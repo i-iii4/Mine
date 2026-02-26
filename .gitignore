@@ -5,6 +5,9 @@ node_modules/
 dist/
 src-tauri/target/
 
+# Bun
+bun.lock
+
 # Environment
 .env
 .env.local

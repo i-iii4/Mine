@@ -1,0 +1,56 @@
+[package]
+name = "local-arena"
+version = "0.1.0"
+description = "Local-first alternative to Are.na for visual bookmarking"
+authors = ["i_iii"]
+license = "MIT"
+repository = "https://github.com/i-iii4/local-arena"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "local_arena_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri
+tauri = { version = "2", features = [] }
+tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Database
+rusqlite = { version = "0.33", features = ["bundled"] }
+
+# File system
+notify = "8"
+
+# Image processing
+image = "0.25"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+log = "0.4"
+
+# Type generation for TypeScript
+specta = { version = "=2.0.0-rc.22", features = ["derive"] }
+tauri-specta = { version = "=2.0.0-rc.21", features = ["typescript"] }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
