@@ -1,88 +1,127 @@
 # Implementation Plan
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md)
 
 ## Goal
 
-Создать десктопное приложение для macOS — локальную альтернативу Are.na. Пользователь хранит визуальные материалы (изображения, ссылки, заметки) в папках на диске, приложение отображает их в виде сетки карточек с навигацией по каналам, поиском и связями.
+Создать технически совершенное десктопное приложение для macOS — локальную альтернативу Are.na. Файлы на диске (Markdown + frontmatter), каналы — теги, плавный интерфейс на 10 000+ блоков.
 
-**Definition of done:** пользователь может открыть приложение, увидеть свои каналы, просматривать карточки в сетке с плавной прокруткой на 10 000+ элементов, добавлять файлы drag-and-drop, искать по содержимому.
+**Это не MVP.** Каждый модуль реализуется в финальном качестве.
+
+## Стратегия: вертикальные срезы с эталонным модулем
+
+Каждый модуль проходит полный цикл:
+```
+SPEC → TEST (красные) → CODE (зелёные) → VERIFY → COMMIT
+```
+
+Фаза 1 создаёт **эталонный модуль** (`domain/block`) — образец качества для всех остальных. Уроки из каждого модуля влияют на спецификацию следующего.
 
 ## Phases
 
-### Phase 1 — Скелет (Tauri + React + Vault) [PLANNED]
+### Phase 0 — Архитектура и документация [COMPLETED]
 
-Goal: приложение запускается, показывает содержимое vault-папки, базовая навигация.
-
-| # | Task | Status |
-|---|------|--------|
-| 1.1 | Инициализация Tauri v2 + React + Vite + TypeScript | [ ] |
-| 1.2 | Структура Rust-бэкенда: commands/, db/, indexer/ | [ ] |
-| 1.3 | SQLite-схема: blocks, channels, block_channels, FTS5 | [ ] |
-| 1.4 | Tauri command: выбор vault-папки (диалог) | [ ] |
-| 1.5 | Scanner: полное сканирование vault → индекс в SQLite | [ ] |
-| 1.6 | Tauri commands: list_channels, get_channel, list_blocks | [ ] |
-| 1.7 | Фронтенд: Sidebar с каналами + Grid с карточками (заглушки) | [ ] |
-| 1.8 | Роутинг: / → список каналов, /channel/:slug → содержимое | [ ] |
-
-### Phase 2 — Thumbnails и производительность [PLANNED]
-
-Goal: сетка показывает реальные превью, плавная прокрутка на тысячах карточек.
+Goal: полный каркас проекта — принципы, архитектура, PRD, юзкейсы.
 
 | # | Task | Status |
 |---|------|--------|
-| 2.1 | Thumbnail generator: image crate, 240px превью | [ ] |
-| 2.2 | Tauri command: отдача thumbnail по ID блока | [ ] |
-| 2.3 | Виртуальный скроллинг: @tanstack/react-virtual | [ ] |
-| 2.4 | Lazy loading изображений с placeholder | [ ] |
-| 2.5 | File watcher (notify): отслеживание изменений в vault | [ ] |
-| 2.6 | Tauri events: уведомление фронтенда об изменениях файлов | [ ] |
+| 0.1 | CLAUDE.md, ARCHITECTURE.md, PLAN.md, DEVLOG.md | [x] |
+| 0.2 | PRINCIPLES.md — инженерные принципы и антипаттерны | [x] |
+| 0.3 | SPEC_PRD.md — модель данных, типы блоков, интерфейс | [x] |
+| 0.4 | SPEC_USECASES.md — юзкейсы и сценарии | [x] |
+| 0.5 | Git + GitHub репозиторий | [x] |
 
-### Phase 3 — Полноценная работа с блоками [PLANNED]
+### Phase 1 — Эталонный модуль + инициализация [PLANNED]
 
-Goal: пользователь может добавлять, удалять, перемещать блоки, работать с разными типами.
-
-| # | Task | Status |
-|---|------|--------|
-| 3.1 | Drag-and-drop файлов в окно → копирование в канал | [ ] |
-| 3.2 | Типы блоков: image, text (markdown), link (.json), file | [ ] |
-| 3.3 | Превью ссылок: fetch metadata (title, description, og:image) | [ ] |
-| 3.4 | Удаление блока (в корзину .arena/trash/) | [ ] |
-| 3.5 | Перемещение блока между каналами | [ ] |
-| 3.6 | Блок в нескольких каналах (симлинки) | [ ] |
-| 3.7 | Создание/удаление/переименование каналов | [ ] |
-
-### Phase 4 — Поиск и связи [PLANNED]
-
-Goal: полнотекстовый поиск, связи между блоками, граф.
+Goal: Tauri-проект инициализирован, `domain/block` реализован идеально — спецификация, тесты, код. Это образец для всех модулей.
 
 | # | Task | Status |
 |---|------|--------|
-| 4.1 | Полнотекстовый поиск через FTS5 | [ ] |
-| 4.2 | UI поиска: модальное окно, мгновенные результаты | [ ] |
-| 4.3 | Связи между блоками (connections) | [ ] |
-| 4.4 | Просмотр «где ещё используется этот блок» | [ ] |
+| 1.1 | Инициализация Tauri v2 + React + Vite + TypeScript + Tailwind | [ ] |
+| 1.2 | Структура директорий: domain/, storage/, watcher/, commands/ | [ ] |
+| 1.3 | Настройка specta для типогенерации Rust → TypeScript | [ ] |
+| 1.4 | SPEC_BLOCK.md — спецификация domain/block | [ ] |
+| 1.5 | Тесты domain/block (красные) | [ ] |
+| 1.6 | Реализация domain/block (тесты зелёные) | [ ] |
+| 1.7 | Ретроспектива: что узнали, что поправить в принципах | [ ] |
 
-### Phase 5 — Импорт из Are.na [PLANNED]
+### Phase 2 — Domain layer [PLANNED]
 
-Goal: пользователь может перенести существующие каналы из Are.na.
-
-| # | Task | Status |
-|---|------|--------|
-| 5.1 | Are.na API: получение каналов и блоков пользователя | [ ] |
-| 5.2 | Скачивание изображений и метаданных | [ ] |
-| 5.3 | Создание файловой структуры vault из импорта | [ ] |
-| 5.4 | UI импорта: выбор каналов, прогресс | [ ] |
-
-### Phase 6 — Polish [PLANNED]
-
-Goal: приложение готово к повседневному использованию.
+Goal: вся бизнес-логика реализована и протестирована. Чистые типы и функции, без зависимостей от Tauri/SQLite.
 
 | # | Task | Status |
 |---|------|--------|
-| 6.1 | Сортировка блоков: по дате, имени, типу, вручную | [ ] |
-| 6.2 | Виды отображения: сетка, список, masonry | [ ] |
-| 6.3 | Горячие клавиши (Cmd+K поиск, навигация) | [ ] |
-| 6.4 | Тёмная/светлая тема (системная) | [ ] |
-| 6.5 | PWA manifest (на будущее — для веб-версии) | [ ] |
-| 6.6 | Автообновление через Tauri updater | [ ] |
+| 2.1 | SPEC + TEST + CODE: domain/tag | [ ] |
+| 2.2 | SPEC + TEST + CODE: domain/channel | [ ] |
+| 2.3 | SPEC + TEST + CODE: domain/vault | [ ] |
+| 2.4 | SPEC + TEST + CODE: domain/search (query parsing) | [ ] |
+
+### Phase 3 — Storage layer [PLANNED]
+
+Goal: SQLite-индекс, файловые операции, thumbnail-пайплайн. Всё персистентное.
+
+| # | Task | Status |
+|---|------|--------|
+| 3.1 | SPEC + TEST + CODE: storage/db (схема, миграции, pool) | [ ] |
+| 3.2 | SPEC + TEST + CODE: storage/index (frontmatter → SQLite) | [ ] |
+| 3.3 | SPEC + TEST + CODE: storage/files (copy, move, naming) | [ ] |
+| 3.4 | SPEC + TEST + CODE: storage/thumbnails (генерация, кэш) | [ ] |
+| 3.5 | SPEC + TEST + CODE: FTS5 поиск | [ ] |
+
+### Phase 4 — Watcher + Commands (интеграция) [PLANNED]
+
+Goal: file watcher отслеживает vault, Tauri commands связывают бэкенд с фронтендом. Полный сканер vault.
+
+| # | Task | Status |
+|---|------|--------|
+| 4.1 | SPEC + TEST + CODE: watcher/events (типы, debouncing) | [ ] |
+| 4.2 | SPEC + TEST + CODE: watcher/handler (FS → indexer) | [ ] |
+| 4.3 | SPEC + TEST + CODE: commands/vault (выбор папки, сканирование) | [ ] |
+| 4.4 | SPEC + TEST + CODE: commands/blocks (list, get, create, delete) | [ ] |
+| 4.5 | SPEC + TEST + CODE: commands/tags (list, add, remove) | [ ] |
+| 4.6 | SPEC + TEST + CODE: commands/search (FTS5 query) | [ ] |
+| 4.7 | Интеграционные тесты: полный цикл файл → индекс → команда | [ ] |
+
+### Phase 5 — Frontend [PLANNED]
+
+Goal: полноценный UI — сетка, sidebar, детальный вид, поиск. 60 fps на 10 000 блоков.
+
+| # | Task | Status |
+|---|------|--------|
+| 5.1 | SPEC: компоненты (Grid, Card, Sidebar, Detail, Search) | [ ] |
+| 5.2 | Sidebar: каналы, счётчики, drag-reorder | [ ] |
+| 5.3 | Grid: виртуальный скроллинг, режимы (сетка, masonry, список) | [ ] |
+| 5.4 | Card: адаптивные карточки по типу блока | [ ] |
+| 5.5 | Detail: lightbox, метаданные, теги, wikilinks | [ ] |
+| 5.6 | Search: Cmd+K, command palette, мгновенные результаты | [ ] |
+| 5.7 | Drag-and-drop файлов → создание блока | [ ] |
+| 5.8 | CRUD тегов из UI: добавить/удалить тег, создать канал | [ ] |
+| 5.9 | Тёмная/светлая тема (системная) | [ ] |
+| 5.10 | Сортировка, горячие клавиши | [ ] |
+| 5.11 | Real-time updates: Tauri events → React state | [ ] |
+| 5.12 | Тесты компонентов | [ ] |
+
+### Phase 6 — Импорт из Are.na [PLANNED]
+
+Goal: пользователь переносит каналы из Are.na.
+
+| # | Task | Status |
+|---|------|--------|
+| 6.1 | SPEC: импорт (API, маппинг, ошибки) | [ ] |
+| 6.2 | Are.na API: авторизация, каналы, блоки | [ ] |
+| 6.3 | Маппинг: Are.na block → .md + медиафайл, channel → тег | [ ] |
+| 6.4 | UI импорта: выбор каналов, прогресс | [ ] |
+| 6.5 | Тесты с моками API | [ ] |
+
+### Phase 7 — Финализация [PLANNED]
+
+Goal: продакшен-готовность. Профилирование, edge cases, сборка.
+
+| # | Task | Status |
+|---|------|--------|
+| 7.1 | Профилирование: 10 000+ блоков (рендеринг, скроллинг, поиск) | [ ] |
+| 7.2 | Edge cases: битый frontmatter, отсутствующий медиафайл, конфликты имён | [ ] |
+| 7.3 | Пересборка индекса из файлов (recovery) | [ ] |
+| 7.4 | Автообновление (Tauri updater) | [ ] |
+| 7.5 | Иконка, About, меню | [ ] |
+| 7.6 | Сборка .dmg, подпись, нотаризация | [ ] |

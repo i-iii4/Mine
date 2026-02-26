@@ -1,12 +1,15 @@
 # Local Arena — локальная альтернатива Are.na для визуального букмаркинга
 
-Десктопное приложение для сбора, организации и связывания визуальных материалов. Файлы хранятся локально в папках (как Obsidian для заметок), интерфейс — окно в них. Никакого облака, никакого Electron.
+Десктопное приложение для визуального букмаркинга. Файлы хранятся локально (плоская структура, Markdown + frontmatter), каналы — это теги. Интерфейс — окно в файловую систему. Никакого облака, никакого Electron.
 
 ## Required reading
 
+- `PRINCIPLES.md` — **читать первым.** Инженерные принципы, антипаттерны, чеклист
 - `ARCHITECTURE.md` — архитектура, компоненты, ключевые решения
 - `PLAN.md` — план реализации по фазам
 - `DEVLOG.md` — история изменений и принятые решения
+- `SPEC_PRD.md` — PRD: модель данных, типы блоков, интерфейс
+- `SPEC_USECASES.md` — юзкейсы и сценарии использования
 
 ## Stack
 
@@ -28,24 +31,30 @@
 local-arena/
 ├── src-tauri/                  # Rust-бэкенд (Tauri)
 │   ├── src/
-│   │   ├── main.rs             # Точка входа Tauri
-│   │   ├── commands/           # Tauri commands (API для фронтенда)
+│   │   ├── main.rs             # Только инициализация Tauri
+│   │   ├── domain/             # Чистая бизнес-логика (без Tauri, без SQLite)
 │   │   │   ├── mod.rs
-│   │   │   ├── channels.rs     # CRUD каналов (папок)
-│   │   │   ├── blocks.rs       # CRUD блоков (файлов)
-│   │   │   ├── search.rs       # Полнотекстовый поиск
-│   │   │   └── thumbnails.rs   # Генерация и отдача превью
-│   │   ├── indexer/            # Индексирование файлов в SQLite
+│   │   │   ├── block.rs        # Block, BlockType, frontmatter parsing
+│   │   │   ├── channel.rs      # Channel (promoted tag)
+│   │   │   ├── tag.rs          # Tag operations
+│   │   │   ├── vault.rs        # Vault path resolution, file naming
+│   │   │   └── search.rs       # Search query parsing
+│   │   ├── storage/            # Персистентность (SQLite, FS)
 │   │   │   ├── mod.rs
-│   │   │   ├── watcher.rs      # File watcher (notify)
-│   │   │   └── scanner.rs      # Полное сканирование vault
-│   │   ├── db/                 # Работа с SQLite
+│   │   │   ├── db.rs           # Connection pool, migrations
+│   │   │   ├── index.rs        # Frontmatter → SQLite indexing
+│   │   │   ├── files.rs        # File operations (copy, move, delete)
+│   │   │   └── thumbnails.rs   # Thumbnail generation + cache
+│   │   ├── watcher/            # File system watcher
 │   │   │   ├── mod.rs
-│   │   │   ├── schema.rs       # Миграции и схема
-│   │   │   └── queries.rs      # SQL-запросы
-│   │   └── thumbnails/         # Пайплайн генерации превью
+│   │   │   ├── events.rs       # Event types, debouncing
+│   │   │   └── handler.rs      # React to FS changes
+│   │   └── commands/           # Tauri commands (тонкий слой, без логики)
 │   │       ├── mod.rs
-│   │       └── generator.rs
+│   │       ├── blocks.rs       # → вызывает domain + storage
+│   │       ├── tags.rs
+│   │       ├── search.rs
+│   │       └── vault.rs
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 ├── src/                        # React-фронтенд
@@ -53,12 +62,14 @@ local-arena/
 │   ├── App.tsx                 # Корневой компонент + роутинг
 │   ├── components/
 │   │   ├── Grid/               # Сетка карточек (виртуализация)
-│   │   ├── Card/               # Карточка блока
-│   │   ├── Channel/            # Представление канала
-│   │   ├── Sidebar/            # Навигация по каналам
-│   │   └── Search/             # Поиск
-│   ├── hooks/                  # React-хуки
-│   ├── lib/                    # Утилиты, типы, Tauri API-обёртки
+│   │   ├── Card/               # Карточка блока (адаптивная по типу)
+│   │   ├── Channel/            # Представление канала (фильтр по тегу)
+│   │   ├── Sidebar/            # Навигация: каналы (promoted tags)
+│   │   ├── Detail/             # Детальный просмотр (lightbox)
+│   │   └── Search/             # Cmd+K поиск
+│   ├── hooks/                  # React-хуки (Tauri IPC обёртки)
+│   ├── types/                  # Автогенерированные типы из Rust (specta)
+│   ├── lib/                    # Утилиты
 │   └── styles/                 # Глобальные стили
 ├── public/                     # Статические ассеты
 ├── index.html
@@ -67,33 +78,35 @@ local-arena/
 ├── tsconfig.json
 ├── package.json
 ├── CLAUDE.md
+├── PRINCIPLES.md
 ├── ARCHITECTURE.md
 ├── PLAN.md
-└── DEVLOG.md
+├── DEVLOG.md
+├── SPEC_PRD.md
+└── SPEC_USECASES.md
 ```
 
 ## Vault structure (пользовательские данные)
 
 ```
 ~/LocalArena/                       # Vault — выбирается пользователем
-├── .arena/                         # Служебные данные (в .gitignore)
-│   ├── index.db                    # SQLite: поисковый индекс, связи
+├── .arena/                         # Служебные данные
+│   ├── index.db                    # SQLite: FTS5, кэш тегов, каналы
 │   └── cache/
 │       └── thumbs/                 # Thumbnails 240px
-├── channels/
-│   ├── design-inspiration/
-│   │   ├── channel.json            # Метаданные канала
-│   │   ├── screenshot-2026.png
-│   │   ├── article.md
-│   │   └── figma-link.json         # { url, title, description }
-│   └── brutalist-architecture/
-│       ├── channel.json
-│       └── ...
+├── sunset-tokyo.md                 # Метаданные (frontmatter + wikilinks)
+├── sunset-tokyo.jpg                # Медиафайл
+├── stripe-homepage.md              # Ссылка (frontmatter, тело пустое)
+├── stripe-og.png                   # Миниатюра ссылки
+├── crdt-article.md                 # Статья (frontmatter + текст)
+└── ...                             # Всё плоско в корне vault
 ```
+
+Каналы = теги в frontmatter. Блок = `.md` файл + опциональный медиафайл.
 
 ## Git
 
-- `origin` — (будет настроен)
+- `origin` — https://github.com/i-iii4/local-arena (private)
 - Main branch: `main`
 
 ## Environment
@@ -115,21 +128,29 @@ cargo clippy                   # Линтинг Rust
 
 ## Code culture
 
-The project is built as a scalable product, not a prototype.
+**Мы не делаем MVP. Мы делаем финальный продукт.** Код бесплатен (пишет ИИ), время дорого (тратит человек на отладку). Оптимизируем корректность, не скорость написания.
 
-### Prohibited
-- Workarounds, hacks, TODO stubs, "fix later"
-- Copy-paste instead of abstraction
-- Direct coupling between unrelated modules
-- Swallowing errors (empty catch, silent failures)
-- Hardcoded values that belong in configuration
+Полный набор принципов, антипаттернов и чеклист — в `PRINCIPLES.md`.
 
-### Required
-- Every decision must be architecturally justified
-- New component: define contract (interface) first, then implement
-- Architecture change: update ARCHITECTURE.md first, then write code
-- Non-obvious solution: comment explains "why", not "what"
-- Errors are handled explicitly with clear messages
+### Рабочий цикл на каждый модуль
+
+```
+1. SPEC    — спецификация (типы, API, поведение, edge cases)
+2. REVIEW  — проверка SPEC на соответствие PRINCIPLES.md
+3. CODE    — реализация строго по спецификации
+4. TEST    — тесты на все сценарии из SPEC
+5. VERIFY  — нет отклонений от SPEC, нет антипаттернов
+6. COMMIT  — коммит с ссылкой на SPEC
+```
+
+### Ключевые правила
+
+- Контракт первичен: SPEC → реализация → тесты (не наоборот)
+- Нулевой технический долг: нет TODO, FIXME, HACK, «потом»
+- Типобезопасность сквозная: Rust → specta → TypeScript (автогенерация)
+- domain/ не знает о storage/, commands/ не содержит логики
+- Ошибки типизированы (enum, не строки), содержат контекст
+- Производительность — архитектурное решение, не оптимизация «потом»
 
 ## Style conventions
 
@@ -153,6 +174,7 @@ The project is built as a scalable product, not a prototype.
 
 | Document | When to update |
 |---|---|
+| PRINCIPLES.md | Крайне редко — только если принцип доказал неверность |
 | CLAUDE.md | Structure, stack, commands, or git config changed |
 | ARCHITECTURE.md | New component, architectural decision, dependency, or SPEC file created |
 | PLAN.md | Task started/completed, new tasks discovered, scope changed, phase status changed |
