@@ -1,1 +1,24 @@
 @import "tailwindcss";
+
+/* Prevent text selection on interactive elements (native app feel) */
+button,
+[role="button"],
+nav {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Hide scrollbars in WebKit (Tauri/Safari) */
+.overflow-y-auto::-webkit-scrollbar {
+  display: none;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Prevent overscroll bounce on the body (native app feel) */
+body {
+  overscroll-behavior: none;
+}

@@ -24,6 +24,7 @@ pub fn run() {
             commands::channels::create_channel,
             commands::channels::delete_channel,
         ])
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
