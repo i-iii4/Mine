@@ -41,18 +41,18 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     pageUrl: info.pageUrl || tab?.url || null,
   };
 
-  // Store data first, then try to open popup
+  // Store data, then open popup as a standalone window.
+  // chrome.action.openPopup() doesn't work from context menu handlers
+  // (requires user gesture on the extension icon), so we use windows.create().
   await chrome.storage.session.set({ contextMenuData: context });
 
-  if (chrome.action.openPopup) {
-    try {
-      await chrome.action.openPopup();
-    } catch {
-      // Fallback: badge indicates pending save
-      chrome.action.setBadgeText({ text: "1" });
-      chrome.action.setBadgeBackgroundColor({ color: "#171717" });
-    }
-  }
+  const popupUrl = chrome.runtime.getURL("popup/popup.html");
+  chrome.windows.create({
+    url: popupUrl,
+    type: "popup",
+    width: 400,
+    height: 560,
+  });
 });
 
 // ── Native messaging ──────────────────────────────────────────────────────

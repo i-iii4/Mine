@@ -254,7 +254,8 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         let dest_name = format!("{}.{}", slug, ext);
         let dest_path = vault.root().join(&dest_name);
 
-        match download_file(image_url, &dest_path) {
+        let referer = p.url.as_deref().unwrap_or(image_url);
+        match download_file(image_url, &dest_path, referer) {
             Ok(()) => {
                 media_file = Some(dest_name);
                 downloaded_path = Some(dest_path);
@@ -276,7 +277,8 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     let body = {
         let raw = p.body.unwrap_or_default();
         if bt == BlockType::Article && !raw.is_empty() {
-            localize_body_images(&raw, vault, &slug)
+            let page_url = p.url.as_deref().unwrap_or("");
+            localize_body_images(&raw, vault, &slug, page_url)
         } else {
             raw
         }
@@ -392,17 +394,18 @@ fn ext_from_url(url: &str) -> &str {
 }
 
 /// Download a file from URL to local path.
-/// Sends proper HTTP headers and retries up to 3 times with backoff.
-fn download_file(url: &str, dest: &std::path::Path) -> anyhow::Result<()> {
+/// `referer` should be the page URL (not the image URL) — CDNs validate this.
+/// Retries up to 3 times with backoff.
+fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Result<()> {
     let mut last_err = None;
     for attempt in 0..3u64 {
         if attempt > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(300 * attempt));
+            std::thread::sleep(std::time::Duration::from_millis(500 * attempt));
         }
         match ureq::get(url)
-            .set("User-Agent", "LocalArena/1.0")
-            .set("Referer", url)
-            .set("Accept", "image/*,*/*;q=0.8")
+            .set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .set("Referer", referer)
+            .set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
             .call()
         {
             Ok(resp) => {
@@ -421,7 +424,7 @@ fn download_file(url: &str, dest: &std::path::Path) -> anyhow::Result<()> {
 /// Images that fail to download keep their original URL.
 const MAX_INLINE_IMAGES: u32 = 30;
 
-fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str) -> String {
+fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &str) -> String {
     let mut result = body.to_string();
     let mut img_idx: u32 = 0;
     let mut search_from = 0;
@@ -460,15 +463,15 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str) -> String {
             let img_name = format!("{slug}-img{img_idx}.{ext}");
             let dest = vault.root().join(&img_name);
 
-            if download_file(&url, &dest).is_ok() {
+            if download_file(&url, &dest, page_url).is_ok() {
                 let alt = result[alt_start..bracket_pos].to_string();
                 let new_markup = format!("![{alt}]({img_name})");
                 let new_len = new_markup.len();
                 result = result[..img_start].to_string() + &new_markup + &result[paren_end + 1..];
                 img_idx += 1;
-                // Small delay between downloads to avoid CDN rate-limiting
+                // Delay between downloads to avoid CDN rate-limiting
                 if img_idx < MAX_INLINE_IMAGES {
-                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    std::thread::sleep(std::time::Duration::from_millis(300));
                 }
                 search_from = img_start + new_len;
                 continue;
