@@ -1,4 +1,4 @@
-// Popup logic: metadata display, type switching, channel picker, save.
+// Popup logic: auto-detect content type, channel/tag picker, save.
 
 (() => {
   "use strict";
@@ -15,14 +15,13 @@
   // ── DOM refs ──────────────────────────────────────────────────────────────
 
   const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => document.querySelectorAll(sel);
 
   const loadingState = $("#loading-state");
   const errorState = $("#error-state");
   const errorMessage = $("#error-message");
   const mainState = $("#main-state");
 
-  const typeBtns = $$(".type-btn");
+  const typeSwitcher = $("#type-switcher");
   const previewImage = $("#preview-image");
   const previewText = $("#preview-text");
   const titleInput = $("#title-input");
@@ -66,7 +65,7 @@
         return;
       }
 
-      // Load channels
+      // Load channels/tags
       const chResult = await sendToNative({ action: "list_channels" });
       if (chResult.ok) {
         channels = chResult.channels || [];
@@ -100,10 +99,18 @@
               favicon: null,
               selection: "",
               detectedType: "link",
+              isArticle: false,
             });
           } else {
             resolve(resp);
           }
+        });
+      });
+
+      // Eager article extraction — runs in parallel with UI setup
+      const articlePromise = new Promise((resolve) => {
+        chrome.tabs.sendMessage(tab.id, { action: "extractArticle" }, (resp) => {
+          resolve(resp || { title: "", content: "", byline: null, excerpt: "" });
         });
       });
 
@@ -112,8 +119,13 @@
         applyContextMenu(contextMenuData);
       }
 
-      // Set detected type
-      switchType(metadata.detectedType || "link");
+      // Set type and build switcher
+      const detectedType = metadata.detectedType || "link";
+      buildTypeSwitcher(detectedType);
+      setType(detectedType);
+
+      // Wait for eager article extraction to complete
+      articleData = await articlePromise;
 
       // Populate fields
       titleInput.value = metadata.title || "";
@@ -157,13 +169,40 @@
     errorMessage.textContent = msg;
   }
 
-  // ── Type switching ────────────────────────────────────────────────────────
+  // ── Type switcher ─────────────────────────────────────────────────────────
 
-  function switchType(type) {
+  const TYPE_LABELS = {
+    link: "Link",
+    article: "Article",
+    video: "Video",
+    image: "Image",
+    selection: "Selection",
+  };
+
+  function buildTypeSwitcher(detectedType) {
+    // Always show Link and Article; add Selection only when text is selected
+    const types = ["link", "article"];
+    if (metadata.selection && metadata.selection.length > 0) {
+      types.push("selection");
+    }
+
+    typeSwitcher.innerHTML = "";
+    for (const type of types) {
+      const btn = document.createElement("button");
+      btn.className = "type-btn";
+      btn.dataset.type = type;
+      btn.textContent = TYPE_LABELS[type];
+      btn.addEventListener("click", () => setType(type));
+      typeSwitcher.appendChild(btn);
+    }
+    typeSwitcher.classList.remove("hidden");
+  }
+
+  function setType(type) {
     currentType = type;
 
-    // Update button styles
-    typeBtns.forEach((btn) => {
+    // Update switcher button styles
+    typeSwitcher.querySelectorAll(".type-btn").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.type === type);
     });
 
@@ -185,19 +224,6 @@
       if (currentType === "selection" && metadata.selection) {
         text = metadata.selection;
       } else if (currentType === "article") {
-        if (!articleData) {
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (tab?.id) {
-            articleData = await new Promise((resolve) => {
-              chrome.tabs.sendMessage(tab.id, { action: "extractArticle" }, (resp) => {
-                resolve(resp || { title: "", content: "", byline: null, excerpt: "" });
-              });
-            });
-            if (articleData.title && !titleInput.value) {
-              titleInput.value = articleData.title;
-            }
-          }
-        }
         text = articleData?.content?.slice(0, 300) || "";
       }
 
@@ -235,7 +261,7 @@
       `;
     }
 
-    // Offer to create a new channel if the search doesn't match any existing
+    // Offer to create a new tag if the search doesn't match any existing
     if (filter && !filtered.some((ch) => ch.tag === slugify(filter))) {
       const newTag = slugify(filter);
       if (newTag) {
@@ -319,6 +345,19 @@
     saveLabel.classList.add("hidden");
     saveSpinner.classList.remove("hidden");
 
+    // Re-query selection right before saving (user may have changed it)
+    if (currentType === "selection") {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id) {
+        const fresh = await new Promise((resolve) => {
+          chrome.tabs.sendMessage(tab.id, { action: "extractMetadata" }, (resp) => resolve(resp));
+        });
+        if (fresh?.selection?.length > 0) {
+          metadata.selection = fresh.selection;
+        }
+      }
+    }
+
     const blockType =
       currentType === "selection" ? "article" : currentType === "image" ? "image" : currentType;
 
@@ -372,10 +411,6 @@
   }
 
   // ── Event listeners ───────────────────────────────────────────────────────
-
-  typeBtns.forEach((btn) => {
-    btn.addEventListener("click", () => switchType(btn.dataset.type));
-  });
 
   channelSearch.addEventListener("input", () => {
     renderChannelList(channelSearch.value);

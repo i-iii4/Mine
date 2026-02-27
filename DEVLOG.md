@@ -28,6 +28,53 @@ if any
 
 ---
 
+## 27.02.2026 — Капитальный ремонт веб-клиппера: форматирование и логика типов
+
+### Goal
+Исправить два класса проблем клиппера: (A) потерю форматирования в Twitter-тредах и статьях, (B) хрупкую логику типов — скрытый переключатель, ленивая загрузка статьи, одноразовый захват выделения.
+
+### Planned
+1. Убрать `.textContent` фоллбэки в `extractTweetContent()` и `extractArticle()` — они уничтожают HTML-структуру
+2. Кастомный DOM-обходчик `tweetTextToMarkdown()` для Twitter (вместо TurndownService)
+3. Логирование ошибок в `htmlToMarkdown()`
+4. Переключатель типов всегда видим (Link/Article + Selection при выделении)
+5. Жадная загрузка статьи параллельно с инициализацией UI
+6. Перезапрос выделения при сохранении
+7. CSS `white-space: pre-wrap` для превью текста
+
+### Actually completed
+Все 7 пунктов выполнены.
+
+**content.js — форматирование:**
+- `tweetTextToMarkdown(el)` — рекурсивный обход DOM: TEXT_NODE, BR, A (ссылки, хэштеги, упоминания), IMG (эмодзи через alt), вложенные SPAN
+- `.textContent` фоллбэки удалены в `extractTweetContent()` и `extractArticle()`
+- `htmlToMarkdown()` — `console.error` вместо тихого catch
+
+**popup.js — логика типов:**
+- `buildTypeSwitcher()` — всегда показывает Link/Article, Selection при наличии выделения
+- `init()` — `articlePromise` запускается сразу после получения `tab.id`, результат ожидается перед `updatePreview()`
+- `save()` — перезапрос `extractMetadata` для свежего выделения при типе "selection"
+- Ленивая загрузка статьи из `updatePreview()` удалена
+
+**popup.css:**
+- `.preview-text { white-space: pre-wrap }` — переносы строк видны в превью
+
+### Deviations from plan
+Нет отклонений.
+
+### Checks
+Ручное тестирование (браузерное расширение, не покрывается unit-тестами).
+
+### Push
+Ожидает коммит.
+
+### Decisions and lessons learned
+1. **tweetTextToMarkdown > TurndownService для Twitter**: Twitter не использует семантический HTML — `<span>` + CSS вместо `<p>` + `<br>`. TurndownService проектировался под обычный HTML, Twitter-разметка требует ручного обхода
+2. **Пустая строка лучше `.textContent`**: если конвертация провалилась, пустое тело заметнее и проще пересохранить, чем склеенный текст без форматирования
+3. **Жадная загрузка vs ленивая**: Readability.js клонирует весь DOM — это тяжёлая операция. Запуск параллельно с UI-настройкой (через Promise) исключает задержку при переключении на тип Article
+
+---
+
 ## 27.02.2026 — Финализация: производительность, edge cases, иконка, меню
 
 ### Goal

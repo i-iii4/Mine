@@ -172,6 +172,7 @@ body {
   max-height: 100px;
   overflow: hidden;
   line-height: 1.6;
+  white-space: pre-wrap;
 }
 
 /* ── Fields ───────────────────────────────────────────────────── */
