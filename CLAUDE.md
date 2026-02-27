@@ -31,6 +31,10 @@
 | Vite | Сборка фронтенда, HMR |
 | TypeScript | Язык фронтенда |
 | TailwindCSS | Стилизация |
+| react-markdown + remark-gfm | Рендеринг markdown в Detail.tsx |
+| @tailwindcss/typography | Стилизация prose-контента (статьи) |
+| Readability.js | Извлечение статей из веб-страниц (content script) |
+| TurndownService | HTML → Markdown (content script) |
 
 ## Structure
 
@@ -38,6 +42,8 @@
 local-arena/
 ├── src-tauri/                  # Rust-бэкенд (Tauri)
 │   ├── src/
+│   │   ├── bin/
+│   │   │   └── native_host.rs  # Native messaging host для веб-клиппера (stdin/stdout JSON)
 │   │   ├── main.rs             # Только инициализация Tauri
 │   │   ├── domain/             # Чистая бизнес-логика (без Tauri, без SQLite)
 │   │   │   ├── mod.rs
@@ -86,6 +92,16 @@ local-arena/
 │   ├── types/                  # TypeScript-типы (ручные, без specta)
 │   ├── lib/                    # commands.ts (IPC), assets.ts (URL-хелперы)
 │   └── styles/                 # Глобальные стили
+├── extension/                  # Chrome/Safari веб-клиппер
+│   ├── background.js           # Service worker: контекстное меню, native messaging
+│   ├── content.js              # Content script: извлечение метаданных, Readability.js
+│   ├── popup/                  # Popup UI: превью, выбор каналов, сохранение
+│   │   ├── popup.html
+│   │   ├── popup.css
+│   │   └── popup.js
+│   ├── lib/                    # Вендорные библиотеки (Readability, TurndownService)
+│   ├── icons/                  # Иконки расширения
+│   └── manifest.json           # Manifest V3
 ├── public/                     # Статические ассеты
 ├── index.html
 ├── vite.config.ts

@@ -28,27 +28,27 @@ if any
 
 ---
 
-## 27.02.2026 — Переделка UX клиппера и рендеринг статей в приложении
+## 27.02.2026 — Переделка UX клиппера, багфиксы, рендеринг статей
 
 ### Goal
 Четыре задачи клиппера: (A) только первая картинка статьи скачивается корректно, (B) переключатель типов — заменить на Content | Link, (C) сохранение картинки через контекстное меню должно открывать попап с превью, (D) список каналов всегда виден, недавние каналы первыми. Параллельно — улучшение рендеринга статей в основном приложении.
 
 ### Planned
 1. HTTP-заголовки + retry в `download_file()` (native_host.rs) — CDN блокирует голые запросы
-2. Задержка 150мс между загрузками в `localize_body_images()`
+2. Задержка между загрузками в `localize_body_images()`
 3. Переключатель Content | Link вместо Link/Article/Selection
-4. Async-обработчик контекстного меню с фолбэком через значок
+4. Открытие попапа из контекстного меню
 5. Полная переработка попапа: карточка превью, встроенный список каналов, недавние каналы
 6. Замена ручного рендеринга markdown на react-markdown + remark-gfm (Detail.tsx)
 7. Фолбэк для карточек-ссылок без thumbnail (Card.tsx)
 8. Исправление переполнения Grid (overflow-x-hidden, min-w-0)
 
 ### Actually completed
-Все 8 пунктов выполнены.
+Все 8 пунктов выполнены. Два из них потребовали повторного исправления (п. 1 и п. 4).
 
-**native_host.rs — загрузка картинок:**
-- `download_file()` — User-Agent, Referer, Accept заголовки + 3 попытки с 300мс бэкофф
-- `localize_body_images()` — 150мс пауза между загрузками для обхода rate-limiting CDN
+**native_host.rs — загрузка картинок (два прохода):**
+- Первый проход (`b1825e6`): добавлены User-Agent, Referer, Accept + retry 3 попытки + задержка 150мс
+- Второй проход (`ab419c8`): исправлен критический баг — Referer указывал на URL картинки, а не на URL страницы. CDN блокировали самоссылающийся Referer. Исправлено: `download_file()` принимает `referer` как отдельный аргумент (URL страницы). User-Agent заменён на реалистичный браузерный. Задержка увеличена до 300мс, бэкофф retry — до 500мс
 
 **popup.html — новая структура:**
 - Карточка превью (миниатюра 48px + заголовок + домен)
@@ -64,7 +64,8 @@ if any
 - `.preview-title` — input без рамки, рамка при фокусе
 - `.channel-list` — static, max-height: 192px, overflow-y: auto
 - `.save-btn` — width: 100%
-- Темная/светлая тема через CSS-переменные
+- Тёмная/светлая тема через CSS-переменные
+- Адаптивная ширина body для standalone-окна (`@media (min-width: 361px)`)
 
 **popup.js — логика:**
 - Типы: article/selection маппятся в "content", Content выбран по умолчанию
@@ -73,16 +74,15 @@ if any
 - `save()` — Content = selection > article; при успехе сохраняет recentChannels (до 10)
 - `applyContextMenu()` — async, запрашивает getImageInfo для alt/width/height
 
-**background.js:**
-- Async-обработчик контекстного меню
-- chrome.storage.session для передачи данных в попап
-- Фолбэк: значок "1" при неудаче openPopup()
+**background.js (два прохода):**
+- Первый проход (`b1825e6`): async-обработчик контекстного меню, `chrome.action.openPopup()` с фолбэком через значок
+- Второй проход (`ab419c8`): `openPopup()` заменён на `chrome.windows.create()` — openPopup() не работает из контекстного меню (требует жест пользователя на иконке расширения). `windows.create()` открывает попап как отдельное окно 388x520
 
 **manifest.json:**
 - Добавлен permission "storage"
 
 **Detail.tsx — рендеринг статей:**
-- Ручной парсер markdown (IMG_RE, HEADING_RE, renderInline, renderTextFormatting) заменён на ReactMarkdown + remark-gfm
+- Ручной парсер markdown (~150 строк: IMG_RE, HEADING_RE, renderInline, renderTextFormatting) заменён на ReactMarkdown + remark-gfm (~30 строк)
 - @tailwindcss/typography для стилизации prose
 - Пользовательские компоненты: img (resolveImageSrc), a (target="_blank")
 
@@ -95,19 +95,24 @@ if any
 
 ### Deviations from plan
 - Работа над Detail.tsx и Card.tsx не входила в первоначальный план по клипперу, но выполнена в рамках общего улучшения UX
+- Два пункта потребовали повторного исправления после тестирования пользователем: (1) Referer в download_file указывал не на ту цель, (2) openPopup() невозможен из контекстного меню
 
 ### Checks
 - `cargo check --bin native-host` — компиляция без ошибок
 - Визуальная проверка расширения (не покрывается unit-тестами)
+- Контекстное меню "Save image" — открывает standalone-окно с попапом
 
 ### Push
-Ожидает коммит.
+- `b1825e6` — Overhaul clipper UX and improve article rendering (8.9)
+- `ab419c8` — Fix image downloads and context menu popup (8.10)
+- `1a8435e` — Fit popup window to content (8.10)
 
 ### Decisions and lessons learned
-1. **HTTP-заголовки решают 90% проблем с CDN**: Referer + User-Agent достаточно для большинства CDN. Accept image/* помогает с content negotiation
-2. **react-markdown > ручной парсер**: собственный рендеринг markdown неизбежно пропускает edge cases (списки, вложенные элементы, HTML-сущности). react-markdown + remark-gfm покрывает GFM-спецификацию целиком
-3. **chrome.storage.local для недавних каналов**: простое и надёжное решение — переживает закрытие браузера, не требует бэкенда
-4. **Content = article + selection**: объединение двух типов в один упрощает UI и логику, при этом selection имеет приоритет (более конкретное действие пользователя)
+1. **Referer должен указывать на страницу, не на ресурс**: CDN проверяют Referer для защиты от хотлинкинга. Самоссылающийся Referer (картинка ссылается на себя) выглядит как скрапинг и блокируется
+2. **Реалистичный User-Agent обязателен**: `LocalArena/1.0` — слишком подозрительно для CDN. Браузерный User-Agent проходит без проблем
+3. **chrome.action.openPopup() не работает из контекстного меню**: API требует «жест пользователя» на иконке расширения. `chrome.windows.create()` — единственный надёжный способ открыть UI расширения программно
+4. **react-markdown > ручной парсер**: собственный рендеринг markdown неизбежно пропускает edge cases. react-markdown + remark-gfm покрывает GFM-спецификацию целиком
+5. **Content = article + selection**: объединение двух типов в один упрощает UI и логику, selection имеет приоритет
 
 ---
 
@@ -149,7 +154,7 @@ if any
 Ручное тестирование (браузерное расширение, не покрывается unit-тестами).
 
 ### Push
-Ожидает коммит.
+- `43592c3` — Fix clipper formatting and type logic (8.8)
 
 ### Decisions and lessons learned
 1. **tweetTextToMarkdown > TurndownService для Twitter**: Twitter не использует семантический HTML — `<span>` + CSS вместо `<p>` + `<br>`. TurndownService проектировался под обычный HTML, Twitter-разметка требует ручного обхода

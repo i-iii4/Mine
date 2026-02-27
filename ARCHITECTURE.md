@@ -174,6 +174,8 @@ saved_at: 2026-02-26T14:30:00Z
 | DB | Поисковый индекс, кэш тегов, список каналов | rusqlite + FTS5 |
 | Thumbnail Generator | Превью изображений 240px | Rust, image crate |
 | Import | Импорт каналов из Are.na | Rust, ureq (sync HTTP) |
+| Web Clipper | Chrome/Safari расширение: сохранение из браузера | Manifest V3, Readability.js, TurndownService |
+| Native Host | Мост между расширением и vault (stdin/stdout JSON) | Rust (bin/native_host.rs), ureq |
 | Vault | Пользовательские файлы на диске | Файловая система |
 
 ## Data flow
@@ -348,3 +350,8 @@ Rationale: пользователь может открыть любой `.md` �
 | ureq | 2.x | Синхронный HTTP-клиент (импорт Are.na) | MIT/Apache-2.0 |
 | tailwindcss | 4.x | Стилизация | MIT |
 | react-router | 7.x | Роутинг | MIT |
+| react-markdown | latest | Рендеринг markdown в Detail.tsx | MIT |
+| remark-gfm | latest | GFM-расширение для react-markdown | MIT |
+| @tailwindcss/typography | latest | Стилизация prose-контента | MIT |
+| Readability.js | 0.6.x | Извлечение статей (content script) | Apache-2.0 |
+| TurndownService | 7.x | HTML → Markdown (content script) | MIT |
