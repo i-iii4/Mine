@@ -19,10 +19,18 @@ export function Grid({ blocks, vaultPath, onBlockClick }: GridProps) {
   const [parentWidth, setParentWidth] = useState(0);
   const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH);
 
-  // Reset visible count when blocks change (channel switch, search, etc.)
+  // Reset visible count only when the actual set of blocks changes
+  // (channel switch, search) — not on background data refreshes that
+  // produce the same blocks with a new array reference.
+  const blocksFingerprint = useMemo(() => {
+    const len = blocks.length;
+    if (len === 0) return "empty";
+    return `${len}:${blocks[0]!.id}:${blocks[len - 1]!.id}`;
+  }, [blocks]);
+
   useEffect(() => {
     setVisibleCount(INITIAL_BATCH);
-  }, [blocks]);
+  }, [blocksFingerprint]);
 
   // Measure parent width
   useEffect(() => {

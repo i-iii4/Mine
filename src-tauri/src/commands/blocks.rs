@@ -36,7 +36,7 @@ pub fn get_block(
 }
 
 /// Create a new block: generate slug, write .md, copy media, index.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn create_block(
     state: State<'_, AppState>,
     block_type: String,

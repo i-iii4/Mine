@@ -10,6 +10,7 @@ interface DropZoneProps {
 export function DropZone({ onBlocksCreated }: DropZoneProps) {
   const [dragging, setDragging] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleDrop = useCallback(
     async (paths: string[]) => {
@@ -17,6 +18,7 @@ export function DropZone({ onBlocksCreated }: DropZoneProps) {
 
       setDragging(false);
       setImporting(true);
+      setError(null);
 
       try {
         for (const filePath of paths) {
@@ -33,7 +35,9 @@ export function DropZone({ onBlocksCreated }: DropZoneProps) {
         }
         onBlocksCreated();
       } catch (e) {
-        console.error("Failed to create block from drop:", e);
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("Failed to create block from drop:", msg);
+        setError(msg);
       } finally {
         setImporting(false);
       }
@@ -61,11 +65,25 @@ export function DropZone({ onBlocksCreated }: DropZoneProps) {
     return () => unlisten?.();
   }, [handleDrop]);
 
-  if (!dragging && !importing) return null;
+  // Auto-hide error after 4 seconds
+  useEffect(() => {
+    if (!error) return;
+    const timer = setTimeout(() => setError(null), 4000);
+    return () => clearTimeout(timer);
+  }, [error]);
+
+  if (!dragging && !importing && !error) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      {importing ? (
+      {error ? (
+        <div className="max-w-sm rounded-2xl bg-red-600 px-8 py-6 shadow-2xl">
+          <p className="text-sm font-medium text-white">
+            Failed to import
+          </p>
+          <p className="mt-1 text-xs text-white/80">{error}</p>
+        </div>
+      ) : importing ? (
         <div className="rounded-2xl bg-white px-8 py-6 shadow-2xl dark:bg-neutral-900">
           <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
             Importing...
