@@ -54,9 +54,9 @@ impl VaultLayout {
         self.root.join(".arena").join("cache").join("thumbs")
     }
 
-    /// Path to a specific thumbnail: `.arena/cache/thumbs/slug.webp`.
+    /// Path to a specific thumbnail: `.arena/cache/thumbs/slug.jpg`.
     pub fn thumb_path(&self, slug: &str) -> PathBuf {
-        self.thumbs_dir().join(format!("{}.webp", slug))
+        self.thumbs_dir().join(format!("{}.jpg", slug))
     }
 }
 
@@ -147,7 +147,7 @@ mod tests {
         // V4
         assert_eq!(
             layout().thumb_path("sunset-tokyo"),
-            PathBuf::from("/vault/.arena/cache/thumbs/sunset-tokyo.webp")
+            PathBuf::from("/vault/.arena/cache/thumbs/sunset-tokyo.jpg")
         );
     }
 
