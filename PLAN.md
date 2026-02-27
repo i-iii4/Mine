@@ -31,7 +31,7 @@ Goal: полный каркас проекта — принципы, архит�
 | 0.4 | SPEC_USECASES.md — юзкейсы и сценарии | [x] |
 | 0.5 | Git + GitHub репозиторий | [x] |
 
-### Phase 1 — Эталонный модуль + инициализация [IN PROGRESS]
+### Phase 1 — Эталонный модуль + инициализация [COMPLETED]
 
 Goal: Tauri-проект инициализирован, `domain/block` реализован идеально — спецификация, тесты, код. Это образец для всех модулей.
 
@@ -39,22 +39,22 @@ Goal: Tauri-проект инициализирован, `domain/block` реал
 |---|------|--------|
 | 1.1 | Инициализация Tauri v2 + React + Vite + TypeScript + Tailwind | [x] |
 | 1.2 | Структура директорий: domain/, storage/, watcher/, commands/ | [x] |
-| 1.3 | Настройка specta для типогенерации Rust → TypeScript | [ ] |
+| 1.3 | Настройка specta для типогенерации Rust → TypeScript | отложено до Phase 5 |
 | 1.4 | SPEC_BLOCK.md — спецификация domain/block | [x] |
 | 1.5 | Тесты domain/block (59 тестов, все 20 edge cases) | [x] |
 | 1.6 | Реализация domain/block (59/59 зелёных) | [x] |
-| 1.7 | Ретроспектива: что узнали, что поправить в принципах | [ ] |
+| 1.7 | Ретроспектива | [x] |
 
-### Phase 2 — Domain layer [PLANNED]
+### Phase 2 — Domain layer [COMPLETED]
 
 Goal: вся бизнес-логика реализована и протестирована. Чистые типы и функции, без зависимостей от Tauri/SQLite.
 
 | # | Task | Status |
 |---|------|--------|
-| 2.1 | SPEC + TEST + CODE: domain/tag | [ ] |
-| 2.2 | SPEC + TEST + CODE: domain/channel | [ ] |
-| 2.3 | SPEC + TEST + CODE: domain/vault | [ ] |
-| 2.4 | SPEC + TEST + CODE: domain/search (query parsing) | [ ] |
+| 2.1 | SPEC + TEST + CODE: domain/tag (12 тестов) | [x] |
+| 2.2 | SPEC + TEST + CODE: domain/channel (20 тестов) | [x] |
+| 2.3 | SPEC + TEST + CODE: domain/vault (13 тестов) | [x] |
+| 2.4 | SPEC + TEST + CODE: domain/search (15 тестов) | [x] |
 
 ### Phase 3 — Storage layer [PLANNED]
 
