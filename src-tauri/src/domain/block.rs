@@ -262,29 +262,29 @@ pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
     lines.push(format!("type: {}", frontmatter.block_type.as_str()));
 
     if let Some(ref v) = frontmatter.title {
-        lines.push(format!("title: {}", v));
+        lines.push(format!("title: {}", yaml_quote(v)));
     }
     if let Some(ref v) = frontmatter.description {
-        lines.push(format!("description: {}", v));
+        lines.push(format!("description: {}", yaml_quote(v)));
     }
     if let Some(ref v) = frontmatter.url {
-        lines.push(format!("url: {}", v));
+        lines.push(format!("url: {}", yaml_quote(v)));
     }
     if let Some(ref v) = frontmatter.file {
-        lines.push(format!("file: {}", v));
+        lines.push(format!("file: {}", yaml_quote(v)));
     }
     if let Some(ref v) = frontmatter.thumbnail {
-        lines.push(format!("thumbnail: {}", v));
+        lines.push(format!("thumbnail: {}", yaml_quote(v)));
     }
     if !frontmatter.tags.is_empty() {
         lines.push("tags:".to_string());
         for tag in &frontmatter.tags {
-            lines.push(format!("  - {}", tag));
+            lines.push(format!("  - {}", yaml_quote(tag)));
         }
     }
     lines.push(format!("saved_at: {}", frontmatter.saved_at.as_str()));
     if let Some(ref v) = frontmatter.source {
-        lines.push(format!("source: {}", v));
+        lines.push(format!("source: {}", yaml_quote(v)));
     }
     if let Some(v) = frontmatter.width {
         lines.push(format!("width: {}", v));
@@ -293,7 +293,7 @@ pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
         lines.push(format!("height: {}", v));
     }
     if let Some(ref v) = frontmatter.author {
-        lines.push(format!("author: {}", v));
+        lines.push(format!("author: {}", yaml_quote(v)));
     }
 
     lines.join("\n")
@@ -376,6 +376,45 @@ pub fn suggest_slug(title: Option<&str>, url: Option<&str>) -> String {
 }
 
 // ─── Private helpers ────────────────────────────────────────────────────────
+
+/// Quote a YAML string value if it contains characters that need escaping.
+/// Uses double quotes with internal double quotes escaped as \".
+fn yaml_quote(s: &str) -> String {
+    // Characters/patterns that require quoting in YAML plain scalars:
+    // `: ` (colon-space) — mapping separator
+    // `#` — comment start
+    // `[`, `]`, `{`, `}` — flow collections
+    // `,` — flow separator
+    // `"`, `'` — quotes at start
+    // Leading/trailing whitespace
+    let needs_quoting = s.contains(": ")
+        || s.contains(" #")
+        || s.contains('[')
+        || s.contains(']')
+        || s.contains('{')
+        || s.contains('}')
+        || s.contains(',')
+        || s.contains('"')
+        || s.contains('\'')
+        || s.starts_with(' ')
+        || s.ends_with(' ')
+        || s.starts_with('#')
+        || s.starts_with('&')
+        || s.starts_with('*')
+        || s.starts_with('!')
+        || s.starts_with('|')
+        || s.starts_with('>')
+        || s.starts_with('%')
+        || s.starts_with('@')
+        || s.starts_with('`')
+        || s.is_empty();
+
+    if needs_quoting {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        s.to_string()
+    }
+}
 
 /// Convert a serde_yaml Value to a String, handling tagged values.
 fn yaml_value_to_string(v: &Value) -> Option<String> {

@@ -1,12 +1,9 @@
-import { useRef, useState, useMemo, useCallback } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useRef, useState, useEffect, useMemo } from "react";
 import type { IndexedBlock } from "@/types";
 import { Card } from "./Card";
 
-const COLUMN_MIN_WIDTH = 220;
-const ROW_HEIGHT = 240;
-const GAP = 12;
-const OVERSCAN = 5;
+const COLUMN_MIN_WIDTH = 240;
+const GAP = 16;
 
 interface GridProps {
   blocks: IndexedBlock[];
@@ -16,100 +13,60 @@ interface GridProps {
 
 export function Grid({ blocks, vaultPath, onBlockClick }: GridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const parentWidth = useObservedWidth(parentRef);
+  const [parentWidth, setParentWidth] = useState(0);
 
-  const columnCount = Math.max(1, Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)));
-  const rowCount = Math.ceil(blocks.length / columnCount);
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
 
-  const virtualizer = useVirtualizer({
-    count: rowCount,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT + GAP,
-    overscan: OVERSCAN,
-  });
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setParentWidth(entry.contentRect.width);
+    });
 
-  const rows = virtualizer.getVirtualItems();
+    setParentWidth(el.clientWidth);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const columnCount = Math.max(
+    1,
+    Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
+  );
+
+  // Distribute blocks into columns using shortest-column algorithm.
+  // This gives a left-to-right visual flow like Pinterest.
+  const columns = useMemo(() => {
+    const cols: IndexedBlock[][] = Array.from({ length: columnCount }, () => []);
+    // Simple round-robin for now (heights unknown until rendered).
+    // A height-aware algorithm would require measuring, but round-robin
+    // produces a visually balanced result when card heights are mixed.
+    for (let i = 0; i < blocks.length; i++) {
+      cols[i % columnCount]!.push(blocks[i]!);
+    }
+    return cols;
+  }, [blocks, columnCount]);
 
   return (
-    <div
-      ref={parentRef}
-      className="h-full overflow-y-auto p-4"
-      style={{ contain: "strict" }}
-    >
-      <div
-        style={{
-          height: virtualizer.getTotalSize(),
-          width: "100%",
-          position: "relative",
-        }}
-      >
-        {rows.map((virtualRow) => {
-          const startIdx = virtualRow.index * columnCount;
-          const rowBlocks = blocks.slice(startIdx, startIdx + columnCount);
-
-          return (
-            <div
-              key={virtualRow.key}
-              style={{
-                position: "absolute",
-                top: virtualRow.start,
-                left: 0,
-                right: 0,
-                height: ROW_HEIGHT,
-                display: "grid",
-                gridTemplateColumns: `repeat(${columnCount}, 1fr)`,
-                gap: GAP,
-              }}
-            >
-              {rowBlocks.map((block) => (
-                <Card
-                  key={block.id}
-                  block={block}
-                  vaultPath={vaultPath}
-                  onClick={onBlockClick}
-                />
-              ))}
-            </div>
-          );
-        })}
+    <div ref={parentRef} className="h-full overflow-y-auto p-4">
+      <div className="flex items-start" style={{ gap: GAP }}>
+        {columns.map((col, colIdx) => (
+          <div
+            key={colIdx}
+            className="flex flex-1 flex-col"
+            style={{ gap: GAP }}
+          >
+            {col.map((block) => (
+              <Card
+                key={block.id}
+                block={block}
+                vaultPath={vaultPath}
+                onClick={onBlockClick}
+              />
+            ))}
+          </div>
+        ))}
       </div>
     </div>
   );
 }
-
-// Observe container width for responsive column count
-function useObservedWidth(ref: React.RefObject<HTMLDivElement | null>): number {
-  const [width, setWidth] = useState(0);
-
-  const observer = useMemo(
-    () =>
-      new ResizeObserver((entries) => {
-        const entry = entries[0];
-        if (entry) {
-          setWidth(entry.contentRect.width);
-        }
-      }),
-    [],
-  );
-
-  const callbackRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      observer.disconnect();
-      if (node) {
-        observer.observe(node);
-        setWidth(node.clientWidth);
-      }
-    },
-    [observer],
-  );
-
-  // Sync ref
-  useMemo(() => {
-    if (ref.current) {
-      callbackRef(ref.current);
-    }
-  }, [ref, callbackRef]);
-
-  return width;
-}
-

@@ -8,8 +8,8 @@ import {
   useOutletContext,
 } from "react-router";
 
-import type { IndexedBlock, ChannelDto } from "@/types";
-import { getVaultPath, listBlocks, listChannels } from "@/lib/commands";
+import type { IndexedBlock, ChannelDto, TagCount } from "@/types";
+import { getVaultPath, listBlocks, listChannels, listTags } from "@/lib/commands";
 import { VaultPicker } from "@/components/VaultPicker";
 import { Sidebar } from "@/components/Sidebar";
 import { Grid } from "@/components/Grid";
@@ -53,13 +53,15 @@ export function App() {
 function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const [blocks, setBlocks] = useState<IndexedBlock[]>([]);
   const [channels, setChannels] = useState<ChannelDto[]>([]);
+  const [tags, setTags] = useState<TagCount[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<IndexedBlock | null>(null);
 
   const loadData = useCallback(async () => {
-    const [b, c] = await Promise.all([listBlocks(), listChannels()]);
+    const [b, c, t] = await Promise.all([listBlocks(), listChannels(), listTags()]);
     setBlocks(b);
     setChannels(c);
+    setTags(t);
   }, []);
 
   useEffect(() => {
@@ -99,6 +101,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     <div className="flex h-screen w-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
       <Sidebar
         channels={channels}
+        tags={tags}
         totalBlocks={blocks.length}
         onSearchOpen={() => setSearchOpen(true)}
       />

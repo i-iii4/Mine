@@ -43,7 +43,7 @@ pub fn full_scan(conn: &Connection, vault: &VaultLayout) -> Result<ScanResult> {
         match index_md_file(conn, vault, path) {
             Ok(()) => indexed += 1,
             Err(e) => {
-                log::warn!("failed to index {}: {}", path.display(), e);
+                log::warn!("failed to index {}: {:#}", path.display(), e);
                 errors += 1;
             }
         }

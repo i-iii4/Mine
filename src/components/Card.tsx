@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { IndexedBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
 
@@ -62,11 +63,11 @@ function ImageCard({
     : thumbnailUrl(vaultPath, block.slug);
 
   return (
-    <div className="relative aspect-square">
+    <div className="relative">
       <img
         src={src}
         alt={block.title ?? block.slug}
-        className="h-full w-full object-cover"
+        className="w-full"
         loading="lazy"
       />
       {block.title && (
@@ -78,6 +79,11 @@ function ImageCard({
   );
 }
 
+const LINK_COLORS = [
+  "bg-blue-900", "bg-emerald-900", "bg-violet-900", "bg-amber-900",
+  "bg-rose-900", "bg-cyan-900", "bg-indigo-900", "bg-teal-900",
+];
+
 function LinkCard({
   block,
   vaultPath,
@@ -85,20 +91,31 @@ function LinkCard({
   block: IndexedBlock;
   vaultPath: string;
 }) {
+  const [thumbLoaded, setThumbLoaded] = useState(false);
   const thumb = thumbnailUrl(vaultPath, block.slug);
   const domain = block.url ? domainFromUrl(block.url) : null;
+  const initial = (domain ?? block.slug).charAt(0).toUpperCase();
+  const colorIdx = block.slug.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+  const bgColor = LINK_COLORS[colorIdx % LINK_COLORS.length]!;
 
   return (
     <div className="flex flex-col">
-      <div className="aspect-video bg-neutral-100 dark:bg-neutral-800">
+      <div className={`relative aspect-video ${bgColor}`}>
+        {!thumbLoaded && (
+          <div className="flex h-full flex-col items-center justify-center gap-1">
+            <span className="text-3xl font-bold text-white/40">{initial}</span>
+            {domain && (
+              <span className="text-xs text-white/30">{domain}</span>
+            )}
+          </div>
+        )}
         <img
           src={thumb}
           alt=""
-          className="h-full w-full object-cover"
+          className={`absolute inset-0 h-full w-full object-cover ${thumbLoaded ? "" : "hidden"}`}
           loading="lazy"
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = "none";
-          }}
+          onLoad={() => setThumbLoaded(true)}
+          onError={() => setThumbLoaded(false)}
         />
       </div>
       <div className="p-3">
@@ -114,7 +131,7 @@ function LinkCard({
 }
 
 function ArticleCard({ block }: { block: IndexedBlock }) {
-  const preview = block.body.slice(0, 200).trim();
+  const preview = block.body.slice(0, 400).trim();
 
   return (
     <div className="p-4">
@@ -122,7 +139,7 @@ function ArticleCard({ block }: { block: IndexedBlock }) {
         {block.title ?? block.slug}
       </p>
       {preview && (
-        <p className="mt-1.5 line-clamp-4 text-xs leading-relaxed text-neutral-500">
+        <p className="mt-1.5 line-clamp-8 text-xs leading-relaxed text-neutral-500">
           {preview}
         </p>
       )}
@@ -153,7 +170,6 @@ function VideoCard({
           (e.target as HTMLImageElement).style.display = "none";
         }}
       />
-      {/* Play icon overlay */}
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">

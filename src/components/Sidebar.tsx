@@ -1,14 +1,19 @@
 import { NavLink } from "react-router";
-import type { ChannelDto } from "@/types";
+import type { ChannelDto, TagCount } from "@/types";
 
 interface SidebarProps {
   channels: ChannelDto[];
+  tags: TagCount[];
   totalBlocks: number;
   onSearchOpen: () => void;
 }
 
-export function Sidebar({ channels, totalBlocks, onSearchOpen }: SidebarProps) {
-  const sorted = [...channels].sort((a, b) => a.position - b.position);
+export function Sidebar({ channels, tags, totalBlocks, onSearchOpen }: SidebarProps) {
+  const sortedChannels = [...channels].sort((a, b) => a.position - b.position);
+
+  // Tags that are not already promoted to channels
+  const channelTags = new Set(channels.map((c) => c.tag));
+  const unpromoted = tags.filter((t) => !channelTags.has(t.tag));
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950">
@@ -21,15 +26,31 @@ export function Sidebar({ channels, totalBlocks, onSearchOpen }: SidebarProps) {
       <nav className="flex-1 overflow-y-auto px-2">
         <NavItem to="/" label="All" count={totalBlocks} end />
 
-        {sorted.length > 0 && (
+        {/* Promoted channels */}
+        {sortedChannels.length > 0 && (
           <>
-            <div className="mx-2 my-2 border-t border-neutral-200 dark:border-neutral-800" />
-            {sorted.map((ch) => (
+            <SectionLabel label="Channels" />
+            {sortedChannels.map((ch) => (
               <NavItem
                 key={ch.tag}
                 to={`/channel/${encodeURIComponent(ch.tag)}`}
                 label={ch.title}
                 count={ch.block_count}
+              />
+            ))}
+          </>
+        )}
+
+        {/* All tags */}
+        {unpromoted.length > 0 && (
+          <>
+            <SectionLabel label="Tags" />
+            {unpromoted.map((t) => (
+              <NavItem
+                key={t.tag}
+                to={`/channel/${encodeURIComponent(t.tag)}`}
+                label={t.tag}
+                count={t.count}
               />
             ))}
           </>
@@ -50,6 +71,14 @@ export function Sidebar({ channels, totalBlocks, onSearchOpen }: SidebarProps) {
         </button>
       </div>
     </aside>
+  );
+}
+
+function SectionLabel({ label }: { label: string }) {
+  return (
+    <div className="mx-3 mt-4 mb-1 text-[10px] font-semibold uppercase tracking-widest text-neutral-400">
+      {label}
+    </div>
   );
 }
 
