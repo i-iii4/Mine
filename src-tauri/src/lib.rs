@@ -1,7 +1,8 @@
 mod commands;
-mod domain;
+pub mod domain;
 mod import;
-mod storage;
+pub mod storage;
+pub mod util;
 mod watcher;
 
 use commands::state::AppState;

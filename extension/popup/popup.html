@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local Arena Clipper</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Error state -->
+    <div id="error-state" class="state hidden">
+      <div class="error-icon">!</div>
+      <p id="error-message"></p>
+    </div>
+
+    <!-- Main form -->
+    <div id="main-state" class="state hidden">
+      <!-- Type switcher -->
+      <div id="type-switcher" class="type-switcher">
+        <button data-type="link" class="type-btn active">Link</button>
+        <button data-type="article" class="type-btn">Article</button>
+        <button data-type="video" class="type-btn">Video</button>
+        <button data-type="file" class="type-btn">File</button>
+      </div>
+
+      <!-- Preview -->
+      <div id="preview" class="preview">
+        <img id="preview-image" class="preview-image hidden" alt="">
+        <p id="preview-text" class="preview-text hidden"></p>
+      </div>
+
+      <!-- Fields -->
+      <div class="field">
+        <label for="title-input">Title</label>
+        <input type="text" id="title-input" placeholder="Page title">
+      </div>
+
+      <div class="field" id="description-field">
+        <label for="description-input">Description</label>
+        <input type="text" id="description-input" placeholder="Description">
+      </div>
+
+      <!-- Channel picker -->
+      <div class="field">
+        <label>Channels</label>
+        <div class="channel-picker">
+          <input type="text" id="channel-search" placeholder="Search or create channel...">
+          <div id="channel-list" class="channel-list hidden"></div>
+        </div>
+        <div id="selected-channels" class="selected-channels"></div>
+      </div>
+
+      <!-- Actions -->
+      <div class="actions">
+        <button id="cancel-btn" class="btn btn-secondary">Cancel</button>
+        <button id="save-btn" class="btn btn-primary">
+          <span id="save-label">Save</span>
+          <span id="save-spinner" class="spinner hidden"></span>
+          <kbd>&#8984;&#9166;</kbd>
+        </button>
+      </div>
+
+      <!-- Status -->
+      <div id="status-bar" class="status-bar hidden">
+        <span id="status-text"></span>
+      </div>
+    </div>
+
+    <!-- Loading state -->
+    <div id="loading-state" class="state">
+      <div class="spinner"></div>
+      <p>Loading...</p>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

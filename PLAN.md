@@ -129,16 +129,16 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.5 | Иконка (SVG → icns/ico/png), нативное macOS-меню, About | [x] |
 | 7.6 | Сборка .dmg, подпись, нотаризация | [ ] |
 
-### Phase 8 — Веб-клиппер (браузерное расширение) [PLANNED]
+### Phase 8 — Веб-клиппер (браузерное расширение) [IN PROGRESS]
 
 Goal: расширение для Chrome и Safari — сохранение ссылок, статей, изображений и видео прямо из браузера в vault.
 
 | # | Task | Status |
 |---|------|--------|
-| 8.1 | SPEC_CLIPPER.md — спецификация: типы клипов, popup UI, native messaging, извлечение метаданных | [ ] |
-| 8.2 | Native messaging host (Rust-бинарник): чтение vault, запись блоков, индексация, thumbnails | [ ] |
-| 8.3 | WebExtension: content script (метаданные, Readability.js), popup UI (сегментированный контрол типа, каналы, предпросмотр) | [ ] |
-| 8.4 | Контекстное меню: Save page / Save image / Save selection / Save link | [ ] |
-| 8.5 | Автоопределение типа контента (эвристика: article/link/video) + ручное переключение | [ ] |
+| 8.1 | SPEC_CLIPPER.md — спецификация: типы клипов, popup UI, native messaging, извлечение метаданных | [x] |
+| 8.2 | Native messaging host (Rust-бинарник): чтение vault, запись блоков, индексация, thumbnails | [x] |
+| 8.3 | WebExtension: content script (метаданные, Readability.js), popup UI (сегментированный контрол типа, каналы, предпросмотр) | [x] |
+| 8.4 | Контекстное меню: Save page / Save image / Save selection / Save link | [x] |
+| 8.5 | Автоопределение типа контента (эвристика: article/link/video) + ручное переключение | [x] |
 | 8.6 | Safari-обёртка: xcrun safari-web-extension-converter → Xcode-проект | [ ] |
-| 8.7 | Интеграция с основным приложением: file watcher подхватывает блоки, созданные клиппером | [ ] |
+| 8.7 | Тестирование с реальными данными | [ ] |

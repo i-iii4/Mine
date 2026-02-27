@@ -19,6 +19,7 @@
     "react-router": "^7.13.1"
   },
   "devDependencies": {
+    "@mozilla/readability": "^0.6.0",
     "@tailwindcss/vite": "^4.2.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
