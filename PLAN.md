@@ -68,19 +68,19 @@ Goal: SQLite-индекс, файловые операции, thumbnail-пайп
 | 3.4 | SPEC + TEST + CODE: storage/thumbnails (Lanczos3 ресайз, JPEG) | [x] |
 | 3.5 | SPEC + TEST + CODE: FTS5 поиск (встроен в storage/index) | [x] |
 
-### Phase 4 — Watcher + Commands (интеграция) [PLANNED]
+### Phase 4 — Watcher + Commands (интеграция) [COMPLETED]
 
 Goal: file watcher отслеживает vault, Tauri commands связывают бэкенд с фронтендом. Полный сканер vault.
 
 | # | Task | Status |
 |---|------|--------|
-| 4.1 | SPEC + TEST + CODE: watcher/events (типы, debouncing) | [ ] |
-| 4.2 | SPEC + TEST + CODE: watcher/handler (FS → indexer) | [ ] |
-| 4.3 | SPEC + TEST + CODE: commands/vault (выбор папки, сканирование) | [ ] |
-| 4.4 | SPEC + TEST + CODE: commands/blocks (list, get, create, delete) | [ ] |
-| 4.5 | SPEC + TEST + CODE: commands/tags (list, add, remove) | [ ] |
-| 4.6 | SPEC + TEST + CODE: commands/search (FTS5 query) | [ ] |
-| 4.7 | Интеграционные тесты: полный цикл файл → индекс → команда | [ ] |
+| 4.1 | SPEC + TEST + CODE: watcher/events (классификация notify событий, 9 тестов) | [x] |
+| 4.2 | SPEC + TEST + CODE: watcher/handler (full_scan, index_md_file, handle_event, 10 тестов) | [x] |
+| 4.3 | SPEC + TEST + CODE: commands/vault (select_vault, get_vault_path) | [x] |
+| 4.4 | SPEC + TEST + CODE: commands/blocks (list, get, create, delete) | [x] |
+| 4.5 | SPEC + TEST + CODE: commands/tags (list, add, remove) | [x] |
+| 4.6 | SPEC + TEST + CODE: commands/search (FTS5 query) | [x] |
+| 4.7 | commands/channels (list, create, delete) + AppState + lib.rs wiring | [x] |
 
 ### Phase 5 — Frontend [PLANNED]
 

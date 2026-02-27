@@ -28,6 +28,55 @@ if any
 
 ---
 
+## 27.02.2026 — Интеграция: watcher + Tauri commands
+
+### Goal
+Связать domain и storage слои в рабочее приложение: событийная обработка файлов, IPC-команды для фронтенда, разделяемое состояние.
+
+### Planned
+1. SPEC_INTEGRATION.md — спецификация watcher + commands
+2. watcher/events — классификация событий notify
+3. watcher/handler — оркестрация: scan, index, handle events
+4. commands/ — 12 Tauri команд (vault, blocks, tags, search, channels)
+5. AppState + lib.rs — регистрация состояния и команд
+
+### Actually completed
+Все 5 пунктов выполнены. 19 новых тестов (watcher/events 9, watcher/handler 10).
+
+- `SPEC_INTEGRATION.md` — спецификация watcher + commands
+- `src-tauri/src/watcher/events.rs` — VaultEvent, classify_notify_event (9 тестов)
+- `src-tauri/src/watcher/handler.rs` — full_scan, index_md_file, handle_event (10 тестов)
+- `src-tauri/src/commands/state.rs` — AppState, VaultState, CommandError, now_iso8601
+- `src-tauri/src/commands/vault.rs` — select_vault, get_vault_path
+- `src-tauri/src/commands/blocks.rs` — list_blocks, get_block, create_block, delete_block
+- `src-tauri/src/commands/tags.rs` — list_tags, add_tag, remove_tag
+- `src-tauri/src/commands/search.rs` — search (FTS5)
+- `src-tauri/src/commands/channels.rs` — list_channels, create_channel, delete_channel + ChannelDto
+- `src-tauri/src/lib.rs` — 12 команд зарегистрированы через generate_handler
+
+### Deviations from plan
+- Задача 4.7 (интеграционные тесты) заменена на commands/channels — полноценные интеграционные тесты требуют Tauri runtime, тестирование через handler-тесты достаточно
+- Debouncing (notify-debouncer) отложен — базовый watcher работает напрямую с notify events
+- ISO 8601 timestamp: реализован через Howard Hinnant's civil_from_days вместо chrono
+
+### Checks
+- `cargo test` — 193/193 passed (123 domain + 51 storage + 19 watcher)
+- `cargo check` — компиляция без ошибок
+- Serialize derives добавлены к BlockType, IndexedBlock, TagCount
+- 12 Tauri команд зарегистрированы и компилируются
+
+### Push
+- `99f0a13` — Implement integration layer: watcher events/handler + Tauri commands (19 tests)
+
+### Decisions and lessons learned
+1. **Оркестрация в watcher/handler**: full_scan и index_md_file переиспользуются и сканером, и вотчером. Commands остаются тонким слоем
+2. **AppState = Mutex<Option<VaultState>>**: vault не выбран при старте, состояние заменяется целиком при select_vault. Mutex гарантирует thread-safety для Connection
+3. **CommandError с Serialize**: Tauri v2 требует сериализуемые ошибки. Реализация через `serialize_str(&self.to_string())` — чистый и расширяемый паттерн
+4. **ChannelDto**: отдельный DTO для фронтенда вместо прямой сериализации Channel — добавляет block_count без изменения domain-типа
+5. **Howard Hinnant's civil_from_days**: ISO 8601 без chrono dependency — достаточно для генерации timestamps при создании блоков
+
+---
+
 ## 26.02.2026 — Storage layer: SQLite, файлы, thumbnails
 
 ### Goal
