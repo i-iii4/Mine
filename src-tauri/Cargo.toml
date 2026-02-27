@@ -46,6 +46,9 @@ log = "0.4"
 specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 tauri-specta = { version = "=2.0.0-rc.21", features = ["typescript"] }
 
+[dev-dependencies]
+indoc = "2"
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 
