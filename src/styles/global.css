@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* Prevent text selection on interactive elements (native app feel) */
 button,

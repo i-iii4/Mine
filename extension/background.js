@@ -31,7 +31,7 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // Store context info for the popup to retrieve
   const context = {
     menuItemId: info.menuItemId,
@@ -41,12 +41,18 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     pageUrl: info.pageUrl || tab?.url || null,
   };
 
-  chrome.storage.session.set({ contextMenuData: context }, () => {
-    // Open popup programmatically (via action)
-    if (tab?.id) {
-      chrome.action.openPopup();
+  // Store data first, then try to open popup
+  await chrome.storage.session.set({ contextMenuData: context });
+
+  if (chrome.action.openPopup) {
+    try {
+      await chrome.action.openPopup();
+    } catch {
+      // Fallback: badge indicates pending save
+      chrome.action.setBadgeText({ text: "1" });
+      chrome.action.setBadgeBackgroundColor({ color: "#171717" });
     }
-  });
+  }
 });
 
 // ── Native messaging ──────────────────────────────────────────────────────

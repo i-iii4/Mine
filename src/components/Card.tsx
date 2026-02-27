@@ -107,8 +107,24 @@ function LinkCard({
   vaultPath: string;
 }) {
   const [thumbLoaded, setThumbLoaded] = useState(false);
+  const [thumbError, setThumbError] = useState(false);
   const thumb = thumbnailUrl(vaultPath, block.slug);
   const domain = block.url ? domainFromUrl(block.url) : null;
+
+  // No thumbnail — compact card (title + domain only)
+  if (thumbError) {
+    return (
+      <div className="p-3">
+        <p className="truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
+          {block.title ?? block.slug}
+        </p>
+        {domain && (
+          <p className="mt-0.5 truncate text-xs text-neutral-500">{domain}</p>
+        )}
+      </div>
+    );
+  }
+
   const initial = (domain ?? block.slug).charAt(0).toUpperCase();
   const colorIdx = block.slug.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
   const bgColor = LINK_COLORS[colorIdx % LINK_COLORS.length]!;
@@ -127,10 +143,9 @@ function LinkCard({
         <img
           src={thumb}
           alt=""
-          className={`absolute inset-0 h-full w-full object-cover ${thumbLoaded ? "" : "hidden"}`}
-          loading="lazy"
+          className={`absolute inset-0 h-full w-full object-cover transition-opacity ${thumbLoaded ? "opacity-100" : "opacity-0"}`}
           onLoad={() => setThumbLoaded(true)}
-          onError={() => setThumbLoaded(false)}
+          onError={() => setThumbError(true)}
         />
       </div>
       <div className="p-3">
@@ -145,8 +160,23 @@ function LinkCard({
   );
 }
 
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[.*?\]\(.*?\)/g, "")
+    .replace(/\[(.+?)\]\(.*?\)/g, "$1")
+    .replace(/^[-*+]\s+/gm, "")
+    .replace(/^>\s+/gm, "")
+    .replace(/^---+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function ArticleCard({ block }: { block: IndexedBlock }) {
-  const preview = block.body.slice(0, 400).trim();
+  const preview = stripMarkdown(block.body).slice(0, 400).trim();
 
   return (
     <div className="p-4">

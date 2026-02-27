@@ -81,12 +81,12 @@ export function Grid({ blocks, vaultPath, onBlockClick }: GridProps) {
   const hasMore = visibleCount < blocks.length;
 
   return (
-    <div ref={parentRef} className="h-full overflow-y-auto p-4">
+    <div ref={parentRef} className="h-full overflow-x-hidden overflow-y-auto p-4">
       <div className="flex items-start" style={{ gap: GAP }}>
         {columns.map((col, colIdx) => (
           <div
             key={colIdx}
-            className="flex flex-1 flex-col"
+            className="flex min-w-0 flex-1 flex-col"
             style={{ gap: GAP }}
           >
             {col.map((block) => (

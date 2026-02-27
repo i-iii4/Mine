@@ -109,6 +109,25 @@ describe("Card", () => {
     expect(screen.getByText("test-block")).toBeInTheDocument();
   });
 
+  it("renders compact link card when thumbnail fails to load", () => {
+    const b = block({
+      block_type: "link",
+      title: "No Image Site",
+      url: "https://noimage.example.com",
+    });
+    const { container } = render(
+      <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
+    );
+    // Trigger image error on the hidden thumbnail
+    const img = container.querySelector("img")!;
+    fireEvent.error(img);
+    // Should show compact card without the color placeholder
+    expect(screen.getByText("No Image Site")).toBeInTheDocument();
+    expect(screen.getByText("noimage.example.com")).toBeInTheDocument();
+    // The img element should be gone (compact card has no image)
+    expect(container.querySelector("img")).toBeNull();
+  });
+
   // ── Article card ──────────────────────────────────────────────────────
 
   it("renders article card with title and body preview", () => {

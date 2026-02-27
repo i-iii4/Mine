@@ -168,26 +168,31 @@ fn handle_list_channels(vault: &VaultLayout) {
         Err(e) => return send_error(&format!("failed to open database: {e}")),
     };
 
-    let channels = match index::list_channels(&conn) {
-        Ok(ch) => ch,
-        Err(e) => return send_error(&format!("failed to list channels: {e}")),
+    // Get all tags (every tag used by any block)
+    let tags = match index::get_all_tags(&conn) {
+        Ok(t) => t,
+        Err(e) => return send_error(&format!("failed to list tags: {e}")),
     };
 
-    // Get tag counts to populate block_count
-    let tags = index::get_all_tags(&conn).unwrap_or_default();
-    let tag_counts: std::collections::HashMap<&str, usize> = tags
+    // Get promoted channels for title overrides
+    let channels = index::list_channels(&conn).unwrap_or_default();
+    let channel_titles: std::collections::HashMap<&str, &str> = channels
         .iter()
-        .map(|t| (t.tag.as_str(), t.count))
+        .map(|c| (c.tag.as_str(), c.title.as_str()))
         .collect();
 
-    let channel_infos: Vec<ChannelInfo> = channels
+    // Merge: every tag becomes a channel entry, promoted channels get their title
+    let channel_infos: Vec<ChannelInfo> = tags
         .into_iter()
-        .map(|c| {
-            let count = tag_counts.get(c.tag.as_str()).copied().unwrap_or(0);
+        .map(|t| {
+            let title = channel_titles
+                .get(t.tag.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| capitalize_tag(&t.tag));
             ChannelInfo {
-                tag: c.tag,
-                title: c.title,
-                block_count: count,
+                tag: t.tag,
+                title,
+                block_count: t.count,
             }
         })
         .collect();
@@ -196,6 +201,19 @@ fn handle_list_channels(vault: &VaultLayout) {
         ok: true,
         channels: channel_infos,
     });
+}
+
+/// Generate a human-readable title from a kebab-case tag.
+fn capitalize_tag(tag: &str) -> String {
+    let with_spaces = tag.replace('-', " ");
+    let mut chars = with_spaces.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => {
+            let upper: String = first.to_uppercase().collect();
+            upper + chars.as_str()
+        }
+    }
 }
 
 fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
@@ -254,6 +272,16 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         None
     };
 
+    // Download inline images for article bodies
+    let body = {
+        let raw = p.body.unwrap_or_default();
+        if bt == BlockType::Article && !raw.is_empty() {
+            localize_body_images(&raw, vault, &slug)
+        } else {
+            raw
+        }
+    };
+
     let now = now_iso8601();
     let saved_at = match DateTime::new(&now) {
         Ok(dt) => dt,
@@ -276,7 +304,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             height: p.height,
             author: p.author,
         },
-        body: p.body.unwrap_or_default(),
+        body,
     };
 
     // Write .md file
@@ -364,12 +392,93 @@ fn ext_from_url(url: &str) -> &str {
 }
 
 /// Download a file from URL to local path.
+/// Sends proper HTTP headers and retries up to 3 times with backoff.
 fn download_file(url: &str, dest: &std::path::Path) -> anyhow::Result<()> {
-    let resp = ureq::get(url).call()?;
-    let mut reader = resp.into_reader();
-    let mut file = std::fs::File::create(dest)?;
-    std::io::copy(&mut reader, &mut file)?;
-    Ok(())
+    let mut last_err = None;
+    for attempt in 0..3u64 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(300 * attempt));
+        }
+        match ureq::get(url)
+            .set("User-Agent", "LocalArena/1.0")
+            .set("Referer", url)
+            .set("Accept", "image/*,*/*;q=0.8")
+            .call()
+        {
+            Ok(resp) => {
+                let mut reader = resp.into_reader();
+                let mut file = std::fs::File::create(dest)?;
+                std::io::copy(&mut reader, &mut file)?;
+                return Ok(());
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap().into())
+}
+
+/// Download inline images from Markdown body, replacing external URLs with local filenames.
+/// Images that fail to download keep their original URL.
+const MAX_INLINE_IMAGES: u32 = 30;
+
+fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str) -> String {
+    let mut result = body.to_string();
+    let mut img_idx: u32 = 0;
+    let mut search_from = 0;
+
+    loop {
+        if img_idx >= MAX_INLINE_IMAGES {
+            break;
+        }
+
+        // Find next ![
+        let Some(offset) = result[search_from..].find("![") else {
+            break;
+        };
+        let img_start = search_from + offset;
+        let alt_start = img_start + 2;
+
+        // Find ]( after ![
+        let Some(offset) = result[alt_start..].find("](") else {
+            search_from = alt_start;
+            continue;
+        };
+        let bracket_pos = alt_start + offset;
+
+        // Find closing )
+        let url_start = bracket_pos + 2;
+        let Some(offset) = result[url_start..].find(')') else {
+            search_from = url_start;
+            continue;
+        };
+        let paren_end = url_start + offset;
+
+        let url = result[url_start..paren_end].to_string();
+
+        if url.starts_with("http://") || url.starts_with("https://") {
+            let ext = ext_from_url(&url);
+            let img_name = format!("{slug}-img{img_idx}.{ext}");
+            let dest = vault.root().join(&img_name);
+
+            if download_file(&url, &dest).is_ok() {
+                let alt = result[alt_start..bracket_pos].to_string();
+                let new_markup = format!("![{alt}]({img_name})");
+                let new_len = new_markup.len();
+                result = result[..img_start].to_string() + &new_markup + &result[paren_end + 1..];
+                img_idx += 1;
+                // Small delay between downloads to avoid CDN rate-limiting
+                if img_idx < MAX_INLINE_IMAGES {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                }
+                search_from = img_start + new_len;
+                continue;
+            }
+        }
+
+        search_from = paren_end + 1;
+    }
+
+    result
 }
 
 // ─── Main loop ──────────────────────────────────────────────────────────────

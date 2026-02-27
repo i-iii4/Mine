@@ -28,6 +28,89 @@ if any
 
 ---
 
+## 27.02.2026 — Переделка UX клиппера и рендеринг статей в приложении
+
+### Goal
+Четыре задачи клиппера: (A) только первая картинка статьи скачивается корректно, (B) переключатель типов — заменить на Content | Link, (C) сохранение картинки через контекстное меню должно открывать попап с превью, (D) список каналов всегда виден, недавние каналы первыми. Параллельно — улучшение рендеринга статей в основном приложении.
+
+### Planned
+1. HTTP-заголовки + retry в `download_file()` (native_host.rs) — CDN блокирует голые запросы
+2. Задержка 150мс между загрузками в `localize_body_images()`
+3. Переключатель Content | Link вместо Link/Article/Selection
+4. Async-обработчик контекстного меню с фолбэком через значок
+5. Полная переработка попапа: карточка превью, встроенный список каналов, недавние каналы
+6. Замена ручного рендеринга markdown на react-markdown + remark-gfm (Detail.tsx)
+7. Фолбэк для карточек-ссылок без thumbnail (Card.tsx)
+8. Исправление переполнения Grid (overflow-x-hidden, min-w-0)
+
+### Actually completed
+Все 8 пунктов выполнены.
+
+**native_host.rs — загрузка картинок:**
+- `download_file()` — User-Agent, Referer, Accept заголовки + 3 попытки с 300мс бэкофф
+- `localize_body_images()` — 150мс пауза между загрузками для обхода rate-limiting CDN
+
+**popup.html — новая структура:**
+- Карточка превью (миниатюра 48px + заголовок + домен)
+- Полноширинная картинка (для типа image)
+- Переключатель Content | Link
+- Текстовый превью (для типа content)
+- Встроенный прокручиваемый список каналов с поиском
+- Полноширинная кнопка Save с динамическим текстом
+- Убрано: поле Description, кнопка Cancel, теги-чипсы
+
+**popup.css — переработка стилей:**
+- `.preview-card` — flex-строка: миниатюра + инфо
+- `.preview-title` — input без рамки, рамка при фокусе
+- `.channel-list` — static, max-height: 192px, overflow-y: auto
+- `.save-btn` — width: 100%
+- Темная/светлая тема через CSS-переменные
+
+**popup.js — логика:**
+- Типы: article/selection маппятся в "content", Content выбран по умолчанию
+- `renderChannelList()` — недавние каналы первыми (из chrome.storage.local), остальные по block_count
+- `updateSaveButton()` — "Save" / "Save to N channels"
+- `save()` — Content = selection > article; при успехе сохраняет recentChannels (до 10)
+- `applyContextMenu()` — async, запрашивает getImageInfo для alt/width/height
+
+**background.js:**
+- Async-обработчик контекстного меню
+- chrome.storage.session для передачи данных в попап
+- Фолбэк: значок "1" при неудаче openPopup()
+
+**manifest.json:**
+- Добавлен permission "storage"
+
+**Detail.tsx — рендеринг статей:**
+- Ручной парсер markdown (IMG_RE, HEADING_RE, renderInline, renderTextFormatting) заменён на ReactMarkdown + remark-gfm
+- @tailwindcss/typography для стилизации prose
+- Пользовательские компоненты: img (resolveImageSrc), a (target="_blank")
+
+**Card.tsx — фолбэк для ссылок:**
+- LinkCard: при ошибке загрузки thumbnail показывает компактную карточку (title + domain)
+- ArticleCard: stripMarkdown() перед превью текста
+
+**Grid.tsx — исправление переполнения:**
+- overflow-x-hidden на контейнере, min-w-0 на столбцах
+
+### Deviations from plan
+- Работа над Detail.tsx и Card.tsx не входила в первоначальный план по клипперу, но выполнена в рамках общего улучшения UX
+
+### Checks
+- `cargo check --bin native-host` — компиляция без ошибок
+- Визуальная проверка расширения (не покрывается unit-тестами)
+
+### Push
+Ожидает коммит.
+
+### Decisions and lessons learned
+1. **HTTP-заголовки решают 90% проблем с CDN**: Referer + User-Agent достаточно для большинства CDN. Accept image/* помогает с content negotiation
+2. **react-markdown > ручной парсер**: собственный рендеринг markdown неизбежно пропускает edge cases (списки, вложенные элементы, HTML-сущности). react-markdown + remark-gfm покрывает GFM-спецификацию целиком
+3. **chrome.storage.local для недавних каналов**: простое и надёжное решение — переживает закрытие браузера, не требует бэкенда
+4. **Content = article + selection**: объединение двух типов в один упрощает UI и логику, при этом selection имеет приоритет (более конкретное действие пользователя)
+
+---
+
 ## 27.02.2026 — Капитальный ремонт веб-клиппера: форматирование и логика типов
 
 ### Goal

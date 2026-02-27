@@ -1,4 +1,7 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { Components } from "react-markdown";
 import type { IndexedBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
 import { addTag, removeTag } from "@/lib/commands";
@@ -239,10 +242,6 @@ function BlockContent({
 
 // ─── Markdown renderer for article body ─────────────────────────────────────
 
-const IMG_RE = /^!\[([^\]]*)\]\(([^)]+)\)$/;
-const HEADING_RE = /^(#{1,3})\s+(.+)$/;
-const INLINE_IMG_RE = /!\[([^\]]*)\]\(([^)]+)\)/g;
-
 function ArticleBody({
   body,
   vaultPath,
@@ -250,85 +249,41 @@ function ArticleBody({
   body: string;
   vaultPath: string;
 }) {
-  const lines = body.split("\n");
-  const elements: React.ReactNode[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i]!;
-
-    // Empty line
-    if (line.trim() === "") {
-      i++;
-      continue;
-    }
-
-    // Heading
-    const headingMatch = line.match(HEADING_RE);
-    if (headingMatch) {
-      const level = headingMatch[1]!.length;
-      const text = headingMatch[2]!;
-      const cls =
-        level === 1
-          ? "mt-6 mb-2 text-base font-semibold"
-          : level === 2
-            ? "mt-5 mb-2 text-sm font-semibold"
-            : "mt-4 mb-1 text-sm font-medium";
-      elements.push(
-        <div key={i} className={`${cls} text-neutral-900 dark:text-neutral-100`}>
-          {text}
-        </div>,
-      );
-      i++;
-      continue;
-    }
-
-    // Standalone image line
-    const imgMatch = line.trim().match(IMG_RE);
-    if (imgMatch) {
-      const alt = imgMatch[1]!;
-      const src = resolveImageSrc(imgMatch[2]!, vaultPath);
-      elements.push(
-        <figure key={i} className="my-4">
+  const components: Components = useMemo(
+    () => ({
+      img: ({ src, alt, ...props }) => {
+        const resolved = resolveImageSrc(src ?? "", vaultPath);
+        return (
           <img
-            src={src}
-            alt={alt}
-            className="w-full rounded-lg"
+            src={resolved}
+            alt={alt ?? ""}
+            className="rounded-lg"
             loading="lazy"
+            {...props}
           />
-          {alt && (
-            <figcaption className="mt-1.5 text-center text-xs text-neutral-400">
-              {alt}
-            </figcaption>
-          )}
-        </figure>,
-      );
-      i++;
-      continue;
-    }
-
-    // Regular paragraph (collect consecutive non-empty, non-special lines)
-    const paraLines: string[] = [];
-    while (i < lines.length) {
-      const l = lines[i]!;
-      if (l.trim() === "" || HEADING_RE.test(l) || IMG_RE.test(l.trim())) break;
-      paraLines.push(l);
-      i++;
-    }
-
-    if (paraLines.length > 0) {
-      elements.push(
-        <p
-          key={`p-${i}`}
-          className="my-2 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300"
+        );
+      },
+      a: ({ href, children, ...props }) => (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          {...props}
         >
-          {renderInline(paraLines.join(" "), vaultPath)}
-        </p>,
-      );
-    }
-  }
+          {children}
+        </a>
+      ),
+    }),
+    [vaultPath],
+  );
 
-  return <div className="mt-4 max-w-none">{elements}</div>;
+  return (
+    <div className="prose prose-sm prose-neutral mt-4 max-w-none dark:prose-invert">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+        {body}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 /** Resolve a markdown image src to an asset URL. */
@@ -337,83 +292,4 @@ function resolveImageSrc(src: string, vaultPath: string): string {
     return src;
   }
   return mediaUrl(vaultPath, src);
-}
-
-/** Render inline markdown: bold, italic, code, inline images. */
-function renderInline(text: string, vaultPath: string): React.ReactNode[] {
-  // First, split on inline images
-  const parts: React.ReactNode[] = [];
-  let lastIndex = 0;
-
-  INLINE_IMG_RE.lastIndex = 0;
-  let match = INLINE_IMG_RE.exec(text);
-
-  while (match) {
-    if (match.index > lastIndex) {
-      parts.push(...renderTextFormatting(text.slice(lastIndex, match.index)));
-    }
-    const alt = match[1]!;
-    const src = resolveImageSrc(match[2]!, vaultPath);
-    parts.push(
-      <img
-        key={`img-${match.index}`}
-        src={src}
-        alt={alt}
-        className="my-2 inline-block max-w-full rounded"
-        loading="lazy"
-      />,
-    );
-    lastIndex = match.index + match[0].length;
-    match = INLINE_IMG_RE.exec(text);
-  }
-
-  if (lastIndex < text.length) {
-    parts.push(...renderTextFormatting(text.slice(lastIndex)));
-  }
-
-  return parts;
-}
-
-/** Render bold, italic, and code spans. */
-function renderTextFormatting(text: string): React.ReactNode[] {
-  const result: React.ReactNode[] = [];
-  let remaining = text;
-  let key = 0;
-
-  // Process **bold**, *italic*, and `code` by splitting on patterns
-  const COMBINED_RE = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`)/g;
-  let lastIdx = 0;
-
-  COMBINED_RE.lastIndex = 0;
-  let m = COMBINED_RE.exec(remaining);
-
-  while (m) {
-    if (m.index > lastIdx) {
-      result.push(remaining.slice(lastIdx, m.index));
-    }
-
-    if (m[2]) {
-      result.push(<strong key={`b-${key++}`}>{m[2]}</strong>);
-    } else if (m[3]) {
-      result.push(<em key={`i-${key++}`}>{m[3]}</em>);
-    } else if (m[4]) {
-      result.push(
-        <code
-          key={`c-${key++}`}
-          className="rounded bg-neutral-100 px-1 py-0.5 text-xs dark:bg-neutral-800"
-        >
-          {m[4]}
-        </code>,
-      );
-    }
-
-    lastIdx = m.index + m[0].length;
-    m = COMBINED_RE.exec(remaining);
-  }
-
-  if (lastIdx < remaining.length) {
-    result.push(remaining.slice(lastIdx));
-  }
-
-  return result;
 }

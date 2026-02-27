@@ -1,18 +1,19 @@
-// Popup logic: auto-detect content type, channel/tag picker, save.
+// Popup logic: auto-detect content type, channel picker, save.
 
 (() => {
   "use strict";
 
-  // ── State ─────────────────────────────────────────────────────────────────
+  // -- State ------------------------------------------------------------------
 
   let metadata = null;
   let articleData = null;
   let channels = [];
   let selectedTags = [];
-  let currentType = "link";
+  let recentTags = [];
+  let currentType = "content";
   let contextMenuData = null;
 
-  // ── DOM refs ──────────────────────────────────────────────────────────────
+  // -- DOM refs ---------------------------------------------------------------
 
   const $ = (sel) => document.querySelector(sel);
 
@@ -21,23 +22,24 @@
   const errorMessage = $("#error-message");
   const mainState = $("#main-state");
 
-  const typeSwitcher = $("#type-switcher");
-  const previewImage = $("#preview-image");
-  const previewText = $("#preview-text");
+  const previewCard = $("#preview-card");
+  const previewThumb = $("#preview-thumb");
+  const previewDomain = $("#preview-domain");
   const titleInput = $("#title-input");
-  const descriptionInput = $("#description-input");
-  const descriptionField = $("#description-field");
+  const imagePreview = $("#image-preview");
+  const imagePreviewImg = $("#image-preview-img");
+  const typeSwitcher = $("#type-switcher");
+  const previewText = $("#preview-text");
   const channelSearch = $("#channel-search");
   const channelList = $("#channel-list");
-  const selectedChannels = $("#selected-channels");
+  const channelsLabel = $("#channels-label");
   const saveBtn = $("#save-btn");
   const saveLabel = $("#save-label");
   const saveSpinner = $("#save-spinner");
-  const cancelBtn = $("#cancel-btn");
   const statusBar = $("#status-bar");
   const statusText = $("#status-text");
 
-  // ── Native messaging ─────────────────────────────────────────────────────
+  // -- Native messaging -------------------------------------------------------
 
   async function sendToNative(payload) {
     return new Promise((resolve) => {
@@ -54,10 +56,17 @@
     });
   }
 
-  // ── Initialization ────────────────────────────────────────────────────────
+  // -- Initialization ---------------------------------------------------------
 
   async function init() {
     try {
+      // Clear any pending badge from context menu fallback
+      chrome.action.setBadgeText({ text: "" });
+
+      // Load recent channels from local storage
+      const stored = await chrome.storage.local.get("recentChannels");
+      recentTags = stored.recentChannels || [];
+
       // Check native host status
       const status = await sendToNative({ action: "get_status" });
       if (!status.ok) {
@@ -107,7 +116,7 @@
         });
       });
 
-      // Eager article extraction — runs in parallel with UI setup
+      // Eager article extraction (parallel with UI setup)
       const articlePromise = new Promise((resolve) => {
         chrome.tabs.sendMessage(tab.id, { action: "extractArticle" }, (resp) => {
           resolve(resp || { title: "", content: "", byline: null, excerpt: "" });
@@ -116,21 +125,48 @@
 
       // Handle context menu overrides
       if (contextMenuData) {
-        applyContextMenu(contextMenuData);
+        await applyContextMenu(contextMenuData, tab);
       }
 
-      // Set type and build switcher
-      const detectedType = metadata.detectedType || "link";
+      // Set domain in preview card
+      try {
+        const url = new URL(metadata.url);
+        previewDomain.textContent = url.hostname.replace(/^www\./, "");
+      } catch {
+        previewDomain.textContent = "";
+      }
+
+      // Map detected type to UI type
+      let detectedType = metadata.detectedType || "link";
+      if (detectedType === "article" || detectedType === "selection") {
+        detectedType = "content";
+      }
+
+      // Show thumbnail in preview card
+      if (detectedType === "image" && metadata.imageToSave) {
+        // For image type, hide the card thumb (full preview shown separately)
+        previewThumb.classList.add("hidden");
+      } else if (metadata.image) {
+        previewThumb.src = metadata.image;
+        previewThumb.classList.remove("hidden");
+      } else if (metadata.favicon) {
+        previewThumb.src = metadata.favicon;
+        previewThumb.classList.remove("hidden");
+      }
+
+      // Build type switcher
       buildTypeSwitcher(detectedType);
       setType(detectedType);
 
-      // Wait for eager article extraction to complete
+      // Wait for article extraction
       articleData = await articlePromise;
 
       // Populate fields
       titleInput.value = metadata.title || "";
-      descriptionInput.value = metadata.description || "";
       updatePreview();
+
+      // Show channel list immediately
+      renderChannelList("");
 
       // Show main UI
       loadingState.classList.add("hidden");
@@ -140,11 +176,28 @@
     }
   }
 
-  function applyContextMenu(ctx) {
+  async function applyContextMenu(ctx, tab) {
     switch (ctx.menuItemId) {
       case "save-image":
         metadata.detectedType = "image";
         metadata.imageToSave = ctx.srcUrl;
+        // Try to get image info (alt, dimensions)
+        if (tab?.id && ctx.srcUrl) {
+          try {
+            const imgInfo = await new Promise((resolve) => {
+              chrome.tabs.sendMessage(
+                tab.id,
+                { action: "getImageInfo", src: ctx.srcUrl },
+                (resp) => resolve(resp || {})
+              );
+            });
+            if (imgInfo.alt) metadata.imageAlt = imgInfo.alt;
+            if (imgInfo.width) metadata.imageWidth = imgInfo.width;
+            if (imgInfo.height) metadata.imageHeight = imgInfo.height;
+          } catch {
+            // Ignore — info is optional
+          }
+        }
         break;
       case "save-selection":
         metadata.detectedType = "selection";
@@ -169,23 +222,24 @@
     errorMessage.textContent = msg;
   }
 
-  // ── Type switcher ─────────────────────────────────────────────────────────
+  // -- Type switcher ----------------------------------------------------------
 
   const TYPE_LABELS = {
+    content: "Content",
     link: "Link",
-    article: "Article",
-    video: "Video",
     image: "Image",
-    selection: "Selection",
+    video: "Video",
   };
 
   function buildTypeSwitcher(detectedType) {
-    // Always show Link and Article; add Selection only when text is selected
-    const types = ["link", "article"];
-    if (metadata.selection && metadata.selection.length > 0) {
-      types.push("selection");
+    // For image/video, hide the switcher (type is fixed)
+    if (detectedType === "image" || detectedType === "video") {
+      typeSwitcher.classList.add("hidden");
+      return;
     }
 
+    // Content | Link
+    const types = ["content", "link"];
     typeSwitcher.innerHTML = "";
     for (const type of types) {
       const btn = document.createElement("button");
@@ -206,62 +260,84 @@
       btn.classList.toggle("active", btn.dataset.type === type);
     });
 
-    // Show/hide description for non-image types
-    descriptionField.classList.toggle("hidden", type === "image");
-
     updatePreview();
   }
 
-  async function updatePreview() {
+  function updatePreview() {
     if (!metadata) return;
 
-    previewImage.classList.add("hidden");
     previewText.classList.add("hidden");
+    imagePreview.classList.add("hidden");
 
-    if (currentType === "article" || currentType === "selection") {
-      // Show text preview
-      let text = "";
-      if (currentType === "selection" && metadata.selection) {
-        text = metadata.selection;
-      } else if (currentType === "article") {
-        text = articleData?.content?.slice(0, 300) || "";
+    if (currentType === "image") {
+      // Full-width image preview
+      const imgUrl = metadata.imageToSave || metadata.image;
+      if (imgUrl) {
+        imagePreviewImg.src = imgUrl;
+        imagePreview.classList.remove("hidden");
       }
-
+      // Use alt text as title if title is empty
+      if (!titleInput.value && metadata.imageAlt) {
+        titleInput.value = metadata.imageAlt;
+      }
+    } else if (currentType === "content") {
+      // Text excerpt preview
+      let text = "";
+      if (metadata.selection && metadata.selection.length > 0) {
+        text = metadata.selection;
+      } else if (articleData?.content) {
+        text = articleData.content.slice(0, 200);
+      }
       if (text) {
-        previewText.textContent = text + (text.length >= 300 ? "..." : "");
+        previewText.textContent = text + (text.length >= 200 ? "..." : "");
         previewText.classList.remove("hidden");
       }
-    } else if (metadata.image || metadata.imageToSave) {
-      // Show image preview
-      const imgUrl = metadata.imageToSave || metadata.image;
-      previewImage.src = imgUrl;
-      previewImage.classList.remove("hidden");
     }
+    // For "link" and "video": only the compact card shows (thumbnail + title + domain)
   }
 
-  // ── Channel picker ────────────────────────────────────────────────────────
+  // -- Channel list -----------------------------------------------------------
 
-  function renderChannelList(filter = "") {
+  function renderChannelList(filter) {
     const lc = filter.toLowerCase();
-    const filtered = channels.filter((ch) =>
-      ch.title.toLowerCase().includes(lc) || ch.tag.toLowerCase().includes(lc)
-    );
+    const filtered = lc
+      ? channels.filter(
+          (ch) =>
+            ch.title.toLowerCase().includes(lc) ||
+            ch.tag.toLowerCase().includes(lc)
+        )
+      : channels.slice();
+
+    // Sort: recent channels first, then by block_count DESC
+    const recentSet = new Set(recentTags);
+    filtered.sort((a, b) => {
+      const aRecent = recentSet.has(a.tag);
+      const bRecent = recentSet.has(b.tag);
+      if (aRecent && !bRecent) return -1;
+      if (!aRecent && bRecent) return 1;
+      if (aRecent && bRecent) {
+        return recentTags.indexOf(a.tag) - recentTags.indexOf(b.tag);
+      }
+      return b.block_count - a.block_count;
+    });
+
+    // Update section header
+    channelsLabel.textContent = lc ? "Channels" : "Recent";
 
     let html = "";
-
     for (const ch of filtered) {
       const isSelected = selectedTags.includes(ch.tag);
       const checkmark = isSelected ? "&#10003;" : "";
       html += `
         <div class="channel-item ${isSelected ? "selected" : ""}" data-tag="${ch.tag}">
           <span class="check">${checkmark}</span>
-          <span>${ch.title}</span>
+          <span class="channel-title">${ch.title}</span>
           <span class="count">${ch.block_count}</span>
         </div>
       `;
     }
 
-    // Offer to create a new tag if the search doesn't match any existing
+    // Offer to create a new channel if the search doesn't match any existing
     if (filter && !filtered.some((ch) => ch.tag === slugify(filter))) {
       const newTag = slugify(filter);
       if (newTag) {
@@ -274,8 +350,8 @@
       }
     }
 
-    channelList.innerHTML = html;
-    channelList.classList.toggle("hidden", html === "");
+    channelList.innerHTML =
+      html || '<div class="channel-empty">No channels yet</div>';
 
     // Bind click events
     channelList.querySelectorAll(".channel-item[data-tag]").forEach((el) => {
@@ -290,7 +366,7 @@
         channels.push({ tag, title, block_count: 0 });
         toggleTag(tag);
         channelSearch.value = "";
-        renderChannelList();
+        renderChannelList("");
       });
     });
   }
@@ -302,28 +378,19 @@
     } else {
       selectedTags.push(tag);
     }
-    renderSelectedTags();
     renderChannelList(channelSearch.value);
+    updateSaveButton();
   }
 
-  function renderSelectedTags() {
-    selectedChannels.innerHTML = selectedTags
-      .map(
-        (tag) => `
-        <span class="tag-chip" data-tag="${tag}">
-          ${tag}
-          <span class="remove" data-remove="${tag}">&times;</span>
-        </span>
-      `
-      )
-      .join("");
-
-    selectedChannels.querySelectorAll(".remove").forEach((el) => {
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        toggleTag(el.dataset.remove);
-      });
-    });
+  function updateSaveButton() {
+    const n = selectedTags.length;
+    if (n === 0) {
+      saveLabel.textContent = "Save";
+    } else if (n === 1) {
+      saveLabel.textContent = "Save to 1 channel";
+    } else {
+      saveLabel.textContent = `Save to ${n} channels`;
+    }
   }
 
   function slugify(text) {
@@ -336,7 +403,7 @@
       .slice(0, 50);
   }
 
-  // ── Save ──────────────────────────────────────────────────────────────────
+  // -- Save -------------------------------------------------------------------
 
   async function save() {
     if (!metadata) return;
@@ -346,11 +413,18 @@
     saveSpinner.classList.remove("hidden");
 
     // Re-query selection right before saving (user may have changed it)
-    if (currentType === "selection") {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (currentType === "content" && metadata.selection?.length > 0) {
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true,
+      });
       if (tab?.id) {
         const fresh = await new Promise((resolve) => {
-          chrome.tabs.sendMessage(tab.id, { action: "extractMetadata" }, (resp) => resolve(resp));
+          chrome.tabs.sendMessage(
+            tab.id,
+            { action: "extractMetadata" },
+            (resp) => resolve(resp)
+          );
         });
         if (fresh?.selection?.length > 0) {
           metadata.selection = fresh.selection;
@@ -358,14 +432,21 @@
       }
     }
 
-    const blockType =
-      currentType === "selection" ? "article" : currentType === "image" ? "image" : currentType;
+    // Determine block_type for backend
+    let blockType;
+    if (currentType === "content") {
+      blockType = "article";
+    } else if (currentType === "image") {
+      blockType = "image";
+    } else {
+      blockType = currentType;
+    }
 
     const payload = {
       action: "save_block",
       block_type: blockType,
       title: titleInput.value || null,
-      description: descriptionInput.value || null,
+      description: null,
       url: metadata.url || null,
       body: "",
       tags: selectedTags.length > 0 ? selectedTags : null,
@@ -375,17 +456,21 @@
       height: null,
     };
 
-    // Set body for article/selection
-    if (currentType === "article" && articleData?.content) {
-      payload.body = articleData.content;
-      if (articleData.byline) payload.author = articleData.byline;
-    } else if (currentType === "selection" && metadata.selection) {
-      payload.body = metadata.selection;
+    // Set body for content type (selection priority, then article)
+    if (currentType === "content") {
+      if (metadata.selection && metadata.selection.length > 0) {
+        payload.body = metadata.selection;
+      } else if (articleData?.content) {
+        payload.body = articleData.content;
+        if (articleData.byline) payload.author = articleData.byline;
+      }
     }
 
     // Set image_url for types that need it
     if (currentType === "image" && metadata.imageToSave) {
       payload.image_url = metadata.imageToSave;
+      payload.width = metadata.imageWidth || null;
+      payload.height = metadata.imageHeight || null;
     } else if (metadata.image && (currentType === "link" || currentType === "video")) {
       payload.image_url = metadata.image;
     }
@@ -397,8 +482,17 @@
     saveBtn.disabled = false;
 
     if (result.ok) {
+      // Persist recent channels
+      if (selectedTags.length > 0) {
+        const updated = [
+          ...selectedTags,
+          ...recentTags.filter((t) => !selectedTags.includes(t)),
+        ];
+        recentTags = updated.slice(0, 10);
+        chrome.storage.local.set({ recentChannels: recentTags });
+      }
       showStatus("Saved!", "success");
-      setTimeout(() => window.close(), 1500);
+      setTimeout(() => window.close(), 1200);
     } else {
       showStatus(result.error || "Failed to save", "error");
     }
@@ -410,28 +504,15 @@
     statusText.textContent = msg;
   }
 
-  // ── Event listeners ───────────────────────────────────────────────────────
+  // -- Event listeners --------------------------------------------------------
 
   channelSearch.addEventListener("input", () => {
     renderChannelList(channelSearch.value);
   });
 
-  channelSearch.addEventListener("focus", () => {
-    renderChannelList(channelSearch.value);
-  });
-
-  // Close channel list when clicking outside
-  document.addEventListener("click", (e) => {
-    if (!e.target.closest(".channel-picker")) {
-      channelList.classList.add("hidden");
-    }
-  });
-
-  cancelBtn.addEventListener("click", () => window.close());
-
   saveBtn.addEventListener("click", save);
 
-  // Cmd+Enter to save
+  // Cmd+Enter to save, Esc to close
   document.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
@@ -442,7 +523,7 @@
     }
   });
 
-  // ── Start ─────────────────────────────────────────────────────────────────
+  // -- Start ------------------------------------------------------------------
 
   init();
 })();

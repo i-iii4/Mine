@@ -16,50 +16,41 @@
 
     <!-- Main form -->
     <div id="main-state" class="state hidden">
-      <!-- Type switcher -->
-      <div id="type-switcher" class="type-switcher">
-        <button data-type="link" class="type-btn active">Link</button>
-        <button data-type="article" class="type-btn">Article</button>
-        <button data-type="video" class="type-btn">Video</button>
-        <button data-type="file" class="type-btn">File</button>
-      </div>
-
-      <!-- Preview -->
-      <div id="preview" class="preview">
-        <img id="preview-image" class="preview-image hidden" alt="">
-        <p id="preview-text" class="preview-text hidden"></p>
-      </div>
-
-      <!-- Fields -->
-      <div class="field">
-        <label for="title-input">Title</label>
-        <input type="text" id="title-input" placeholder="Page title">
-      </div>
-
-      <div class="field" id="description-field">
-        <label for="description-input">Description</label>
-        <input type="text" id="description-input" placeholder="Description">
-      </div>
-
-      <!-- Channel picker -->
-      <div class="field">
-        <label>Channels</label>
-        <div class="channel-picker">
-          <input type="text" id="channel-search" placeholder="Search or create channel...">
-          <div id="channel-list" class="channel-list hidden"></div>
+      <!-- Compact preview card (thumbnail + title + domain) -->
+      <div id="preview-card" class="preview-card">
+        <img id="preview-thumb" class="preview-thumb hidden" alt="">
+        <div class="preview-info">
+          <input type="text" id="title-input" class="preview-title" placeholder="Title">
+          <span id="preview-domain" class="preview-domain"></span>
         </div>
-        <div id="selected-channels" class="selected-channels"></div>
       </div>
 
-      <!-- Actions -->
-      <div class="actions">
-        <button id="cancel-btn" class="btn btn-secondary">Cancel</button>
-        <button id="save-btn" class="btn btn-primary">
-          <span id="save-label">Save</span>
-          <span id="save-spinner" class="spinner hidden"></span>
-          <kbd>&#8984;&#9166;</kbd>
-        </button>
+      <!-- Full-width image preview (for image type only) -->
+      <div id="image-preview" class="image-preview hidden">
+        <img id="image-preview-img" alt="">
       </div>
+
+      <!-- Type switcher: Content | Link -->
+      <div id="type-switcher" class="type-switcher hidden"></div>
+
+      <!-- Text preview (for content type) -->
+      <p id="preview-text" class="preview-text hidden"></p>
+
+      <!-- Channels section -->
+      <div class="channels-section">
+        <input type="text" id="channel-search" class="channel-search" placeholder="Search channels...">
+        <div class="channels-header">
+          <span id="channels-label">Recent</span>
+        </div>
+        <div id="channel-list" class="channel-list"></div>
+      </div>
+
+      <!-- Save button (full width) -->
+      <button id="save-btn" class="save-btn">
+        <span id="save-label">Save</span>
+        <span id="save-spinner" class="spinner hidden"></span>
+        <kbd>&#8984;&#9166;</kbd>
+      </button>
 
       <!-- Status -->
       <div id="status-bar" class="status-bar hidden">
