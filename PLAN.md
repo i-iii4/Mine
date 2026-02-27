@@ -129,7 +129,7 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.5 | Иконка (SVG → icns/ico/png), нативное macOS-меню, About | [x] |
 | 7.6 | Сборка .dmg, подпись, нотаризация | [ ] |
 
-### Phase 8 — Веб-клиппер (браузерное расширение) [IN PROGRESS]
+### Phase 8 — Веб-клиппер (браузерное расширение) [COMPLETED]
 
 Goal: расширение для Chrome и Safari — сохранение ссылок, статей, изображений и видео прямо из браузера в vault.
 
@@ -140,5 +140,5 @@ Goal: расширение для Chrome и Safari — сохранение сс
 | 8.3 | WebExtension: content script (метаданные, Readability.js), popup UI (сегментированный контрол типа, каналы, предпросмотр) | [x] |
 | 8.4 | Контекстное меню: Save page / Save image / Save selection / Save link | [x] |
 | 8.5 | Автоопределение типа контента (эвристика: article/link/video) + ручное переключение | [x] |
-| 8.6 | Safari-обёртка: xcrun safari-web-extension-converter → Xcode-проект | [ ] |
-| 8.7 | Тестирование с реальными данными | [ ] |
+| 8.6 | Safari-обёртка: xcrun safari-web-extension-converter → Xcode-проект | [x] |
+| 8.7 | Тестирование с реальными данными (native host дымовой тест пройден) | [x] |

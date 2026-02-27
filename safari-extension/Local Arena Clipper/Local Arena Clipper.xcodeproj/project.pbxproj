@@ -1,0 +1,621 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		4F9ACFD62F51D67F0032D4E2 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F9ACFD52F51D67F0032D4E2 /* AppDelegate.swift */; };
+		4F9ACFDA2F51D67F0032D4E2 /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 4F9ACFD82F51D67F0032D4E2 /* Main.html */; };
+		4F9ACFDC2F51D67F0032D4E2 /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 4F9ACFDB2F51D67F0032D4E2 /* Icon.png */; };
+		4F9ACFDE2F51D67F0032D4E2 /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 4F9ACFDD2F51D67F0032D4E2 /* Style.css */; };
+		4F9ACFE02F51D67F0032D4E2 /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 4F9ACFDF2F51D67F0032D4E2 /* Script.js */; };
+		4F9ACFE22F51D67F0032D4E2 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F9ACFE12F51D67F0032D4E2 /* ViewController.swift */; };
+		4F9ACFE52F51D67F0032D4E2 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 4F9ACFE32F51D67F0032D4E2 /* Main.storyboard */; };
+		4F9ACFE72F51D67F0032D4E2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4F9ACFE62F51D67F0032D4E2 /* Assets.xcassets */; };
+		4F9ACFEE2F51D6800032D4E2 /* Local Arena Clipper Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4F9ACFED2F51D6800032D4E2 /* Local Arena Clipper Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		4F9ACFF32F51D6800032D4E2 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F9ACFF22F51D6800032D4E2 /* SafariWebExtensionHandler.swift */; };
+		4F9AD0062F51D6800032D4E2 /* popup in Resources */ = {isa = PBXBuildFile; fileRef = 4F9ACFFF2F51D6800032D4E2 /* popup */; };
+		4F9AD0072F51D6800032D4E2 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 4F9AD0002F51D6800032D4E2 /* background.js */; };
+		4F9AD0082F51D6800032D4E2 /* install-native-host.sh in Resources */ = {isa = PBXBuildFile; fileRef = 4F9AD0012F51D6800032D4E2 /* install-native-host.sh */; };
+		4F9AD0092F51D6800032D4E2 /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 4F9AD0022F51D6800032D4E2 /* icons */; };
+		4F9AD00A2F51D6800032D4E2 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 4F9AD0032F51D6800032D4E2 /* manifest.json */; };
+		4F9AD00B2F51D6800032D4E2 /* lib in Resources */ = {isa = PBXBuildFile; fileRef = 4F9AD0042F51D6800032D4E2 /* lib */; };
+		4F9AD00C2F51D6800032D4E2 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 4F9AD0052F51D6800032D4E2 /* content.js */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		4F9ACFEF2F51D6800032D4E2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4F9ACFCA2F51D67F0032D4E2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4F9ACFEC2F51D6800032D4E2;
+			remoteInfo = "Local Arena Clipper Extension";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		4F9ACFFA2F51D6800032D4E2 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				4F9ACFEE2F51D6800032D4E2 /* Local Arena Clipper Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		4F9ACFD22F51D67F0032D4E2 /* Local Arena Clipper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Local Arena Clipper.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		4F9ACFD52F51D67F0032D4E2 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		4F9ACFD92F51D67F0032D4E2 /* Base */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = Base; path = Base.lproj/Main.html; sourceTree = "<group>"; };
+		4F9ACFDB2F51D67F0032D4E2 /* Icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icon.png; sourceTree = "<group>"; };
+		4F9ACFDD2F51D67F0032D4E2 /* Style.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = Style.css; sourceTree = "<group>"; };
+		4F9ACFDF2F51D67F0032D4E2 /* Script.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Script.js; sourceTree = "<group>"; };
+		4F9ACFE12F51D67F0032D4E2 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
+		4F9ACFE42F51D67F0032D4E2 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		4F9ACFE62F51D67F0032D4E2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		4F9ACFE82F51D67F0032D4E2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		4F9ACFED2F51D6800032D4E2 /* Local Arena Clipper Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Local Arena Clipper Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		4F9ACFF22F51D6800032D4E2 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		4F9ACFF42F51D6800032D4E2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		4F9ACFFF2F51D6800032D4E2 /* popup */ = {isa = PBXFileReference; lastKnownFileType = folder; name = popup; path = Resources/popup; sourceTree = "<group>"; };
+		4F9AD0002F51D6800032D4E2 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = Resources/background.js; sourceTree = "<group>"; };
+		4F9AD0012F51D6800032D4E2 /* install-native-host.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; name = "install-native-host.sh"; path = "Resources/install-native-host.sh"; sourceTree = "<group>"; };
+		4F9AD0022F51D6800032D4E2 /* icons */ = {isa = PBXFileReference; lastKnownFileType = folder; name = icons; path = Resources/icons; sourceTree = "<group>"; };
+		4F9AD0032F51D6800032D4E2 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = Resources/manifest.json; sourceTree = "<group>"; };
+		4F9AD0042F51D6800032D4E2 /* lib */ = {isa = PBXFileReference; lastKnownFileType = folder; name = lib; path = Resources/lib; sourceTree = "<group>"; };
+		4F9AD0052F51D6800032D4E2 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = Resources/content.js; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		4F9ACFCF2F51D67F0032D4E2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4F9ACFEA2F51D6800032D4E2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		4F9ACFC92F51D67F0032D4E2 = {
+			isa = PBXGroup;
+			children = (
+				4F9ACFD42F51D67F0032D4E2 /* Local Arena Clipper */,
+				4F9ACFF12F51D6800032D4E2 /* Local Arena Clipper Extension */,
+				4F9ACFD32F51D67F0032D4E2 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		4F9ACFD32F51D67F0032D4E2 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				4F9ACFD22F51D67F0032D4E2 /* Local Arena Clipper.app */,
+				4F9ACFED2F51D6800032D4E2 /* Local Arena Clipper Extension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		4F9ACFD42F51D67F0032D4E2 /* Local Arena Clipper */ = {
+			isa = PBXGroup;
+			children = (
+				4F9ACFD52F51D67F0032D4E2 /* AppDelegate.swift */,
+				4F9ACFE12F51D67F0032D4E2 /* ViewController.swift */,
+				4F9ACFE32F51D67F0032D4E2 /* Main.storyboard */,
+				4F9ACFE62F51D67F0032D4E2 /* Assets.xcassets */,
+				4F9ACFE82F51D67F0032D4E2 /* Info.plist */,
+				4F9ACFD72F51D67F0032D4E2 /* Resources */,
+			);
+			path = "Local Arena Clipper";
+			sourceTree = "<group>";
+		};
+		4F9ACFD72F51D67F0032D4E2 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				4F9ACFD82F51D67F0032D4E2 /* Main.html */,
+				4F9ACFDB2F51D67F0032D4E2 /* Icon.png */,
+				4F9ACFDD2F51D67F0032D4E2 /* Style.css */,
+				4F9ACFDF2F51D67F0032D4E2 /* Script.js */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		4F9ACFF12F51D6800032D4E2 /* Local Arena Clipper Extension */ = {
+			isa = PBXGroup;
+			children = (
+				4F9ACFFE2F51D6800032D4E2 /* Resources */,
+				4F9ACFF22F51D6800032D4E2 /* SafariWebExtensionHandler.swift */,
+				4F9ACFF42F51D6800032D4E2 /* Info.plist */,
+			);
+			path = "Local Arena Clipper Extension";
+			sourceTree = "<group>";
+		};
+		4F9ACFFE2F51D6800032D4E2 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				4F9ACFFF2F51D6800032D4E2 /* popup */,
+				4F9AD0002F51D6800032D4E2 /* background.js */,
+				4F9AD0012F51D6800032D4E2 /* install-native-host.sh */,
+				4F9AD0022F51D6800032D4E2 /* icons */,
+				4F9AD0032F51D6800032D4E2 /* manifest.json */,
+				4F9AD0042F51D6800032D4E2 /* lib */,
+				4F9AD0052F51D6800032D4E2 /* content.js */,
+			);
+			name = Resources;
+			path = "Local Arena Clipper Extension";
+			sourceTree = SOURCE_ROOT;
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4F9ACFD12F51D67F0032D4E2 /* Local Arena Clipper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4F9ACFFB2F51D6800032D4E2 /* Build configuration list for PBXNativeTarget "Local Arena Clipper" */;
+			buildPhases = (
+				4F9ACFCE2F51D67F0032D4E2 /* Sources */,
+				4F9ACFCF2F51D67F0032D4E2 /* Frameworks */,
+				4F9ACFD02F51D67F0032D4E2 /* Resources */,
+				4F9ACFFA2F51D6800032D4E2 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4F9ACFF02F51D6800032D4E2 /* PBXTargetDependency */,
+			);
+			name = "Local Arena Clipper";
+			packageProductDependencies = (
+			);
+			productName = "Local Arena Clipper";
+			productReference = 4F9ACFD22F51D67F0032D4E2 /* Local Arena Clipper.app */;
+			productType = "com.apple.product-type.application";
+		};
+		4F9ACFEC2F51D6800032D4E2 /* Local Arena Clipper Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4F9ACFF72F51D6800032D4E2 /* Build configuration list for PBXNativeTarget "Local Arena Clipper Extension" */;
+			buildPhases = (
+				4F9ACFE92F51D6800032D4E2 /* Sources */,
+				4F9ACFEA2F51D6800032D4E2 /* Frameworks */,
+				4F9ACFEB2F51D6800032D4E2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Local Arena Clipper Extension";
+			packageProductDependencies = (
+			);
+			productName = "Local Arena Clipper Extension";
+			productReference = 4F9ACFED2F51D6800032D4E2 /* Local Arena Clipper Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4F9ACFCA2F51D67F0032D4E2 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2610;
+				LastUpgradeCheck = 2610;
+				TargetAttributes = {
+					4F9ACFD12F51D67F0032D4E2 = {
+						CreatedOnToolsVersion = 26.1.1;
+					};
+					4F9ACFEC2F51D6800032D4E2 = {
+						CreatedOnToolsVersion = 26.1.1;
+					};
+				};
+			};
+			buildConfigurationList = 4F9ACFCD2F51D67F0032D4E2 /* Build configuration list for PBXProject "Local Arena Clipper" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 4F9ACFC92F51D67F0032D4E2;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 4F9ACFD32F51D67F0032D4E2 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				4F9ACFD12F51D67F0032D4E2 /* Local Arena Clipper */,
+				4F9ACFEC2F51D6800032D4E2 /* Local Arena Clipper Extension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		4F9ACFD02F51D67F0032D4E2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4F9ACFDC2F51D67F0032D4E2 /* Icon.png in Resources */,
+				4F9ACFE52F51D67F0032D4E2 /* Main.storyboard in Resources */,
+				4F9ACFE02F51D67F0032D4E2 /* Script.js in Resources */,
+				4F9ACFDA2F51D67F0032D4E2 /* Main.html in Resources */,
+				4F9ACFE72F51D67F0032D4E2 /* Assets.xcassets in Resources */,
+				4F9ACFDE2F51D67F0032D4E2 /* Style.css in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4F9ACFEB2F51D6800032D4E2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4F9AD00B2F51D6800032D4E2 /* lib in Resources */,
+				4F9AD0082F51D6800032D4E2 /* install-native-host.sh in Resources */,
+				4F9AD0092F51D6800032D4E2 /* icons in Resources */,
+				4F9AD00A2F51D6800032D4E2 /* manifest.json in Resources */,
+				4F9AD0072F51D6800032D4E2 /* background.js in Resources */,
+				4F9AD00C2F51D6800032D4E2 /* content.js in Resources */,
+				4F9AD0062F51D6800032D4E2 /* popup in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4F9ACFCE2F51D67F0032D4E2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4F9ACFE22F51D67F0032D4E2 /* ViewController.swift in Sources */,
+				4F9ACFD62F51D67F0032D4E2 /* AppDelegate.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4F9ACFE92F51D6800032D4E2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4F9ACFF32F51D6800032D4E2 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		4F9ACFF02F51D6800032D4E2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4F9ACFEC2F51D6800032D4E2 /* Local Arena Clipper Extension */;
+			targetProxy = 4F9ACFEF2F51D6800032D4E2 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		4F9ACFD82F51D67F0032D4E2 /* Main.html */ = {
+			isa = PBXVariantGroup;
+			children = (
+				4F9ACFD92F51D67F0032D4E2 /* Base */,
+			);
+			name = Main.html;
+			sourceTree = "<group>";
+		};
+		4F9ACFE32F51D67F0032D4E2 /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				4F9ACFE42F51D67F0032D4E2 /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		4F9ACFF52F51D6800032D4E2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.1;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		4F9ACFF62F51D6800032D4E2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.1;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		4F9ACFF82F51D6800032D4E2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Local Arena Clipper Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Local Arena Clipper Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 10.14;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.localarena.clipper.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		4F9ACFF92F51D6800032D4E2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Local Arena Clipper Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Local Arena Clipper Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 10.14;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.localarena.clipper.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		4F9ACFFC2F51D6800032D4E2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Local Arena Clipper/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Local Arena Clipper";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.localarena.Local-Arena-Clipper";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		4F9ACFFD2F51D6800032D4E2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Local Arena Clipper/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Local Arena Clipper";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.localarena.Local-Arena-Clipper";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4F9ACFCD2F51D67F0032D4E2 /* Build configuration list for PBXProject "Local Arena Clipper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4F9ACFF52F51D6800032D4E2 /* Debug */,
+				4F9ACFF62F51D6800032D4E2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4F9ACFF72F51D6800032D4E2 /* Build configuration list for PBXNativeTarget "Local Arena Clipper Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4F9ACFF82F51D6800032D4E2 /* Debug */,
+				4F9ACFF92F51D6800032D4E2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4F9ACFFB2F51D6800032D4E2 /* Build configuration list for PBXNativeTarget "Local Arena Clipper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4F9ACFFC2F51D6800032D4E2 /* Debug */,
+				4F9ACFFD2F51D6800032D4E2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 4F9ACFCA2F51D67F0032D4E2 /* Project object */;
+}
