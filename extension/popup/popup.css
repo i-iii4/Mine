@@ -52,6 +52,14 @@ body {
   overflow-y: auto;
 }
 
+/* When opened as a standalone window (context menu), fill the window */
+@media (min-width: 361px) {
+  body {
+    width: 100%;
+    max-height: none;
+  }
+}
+
 #app {
   padding: 14px;
 }
