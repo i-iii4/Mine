@@ -32,6 +32,9 @@ rusqlite = { version = "0.33", features = ["bundled"] }
 # File system
 notify = "8"
 
+# HTTP client (for Are.na import)
+ureq = { version = "2", features = ["json"] }
+
 # Image processing
 image = "0.25"
 

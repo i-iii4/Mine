@@ -17,6 +17,7 @@ import { Grid } from "@/components/Grid";
 import { Search } from "@/components/Search";
 import { Detail } from "@/components/Detail";
 import { DropZone } from "@/components/DropZone";
+import { ImportDialog } from "@/components/ImportDialog";
 
 // ─── Root ──────────────────────────────────────────────────────────────────
 
@@ -57,6 +58,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const [channels, setChannels] = useState<ChannelDto[]>([]);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<IndexedBlock | null>(null);
 
   const loadData = useCallback(async () => {
@@ -119,6 +121,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         tags={tags}
         totalBlocks={blocks.length}
         onSearchOpen={() => setSearchOpen(true)}
+        onImportOpen={() => setImportOpen(true)}
       />
 
       <main className="flex-1 overflow-hidden">
@@ -148,6 +151,12 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       />
 
       <DropZone onBlocksCreated={loadData} />
+
+      <ImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImportComplete={loadData}
+      />
 
       {selectedBlock && (
         <Detail

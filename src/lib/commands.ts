@@ -8,6 +8,9 @@ import type {
   ChannelDto,
   ScanResult,
   CreateBlockParams,
+  ArenaChannelInfo,
+  ImportChannelRequest,
+  ImportChannelResult,
 } from "@/types";
 
 // Vault
@@ -53,3 +56,10 @@ export const createChannel = (tag: string, title?: string) =>
 
 export const deleteChannel = (tag: string) =>
   invoke<boolean>("delete_channel", { tag });
+
+// Are.na import
+export const listArenaChannels = (username: string) =>
+  invoke<ArenaChannelInfo[]>("list_arena_channels", { username });
+
+export const importArenaChannels = (channels: ImportChannelRequest[]) =>
+  invoke<ImportChannelResult[]>("import_arena_channels", { channels });

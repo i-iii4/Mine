@@ -1,5 +1,6 @@
 mod commands;
 mod domain;
+mod import;
 mod storage;
 mod watcher;
 
@@ -23,6 +24,8 @@ pub fn run() {
             commands::channels::list_channels,
             commands::channels::create_channel,
             commands::channels::delete_channel,
+            commands::import::list_arena_channels,
+            commands::import::import_arena_channels,
         ])
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {

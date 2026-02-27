@@ -6,9 +6,10 @@ interface SidebarProps {
   tags: TagCount[];
   totalBlocks: number;
   onSearchOpen: () => void;
+  onImportOpen: () => void;
 }
 
-export function Sidebar({ channels, tags, totalBlocks, onSearchOpen }: SidebarProps) {
+export function Sidebar({ channels, tags, totalBlocks, onSearchOpen, onImportOpen }: SidebarProps) {
   const sortedChannels = [...channels].sort((a, b) => a.position - b.position);
 
   // Tags that are not already promoted to channels
@@ -57,8 +58,15 @@ export function Sidebar({ channels, tags, totalBlocks, onSearchOpen }: SidebarPr
         )}
       </nav>
 
-      {/* Search trigger */}
+      {/* Bottom actions */}
       <div className="border-t border-neutral-200 p-2 dark:border-neutral-800">
+        <button
+          onClick={onImportOpen}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-neutral-500 transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-900"
+        >
+          <ImportIcon />
+          <span>Import from Are.na</span>
+        </button>
         <button
           onClick={onSearchOpen}
           className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-neutral-500 transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-900"
@@ -108,6 +116,24 @@ function NavItem({
       <span className="truncate">{label}</span>
       <span className="ml-2 shrink-0 text-xs text-neutral-400">{count}</span>
     </NavLink>
+  );
+}
+
+function ImportIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M8 2v8M5 7l3 3 3-3" />
+      <path d="M2 11v2a1 1 0 001 1h10a1 1 0 001-1v-2" />
+    </svg>
   );
 }
 

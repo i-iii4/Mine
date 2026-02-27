@@ -49,3 +49,33 @@ export interface CreateBlockParams {
   tags: string[];
   file_path?: string;
 }
+
+// ─── Are.na import ──────────────────────────────────────────────────────────
+
+export interface ArenaChannelInfo {
+  id: number;
+  title: string;
+  slug: string;
+  length: number;
+  status: string;
+}
+
+export interface ImportChannelRequest {
+  slug: string;
+  tag: string;
+}
+
+export interface ImportChannelResult {
+  channel_slug: string;
+  channel_title: string;
+  imported: number;
+  skipped: number;
+  errors: string[];
+}
+
+export interface ImportProgress {
+  channel_slug: string;
+  current: number;
+  total: number;
+  block_title: string | null;
+}

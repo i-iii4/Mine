@@ -2,6 +2,7 @@
 /// Contains no business logic. Delegates to domain/ and storage/.
 pub mod blocks;
 pub mod channels;
+pub mod import;
 pub mod search;
 pub mod state;
 pub mod tags;

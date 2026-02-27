@@ -28,6 +28,58 @@ if any
 
 ---
 
+## 27.02.2026 — Drag-and-drop, file watcher, импорт из Are.na
+
+### Goal
+Добавить три ключевых интерактивных механики: drag-and-drop файлов для быстрого создания блоков, автообновление интерфейса при внешних изменениях vault, встроенный импорт коллекций из Are.na.
+
+### Planned
+1. DropZone — компонент перетаскивания файлов (Tauri v2 onDragDropEvent)
+2. File watcher — notify-крейт, фоновый поток, события vault-changed
+3. Are.na импорт — HTTP-клиент (ureq), маппинг типов, загрузка медиа, UI
+
+### Actually completed
+Все 3 пункта выполнены. 197 тестов проходят.
+
+**Drag-and-drop (5.10):**
+- `src/components/DropZone.tsx` — оверлей при перетаскивании, определение типа блока по расширению, создание через create_block
+
+**File watcher (5.12):**
+- `src-tauri/src/watcher/watch.rs` — notify-вотчер в фоновом потоке, собственное SQLite-соединение (WAL), debounce 300мс
+- `src-tauri/src/commands/state.rs` — RecommendedWatcher в AppState
+- `src-tauri/src/commands/vault.rs` — запуск вотчера в initialize_vault
+- `src/App.tsx` — подписка на vault-changed с debounce 500мс
+
+**Импорт из Are.na (Phase 6):**
+- `src-tauri/src/import/arena_api.rs` — HTTP-клиент: пагинация, rate-limiting, загрузка файлов
+- `src-tauri/src/import/importer.rs` — маппинг Are.na → local blocks, прогресс-коллбэк
+- `src-tauri/src/commands/import.rs` — list_arena_channels, import_arena_channels
+- `src/components/ImportDialog.tsx` — 4-шаговый UI: username → выбор каналов → прогресс → результаты
+- `src/components/Sidebar.tsx` — кнопка "Import from Are.na"
+
+### Deviations from plan
+- Phase 6 реализована без отдельной SPEC — переиспользована архитектура существующих модулей
+- Авторизация Are.na не нужна — публичные каналы доступны без токена
+- 5.11 (sidebar drag-reorder) отложен — не критичен для функциональности
+
+### Checks
+- `cargo check` — Rust компилируется (15 предупреждений, 0 ошибок)
+- `tsc --noEmit` — TypeScript компилируется чисто
+- `cargo test` — 197/197 пройдено
+- 15 Tauri-команд зарегистрированы
+
+### Push
+- `2f147ba` — Add drag-and-drop file import and real-time vault watcher
+- (ожидает коммит) — Are.na import
+
+### Decisions and lessons learned
+1. **ureq вместо reqwest**: синхронный HTTP-клиент, Tauri-команды всё равно на thread pool. Нет async-рантайма, нет лишней сложности
+2. **Отдельное SQLite-соединение для watcher**: WAL-режим позволяет несколько reader-ов. Watcher в фоновом потоке не блокирует UI-команды
+3. **Прогресс через Tauri events**: `app.emit("import-progress", ...)` — фронтенд подписывается через `listen()`, обновляет progress bar без polling
+4. **Переиспользование storage-слоя в импорте**: `files::write_block_file`, `index::upsert_block`, `thumbnails::generate_thumbnail` — одна и та же логика для ручного создания и импорта
+
+---
+
 ## 27.02.2026 — Frontend: компоненты, роутинг, IPC
 
 ### Goal

@@ -97,23 +97,24 @@ Goal: полноценный UI — сетка, sidebar, детальный ви
 | 5.7 | Search: Cmd+K, command palette, debounced FTS5 | [x] |
 | 5.8 | Detail: lightbox, теги (добавить/удалить), навигация стрелками | [x] |
 | 5.9 | App: роутинг (react-router), состояние vault, загрузка данных | [x] |
-| 5.10 | Drag-and-drop файлов → создание блока | [ ] |
+| 5.10 | Drag-and-drop файлов → создание блока | [x] |
 | 5.11 | Sidebar drag-reorder каналов | [ ] |
-| 5.12 | Real-time updates: Tauri events → React state | [ ] |
+| 5.12 | Real-time updates: Tauri events → React state | [x] |
 | 5.13 | Тёмная/светлая тема (системная) — базовая поддержка через dark: | [x] |
 | 5.14 | Тесты компонентов | [ ] |
 
-### Phase 6 — Импорт из Are.na [PLANNED]
+### Phase 6 — Импорт из Are.na [IN PROGRESS]
 
 Goal: пользователь переносит каналы из Are.na.
 
 | # | Task | Status |
 |---|------|--------|
-| 6.1 | SPEC: импорт (API, маппинг, ошибки) | [ ] |
-| 6.2 | Are.na API: авторизация, каналы, блоки | [ ] |
-| 6.3 | Маппинг: Are.na block → .md + медиафайл, channel → тег | [ ] |
-| 6.4 | UI импорта: выбор каналов, прогресс | [ ] |
-| 6.5 | Тесты с моками API | [ ] |
+| 6.1 | Are.na API клиент: пагинация, rate-limiting, десериализация (ureq) | [x] |
+| 6.2 | Маппинг: Are.na block → .md + медиафайл, channel → тег | [x] |
+| 6.3 | Загрузка медиафайлов и генерация thumbnails | [x] |
+| 6.4 | Tauri-команды: list_arena_channels, import_arena_channels | [x] |
+| 6.5 | UI импорта: ImportDialog (ввод username, выбор каналов, прогресс-бар) | [x] |
+| 6.6 | Тестирование с реальными данными | [ ] |
 
 ### Phase 7 — Финализация [PLANNED]
 
