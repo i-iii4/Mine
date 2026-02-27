@@ -28,6 +28,59 @@ if any
 
 ---
 
+## 27.02.2026 — Финализация: производительность, edge cases, иконка, меню
+
+### Goal
+Довести приложение до продакшен-уровня: оптимизировать рендеринг сетки для 10 000+ блоков, обработать граничные случаи, добавить восстановление индекса, создать иконку и нативное macOS-меню.
+
+### Planned
+1. Чанковый рендеринг Grid (IntersectionObserver вместо полного рендера)
+2. Фолбэк для сломанных изображений
+3. Команда rebuild_index — пересборка индекса из файлов
+4. Автообновление (Tauri updater)
+5. Иконка приложения + нативное macOS-меню + About
+
+### Actually completed
+Пункты 1-3, 5 выполнены. Пункт 4 (автообновление) отложен.
+
+**Grid (7.1):**
+- `src/components/Grid.tsx` — переписан на IntersectionObserver: INITIAL_BATCH=80, BATCH_SIZE=60, rootMargin="400px"
+- Masonry-раскладка (round-robin по столбцам), адаптивное количество столбцов через ResizeObserver
+- visibleCount сбрасывается при смене канала/поиске
+
+**Edge cases (7.2):**
+- `src/components/Card.tsx` — ImageCard: состояние ошибки + BrokenImageIcon
+- onError → показывает плейсхолдер вместо сломанного изображения
+
+**Rebuild index (7.3):**
+- `src-tauri/src/commands/vault.rs` — rebuild_index: очистка block_tags, wikilinks, blocks, channels → full_scan
+- `src/lib/commands.ts` — rebuildIndex() обёртка
+
+**Иконка и меню (7.5):**
+- `src-tauri/icons/app-icon.svg` — masonry-сетка на тёмном фоне (#0A0A0A), скруглённый квадрат
+- Все размеры сгенерированы через `cargo tauri icon`
+- `src-tauri/src/lib.rs` — нативное macOS-меню: App (About, Services, Hide, Quit), Edit, View, Window
+
+### Deviations from plan
+- 7.4 (автообновление) отложен — требует генерации пары ключей (Ed25519) и настройки сервера обновлений. Не критично для первого релиза
+
+### Checks
+- `cargo test` — 197/197 пройдено
+- `cargo check` — компиляция без ошибок
+- `tsc --noEmit` — TypeScript чисто
+- 16 Tauri-команд зарегистрированы (15 + rebuild_index)
+
+### Push
+- `5b0f445` — Add app icon, native macOS menu, grid performance, edge cases, rebuild index
+
+### Decisions and lessons learned
+1. **IntersectionObserver > @tanstack/react-virtual**: для masonry-раскладки с переменной высотой карточек виртуализация слишком сложна. Чанковый рендеринг (80 начальных + 60 по батчам) проще и достаточен
+2. **rootMargin: "400px"**: предзагрузка батчей до того, как пользователь доскроллит — нет визуальных пауз
+3. **Tauri menu API**: macOS верхнее меню принимает только Submenu, не MenuItem. AboutMetadata позволяет задать версию, copyright, credits
+4. **rebuild_index как восстановление**: паттерн "удали индекс — пересканируй" работает как аварийное восстановление и как функция для пользователя
+
+---
+
 ## 27.02.2026 — Drag-and-drop, file watcher, импорт из Are.na
 
 ### Goal

@@ -15,6 +15,7 @@
 - `SPEC_STORAGE.md` — спецификации storage/db, index, files, thumbnails
 - `SPEC_INTEGRATION.md` — спецификации watcher/events, handler, commands
 - `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
+- `SPEC_CLIPPER.md` — спецификация веб-клиппера: типы клипов, popup, native messaging
 
 ## Stack
 
@@ -25,6 +26,7 @@
 | rusqlite | SQLite + FTS5 — поисковый индекс и связи между блоками |
 | notify | File watcher — отслеживание изменений в vault |
 | image | Генерация thumbnails |
+| ureq | Синхронный HTTP-клиент (импорт Are.na) |
 | React 19 | UI-фреймворк |
 | Vite | Сборка фронтенда, HMR |
 | TypeScript | Язык фронтенда |
@@ -53,28 +55,36 @@ local-arena/
 │   │   ├── watcher/            # File system watcher
 │   │   │   ├── mod.rs
 │   │   │   ├── events.rs       # Event types, debouncing
-│   │   │   └── handler.rs      # React to FS changes
+│   │   │   ├── handler.rs      # React to FS changes
+│   │   │   └── watch.rs        # notify watcher в фоновом потоке
+│   │   ├── import/             # Импорт из внешних сервисов
+│   │   │   ├── mod.rs
+│   │   │   ├── arena_api.rs    # Are.na HTTP-клиент (ureq)
+│   │   │   └── importer.rs     # Маппинг Are.na → local blocks
 │   │   └── commands/           # Tauri commands (тонкий слой, без логики)
 │   │       ├── mod.rs
+│   │       ├── state.rs        # AppState, VaultState, CommandError
 │   │       ├── blocks.rs       # → вызывает domain + storage
 │   │       ├── tags.rs
 │   │       ├── search.rs
-│   │       └── vault.rs
+│   │       ├── vault.rs        # select_vault, get_vault_path, rebuild_index
+│   │       └── import.rs       # list_arena_channels, import_arena_channels
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 ├── src/                        # React-фронтенд
 │   ├── main.tsx                # Точка входа React
 │   ├── App.tsx                 # Корневой компонент + роутинг
 │   ├── components/
-│   │   ├── Grid/               # Сетка карточек (виртуализация)
-│   │   ├── Card/               # Карточка блока (адаптивная по типу)
-│   │   ├── Channel/            # Представление канала (фильтр по тегу)
-│   │   ├── Sidebar/            # Навигация: каналы (promoted tags)
-│   │   ├── Detail/             # Детальный просмотр (lightbox)
-│   │   └── Search/             # Cmd+K поиск
-│   ├── hooks/                  # React-хуки (Tauri IPC обёртки)
-│   ├── types/                  # Автогенерированные типы из Rust (specta)
-│   ├── lib/                    # Утилиты
+│   │   ├── Grid.tsx            # Masonry-сетка с чанковым рендерингом (IntersectionObserver)
+│   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)
+│   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
+│   │   ├── Detail.tsx          # Lightbox: просмотр, теги, навигация стрелками
+│   │   ├── Search.tsx          # Cmd+K поиск (command palette)
+│   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог
+│   │   ├── DropZone.tsx        # Drag-and-drop файлов для создания блоков
+│   │   └── ImportDialog.tsx    # 4-шаговый импорт из Are.na
+│   ├── types/                  # TypeScript-типы (ручные, без specta)
+│   ├── lib/                    # commands.ts (IPC), assets.ts (URL-хелперы)
 │   └── styles/                 # Глобальные стили
 ├── public/                     # Статические ассеты
 ├── index.html

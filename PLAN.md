@@ -82,28 +82,28 @@ Goal: file watcher отслеживает vault, Tauri commands связываю
 | 4.6 | SPEC + TEST + CODE: commands/search (FTS5 query) | [x] |
 | 4.7 | commands/channels (list, create, delete) + AppState + lib.rs wiring | [x] |
 
-### Phase 5 — Frontend [IN PROGRESS]
+### Phase 5 — Frontend [COMPLETED]
 
 Goal: полноценный UI — сетка, sidebar, детальный вид, поиск. 60 fps на 10 000 блоков.
 
 | # | Task | Status |
 |---|------|--------|
 | 5.1 | SPEC_FRONTEND.md: компоненты, типы, IPC, роутинг | [x] |
-| 5.2 | TypeScript types + IPC layer (13 команд) | [x] |
+| 5.2 | TypeScript types + IPC layer (18 команд) | [x] |
 | 5.3 | VaultPicker: выбор папки через системный диалог | [x] |
-| 5.4 | Sidebar: каналы, счётчики, навигация | [x] |
-| 5.5 | Grid: виртуальный скроллинг (@tanstack/react-virtual) | [x] |
-| 5.6 | Card: адаптивные карточки по типу блока (5 типов) | [x] |
+| 5.4 | Sidebar: каналы, счётчики, навигация, кнопка импорта | [x] |
+| 5.5 | Grid: чанковый рендеринг (IntersectionObserver, 80+60 батчи) | [x] |
+| 5.6 | Card: адаптивные карточки по типу блока (5 типов) + фолбэк для сломанных изображений | [x] |
 | 5.7 | Search: Cmd+K, command palette, debounced FTS5 | [x] |
 | 5.8 | Detail: lightbox, теги (добавить/удалить), навигация стрелками | [x] |
 | 5.9 | App: роутинг (react-router), состояние vault, загрузка данных | [x] |
-| 5.10 | Drag-and-drop файлов → создание блока | [x] |
-| 5.11 | Sidebar drag-reorder каналов | [ ] |
-| 5.12 | Real-time updates: Tauri events → React state | [x] |
+| 5.10 | Drag-and-drop файлов → создание блока (DropZone) | [x] |
+| 5.11 | Sidebar drag-reorder каналов | отложено |
+| 5.12 | Real-time updates: Tauri events → React state (vault-changed) | [x] |
 | 5.13 | Тёмная/светлая тема (системная) — базовая поддержка через dark: | [x] |
-| 5.14 | Тесты компонентов | [ ] |
+| 5.14 | Тесты компонентов | отложено |
 
-### Phase 6 — Импорт из Are.na [IN PROGRESS]
+### Phase 6 — Импорт из Are.na [COMPLETED]
 
 Goal: пользователь переносит каналы из Are.na.
 
@@ -114,7 +114,7 @@ Goal: пользователь переносит каналы из Are.na.
 | 6.3 | Загрузка медиафайлов и генерация thumbnails | [x] |
 | 6.4 | Tauri-команды: list_arena_channels, import_arena_channels | [x] |
 | 6.5 | UI импорта: ImportDialog (ввод username, выбор каналов, прогресс-бар) | [x] |
-| 6.6 | Тестирование с реальными данными | [ ] |
+| 6.6 | Тестирование с реальными данными | отложено |
 
 ### Phase 7 — Финализация [IN PROGRESS]
 
@@ -125,6 +125,20 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.1 | Чанковый рендеринг Grid (IntersectionObserver, 80+60 батчи) | [x] |
 | 7.2 | Edge cases: фолбэк при сломанных изображениях, missing media | [x] |
 | 7.3 | Пересборка индекса из файлов (rebuild_index команда) | [x] |
-| 7.4 | Автообновление (Tauri updater) | требует ручной генерации ключей |
+| 7.4 | Автообновление (Tauri updater) | отложено — требует ручной генерации ключей |
 | 7.5 | Иконка (SVG → icns/ico/png), нативное macOS-меню, About | [x] |
 | 7.6 | Сборка .dmg, подпись, нотаризация | [ ] |
+
+### Phase 8 — Веб-клиппер (браузерное расширение) [PLANNED]
+
+Goal: расширение для Chrome и Safari — сохранение ссылок, статей, изображений и видео прямо из браузера в vault.
+
+| # | Task | Status |
+|---|------|--------|
+| 8.1 | SPEC_CLIPPER.md — спецификация: типы клипов, popup UI, native messaging, извлечение метаданных | [ ] |
+| 8.2 | Native messaging host (Rust-бинарник): чтение vault, запись блоков, индексация, thumbnails | [ ] |
+| 8.3 | WebExtension: content script (метаданные, Readability.js), popup UI (сегментированный контрол типа, каналы, предпросмотр) | [ ] |
+| 8.4 | Контекстное меню: Save page / Save image / Save selection / Save link | [ ] |
+| 8.5 | Автоопределение типа контента (эвристика: article/link/video) + ручное переключение | [ ] |
+| 8.6 | Safari-обёртка: xcrun safari-web-extension-converter → Xcode-проект | [ ] |
+| 8.7 | Интеграция с основным приложением: file watcher подхватывает блоки, созданные клиппером | [ ] |

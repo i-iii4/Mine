@@ -1,6 +1,6 @@
 # Architecture: Local Arena
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md)
 
 ## Context
 
@@ -145,6 +145,9 @@ saved_at: 2026-02-26T14:30:00Z
 │                           │                        │  │
 │                           │  Thumbnail Generator   │  │
 │                           │  └── image crate       │  │
+│                           │                        │  │
+│                           │  Import (Are.na)       │  │
+│                           │  └── ureq HTTP client  │  │
 │                           └────────────────────────┘  │
 └─────────────────────────────────────────────────────┘
                           │
@@ -170,6 +173,7 @@ saved_at: 2026-02-26T14:30:00Z
 | Frontmatter Parser | Извлечение атрибутов из `.md` файлов | Rust (yaml parsing) |
 | DB | Поисковый индекс, кэш тегов, список каналов | rusqlite + FTS5 |
 | Thumbnail Generator | Превью изображений 240px | Rust, image crate |
+| Import | Импорт каналов из Are.na | Rust, ureq (sync HTTP) |
 | Vault | Пользовательские файлы на диске | Файловая система |
 
 ## Data flow
@@ -341,6 +345,6 @@ Rationale: пользователь может открыть любой `.md` �
 | thiserror | latest | Типизированные ошибки | MIT/Apache-2.0 |
 | react | 19.x | UI-фреймворк | MIT |
 | vite | latest | Сборщик | MIT |
-| @tanstack/react-virtual | latest | Виртуальный скроллинг | MIT |
+| ureq | 2.x | Синхронный HTTP-клиент (импорт Are.na) | MIT/Apache-2.0 |
 | tailwindcss | 4.x | Стилизация | MIT |
 | react-router | 7.x | Роутинг | MIT |
