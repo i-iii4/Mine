@@ -20,6 +20,9 @@ export const selectVault = (path: string) =>
 export const getVaultPath = () =>
   invoke<string | null>("get_vault_path");
 
+export const rebuildIndex = () =>
+  invoke<ScanResult>("rebuild_index");
+
 // Blocks
 export const listBlocks = () =>
   invoke<IndexedBlock[]>("list_blocks");

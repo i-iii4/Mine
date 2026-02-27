@@ -1,9 +1,11 @@
-import { useRef, useState, useEffect, useMemo } from "react";
+import { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import type { IndexedBlock } from "@/types";
 import { Card } from "./Card";
 
 const COLUMN_MIN_WIDTH = 240;
 const GAP = 16;
+const INITIAL_BATCH = 80;
+const BATCH_SIZE = 60;
 
 interface GridProps {
   blocks: IndexedBlock[];
@@ -13,8 +15,16 @@ interface GridProps {
 
 export function Grid({ blocks, vaultPath, onBlockClick }: GridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const [parentWidth, setParentWidth] = useState(0);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH);
 
+  // Reset visible count when blocks change (channel switch, search, etc.)
+  useEffect(() => {
+    setVisibleCount(INITIAL_BATCH);
+  }, [blocks]);
+
+  // Measure parent width
   useEffect(() => {
     const el = parentRef.current;
     if (!el) return;
@@ -29,23 +39,46 @@ export function Grid({ blocks, vaultPath, onBlockClick }: GridProps) {
     return () => observer.disconnect();
   }, []);
 
+  // Load more when sentinel enters viewport
+  const loadMore = useCallback(() => {
+    setVisibleCount((prev) => Math.min(prev + BATCH_SIZE, blocks.length));
+  }, [blocks.length]);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMore();
+      },
+      { rootMargin: "400px" },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadMore]);
+
   const columnCount = Math.max(
     1,
     Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
   );
 
-  // Distribute blocks into columns using shortest-column algorithm.
-  // This gives a left-to-right visual flow like Pinterest.
+  const visibleBlocks = useMemo(
+    () => blocks.slice(0, visibleCount),
+    [blocks, visibleCount],
+  );
+
+  // Distribute blocks into columns (round-robin)
   const columns = useMemo(() => {
     const cols: IndexedBlock[][] = Array.from({ length: columnCount }, () => []);
-    // Simple round-robin for now (heights unknown until rendered).
-    // A height-aware algorithm would require measuring, but round-robin
-    // produces a visually balanced result when card heights are mixed.
-    for (let i = 0; i < blocks.length; i++) {
-      cols[i % columnCount]!.push(blocks[i]!);
+    for (let i = 0; i < visibleBlocks.length; i++) {
+      cols[i % columnCount]!.push(visibleBlocks[i]!);
     }
     return cols;
-  }, [blocks, columnCount]);
+  }, [visibleBlocks, columnCount]);
+
+  const hasMore = visibleCount < blocks.length;
 
   return (
     <div ref={parentRef} className="h-full overflow-y-auto p-4">
@@ -67,6 +100,15 @@ export function Grid({ blocks, vaultPath, onBlockClick }: GridProps) {
           </div>
         ))}
       </div>
+
+      {/* Sentinel for infinite scroll */}
+      {hasMore && (
+        <div ref={sentinelRef} className="flex justify-center py-8">
+          <p className="text-xs text-neutral-400">
+            {visibleCount} of {blocks.length}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

@@ -67,6 +67,37 @@ pub fn get_vault_path(
     Ok(None)
 }
 
+/// Rebuild the index from scratch: drop all indexed data, re-scan vault files.
+/// Use when the index is corrupted or out of sync with the filesystem.
+#[tauri::command]
+pub fn rebuild_index(
+    state: State<'_, AppState>,
+) -> Result<ScanResult, CommandError> {
+    let vault_state = state.vault_state.lock().unwrap();
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+
+    // Clear all indexed data
+    vs.conn
+        .execute_batch(
+            "DELETE FROM block_tags;
+             DELETE FROM wikilinks;
+             DELETE FROM blocks;
+             DELETE FROM channels;",
+        )
+        .map_err(|e| CommandError::Internal(format!("failed to clear index: {e}")))?;
+
+    // Re-scan vault files
+    let result = handler::full_scan(&vs.conn, &vs.vault)?;
+
+    log::info!(
+        "index rebuilt: {} indexed, {} errors",
+        result.indexed,
+        result.errors
+    );
+
+    Ok(result)
+}
+
 // ─── Shared initialization ──────────────────────────────────────────────────
 
 /// Initialize a vault: expand asset scope, create dirs, open DB, full scan.

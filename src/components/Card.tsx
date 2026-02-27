@@ -58,9 +58,23 @@ function ImageCard({
   block: IndexedBlock;
   vaultPath: string;
 }) {
+  const [error, setError] = useState(false);
   const src = block.media_file
     ? mediaUrl(vaultPath, block.media_file)
     : thumbnailUrl(vaultPath, block.slug);
+
+  if (error) {
+    return (
+      <div className="flex aspect-square items-center justify-center bg-neutral-100 dark:bg-neutral-800">
+        <div className="text-center">
+          <BrokenImageIcon />
+          <p className="mt-1 text-xs text-neutral-400">
+            {block.title ?? block.slug}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative">
@@ -69,6 +83,7 @@ function ImageCard({
         alt={block.title ?? block.slug}
         className="w-full"
         loading="lazy"
+        onError={() => setError(true)}
       />
       {block.title && (
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3 opacity-0 transition-opacity group-hover:opacity-100">
@@ -208,5 +223,26 @@ function FileCard({ block }: { block: IndexedBlock }) {
         )}
       </div>
     </div>
+  );
+}
+
+function BrokenImageIcon() {
+  return (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="mx-auto text-neutral-300 dark:text-neutral-600"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M3 16l5-5 4 4" />
+      <path d="M14 14l2-2 5 5" />
+      <line x1="2" y1="2" x2="22" y2="22" />
+    </svg>
   );
 }
