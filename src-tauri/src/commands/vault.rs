@@ -12,6 +12,7 @@ use crate::commands::state::{AppState, CommandError, VaultState};
 use crate::domain::vault::VaultLayout;
 use crate::storage::db;
 use crate::watcher::handler::{self, ScanResult};
+use crate::watcher::watch;
 
 // ─── Commands ───────────────────────────────────────────────────────────────
 
@@ -90,6 +91,18 @@ fn initialize_vault(
 
     // Full scan
     let result = handler::full_scan(&conn, &vault)?;
+
+    // Start file watcher
+    let db_path = vault.index_db_path();
+    match watch::start_watching(app, &vault, &db_path) {
+        Ok(w) => {
+            let mut watcher = state.watcher.lock().unwrap();
+            *watcher = Some(w);
+        }
+        Err(e) => {
+            log::warn!("failed to start file watcher: {e:#}");
+        }
+    }
 
     // Update app state
     let mut vault_state = state.vault_state.lock().unwrap();

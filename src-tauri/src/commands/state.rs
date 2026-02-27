@@ -5,6 +5,7 @@
 //
 // Contract: SPEC_INTEGRATION.md#commands/state
 
+use notify::RecommendedWatcher;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::sync::Mutex;
@@ -23,12 +24,15 @@ pub struct VaultState {
 /// Shared state managed by Tauri, accessible from all commands.
 pub struct AppState {
     pub vault_state: Mutex<Option<VaultState>>,
+    /// File watcher handle. Dropping it stops watching.
+    pub watcher: Mutex<Option<RecommendedWatcher>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
             vault_state: Mutex::new(None),
+            watcher: Mutex::new(None),
         }
     }
 }

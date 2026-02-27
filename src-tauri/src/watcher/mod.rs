@@ -2,3 +2,4 @@
 /// Depends on domain/ and storage/.
 pub mod events;
 pub mod handler;
+pub mod watch;

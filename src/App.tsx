@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   BrowserRouter,
   Routes,
@@ -7,6 +7,7 @@ import {
   useParams,
   useOutletContext,
 } from "react-router";
+import { listen } from "@tauri-apps/api/event";
 
 import type { IndexedBlock, ChannelDto, TagCount } from "@/types";
 import { getVaultPath, listBlocks, listChannels, listTags } from "@/lib/commands";
@@ -15,6 +16,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { Grid } from "@/components/Grid";
 import { Search } from "@/components/Search";
 import { Detail } from "@/components/Detail";
+import { DropZone } from "@/components/DropZone";
 
 // ─── Root ──────────────────────────────────────────────────────────────────
 
@@ -66,6 +68,19 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   useEffect(() => {
     loadData();
+  }, [loadData]);
+
+  // Listen for vault-changed events from file watcher (with debounce)
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    const unlisten = listen("vault-changed", () => {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(loadData, 500);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+      clearTimeout(debounceRef.current);
+    };
   }, [loadData]);
 
   // Global Cmd+K
@@ -131,6 +146,8 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
           setSearchOpen(false);
         }}
       />
+
+      <DropZone onBlocksCreated={loadData} />
 
       {selectedBlock && (
         <Detail
