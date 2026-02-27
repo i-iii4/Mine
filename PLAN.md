@@ -56,17 +56,17 @@ Goal: вся бизнес-логика реализована и протест�
 | 2.3 | SPEC + TEST + CODE: domain/vault (13 тестов) | [x] |
 | 2.4 | SPEC + TEST + CODE: domain/search (15 тестов) | [x] |
 
-### Phase 3 — Storage layer [PLANNED]
+### Phase 3 — Storage layer [COMPLETED]
 
 Goal: SQLite-индекс, файловые операции, thumbnail-пайплайн. Всё персистентное.
 
 | # | Task | Status |
 |---|------|--------|
-| 3.1 | SPEC + TEST + CODE: storage/db (схема, миграции, pool) | [ ] |
-| 3.2 | SPEC + TEST + CODE: storage/index (frontmatter → SQLite) | [ ] |
-| 3.3 | SPEC + TEST + CODE: storage/files (copy, move, naming) | [ ] |
-| 3.4 | SPEC + TEST + CODE: storage/thumbnails (генерация, кэш) | [ ] |
-| 3.5 | SPEC + TEST + CODE: FTS5 поиск | [ ] |
+| 3.1 | SPEC + TEST + CODE: storage/db (схема, FTS5 триггеры, WAL) | [x] |
+| 3.2 | SPEC + TEST + CODE: storage/index (CRUD блоков/каналов/тегов, поиск) | [x] |
+| 3.3 | SPEC + TEST + CODE: storage/files (write, read, scan, copy, delete) | [x] |
+| 3.4 | SPEC + TEST + CODE: storage/thumbnails (Lanczos3 ресайз, JPEG) | [x] |
+| 3.5 | SPEC + TEST + CODE: FTS5 поиск (встроен в storage/index) | [x] |
 
 ### Phase 4 — Watcher + Commands (интеграция) [PLANNED]
 

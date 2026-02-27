@@ -10,6 +10,9 @@
 - `DEVLOG.md` — история изменений и принятые решения
 - `SPEC_PRD.md` — PRD: модель данных, типы блоков, интерфейс
 - `SPEC_USECASES.md` — юзкейсы и сценарии использования
+- `SPEC_BLOCK.md` — спецификация domain/block (эталонный модуль)
+- `SPEC_DOMAIN.md` — спецификации domain/tag, channel, vault, search
+- `SPEC_STORAGE.md` — спецификации storage/db, index, files, thumbnails
 
 ## Stack
 

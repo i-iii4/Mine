@@ -28,6 +28,49 @@ if any
 
 ---
 
+## 26.02.2026 — Storage layer: SQLite, файлы, thumbnails
+
+### Goal
+Реализовать Phase 3 — персистентный слой: SQLite-индекс с FTS5, файловые операции в vault, генерацию thumbnail-превью.
+
+### Planned
+1. SPEC_STORAGE.md — спецификация 4 модулей storage
+2. storage/db — соединение, схема, прагмы, FTS5-триггеры
+3. storage/index — CRUD блоков/каналов, динамический FTS5-поиск
+4. storage/files — write/read/scan .md, copy media, delete
+5. storage/thumbnails — Lanczos3 ресайз, JPEG-вывод
+
+### Actually completed
+Все 5 пунктов выполнены. 51 тест в storage-слое.
+
+- `SPEC_STORAGE.md` — спецификация: схема, типы, функции, поведение
+- `src-tauri/src/storage/db.rs` — 13 тестов: WAL, foreign keys, FTS5 триггеры, каскадное удаление
+- `src-tauri/src/storage/index.rs` — 25 тестов: upsert/remove/get/list блоков, каналов, тегов, FTS5-поиск с фильтрами
+- `src-tauri/src/storage/files.rs` — 8 тестов: roundtrip write/read, scan, copy media, delete
+- `src-tauri/src/storage/thumbnails.rs` — 5 тестов: ресайз, no-upscale, JPEG-валидация
+- `src-tauri/src/domain/vault.rs` — thumbnail extension `.webp` → `.jpg` (согласованность со спецификацией)
+
+### Deviations from plan
+- FTS5 (задача 3.5) встроен в storage/index вместо отдельного модуля — search_blocks использует FTS5 напрямую через динамический SQL
+- bundled (не bundled-full): libsqlite3-sys включает `-DSQLITE_ENABLE_FTS5` по умолчанию
+
+### Checks
+- `cargo test` — 174/174 passed (123 domain + 51 storage)
+- Каскадное удаление: block → block_tags, wikilinks
+- FTS5 триггеры: авто-индексация при INSERT, авто-удаление при DELETE, авто-обновление при UPDATE
+- Thumbnail: 800x600 → 240x180 (Lanczos3), 100x80 → 100x80 (no upscale)
+
+### Push
+- `30f9b11` — Implement storage layer: SQLite index, file operations, thumbnails (51 tests)
+
+### Decisions and lessons learned
+1. **FTS5 content-sync**: `content='blocks', content_rowid='id'` + триггеры — FTS не хранит данные, а ссылается на blocks. Меньше места, автосинхронизация
+2. **Динамический SQL для search_blocks**: пронумерованные параметры (`?1`, `?2`) + JOIN-алиасы (`bt0`, `bt1`) для AND-логики между тегами
+3. **bundled включает FTS5**: build.rs в libsqlite3-sys устанавливает `-DSQLITE_ENABLE_FTS5`, не нужен `bundled-full`
+4. **Thumbnail формат — JPEG**: WebP лучше по компрессии, но JPEG проще (нативная поддержка в image crate), а при 240px разница несущественна
+
+---
+
 ## 26.02.2026 — Эталонный модуль domain/block
 
 ### Goal
