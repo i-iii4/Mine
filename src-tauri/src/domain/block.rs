@@ -8,6 +8,7 @@
 //
 // Contract: SPEC_BLOCK.md
 
+use serde::Serialize;
 use serde_yaml::Value;
 use thiserror::Error;
 
@@ -58,7 +59,8 @@ pub enum BlockError {
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /// The type of content a block represents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum BlockType {
     Image,
     Article,

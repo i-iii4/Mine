@@ -1,0 +1,191 @@
+# SPEC: integration layer (watcher + commands)
+
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md)
+
+Связующий слой: file watcher отслеживает изменения в vault, Tauri commands предоставляют API для фронтенда. Оркестрация файл → парсинг → индексация → thumbnail.
+
+---
+
+## watcher/events
+
+Классификация событий файловой системы.
+
+### Типы
+
+```rust
+enum VaultEvent {
+    BlockChanged(PathBuf),   // .md создан или изменён
+    BlockDeleted(PathBuf),   // .md удалён
+    MediaChanged(PathBuf),   // медиафайл создан или изменён
+    MediaDeleted(PathBuf),   // медиафайл удалён
+}
+```
+
+### Функции
+
+```rust
+classify_notify_event(event: &notify::Event, vault: &VaultLayout) -> Vec<VaultEvent>
+```
+
+### Поведение classify_notify_event
+
+- Принимает сырое событие `notify::Event`
+- Игнорирует пути внутри `.arena/`
+- Игнорирует директории
+- `.md` файлы → `BlockChanged` / `BlockDeleted`
+- Остальные файлы → `MediaChanged` / `MediaDeleted`
+- Create/Modify → `*Changed`, Remove → `*Deleted`
+
+---
+
+## watcher/handler
+
+Оркестрация: файловое событие → обновление индекса.
+
+### Типы
+
+```rust
+struct ScanResult {
+    pub indexed: usize,
+    pub errors: usize,
+}
+```
+
+### Функции
+
+```rust
+full_scan(conn: &Connection, vault: &VaultLayout) -> Result<ScanResult>
+index_md_file(conn: &Connection, vault: &VaultLayout, path: &Path) -> Result<()>
+handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) -> Result<()>
+```
+
+### Поведение full_scan
+
+- Вызывает `storage::files::scan_md_files` для получения всех `.md`
+- Для каждого файла: `read_block_file` → `parse_block` → `upsert_block`
+- Если у блока есть `file` — генерирует thumbnail (если медиафайл существует)
+- Ошибки парсинга отдельных файлов логируются, не прерывают сканирование
+- Возвращает `ScanResult { indexed, errors }`
+
+### Поведение index_md_file
+
+- Читает файл, парсит блок, индексирует
+- Генерирует thumbnail при наличии медиафайла
+- Ошибки пробрасываются (не логируются)
+
+### Поведение handle_event
+
+- `BlockChanged` → `index_md_file`
+- `BlockDeleted` → `storage::index::remove_block` (slug из имени файла)
+- `MediaChanged` → генерация thumbnail
+- `MediaDeleted` → удаление thumbnail
+
+---
+
+## commands/state
+
+Разделяемое состояние приложения.
+
+### Типы
+
+```rust
+struct VaultState {
+    conn: Connection,
+    vault: VaultLayout,
+}
+
+struct AppState {
+    vault_state: Mutex<Option<VaultState>>,
+}
+
+#[derive(Debug, Error, Serialize)]
+enum CommandError {
+    NoVault,
+    Internal(String),
+}
+```
+
+---
+
+## commands/vault
+
+```rust
+#[tauri::command] select_vault(state, path: String) -> Result<ScanResult, CommandError>
+#[tauri::command] get_vault_path(state) -> Result<Option<String>, CommandError>
+```
+
+### Поведение select_vault
+
+1. Создать `VaultLayout` из `path`
+2. Создать `.arena/cache/thumbs/` директории
+3. Открыть/создать БД (`storage::db::open_or_create`)
+4. Полное сканирование (`watcher::handler::full_scan`)
+5. Обновить `AppState.vault_state`
+6. Вернуть `ScanResult`
+
+---
+
+## commands/blocks
+
+```rust
+#[tauri::command] list_blocks(state) -> Result<Vec<IndexedBlock>, CommandError>
+#[tauri::command] get_block(state, slug: String) -> Result<Option<IndexedBlock>, CommandError>
+#[tauri::command] create_block(state, ...) -> Result<IndexedBlock, CommandError>
+#[tauri::command] delete_block(state, slug: String) -> Result<bool, CommandError>
+```
+
+### Поведение create_block
+
+1. Сгенерировать slug из title/url
+2. Разрешить конфликт slug (через `resolve_slug_conflict`)
+3. Создать `Block` с frontmatter
+4. Записать `.md` файл
+5. Скопировать медиафайл (если есть)
+6. Сгенерировать thumbnail (если изображение)
+7. Проиндексировать
+8. Вернуть `IndexedBlock`
+
+### Поведение delete_block
+
+1. Получить блок из индекса (для media_file)
+2. Удалить файлы (`storage::files::delete_block_files`)
+3. Удалить из индекса (`storage::index::remove_block`)
+
+---
+
+## commands/tags
+
+```rust
+#[tauri::command] list_tags(state) -> Result<Vec<TagCount>, CommandError>
+#[tauri::command] add_tag(state, slug: String, tag: String) -> Result<(), CommandError>
+#[tauri::command] remove_tag(state, slug: String, tag: String) -> Result<(), CommandError>
+```
+
+### Поведение add_tag / remove_tag
+
+1. Прочитать `.md` файл → распарсить блок
+2. Добавить/удалить тег из `frontmatter.tags`
+3. Записать файл обратно
+4. Переиндексировать блок
+
+---
+
+## commands/search
+
+```rust
+#[tauri::command] search(state, query: String) -> Result<Vec<IndexedBlock>, CommandError>
+```
+
+Делегирует в `domain::search::parse_search_query` → `storage::index::search_blocks`.
+
+---
+
+## commands/channels
+
+```rust
+#[tauri::command] list_channels(state) -> Result<Vec<ChannelDto>, CommandError>
+#[tauri::command] create_channel(state, tag: String, title: Option<String>) -> Result<ChannelDto, CommandError>
+#[tauri::command] delete_channel(state, tag: String) -> Result<bool, CommandError>
+```
+
+`ChannelDto` — сериализуемая версия `Channel` для фронтенда.

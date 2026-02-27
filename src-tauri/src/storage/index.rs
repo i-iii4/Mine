@@ -7,6 +7,7 @@
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
+use serde::Serialize;
 
 use crate::domain::block::{extract_wikilinks, Block, BlockType, DateTime};
 use crate::domain::channel::Channel;
@@ -15,7 +16,7 @@ use crate::domain::search::{SearchFilter, SearchQuery};
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /// A block as read from the database index.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct IndexedBlock {
     pub id: i64,
     pub slug: String,
@@ -35,7 +36,7 @@ pub struct IndexedBlock {
 }
 
 /// A tag with its usage count across blocks.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TagCount {
     pub tag: String,
     pub count: usize,
