@@ -82,24 +82,26 @@ Goal: file watcher отслеживает vault, Tauri commands связываю
 | 4.6 | SPEC + TEST + CODE: commands/search (FTS5 query) | [x] |
 | 4.7 | commands/channels (list, create, delete) + AppState + lib.rs wiring | [x] |
 
-### Phase 5 — Frontend [PLANNED]
+### Phase 5 — Frontend [IN PROGRESS]
 
 Goal: полноценный UI — сетка, sidebar, детальный вид, поиск. 60 fps на 10 000 блоков.
 
 | # | Task | Status |
 |---|------|--------|
-| 5.1 | SPEC: компоненты (Grid, Card, Sidebar, Detail, Search) | [ ] |
-| 5.2 | Sidebar: каналы, счётчики, drag-reorder | [ ] |
-| 5.3 | Grid: виртуальный скроллинг, режимы (сетка, masonry, список) | [ ] |
-| 5.4 | Card: адаптивные карточки по типу блока | [ ] |
-| 5.5 | Detail: lightbox, метаданные, теги, wikilinks | [ ] |
-| 5.6 | Search: Cmd+K, command palette, мгновенные результаты | [ ] |
-| 5.7 | Drag-and-drop файлов → создание блока | [ ] |
-| 5.8 | CRUD тегов из UI: добавить/удалить тег, создать канал | [ ] |
-| 5.9 | Тёмная/светлая тема (системная) | [ ] |
-| 5.10 | Сортировка, горячие клавиши | [ ] |
-| 5.11 | Real-time updates: Tauri events → React state | [ ] |
-| 5.12 | Тесты компонентов | [ ] |
+| 5.1 | SPEC_FRONTEND.md: компоненты, типы, IPC, роутинг | [x] |
+| 5.2 | TypeScript types + IPC layer (13 команд) | [x] |
+| 5.3 | VaultPicker: выбор папки через системный диалог | [x] |
+| 5.4 | Sidebar: каналы, счётчики, навигация | [x] |
+| 5.5 | Grid: виртуальный скроллинг (@tanstack/react-virtual) | [x] |
+| 5.6 | Card: адаптивные карточки по типу блока (5 типов) | [x] |
+| 5.7 | Search: Cmd+K, command palette, debounced FTS5 | [x] |
+| 5.8 | Detail: lightbox, теги (добавить/удалить), навигация стрелками | [x] |
+| 5.9 | App: роутинг (react-router), состояние vault, загрузка данных | [x] |
+| 5.10 | Drag-and-drop файлов → создание блока | [ ] |
+| 5.11 | Sidebar drag-reorder каналов | [ ] |
+| 5.12 | Real-time updates: Tauri events → React state | [ ] |
+| 5.13 | Тёмная/светлая тема (системная) — базовая поддержка через dark: | [x] |
+| 5.14 | Тесты компонентов | [ ] |
 
 ### Phase 6 — Импорт из Are.na [PLANNED]
 

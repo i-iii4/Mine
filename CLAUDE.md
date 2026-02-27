@@ -13,6 +13,8 @@
 - `SPEC_BLOCK.md` — спецификация domain/block (эталонный модуль)
 - `SPEC_DOMAIN.md` — спецификации domain/tag, channel, vault, search
 - `SPEC_STORAGE.md` — спецификации storage/db, index, files, thumbnails
+- `SPEC_INTEGRATION.md` — спецификации watcher/events, handler, commands
+- `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
 
 ## Stack
 

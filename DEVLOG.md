@@ -28,6 +28,71 @@ if any
 
 ---
 
+## 27.02.2026 — Frontend: компоненты, роутинг, IPC
+
+### Goal
+Пользователь видит интерфейс приложения: выбирает vault, видит сетку карточек, переключает каналы в sidebar, ищет по Cmd+K, открывает детальный вид.
+
+### Planned
+1. SPEC_FRONTEND.md — спецификация: типы, IPC, компоненты, роутинг, ассеты
+2. Установка зависимостей: @tauri-apps/api, @tauri-apps/plugin-dialog, @tanstack/react-virtual, react-router
+3. TypeScript types + IPC layer (13 typed commands)
+4. VaultPicker — экран выбора vault
+5. Sidebar — навигация по каналам
+6. Grid — виртуальный скроллинг
+7. Card — адаптивные карточки (5 типов блоков)
+8. Search — Cmd+K палитра поиска
+9. Detail — lightbox с управлением тегами
+10. App — роутинг, состояние, компоновка
+
+### Actually completed
+Все 10 пунктов выполнены. Фронтенд собирается (263 КБ JS / 83 КБ gzip).
+
+- `SPEC_FRONTEND.md` — спецификация фронтенда
+- `src/types/index.ts` — IndexedBlock, TagCount, ChannelDto, ScanResult, CreateBlockParams
+- `src/lib/commands.ts` — 13 типизированных обёрток над invoke()
+- `src/lib/assets.ts` — thumbnailUrl, mediaUrl, domainFromUrl (convertFileSrc)
+- `src/components/VaultPicker.tsx` — нативный dialog для выбора папки, сканирование vault
+- `src/components/Sidebar.tsx` — каналы с счётчиками, NavLink-навигация, кнопка Cmd+K
+- `src/components/Grid.tsx` — @tanstack/react-virtual, адаптивные столбцы (ResizeObserver), overscan=5
+- `src/components/Card.tsx` — ImageCard, LinkCard, ArticleCard, VideoCard, FileCard
+- `src/components/Search.tsx` — модальное окно, debounce 200мс, навигация стрелками, Enter/Esc
+- `src/components/Detail.tsx` — lightbox по типу блока, добавление/удаление тегов, стрелки лево-право
+- `src/App.tsx` — BrowserRouter, Outlet context, AllBlocksPage, ChannelPage, глобальный Cmd+K
+- `src/styles/global.css` — скрытие скроллбаров WebKit, user-select для кнопок, overscroll-behavior
+- `src-tauri/Cargo.toml` — feature `protocol-asset` для отображения файлов
+- `src-tauri/tauri.conf.json` — assetProtocol: enable + scope **
+- `src-tauri/capabilities/default.json` — dialog:default, dialog:allow-open
+- `src-tauri/src/lib.rs` — регистрация tauri_plugin_dialog
+- `package.json` — @tauri-apps/api, @tauri-apps/plugin-dialog, @tanstack/react-virtual, react-router
+
+### Deviations from plan
+- Drag-and-drop файлов отложен — требует tauri-plugin-fs и дополнительную логику копирования
+- Sidebar drag-reorder каналов отложен — требует обновление позиции в бэкенде
+- Real-time updates (Tauri events → React state) отложены — требует подписку на события watcher
+- Masonry/list режимы сетки отложены — базовый grid покрывает основные сценарии
+- Тесты компонентов отложены — тестирование через Tauri runtime требует дополнительной инфраструктуры
+
+### Checks
+- `tsc --noEmit` — компиляция TypeScript без ошибок
+- `bun run build` — сборка Vite успешна (263 КБ JS)
+- `cargo check` — Rust компилируется (с protocol-asset feature)
+- `cargo test --lib` — 193/193 тестов пройдены
+- Все 13 IPC-команд строго типизированы
+- Dark mode: все компоненты используют dark: варианты Tailwind
+
+### Push
+- `d60ced6` — Implement frontend: VaultPicker, Sidebar, Grid, Card, Search, Detail
+
+### Decisions and lessons learned
+1. **convertFileSrc + protocol-asset**: Tauri WebView не загружает file:// URL. Необходим feature `protocol-asset` в Cargo.toml + `assetProtocol.enable` в tauri.conf.json. convertFileSrc преобразует путь в asset://localhost/...
+2. **Outlet context вместо prop drilling**: react-router `<Outlet context={...}>` + `useOutletContext<T>()` — чистый способ передать blocks/vaultPath во вложенные маршруты без пробрасывания через 5 уровней
+3. **ResizeObserver для адаптивных столбцов**: Grid вычисляет количество столбцов через ResizeObserver на контейнере, а не через window.innerWidth. Это правильно работает при изменении ширины sidebar
+4. **Debounce 200мс для поиска**: баланс между отзывчивостью и нагрузкой на SQLite. FTS5 быстр (<10мс), но debounce предотвращает лишние вызовы при быстром вводе
+5. **Spread operator для CreateBlockParams**: TypeScript interface несовместим с Record<string, unknown> (нет index signature). Решение: `{ ...params }` создаёт plain object
+
+---
+
 ## 27.02.2026 — Интеграция: watcher + Tauri commands
 
 ### Goal
