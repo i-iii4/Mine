@@ -319,6 +319,22 @@ pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
         .collect()
 }
 
+/// Batch-update channel positions. Each pair is (tag, new_position).
+///
+/// Uses a single transaction for atomicity. Tags that don't exist are skipped.
+pub fn update_channel_positions(conn: &Connection, positions: &[(String, u32)]) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut stmt =
+            tx.prepare("UPDATE channels SET position = ?1 WHERE tag = ?2")?;
+        for (tag, pos) in positions {
+            stmt.execute(params![*pos as i64, tag])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// Remove a channel by tag. Returns true if removed.
 pub fn remove_channel(conn: &Connection, tag: &str) -> Result<bool> {
     let count = conn.execute("DELETE FROM channels WHERE tag = ?1", [tag])?;

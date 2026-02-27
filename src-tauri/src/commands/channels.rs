@@ -2,7 +2,7 @@
 //
 // Contract: SPEC_INTEGRATION.md#commands/channels
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::state::{AppState, CommandError};
@@ -94,6 +94,31 @@ pub fn create_channel(
         .unwrap_or(0);
 
     Ok(ChannelDto::from_channel(&channel, count))
+}
+
+/// A single item in a reorder request: tag + new position.
+#[derive(Debug, Deserialize)]
+pub struct ReorderItem {
+    pub tag: String,
+    pub position: u32,
+}
+
+/// Reorder channels by setting new positions for each tag.
+#[tauri::command]
+pub fn reorder_channels(
+    state: State<'_, AppState>,
+    items: Vec<ReorderItem>,
+) -> Result<(), CommandError> {
+    let vault_state = state.vault_state.lock().unwrap();
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+
+    let positions: Vec<(String, u32)> = items
+        .into_iter()
+        .map(|item| (item.tag, item.position))
+        .collect();
+
+    index::update_channel_positions(&vs.conn, &positions)?;
+    Ok(())
 }
 
 /// Delete a channel (blocks are not affected, only the channel metadata).

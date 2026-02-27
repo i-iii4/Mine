@@ -57,6 +57,9 @@ export const listChannels = () =>
 export const createChannel = (tag: string, title?: string) =>
   invoke<ChannelDto>("create_channel", { tag, title });
 
+export const reorderChannels = (items: { tag: string; position: number }[]) =>
+  invoke<void>("reorder_channels", { items });
+
 export const deleteChannel = (tag: string) =>
   invoke<boolean>("delete_channel", { tag });
 

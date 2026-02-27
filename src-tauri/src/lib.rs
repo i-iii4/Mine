@@ -26,6 +26,7 @@ pub fn run() {
             commands::search::search,
             commands::channels::list_channels,
             commands::channels::create_channel,
+            commands::channels::reorder_channels,
             commands::channels::delete_channel,
             commands::import::list_arena_channels,
             commands::import::import_arena_channels,

@@ -98,10 +98,10 @@ Goal: полноценный UI — сетка, sidebar, детальный ви
 | 5.8 | Detail: lightbox, теги (добавить/удалить), навигация стрелками | [x] |
 | 5.9 | App: роутинг (react-router), состояние vault, загрузка данных | [x] |
 | 5.10 | Drag-and-drop файлов → создание блока (DropZone) | [x] |
-| 5.11 | Sidebar drag-reorder каналов | отложено |
+| 5.11 | Sidebar drag-reorder каналов (HTML5 DnD, reorder_channels команда) | [x] |
 | 5.12 | Real-time updates: Tauri events → React state (vault-changed) | [x] |
 | 5.13 | Тёмная/светлая тема (системная) — базовая поддержка через dark: | [x] |
-| 5.14 | Тесты компонентов | отложено |
+| 5.14 | Тесты компонентов (vitest + testing-library, 43 теста, 5 файлов) | [x] |
 
 ### Phase 6 — Импорт из Are.na [COMPLETED]
 

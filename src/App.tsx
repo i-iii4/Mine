@@ -10,7 +10,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 
 import type { IndexedBlock, ChannelDto, TagCount } from "@/types";
-import { getVaultPath, listBlocks, listChannels, listTags } from "@/lib/commands";
+import { getVaultPath, listBlocks, listChannels, listTags, reorderChannels } from "@/lib/commands";
 import { VaultPicker } from "@/components/VaultPicker";
 import { Sidebar } from "@/components/Sidebar";
 import { Grid } from "@/components/Grid";
@@ -97,6 +97,20 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  const handleReorderChannels = useCallback(
+    (reordered: ChannelDto[]) => {
+      // Optimistic update
+      setChannels(reordered);
+      // Persist to backend
+      const items = reordered.map((ch) => ({ tag: ch.tag, position: ch.position }));
+      reorderChannels(items).catch(() => {
+        // Revert on failure
+        loadData();
+      });
+    },
+    [loadData],
+  );
+
   const handleBlockClick = useCallback((block: IndexedBlock) => {
     setSelectedBlock(block);
   }, []);
@@ -122,6 +136,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         totalBlocks={blocks.length}
         onSearchOpen={() => setSearchOpen(true)}
         onImportOpen={() => setImportOpen(true)}
+        onReorderChannels={handleReorderChannels}
       />
 
       <main className="flex-1 overflow-hidden">
