@@ -31,18 +31,18 @@ Goal: полный каркас проекта — принципы, архит�
 | 0.4 | SPEC_USECASES.md — юзкейсы и сценарии | [x] |
 | 0.5 | Git + GitHub репозиторий | [x] |
 
-### Phase 1 — Эталонный модуль + инициализация [PLANNED]
+### Phase 1 — Эталонный модуль + инициализация [IN PROGRESS]
 
 Goal: Tauri-проект инициализирован, `domain/block` реализован идеально — спецификация, тесты, код. Это образец для всех модулей.
 
 | # | Task | Status |
 |---|------|--------|
-| 1.1 | Инициализация Tauri v2 + React + Vite + TypeScript + Tailwind | [ ] |
-| 1.2 | Структура директорий: domain/, storage/, watcher/, commands/ | [ ] |
+| 1.1 | Инициализация Tauri v2 + React + Vite + TypeScript + Tailwind | [x] |
+| 1.2 | Структура директорий: domain/, storage/, watcher/, commands/ | [x] |
 | 1.3 | Настройка specta для типогенерации Rust → TypeScript | [ ] |
-| 1.4 | SPEC_BLOCK.md — спецификация domain/block | [ ] |
-| 1.5 | Тесты domain/block (красные) | [ ] |
-| 1.6 | Реализация domain/block (тесты зелёные) | [ ] |
+| 1.4 | SPEC_BLOCK.md — спецификация domain/block | [x] |
+| 1.5 | Тесты domain/block (59 тестов, все 20 edge cases) | [x] |
+| 1.6 | Реализация domain/block (59/59 зелёных) | [x] |
 | 1.7 | Ретроспектива: что узнали, что поправить в принципах | [ ] |
 
 ### Phase 2 — Domain layer [PLANNED]
