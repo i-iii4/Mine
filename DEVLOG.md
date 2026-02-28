@@ -74,7 +74,7 @@ if any
 - Поведение «создал канал — карточка сразу отмечена» уже обеспечивается `handleCreateTagFromMenu` (addTag + оптимистичное обновление) и `toggleTag` в клиппере
 
 ### Push
-COMMIT_HASH — Improve channel menus: MRU ranking, create channel, hide delete during search
+5e4035f — Improve channel menus: MRU ranking, create channel, hide delete during search
 
 ### Decisions and lessons learned
 - `localStorage` для MRU — простое решение, масштабируется до тысяч каналов (поиск в Set — O(1), сортировка — O(n log n) от отфильтрованного подмножества)
