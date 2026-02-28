@@ -46,6 +46,12 @@ export const addTag = (slug: string, tag: string) =>
 export const removeTag = (slug: string, tag: string) =>
   invoke<void>("remove_tag", { slug, tag });
 
+export const renameTag = (old_tag: string, new_tag: string) =>
+  invoke<void>("rename_tag", { old_tag, new_tag });
+
+export const deleteTagFromAll = (tag: string) =>
+  invoke<void>("delete_tag_from_all", { tag });
+
 // Search
 export const search = (query: string) =>
   invoke<IndexedBlock[]>("search", { query });
@@ -59,6 +65,9 @@ export const createChannel = (tag: string, title?: string) =>
 
 export const reorderChannels = (items: { tag: string; position: number }[]) =>
   invoke<void>("reorder_channels", { items });
+
+export const renameChannel = (old_tag: string, new_tag: string) =>
+  invoke<ChannelDto>("rename_channel", { old_tag, new_tag });
 
 export const deleteChannel = (tag: string) =>
   invoke<boolean>("delete_channel", { tag });

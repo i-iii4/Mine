@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::state::{AppState, CommandError};
-use crate::domain::block::DateTime;
+use crate::domain::block::{parse_block, serialize_block, DateTime};
 use crate::domain::channel::Channel;
-use crate::storage::index;
+use crate::domain::tag::normalize_tag;
+use crate::storage::{files, index};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -119,6 +120,84 @@ pub fn reorder_channels(
 
     index::update_channel_positions(&vs.conn, &positions)?;
     Ok(())
+}
+
+/// Rename a channel: update the tag in all blocks' frontmatter files,
+/// re-index them, and update the channel record in the database.
+#[tauri::command(rename_all = "snake_case")]
+pub fn rename_channel(
+    state: State<'_, AppState>,
+    old_tag: String,
+    new_tag: String,
+) -> Result<ChannelDto, CommandError> {
+    let vault_state = state.vault_state.lock().unwrap();
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+
+    let normalized_new = normalize_tag(&new_tag);
+    if normalized_new.is_empty() {
+        return Err(CommandError::Internal("new tag is empty after normalization".into()));
+    }
+
+    let normalized_old = normalize_tag(&old_tag);
+    if normalized_old == normalized_new {
+        // Same tag after normalization — no-op
+        let channels = index::list_channels(&vs.conn)?;
+        let existing = channels.iter().find(|c| c.tag == normalized_old)
+            .ok_or_else(|| CommandError::Internal(format!("channel '{}' not found", old_tag)))?;
+
+        let tags = index::get_all_tags(&vs.conn)?;
+        let count = tags.iter().find(|t| t.tag == normalized_old).map(|t| t.count).unwrap_or(0);
+        return Ok(ChannelDto::from_channel(existing, count));
+    }
+
+    // Check that the new tag doesn't conflict with another channel
+    let channels = index::list_channels(&vs.conn)?;
+    if channels.iter().any(|c| c.tag == normalized_new) {
+        return Err(CommandError::Internal(format!(
+            "channel '{}' already exists", normalized_new
+        )));
+    }
+
+    // Find the existing channel
+    let existing = channels.iter().find(|c| c.tag == normalized_old)
+        .ok_or_else(|| CommandError::Internal(format!("channel '{}' not found", old_tag)))?;
+
+    // Update all blocks that have the old tag
+    let affected_blocks = index::list_blocks_by_tag(&vs.conn, &normalized_old)?;
+    for indexed_block in &affected_blocks {
+        let path = vs.vault.block_path(&indexed_block.slug);
+        let (_, content) = files::read_block_file(&path)?;
+        let mut block = parse_block(&indexed_block.slug, &content)
+            .map_err(|e| CommandError::Internal(e.to_string()))?;
+
+        // Replace old tag with new tag
+        block.frontmatter.tags.retain(|t| t != &normalized_old);
+        if !block.frontmatter.tags.contains(&normalized_new) {
+            block.frontmatter.tags.push(normalized_new.clone());
+        }
+
+        let serialized = serialize_block(&block);
+        std::fs::write(&path, serialized)
+            .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
+        index::upsert_block(&vs.conn, &block)?;
+    }
+
+    // Create new channel with same metadata, remove old one
+    let now = crate::commands::state::now_iso8601();
+    let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
+    let mut new_channel = Channel::new(&normalized_new, None, dt)
+        .map_err(|e| CommandError::Internal(e.to_string()))?;
+    new_channel.description = existing.description.clone();
+    new_channel.color = existing.color.clone();
+    new_channel.icon = existing.icon.clone();
+    new_channel.position = existing.position;
+
+    index::upsert_channel(&vs.conn, &new_channel)?;
+    index::remove_channel(&vs.conn, &normalized_old)?;
+
+    let tags = index::get_all_tags(&vs.conn)?;
+    let count = tags.iter().find(|t| t.tag == normalized_new).map(|t| t.count).unwrap_or(0);
+    Ok(ChannelDto::from_channel(&new_channel, count))
 }
 
 /// Delete a channel (blocks are not affected, only the channel metadata).

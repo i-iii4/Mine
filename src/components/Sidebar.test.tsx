@@ -1,39 +1,29 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+import { DndContext } from "@dnd-kit/core";
 import { Sidebar } from "./Sidebar";
-import type { ChannelDto, TagCount } from "@/types";
+import type { TagCount } from "@/types";
 
-function ch(tag: string, position: number, block_count = 3): ChannelDto {
-  return {
-    tag,
-    title: tag.charAt(0).toUpperCase() + tag.slice(1),
-    description: null,
-    color: null,
-    icon: null,
-    position,
-    created_at: "2026-01-01T00:00:00Z",
-    block_count,
-  };
+function tag(name: string, count = 3): TagCount {
+  return { tag: name, count };
 }
 
 const defaultProps = {
-  channels: [ch("beta", 1, 5), ch("alpha", 0, 10)],
-  tags: [
-    { tag: "alpha", count: 10 },
-    { tag: "beta", count: 5 },
-    { tag: "gamma", count: 2 },
-  ] as TagCount[],
+  tags: [tag("beta", 5), tag("alpha", 10)],
   totalBlocks: 17,
   onSearchOpen: vi.fn(),
   onImportOpen: vi.fn(),
-  onReorderChannels: vi.fn(),
+  onDeleteTag: vi.fn(),
+  onRenameTag: vi.fn(),
 };
 
 function renderSidebar(props = defaultProps) {
   return render(
     <MemoryRouter>
-      <Sidebar {...props} />
+      <DndContext>
+        <Sidebar {...props} />
+      </DndContext>
     </MemoryRouter>,
   );
 }
@@ -51,28 +41,17 @@ describe("Sidebar", () => {
     expect(within(allLink).getByText("17")).toBeInTheDocument();
   });
 
-  it("renders channels sorted by position", () => {
+  it("renders tags sorted alphabetically", () => {
     renderSidebar();
     const links = screen.getAllByRole("link");
-    // "All" link is first, then "Alpha" (pos 0), then "Beta" (pos 1)
+    // "All" link is first, then "Alpha" (a < b), then "Beta"
     expect(links[1]).toHaveTextContent("Alpha");
     expect(links[2]).toHaveTextContent("Beta");
   });
 
-  it("renders unpromoted tags (not channels)", () => {
+  it("renders Tags section header", () => {
     renderSidebar();
-    // "gamma" is a tag but not a channel, so it should appear
-    expect(screen.getByRole("link", { name: /gamma/ })).toBeInTheDocument();
-  });
-
-  it("does not duplicate promoted tags in Tags section", () => {
-    renderSidebar();
-    // "alpha" and "beta" are channels, only "gamma" should be in tags
-    // Count how many links have "gamma" text
-    const gammaLinks = screen.getAllByRole("link").filter(
-      (l) => l.textContent?.includes("gamma"),
-    );
-    expect(gammaLinks).toHaveLength(1);
+    expect(screen.getByText("Tags")).toBeInTheDocument();
   });
 
   it("renders search button with keyboard shortcut", () => {
@@ -87,26 +66,21 @@ describe("Sidebar", () => {
     ).toBeInTheDocument();
   });
 
-  it("channel items are draggable", () => {
+  it("tag items are not draggable", () => {
     const { container } = renderSidebar();
     const draggables = container.querySelectorAll("[draggable='true']");
-    expect(draggables.length).toBe(2);
+    expect(draggables.length).toBe(0);
   });
 
-  it("hides Channels section when no channels", () => {
-    renderSidebar({ ...defaultProps, channels: [] });
-    expect(screen.queryByText("Channels")).not.toBeInTheDocument();
+  it("shows Tags header even when no tags", () => {
+    renderSidebar({ ...defaultProps, tags: [] });
+    expect(screen.getByText("Tags")).toBeInTheDocument();
   });
 
-  it("hides Tags section when no unpromoted tags", () => {
-    const props = {
-      ...defaultProps,
-      tags: [
-        { tag: "alpha", count: 10 },
-        { tag: "beta", count: 5 },
-      ] as TagCount[],
-    };
-    renderSidebar(props);
-    expect(screen.queryByText("Tags")).not.toBeInTheDocument();
+  it("does not show create button (tags created via context menu)", () => {
+    renderSidebar();
+    expect(
+      screen.queryByRole("button", { name: /Create/ }),
+    ).not.toBeInTheDocument();
   });
 });

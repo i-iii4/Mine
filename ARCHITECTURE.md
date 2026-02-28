@@ -350,6 +350,7 @@ Rationale: пользователь может открыть любой `.md` �
 | ureq | 2.x | Синхронный HTTP-клиент (импорт Are.na) | MIT/Apache-2.0 |
 | tailwindcss | 4.x | Стилизация | MIT |
 | react-router | 7.x | Роутинг | MIT |
+| @dnd-kit/core | 6.3.x | Drag-and-drop (Pointer Events вместо HTML5 DnD — обходит перехват Tauri WKWebView) | MIT |
 | react-markdown | latest | Рендеринг markdown в Detail.tsx | MIT |
 | remark-gfm | latest | GFM-расширение для react-markdown | MIT |
 | @tailwindcss/typography | latest | Стилизация prose-контента | MIT |

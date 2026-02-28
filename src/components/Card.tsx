@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useDraggable } from "@dnd-kit/core";
 import type { IndexedBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
 
@@ -6,9 +7,14 @@ interface CardProps {
   block: IndexedBlock;
   vaultPath: string;
   onClick: (block: IndexedBlock) => void;
+  onContextMenu?: (block: IndexedBlock, x: number, y: number) => void;
 }
 
-export function Card({ block, vaultPath, onClick }: CardProps) {
+export function Card({ block, vaultPath, onClick, onContextMenu }: CardProps) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: block.slug,
+  });
+
   const handleClick = () => onClick(block);
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
@@ -16,14 +22,24 @@ export function Card({ block, vaultPath, onClick }: CardProps) {
       onClick(block);
     }
   };
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (onContextMenu) {
+      e.preventDefault();
+      onContextMenu(block, e.clientX, e.clientY);
+    }
+  };
 
   return (
     <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
       role="button"
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
-      className="group cursor-pointer overflow-hidden rounded-lg border border-neutral-200 bg-white transition-shadow hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900"
+      onContextMenu={handleContextMenu}
+      className={`group cursor-pointer overflow-hidden rounded-lg border border-neutral-200 bg-white transition-shadow hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900 ${isDragging ? "opacity-30" : ""}`}
     >
       <CardContent block={block} vaultPath={vaultPath} />
     </div>

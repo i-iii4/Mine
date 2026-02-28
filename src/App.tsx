@@ -6,11 +6,45 @@ import {
   Outlet,
   useParams,
   useOutletContext,
+  useNavigate,
 } from "react-router";
 import { listen } from "@tauri-apps/api/event";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  pointerWithin,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragEndEvent,
+  type Modifier,
+} from "@dnd-kit/core";
 
-import type { IndexedBlock, ChannelDto, TagCount } from "@/types";
-import { getVaultPath, listBlocks, listChannels, listTags, reorderChannels } from "@/lib/commands";
+/** Center the DragOverlay on the cursor rather than on the dragged element's origin. */
+const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, overlayNodeRect, transform }) => {
+  if (!activatorEvent || !draggingNodeRect) return transform;
+  const e = activatorEvent as PointerEvent;
+  const ow = overlayNodeRect?.width ?? 0;
+  const oh = overlayNodeRect?.height ?? 0;
+  return {
+    ...transform,
+    x: transform.x + (e.clientX - draggingNodeRect.left) - ow / 2,
+    y: transform.y + (e.clientY - draggingNodeRect.top) - oh / 2,
+  };
+};
+
+import type { IndexedBlock, TagCount } from "@/types";
+import {
+  getVaultPath,
+  listBlocks,
+  listTags,
+  renameTag,
+  deleteTagFromAll,
+  addTag,
+  removeTag,
+  deleteBlock,
+} from "@/lib/commands";
 import { VaultPicker } from "@/components/VaultPicker";
 import { Sidebar } from "@/components/Sidebar";
 import { Grid } from "@/components/Grid";
@@ -18,6 +52,7 @@ import { Search } from "@/components/Search";
 import { Detail } from "@/components/Detail";
 import { DropZone } from "@/components/DropZone";
 import { ImportDialog } from "@/components/ImportDialog";
+import { CardContextMenu } from "@/components/CardContextMenu";
 
 // ─── Root ──────────────────────────────────────────────────────────────────
 
@@ -53,18 +88,31 @@ export function App() {
 
 // ─── Main app (vault selected) ─────────────────────────────────────────────
 
+interface ContextMenuState {
+  block: IndexedBlock;
+  x: number;
+  y: number;
+}
+
 function AppWithVault({ vaultPath }: { vaultPath: string }) {
+  const navigate = useNavigate();
+
   const [blocks, setBlocks] = useState<IndexedBlock[]>([]);
-  const [channels, setChannels] = useState<ChannelDto[]>([]);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<IndexedBlock | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [activeDragBlock, setActiveDragBlock] = useState<IndexedBlock | null>(null);
+
+  // ── dnd-kit sensors ────────────────────────────────────────────────────
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  );
 
   const loadData = useCallback(async () => {
-    const [b, c, t] = await Promise.all([listBlocks(), listChannels(), listTags()]);
+    const [b, t] = await Promise.all([listBlocks(), listTags()]);
     setBlocks(b);
-    setChannels(c);
     setTags(t);
   }, []);
 
@@ -97,19 +145,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  const handleReorderChannels = useCallback(
-    (reordered: ChannelDto[]) => {
-      // Optimistic update
-      setChannels(reordered);
-      // Persist to backend
-      const items = reordered.map((ch) => ({ tag: ch.tag, position: ch.position }));
-      reorderChannels(items).catch(() => {
-        // Revert on failure
-        loadData();
-      });
-    },
-    [loadData],
-  );
+  // ── Block navigation ──────────────────────────────────────────────────────
 
   const handleBlockClick = useCallback((block: IndexedBlock) => {
     setSelectedBlock(block);
@@ -128,15 +164,127 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     [selectedBlock, blocks],
   );
 
+  // ── Tag management ──────────────────────────────────────────────────────
+
+  const handleRenameTag = useCallback(
+    async (oldTag: string, newTag: string) => {
+      await renameTag(oldTag, newTag);
+      await loadData();
+      const currentPath = window.location.pathname;
+      if (currentPath === `/channel/${encodeURIComponent(oldTag)}`) {
+        navigate(`/channel/${encodeURIComponent(newTag)}`);
+      }
+    },
+    [loadData, navigate],
+  );
+
+  const handleDeleteTagFromAll = useCallback(
+    async (tag: string) => {
+      await deleteTagFromAll(tag);
+      await loadData();
+    },
+    [loadData],
+  );
+
+  // ── Card drag-to-tag (dnd-kit) ──────────────────────────────────────────
+
+  const handleCardDrop = useCallback(
+    async (slug: string, tag: string) => {
+      await addTag(slug, tag);
+      await loadData();
+    },
+    [loadData],
+  );
+
+  const handleDndStart = useCallback(
+    (event: DragStartEvent) => {
+      const slug = String(event.active.id);
+      const block = blocks.find((b) => b.slug === slug);
+      if (block) setActiveDragBlock(block);
+    },
+    [blocks],
+  );
+
+  const handleDndEnd = useCallback(
+    (event: DragEndEvent) => {
+      setActiveDragBlock(null);
+      const { active, over } = event;
+      if (!over) return;
+      const overId = String(over.id);
+      if (!overId.startsWith("tag:")) return;
+      const tag = overId.slice(4);
+      const slug = String(active.id);
+      handleCardDrop(slug, tag);
+    },
+    [handleCardDrop],
+  );
+
+  // ── Context menu ──────────────────────────────────────────────────────────
+
+  const handleContextMenu = useCallback(
+    (block: IndexedBlock, x: number, y: number) => {
+      setContextMenu({ block, x, y });
+    },
+    [],
+  );
+
+  const handleToggleTag = useCallback(
+    async (slug: string, tag: string, hasTag: boolean) => {
+      if (hasTag) {
+        await removeTag(slug, tag);
+      } else {
+        await addTag(slug, tag);
+      }
+      // Optimistic update of context menu block tags
+      setContextMenu((prev) => {
+        if (!prev || prev.block.slug !== slug) return prev;
+        const newTags = hasTag
+          ? prev.block.tags.filter((t) => t !== tag)
+          : [...prev.block.tags, tag];
+        return { ...prev, block: { ...prev.block, tags: newTags } };
+      });
+      await loadData();
+    },
+    [loadData],
+  );
+
+  const handleCreateTagFromMenu = useCallback(
+    async (tag: string, blockSlug: string) => {
+      await addTag(blockSlug, tag);
+      setContextMenu((prev) => {
+        if (!prev || prev.block.slug !== blockSlug) return prev;
+        return { ...prev, block: { ...prev.block, tags: [...prev.block.tags, tag] } };
+      });
+      await loadData();
+    },
+    [loadData],
+  );
+
+  const handleDeleteBlock = useCallback(
+    async (slug: string) => {
+      await deleteBlock(slug);
+      setContextMenu(null);
+      await loadData();
+    },
+    [loadData],
+  );
+
   return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      autoScroll={{ canScroll: (el) => el.hasAttribute("data-sidebar-scroll") }}
+      onDragStart={handleDndStart}
+      onDragEnd={handleDndEnd}
+    >
     <div className="flex h-screen w-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
       <Sidebar
-        channels={channels}
         tags={tags}
         totalBlocks={blocks.length}
         onSearchOpen={() => setSearchOpen(true)}
         onImportOpen={() => setImportOpen(true)}
-        onReorderChannels={handleReorderChannels}
+        onDeleteTag={handleDeleteTagFromAll}
+        onRenameTag={handleRenameTag}
       />
 
       <main className="flex-1 overflow-hidden">
@@ -147,6 +295,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
                 blocks={blocks}
                 vaultPath={vaultPath}
                 onBlockClick={handleBlockClick}
+                onContextMenu={handleContextMenu}
               />
             }
           >
@@ -182,7 +331,29 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
           onTagsChanged={loadData}
         />
       )}
+
+      {contextMenu && (
+        <CardContextMenu
+          block={contextMenu.block}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          tags={tags}
+          onToggleTag={handleToggleTag}
+          onCreateAndAssign={handleCreateTagFromMenu}
+          onDelete={handleDeleteBlock}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
+
+    <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
+      {activeDragBlock && (
+        <div className="pointer-events-none rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm shadow-lg dark:border-neutral-600 dark:bg-neutral-800">
+          {activeDragBlock.title ?? activeDragBlock.slug}
+        </div>
+      )}
+    </DragOverlay>
+    </DndContext>
   );
 }
 
@@ -192,14 +363,16 @@ interface RouteContext {
   blocks: IndexedBlock[];
   vaultPath: string;
   onBlockClick: (block: IndexedBlock) => void;
+  onContextMenu: (block: IndexedBlock, x: number, y: number) => void;
 }
 
 function PageShell({
   blocks,
   vaultPath,
   onBlockClick,
+  onContextMenu,
 }: RouteContext) {
-  return <Outlet context={{ blocks, vaultPath, onBlockClick }} />;
+  return <Outlet context={{ blocks, vaultPath, onBlockClick, onContextMenu }} />;
 }
 
 function useRouteCtx(): RouteContext {
@@ -209,21 +382,31 @@ function useRouteCtx(): RouteContext {
 // ─── Pages ─────────────────────────────────────────────────────────────────
 
 function AllBlocksPage() {
-  const { blocks, vaultPath, onBlockClick } = useRouteCtx();
+  const { blocks, vaultPath, onBlockClick, onContextMenu } = useRouteCtx();
   return (
-    <Grid blocks={blocks} vaultPath={vaultPath} onBlockClick={onBlockClick} />
+    <Grid
+      blocks={blocks}
+      vaultPath={vaultPath}
+      onBlockClick={onBlockClick}
+      onContextMenu={onContextMenu}
+    />
   );
 }
 
 function ChannelPage() {
   const { tag } = useParams<{ tag: string }>();
-  const { blocks, vaultPath, onBlockClick } = useRouteCtx();
+  const { blocks, vaultPath, onBlockClick, onContextMenu } = useRouteCtx();
 
   const filtered = blocks.filter(
     (b) => tag && b.tags.includes(decodeURIComponent(tag)),
   );
 
   return (
-    <Grid blocks={filtered} vaultPath={vaultPath} onBlockClick={onBlockClick} />
+    <Grid
+      blocks={filtered}
+      vaultPath={vaultPath}
+      onBlockClick={onBlockClick}
+      onContextMenu={onContextMenu}
+    />
   );
 }

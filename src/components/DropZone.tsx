@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { BlockType } from "@/types";
 import { createBlock } from "@/lib/commands";
+import { isInternalDragActive } from "@/lib/drag";
 
 interface DropZoneProps {
   onBlocksCreated: () => void;
@@ -51,7 +52,7 @@ export function DropZone({ onBlocksCreated }: DropZoneProps) {
     getCurrentWebviewWindow()
       .onDragDropEvent((event) => {
         if (event.payload.type === "over") {
-          setDragging(true);
+          if (!isInternalDragActive()) setDragging(true);
         } else if (event.payload.type === "drop") {
           handleDrop(event.payload.paths);
         } else if (event.payload.type === "leave") {

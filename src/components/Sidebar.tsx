@@ -1,78 +1,64 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { NavLink } from "react-router";
-import type { ChannelDto, TagCount } from "@/types";
+import { useDroppable } from "@dnd-kit/core";
+import type { TagCount } from "@/types";
+
+/** Convert a normalized tag slug to a display title: `web-design` -> `Web Design` */
+function titleFromTag(tag: string): string {
+  return tag
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
 
 interface SidebarProps {
-  channels: ChannelDto[];
   tags: TagCount[];
   totalBlocks: number;
   onSearchOpen: () => void;
   onImportOpen: () => void;
-  onReorderChannels: (reordered: ChannelDto[]) => void;
+  onDeleteTag: (tag: string) => void;
+  onRenameTag: (oldTag: string, newTag: string) => void;
+}
+
+interface TagMenuState {
+  tag: string;
+  label: string;
+  x: number;
+  y: number;
 }
 
 export function Sidebar({
-  channels,
   tags,
   totalBlocks,
   onSearchOpen,
   onImportOpen,
-  onReorderChannels,
+  onDeleteTag,
+  onRenameTag,
 }: SidebarProps) {
-  const sortedChannels = [...channels].sort((a, b) => a.position - b.position);
+  const sortedTags = [...tags].sort((a, b) => a.tag.localeCompare(b.tag));
 
-  // Tags that are not already promoted to channels
-  const channelTags = new Set(channels.map((c) => c.tag));
-  const unpromoted = tags.filter((t) => !channelTags.has(t.tag));
+  // ── State ──────────────────────────────────────────────────────────────
+  const [editingTag, setEditingTag] = useState<string | null>(null);
+  const [tagMenu, setTagMenu] = useState<TagMenuState | null>(null);
 
-  // ── Drag state ──────────────────────────────────────────────────────────
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
-  const [overIdx, setOverIdx] = useState<number | null>(null);
-  const dragNodeRef = useRef<HTMLElement | null>(null);
+  // ── Tag CRUD handlers ─────────────────────────────────────────────────
 
-  const handleDragStart = useCallback(
-    (e: React.DragEvent<HTMLDivElement>, idx: number) => {
-      setDragIdx(idx);
-      dragNodeRef.current = e.currentTarget;
-      e.dataTransfer.effectAllowed = "move";
-      // Semi-transparent ghost
-      e.dataTransfer.setDragImage(e.currentTarget, 0, 0);
+  const handleRename = useCallback(
+    (oldTag: string, newValue: string) => {
+      const trimmed = newValue.trim();
+      if (trimmed) onRenameTag(oldTag, trimmed);
+      setEditingTag(null);
+    },
+    [onRenameTag],
+  );
+
+  const handleMenuOpen = useCallback(
+    (tag: string, label: string, e: React.MouseEvent) => {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      setTagMenu({ tag, label, x: rect.left, y: rect.bottom + 4 });
     },
     [],
   );
-
-  const handleDragOver = useCallback(
-    (e: React.DragEvent<HTMLDivElement>, idx: number) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      if (idx !== overIdx) {
-        setOverIdx(idx);
-      }
-    },
-    [overIdx],
-  );
-
-  const handleDragEnd = useCallback(() => {
-    if (dragIdx !== null && overIdx !== null && dragIdx !== overIdx) {
-      const reordered = [...sortedChannels];
-      const [moved] = reordered.splice(dragIdx, 1);
-      reordered.splice(overIdx, 0, moved!);
-
-      // Assign new positions
-      const withPositions = reordered.map((ch, i) => ({
-        ...ch,
-        position: i,
-      }));
-      onReorderChannels(withPositions);
-    }
-    setDragIdx(null);
-    setOverIdx(null);
-    dragNodeRef.current = null;
-  }, [dragIdx, overIdx, sortedChannels, onReorderChannels]);
-
-  const handleDragLeave = useCallback(() => {
-    setOverIdx(null);
-  }, []);
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950">
@@ -82,45 +68,25 @@ export function Sidebar({
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-2">
+      <nav className="flex-1 overflow-y-auto px-2" data-sidebar-scroll>
         <NavItem to="/" label="All" count={totalBlocks} end />
 
-        {/* Promoted channels */}
-        {sortedChannels.length > 0 && (
-          <>
-            <SectionLabel label="Channels" />
-            {sortedChannels.map((ch, idx) => (
-              <DraggableNavItem
-                key={ch.tag}
-                to={`/channel/${encodeURIComponent(ch.tag)}`}
-                label={ch.title}
-                count={ch.block_count}
-                idx={idx}
-                isDragging={dragIdx === idx}
-                isOver={overIdx === idx && dragIdx !== idx}
-                onDragStart={handleDragStart}
-                onDragOver={handleDragOver}
-                onDragEnd={handleDragEnd}
-                onDragLeave={handleDragLeave}
-              />
-            ))}
-          </>
-        )}
-
-        {/* All tags */}
-        {unpromoted.length > 0 && (
-          <>
-            <SectionLabel label="Tags" />
-            {unpromoted.map((t) => (
-              <NavItem
-                key={t.tag}
-                to={`/channel/${encodeURIComponent(t.tag)}`}
-                label={t.tag}
-                count={t.count}
-              />
-            ))}
-          </>
-        )}
+        {/* Tags */}
+        <TagsHeader />
+        {sortedTags.map((tc) => (
+          <TagNavItem
+            key={tc.tag}
+            to={`/channel/${encodeURIComponent(tc.tag)}`}
+            label={titleFromTag(tc.tag)}
+            count={tc.count}
+            tag={tc.tag}
+            isEditing={editingTag === tc.tag}
+            onMenuOpen={(e) => handleMenuOpen(tc.tag, titleFromTag(tc.tag), e)}
+            onDoubleClick={() => setEditingTag(tc.tag)}
+            onRenameSubmit={(v) => handleRename(tc.tag, v)}
+            onRenameCancel={() => setEditingTag(null)}
+          />
+        ))}
       </nav>
 
       {/* Bottom actions */}
@@ -143,16 +109,41 @@ export function Sidebar({
           </kbd>
         </button>
       </div>
+
+      {/* Tag context menu */}
+      {tagMenu && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setTagMenu(null)}
+          />
+          <TagMenu
+            x={tagMenu.x}
+            y={tagMenu.y}
+            onRename={() => {
+              setEditingTag(tagMenu.tag);
+              setTagMenu(null);
+            }}
+            onDelete={() => {
+              onDeleteTag(tagMenu.tag);
+              setTagMenu(null);
+            }}
+            onClose={() => setTagMenu(null)}
+          />
+        </>
+      )}
     </aside>
   );
 }
 
 // ─── Components ──────────────────────────────────────────────────────────────
 
-function SectionLabel({ label }: { label: string }) {
+function TagsHeader() {
   return (
-    <div className="mx-3 mt-4 mb-1 text-[10px] font-semibold uppercase tracking-widest text-neutral-400">
-      {label}
+    <div className="mx-3 mt-4 mb-1 flex items-center">
+      <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">
+        Tags
+      </span>
     </div>
   );
 }
@@ -186,42 +177,53 @@ function NavItem({
   );
 }
 
-function DraggableNavItem({
+function TagNavItem({
   to,
   label,
   count,
-  idx,
-  isDragging,
-  isOver,
-  onDragStart,
-  onDragOver,
-  onDragEnd,
-  onDragLeave,
+  tag,
+  isEditing,
+  onMenuOpen,
+  onDoubleClick,
+  onRenameSubmit,
+  onRenameCancel,
 }: {
   to: string;
   label: string;
   count: number;
-  idx: number;
-  isDragging: boolean;
-  isOver: boolean;
-  onDragStart: (e: React.DragEvent<HTMLDivElement>, idx: number) => void;
-  onDragOver: (e: React.DragEvent<HTMLDivElement>, idx: number) => void;
-  onDragEnd: () => void;
-  onDragLeave: () => void;
+  tag: string;
+  isEditing: boolean;
+  onMenuOpen: (e: React.MouseEvent) => void;
+  onDoubleClick: () => void;
+  onRenameSubmit: (value: string) => void;
+  onRenameCancel: () => void;
 }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `tag:${tag}` });
+
+  if (isEditing) {
+    return (
+      <InlineInput
+        defaultValue={label}
+        placeholder="Rename..."
+        onSubmit={onRenameSubmit}
+        onCancel={onRenameCancel}
+      />
+    );
+  }
+
   return (
     <div
-      draggable
-      onDragStart={(e) => onDragStart(e, idx)}
-      onDragOver={(e) => onDragOver(e, idx)}
-      onDragEnd={onDragEnd}
-      onDragLeave={onDragLeave}
-      className={`group relative rounded-md transition-opacity ${
-        isDragging ? "opacity-30" : ""
-      } ${isOver ? "before:absolute before:inset-x-1 before:-top-px before:h-0.5 before:rounded-full before:bg-blue-500" : ""}`}
+      ref={setNodeRef}
+      className={`group relative rounded-md transition-all ${
+        isOver ? "ring-2 ring-blue-400 ring-inset" : ""
+      }`}
     >
       <NavLink
         to={to}
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          onDoubleClick();
+        }}
         className={({ isActive }) =>
           `flex items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors ${
             isActive
@@ -230,31 +232,149 @@ function DraggableNavItem({
           }`
         }
       >
-        <GripIcon className="mr-1.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-40" />
-        <span className="truncate flex-1">{label}</span>
+        <span className="flex-1 truncate">{label}</span>
         <span className="ml-2 shrink-0 text-xs text-neutral-400">{count}</span>
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onMenuOpen(e);
+          }}
+          className="ml-1 shrink-0 rounded p-0.5 text-neutral-400 opacity-0 transition-opacity hover:text-neutral-600 group-hover:opacity-100 dark:hover:text-neutral-300"
+        >
+          <EllipsisIcon />
+        </button>
       </NavLink>
     </div>
   );
 }
 
+function TagMenu({
+  x,
+  y,
+  onRename,
+  onDelete,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  onRename: () => void;
+  onDelete: () => void;
+  onClose: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed z-50 min-w-36 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-800"
+      style={{ left: x, top: y }}
+    >
+      {confirming ? (
+        <>
+          <p className="px-3 py-1.5 text-xs text-neutral-500">
+            Remove tag from all cards.
+          </p>
+          <button
+            onClick={onDelete}
+            className="flex w-full px-3 py-1.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
+          >
+            Confirm delete
+          </button>
+          <button
+            onClick={() => setConfirming(false)}
+            className="flex w-full px-3 py-1.5 text-sm text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+          >
+            Cancel
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            onClick={onRename}
+            className="flex w-full px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-700"
+          >
+            Rename
+          </button>
+          <button
+            onClick={() => setConfirming(true)}
+            className="flex w-full px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
+          >
+            Delete
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function InlineInput({
+  placeholder,
+  defaultValue = "",
+  onSubmit,
+  onCancel,
+}: {
+  placeholder: string;
+  defaultValue?: string;
+  onSubmit: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const submitted = useRef(false);
+
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+
+  const doSubmit = (value: string) => {
+    if (submitted.current) return;
+    submitted.current = true;
+    const trimmed = value.trim();
+    if (trimmed) onSubmit(trimmed);
+    else onCancel();
+  };
+
+  return (
+    <input
+      ref={ref}
+      type="text"
+      defaultValue={defaultValue}
+      placeholder={placeholder}
+      className="mx-1 w-[calc(100%-0.5rem)] rounded-md border border-blue-400 bg-white px-3 py-1.5 text-sm outline-none dark:border-blue-600 dark:bg-neutral-900"
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          doSubmit((e.target as HTMLInputElement).value);
+        } else if (e.key === "Escape") {
+          submitted.current = true;
+          onCancel();
+        }
+      }}
+      onBlur={(e) => doSubmit(e.target.value)}
+    />
+  );
+}
+
 // ─── Icons ───────────────────────────────────────────────────────────────────
 
-function GripIcon({ className }: { className?: string }) {
+function EllipsisIcon() {
   return (
     <svg
       width="12"
       height="12"
       viewBox="0 0 12 12"
       fill="currentColor"
-      className={className}
     >
-      <circle cx="4" cy="3" r="1" />
-      <circle cx="8" cy="3" r="1" />
-      <circle cx="4" cy="6" r="1" />
-      <circle cx="8" cy="6" r="1" />
-      <circle cx="4" cy="9" r="1" />
-      <circle cx="8" cy="9" r="1" />
+      <circle cx="2" cy="6" r="1.2" />
+      <circle cx="6" cy="6" r="1.2" />
+      <circle cx="10" cy="6" r="1.2" />
     </svg>
   );
 }

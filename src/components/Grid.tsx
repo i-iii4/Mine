@@ -11,9 +11,10 @@ interface GridProps {
   blocks: IndexedBlock[];
   vaultPath: string;
   onBlockClick: (block: IndexedBlock) => void;
+  onContextMenu?: (block: IndexedBlock, x: number, y: number) => void;
 }
 
-export function Grid({ blocks, vaultPath, onBlockClick }: GridProps) {
+export function Grid({ blocks, vaultPath, onBlockClick, onContextMenu }: GridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [parentWidth, setParentWidth] = useState(0);
@@ -103,6 +104,7 @@ export function Grid({ blocks, vaultPath, onBlockClick }: GridProps) {
                 block={block}
                 vaultPath={vaultPath}
                 onClick={onBlockClick}
+                onContextMenu={onContextMenu}
               />
             ))}
           </div>

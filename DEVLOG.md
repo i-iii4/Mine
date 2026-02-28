@@ -28,6 +28,88 @@ if any
 
 ---
 
+## 27.02.2026 — Теги вместо каналов, dnd-kit, контекстное меню карточки
+
+### Goal
+Три задачи: (A) убрать абстракцию «каналов» (channels) — сайдбар показывает все уникальные теги из frontmatter напрямую; (B) реализовать drag-and-drop карточки на тег в сайдбаре (присвоение тега); (C) добавить контекстное меню карточки с управлением тегами.
+
+### Planned
+1. Бэкенд: команды `rename_tag` и `delete_tag_from_all` (обновление frontmatter во всех .md файлах)
+2. IPC-обёртки для новых команд
+3. Сайдбар: заменить `ChannelDto[]` на `TagCount[]`, алфавитная сортировка, inline-редактирование, контекстное меню тега (переименовать/удалить)
+4. App.tsx: замена channels-состояния на tags, обработчики тегов
+5. CardContextMenu: список всех тегов с чекбоксами, поиск, создание нового тега, удаление карточки
+6. Drag-and-drop карточки на тег в сайдбаре
+7. Исправление коллизии и автоскролла при drag
+
+### Actually completed
+Все 7 пунктов выполнены.
+
+**Бэкенд (tags.rs):**
+- `rename_tag` — находит все блоки с тегом через `list_blocks_by_tag`, в каждом .md обновляет frontmatter (удаляет старый тег, добавляет новый), перезаписывает файл, обновляет индекс
+- `delete_tag_from_all` — аналогично, но только удаляет тег из всех блоков
+- Оба зарегистрированы в `lib.rs`
+
+**IPC (commands.ts):**
+- `renameTag(old_tag, new_tag)` и `deleteTagFromAll(tag)` — обёртки над invoke()
+
+**Sidebar.tsx — полная переработка:**
+- Принимает `TagCount[]` вместо `ChannelDto[]`
+- `titleFromTag()` — `web-design` → `Web Design` для отображения
+- Алфавитная сортировка тегов
+- `TagNavItem` — `useDroppable({ id: "tag:${tag}" })` из dnd-kit, подсветка `ring-2 ring-blue-400` при `isOver`
+- Inline-редактирование: двойной клик → `InlineInput` (Enter/Esc/blur)
+- `TagMenu` — контекстное меню тега: Rename, Delete (с подтверждением)
+- Убрана кнопка «+» (теги создаются через контекстное меню карточки)
+
+**App.tsx — оркестрация dnd-kit:**
+- `DndContext` с `PointerSensor` (distance: 8 для отличия клика от drag)
+- `DragOverlay` с кастомным модификатором `snapToCursor` — миниатюра следует за курсором
+- `handleDndEnd` — если `over.id` начинается с `tag:`, вызывает `addTag(slug, tag)`
+- `collisionDetection={pointerWithin}` — коллизия по позиции курсора, а не bounding rect карточки
+- `autoScroll={{ canScroll: (el) => el.hasAttribute("data-sidebar-scroll") }}` — прокрутка только сайдбара
+
+**Card.tsx — useDraggable:**
+- `useDraggable({ id: block.slug })` вместо HTML5 `draggable`/`onDragStart`
+- `isDragging` → `opacity-30`
+
+**CardContextMenu.tsx — новый компонент:**
+- Список всех тегов с чекбоксами (`onToggleTag`), поиск по тегам
+- Создание нового тега из строки поиска (`slugify()` + проверка уникальности)
+- Удаление карточки с двухшаговым подтверждением
+- Позиционирование: `useLayoutEffect` корректирует координаты, чтобы меню не вышло за viewport
+
+**Sidebar.tsx — data-sidebar-scroll:**
+- Атрибут `data-sidebar-scroll` на `<nav>` — маркер для `autoScroll.canScroll`
+
+**drag.ts — вспомогательный модуль:**
+- `isInternalDragActive()` — флаг для DropZone (не показывать оверлей при внутреннем drag). Сейчас рудиментарный — Card больше не вызывает `setInternalDragActive`, но DropZone по-прежнему проверяет его
+
+**Sidebar.test.tsx — обновление тестов:**
+- Обёрнут в `DndContext`, props заменены на `TagCount[]`
+- Убран `onCardDrop`, проверки: нет draggable-элементов, нет кнопки Create, Tags-заголовок
+
+### Deviations from plan
+- HTML5 Drag and Drop API не работает в Tauri v2: `dragDropEnabled: true` (значение по умолчанию) регистрирует нативный обработчик drag на WKWebView, который перехватывает все HTML5 drag-события до того, как они попадают в DOM. Подтверждено GitHub issues #14373, #8581, #6695. Решение: переход на dnd-kit с Pointer Events (pointerdown/pointermove/pointerup), которые Tauri не перехватывает
+- Стандартная коллизия dnd-kit (`rectIntersection`) определяла цель по bounding rect карточки, а не по курсору — drop попадал не на тот тег. Исправлено через `pointerWithin`
+- По умолчанию dnd-kit прокручивает все scrollable-контейнеры — прокручивалась основная сетка вместо сайдбара. Исправлено через `autoScroll.canScroll` с data-атрибутом
+
+### Checks
+- `tsc --noEmit` — без ошибок
+- `bunx vitest run` — 43/43 пройдено (5 файлов)
+- `cargo test` — 197/197 пройдено (в предыдущей сессии)
+
+### Push
+- (ожидает коммит)
+
+### Decisions and lessons learned
+1. **HTML5 DnD несовместим с Tauri v2**: WKWebView перехватывает drag-события на нативном уровне для поддержки перетаскивания файлов из Finder. Pointer Events (dnd-kit) работают параллельно — два DnD-потока не конфликтуют
+2. **pointerWithin > rectIntersection**: для сценария «маленькая цель (тег 32px) + большой источник (карточка 300px)» коллизия по курсору — единственно правильная стратегия
+3. **data-атрибут для canScroll**: CSS-классы Tailwind генерируются и могут меняться. Data-атрибут — стабильный семантический маркер, не зависящий от стилей
+4. **snapToCursor модификатор**: DragOverlay по умолчанию привязан к начальной позиции перетаскиваемого элемента. Кастомный модификатор смещает его к позиции курсора через разницу между clientX/Y и draggingNodeRect
+
+---
+
 ## 27.02.2026 — Исправление drag-and-drop и сброса прокрутки
 
 ### Goal
