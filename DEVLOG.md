@@ -93,7 +93,7 @@ if any
 - Нет ручного позиционирования меню: всё через Radix ContextMenu/DropdownMenu
 
 ### Push
-pending
+`f8ca8dc` Migrate all interactive elements to shadcn/ui (14 primitives)
 
 ### Decisions and lessons learned
 - **ContextMenu + dnd-kit**: правый клик (ContextMenu) и перетаскивание (PointerSensor) не конфликтуют — разные типы событий
