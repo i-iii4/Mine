@@ -1,25 +1,34 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { BlockType } from "@/types";
 import { createBlock } from "@/lib/commands";
 import { isInternalDragActive } from "@/lib/drag";
 
 interface DropZoneProps {
+  currentTag?: string;
   onBlocksCreated: () => void;
 }
 
-export function DropZone({ onBlocksCreated }: DropZoneProps) {
+export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
   const [dragging, setDragging] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Refs to avoid re-registering the Tauri listener on navigation
+  const currentTagRef = useRef(currentTag);
+  currentTagRef.current = currentTag;
+  const importingRef = useRef(false);
+
   const handleDrop = useCallback(
     async (paths: string[]) => {
-      if (paths.length === 0) return;
+      if (paths.length === 0 || importingRef.current) return;
+      importingRef.current = true;
 
       setDragging(false);
       setImporting(true);
       setError(null);
+
+      const tags = currentTagRef.current ? [currentTagRef.current] : [];
 
       try {
         for (const filePath of paths) {
@@ -30,7 +39,7 @@ export function DropZone({ onBlocksCreated }: DropZoneProps) {
           await createBlock({
             block_type: blockType,
             title,
-            tags: [],
+            tags,
             file_path: filePath,
           });
         }
@@ -40,6 +49,7 @@ export function DropZone({ onBlocksCreated }: DropZoneProps) {
         console.error("Failed to create block from drop:", msg);
         setError(msg);
       } finally {
+        importingRef.current = false;
         setImporting(false);
       }
     },

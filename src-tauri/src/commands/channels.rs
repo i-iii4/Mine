@@ -105,6 +105,7 @@ pub struct ReorderItem {
 }
 
 /// Reorder channels by setting new positions for each tag.
+/// Tags without channel entries are auto-created.
 #[tauri::command]
 pub fn reorder_channels(
     state: State<'_, AppState>,
@@ -112,6 +113,22 @@ pub fn reorder_channels(
 ) -> Result<(), CommandError> {
     let vault_state = state.vault_state.lock().unwrap();
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+
+    // Find tags that don't have channel entries yet
+    let existing = index::list_channels(&vs.conn)?;
+    let existing_tags: std::collections::HashSet<&str> =
+        existing.iter().map(|c| c.tag.as_str()).collect();
+
+    let now = crate::commands::state::now_iso8601();
+    for item in &items {
+        if !existing_tags.contains(item.tag.as_str()) {
+            let dt = DateTime::new(&now)
+                .map_err(|e| CommandError::Internal(e.to_string()))?;
+            let channel = Channel::new(&item.tag, None, dt)
+                .map_err(|e| CommandError::Internal(e.to_string()))?;
+            index::upsert_channel(&vs.conn, &channel)?;
+        }
+    }
 
     let positions: Vec<(String, u32)> = items
         .into_iter()

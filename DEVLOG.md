@@ -28,6 +28,66 @@ if any
 
 ---
 
+## 28.02.2026 — Drag-and-drop каналов, багфиксы drop-зоны и создания каналов
+
+### Goal
+Две задачи: (A) реализовать перетаскивание каналов в сайдбаре для изменения порядка; (B) исправить пять багов — drop файлов без тега, дублирование блоков, синее кольцо при перетаскивании каналов, канал остаётся после удаления тега, создание каналов с не-ASCII названиями.
+
+### Planned
+1. @dnd-kit/sortable для перетаскивания каналов в сайдбаре
+2. Кнопка «New channel» с inline-вводом
+3. Исправление file drop: тег текущего канала, защита от дублирования
+4. Синее кольцо только при перетаскивании карточки, не канала
+5. Удаление записи канала при удалении тега из всех карточек
+6. Исправление slugifyTag: Unicode-совместимость
+
+### Actually completed
+Все 6 пунктов выполнены.
+
+**@dnd-kit/sortable (7.13):**
+- Установлен `@dnd-kit/sortable@10.0.0`
+- `Sidebar.tsx`: `SortableContext` + `verticalListSortingStrategy`, `TagNavItem` использует `useSortable` вместо `useDroppable` — каждый тег одновременно draggable и droppable
+- `App.tsx`: `orderedTags` useMemo — объединяет `tags` и `channels` по позиции, каналы без блоков тоже показываются
+- `App.tsx`: `handleReorderTag` — `arrayMove` + `reorderChannels` с позициями для всех тегов
+- `App.tsx`: `activeDragTag` состояние + DragOverlay для перетаскиваемого тега
+- `App.tsx`: `handleDndStart/End/Cancel` — различают tag:* и card ID по префиксу
+- `channels.rs`: `reorder_channels` автоматически создаёт записи каналов для тегов без них
+
+**Кнопка «New channel» (7.13):**
+- `Sidebar.tsx`: `isCreating` состояние, `InlineInput` для ввода названия, `PlusIcon`
+- `App.tsx`: `handleCreateChannel` → `createChannel(tag)` + `loadData()`
+
+**Багфиксы (7.14):**
+
+1. *File drop без тега текущего канала*: `App.tsx` вычисляет `currentTag` из `useLocation().pathname`, передаёт в `DropZone`. `DropZone.tsx` принимает `currentTag`, хранит в `currentTagRef` (ref, чтобы не перерегистрировать Tauri-листенер), при создании блока добавляет тег
+
+2. *Дублирование блоков при drop*: `DropZone.tsx` — `importingRef` guard предотвращает повторный вход в `handleDrop` (Tauri может отправить событие drop дважды)
+
+3. *Синее кольцо при перетаскивании каналов*: `App.tsx` передаёт `isCardDragging={activeDragBlock !== null}` в `Sidebar`. `TagNavItem` показывает `ring-2 ring-blue-400` только при `isOver && isCardDragging`
+
+4. *Канал остаётся после удаления тега*: `App.tsx` — `handleDeleteTagFromAll` вызывает `deleteChannel(tag).catch(() => {})` параллельно с `deleteTagFromAll(tag)`
+
+5. *Создание каналов с не-ASCII названиями*: удалён `slugifyTag` из фронтенда — JavaScript `\w` не поддерживает Unicode. Текст передаётся напрямую в бэкенд, где Rust `normalize_tag` корректно обрабатывает кириллицу через `char::is_alphanumeric()`
+
+### Deviations from plan
+Нет отклонений.
+
+### Checks
+- `tsc --noEmit` — без ошибок
+- `bunx vitest run` — 42/42 пройдено (5 файлов)
+
+### Push
+- `COMMIT_HASH` — Add channel drag-reorder, fix drop zone and channel creation bugs
+
+### Decisions and lessons learned
+1. **useSortable = useDraggable + useDroppable**: один хук делает элемент и источником, и целью перетаскивания. Для перетаскивания каналов в сайдбаре — идеальный выбор
+2. **ID-префикс для различения типов drag**: карточки используют slug (`sunset-tokyo`), теги — `tag:photography`. `handleDndEnd` по префиксу определяет тип операции: tag→tag = reorder, card→tag = присвоение тега
+3. **isCardDragging пропс вместо active из useSortable**: `useSortable` не знает, что именно перетаскивается. Булев флаг из `DndContext` явнее, проще типизируется и не зависит от внутреннего API dnd-kit
+4. **Ref для Tauri-листенера**: `currentTagRef.current = currentTag` — обновляет значение без повторной регистрации `onDragDropEvent`. Листенер Tauri регистрируется один раз, ref даёт доступ к актуальному значению
+5. **Нормализация Unicode — только на бэкенде**: Rust `char::is_alphanumeric()` поддерживает Unicode, JavaScript `\w` — нет. Дублировать логику нормализации на фронтенде вредно — единый источник истины на бэкенде
+
+---
+
 ## 27.02.2026 — Теги вместо каналов, dnd-kit, контекстное меню карточки
 
 ### Goal

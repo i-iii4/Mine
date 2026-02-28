@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { NavLink } from "react-router";
-import { useDroppable } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { TagCount } from "@/types";
 
 /** Convert a normalized tag slug to a display title: `web-design` -> `Web Design` */
@@ -12,12 +13,14 @@ function titleFromTag(tag: string): string {
 }
 
 interface SidebarProps {
-  tags: TagCount[];
+  orderedTags: TagCount[];
   totalBlocks: number;
+  isCardDragging: boolean;
   onSearchOpen: () => void;
   onImportOpen: () => void;
   onDeleteTag: (tag: string) => void;
   onRenameTag: (oldTag: string, newTag: string) => void;
+  onCreateChannel: (tag: string) => void;
 }
 
 interface TagMenuState {
@@ -28,18 +31,19 @@ interface TagMenuState {
 }
 
 export function Sidebar({
-  tags,
+  orderedTags,
   totalBlocks,
+  isCardDragging,
   onSearchOpen,
   onImportOpen,
   onDeleteTag,
   onRenameTag,
+  onCreateChannel,
 }: SidebarProps) {
-  const sortedTags = [...tags].sort((a, b) => a.tag.localeCompare(b.tag));
-
   // ── State ──────────────────────────────────────────────────────────────
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [tagMenu, setTagMenu] = useState<TagMenuState | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
 
   // ── Tag CRUD handlers ─────────────────────────────────────────────────
 
@@ -71,22 +75,46 @@ export function Sidebar({
       <nav className="flex-1 overflow-y-auto px-2" data-sidebar-scroll>
         <NavItem to="/" label="All" count={totalBlocks} end />
 
-        {/* Tags */}
-        <TagsHeader />
-        {sortedTags.map((tc) => (
-          <TagNavItem
-            key={tc.tag}
-            to={`/channel/${encodeURIComponent(tc.tag)}`}
-            label={titleFromTag(tc.tag)}
-            count={tc.count}
-            tag={tc.tag}
-            isEditing={editingTag === tc.tag}
-            onMenuOpen={(e) => handleMenuOpen(tc.tag, titleFromTag(tc.tag), e)}
-            onDoubleClick={() => setEditingTag(tc.tag)}
-            onRenameSubmit={(v) => handleRename(tc.tag, v)}
-            onRenameCancel={() => setEditingTag(null)}
+        <SortableContext
+          items={orderedTags.map((tc) => `tag:${tc.tag}`)}
+          strategy={verticalListSortingStrategy}
+        >
+          {orderedTags.map((tc) => (
+            <TagNavItem
+              key={tc.tag}
+              to={`/channel/${encodeURIComponent(tc.tag)}`}
+              label={titleFromTag(tc.tag)}
+              count={tc.count}
+              tag={tc.tag}
+              isCardDragging={isCardDragging}
+              isEditing={editingTag === tc.tag}
+              onMenuOpen={(e) => handleMenuOpen(tc.tag, titleFromTag(tc.tag), e)}
+              onDoubleClick={() => setEditingTag(tc.tag)}
+              onRenameSubmit={(v) => handleRename(tc.tag, v)}
+              onRenameCancel={() => setEditingTag(null)}
+            />
+          ))}
+        </SortableContext>
+
+        {isCreating ? (
+          <InlineInput
+            defaultValue=""
+            placeholder="New channel..."
+            onSubmit={(value) => {
+              onCreateChannel(value);
+              setIsCreating(false);
+            }}
+            onCancel={() => setIsCreating(false)}
           />
-        ))}
+        ) : (
+          <button
+            onClick={() => setIsCreating(true)}
+            className="mt-1 flex w-full items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-900 dark:hover:text-neutral-300"
+          >
+            <PlusIcon />
+            <span>New channel</span>
+          </button>
+        )}
       </nav>
 
       {/* Bottom actions */}
@@ -138,16 +166,6 @@ export function Sidebar({
 
 // ─── Components ──────────────────────────────────────────────────────────────
 
-function TagsHeader() {
-  return (
-    <div className="mx-3 mt-4 mb-1 flex items-center">
-      <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">
-        Tags
-      </span>
-    </div>
-  );
-}
-
 function NavItem({
   to,
   label,
@@ -182,6 +200,7 @@ function TagNavItem({
   label,
   count,
   tag,
+  isCardDragging,
   isEditing,
   onMenuOpen,
   onDoubleClick,
@@ -192,13 +211,27 @@ function TagNavItem({
   label: string;
   count: number;
   tag: string;
+  isCardDragging: boolean;
   isEditing: boolean;
   onMenuOpen: (e: React.MouseEvent) => void;
   onDoubleClick: () => void;
   onRenameSubmit: (value: string) => void;
   onRenameCancel: () => void;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `tag:${tag}` });
+  const {
+    setNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+    isOver,
+  } = useSortable({ id: `tag:${tag}` });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
 
   if (isEditing) {
     return (
@@ -214,12 +247,16 @@ function TagNavItem({
   return (
     <div
       ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
       className={`group relative rounded-md transition-all ${
-        isOver ? "ring-2 ring-blue-400 ring-inset" : ""
-      }`}
+        isDragging ? "opacity-30" : ""
+      } ${isOver && !isDragging && isCardDragging ? "ring-2 ring-blue-400 ring-inset" : ""}`}
     >
       <NavLink
         to={to}
+        draggable="false"
         onDoubleClick={(e) => {
           e.preventDefault();
           onDoubleClick();
@@ -363,6 +400,22 @@ function InlineInput({
 }
 
 // ─── Icons ───────────────────────────────────────────────────────────────────
+
+function PlusIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    >
+      <path d="M6 2v8M2 6h8" />
+    </svg>
+  );
+}
 
 function EllipsisIcon() {
   return (

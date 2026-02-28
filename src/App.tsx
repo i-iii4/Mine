@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   BrowserRouter,
   Routes,
@@ -7,6 +7,7 @@ import {
   useParams,
   useOutletContext,
   useNavigate,
+  useLocation,
 } from "react-router";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -20,6 +21,15 @@ import {
   type DragEndEvent,
   type Modifier,
 } from "@dnd-kit/core";
+import { arrayMove } from "@dnd-kit/sortable";
+
+/** Convert a normalized tag slug to a display title: `web-design` -> `Web Design` */
+function titleFromTag(tag: string): string {
+  return tag
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
 
 /** Center the DragOverlay on the cursor rather than on the dragged element's origin. */
 const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, overlayNodeRect, transform }) => {
@@ -34,17 +44,22 @@ const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, overlayNodeR
   };
 };
 
-import type { IndexedBlock, TagCount } from "@/types";
+import type { IndexedBlock, TagCount, ChannelDto } from "@/types";
 import {
   getVaultPath,
   listBlocks,
   listTags,
+  listChannels,
+  createChannel,
+  deleteChannel,
+  reorderChannels,
   renameTag,
   deleteTagFromAll,
   addTag,
   removeTag,
   deleteBlock,
 } from "@/lib/commands";
+import { setInternalDragActive } from "@/lib/drag";
 import { VaultPicker } from "@/components/VaultPicker";
 import { Sidebar } from "@/components/Sidebar";
 import { Grid } from "@/components/Grid";
@@ -96,14 +111,21 @@ interface ContextMenuState {
 
 function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const currentTag = location.pathname.startsWith("/channel/")
+    ? decodeURIComponent(location.pathname.slice("/channel/".length))
+    : undefined;
 
   const [blocks, setBlocks] = useState<IndexedBlock[]>([]);
   const [tags, setTags] = useState<TagCount[]>([]);
+  const [channels, setChannels] = useState<ChannelDto[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<IndexedBlock | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [activeDragBlock, setActiveDragBlock] = useState<IndexedBlock | null>(null);
+  const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
 
   // ── dnd-kit sensors ────────────────────────────────────────────────────
   const sensors = useSensors(
@@ -111,9 +133,10 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   );
 
   const loadData = useCallback(async () => {
-    const [b, t] = await Promise.all([listBlocks(), listTags()]);
+    const [b, t, ch] = await Promise.all([listBlocks(), listTags(), listChannels()]);
     setBlocks(b);
     setTags(t);
+    setChannels(ch);
   }, []);
 
   useEffect(() => {
@@ -181,9 +204,64 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const handleDeleteTagFromAll = useCallback(
     async (tag: string) => {
       await deleteTagFromAll(tag);
+      await deleteChannel(tag).catch(() => {});
       await loadData();
     },
     [loadData],
+  );
+
+  // ── Ordered tags: channels by position, then remaining alphabetically ──
+
+  const orderedTags = useMemo(() => {
+    const channelPositions = new Map(channels.map((c) => [c.tag, c.position]));
+    const withPos: (TagCount & { pos: number })[] = [];
+    const noPos: TagCount[] = [];
+
+    for (const tc of tags) {
+      const pos = channelPositions.get(tc.tag);
+      if (pos !== undefined) {
+        withPos.push({ ...tc, pos });
+      } else {
+        noPos.push(tc);
+      }
+    }
+
+    // Channels that exist but have no blocks yet
+    for (const ch of channels) {
+      if (!tags.some((tc) => tc.tag === ch.tag)) {
+        withPos.push({ tag: ch.tag, count: 0, pos: ch.position });
+      }
+    }
+
+    withPos.sort((a, b) => a.pos - b.pos);
+    noPos.sort((a, b) => a.tag.localeCompare(b.tag));
+
+    return [...withPos, ...noPos].map(({ tag, count }) => ({ tag, count }));
+  }, [tags, channels]);
+
+  // ── Channel management ─────────────────────────────────────────────────
+
+  const handleCreateChannel = useCallback(
+    async (tag: string) => {
+      await createChannel(tag);
+      await loadData();
+    },
+    [loadData],
+  );
+
+  const handleReorderTag = useCallback(
+    async (activeTag: string, overTag: string) => {
+      const currentOrder = orderedTags.map((t) => t.tag);
+      const oldIndex = currentOrder.indexOf(activeTag);
+      const newIndex = currentOrder.indexOf(overTag);
+      if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
+
+      const newOrder = arrayMove(currentOrder, oldIndex, newIndex);
+      const items = newOrder.map((tag, i) => ({ tag, position: i }));
+      await reorderChannels(items);
+      await loadData();
+    },
+    [orderedTags, loadData],
   );
 
   // ── Card drag-to-tag (dnd-kit) ──────────────────────────────────────────
@@ -198,26 +276,50 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleDndStart = useCallback(
     (event: DragStartEvent) => {
-      const slug = String(event.active.id);
-      const block = blocks.find((b) => b.slug === slug);
-      if (block) setActiveDragBlock(block);
+      setInternalDragActive(true);
+      const id = String(event.active.id);
+      if (id.startsWith("tag:")) {
+        setActiveDragTag(id.slice(4));
+        setActiveDragBlock(null);
+      } else {
+        const block = blocks.find((b) => b.slug === id);
+        if (block) setActiveDragBlock(block);
+        setActiveDragTag(null);
+      }
     },
     [blocks],
   );
 
   const handleDndEnd = useCallback(
     (event: DragEndEvent) => {
+      setInternalDragActive(false);
       setActiveDragBlock(null);
+      setActiveDragTag(null);
       const { active, over } = event;
       if (!over) return;
+
+      const activeId = String(active.id);
       const overId = String(over.id);
-      if (!overId.startsWith("tag:")) return;
-      const tag = overId.slice(4);
-      const slug = String(active.id);
-      handleCardDrop(slug, tag);
+
+      // Tag reorder in sidebar
+      if (activeId.startsWith("tag:") && overId.startsWith("tag:")) {
+        handleReorderTag(activeId.slice(4), overId.slice(4));
+        return;
+      }
+
+      // Card dropped on tag
+      if (!activeId.startsWith("tag:") && overId.startsWith("tag:")) {
+        handleCardDrop(activeId, overId.slice(4));
+      }
     },
-    [handleCardDrop],
+    [handleCardDrop, handleReorderTag],
   );
+
+  const handleDndCancel = useCallback(() => {
+    setInternalDragActive(false);
+    setActiveDragBlock(null);
+    setActiveDragTag(null);
+  }, []);
 
   // ── Context menu ──────────────────────────────────────────────────────────
 
@@ -276,15 +378,18 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       autoScroll={{ canScroll: (el) => el.hasAttribute("data-sidebar-scroll") }}
       onDragStart={handleDndStart}
       onDragEnd={handleDndEnd}
+      onDragCancel={handleDndCancel}
     >
     <div className="flex h-screen w-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
       <Sidebar
-        tags={tags}
+        orderedTags={orderedTags}
         totalBlocks={blocks.length}
+        isCardDragging={activeDragBlock !== null}
         onSearchOpen={() => setSearchOpen(true)}
         onImportOpen={() => setImportOpen(true)}
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}
+        onCreateChannel={handleCreateChannel}
       />
 
       <main className="flex-1 overflow-hidden">
@@ -314,7 +419,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         }}
       />
 
-      <DropZone onBlocksCreated={loadData} />
+      <DropZone currentTag={currentTag} onBlocksCreated={loadData} />
 
       <ImportDialog
         open={importOpen}
@@ -350,6 +455,11 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       {activeDragBlock && (
         <div className="pointer-events-none rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm shadow-lg dark:border-neutral-600 dark:bg-neutral-800">
           {activeDragBlock.title ?? activeDragBlock.slug}
+        </div>
+      )}
+      {activeDragTag && (
+        <div className="pointer-events-none rounded-md bg-neutral-200 px-3 py-1.5 text-sm font-medium shadow-lg dark:bg-neutral-700">
+          {titleFromTag(activeDragTag)}
         </div>
       )}
     </DragOverlay>

@@ -10,12 +10,14 @@ function tag(name: string, count = 3): TagCount {
 }
 
 const defaultProps = {
-  tags: [tag("beta", 5), tag("alpha", 10)],
+  orderedTags: [tag("alpha", 10), tag("beta", 5)],
   totalBlocks: 17,
+  isCardDragging: false,
   onSearchOpen: vi.fn(),
   onImportOpen: vi.fn(),
   onDeleteTag: vi.fn(),
   onRenameTag: vi.fn(),
+  onCreateChannel: vi.fn(),
 };
 
 function renderSidebar(props = defaultProps) {
@@ -41,17 +43,17 @@ describe("Sidebar", () => {
     expect(within(allLink).getByText("17")).toBeInTheDocument();
   });
 
-  it("renders tags sorted alphabetically", () => {
+  it("renders tags in provided order", () => {
     renderSidebar();
     const links = screen.getAllByRole("link");
-    // "All" link is first, then "Alpha" (a < b), then "Beta"
+    // "All" link is first, then tags in orderedTags order
     expect(links[1]).toHaveTextContent("Alpha");
     expect(links[2]).toHaveTextContent("Beta");
   });
 
-  it("renders Tags section header", () => {
+  it("does not render Tags section header", () => {
     renderSidebar();
-    expect(screen.getByText("Tags")).toBeInTheDocument();
+    expect(screen.queryByText("Tags")).not.toBeInTheDocument();
   });
 
   it("renders search button with keyboard shortcut", () => {
@@ -66,21 +68,17 @@ describe("Sidebar", () => {
     ).toBeInTheDocument();
   });
 
-  it("tag items are not draggable", () => {
-    const { container } = renderSidebar();
-    const draggables = container.querySelectorAll("[draggable='true']");
-    expect(draggables.length).toBe(0);
-  });
-
-  it("shows Tags header even when no tags", () => {
-    renderSidebar({ ...defaultProps, tags: [] });
-    expect(screen.getByText("Tags")).toBeInTheDocument();
-  });
-
-  it("does not show create button (tags created via context menu)", () => {
+  it("renders New channel button", () => {
     renderSidebar();
     expect(
-      screen.queryByRole("button", { name: /Create/ }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: /New channel/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows New channel button even when no tags", () => {
+    renderSidebar({ ...defaultProps, orderedTags: [] });
+    expect(
+      screen.getByRole("button", { name: /New channel/ }),
+    ).toBeInTheDocument();
   });
 });
