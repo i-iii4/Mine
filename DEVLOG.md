@@ -59,7 +59,7 @@ if any
 - `tsc --noEmit` — без ошибок
 
 ### Push
-- `COMMIT_HASH` — Improve thumbnail quality for Retina and reposition DragOverlay
+- `6a46aa2` — Improve thumbnail quality for Retina and reposition DragOverlay
 
 ### Decisions and lessons learned
 1. **480px = 2x Retina**: минимальная ширина столбца 240 CSS-пикселей, на Retina нужно 480 физических. 3x на Mac не используется. JPEG 85 при 480px — ~30-50 КБ на файл
