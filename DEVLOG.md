@@ -28,6 +28,50 @@ if any
 
 ---
 
+## 28.02.2026 — Миграция всех компонентов на семантические токены
+
+### Goal
+Довести миграцию на shadcn/ui до конца: заменить все хардкоды `neutral-*` и `dark:` классов на семантические токены во всех React-компонентах. После этого смена палитры требует правки только CSS-переменных.
+
+### Planned
+Механическая замена в 9 файлах (87 хардкодов), от простых к сложным:
+1. Grid (1) -> DropZone (2) -> App DragOverlay (2) -> VaultPicker (7)
+2. CardContextMenu (9) -> Search (10) -> Card (14) -> Detail (16) -> ImportDialog (26)
+
+### Actually completed
+Все 9 файлов обработаны. Добавлен `cn()` в Card, Search, CardContextMenu.
+
+**Замены по файлам:**
+- `Grid.tsx` — `text-neutral-400` -> `text-muted-foreground`
+- `DropZone.tsx` — `bg-white dark:bg-neutral-900` -> `bg-card`, `text-neutral-700 dark:text-neutral-300` -> `text-foreground`
+- `App.tsx` — DragOverlay: `bg-white border-neutral-300 dark:...` -> `bg-card border-border`, `bg-neutral-200 dark:...` -> `bg-secondary`
+- `VaultPicker.tsx` — фон, текст, кнопка, ошибка: `bg-background`, `text-foreground`, `bg-primary text-primary-foreground`, `text-destructive`
+- `CardContextMenu.tsx` — input: `border-input bg-background focus:border-ring`; чекбокс: `border-primary bg-primary text-primary-foreground`; ховеры: `hover:bg-accent`; delete: `text-destructive hover:bg-destructive/10`
+- `Search.tsx` — палитра: `bg-popover border-border`, `text-foreground`, `bg-accent`, бэдж: `bg-secondary text-muted-foreground`
+- `Card.tsx` — контейнер: `bg-card border-border`; текст: `text-foreground`, `text-muted-foreground`; фолбэк: `bg-muted`
+- `Detail.tsx` — диалог: `bg-card`; бордер: `border-border`; теги: `bg-secondary text-muted-foreground`; файл: `bg-muted`
+- `ImportDialog.tsx` — диалог: `bg-card`; кнопки: `bg-primary text-primary-foreground`; input: `border-input bg-background`; прогресс: `bg-secondary` / `bg-primary`; ошибка: `bg-destructive/10 text-destructive`
+
+### Deviations from plan
+- `LINK_COLORS` в Card.tsx (декоративные цвета) и `prose-neutral dark:prose-invert` в Detail.tsx (плагин typography) намеренно оставлены без замены — как и планировалось
+- Фактически `neutral-` не найден нигде в src/ (даже LINK_COLORS используют другие цвета: blue, emerald, violet и т.д.)
+
+### Checks
+- `npx tsc --noEmit` — 0 ошибок
+- `bunx vitest run` — 42/42 тестов
+- `grep neutral- src/` — 0 совпадений
+- Все 9 компонентов на семантических токенах
+
+### Push
+3fc609d — Migrate all components to semantic design tokens
+
+### Decisions and lessons learned
+- Подход «только токены, без shadcn-примитивов» оправдал себя: минимальный риск, все тесты прошли без изменений, визуально ничего не сломалось
+- Три кандидата на shadcn-примитивы (Command для Search, Dialog для ImportDialog, ContextMenu для CardContextMenu) отклонены по техническим причинам: конфликты с IPC-debounce, захват фокуса, кастомное позиционирование
+- `cn()` вместо шаблонных литералов улучшает читаемость и безопасность (tailwind-merge разрешает конфликты классов)
+
+---
+
 ## 28.02.2026 — Фундамент дизайн-системы: shadcn/ui
 
 ### Goal
