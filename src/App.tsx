@@ -445,6 +445,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
           x={contextMenu.x}
           y={contextMenu.y}
           tags={tags}
+          currentTag={currentTag}
           onToggleTag={handleToggleTag}
           onCreateAndAssign={handleCreateTagFromMenu}
           onDelete={handleDeleteBlock}

@@ -7,6 +7,7 @@ interface CardContextMenuProps {
   x: number;
   y: number;
   tags: TagCount[];
+  currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onDelete: (slug: string) => void;
@@ -26,6 +27,7 @@ export function CardContextMenu({
   x,
   y,
   tags,
+  currentTag,
   onToggleTag,
   onCreateAndAssign,
   onDelete,
@@ -76,15 +78,24 @@ export function CardContextMenu({
     };
   }, [onClose]);
 
-  // Sort tags: assigned first, then recent, then alphabetical
+  // Sort tags: current channel > assigned > recent > alphabetical
   const recentTags = getRecentTags();
   const recentSet = new Set(recentTags);
 
   const sortedTags = [...tags].sort((a, b) => {
+    // Level 0: current channel always first
+    if (currentTag) {
+      const aCur = a.tag === currentTag;
+      const bCur = b.tag === currentTag;
+      if (aCur !== bCur) return aCur ? -1 : 1;
+    }
+
+    // Level 1: assigned tags (block is in this channel)
     const aHas = block.tags.includes(a.tag);
     const bHas = block.tags.includes(b.tag);
     if (aHas !== bHas) return aHas ? -1 : 1;
 
+    // Level 2: recently used
     const aRecent = recentSet.has(a.tag);
     const bRecent = recentSet.has(b.tag);
     if (aRecent !== bRecent) return aRecent ? -1 : 1;
@@ -92,6 +103,7 @@ export function CardContextMenu({
       return recentTags.indexOf(a.tag) - recentTags.indexOf(b.tag);
     }
 
+    // Level 3: alphabetical
     return a.tag.localeCompare(b.tag);
   });
 
