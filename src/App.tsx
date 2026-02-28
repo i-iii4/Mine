@@ -59,6 +59,7 @@ import {
   deleteBlock,
 } from "@/lib/commands";
 import { setInternalDragActive } from "@/lib/drag";
+import { pushRecentTag } from "@/lib/recentTags";
 import { VaultPicker } from "@/components/VaultPicker";
 import { Sidebar } from "@/components/Sidebar";
 import { Grid } from "@/components/Grid";
@@ -335,6 +336,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         await removeTag(slug, tag);
       } else {
         await addTag(slug, tag);
+        pushRecentTag(tag);
       }
       // Optimistic update of context menu block tags
       setContextMenu((prev) => {
@@ -352,6 +354,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const handleCreateTagFromMenu = useCallback(
     async (tag: string, blockSlug: string) => {
       await addTag(blockSlug, tag);
+      pushRecentTag(tag);
       setContextMenu((prev) => {
         if (!prev || prev.block.slug !== blockSlug) return prev;
         return { ...prev, block: { ...prev.block, tags: [...prev.block.tags, tag] } };

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useLayoutEffect, useState } from "react";
 import type { IndexedBlock, TagCount } from "@/types";
+import { getRecentTags } from "@/lib/recentTags";
 
 interface CardContextMenuProps {
   block: IndexedBlock;
@@ -75,19 +76,34 @@ export function CardContextMenu({
     };
   }, [onClose]);
 
-  // Filter tags by search
+  // Sort tags: assigned first, then recent, then alphabetical
+  const recentTags = getRecentTags();
+  const recentSet = new Set(recentTags);
+
+  const sortedTags = [...tags].sort((a, b) => {
+    const aHas = block.tags.includes(a.tag);
+    const bHas = block.tags.includes(b.tag);
+    if (aHas !== bHas) return aHas ? -1 : 1;
+
+    const aRecent = recentSet.has(a.tag);
+    const bRecent = recentSet.has(b.tag);
+    if (aRecent !== bRecent) return aRecent ? -1 : 1;
+    if (aRecent && bRecent) {
+      return recentTags.indexOf(a.tag) - recentTags.indexOf(b.tag);
+    }
+
+    return a.tag.localeCompare(b.tag);
+  });
+
+  // Filter by search
   const lc = search.toLowerCase();
-  const sortedTags = [...tags].sort((a, b) => a.tag.localeCompare(b.tag));
   const filtered = lc
-    ? sortedTags.filter((tc) => tc.tag.toLowerCase().includes(lc))
+    ? sortedTags.filter((tc) => titleFromTag(tc.tag).toLowerCase().includes(lc))
     : sortedTags;
 
-  // Can we offer to create a new tag from the search text?
-  const slugified = slugify(search);
-  const canCreate =
-    search.trim().length > 0 &&
-    slugified.length > 0 &&
-    !tags.some((tc) => tc.tag === slugified);
+  // Offer to create when search has no matches
+  const trimmed = search.trim();
+  const canCreate = trimmed.length > 0 && filtered.length === 0;
 
   return (
     <div
@@ -102,7 +118,7 @@ export function CardContextMenu({
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search tags..."
+          placeholder="Search channels..."
           className="w-full rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-1.5 text-sm outline-none focus:border-neutral-400 dark:border-neutral-600 dark:bg-neutral-900 dark:focus:border-neutral-500"
           onClick={(e) => e.stopPropagation()}
         />
@@ -144,7 +160,7 @@ export function CardContextMenu({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onCreateAndAssign(slugified, block.slug);
+              onCreateAndAssign(trimmed, block.slug);
               setSearch("");
             }}
             className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-neutral-900 hover:bg-neutral-100 dark:text-neutral-100 dark:hover:bg-neutral-700"
@@ -153,56 +169,48 @@ export function CardContextMenu({
               +
             </span>
             <span>
-              Create &ldquo;{search.trim()}&rdquo;
+              Create &ldquo;{trimmed}&rdquo;
             </span>
           </button>
         )}
 
         {filtered.length === 0 && !canCreate && (
           <p className="px-2 py-3 text-center text-xs text-neutral-400">
-            No tags
+            No channels
           </p>
         )}
       </div>
 
-      {/* Delete */}
-      <div className="border-t border-neutral-200 px-1 py-0.5 dark:border-neutral-700">
-        {confirmingDelete ? (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(block.slug);
-            }}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
-          >
-            <TrashIcon />
-            <span>Confirm delete</span>
-          </button>
-        ) : (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setConfirmingDelete(true);
-            }}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
-          >
-            <TrashIcon />
-            <span>Delete card</span>
-          </button>
-        )}
-      </div>
+      {/* Delete — hidden while searching */}
+      {!search && (
+        <div className="border-t border-neutral-200 px-1 py-0.5 dark:border-neutral-700">
+          {confirmingDelete ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(block.slug);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+            >
+              <TrashIcon />
+              <span>Confirm delete</span>
+            </button>
+          ) : (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setConfirmingDelete(true);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
+            >
+              <TrashIcon />
+              <span>Delete card</span>
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
-}
-
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/[\s_]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 50);
 }
 
 function TrashIcon() {

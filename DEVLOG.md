@@ -28,6 +28,61 @@ if any
 
 ---
 
+## 28.02.2026 — Меню каналов: MRU, создание, UX-улучшения
+
+### Goal
+Три улучшения в контекстном меню карточки (`CardContextMenu`) и попапе клиппера: (A) скрывать «Delete card» при поиске канала; (B) предлагать создание нового канала, если поисковый запрос не совпал ни с одним существующим; (C) ранжировать каналы по недавнему использованию (MRU). Правила B и C — единообразно для обоих интерфейсов.
+
+### Planned
+1. Условный рендеринг секции «Delete card» — скрыть при `search !== ""`
+2. Кнопка «Create "..."» при пустой фильтрации
+3. MRU-хранение в `localStorage` (`arena:recentTags`, макс. 10)
+4. Трёхуровневая сортировка: присвоенные → недавние → алфавит
+5. Обновление MRU при добавлении тега и создании канала
+6. Удаление `slugify()` — делегирование нормализации бэкенду (Unicode)
+7. Клиппер: выбранные каналы первыми, удаление `slugify()`
+
+### Actually completed
+Все 7 пунктов выполнены.
+
+**Новый файл `src/lib/recentTags.ts`:**
+- `getRecentTags()` / `pushRecentTag(tag)` — чтение и запись MRU-списка в `localStorage`
+- Ключ `arena:recentTags`, максимум 10 записей, последний использованный — первым
+
+**`src/components/CardContextMenu.tsx` — полная переработка:**
+- Секция «Delete card» обёрнута в `{!search && (...)}` — скрывается при вводе
+- `canCreate = trimmed.length > 0 && filtered.length === 0` — кнопка «Create» при пустых результатах
+- Удалена функция `slugify()` — отправляется `trimmed` напрямую (бэкенд нормализует)
+- Сортировка: `block.tags.includes` → `recentSet.has` → `localeCompare`
+- Поиск по отображаемому имени (`titleFromTag`) вместо сырого тега
+
+**`src/App.tsx`:**
+- `handleToggleTag`: вызов `pushRecentTag(tag)` при добавлении тега
+- `handleCreateTagFromMenu`: вызов `pushRecentTag(tag)` + оптимистичное обновление `block.tags`
+
+**`extension/popup/popup.js`:**
+- Сортировка: нулевой уровень `selectedTags` (выбранные для текущего сохранения) всегда первыми
+- Удалена функция `slugify()` — `trimmedFilter` передаётся напрямую
+- Кнопка «Create» при `filter && filtered.length === 0`
+
+### Deviations from plan
+Нет отклонений.
+
+### Checks
+- `npx tsc --noEmit` — 0 ошибок
+- `bunx vitest run` — 42/42 тестов пройдено
+- Поведение «создал канал — карточка сразу отмечена» уже обеспечивается `handleCreateTagFromMenu` (addTag + оптимистичное обновление) и `toggleTag` в клиппере
+
+### Push
+COMMIT_HASH — Improve channel menus: MRU ranking, create channel, hide delete during search
+
+### Decisions and lessons learned
+- `localStorage` для MRU — простое решение, масштабируется до тысяч каналов (поиск в Set — O(1), сортировка — O(n log n) от отфильтрованного подмножества)
+- Удаление `slugify()` из фронтенда — правильный паттерн: единственный источник нормализации — `normalize_tag` в Rust, JavaScript `\w` не поддерживает Unicode
+- Трёхуровневая сортировка (присвоенные → недавние → алфавит) одинакова в обоих интерфейсах, но в клиппере нулевой уровень — `selectedTags` (временное выделение), а в меню карточки — `block.tags` (постоянная принадлежность)
+
+---
+
 ## 28.02.2026 — Качество thumbnail, позиционирование DragOverlay
 
 ### Goal

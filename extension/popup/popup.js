@@ -308,9 +308,13 @@
         )
       : channels.slice();
 
-    // Sort: recent channels first, then by block_count DESC
+    // Sort: selected first, then recent, then by block_count DESC
     const recentSet = new Set(recentTags);
     filtered.sort((a, b) => {
+      const aSel = selectedTags.includes(a.tag);
+      const bSel = selectedTags.includes(b.tag);
+      if (aSel !== bSel) return aSel ? -1 : 1;
+
       const aRecent = recentSet.has(a.tag);
       const bRecent = recentSet.has(b.tag);
       if (aRecent && !bRecent) return -1;
@@ -337,14 +341,14 @@
       `;
     }
 
-    // Offer to create a new channel if the search doesn't match any existing
-    if (filter && !filtered.some((ch) => ch.tag === slugify(filter))) {
-      const newTag = slugify(filter);
-      if (newTag) {
+    // Offer to create a new channel if no matches found
+    if (filter && filtered.length === 0) {
+      const trimmedFilter = filter.trim();
+      if (trimmedFilter) {
         html += `
-          <div class="channel-item create-new" data-new-tag="${newTag}" data-new-title="${filter}">
+          <div class="channel-item create-new" data-new-tag="${trimmedFilter}" data-new-title="${trimmedFilter}">
             <span class="check">+</span>
-            <span>Create "${filter}"</span>
+            <span>Create \u201c${trimmedFilter}\u201d</span>
           </div>
         `;
       }
@@ -391,16 +395,6 @@
     } else {
       saveLabel.textContent = `Save to ${n} channels`;
     }
-  }
-
-  function slugify(text) {
-    return text
-      .toLowerCase()
-      .replace(/[^\w\s-]/g, "")
-      .replace(/[\s_]+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 50);
   }
 
   // -- Save -------------------------------------------------------------------
