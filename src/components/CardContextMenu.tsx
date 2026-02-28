@@ -120,7 +120,7 @@ export function CardContextMenu({
   return (
     <div
       ref={ref}
-      className="fixed z-50 w-64 rounded-lg border border-neutral-200 bg-white shadow-lg dark:border-neutral-700 dark:bg-neutral-800"
+      className="fixed z-50 w-64 rounded-lg border border-border bg-popover shadow-lg"
       style={{ left: pos.x, top: pos.y }}
     >
       {/* Search */}

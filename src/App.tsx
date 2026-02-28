@@ -84,8 +84,8 @@ export function App() {
 
   if (loading) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-neutral-50 dark:bg-neutral-950">
-        <p className="text-sm text-neutral-400">Loading...</p>
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <p className="text-sm text-muted-foreground">Loading...</p>
       </div>
     );
   }
@@ -379,7 +379,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       onDragEnd={handleDndEnd}
       onDragCancel={handleDndCancel}
     >
-    <div className="flex h-screen w-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+    <div className="flex h-screen w-screen bg-background text-foreground">
       <Sidebar
         orderedTags={orderedTags}
         totalBlocks={blocks.length}

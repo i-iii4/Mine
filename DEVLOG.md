@@ -28,6 +28,55 @@ if any
 
 ---
 
+## 28.02.2026 — Фундамент дизайн-системы: shadcn/ui
+
+### Goal
+Перейти со стокового Tailwind без конфигурации на shadcn/ui — семантические токены, утилита `cn()`, инфраструктура тёмной темы. Заложить фундамент для инкрементальной миграции компонентов.
+
+### Planned
+1. Установить shadcn/ui через CLI (`bun x shadcn@latest init`)
+2. Настроить CSS-токены (OKLCH) в `global.css`
+3. Создать ThemeProvider (system/light/dark)
+4. Мигрировать оболочку (App.tsx, Sidebar.tsx) на семантические токены
+5. Начать использовать `cn()` для условных классов
+
+### Actually completed
+Все 5 пунктов выполнены.
+
+**Инфраструктура:**
+- `components.json` — конфигурация shadcn/ui (стиль new-york, базовый цвет neutral, CSS-переменные)
+- `src/lib/utils.ts` — утилита `cn()` (clsx + tailwind-merge)
+- `src/styles/global.css` — полный набор OKLCH-токенов (~30 переменных), `@theme inline`, `@custom-variant dark` (class-based тёмная тема)
+- `src/components/ThemeProvider.tsx` — React Context, три режима (system/light/dark), `localStorage` хранение, `matchMedia` для системной темы
+
+**Миграция оболочки:**
+- `src/App.tsx` — `bg-background text-foreground` вместо `bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100`
+- `src/components/Sidebar.tsx` — полная миграция: `bg-sidebar`, `border-sidebar-border`, `text-muted-foreground`, `hover:bg-sidebar-accent`, `text-destructive`, `bg-popover`; использование `cn()` для условных классов в NavItem и TagNavItem
+- `src/components/CardContextMenu.tsx` — контейнер на `bg-popover border-border`
+
+**Зависимости:** clsx, tailwind-merge, class-variance-authority, tw-animate-css, lucide-react, shadcn
+
+### Deviations from plan
+Нет отклонений.
+
+### Checks
+- `npx tsc --noEmit` — 0 ошибок
+- `bunx vitest run` — 42/42 тестов
+- Новые CSS-токены: `--background`, `--foreground`, `--border`, `--sidebar-*`, `--popover-*`, `--muted-*`, `--accent-*`, `--destructive`
+- `@custom-variant dark` переключает тёмную тему с media query на класс `.dark`
+- ThemeProvider с `defaultTheme="system"` обёрнут в `main.tsx`
+
+### Push
+COMMIT_HASH — Add shadcn/ui foundation: design tokens, ThemeProvider, migrate App+Sidebar to semantic tokens
+
+### Decisions and lessons learned
+- shadcn/ui v3 использует пакет `shadcn` с `@import "shadcn/tailwind.css"` вместо инлайнинга CSS-переменных — чище, обновляемо
+- Стратегия «два этапа» (фундамент, затем компоненты) оправдана: можно проверить визуальную идентичность до замены компонентов
+- Токен `--sidebar-*` — отдельный набор для боковой панели (фон, бордер, акцент) — позволяет сделать сайдбар визуально отличным от основного контента
+- `cn()` вместо тернарников в `className` — существенно улучшает читаемость (3 строки вместо 6)
+
+---
+
 ## 28.02.2026 — Меню каналов: MRU, создание, UX-улучшения
 
 ### Goal

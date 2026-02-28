@@ -3,6 +3,7 @@ import { NavLink } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { TagCount } from "@/types";
+import { cn } from "@/lib/utils";
 
 /** Convert a normalized tag slug to a display title: `web-design` -> `Web Design` */
 function titleFromTag(tag: string): string {
@@ -65,9 +66,9 @@ export function Sidebar({
   );
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950">
+    <aside className="flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
       {/* Header */}
-      <div className="p-4 text-sm font-semibold uppercase tracking-wider text-neutral-400">
+      <div className="p-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
         Local Arena
       </div>
 
@@ -109,7 +110,7 @@ export function Sidebar({
         ) : (
           <button
             onClick={() => setIsCreating(true)}
-            className="mt-1 flex w-full items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-900 dark:hover:text-neutral-300"
+            className="mt-1 flex w-full items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           >
             <PlusIcon />
             <span>New channel</span>
@@ -118,21 +119,21 @@ export function Sidebar({
       </nav>
 
       {/* Bottom actions */}
-      <div className="border-t border-neutral-200 p-2 dark:border-neutral-800">
+      <div className="border-t border-sidebar-border p-2">
         <button
           onClick={onImportOpen}
-          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-neutral-500 transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-900"
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent"
         >
           <ImportIcon />
           <span>Import from Are.na</span>
         </button>
         <button
           onClick={onSearchOpen}
-          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-neutral-500 transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-900"
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent"
         >
           <SearchIcon />
           <span>Search</span>
-          <kbd className="ml-auto rounded border border-neutral-300 px-1.5 py-0.5 text-xs text-neutral-400 dark:border-neutral-700">
+          <kbd className="ml-auto rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
             {"\u2318"}K
           </kbd>
         </button>
@@ -182,15 +183,16 @@ function NavItem({
       to={to}
       end={end}
       className={({ isActive }) =>
-        `flex items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors ${
+        cn(
+          "flex items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors",
           isActive
-            ? "bg-neutral-200 font-medium text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100"
-            : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-900"
-        }`
+            ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+            : "text-muted-foreground hover:bg-sidebar-accent",
+        )
       }
     >
       <span className="truncate">{label}</span>
-      <span className="ml-2 shrink-0 text-xs text-neutral-400">{count}</span>
+      <span className="ml-2 shrink-0 text-xs text-muted-foreground">{count}</span>
     </NavLink>
   );
 }
@@ -250,9 +252,11 @@ function TagNavItem({
       style={style}
       {...attributes}
       {...listeners}
-      className={`group relative rounded-md transition-all ${
-        isDragging ? "opacity-30" : ""
-      } ${isOver && !isDragging && isCardDragging ? "ring-2 ring-blue-400 ring-inset" : ""}`}
+      className={cn(
+        "group relative rounded-md transition-all",
+        isDragging && "opacity-30",
+        isOver && !isDragging && isCardDragging && "ring-2 ring-ring ring-inset",
+      )}
     >
       <NavLink
         to={to}
@@ -262,22 +266,23 @@ function TagNavItem({
           onDoubleClick();
         }}
         className={({ isActive }) =>
-          `flex items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors ${
+          cn(
+            "flex items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors",
             isActive
-              ? "bg-neutral-200 font-medium text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100"
-              : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-900"
-          }`
+              ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+              : "text-muted-foreground hover:bg-sidebar-accent",
+          )
         }
       >
         <span className="flex-1 truncate">{label}</span>
-        <span className="ml-2 shrink-0 text-xs text-neutral-400">{count}</span>
+        <span className="ml-2 shrink-0 text-xs text-muted-foreground">{count}</span>
         <button
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
             onMenuOpen(e);
           }}
-          className="ml-1 shrink-0 rounded p-0.5 text-neutral-400 opacity-0 transition-opacity hover:text-neutral-600 group-hover:opacity-100 dark:hover:text-neutral-300"
+          className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
         >
           <EllipsisIcon />
         </button>
@@ -311,23 +316,23 @@ function TagMenu({
 
   return (
     <div
-      className="fixed z-50 min-w-36 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-800"
+      className="fixed z-50 min-w-36 rounded-lg border border-border bg-popover py-1 shadow-lg"
       style={{ left: x, top: y }}
     >
       {confirming ? (
         <>
-          <p className="px-3 py-1.5 text-xs text-neutral-500">
+          <p className="px-3 py-1.5 text-xs text-muted-foreground">
             Remove tag from all cards.
           </p>
           <button
             onClick={onDelete}
-            className="flex w-full px-3 py-1.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
+            className="flex w-full px-3 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
           >
             Confirm delete
           </button>
           <button
             onClick={() => setConfirming(false)}
-            className="flex w-full px-3 py-1.5 text-sm text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+            className="flex w-full px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent"
           >
             Cancel
           </button>
@@ -336,13 +341,13 @@ function TagMenu({
         <>
           <button
             onClick={onRename}
-            className="flex w-full px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-700"
+            className="flex w-full px-3 py-1.5 text-sm text-popover-foreground hover:bg-accent"
           >
             Rename
           </button>
           <button
             onClick={() => setConfirming(true)}
-            className="flex w-full px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
+            className="flex w-full px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10"
           >
             Delete
           </button>
@@ -385,7 +390,7 @@ function InlineInput({
       type="text"
       defaultValue={defaultValue}
       placeholder={placeholder}
-      className="mx-1 w-[calc(100%-0.5rem)] rounded-md border border-blue-400 bg-white px-3 py-1.5 text-sm outline-none dark:border-blue-600 dark:bg-neutral-900"
+      className="mx-1 w-[calc(100%-0.5rem)] rounded-md border border-ring bg-background px-3 py-1.5 text-sm outline-none"
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           doSubmit((e.target as HTMLInputElement).value);

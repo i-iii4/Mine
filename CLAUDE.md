@@ -30,7 +30,9 @@
 | React 19 | UI-фреймворк |
 | Vite | Сборка фронтенда, HMR |
 | TypeScript | Язык фронтенда |
-| TailwindCSS | Стилизация |
+| TailwindCSS v4 | Стилизация (CSS-first конфигурация) |
+| shadcn/ui | Дизайн-система: OKLCH-токены, `cn()`, ThemeProvider, компонентная база |
+| @dnd-kit | Drag-and-drop: сортировка каналов, перетаскивание карточек на теги |
 | react-markdown + remark-gfm | Рендеринг markdown в Detail.tsx |
 | @tailwindcss/typography | Стилизация prose-контента (статьи) |
 | Readability.js | Извлечение статей из веб-страниц (content script) |
@@ -88,9 +90,11 @@ local-arena/
 │   │   ├── Search.tsx          # Cmd+K поиск (command palette)
 │   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог
 │   │   ├── DropZone.tsx        # Drag-and-drop файлов для создания блоков
-│   │   └── ImportDialog.tsx    # 4-шаговый импорт из Are.na
+│   │   ├── ImportDialog.tsx    # 4-шаговый импорт из Are.na
+│   │   ├── CardContextMenu.tsx # Контекстное меню карточки: теги, удаление
+│   │   └── ThemeProvider.tsx   # Провайдер темы (system/light/dark)
 │   ├── types/                  # TypeScript-типы (ручные, без specta)
-│   ├── lib/                    # commands.ts (IPC), assets.ts (URL-хелперы)
+│   ├── lib/                    # commands.ts (IPC), assets.ts, utils.ts (cn()), recentTags.ts
 │   └── styles/                 # Глобальные стили
 ├── extension/                  # Chrome/Safari веб-клиппер
 │   ├── background.js           # Service worker: контекстное меню, native messaging
@@ -104,6 +108,7 @@ local-arena/
 │   └── manifest.json           # Manifest V3
 ├── public/                     # Статические ассеты
 ├── index.html
+├── components.json             # Конфигурация shadcn/ui
 ├── vite.config.ts
 ├── tailwind.config.ts
 ├── tsconfig.json
