@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { selectVault } from "@/lib/commands";
+import { Button } from "@/components/ui/button";
 import type { ScanResult } from "@/types";
 
 interface VaultPickerProps {
@@ -58,13 +59,9 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
             </p>
           </div>
         ) : (
-          <button
-            onClick={handleSelect}
-            disabled={loading}
-            className="rounded-lg bg-primary px-6 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-          >
+          <Button onClick={handleSelect} disabled={loading} size="lg">
             {loading ? "Scanning..." : "Select Vault"}
-          </button>
+          </Button>
         )}
 
         {error && (

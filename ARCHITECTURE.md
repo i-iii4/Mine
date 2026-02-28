@@ -349,6 +349,12 @@ Rationale: пользователь может открыть любой `.md` �
 | vite | latest | Сборщик | MIT |
 | ureq | 2.x | Синхронный HTTP-клиент (импорт Are.na) | MIT/Apache-2.0 |
 | tailwindcss | 4.x | Стилизация | MIT |
+| shadcn/ui | latest | Компонентная библиотека: 14 примитивов (Button, Dialog, Command и др.) | MIT |
+| radix-ui | latest | Headless UI-примитивы (основа shadcn) | MIT |
+| cmdk | latest | Command palette (поиск Cmd+K) | MIT |
+| lucide-react | latest | Иконки (замена ручных SVG) | ISC |
+| class-variance-authority | latest | Варианты компонентов (CVA) | Apache-2.0 |
+| tw-animate-css | latest | CSS-анимации для Tailwind v4 | MIT |
 | react-router | 7.x | Роутинг | MIT |
 | @dnd-kit/core | 6.3.x | Drag-and-drop (Pointer Events вместо HTML5 DnD — обходит перехват Tauri WKWebView) | MIT |
 | react-markdown | latest | Рендеринг markdown в Detail.tsx | MIT |

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
+import { ImageOff } from "lucide-react";
 import type { IndexedBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
 import { cn } from "@/lib/utils";
@@ -8,10 +9,9 @@ interface CardProps {
   block: IndexedBlock;
   vaultPath: string;
   onClick: (block: IndexedBlock) => void;
-  onContextMenu?: (block: IndexedBlock, x: number, y: number) => void;
 }
 
-export function Card({ block, vaultPath, onClick, onContextMenu }: CardProps) {
+export function Card({ block, vaultPath, onClick }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
   });
@@ -21,12 +21,6 @@ export function Card({ block, vaultPath, onClick, onContextMenu }: CardProps) {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       onClick(block);
-    }
-  };
-  const handleContextMenu = (e: React.MouseEvent) => {
-    if (onContextMenu) {
-      e.preventDefault();
-      onContextMenu(block, e.clientX, e.clientY);
     }
   };
 
@@ -39,7 +33,6 @@ export function Card({ block, vaultPath, onClick, onContextMenu }: CardProps) {
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
-      onContextMenu={handleContextMenu}
       className={cn(
         "group cursor-pointer overflow-hidden rounded-lg border border-border bg-card transition-shadow hover:shadow-md",
         isDragging && "opacity-30",
@@ -87,7 +80,7 @@ function ImageCard({
     return (
       <div className="flex aspect-square items-center justify-center bg-muted">
         <div className="text-center">
-          <BrokenImageIcon />
+          <ImageOff className="mx-auto size-6 text-muted-foreground/50" />
           <p className="mt-1 text-xs text-muted-foreground">
             {block.title ?? block.slug}
           </p>
@@ -279,23 +272,3 @@ function FileCard({ block }: { block: IndexedBlock }) {
   );
 }
 
-function BrokenImageIcon() {
-  return (
-    <svg
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="mx-auto text-muted-foreground/50"
-    >
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <path d="M3 16l5-5 4 4" />
-      <path d="M14 14l2-2 5 5" />
-      <line x1="2" y1="2" x2="22" y2="22" />
-    </svg>
-  );
-}

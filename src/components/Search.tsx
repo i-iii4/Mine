@@ -1,7 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { search as searchCommand } from "@/lib/commands";
+import { Badge } from "@/components/ui/badge";
+import {
+  Command,
+  CommandInput,
+  CommandList,
+  CommandItem,
+  CommandEmpty,
+} from "@/components/ui/command";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { IndexedBlock } from "@/types";
-import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 200;
 
@@ -14,21 +28,17 @@ interface SearchProps {
 export function Search({ open, onClose, onSelect }: SearchProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<IndexedBlock[]>([]);
-  const [selectedIdx, setSelectedIdx] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(null);
 
-  // Focus input when opened
+  // Reset state when opened
   useEffect(() => {
     if (open) {
       setQuery("");
       setResults([]);
-      setSelectedIdx(0);
-      requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
 
-  // Debounced search
+  // Debounced search via IPC
   const runSearch = useCallback((q: string) => {
     if (timerRef.current) clearTimeout(timerRef.current);
     if (!q.trim()) {
@@ -39,77 +49,43 @@ export function Search({ open, onClose, onSelect }: SearchProps) {
       try {
         const res = await searchCommand(q);
         setResults(res);
-        setSelectedIdx(0);
       } catch {
         setResults([]);
       }
     }, DEBOUNCE_MS);
   }, []);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setQuery(val);
-    runSearch(val);
+  const handleValueChange = (value: string) => {
+    setQuery(value);
+    runSearch(value);
   };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      onClose();
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setSelectedIdx((i) => Math.min(i + 1, results.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setSelectedIdx((i) => Math.max(i - 1, 0));
-    } else if (e.key === "Enter" && results[selectedIdx]) {
-      onSelect(results[selectedIdx]);
-      onClose();
-    }
-  };
-
-  if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[15vh]"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg overflow-hidden rounded-xl border border-border bg-popover shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Input */}
-        <div className="flex items-center gap-2 border-b border-border px-4">
-          <SearchIcon />
-          <input
-            ref={inputRef}
-            type="text"
+    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
+      <DialogContent className="gap-0 overflow-hidden p-0" showCloseButton={false}>
+        <DialogHeader className="sr-only">
+          <DialogTitle>Search</DialogTitle>
+          <DialogDescription>Search blocks in vault</DialogDescription>
+        </DialogHeader>
+        <Command shouldFilter={false}>
+          <CommandInput
             value={query}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
+            onValueChange={handleValueChange}
             placeholder="Search blocks..."
-            className="w-full bg-transparent py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
           />
-          <kbd className="shrink-0 rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-            esc
-          </kbd>
-        </div>
-
-        {/* Results */}
-        {results.length > 0 && (
-          <ul className="max-h-80 overflow-y-auto py-2">
-            {results.map((block, idx) => (
-              <li
+          <CommandList>
+            {query.trim() && results.length === 0 && (
+              <CommandEmpty>No results</CommandEmpty>
+            )}
+            {results.map((block) => (
+              <CommandItem
                 key={block.id}
-                className={cn(
-                  "flex cursor-pointer items-center gap-3 px-4 py-2 text-sm",
-                  idx === selectedIdx && "bg-accent",
-                )}
-                onClick={() => {
+                value={String(block.id)}
+                onSelect={() => {
                   onSelect(block);
                   onClose();
                 }}
-                onMouseEnter={() => setSelectedIdx(idx)}
+                className="gap-3"
               >
                 <TypeBadge type={block.block_type} />
                 <span className="truncate text-foreground">
@@ -120,18 +96,12 @@ export function Search({ open, onClose, onSelect }: SearchProps) {
                     {block.tags.slice(0, 2).join(", ")}
                   </span>
                 )}
-              </li>
+              </CommandItem>
             ))}
-          </ul>
-        )}
-
-        {query.trim() && results.length === 0 && (
-          <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-            No results
-          </div>
-        )}
-      </div>
-    </div>
+          </CommandList>
+        </Command>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -144,27 +114,8 @@ function TypeBadge({ type }: { type: string }) {
     file: "FILE",
   };
   return (
-    <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+    <Badge variant="secondary" className="text-[10px] font-semibold text-muted-foreground">
       {labels[type] ?? type.toUpperCase()}
-    </span>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="shrink-0 text-muted-foreground"
-    >
-      <circle cx="7" cy="7" r="4.5" />
-      <path d="M10.5 10.5L14 14" />
-    </svg>
+    </Badge>
   );
 }

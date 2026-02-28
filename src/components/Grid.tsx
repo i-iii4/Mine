@@ -1,6 +1,21 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from "react";
-import type { IndexedBlock } from "@/types";
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import type { IndexedBlock, TagCount } from "@/types";
 import { Card } from "./Card";
+import { CardTagMenu } from "./CardContextMenu";
 
 const COLUMN_MIN_WIDTH = 240;
 const GAP = 16;
@@ -10,15 +25,29 @@ const BATCH_SIZE = 60;
 interface GridProps {
   blocks: IndexedBlock[];
   vaultPath: string;
+  tags: TagCount[];
+  currentTag?: string;
   onBlockClick: (block: IndexedBlock) => void;
-  onContextMenu?: (block: IndexedBlock, x: number, y: number) => void;
+  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onDeleteBlock: (slug: string) => void;
 }
 
-export function Grid({ blocks, vaultPath, onBlockClick, onContextMenu }: GridProps) {
+export function Grid({
+  blocks,
+  vaultPath,
+  tags,
+  currentTag,
+  onBlockClick,
+  onToggleTag,
+  onCreateAndAssign,
+  onDeleteBlock,
+}: GridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [parentWidth, setParentWidth] = useState(0);
   const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH);
+  const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
 
   // Reset visible count only when the actual set of blocks changes
   // (channel switch, search) — not on background data refreshes that
@@ -99,13 +128,25 @@ export function Grid({ blocks, vaultPath, onBlockClick, onContextMenu }: GridPro
             style={{ gap: GAP }}
           >
             {col.map((block) => (
-              <Card
-                key={block.id}
-                block={block}
-                vaultPath={vaultPath}
-                onClick={onBlockClick}
-                onContextMenu={onContextMenu}
-              />
+              <ContextMenu key={block.id}>
+                <ContextMenuTrigger asChild>
+                  <div>
+                    <Card
+                      block={block}
+                      vaultPath={vaultPath}
+                      onClick={onBlockClick}
+                    />
+                  </div>
+                </ContextMenuTrigger>
+                <CardTagMenu
+                  block={block}
+                  tags={tags}
+                  currentTag={currentTag}
+                  onToggleTag={onToggleTag}
+                  onCreateAndAssign={onCreateAndAssign}
+                  onRequestDelete={setBlockToDelete}
+                />
+              </ContextMenu>
             ))}
           </div>
         ))}
@@ -119,6 +160,33 @@ export function Grid({ blocks, vaultPath, onBlockClick, onContextMenu }: GridPro
           </p>
         </div>
       )}
+
+      {/* Delete confirmation — lives at Grid level, survives ContextMenu close */}
+      <AlertDialog
+        open={blockToDelete !== null}
+        onOpenChange={(open) => { if (!open) setBlockToDelete(null); }}
+      >
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete card</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the card and its files.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (blockToDelete) onDeleteBlock(blockToDelete);
+                setBlockToDelete(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

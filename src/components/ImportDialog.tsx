@@ -1,5 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { listArenaChannels, importArenaChannels } from "@/lib/commands";
 import type {
   ArenaChannelInfo,
@@ -119,39 +131,29 @@ export function ImportDialog({
     }
   }, [channels, selected, onImportComplete]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (step !== "importing") onClose();
-      } else if (e.key === "Enter" && step === "username") {
-        handleFetchChannels();
-      }
-    },
-    [step, onClose, handleFetchChannels],
-  );
-
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onKeyDown={handleKeyDown}
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => {
+        if (!isOpen && step !== "importing") onClose();
+      }}
     >
-      <div className="w-full max-w-lg rounded-2xl bg-card p-6 shadow-2xl">
-        {/* Header */}
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-foreground">
-            Import from Are.na
-          </h2>
-          {step !== "importing" && (
-            <button
-              onClick={onClose}
-              className="rounded-lg p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              <CloseIcon />
-            </button>
-          )}
-        </div>
+      <DialogContent
+        className="max-w-lg gap-0"
+        showCloseButton={step !== "importing"}
+        onInteractOutside={(e) => {
+          if (step === "importing") e.preventDefault();
+        }}
+        onEscapeKeyDown={(e) => {
+          if (step === "importing") e.preventDefault();
+        }}
+      >
+        <DialogHeader className="mb-5">
+          <DialogTitle>Import from Are.na</DialogTitle>
+          <DialogDescription className="sr-only">
+            Import channels from Are.na into your vault
+          </DialogDescription>
+        </DialogHeader>
 
         {error && (
           <div className="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -159,7 +161,6 @@ export function ImportDialog({
           </div>
         )}
 
-        {/* Step: Enter username */}
         {step === "username" && (
           <UsernameStep
             username={username}
@@ -169,7 +170,6 @@ export function ImportDialog({
           />
         )}
 
-        {/* Step: Select channels */}
         {step === "select" && (
           <SelectStep
             channels={channels}
@@ -181,17 +181,15 @@ export function ImportDialog({
           />
         )}
 
-        {/* Step: Importing */}
         {step === "importing" && (
           <ImportingStep progress={progress} />
         )}
 
-        {/* Step: Done */}
         {step === "done" && (
           <DoneStep results={results} onClose={onClose} />
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -214,22 +212,21 @@ function UsernameStep({
         Enter your Are.na username to see your public channels.
       </p>
       <div className="flex gap-3">
-        <input
+        <Input
           autoFocus
           type="text"
           value={username}
           onChange={(e) => onUsernameChange(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && onSubmit()}
           placeholder="username"
-          className="flex-1 rounded-lg border border-input bg-background px-4 py-2.5 text-sm outline-none focus:border-ring"
+          className="flex-1"
         />
-        <button
+        <Button
           onClick={onSubmit}
           disabled={loading || !username.trim()}
-          className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
         >
           {loading ? "Loading..." : "Fetch"}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -260,25 +257,25 @@ function SelectStep({
         <p className="text-sm text-muted-foreground">
           {channels.length} channels found
         </p>
-        <button
+        <Button
+          variant="ghost"
+          size="xs"
           onClick={onSelectAll}
-          className="text-xs text-muted-foreground hover:text-foreground"
+          className="text-muted-foreground"
         >
           {selected.size === channels.length ? "Deselect all" : "Select all"}
-        </button>
+        </Button>
       </div>
 
-      <div className="mb-4 max-h-72 overflow-y-auto rounded-lg border border-border">
+      <ScrollArea className="mb-4 max-h-72 rounded-lg border border-border">
         {channels.map((ch) => (
           <label
             key={ch.slug}
             className="flex cursor-pointer items-center gap-3 border-b border-border px-4 py-3 last:border-0 hover:bg-accent"
           >
-            <input
-              type="checkbox"
+            <Checkbox
               checked={selected.has(ch.slug)}
-              onChange={() => onToggle(ch.slug)}
-              className="h-4 w-4 rounded border-input accent-primary"
+              onCheckedChange={() => onToggle(ch.slug)}
             />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-foreground">
@@ -290,26 +287,19 @@ function SelectStep({
             </div>
           </label>
         ))}
-      </div>
+      </ScrollArea>
 
       <div className="flex items-center justify-between">
-        <button
-          onClick={onBack}
-          className="text-sm text-muted-foreground hover:text-foreground"
-        >
+        <Button variant="ghost" onClick={onBack} className="text-muted-foreground">
           Back
-        </button>
+        </Button>
         <div className="flex items-center gap-3">
           <span className="text-xs text-muted-foreground">
             {selected.size} channels, ~{totalBlocks} blocks
           </span>
-          <button
-            onClick={onImport}
-            disabled={selected.size === 0}
-            className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
-          >
+          <Button onClick={onImport} disabled={selected.size === 0}>
             Import
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -336,12 +326,7 @@ function ImportingStep({ progress }: { progress: ImportProgress | null }) {
             {progress.current} / {progress.total}
           </span>
         </div>
-        <div className="h-2 overflow-hidden rounded-full bg-secondary">
-          <div
-            className="h-full rounded-full bg-primary transition-all duration-300"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
+        <Progress value={pct} />
       </div>
       {progress.block_title && (
         <p className="truncate text-xs text-muted-foreground">
@@ -374,7 +359,7 @@ function DoneStep({
         </p>
       </div>
 
-      <div className="mb-4 max-h-48 overflow-y-auto">
+      <ScrollArea className="mb-4 max-h-48">
         {results.map((r) => (
           <div
             key={r.channel_slug}
@@ -389,32 +374,12 @@ function DoneStep({
             </span>
           </div>
         ))}
-      </div>
+      </ScrollArea>
 
       <div className="flex justify-end">
-        <button
-          onClick={onClose}
-          className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground"
-        >
-          Done
-        </button>
+        <Button onClick={onClose}>Done</Button>
       </div>
     </div>
   );
 }
 
-function CloseIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-    >
-      <path d="M4 4l8 8M12 4l-8 8" />
-    </svg>
-  );
-}

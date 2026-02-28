@@ -64,10 +64,10 @@ import { VaultPicker } from "@/components/VaultPicker";
 import { Sidebar } from "@/components/Sidebar";
 import { Grid } from "@/components/Grid";
 import { Search } from "@/components/Search";
+import { Dialog } from "@/components/ui/dialog";
 import { Detail } from "@/components/Detail";
 import { DropZone } from "@/components/DropZone";
 import { ImportDialog } from "@/components/ImportDialog";
-import { CardContextMenu } from "@/components/CardContextMenu";
 
 // ─── Root ──────────────────────────────────────────────────────────────────
 
@@ -103,12 +103,6 @@ export function App() {
 
 // ─── Main app (vault selected) ─────────────────────────────────────────────
 
-interface ContextMenuState {
-  block: IndexedBlock;
-  x: number;
-  y: number;
-}
-
 function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -123,7 +117,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<IndexedBlock | null>(null);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [activeDragBlock, setActiveDragBlock] = useState<IndexedBlock | null>(null);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
 
@@ -321,23 +314,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     setActiveDragTag(null);
   }, []);
 
-  // ── Context menu ──────────────────────────────────────────────────────────
-
-  const handleContextMenu = useCallback(
-    (block: IndexedBlock, x: number, y: number) => {
-      setContextMenu({ block, x, y });
-    },
-    [],
-  );
-
-  // Keep context menu block in sync with latest blocks data
-  useEffect(() => {
-    setContextMenu((prev) => {
-      if (!prev) return prev;
-      const fresh = blocks.find((b) => b.slug === prev.block.slug);
-      return fresh ? { ...prev, block: fresh } : prev;
-    });
-  }, [blocks]);
+  // ── Card tag management (context menu) ───────────────────────────────────
 
   const handleToggleTag = useCallback(
     async (slug: string, tag: string, hasTag: boolean) => {
@@ -364,7 +341,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const handleDeleteBlock = useCallback(
     async (slug: string) => {
       await deleteBlock(slug);
-      setContextMenu(null);
       await loadData();
     },
     [loadData],
@@ -398,8 +374,12 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
               <PageShell
                 blocks={blocks}
                 vaultPath={vaultPath}
+                tags={tags}
+                currentTag={currentTag}
                 onBlockClick={handleBlockClick}
-                onContextMenu={handleContextMenu}
+                onToggleTag={handleToggleTag}
+                onCreateAndAssign={handleCreateTagFromMenu}
+                onDeleteBlock={handleDeleteBlock}
               />
             }
           >
@@ -426,29 +406,19 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         onImportComplete={loadData}
       />
 
-      {selectedBlock && (
-        <Detail
-          block={selectedBlock}
-          vaultPath={vaultPath}
-          onClose={() => setSelectedBlock(null)}
-          onNavigate={handleDetailNavigate}
-          onTagsChanged={loadData}
-        />
-      )}
-
-      {contextMenu && (
-        <CardContextMenu
-          block={contextMenu.block}
-          x={contextMenu.x}
-          y={contextMenu.y}
-          tags={tags}
-          currentTag={currentTag}
-          onToggleTag={handleToggleTag}
-          onCreateAndAssign={handleCreateTagFromMenu}
-          onDelete={handleDeleteBlock}
-          onClose={() => setContextMenu(null)}
-        />
-      )}
+      <Dialog
+        open={selectedBlock !== null}
+        onOpenChange={(isOpen) => { if (!isOpen) setSelectedBlock(null); }}
+      >
+        {selectedBlock && (
+          <Detail
+            block={selectedBlock}
+            vaultPath={vaultPath}
+            onNavigate={handleDetailNavigate}
+            onTagsChanged={loadData}
+          />
+        )}
+      </Dialog>
     </div>
 
     <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
@@ -472,17 +442,16 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 interface RouteContext {
   blocks: IndexedBlock[];
   vaultPath: string;
+  tags: TagCount[];
+  currentTag?: string;
   onBlockClick: (block: IndexedBlock) => void;
-  onContextMenu: (block: IndexedBlock, x: number, y: number) => void;
+  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onDeleteBlock: (slug: string) => void;
 }
 
-function PageShell({
-  blocks,
-  vaultPath,
-  onBlockClick,
-  onContextMenu,
-}: RouteContext) {
-  return <Outlet context={{ blocks, vaultPath, onBlockClick, onContextMenu }} />;
+function PageShell(props: RouteContext) {
+  return <Outlet context={props} />;
 }
 
 function useRouteCtx(): RouteContext {
@@ -492,31 +461,17 @@ function useRouteCtx(): RouteContext {
 // ─── Pages ─────────────────────────────────────────────────────────────────
 
 function AllBlocksPage() {
-  const { blocks, vaultPath, onBlockClick, onContextMenu } = useRouteCtx();
-  return (
-    <Grid
-      blocks={blocks}
-      vaultPath={vaultPath}
-      onBlockClick={onBlockClick}
-      onContextMenu={onContextMenu}
-    />
-  );
+  const ctx = useRouteCtx();
+  return <Grid {...ctx} blocks={ctx.blocks} />;
 }
 
 function ChannelPage() {
   const { tag } = useParams<{ tag: string }>();
-  const { blocks, vaultPath, onBlockClick, onContextMenu } = useRouteCtx();
+  const ctx = useRouteCtx();
 
-  const filtered = blocks.filter(
+  const filtered = ctx.blocks.filter(
     (b) => tag && b.tags.includes(decodeURIComponent(tag)),
   );
 
-  return (
-    <Grid
-      blocks={filtered}
-      vaultPath={vaultPath}
-      onBlockClick={onBlockClick}
-      onContextMenu={onContextMenu}
-    />
-  );
+  return <Grid {...ctx} blocks={filtered} />;
 }

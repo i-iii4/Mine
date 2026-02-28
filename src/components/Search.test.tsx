@@ -43,40 +43,11 @@ describe("Search", () => {
     expect(screen.getByPlaceholderText("Search blocks...")).toBeInTheDocument();
   });
 
-  it("renders esc keyboard hint", () => {
-    const { container } = render(
-      <Search open={true} onClose={vi.fn()} onSelect={vi.fn()} />,
-    );
-    const kbd = container.querySelector("kbd");
-    expect(kbd).toBeInTheDocument();
-    expect(kbd?.textContent).toBe("esc");
-  });
-
-  it("calls onClose when Escape pressed in input", () => {
-    const onClose = vi.fn();
-    render(<Search open={true} onClose={onClose} onSelect={vi.fn()} />);
-    const input = screen.getByPlaceholderText("Search blocks...");
-    fireEvent.keyDown(input, { key: "Escape" });
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("calls onClose when backdrop clicked", () => {
-    const onClose = vi.fn();
-    const { container } = render(
-      <Search open={true} onClose={onClose} onSelect={vi.fn()} />,
-    );
-    // Click the outer backdrop (first child)
-    const backdrop = container.firstElementChild;
-    if (backdrop) fireEvent.click(backdrop);
-    expect(onClose).toHaveBeenCalled();
-  });
-
   it("shows No results for unmatched search", async () => {
     mockInvoke.mockResolvedValue([]);
     render(<Search open={true} onClose={vi.fn()} onSelect={vi.fn()} />);
-    fireEvent.change(screen.getByPlaceholderText("Search blocks..."), {
-      target: { value: "nonexistent" },
-    });
+    const input = screen.getByPlaceholderText("Search blocks...");
+    fireEvent.change(input, { target: { value: "nonexistent" } });
     await waitFor(() => {
       expect(screen.getByText("No results")).toBeInTheDocument();
     });
@@ -85,9 +56,8 @@ describe("Search", () => {
   it("renders search results", async () => {
     mockInvoke.mockResolvedValue([block(1, "Result One"), block(2, "Result Two")]);
     render(<Search open={true} onClose={vi.fn()} onSelect={vi.fn()} />);
-    fireEvent.change(screen.getByPlaceholderText("Search blocks..."), {
-      target: { value: "result" },
-    });
+    const input = screen.getByPlaceholderText("Search blocks...");
+    fireEvent.change(input, { target: { value: "result" } });
     await waitFor(() => {
       expect(screen.getByText("Result One")).toBeInTheDocument();
       expect(screen.getByText("Result Two")).toBeInTheDocument();
@@ -100,9 +70,8 @@ describe("Search", () => {
     const onSelect = vi.fn();
     const onClose = vi.fn();
     render(<Search open={true} onClose={onClose} onSelect={onSelect} />);
-    fireEvent.change(screen.getByPlaceholderText("Search blocks..."), {
-      target: { value: "click" },
-    });
+    const input = screen.getByPlaceholderText("Search blocks...");
+    fireEvent.change(input, { target: { value: "click" } });
     await waitFor(() => {
       expect(screen.getByText("Clickable")).toBeInTheDocument();
     });

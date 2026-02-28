@@ -31,7 +31,11 @@
 | Vite | Сборка фронтенда, HMR |
 | TypeScript | Язык фронтенда |
 | TailwindCSS v4 | Стилизация (CSS-first конфигурация) |
-| shadcn/ui | Дизайн-система: OKLCH-токены, `cn()`, ThemeProvider, компонентная база |
+| shadcn/ui | Дизайн-система: OKLCH-токены, 14 Radix-примитивов (Button, Dialog, Command, ContextMenu и др.), glass-вариант, `cn()` |
+| radix-ui + cmdk | Headless UI-примитивы (основа shadcn), command palette (Cmd+K поиск) |
+| lucide-react | Иконки (замена ручных SVG) |
+| class-variance-authority | Варианты компонентов (CVA) |
+| tw-animate-css | CSS-анимации для Tailwind v4 (Dialog, DropdownMenu, ContextMenu) |
 | @dnd-kit | Drag-and-drop: сортировка каналов, перетаскивание карточек на теги |
 | react-markdown + remark-gfm | Рендеринг markdown в Detail.tsx |
 | @tailwindcss/typography | Стилизация prose-контента (статьи) |

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { ArrowDown } from "lucide-react";
 import type { BlockType } from "@/types";
 import { createBlock } from "@/lib/commands";
 import { isInternalDragActive } from "@/lib/drag";
@@ -88,7 +89,7 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
       {error ? (
-        <div className="max-w-sm rounded-2xl bg-red-600 px-8 py-6 shadow-2xl">
+        <div className="max-w-sm rounded-2xl bg-destructive px-8 py-6 shadow-2xl">
           <p className="text-sm font-medium text-white">
             Failed to import
           </p>
@@ -102,7 +103,7 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
         </div>
       ) : (
         <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-white/50 px-16 py-12">
-          <DropIcon />
+          <ArrowDown className="size-10 text-white" strokeWidth={2} />
           <p className="text-lg font-medium text-white">Drop files to add</p>
           <p className="text-sm text-white/60">
             Images, videos, PDFs, documents
@@ -136,20 +137,3 @@ const VIDEO_EXTS = new Set([
   "mp4", "mov", "avi", "mkv", "webm", "m4v",
 ]);
 
-function DropIcon() {
-  return (
-    <svg
-      width="40"
-      height="40"
-      viewBox="0 0 40 40"
-      fill="none"
-      stroke="white"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M20 6v20M12 18l8 8 8-8" />
-      <path d="M6 28v4a2 2 0 002 2h24a2 2 0 002-2v-4" />
-    </svg>
-  );
-}

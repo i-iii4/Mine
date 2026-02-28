@@ -1,18 +1,23 @@
-import { useEffect, useRef, useLayoutEffect, useState } from "react";
+import { useState } from "react";
+import { Trash2, Plus } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "@/components/ui/context-menu";
 import type { IndexedBlock, TagCount } from "@/types";
 import { getRecentTags } from "@/lib/recentTags";
-import { cn } from "@/lib/utils";
 
-interface CardContextMenuProps {
+interface CardTagMenuProps {
   block: IndexedBlock;
-  x: number;
-  y: number;
   tags: TagCount[];
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
-  onDelete: (slug: string) => void;
-  onClose: () => void;
+  onRequestDelete: (slug: string) => void;
 }
 
 /** Convert a normalized tag slug to a display title: `web-design` -> `Web Design` */
@@ -23,80 +28,35 @@ function titleFromTag(tag: string): string {
     .join(" ");
 }
 
-export function CardContextMenu({
+/**
+ * Renders ContextMenuContent with tag management UI.
+ * Must be used inside a <ContextMenu> wrapper.
+ */
+export function CardTagMenu({
   block,
-  x,
-  y,
   tags,
   currentTag,
   onToggleTag,
   onCreateAndAssign,
-  onDelete,
-  onClose,
-}: CardContextMenuProps) {
-  const ref = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const [pos, setPos] = useState({ x, y });
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  onRequestDelete,
+}: CardTagMenuProps) {
   const [search, setSearch] = useState("");
-
-  // Adjust position to stay within viewport (runs before paint)
-  useLayoutEffect(() => {
-    if (!ref.current) return;
-    const rect = ref.current.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let ax = x;
-    let ay = y;
-    if (rect.right > vw) ax = vw - rect.width - 8;
-    if (rect.bottom > vh) ay = vh - rect.height - 8;
-    if (ax < 0) ax = 8;
-    if (ay < 0) ay = 8;
-    if (ax !== x || ay !== y) setPos({ x: ax, y: ay });
-  }, [x, y]);
-
-  // Focus search input on open
-  useEffect(() => {
-    const t = setTimeout(() => searchRef.current?.focus(), 50);
-    return () => clearTimeout(t);
-  }, []);
-
-  // Close on click outside or Escape
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        onClose();
-      }
-    };
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("click", handleClick, true);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("click", handleClick, true);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [onClose]);
 
   // Sort tags: current channel > assigned > recent > alphabetical
   const recentTags = getRecentTags();
   const recentSet = new Set(recentTags);
 
   const sortedTags = [...tags].sort((a, b) => {
-    // Level 0: current channel always first
     if (currentTag) {
       const aCur = a.tag === currentTag;
       const bCur = b.tag === currentTag;
       if (aCur !== bCur) return aCur ? -1 : 1;
     }
 
-    // Level 1: assigned tags (block is in this channel)
     const aHas = block.tags.includes(a.tag);
     const bHas = block.tags.includes(b.tag);
     if (aHas !== bHas) return aHas ? -1 : 1;
 
-    // Level 2: recently used
     const aRecent = recentSet.has(a.tag);
     const bRecent = recentSet.has(b.tag);
     if (aRecent !== bRecent) return aRecent ? -1 : 1;
@@ -104,62 +64,47 @@ export function CardContextMenu({
       return recentTags.indexOf(a.tag) - recentTags.indexOf(b.tag);
     }
 
-    // Level 3: alphabetical
     return a.tag.localeCompare(b.tag);
   });
 
-  // Filter by search
   const lc = search.toLowerCase();
   const filtered = lc
     ? sortedTags.filter((tc) => titleFromTag(tc.tag).toLowerCase().includes(lc))
     : sortedTags;
 
-  // Offer to create when search has no matches
   const trimmed = search.trim();
   const canCreate = trimmed.length > 0 && filtered.length === 0;
 
   return (
-    <div
-      ref={ref}
-      className="fixed z-50 w-64 rounded-lg border border-border bg-popover shadow-lg"
-      style={{ left: pos.x, top: pos.y }}
-    >
-      {/* Search */}
-      <div className="p-2 pb-1">
-        <input
-          ref={searchRef}
+    <ContextMenuContent className="w-64 p-0">
+      {/* Search — stopPropagation prevents ContextMenu typeahead */}
+      <div className="p-2 pb-1" onKeyDown={(e) => e.stopPropagation()}>
+        <Input
+          autoFocus
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search channels..."
-          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:border-ring"
-          onClick={(e) => e.stopPropagation()}
+          className="h-auto py-1.5"
         />
       </div>
 
-      {/* Tag list */}
-      <div className="max-h-48 overflow-y-auto px-1 py-0.5">
+      {/* Tag list — custom buttons, not ContextMenuItems (don't close menu) */}
+      <ScrollArea className="max-h-48">
+        <div className="px-1 py-0.5">
         {filtered.map((tc) => {
           const hasTag = block.tags.includes(tc.tag);
           return (
             <button
               key={tc.tag}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleTag(block.slug, tc.tag, hasTag);
-              }}
+              onClick={() => onToggleTag(block.slug, tc.tag, hasTag)}
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
             >
-              <span
-                className={cn(
-                  "flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px]",
-                  hasTag
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-input",
-                )}
-              >
-                {hasTag && "\u2713"}
-              </span>
+              <Checkbox
+                checked={hasTag}
+                tabIndex={-1}
+                className="pointer-events-none"
+              />
               <span className="flex-1 truncate text-left text-foreground">
                 {titleFromTag(tc.tag)}
               </span>
@@ -172,16 +117,13 @@ export function CardContextMenu({
 
         {canCreate && (
           <button
-            onClick={(e) => {
-              e.stopPropagation();
+            onClick={() => {
               onCreateAndAssign(trimmed, block.slug);
               setSearch("");
             }}
             className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-foreground hover:bg-accent"
           >
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center text-xs">
-              +
-            </span>
+            <Plus className="size-4 shrink-0" />
             <span>
               Create &ldquo;{trimmed}&rdquo;
             </span>
@@ -193,54 +135,22 @@ export function CardContextMenu({
             No channels
           </p>
         )}
-      </div>
+        </div>
+      </ScrollArea>
 
       {/* Delete — hidden while searching */}
       {!search && (
-        <div className="border-t border-border px-1 py-0.5">
-          {confirmingDelete ? (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(block.slug);
-              }}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
-            >
-              <TrashIcon />
-              <span>Confirm delete</span>
-            </button>
-          ) : (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setConfirmingDelete(true);
-              }}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
-            >
-              <TrashIcon />
-              <span>Delete card</span>
-            </button>
-          )}
-        </div>
+        <>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            variant="destructive"
+            onSelect={() => onRequestDelete(block.slug)}
+          >
+            <Trash2 className="size-3" />
+            Delete card
+          </ContextMenuItem>
+        </>
       )}
-    </div>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 12 12"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="shrink-0"
-    >
-      <path d="M1.5 3h9M4 3V2a1 1 0 011-1h2a1 1 0 011 1v1M9.5 3v7a1 1 0 01-1 1h-5a1 1 0 01-1-1V3" />
-    </svg>
+    </ContextMenuContent>
   );
 }

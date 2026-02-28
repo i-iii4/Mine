@@ -2,6 +2,12 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
+import { X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { DialogContent } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import type { IndexedBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
 import { addTag, removeTag } from "@/lib/commands";
@@ -9,7 +15,6 @@ import { addTag, removeTag } from "@/lib/commands";
 interface DetailProps {
   block: IndexedBlock;
   vaultPath: string;
-  onClose: () => void;
   onNavigate: (direction: "prev" | "next") => void;
   onTagsChanged: () => void;
 }
@@ -17,7 +22,6 @@ interface DetailProps {
 export function Detail({
   block,
   vaultPath,
-  onClose,
   onNavigate,
   onTagsChanged,
 }: DetailProps) {
@@ -28,17 +32,6 @@ export function Detail({
     setTags(block.tags);
     setTagInput("");
   }, [block]);
-
-  // Keyboard navigation
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      else if (e.key === "ArrowLeft") onNavigate("prev");
-      else if (e.key === "ArrowRight") onNavigate("next");
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose, onNavigate]);
 
   const handleAddTag = useCallback(async () => {
     const tag = tagInput.trim();
@@ -67,80 +60,72 @@ export function Detail({
   );
 
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60"
-      onClick={onClose}
+    <DialogContent
+      className="flex max-h-[90vh] max-w-3xl flex-col gap-0 overflow-hidden p-0"
+      onOpenAutoFocus={(e) => e.preventDefault()}
+      onKeyDown={(e) => {
+        // Arrow navigation only when not typing in an input
+        if (e.target instanceof HTMLInputElement) return;
+        if (e.key === "ArrowLeft") onNavigate("prev");
+        if (e.key === "ArrowRight") onNavigate("next");
+      }}
     >
-      <div
-        className="relative mx-4 flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-card shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Close button */}
-        <button
-          onClick={onClose}
-          className="absolute right-3 top-3 z-10 rounded-full bg-muted/80 p-1.5 text-muted-foreground transition-colors hover:bg-accent"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M4 4l8 8M12 4l-8 8" />
-          </svg>
-        </button>
+      {/* Content */}
+      <ScrollArea className="flex-1">
+        <BlockContent block={block} vaultPath={vaultPath} />
+      </ScrollArea>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto">
-          <BlockContent block={block} vaultPath={vaultPath} />
+      {/* Metadata */}
+      <div className="border-t border-border px-6 py-4">
+        {/* Tags */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {tags.map((tag) => (
+            <Badge
+              key={tag}
+              variant="secondary"
+              className="group gap-1 text-muted-foreground"
+            >
+              {tag}
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => handleRemoveTag(tag)}
+                className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100"
+              >
+                <X className="size-2.5" />
+              </Button>
+            </Badge>
+          ))}
+          <Input
+            type="text"
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleAddTag();
+            }}
+            placeholder="+ tag"
+            className="h-auto w-20 border-none bg-transparent px-0 py-0 text-xs shadow-none focus-visible:ring-0"
+          />
         </div>
 
-        {/* Metadata */}
-        <div className="border-t border-border px-6 py-4">
-          {/* Tags */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            {tags.map((tag) => (
-              <span
-                key={tag}
-                className="group inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs text-muted-foreground"
-              >
-                {tag}
-                <button
-                  onClick={() => handleRemoveTag(tag)}
-                  className="opacity-0 transition-opacity group-hover:opacity-100"
-                >
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                    <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
-                  </svg>
-                </button>
-              </span>
-            ))}
-            <input
-              type="text"
-              value={tagInput}
-              onChange={(e) => setTagInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleAddTag();
-              }}
-              placeholder="+ tag"
-              className="w-20 bg-transparent text-xs text-muted-foreground outline-none placeholder:text-muted-foreground"
-            />
-          </div>
-
-          {/* Info row */}
-          <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
-            <span>{block.block_type}</span>
-            <span>{new Date(block.saved_at).toLocaleDateString()}</span>
-            {block.source && <span>{block.source}</span>}
-            {block.url && (
-              <a
-                href={block.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-500 hover:underline"
-              >
-                {domainFromUrl(block.url)}
-              </a>
-            )}
-          </div>
+        {/* Info row */}
+        <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
+          <span>{block.block_type}</span>
+          <span>{new Date(block.saved_at).toLocaleDateString()}</span>
+          {block.source && <span>{block.source}</span>}
+          {block.url && (
+            <a
+              href={block.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-500 hover:underline"
+            >
+              {domainFromUrl(block.url)}
+            </a>
+          )}
         </div>
       </div>
-    </div>
+    </DialogContent>
   );
 }
 

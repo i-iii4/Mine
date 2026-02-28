@@ -2,6 +2,30 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { NavLink } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { Plus, MoreHorizontal, Search, Download, Pencil, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import type { TagCount } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -24,13 +48,6 @@ interface SidebarProps {
   onCreateChannel: (tag: string) => void;
 }
 
-interface TagMenuState {
-  tag: string;
-  label: string;
-  x: number;
-  y: number;
-}
-
 export function Sidebar({
   orderedTags,
   totalBlocks,
@@ -41,12 +58,8 @@ export function Sidebar({
   onRenameTag,
   onCreateChannel,
 }: SidebarProps) {
-  // ── State ──────────────────────────────────────────────────────────────
   const [editingTag, setEditingTag] = useState<string | null>(null);
-  const [tagMenu, setTagMenu] = useState<TagMenuState | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-
-  // ── Tag CRUD handlers ─────────────────────────────────────────────────
 
   const handleRename = useCallback(
     (oldTag: string, newValue: string) => {
@@ -55,14 +68,6 @@ export function Sidebar({
       setEditingTag(null);
     },
     [onRenameTag],
-  );
-
-  const handleMenuOpen = useCallback(
-    (tag: string, label: string, e: React.MouseEvent) => {
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      setTagMenu({ tag, label, x: rect.left, y: rect.bottom + 4 });
-    },
-    [],
   );
 
   return (
@@ -89,10 +94,10 @@ export function Sidebar({
               tag={tc.tag}
               isCardDragging={isCardDragging}
               isEditing={editingTag === tc.tag}
-              onMenuOpen={(e) => handleMenuOpen(tc.tag, titleFromTag(tc.tag), e)}
               onDoubleClick={() => setEditingTag(tc.tag)}
               onRenameSubmit={(v) => handleRename(tc.tag, v)}
               onRenameCancel={() => setEditingTag(null)}
+              onDelete={() => onDeleteTag(tc.tag)}
             />
           ))}
         </SortableContext>
@@ -108,59 +113,43 @@ export function Sidebar({
             onCancel={() => setIsCreating(false)}
           />
         ) : (
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => setIsCreating(true)}
-            className="mt-1 flex w-full items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            className="mt-1 w-full justify-start text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           >
-            <PlusIcon />
+            <Plus className="size-3" />
             <span>New channel</span>
-          </button>
+          </Button>
         )}
       </nav>
 
       {/* Bottom actions */}
       <div className="border-t border-sidebar-border p-2">
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onImportOpen}
-          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent"
+          className="w-full justify-start text-muted-foreground hover:bg-sidebar-accent"
         >
-          <ImportIcon />
+          <Download className="size-4" />
           <span>Import from Are.na</span>
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onSearchOpen}
-          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent"
+          className="w-full justify-start text-muted-foreground hover:bg-sidebar-accent"
         >
-          <SearchIcon />
+          <Search className="size-4" />
           <span>Search</span>
           <kbd className="ml-auto rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
             {"\u2318"}K
           </kbd>
-        </button>
+        </Button>
       </div>
 
-      {/* Tag context menu */}
-      {tagMenu && (
-        <>
-          <div
-            className="fixed inset-0 z-40"
-            onClick={() => setTagMenu(null)}
-          />
-          <TagMenu
-            x={tagMenu.x}
-            y={tagMenu.y}
-            onRename={() => {
-              setEditingTag(tagMenu.tag);
-              setTagMenu(null);
-            }}
-            onDelete={() => {
-              onDeleteTag(tagMenu.tag);
-              setTagMenu(null);
-            }}
-            onClose={() => setTagMenu(null)}
-          />
-        </>
-      )}
     </aside>
   );
 }
@@ -204,10 +193,10 @@ function TagNavItem({
   tag,
   isCardDragging,
   isEditing,
-  onMenuOpen,
   onDoubleClick,
   onRenameSubmit,
   onRenameCancel,
+  onDelete,
 }: {
   to: string;
   label: string;
@@ -215,11 +204,13 @@ function TagNavItem({
   tag: string;
   isCardDragging: boolean;
   isEditing: boolean;
-  onMenuOpen: (e: React.MouseEvent) => void;
   onDoubleClick: () => void;
   onRenameSubmit: (value: string) => void;
   onRenameCancel: () => void;
+  onDelete: () => void;
 }) {
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
   const {
     setNodeRef,
     attributes,
@@ -247,113 +238,87 @@ function TagNavItem({
   }
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...attributes}
-      {...listeners}
-      className={cn(
-        "group relative rounded-md transition-all",
-        isDragging && "opacity-30",
-        isOver && !isDragging && isCardDragging && "ring-2 ring-ring ring-inset",
-      )}
-    >
-      <NavLink
-        to={to}
-        draggable="false"
-        onDoubleClick={(e) => {
-          e.preventDefault();
-          onDoubleClick();
-        }}
-        className={({ isActive }) =>
-          cn(
-            "flex items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors",
-            isActive
-              ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-              : "text-muted-foreground hover:bg-sidebar-accent",
-          )
-        }
+    <>
+      <div
+        ref={setNodeRef}
+        style={style}
+        {...attributes}
+        {...listeners}
+        className={cn(
+          "group relative rounded-md transition-all",
+          isDragging && "opacity-30",
+          isOver && !isDragging && isCardDragging && "ring-2 ring-ring ring-inset",
+        )}
       >
-        <span className="flex-1 truncate">{label}</span>
-        <span className="ml-2 shrink-0 text-xs text-muted-foreground">{count}</span>
-        <button
-          onClick={(e) => {
+        <NavLink
+          to={to}
+          draggable="false"
+          onDoubleClick={(e) => {
             e.preventDefault();
-            e.stopPropagation();
-            onMenuOpen(e);
+            onDoubleClick();
           }}
-          className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+          className={({ isActive }) =>
+            cn(
+              "flex items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors",
+              isActive
+                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                : "text-muted-foreground hover:bg-sidebar-accent",
+            )
+          }
         >
-          <EllipsisIcon />
-        </button>
-      </NavLink>
-    </div>
-  );
-}
+          <span className="flex-1 truncate">{label}</span>
+          <span className="ml-2 shrink-0 text-xs text-muted-foreground">{count}</span>
+          <DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="ml-1 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                  >
+                    <MoreHorizontal className="size-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="right">Options</TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onSelect={onDoubleClick}>
+                <Pencil className="size-3" />
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setDeleteOpen(true)}
+              >
+                <Trash2 className="size-3" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </NavLink>
+      </div>
 
-function TagMenu({
-  x,
-  y,
-  onRename,
-  onDelete,
-  onClose,
-}: {
-  x: number;
-  y: number;
-  onRename: () => void;
-  onDelete: () => void;
-  onClose: () => void;
-}) {
-  const [confirming, setConfirming] = useState(false);
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [onClose]);
-
-  return (
-    <div
-      className="fixed z-50 min-w-36 rounded-lg border border-border bg-popover py-1 shadow-lg"
-      style={{ left: x, top: y }}
-    >
-      {confirming ? (
-        <>
-          <p className="px-3 py-1.5 text-xs text-muted-foreground">
-            Remove tag from all cards.
-          </p>
-          <button
-            onClick={onDelete}
-            className="flex w-full px-3 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
-          >
-            Confirm delete
-          </button>
-          <button
-            onClick={() => setConfirming(false)}
-            className="flex w-full px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent"
-          >
-            Cancel
-          </button>
-        </>
-      ) : (
-        <>
-          <button
-            onClick={onRename}
-            className="flex w-full px-3 py-1.5 text-sm text-popover-foreground hover:bg-accent"
-          >
-            Rename
-          </button>
-          <button
-            onClick={() => setConfirming(true)}
-            className="flex w-full px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10"
-          >
-            Delete
-          </button>
-        </>
-      )}
-    </div>
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete channel</AlertDialogTitle>
+            <AlertDialogDescription>
+              Remove tag &ldquo;{label}&rdquo; from all cards. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={onDelete}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -385,12 +350,12 @@ function InlineInput({
   };
 
   return (
-    <input
+    <Input
       ref={ref}
       type="text"
       defaultValue={defaultValue}
       placeholder={placeholder}
-      className="mx-1 w-[calc(100%-0.5rem)] rounded-md border border-ring bg-background px-3 py-1.5 text-sm outline-none"
+      className="mx-1 h-auto w-[calc(100%-0.5rem)] border-ring py-1.5"
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           doSubmit((e.target as HTMLInputElement).value);
@@ -404,71 +369,3 @@ function InlineInput({
   );
 }
 
-// ─── Icons ───────────────────────────────────────────────────────────────────
-
-function PlusIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 12 12"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-    >
-      <path d="M6 2v8M2 6h8" />
-    </svg>
-  );
-}
-
-function EllipsisIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 12 12"
-      fill="currentColor"
-    >
-      <circle cx="2" cy="6" r="1.2" />
-      <circle cx="6" cy="6" r="1.2" />
-      <circle cx="10" cy="6" r="1.2" />
-    </svg>
-  );
-}
-
-function ImportIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M8 2v8M5 7l3 3 3-3" />
-      <path d="M2 11v2a1 1 0 001 1h10a1 1 0 001-1v-2" />
-    </svg>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="7" cy="7" r="4.5" />
-      <path d="M10.5 10.5L14 14" />
-    </svg>
-  );
-}

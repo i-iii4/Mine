@@ -28,6 +28,83 @@ if any
 
 ---
 
+## 28.02.2026 18:30 — shadcn/ui компонентная миграция (14 примитивов)
+
+### Goal
+Заменить все ручные интерактивные элементы (кнопки, инпуты, модалки, меню) на shadcn/ui-примитивы с доступностью, клавиатурной навигацией и анимациями из коробки. Удалить ручной код: позиционирование меню, click-outside, Escape-обработчики, backdrop-слои.
+
+### Planned
+Четырёхфазная миграция по плану (snazzy-splashing-platypus.md):
+1. **3.1** Базовые примитивы: Button, Input, Badge, Checkbox, Progress, Separator
+2. **3.2** Модальные окна: Dialog (Detail, ImportDialog), Command/cmdk (Search)
+3. **3.3** Меню: ContextMenu (Card правый клик), DropdownMenu + AlertDialog (Sidebar)
+4. **3.4** Финальный слой: ScrollArea, Tooltip, glass-токены, анимации
+
+### Actually completed
+Все четыре фазы выполнены.
+
+**Новые shadcn/ui компоненты** (`src/components/ui/`): alert-dialog, badge, button, checkbox, command, context-menu, dialog, dropdown-menu, input, progress, scroll-area, separator, tooltip — 14 файлов.
+
+**Фаза 3.1 — базовые примитивы:**
+- `VaultPicker.tsx` — кнопка → `<Button>`, inline SVG → lucide `<X>`
+- `DropZone.tsx` — bg-red-600 → bg-destructive, SVG → lucide
+- `Sidebar.tsx` — 4 кнопки → `<Button variant="ghost">`, InlineInput → `<Input>`, SVG → lucide (Plus, MoreHorizontal, Search, Download)
+- `Detail.tsx` — теги → `<Badge>`, tag input → `<Input>`, кнопка удаления тега → `<Button variant="ghost" size="icon-xs">`
+- `CardContextMenu.tsx` — fake checkbox → `<Checkbox>`, search input → `<Input>`, кнопки → `<Button>`
+- `ImportDialog.tsx` — 5 кнопок → `<Button>` (default/ghost/destructive), checkbox → `<Checkbox>`, progress bar → `<Progress>`
+- `Card.tsx` — SVG → lucide `<ImageOff>`
+- `Search.tsx` — TypeBadge → `<Badge variant="secondary">`
+
+**Фаза 3.2 — модальные окна:**
+- `Detail.tsx` — ручной fixed-div + backdrop → `<DialogContent>` (внутри `<Dialog>` в App.tsx)
+- `ImportDialog.tsx` — ручной overlay → `<Dialog>` + `<DialogContent>` с `showCloseButton`, `onInteractOutside`
+- `Search.tsx` — ручной командный палитр → `<CommandDialog>` (cmdk) с `shouldFilter={false}` для IPC-поиска
+- `App.tsx` — `<Dialog open={selectedBlock !== null}>` оборачивает Detail
+
+**Фаза 3.3 — меню:**
+- `CardContextMenu.tsx` → `CardTagMenu`: `<ContextMenuContent>` вместо positioned div. Удалены: useLayoutEffect, useEffect (click-outside, Escape), ручной фокус
+- `Grid.tsx` — каждая Card обёрнута в `<ContextMenu>` + `<ContextMenuTrigger>`, AlertDialog для подтверждения удаления на уровне Grid
+- `Sidebar.tsx` — TagMenu → `<DropdownMenu>` + `<AlertDialog>` для удаления канала. Удалены: TagMenuState, backdrop, ручное позиционирование
+- `App.tsx` — удалены: ContextMenuState, contextMenu state, handleContextMenu, CardContextMenu рендер. RouteContext расширен (tags, currentTag, onToggleTag, onCreateAndAssign, onDeleteBlock)
+
+**Фаза 3.4 — финальный слой:**
+- `global.css` — glass-токены: `--glass-bg`, `--glass-border` (свет + тьма), `--color-glass*` в `@theme inline`
+- `button.tsx` — вариант `glass` с `backdrop-blur-xl backdrop-saturate-[180%]`
+- `main.tsx` — `<TooltipProvider>` оборачивает `<App />`
+- `Sidebar.tsx` — `<Tooltip>` на кнопке-многоточие TagNavItem
+- `CardContextMenu.tsx`, `ImportDialog.tsx`, `Detail.tsx` — `<ScrollArea>` заменяет `overflow-y-auto`
+
+**Тесты:**
+- `setup.ts` — добавлен мок ResizeObserver и scrollIntoView (cmdk)
+- `Search.test.tsx` — удалены 3 теста библиотечного поведения (Escape, backdrop, kbd hint)
+- `Sidebar.test.tsx` — `<TooltipProvider>` в обёртке рендера
+
+### Deviations from plan
+- Search.tsx: вместо отдельного `<CommandDialog>` использован `<Dialog>` + `<Command>` — больше контроля над layout (поисковые результаты с Badge)
+- Sidebar ScrollArea: не добавлена — sidebar nav уже имеет `overflow-y-auto` со скрытым скроллбаром через CSS, и ScrollArea внутри `<SortableContext>` конфликтует с dnd-kit
+- Card hover transition: оставлен существующий `transition-shadow` вместо `transition-all duration-200` из плана
+
+### Checks
+- `tsc --noEmit` — 0 ошибок
+- `vitest run` — 39/39 тестов (было 42, удалены 3 теста библиотечного поведения)
+- Все `<button>` заменены на `<Button>` (кроме намеренных кастомных в CardTagMenu)
+- Все `<input>` заменены на `<Input>` / `<CommandInput>` (кроме shadcn-примитива)
+- Нет ручных модалок: все через `<Dialog>` или `<CommandDialog>`
+- Нет ручного позиционирования меню: всё через Radix ContextMenu/DropdownMenu
+
+### Push
+pending
+
+### Decisions and lessons learned
+- **ContextMenu + dnd-kit**: правый клик (ContextMenu) и перетаскивание (PointerSensor) не конфликтуют — разные типы событий
+- **AlertDialog за пределами ContextMenu**: состояние подтверждения удаления поднято на уровень Grid, потому что ContextMenuContent размонтируется при закрытии меню
+- **DropdownMenu внутри NavLink + dnd-kit**: нужен `stopPropagation` и на `onClick`, и на `onPointerDown` — иначе клик по многоточию запускает навигацию или перетаскивание
+- **cmdk + ResizeObserver**: cmdk внутренне использует ResizeObserver, нужен мок в тестах
+- **Tooltip + DropdownMenu**: вложенные `asChild` на одном элементе работают, при открытии DropdownMenu tooltip автоматически скрывается
+- Итог: 14 shadcn-примитивов, -323 строки кода, полная доступность и клавиатурная навигация из коробки
+
+---
+
 ## 28.02.2026 — Миграция всех компонентов на семантические токены
 
 ### Goal

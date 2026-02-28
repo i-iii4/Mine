@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { DndContext } from "@dnd-kit/core";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
 import type { TagCount } from "@/types";
 
@@ -23,9 +24,11 @@ const defaultProps = {
 function renderSidebar(props = defaultProps) {
   return render(
     <MemoryRouter>
-      <DndContext>
-        <Sidebar {...props} />
-      </DndContext>
+      <TooltipProvider>
+        <DndContext>
+          <Sidebar {...props} />
+        </DndContext>
+      </TooltipProvider>
     </MemoryRouter>,
   );
 }
