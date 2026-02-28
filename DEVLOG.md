@@ -100,7 +100,7 @@ if any
 - `cargo test` — 197/197 пройдено (в предыдущей сессии)
 
 ### Push
-- (ожидает коммит)
+- `d8d20cb` — Replace channels with tags, add dnd-kit drag-and-drop and card context menu
 
 ### Decisions and lessons learned
 1. **HTML5 DnD несовместим с Tauri v2**: WKWebView перехватывает drag-события на нативном уровне для поддержки перетаскивания файлов из Finder. Pointer Events (dnd-kit) работают параллельно — два DnD-потока не конфликтуют
