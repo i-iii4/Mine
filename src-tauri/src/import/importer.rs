@@ -15,8 +15,6 @@ use crate::domain::vault::{resolve_slug_conflict, VaultLayout};
 use crate::import::arena_api::{self, ArenaBlock};
 use crate::storage::{files, index, thumbnails};
 
-const THUMB_MAX_SIZE: u32 = 240;
-
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 /// Result of importing a single channel.
@@ -141,7 +139,7 @@ fn import_single_block(
             let media_path = vault.media_path(&slug, ext);
             if media_path.exists() {
                 let thumb_path = vault.thumb_path(&slug);
-                let _ = thumbnails::generate_thumbnail(&media_path, &thumb_path, THUMB_MAX_SIZE);
+                let _ = thumbnails::generate_thumbnail(&media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE);
             }
         }
     }

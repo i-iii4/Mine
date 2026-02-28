@@ -12,8 +12,6 @@ use crate::domain::vault::resolve_slug_conflict;
 use crate::storage::{files, index, thumbnails};
 use crate::storage::index::IndexedBlock;
 
-const THUMB_MAX_SIZE: u32 = 240;
-
 // ─── Commands ───────────────────────────────────────────────────────────────
 
 /// List all blocks, ordered by saved_at descending.
@@ -112,7 +110,7 @@ pub fn create_block(
         if is_image_ext(ext) {
             let media_dest = vs.vault.media_path(&slug, ext);
             let thumb_dest = vs.vault.thumb_path(&slug);
-            let _ = thumbnails::generate_thumbnail(&media_dest, &thumb_dest, THUMB_MAX_SIZE);
+            let _ = thumbnails::generate_thumbnail(&media_dest, &thumb_dest, thumbnails::DEFAULT_MAX_SIZE);
         }
     }
 

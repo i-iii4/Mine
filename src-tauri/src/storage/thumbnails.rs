@@ -1,7 +1,7 @@
 // Thumbnails: image resize and caching.
 //
 // Generates thumbnail previews for block images.
-// Max side = 240px, saves as JPEG (quality 80).
+// Max side = 480px (2x for Retina), saves as JPEG (quality 85).
 // Does not upscale images smaller than max_size.
 //
 // Contract: SPEC_STORAGE.md#storage/thumbnails
@@ -10,7 +10,10 @@ use anyhow::{Context, Result};
 use image::GenericImageView;
 use std::path::Path;
 
-const JPEG_QUALITY: u8 = 80;
+/// Default max side for thumbnails: 480px covers 240px CSS columns at 2x Retina.
+pub const DEFAULT_MAX_SIZE: u32 = 480;
+
+const JPEG_QUALITY: u8 = 85;
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 

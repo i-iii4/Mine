@@ -31,16 +31,15 @@ function titleFromTag(tag: string): string {
     .join(" ");
 }
 
-/** Center the DragOverlay on the cursor rather than on the dragged element's origin. */
-const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, overlayNodeRect, transform }) => {
+/** Pin the DragOverlay so the cursor tip sits just outside the top-left corner. */
+const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
   if (!activatorEvent || !draggingNodeRect) return transform;
   const e = activatorEvent as PointerEvent;
-  const ow = overlayNodeRect?.width ?? 0;
-  const oh = overlayNodeRect?.height ?? 0;
+  const INSET = 4; // cursor tip peeks past the border-radius
   return {
     ...transform,
-    x: transform.x + (e.clientX - draggingNodeRect.left) - ow / 2,
-    y: transform.y + (e.clientY - draggingNodeRect.top) - oh / 2,
+    x: transform.x + (e.clientX - draggingNodeRect.left) - INSET,
+    y: transform.y + (e.clientY - draggingNodeRect.top) - INSET,
   };
 };
 

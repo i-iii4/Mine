@@ -20,7 +20,6 @@ use local_arena_lib::domain::vault::{resolve_slug_conflict, VaultLayout};
 use local_arena_lib::storage::{db, files, index, thumbnails};
 use local_arena_lib::util::now_iso8601;
 
-const THUMB_MAX_SIZE: u32 = 240;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ─── Message types ──────────────────────────────────────────────────────────
@@ -317,7 +316,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     // Generate thumbnail if we downloaded an image
     if let Some(ref src_path) = downloaded_path {
         let thumb_path = vault.thumb_path(&slug);
-        let _ = thumbnails::generate_thumbnail(src_path, &thumb_path, THUMB_MAX_SIZE);
+        let _ = thumbnails::generate_thumbnail(src_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE);
     }
 
     // Index the block

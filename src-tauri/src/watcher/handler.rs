@@ -15,8 +15,6 @@ use crate::domain::vault::VaultLayout;
 use crate::storage::{files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
 
-const THUMB_MAX_SIZE: u32 = 240;
-
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /// Result of a full vault scan.
@@ -73,7 +71,7 @@ pub fn index_md_file(conn: &Connection, vault: &VaultLayout, path: &Path) -> Res
 
         if media_path.exists() && is_image_ext(ext) {
             let thumb_path = vault.thumb_path(&slug);
-            if let Err(e) = thumbnails::generate_thumbnail(&media_path, &thumb_path, THUMB_MAX_SIZE)
+            if let Err(e) = thumbnails::generate_thumbnail(&media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
             {
                 log::warn!("thumbnail failed for {}: {}", slug, e);
             }
@@ -99,7 +97,7 @@ pub fn handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) 
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                 if is_image_ext(ext) {
                     let thumb_path = vault.thumb_path(&slug);
-                    thumbnails::generate_thumbnail(path, &thumb_path, THUMB_MAX_SIZE)?;
+                    thumbnails::generate_thumbnail(path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)?;
                 }
             }
         }

@@ -28,6 +28,46 @@ if any
 
 ---
 
+## 28.02.2026 — Качество thumbnail, позиционирование DragOverlay
+
+### Goal
+Два улучшения: (A) повысить качество thumbnail-превью для Retina-дисплеев; (B) изменить позиционирование DragOverlay — курсор «держит» карточку за левый верхний угол, не закрывая целевые теги.
+
+### Planned
+1. Увеличить max size thumbnail с 240 до 480px (покрытие 2x Retina)
+2. Повысить JPEG quality с 80 до 85
+3. Вынести константу в единый `DEFAULT_MAX_SIZE` в `thumbnails.rs`
+4. DragOverlay: привязка к левому верхнему углу с отступом 4px
+
+### Actually completed
+Все 4 пункта выполнены.
+
+**Thumbnail quality (7.15):**
+- `thumbnails.rs`: новая публичная константа `DEFAULT_MAX_SIZE = 480`, `JPEG_QUALITY = 85`
+- Удалены дублирующиеся `THUMB_MAX_SIZE = 240` из 4 файлов (`commands/blocks.rs`, `watcher/handler.rs`, `import/importer.rs`, `bin/native_host.rs`) — все ссылаются на `thumbnails::DEFAULT_MAX_SIZE`
+- Тесты в `thumbnails.rs` продолжают использовать `generate_thumbnail(&src, &dst, 240)` напрямую — они тестируют функцию с конкретным параметром, не зависят от константы
+
+**DragOverlay (7.16):**
+- `App.tsx`: модификатор `snapToCursor` — убрано центрирование (`- ow/2`, `- oh/2`), добавлен `INSET = 4` (остриё курсора чуть выступает за border-radius карточки). Курсор «держит» карточку за угол, область справа свободна для обзора целей drop
+
+### Deviations from plan
+Нет отклонений.
+
+### Checks
+- `cargo check` — компиляция без ошибок
+- `cargo test --lib` — 197/197 пройдено
+- `tsc --noEmit` — без ошибок
+
+### Push
+- `COMMIT_HASH` — Improve thumbnail quality for Retina and reposition DragOverlay
+
+### Decisions and lessons learned
+1. **480px = 2x Retina**: минимальная ширина столбца 240 CSS-пикселей, на Retina нужно 480 физических. 3x на Mac не используется. JPEG 85 при 480px — ~30-50 КБ на файл
+2. **Единая константа вместо 4 копий**: `thumbnails::DEFAULT_MAX_SIZE` — единый источник истины, изменение в одном месте обновляет всю систему
+3. **INSET = 4px при border-radius 8px**: остриё курсора выступает ровно на половину скругления — визуально курсор «цепляет» угол карточки
+
+---
+
 ## 28.02.2026 — Drag-and-drop каналов, багфиксы drop-зоны и создания каналов
 
 ### Goal
