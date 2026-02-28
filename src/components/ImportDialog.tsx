@@ -137,16 +137,16 @@ export function ImportDialog({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
       onKeyDown={handleKeyDown}
     >
-      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-neutral-900">
+      <div className="w-full max-w-lg rounded-2xl bg-card p-6 shadow-2xl">
         {/* Header */}
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+          <h2 className="text-lg font-semibold text-foreground">
             Import from Are.na
           </h2>
           {step !== "importing" && (
             <button
               onClick={onClose}
-              className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800 dark:hover:text-neutral-300"
+              className="rounded-lg p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
             >
               <CloseIcon />
             </button>
@@ -154,7 +154,7 @@ export function ImportDialog({
         </div>
 
         {error && (
-          <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-400">
+          <div className="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
           </div>
         )}
@@ -210,7 +210,7 @@ function UsernameStep({
 }) {
   return (
     <div>
-      <p className="mb-3 text-sm text-neutral-500 dark:text-neutral-400">
+      <p className="mb-3 text-sm text-muted-foreground">
         Enter your Are.na username to see your public channels.
       </p>
       <div className="flex gap-3">
@@ -221,12 +221,12 @@ function UsernameStep({
           onChange={(e) => onUsernameChange(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && onSubmit()}
           placeholder="username"
-          className="flex-1 rounded-lg border border-neutral-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-800 dark:focus:border-neutral-500"
+          className="flex-1 rounded-lg border border-input bg-background px-4 py-2.5 text-sm outline-none focus:border-ring"
         />
         <button
           onClick={onSubmit}
           disabled={loading || !username.trim()}
-          className="rounded-lg bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900"
+          className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
         >
           {loading ? "Loading..." : "Fetch"}
         </button>
@@ -257,34 +257,34 @@ function SelectStep({
   return (
     <div>
       <div className="mb-3 flex items-center justify-between">
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
+        <p className="text-sm text-muted-foreground">
           {channels.length} channels found
         </p>
         <button
           onClick={onSelectAll}
-          className="text-xs text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+          className="text-xs text-muted-foreground hover:text-foreground"
         >
           {selected.size === channels.length ? "Deselect all" : "Select all"}
         </button>
       </div>
 
-      <div className="mb-4 max-h-72 overflow-y-auto rounded-lg border border-neutral-200 dark:border-neutral-700">
+      <div className="mb-4 max-h-72 overflow-y-auto rounded-lg border border-border">
         {channels.map((ch) => (
           <label
             key={ch.slug}
-            className="flex cursor-pointer items-center gap-3 border-b border-neutral-100 px-4 py-3 last:border-0 hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-800/50"
+            className="flex cursor-pointer items-center gap-3 border-b border-border px-4 py-3 last:border-0 hover:bg-accent"
           >
             <input
               type="checkbox"
               checked={selected.has(ch.slug)}
               onChange={() => onToggle(ch.slug)}
-              className="h-4 w-4 rounded border-neutral-300 accent-neutral-900 dark:accent-neutral-100"
+              className="h-4 w-4 rounded border-input accent-primary"
             />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
+              <p className="truncate text-sm font-medium text-foreground">
                 {ch.title}
               </p>
-              <p className="text-xs text-neutral-400">
+              <p className="text-xs text-muted-foreground">
                 {ch.length} blocks
               </p>
             </div>
@@ -295,18 +295,18 @@ function SelectStep({
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
-          className="text-sm text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+          className="text-sm text-muted-foreground hover:text-foreground"
         >
           Back
         </button>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-neutral-400">
+          <span className="text-xs text-muted-foreground">
             {selected.size} channels, ~{totalBlocks} blocks
           </span>
           <button
             onClick={onImport}
             disabled={selected.size === 0}
-            className="rounded-lg bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900"
+            className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
           >
             Import
           </button>
@@ -320,7 +320,7 @@ function ImportingStep({ progress }: { progress: ImportProgress | null }) {
   if (!progress) {
     return (
       <div className="py-8 text-center">
-        <p className="text-sm text-neutral-500">Connecting to Are.na...</p>
+        <p className="text-sm text-muted-foreground">Connecting to Are.na...</p>
       </div>
     );
   }
@@ -330,25 +330,25 @@ function ImportingStep({ progress }: { progress: ImportProgress | null }) {
   return (
     <div className="py-4">
       <div className="mb-3">
-        <div className="mb-1.5 flex justify-between text-xs text-neutral-500">
+        <div className="mb-1.5 flex justify-between text-xs text-muted-foreground">
           <span>{progress.channel_slug}</span>
           <span>
             {progress.current} / {progress.total}
           </span>
         </div>
-        <div className="h-2 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-700">
+        <div className="h-2 overflow-hidden rounded-full bg-secondary">
           <div
-            className="h-full rounded-full bg-neutral-900 transition-all duration-300 dark:bg-neutral-100"
+            className="h-full rounded-full bg-primary transition-all duration-300"
             style={{ width: `${pct}%` }}
           />
         </div>
       </div>
       {progress.block_title && (
-        <p className="truncate text-xs text-neutral-400">
+        <p className="truncate text-xs text-muted-foreground">
           {progress.block_title}
         </p>
       )}
-      <p className="mt-3 text-xs text-neutral-400">
+      <p className="mt-3 text-xs text-muted-foreground">
         Do not close this window during import.
       </p>
     </div>
@@ -378,12 +378,12 @@ function DoneStep({
         {results.map((r) => (
           <div
             key={r.channel_slug}
-            className="flex items-center justify-between border-b border-neutral-100 py-2 last:border-0 dark:border-neutral-800"
+            className="flex items-center justify-between border-b border-border py-2 last:border-0"
           >
-            <span className="text-sm text-neutral-700 dark:text-neutral-300">
+            <span className="text-sm text-foreground">
               {r.channel_title}
             </span>
-            <span className="text-xs text-neutral-400">
+            <span className="text-xs text-muted-foreground">
               {r.imported} imported
               {r.skipped > 0 && `, ${r.skipped} errors`}
             </span>
@@ -394,7 +394,7 @@ function DoneStep({
       <div className="flex justify-end">
         <button
           onClick={onClose}
-          className="rounded-lg bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white dark:bg-neutral-100 dark:text-neutral-900"
+          className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground"
         >
           Done
         </button>

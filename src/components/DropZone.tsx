@@ -95,8 +95,8 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
           <p className="mt-1 text-xs text-white/80">{error}</p>
         </div>
       ) : importing ? (
-        <div className="rounded-2xl bg-white px-8 py-6 shadow-2xl dark:bg-neutral-900">
-          <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+        <div className="rounded-2xl bg-card px-8 py-6 shadow-2xl">
+          <p className="text-sm font-medium text-foreground">
             Importing...
           </p>
         </div>

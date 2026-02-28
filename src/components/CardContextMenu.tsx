@@ -1,6 +1,7 @@
 import { useEffect, useRef, useLayoutEffect, useState } from "react";
 import type { IndexedBlock, TagCount } from "@/types";
 import { getRecentTags } from "@/lib/recentTags";
+import { cn } from "@/lib/utils";
 
 interface CardContextMenuProps {
   block: IndexedBlock;
@@ -131,7 +132,7 @@ export function CardContextMenu({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search channels..."
-          className="w-full rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-1.5 text-sm outline-none focus:border-neutral-400 dark:border-neutral-600 dark:bg-neutral-900 dark:focus:border-neutral-500"
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:border-ring"
           onClick={(e) => e.stopPropagation()}
         />
       </div>
@@ -147,21 +148,22 @@ export function CardContextMenu({
                 e.stopPropagation();
                 onToggleTag(block.slug, tc.tag, hasTag);
               }}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-700"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
             >
               <span
-                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] ${
+                className={cn(
+                  "flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px]",
                   hasTag
-                    ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
-                    : "border-neutral-300 dark:border-neutral-600"
-                }`}
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-input",
+                )}
               >
                 {hasTag && "\u2713"}
               </span>
-              <span className="flex-1 truncate text-left text-neutral-700 dark:text-neutral-200">
+              <span className="flex-1 truncate text-left text-foreground">
                 {titleFromTag(tc.tag)}
               </span>
-              <span className="shrink-0 text-xs text-neutral-400">
+              <span className="shrink-0 text-xs text-muted-foreground">
                 {tc.count}
               </span>
             </button>
@@ -175,7 +177,7 @@ export function CardContextMenu({
               onCreateAndAssign(trimmed, block.slug);
               setSearch("");
             }}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-neutral-900 hover:bg-neutral-100 dark:text-neutral-100 dark:hover:bg-neutral-700"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-foreground hover:bg-accent"
           >
             <span className="flex h-4 w-4 shrink-0 items-center justify-center text-xs">
               +
@@ -187,7 +189,7 @@ export function CardContextMenu({
         )}
 
         {filtered.length === 0 && !canCreate && (
-          <p className="px-2 py-3 text-center text-xs text-neutral-400">
+          <p className="px-2 py-3 text-center text-xs text-muted-foreground">
             No channels
           </p>
         )}
@@ -195,14 +197,14 @@ export function CardContextMenu({
 
       {/* Delete — hidden while searching */}
       {!search && (
-        <div className="border-t border-neutral-200 px-1 py-0.5 dark:border-neutral-700">
+        <div className="border-t border-border px-1 py-0.5">
           {confirmingDelete ? (
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 onDelete(block.slug);
               }}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
             >
               <TrashIcon />
               <span>Confirm delete</span>
@@ -213,7 +215,7 @@ export function CardContextMenu({
                 e.stopPropagation();
                 setConfirmingDelete(true);
               }}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
             >
               <TrashIcon />
               <span>Delete card</span>

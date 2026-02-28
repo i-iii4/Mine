@@ -114,7 +114,7 @@ export function Grid({ blocks, vaultPath, onBlockClick, onContextMenu }: GridPro
       {/* Sentinel for infinite scroll */}
       {hasMore && (
         <div ref={sentinelRef} className="flex justify-center py-8">
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-muted-foreground">
             {visibleCount} of {blocks.length}
           </p>
         </div>

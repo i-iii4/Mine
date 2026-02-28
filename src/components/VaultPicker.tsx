@@ -31,21 +31,21 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
   };
 
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-neutral-50 dark:bg-neutral-950">
+    <div className="flex h-screen w-screen items-center justify-center bg-background">
       <div className="flex max-w-sm flex-col items-center gap-6 text-center">
-        <h1 className="text-2xl font-semibold text-neutral-900 dark:text-neutral-100">
+        <h1 className="text-2xl font-semibold text-foreground">
           Local Arena
         </h1>
-        <p className="text-sm text-neutral-500">
+        <p className="text-sm text-muted-foreground">
           Choose a folder for your vault. All blocks will be stored as files in
           this directory.
         </p>
 
         {result ? (
-          <div className="rounded-lg bg-neutral-100 px-6 py-4 dark:bg-neutral-900">
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          <div className="rounded-lg bg-muted px-6 py-4">
+            <p className="text-sm text-muted-foreground">
               Indexed{" "}
-              <span className="font-semibold text-neutral-900 dark:text-neutral-100">
+              <span className="font-semibold text-foreground">
                 {result.indexed}
               </span>{" "}
               blocks
@@ -61,14 +61,14 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
           <button
             onClick={handleSelect}
             disabled={loading}
-            className="rounded-lg bg-neutral-900 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-neutral-800 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
+            className="rounded-lg bg-primary px-6 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
           >
             {loading ? "Scanning..." : "Select Vault"}
           </button>
         )}
 
         {error && (
-          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+          <p className="text-sm text-destructive">{error}</p>
         )}
       </div>
     </div>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import type { IndexedBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
+import { cn } from "@/lib/utils";
 
 interface CardProps {
   block: IndexedBlock;
@@ -39,7 +40,10 @@ export function Card({ block, vaultPath, onClick, onContextMenu }: CardProps) {
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       onContextMenu={handleContextMenu}
-      className={`group cursor-pointer overflow-hidden rounded-lg border border-neutral-200 bg-white transition-shadow hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900 ${isDragging ? "opacity-30" : ""}`}
+      className={cn(
+        "group cursor-pointer overflow-hidden rounded-lg border border-border bg-card transition-shadow hover:shadow-md",
+        isDragging && "opacity-30",
+      )}
     >
       <CardContent block={block} vaultPath={vaultPath} />
     </div>
@@ -81,10 +85,10 @@ function ImageCard({
 
   if (error) {
     return (
-      <div className="flex aspect-square items-center justify-center bg-neutral-100 dark:bg-neutral-800">
+      <div className="flex aspect-square items-center justify-center bg-muted">
         <div className="text-center">
           <BrokenImageIcon />
-          <p className="mt-1 text-xs text-neutral-400">
+          <p className="mt-1 text-xs text-muted-foreground">
             {block.title ?? block.slug}
           </p>
         </div>
@@ -131,11 +135,11 @@ function LinkCard({
   if (thumbError) {
     return (
       <div className="p-3">
-        <p className="truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
+        <p className="truncate text-sm font-medium text-foreground">
           {block.title ?? block.slug}
         </p>
         {domain && (
-          <p className="mt-0.5 truncate text-xs text-neutral-500">{domain}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">{domain}</p>
         )}
       </div>
     );
@@ -159,17 +163,20 @@ function LinkCard({
         <img
           src={thumb}
           alt=""
-          className={`absolute inset-0 h-full w-full object-cover transition-opacity ${thumbLoaded ? "opacity-100" : "opacity-0"}`}
+          className={cn(
+            "absolute inset-0 h-full w-full object-cover transition-opacity",
+            thumbLoaded ? "opacity-100" : "opacity-0",
+          )}
           onLoad={() => setThumbLoaded(true)}
           onError={() => setThumbError(true)}
         />
       </div>
       <div className="p-3">
-        <p className="truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
+        <p className="truncate text-sm font-medium text-foreground">
           {block.title ?? block.slug}
         </p>
         {domain && (
-          <p className="mt-0.5 truncate text-xs text-neutral-500">{domain}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">{domain}</p>
         )}
       </div>
     </div>
@@ -196,16 +203,16 @@ function ArticleCard({ block }: { block: IndexedBlock }) {
 
   return (
     <div className="p-4">
-      <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+      <p className="text-sm font-medium text-foreground">
         {block.title ?? block.slug}
       </p>
       {preview && (
-        <p className="mt-1.5 line-clamp-8 text-xs leading-relaxed text-neutral-500">
+        <p className="mt-1.5 line-clamp-8 text-xs leading-relaxed text-muted-foreground">
           {preview}
         </p>
       )}
       {block.author && (
-        <p className="mt-2 text-xs text-neutral-400">{block.author}</p>
+        <p className="mt-2 text-xs text-muted-foreground">{block.author}</p>
       )}
     </div>
   );
@@ -255,15 +262,15 @@ function FileCard({ block }: { block: IndexedBlock }) {
 
   return (
     <div className="flex items-center gap-3 p-4">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-xs font-semibold text-neutral-500 dark:bg-neutral-800">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-xs font-semibold text-muted-foreground">
         {ext ?? "FILE"}
       </div>
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
+        <p className="truncate text-sm font-medium text-foreground">
           {block.title ?? block.slug}
         </p>
         {block.media_file && (
-          <p className="truncate text-xs text-neutral-500">
+          <p className="truncate text-xs text-muted-foreground">
             {block.media_file}
           </p>
         )}
@@ -283,7 +290,7 @@ function BrokenImageIcon() {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="mx-auto text-neutral-300 dark:text-neutral-600"
+      className="mx-auto text-muted-foreground/50"
     >
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <path d="M3 16l5-5 4 4" />

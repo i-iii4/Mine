@@ -72,13 +72,13 @@ export function Detail({
       onClick={onClose}
     >
       <div
-        className="relative mx-4 flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-neutral-900"
+        className="relative mx-4 flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-card shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute right-3 top-3 z-10 rounded-full bg-neutral-100/80 p-1.5 text-neutral-600 transition-colors hover:bg-neutral-200 dark:bg-neutral-800/80 dark:text-neutral-400 dark:hover:bg-neutral-700"
+          className="absolute right-3 top-3 z-10 rounded-full bg-muted/80 p-1.5 text-muted-foreground transition-colors hover:bg-accent"
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M4 4l8 8M12 4l-8 8" />
@@ -91,13 +91,13 @@ export function Detail({
         </div>
 
         {/* Metadata */}
-        <div className="border-t border-neutral-200 px-6 py-4 dark:border-neutral-800">
+        <div className="border-t border-border px-6 py-4">
           {/* Tags */}
           <div className="flex flex-wrap items-center gap-1.5">
             {tags.map((tag) => (
               <span
                 key={tag}
-                className="group inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
+                className="group inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs text-muted-foreground"
               >
                 {tag}
                 <button
@@ -118,12 +118,12 @@ export function Detail({
                 if (e.key === "Enter") handleAddTag();
               }}
               placeholder="+ tag"
-              className="w-20 bg-transparent text-xs text-neutral-500 outline-none placeholder:text-neutral-400"
+              className="w-20 bg-transparent text-xs text-muted-foreground outline-none placeholder:text-muted-foreground"
             />
           </div>
 
           {/* Info row */}
-          <div className="mt-3 flex items-center gap-4 text-xs text-neutral-500">
+          <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
             <span>{block.block_type}</span>
             <span>{new Date(block.saved_at).toLocaleDateString()}</span>
             {block.source && <span>{block.source}</span>}
@@ -157,7 +157,7 @@ function BlockContent({
         ? mediaUrl(vaultPath, block.media_file)
         : thumbnailUrl(vaultPath, block.slug);
       return (
-        <div className="flex items-center justify-center bg-neutral-100 dark:bg-neutral-950">
+        <div className="flex items-center justify-center bg-muted">
           <img
             src={src}
             alt={block.title ?? block.slug}
@@ -170,7 +170,7 @@ function BlockContent({
       const thumb = thumbnailUrl(vaultPath, block.slug);
       return (
         <div>
-          <div className="aspect-video bg-neutral-100 dark:bg-neutral-950">
+          <div className="aspect-video bg-muted">
             <img
               src={thumb}
               alt=""
@@ -181,11 +181,11 @@ function BlockContent({
             />
           </div>
           <div className="px-6 py-4">
-            <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+            <h2 className="text-lg font-semibold text-foreground">
               {block.title ?? block.slug}
             </h2>
             {block.description && (
-              <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+              <p className="mt-2 text-sm text-muted-foreground">
                 {block.description}
               </p>
             )}
@@ -196,11 +196,11 @@ function BlockContent({
     case "article":
       return (
         <div className="px-6 py-6">
-          <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+          <h2 className="text-lg font-semibold text-foreground">
             {block.title ?? block.slug}
           </h2>
           {block.author && (
-            <p className="mt-1 text-sm text-neutral-500">{block.author}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{block.author}</p>
           )}
           <ArticleBody body={block.body} vaultPath={vaultPath} />
         </div>
@@ -216,7 +216,7 @@ function BlockContent({
               <source src={src} />
             </video>
           ) : (
-            <div className="flex aspect-video items-center justify-center text-neutral-500">
+            <div className="flex aspect-video items-center justify-center text-muted-foreground">
               No video file
             </div>
           )}
@@ -226,14 +226,14 @@ function BlockContent({
     case "file":
       return (
         <div className="flex flex-col items-center justify-center gap-3 py-12">
-          <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-neutral-100 text-lg font-bold text-neutral-500 dark:bg-neutral-800">
+          <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-muted text-lg font-bold text-muted-foreground">
             {block.media_file?.split(".").pop()?.toUpperCase() ?? "FILE"}
           </div>
-          <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+          <p className="text-sm font-medium text-foreground">
             {block.title ?? block.slug}
           </p>
           {block.media_file && (
-            <p className="text-xs text-neutral-500">{block.media_file}</p>
+            <p className="text-xs text-muted-foreground">{block.media_file}</p>
           )}
         </div>
       );

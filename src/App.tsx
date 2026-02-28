@@ -453,12 +453,12 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
     <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
       {activeDragBlock && (
-        <div className="pointer-events-none rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm shadow-lg dark:border-neutral-600 dark:bg-neutral-800">
+        <div className="pointer-events-none rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-lg">
           {activeDragBlock.title ?? activeDragBlock.slug}
         </div>
       )}
       {activeDragTag && (
-        <div className="pointer-events-none rounded-md bg-neutral-200 px-3 py-1.5 text-sm font-medium shadow-lg dark:bg-neutral-700">
+        <div className="pointer-events-none rounded-md bg-secondary px-3 py-1.5 text-sm font-medium shadow-lg">
           {titleFromTag(activeDragTag)}
         </div>
       )}
