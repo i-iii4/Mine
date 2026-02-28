@@ -91,8 +91,7 @@ local-arena/
 │   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог
 │   │   ├── DropZone.tsx        # Drag-and-drop файлов для создания блоков
 │   │   ├── ImportDialog.tsx    # 4-шаговый импорт из Are.na
-│   │   ├── CardContextMenu.tsx # Контекстное меню карточки: теги, удаление
-│   │   └── ThemeProvider.tsx   # Провайдер темы (system/light/dark)
+│   │   └── CardContextMenu.tsx # Контекстное меню карточки: теги, удаление
 │   ├── types/                  # TypeScript-типы (ручные, без specta)
 │   ├── lib/                    # commands.ts (IPC), assets.ts, utils.ts (cn()), recentTags.ts
 │   └── styles/                 # Глобальные стили
