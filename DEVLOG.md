@@ -77,7 +77,7 @@ if any
 - `bunx vitest run` — 42/42 пройдено (5 файлов)
 
 ### Push
-- `COMMIT_HASH` — Add channel drag-reorder, fix drop zone and channel creation bugs
+- `19052e1` — Add channel drag-reorder, fix drop zone and channel creation bugs
 
 ### Decisions and lessons learned
 1. **useSortable = useDraggable + useDroppable**: один хук делает элемент и источником, и целью перетаскивания. Для перетаскивания каналов в сайдбаре — идеальный выбор
