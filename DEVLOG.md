@@ -67,7 +67,7 @@ if any
 - ThemeProvider с `defaultTheme="system"` обёрнут в `main.tsx`
 
 ### Push
-COMMIT_HASH — Add shadcn/ui foundation: design tokens, ThemeProvider, migrate App+Sidebar to semantic tokens
+96fe6a2 — Add shadcn/ui design system foundation: OKLCH tokens, ThemeProvider, cn()
 
 ### Decisions and lessons learned
 - shadcn/ui v3 использует пакет `shadcn` с `@import "shadcn/tailwind.css"` вместо инлайнинга CSS-переменных — чище, обновляемо
