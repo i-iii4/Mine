@@ -330,6 +330,15 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     [],
   );
 
+  // Keep context menu block in sync with latest blocks data
+  useEffect(() => {
+    setContextMenu((prev) => {
+      if (!prev) return prev;
+      const fresh = blocks.find((b) => b.slug === prev.block.slug);
+      return fresh ? { ...prev, block: fresh } : prev;
+    });
+  }, [blocks]);
+
   const handleToggleTag = useCallback(
     async (slug: string, tag: string, hasTag: boolean) => {
       if (hasTag) {
@@ -338,14 +347,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         await addTag(slug, tag);
         pushRecentTag(tag);
       }
-      // Optimistic update of context menu block tags
-      setContextMenu((prev) => {
-        if (!prev || prev.block.slug !== slug) return prev;
-        const newTags = hasTag
-          ? prev.block.tags.filter((t) => t !== tag)
-          : [...prev.block.tags, tag];
-        return { ...prev, block: { ...prev.block, tags: newTags } };
-      });
       await loadData();
     },
     [loadData],
@@ -355,10 +356,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     async (tag: string, blockSlug: string) => {
       await addTag(blockSlug, tag);
       pushRecentTag(tag);
-      setContextMenu((prev) => {
-        if (!prev || prev.block.slug !== blockSlug) return prev;
-        return { ...prev, block: { ...prev.block, tags: [...prev.block.tags, tag] } };
-      });
       await loadData();
     },
     [loadData],
