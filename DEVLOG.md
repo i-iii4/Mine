@@ -70,7 +70,7 @@ if any
 - Визуально: hover сайдбара полупрозрачный, контекстное меню скроллируется
 
 ### Push
-TBD
+`4d886a9` Grid: delegate ContextMenu (O(N)->O(1)) + sync visibleCount reset
 
 ### Decisions and lessons learned
 - **Производительность — архитектурное решение, не оптимизация.** `React.memo` и lazy rendering — пластыри на плохой архитектуре (O(N) инстансов). Правильный ответ — O(1) через делегирование.
