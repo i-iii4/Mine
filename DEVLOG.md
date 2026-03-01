@@ -59,7 +59,7 @@ if any
 - Тёмная тема — обводка border-background адаптируется
 
 ### Push
-`pending`
+`fa34940` Channel icons: stacked mini-card previews with fan hover animation
 
 ### Decisions and lessons learned
 - CSS custom properties внутри `transform` функций (`rotate(var(--x))`) работают, но составные transform-строки как значение переменной (`var(--full-transform)`) — нет, браузер не может интерполировать
