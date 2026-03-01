@@ -163,3 +163,108 @@ Goal: расширение для Chrome и Safari — сохранение сс
 | 8.8 | Ремонт форматирования (tweetTextToMarkdown, убран .textContent) и логики типов (переключатель всегда виден, жадная загрузка статьи, перезапрос выделения) | [x] |
 | 8.9 | Переделка UX клиппера: Content/Link, недавние каналы, встроенный список, HTTP-заголовки для загрузки картинок, async контекстное меню | [x] |
 | 8.10 | Багфикс: Referer на URL страницы (не картинки), реалистичный User-Agent, windows.create() вместо openPopup(), адаптивный размер окна | [x] |
+
+### Phase 9 — Аудит и укрепление кодовой базы [IN PROGRESS]
+
+Goal: довести проект до продакшен-качества по результатам полного аудита ([AUDIT.md](AUDIT.md)). Устранить все критические и высокие проблемы, закрыть пробелы в тестовом покрытии, укрепить безопасность.
+
+#### 9.1 — Критические исправления (блокеры релиза)
+
+| # | Task | Ref | Status |
+|---|------|-----|--------|
+| 9.1.1 | `panic!()` → `Result` в `resolve_slug_conflict()`: добавить `VaultError::SlugConflictExhausted`, обновить вызывающий код | CRIT-1 | [x] |
+| 9.1.2 | Обернуть `upsert_block()` в `conn.unchecked_transaction()` — 6 SQL-операций атомарны | CRIT-2 | [x] |
+| 9.1.3 | Исправить N+1: батч-запрос `WHERE block_id IN (...)` + HashMap в `collect_blocks()` | CRIT-3 | [x] |
+| 9.1.4 | Включить CSP в `tauri.conf.json`: `default-src 'self'; img-src 'self' asset: https:; style-src 'self' 'unsafe-inline'` | CRIT-4 | [x] |
+| 9.1.5 | Исправить XSS в `popup.js`: переписать `renderChannelList()` на DOM API (`textContent` вместо `innerHTML`) | CRIT-5 | [x] |
+| 9.1.6 | Установить ESLint 10 + typescript-eslint, создать `eslint.config.js` | CRIT-6 | [x] |
+
+#### 9.2 — Обработка ошибок и безопасность
+
+| # | Task | Ref | Status |
+|---|------|-----|--------|
+| 9.2.1 | Убрать `unwrap_or(BlockType::File)` в `row_to_block()` — `FromSqlConversionFailure` при невалидном типе | HIGH-2 | [x] |
+| 9.2.2 | Заменить 20× `lock().unwrap()` на `lock().map_err(CommandError::Internal)` во всех commands | HIGH-3 | [x] |
+| 9.2.3 | `unwrap()` на `duration_since(UNIX_EPOCH)` в util.rs → `.expect("system clock is set before Unix epoch")` | HIGH-4 | [x] |
+| 9.2.4 | Path traversal: `canonicalize()` + `is_file()` в `create_block` | HIGH-5 | [x] |
+| 9.2.5 | `.expect()` → `Result` в `lib.rs:95` — обработать ошибку запуска Tauri | HIGH-10 | [ ] |
+| 9.2.6 | Добавить `console.error()` в пустые `catch {}` блоки: Detail.tsx (addTag/removeTag), App.tsx (deleteChannel) | HIGH-7 | [x] |
+| 9.2.7 | Open redirect: валидация URL-протокола (`http:`/`https:`) перед рендерингом `<a href>` в Detail.tsx и ArticleBody | MED-8, MED-9 | [ ] |
+| 9.2.8 | `unwrap()` в native_host.rs:362, 419 → явная обработка ошибок | — | [ ] |
+
+#### 9.3 — Производительность storage
+
+| # | Task | Ref | Status |
+|---|------|-----|--------|
+| 9.3.1 | Добавить индекс `CREATE INDEX idx_blocks_saved_at ON blocks(saved_at DESC)` | HIGH-1 | [x] |
+| 9.3.2 | Добавить индекс `CREATE INDEX idx_block_tags_block_id ON block_tags(block_id)` | HIGH-1 | [x] |
+| 9.3.3 | FTS5: указать `tokenize='unicode61 remove_diacritics 0'` для корректного поиска по кириллице | MED-2 | [ ] |
+| 9.3.4 | TOCTOU в `delete_block_files()`: ловить `ErrorKind::NotFound` вместо `if exists()` | MED-4 | [ ] |
+| 9.3.5 | Лимит на размер изображения перед `image::open()`: проверка `w > 8192 \|\| h > 8192` | MED-5 | [ ] |
+
+#### 9.4 — Фронтенд: устойчивость и консистентность
+
+| # | Task | Ref | Status |
+|---|------|-----|--------|
+| 9.4.1 | Исправить утечку слушателя в ImportDialog: паттерн `isMounted` + guard в `.then()` | HIGH-6 | [ ] |
+| 9.4.2 | Заменить хардкод-цвета на семантические токены: `LINK_COLORS` в Card.tsx, `bg-green-*` в ImportDialog, `text-amber-*` в VaultPicker | HIGH-9 | [ ] |
+| 9.4.3 | `as PointerEvent` → `instanceof` проверка в App.tsx:37 | MED-12 | [ ] |
+| 9.4.4 | Извлечь повторяющийся CSS-класс метаданных (`text-[10px] uppercase tracking-widest`) в `@layer components` | — | [ ] |
+
+#### 9.5 — Веб-клиппер: безопасность и надёжность
+
+| # | Task | Ref | Status |
+|---|------|-----|--------|
+| 9.5.1 | Заменить FIFO-очередь `pendingCallbacks` на `Map<messageId, callback>` в background.js | HIGH-8 | [ ] |
+| 9.5.2 | Валидация URL в content.js: `isValidUrl()` проверка перед формированием markdown-ссылок | MED-9 | [ ] |
+| 9.5.3 | Ограничить `matches` в manifest.json до `["https://*", "http://*"]` (убрать `<all_urls>`) | — | [ ] |
+| 9.5.4 | Таймауты HTTP в native_host.rs: `.timeout(Duration::from_secs(30))` на все `ureq` запросы | MED-6 | [ ] |
+| 9.5.5 | Атомарная запись файлов в native_host: write-to-temp → rename | MED-7 | [ ] |
+| 9.5.6 | Откатка при ошибке индексации: если `upsert_block()` упал — удалить записанный .md | — | [ ] |
+
+#### 9.6 — Рефакторинг и устранение дублирования
+
+| # | Task | Ref | Status |
+|---|------|-----|--------|
+| 9.6.1 | Вынести `is_image_ext()` в `util.rs` — убрать дублирование между handler.rs и blocks.rs | MED-1 | [ ] |
+| 9.6.2 | Разделить ошибки импорта: `ImportError::BlockParseFailed` vs `ImportError::DatabaseFailed` — фатальные останавливают процесс | MED-11 | [ ] |
+| 9.6.3 | Восстановление watcher: эмитить `watcher-error` событие, full_scan при накоплении ошибок | MED-10 | [ ] |
+| 9.6.4 | Убрать dead code в arena_api.rs: неиспользуемые поля `updated_at`, `base_class`, `file_name` + unused imports | — | [ ] |
+
+#### 9.7 — Тесты: критические пробелы
+
+| # | Task | Ref | Status |
+|---|------|-----|--------|
+| 9.7.1 | Тесты commands/blocks.rs: create_block → write_file → upsert (полный цикл), delete_block, list_blocks, error paths | — | [ ] |
+| 9.7.2 | Тесты commands/tags.rs: add_tag, remove_tag, rename_tag, delete_tag_from_all | — | [ ] |
+| 9.7.3 | Тесты commands/channels.rs: list, create, delete, reorder, rename | — | [ ] |
+| 9.7.4 | Тесты storage/files.rs: delete_block_files (с orphaned media), copy_media_file (конфликты), scan_md_files (пустой vault) | — | [ ] |
+| 9.7.5 | Тесты arena_api.rs: мок HTTP (ureq), пагинация, ошибки сети, malformed JSON | — | [ ] |
+| 9.7.6 | Тесты watcher/watch.rs: запуск/остановка, debounce, обработка ошибок | — | [ ] |
+| 9.7.7 | Тесты storage/thumbnails.rs: повреждённые изображения, слишком большие файлы, неподдерживаемые форматы | — | [ ] |
+
+#### 9.8 — Документация
+
+| # | Task | Ref | Status |
+|---|------|-----|--------|
+| 9.8.1 | Обновить SPEC_INTEGRATION.md: добавить 5 недокументированных команд (rename_tag, delete_tag_from_all, reorder_channels, rename_channel, rebuild_index) | DOC-1 | [ ] |
+| 9.8.2 | Обновить DEVLOG.md: запись о результатах аудита Phase 9 | — | [ ] |
+
+#### Порядок выполнения
+
+```
+9.1 (критические)
+ ├── 9.1.1—9.1.3  Rust-бэкенд: panic, транзакции, N+1
+ ├── 9.1.4—9.1.5  Безопасность: CSP, XSS
+ └── 9.1.6        Инфраструктура: ESLint
+      ↓
+9.2 (ошибки) + 9.3 (производительность)  — параллельно
+      ↓
+9.4 (фронтенд) + 9.5 (клиппер)  — параллельно
+      ↓
+9.6 (рефакторинг)
+      ↓
+9.7 (тесты)  — после всех исправлений
+      ↓
+9.8 (документация)  — финальный шаг
+```

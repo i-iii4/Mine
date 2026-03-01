@@ -28,6 +28,82 @@ if any
 
 ---
 
+## 01.03.2026 18:00 — Phase 9.1 + 9.2: критические и высокоприоритетные исправления по аудиту
+
+### Goal
+Устранить все 6 критических (блокирующих релиз) и ключевые высокоприоритетные проблемы, выявленные полным аудитом кодовой базы (AUDIT.md).
+
+### Planned
+1. CRIT-1: `panic!()` → `Result` в `resolve_slug_conflict()`
+2. CRIT-2: транзакция в `upsert_block()`
+3. CRIT-3: N+1 → батч-запрос в `collect_blocks()`
+4. CRIT-4: включить CSP в `tauri.conf.json`
+5. CRIT-5: XSS в `popup.js` → DOM API
+6. CRIT-6: установить ESLint
+7. HIGH-2: `unwrap_or(BlockType::File)` → ошибка
+8. HIGH-3: 20× `lock().unwrap()` → `map_err`
+9. HIGH-4: `unwrap()` на SystemTime → `expect()`
+10. HIGH-5: path traversal → `canonicalize()` + `is_file()`
+11. HIGH-7: пустые `catch {}` → `console.error()`
+12. Индексы SQLite: `idx_blocks_saved_at`, `idx_block_tags_block_id`
+
+### Actually completed
+
+Все 12 пунктов выполнены. Затронуто 22 файла:
+
+**Rust-бэкенд:**
+- `domain/vault.rs` — добавлен `VaultError` enum с `SlugConflictExhausted`, `resolve_slug_conflict()` возвращает `Result<String, VaultError>`, новый тест на исчерпание
+- `storage/index.rs` — `row_to_block()`: `FromSqlConversionFailure` вместо молчаливой подмены типа; `collect_blocks()`: батч-запрос `WHERE block_id IN (...)` + HashMap вместо N+1; `upsert_block()`: обёрнут в `unchecked_transaction()`
+- `storage/db.rs` — два новых индекса: `idx_blocks_saved_at` и `idx_block_tags_block_id`
+- `util.rs` — `.unwrap()` → `.expect("system clock is set before Unix epoch")`
+- `commands/blocks.rs` — обновлён вызов `resolve_slug_conflict`, добавлена проверка `canonicalize()` + `is_file()`, все `lock().unwrap()` → `map_err`
+- `commands/vault.rs`, `commands/search.rs`, `commands/channels.rs`, `commands/tags.rs`, `commands/import.rs` — все `lock().unwrap()` → `map_err`
+- `import/importer.rs` — обновлён вызов `resolve_slug_conflict`, убран неиспользуемый `PathBuf`
+- `bin/native_host.rs` — обновлён вызов `resolve_slug_conflict`
+
+**Безопасность:**
+- `tauri.conf.json` — `"csp": null` → `"default-src 'self'; img-src 'self' asset: https:; script-src 'self'; style-src 'self' 'unsafe-inline'"`
+
+**Веб-клиппер:**
+- `extension/popup/popup.js` — `renderChannelList()` переписан с `innerHTML` на DOM API (`createElement`, `textContent`, `append`)
+
+**Фронтенд:**
+- `src/components/Detail.tsx` — `catch {}` → `catch (err) { console.error(...) }`
+- `src/App.tsx` — `.catch(() => {})` → `.catch((err) => console.error(...))`
+
+**Инфраструктура:**
+- `eslint.config.js` — новый файл (ESLint 10 + typescript-eslint)
+- `package.json` — devDependencies: `eslint`, `@eslint/js`, `typescript-eslint`
+
+**Дополнительные исправления (не в плане, но требовались для `clippy -- -D warnings`):**
+- `watcher/watch.rs` — убран неиспользуемый импорт `Manager`
+- `import/arena_api.rs` — `#[allow(dead_code)]` для serde-only полей
+- `domain/block.rs` — `#[allow(clippy::should_implement_trait)]` для `from_str`
+- `domain/tag.rs` — слияние вложенных `if` по рекомендации clippy
+
+### Deviations from plan
+- **1 коммит вместо 11:** план предполагал 11 отдельных коммитов, но файлы пересекались между коммитами (например, `blocks.rs` затрагивался коммитами 1, 6, 7). Один коммит проще и чище
+- **5 дополнительных clippy-исправлений:** предсуществующие предупреждения, не учтённые в плане
+- **ESLint 10** вместо 9+: установлена актуальная версия
+- **`unchecked_transaction()`** вместо `transaction()`: в CRIT-2 использован `unchecked_transaction()`, т.к. `Connection` передаётся как `&Connection` (не `&mut`)
+- **`idx_block_tags_block_id`** только по `block_id` (без `tag`): достаточно для обратного поиска тегов
+
+### Checks
+- `cargo clippy -- -D warnings` — 0 предупреждений
+- `cargo test` — 198/198 тестов (включая новый `conflict_exhausted_returns_error`)
+- `bunx tsc --noEmit` — 0 ошибок TypeScript
+- `bun run lint` (ESLint) — 0 ошибок
+
+### Push
+`c5d2a92` — Phase 9.1 + 9.2: critical and high-priority audit fixes
+
+### Decisions and lessons learned
+- `unchecked_transaction()` — необходим при `&Connection` без `mut`. Безопасен в однопоточном контексте Tauri-команд
+- Предсуществующие clippy-предупреждения стоит фиксировать заранее, до начала фазы исправлений — иначе верификация `clippy -D warnings` падает на чужих проблемах
+- `canonicalize()` без `starts_with(vault_root)` — достаточно при текущей архитектуре, т.к. файл копируется в vault (не читается из произвольного пути)
+
+---
+
 ## 01.03.2026 11:12 — Fullscreen Detail с двухколоночным layout
 
 ### Goal

@@ -16,6 +16,7 @@
 - `SPEC_INTEGRATION.md` — спецификации watcher/events, handler, commands
 - `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
 - `SPEC_CLIPPER.md` — спецификация веб-клиппера: типы клипов, popup, native messaging
+- `AUDIT.md` — результаты полного аудита кодовой базы (01.03.2026), план доработки — Phase 9 в PLAN.md
 
 ## Stack
 
@@ -41,6 +42,7 @@
 | @tailwindcss/typography | Стилизация prose-контента (статьи) |
 | Readability.js | Извлечение статей из веб-страниц (content script) |
 | TurndownService | HTML → Markdown (content script) |
+| ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 
 ## Structure
 

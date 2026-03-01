@@ -362,3 +362,4 @@ Rationale: пользователь может открыть любой `.md` �
 | @tailwindcss/typography | latest | Стилизация prose-контента | MIT |
 | Readability.js | 0.6.x | Извлечение статей (content script) | Apache-2.0 |
 | TurndownService | 7.x | HTML → Markdown (content script) | MIT |
+| eslint + typescript-eslint | 10.x | Линтинг фронтенда (TypeScript) | MIT |
