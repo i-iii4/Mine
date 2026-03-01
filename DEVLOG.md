@@ -76,7 +76,7 @@ if any
 - Geist Sans применяется ко всему интерфейсу
 
 ### Push
-`TBD`
+`26eafad` Visual styling: overlay titlebar, Geist Sans, sharp cards, sidebar fade
 
 ### Decisions and lessons learned
 - Пакет `geist` — обёртка для `next/font/local`, бесполезна вне Next.js. Для Vite/Tauri — копируем woff2 в `public/` и объявляем `@font-face` вручную
