@@ -90,26 +90,6 @@ pub fn run() {
 
             app.set_menu(menu)?;
 
-            // ── macOS: add NSToolbar to get 26px window class ──────────────
-            #[cfg(target_os = "macos")]
-            {
-                use tauri::Manager;
-                if let Some(window) = app.get_webview_window("main") {
-                    unsafe {
-                        use cocoa::base::{id, nil};
-                        use cocoa::foundation::NSString;
-                        use objc::{class, msg_send, sel, sel_impl};
-
-                        let ns_win: id = window.ns_window().unwrap() as id;
-                        let ident = NSString::alloc(nil).init_str("main-toolbar");
-                        let toolbar: id = msg_send![class!(NSToolbar), alloc];
-                        let toolbar: id = msg_send![toolbar, initWithIdentifier: ident];
-                        let _: () = msg_send![toolbar, setShowsBaselineSeparator: false];
-                        let _: () = msg_send![ns_win, setToolbar: toolbar];
-                    }
-                }
-            }
-
             Ok(())
         })
         .run(tauri::generate_context!())

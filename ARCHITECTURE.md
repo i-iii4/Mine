@@ -325,16 +325,6 @@ Rationale: теговая модель (как Mymind) проще и надёж�
 
 Rationale: минимальная сложность. Позже — изолированные vault'ы (проекты) для разделения контента.
 
-### 006: NSToolbar для класса окна 26px в macOS Tahoe
-
-| Approach | Problem |
-|---|---|
-| `tauri-plugin-mac-rounded-corners` | Требует `decorations: false`, борется с системой, ручное управление скруглениями |
-| Кастомный titlebar (WebView) | Потеря нативного поведения (светофор, fullscreen, Liquid Glass) |
-| NSToolbar на NSWindow (chosen) | Зависимость от `cocoa`/`objc` крейтов (deprecated в пользу `objc2`), но минимальный код |
-
-Rationale: macOS Tahoe делит приложения на два класса — 18px (без тулбара) и 26px (с тулбаром). Класс определяется наличием `NSToolbar` на `NSWindow`. Пустой тулбар достаточен — система автоматически назначает 26px скругления, расширенный Liquid Glass и отступ светофора. Это архитектурно правильный подход: мы не борёмся с системой, а сообщаем ей, что наше приложение — «большое» (как Music, Safari, Finder). Откат: удалить блок `#[cfg(target_os = "macos")]` в `lib.rs` и зависимости из `Cargo.toml`.
-
 ### 005: Markdown + frontmatter — единый формат метаданных
 
 | Approach | Problem |
@@ -373,5 +363,3 @@ Rationale: пользователь может открыть любой `.md` �
 | Readability.js | 0.6.x | Извлечение статей (content script) | Apache-2.0 |
 | TurndownService | 7.x | HTML → Markdown (content script) | MIT |
 | eslint + typescript-eslint | 10.x | Линтинг фронтенда (TypeScript) | MIT |
-| cocoa | 0.26.x | macOS: доступ к NSWindow/NSToolbar для класса окна 26px | MIT/Apache-2.0 |
-| objc | 0.2.x | macOS: Objective-C runtime (msg_send!, class!) | MIT |
