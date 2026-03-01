@@ -53,7 +53,8 @@ pub fn import_arena_channels(
     state: State<'_, AppState>,
     channels: Vec<ImportChannelRequest>,
 ) -> Result<Vec<importer::ImportChannelResult>, CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     let mut results = Vec::new();

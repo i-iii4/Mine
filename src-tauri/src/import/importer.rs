@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::HashSet;
-use std::path::PathBuf;
+
 
 use crate::domain::block::{suggest_slug, Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::{resolve_slug_conflict, VaultLayout};
@@ -120,7 +120,8 @@ fn import_single_block(
 
     // Generate unique slug
     let raw_slug = suggest_slug(title.as_deref(), url.as_deref());
-    let slug = resolve_slug_conflict(&raw_slug, existing_slugs);
+    let slug = resolve_slug_conflict(&raw_slug, existing_slugs)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
     existing_slugs.insert(slug.clone());
 
     // Download media file if applicable

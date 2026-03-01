@@ -47,7 +47,8 @@ impl ChannelDto {
 /// List all channels with block counts.
 #[tauri::command]
 pub fn list_channels(state: State<'_, AppState>) -> Result<Vec<ChannelDto>, CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     let channels = index::list_channels(&vs.conn)?;
@@ -75,7 +76,8 @@ pub fn create_channel(
     tag: String,
     title: Option<String>,
 ) -> Result<ChannelDto, CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     let now = crate::commands::state::now_iso8601();
@@ -111,7 +113,8 @@ pub fn reorder_channels(
     state: State<'_, AppState>,
     items: Vec<ReorderItem>,
 ) -> Result<(), CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     // Find tags that don't have channel entries yet
@@ -147,7 +150,8 @@ pub fn rename_channel(
     old_tag: String,
     new_tag: String,
 ) -> Result<ChannelDto, CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     let normalized_new = normalize_tag(&new_tag);
@@ -223,7 +227,8 @@ pub fn delete_channel(
     state: State<'_, AppState>,
     tag: String,
 ) -> Result<bool, CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     Ok(index::remove_channel(&vs.conn, &tag)?)
 }

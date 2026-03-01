@@ -62,11 +62,9 @@ pub fn normalize_tag(raw: &str) -> String {
         if c.is_alphanumeric() {
             result.push(c);
             prev_dash = false;
-        } else if c == '-' || c == ' ' || c == '_' {
-            if !prev_dash && !result.is_empty() {
-                result.push('-');
-                prev_dash = true;
-            }
+        } else if (c == '-' || c == ' ' || c == '_') && !prev_dash && !result.is_empty() {
+            result.push('-');
+            prev_dash = true;
         }
         // Other characters are silently dropped
     }

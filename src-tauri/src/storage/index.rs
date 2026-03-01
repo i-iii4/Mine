@@ -49,7 +49,10 @@ pub struct TagCount {
 /// On conflict (same slug): updates all fields, replaces tags and wikilinks.
 /// FTS5 is updated automatically through triggers.
 pub fn upsert_block(conn: &Connection, block: &Block) -> Result<i64> {
-    conn.execute(
+    let tx = conn.unchecked_transaction()
+        .context("failed to begin transaction for upsert_block")?;
+
+    tx.execute(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
@@ -85,7 +88,7 @@ pub fn upsert_block(conn: &Connection, block: &Block) -> Result<i64> {
     )
     .context("failed to upsert block")?;
 
-    let block_id: i64 = conn
+    let block_id: i64 = tx
         .query_row(
             "SELECT id FROM blocks WHERE slug = ?1",
             [&block.slug],
@@ -94,10 +97,10 @@ pub fn upsert_block(conn: &Connection, block: &Block) -> Result<i64> {
         .context("failed to get block id after upsert")?;
 
     // Replace tags: delete old, insert new.
-    conn.execute("DELETE FROM block_tags WHERE block_id = ?1", [block_id])
+    tx.execute("DELETE FROM block_tags WHERE block_id = ?1", [block_id])
         .context("failed to delete old tags")?;
     for tag in &block.frontmatter.tags {
-        conn.execute(
+        tx.execute(
             "INSERT INTO block_tags (block_id, tag) VALUES (?1, ?2)",
             params![block_id, tag],
         )
@@ -105,17 +108,18 @@ pub fn upsert_block(conn: &Connection, block: &Block) -> Result<i64> {
     }
 
     // Replace wikilinks: delete old, insert new.
-    conn.execute("DELETE FROM wikilinks WHERE source_id = ?1", [block_id])
+    tx.execute("DELETE FROM wikilinks WHERE source_id = ?1", [block_id])
         .context("failed to delete old wikilinks")?;
     let links = extract_wikilinks(&block.body);
     for link in &links {
-        conn.execute(
+        tx.execute(
             "INSERT OR IGNORE INTO wikilinks (source_id, target_slug) VALUES (?1, ?2)",
             params![block_id, link],
         )
         .context("failed to insert wikilink")?;
     }
 
+    tx.commit().context("failed to commit upsert_block")?;
     Ok(block_id)
 }
 
@@ -347,7 +351,16 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
     Ok(IndexedBlock {
         id: row.get(0)?,
         slug: row.get(1)?,
-        block_type: BlockType::from_str(&row.get::<_, String>(2)?).unwrap_or(BlockType::File),
+        block_type: {
+            let raw: String = row.get(2)?;
+            BlockType::from_str(&raw).map_err(|_| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    2,
+                    rusqlite::types::Type::Text,
+                    format!("unknown block_type: {}", raw).into(),
+                )
+            })?
+        },
         title: row.get(3)?,
         description: row.get(4)?,
         url: row.get(5)?,
@@ -377,14 +390,40 @@ fn collect_blocks(
     stmt: &mut rusqlite::Statement<'_>,
     params: &[&dyn rusqlite::types::ToSql],
 ) -> Result<Vec<IndexedBlock>> {
-    let blocks = stmt
+    let mut blocks: Vec<IndexedBlock> = stmt
         .query_map(params, row_to_block)?
         .collect::<Result<Vec<_>, _>>()?;
-    let mut result = blocks;
-    for block in &mut result {
-        block.tags = get_tags_for_block(conn, block.id)?;
+
+    if blocks.is_empty() {
+        return Ok(blocks);
     }
-    Ok(result)
+
+    // Batch: fetch all tags in one query instead of N+1
+    let ids: Vec<i64> = blocks.iter().map(|b| b.id).collect();
+    let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT block_id, tag FROM block_tags WHERE block_id IN ({}) ORDER BY tag",
+        placeholders
+    );
+    let mut tag_stmt = conn.prepare(&sql)?;
+    let id_params: Vec<&dyn rusqlite::types::ToSql> =
+        ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+    let rows = tag_stmt.query_map(&*id_params, |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    let mut tag_map: std::collections::HashMap<i64, Vec<String>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        let (block_id, tag) = row?;
+        tag_map.entry(block_id).or_default().push(tag);
+    }
+
+    for block in &mut blocks {
+        block.tags = tag_map.remove(&block.id).unwrap_or_default();
+    }
+
+    Ok(blocks)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

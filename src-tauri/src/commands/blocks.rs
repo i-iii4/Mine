@@ -17,7 +17,8 @@ use crate::storage::index::IndexedBlock;
 /// List all blocks, ordered by saved_at descending.
 #[tauri::command]
 pub fn list_blocks(state: State<'_, AppState>) -> Result<Vec<IndexedBlock>, CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     Ok(index::list_blocks(&vs.conn)?)
 }
@@ -28,7 +29,8 @@ pub fn get_block(
     state: State<'_, AppState>,
     slug: String,
 ) -> Result<Option<IndexedBlock>, CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     Ok(index::get_block(&vs.conn, &slug)?)
 }
@@ -43,7 +45,8 @@ pub fn create_block(
     tags: Vec<String>,
     file_path: Option<String>,
 ) -> Result<IndexedBlock, CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     let bt = BlockType::from_str(&block_type)
@@ -60,7 +63,8 @@ pub fn create_block(
         .iter()
         .map(|b| b.slug.clone())
         .collect();
-    let slug = resolve_slug_conflict(&raw_slug, &existing);
+    let slug = resolve_slug_conflict(&raw_slug, &existing)
+        .map_err(|e| CommandError::Internal(e.to_string()))?;
 
     // Determine media file name
     let media_file = file_path.as_ref().map(|fp| {
@@ -100,10 +104,15 @@ pub fn create_block(
     // Copy media file if provided
     if let Some(ref fp) = file_path {
         let source = PathBuf::from(fp);
-        files::copy_media_file(&source, &vs.vault, &slug)?;
+        let canonical = source.canonicalize()
+            .map_err(|e| CommandError::Internal(format!("invalid file path: {}", e)))?;
+        if !canonical.is_file() {
+            return Err(CommandError::Internal("path is not a file".into()));
+        }
+        files::copy_media_file(&canonical, &vs.vault, &slug)?;
 
         // Generate thumbnail for images
-        let ext = source
+        let ext = canonical
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("");
@@ -128,7 +137,8 @@ pub fn delete_block(
     state: State<'_, AppState>,
     slug: String,
 ) -> Result<bool, CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     // Get block info for media file extension

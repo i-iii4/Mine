@@ -4,7 +4,7 @@
 pub fn now_iso8601() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system clock is set before Unix epoch")
         .as_secs();
     let secs_per_day = 86400u64;
     let days = now / secs_per_day;

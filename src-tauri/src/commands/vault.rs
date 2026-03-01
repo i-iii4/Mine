@@ -41,7 +41,8 @@ pub fn get_vault_path(
 ) -> Result<Option<String>, CommandError> {
     // Check in-memory state first
     {
-        let vault_state = state.vault_state.lock().unwrap();
+        let vault_state = state.vault_state.lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
         if let Some(ref vs) = *vault_state {
             return Ok(Some(vs.vault.root().to_string_lossy().to_string()));
         }
@@ -73,7 +74,8 @@ pub fn get_vault_path(
 pub fn rebuild_index(
     state: State<'_, AppState>,
 ) -> Result<ScanResult, CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     // Clear all indexed data
@@ -127,7 +129,8 @@ fn initialize_vault(
     let db_path = vault.index_db_path();
     match watch::start_watching(app, &vault, &db_path) {
         Ok(w) => {
-            let mut watcher = state.watcher.lock().unwrap();
+            let mut watcher = state.watcher.lock()
+                .map_err(|_| CommandError::Internal("watcher mutex poisoned".into()))?;
             *watcher = Some(w);
         }
         Err(e) => {
@@ -136,7 +139,8 @@ fn initialize_vault(
     }
 
     // Update app state
-    let mut vault_state = state.vault_state.lock().unwrap();
+    let mut vault_state = state.vault_state.lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     *vault_state = Some(VaultState { conn, vault });
 
     Ok(result)

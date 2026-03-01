@@ -43,8 +43,8 @@ export function Detail({
       setTags((prev) => [...prev, tag]);
       setTagInput("");
       onTagsChanged();
-    } catch {
-      // Silently fail — user will see tag didn't appear
+    } catch (err) {
+      console.error("Failed to add tag:", err);
     }
   }, [tagInput, tags, block.slug, onTagsChanged]);
 
@@ -54,8 +54,8 @@ export function Detail({
         await removeTag(block.slug, tag);
         setTags((prev) => prev.filter((t) => t !== tag));
         onTagsChanged();
-      } catch {
-        // Silently fail
+      } catch (err) {
+        console.error("Failed to remove tag:", err);
       }
     },
     [block.slug, onTagsChanged],
@@ -247,7 +247,7 @@ function BlockContent({
         ? mediaUrl(vaultPath, block.media_file)
         : thumbnailUrl(vaultPath, block.slug);
       return (
-        <div className="flex min-h-full items-center justify-center p-6">
+        <div className="flex min-h-full items-center justify-center">
           <img
             src={src}
             alt={block.title ?? block.slug}
@@ -270,7 +270,7 @@ function BlockContent({
               }}
             />
           </div>
-          <div className="px-6 py-4">
+          <div className="py-4">
             <h2 className="text-lg font-semibold text-foreground">
               {block.title ?? block.slug}
             </h2>
@@ -285,7 +285,7 @@ function BlockContent({
     }
     case "article":
       return (
-        <div className="px-6 py-6">
+        <div>
           <h2 className="text-lg font-semibold text-foreground">
             {block.title ?? block.slug}
           </h2>
@@ -315,7 +315,7 @@ function BlockContent({
     }
     case "file":
       return (
-        <div className="flex min-h-full flex-col items-center justify-center gap-3 py-12">
+        <div className="flex min-h-full flex-col items-center justify-center gap-3">
           <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-muted text-lg font-bold text-muted-foreground">
             {block.media_file?.split(".").pop()?.toUpperCase() ?? "FILE"}
           </div>

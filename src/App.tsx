@@ -198,7 +198,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const handleDeleteTagFromAll = useCallback(
     async (tag: string) => {
       await deleteTagFromAll(tag);
-      await deleteChannel(tag).catch(() => {});
+      await deleteChannel(tag).catch((err) => console.error("Failed to delete channel:", err));
       await loadData();
     },
     [loadData],

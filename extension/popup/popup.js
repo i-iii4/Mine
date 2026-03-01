@@ -328,51 +328,63 @@
     // Update section header
     channelsLabel.textContent = lc ? "Channels" : "Recent";
 
-    let html = "";
+    channelList.textContent = "";
+
     for (const ch of filtered) {
       const isSelected = selectedTags.includes(ch.tag);
-      const checkmark = isSelected ? "&#10003;" : "";
-      html += `
-        <div class="channel-item ${isSelected ? "selected" : ""}" data-tag="${ch.tag}">
-          <span class="check">${checkmark}</span>
-          <span class="channel-title">${ch.title}</span>
-          <span class="count">${ch.block_count}</span>
-        </div>
-      `;
+      const div = document.createElement("div");
+      div.className = "channel-item" + (isSelected ? " selected" : "");
+      div.dataset.tag = ch.tag;
+
+      const check = document.createElement("span");
+      check.className = "check";
+      check.textContent = isSelected ? "\u2713" : "";
+
+      const title = document.createElement("span");
+      title.className = "channel-title";
+      title.textContent = ch.title;
+
+      const count = document.createElement("span");
+      count.className = "count";
+      count.textContent = String(ch.block_count);
+
+      div.append(check, title, count);
+      div.addEventListener("click", () => toggleTag(ch.tag));
+      channelList.appendChild(div);
     }
 
     // Offer to create a new channel if no matches found
     if (filter && filtered.length === 0) {
-      const trimmedFilter = filter.trim();
-      if (trimmedFilter) {
-        html += `
-          <div class="channel-item create-new" data-new-tag="${trimmedFilter}" data-new-title="${trimmedFilter}">
-            <span class="check">+</span>
-            <span>Create \u201c${trimmedFilter}\u201d</span>
-          </div>
-        `;
+      const trimmed = filter.trim();
+      if (trimmed) {
+        const div = document.createElement("div");
+        div.className = "channel-item create-new";
+
+        const check = document.createElement("span");
+        check.className = "check";
+        check.textContent = "+";
+
+        const label = document.createElement("span");
+        label.textContent = "Create \u201c" + trimmed + "\u201d";
+
+        div.append(check, label);
+        div.addEventListener("click", async () => {
+          await sendToNative({ action: "create_channel", tag: trimmed, title: trimmed });
+          channels.push({ tag: trimmed, title: trimmed, block_count: 0 });
+          toggleTag(trimmed);
+          channelSearch.value = "";
+          renderChannelList("");
+        });
+        channelList.appendChild(div);
       }
     }
 
-    channelList.innerHTML =
-      html || '<div class="channel-empty">No channels yet</div>';
-
-    // Bind click events
-    channelList.querySelectorAll(".channel-item[data-tag]").forEach((el) => {
-      el.addEventListener("click", () => toggleTag(el.dataset.tag));
-    });
-
-    channelList.querySelectorAll(".channel-item[data-new-tag]").forEach((el) => {
-      el.addEventListener("click", async () => {
-        const tag = el.dataset.newTag;
-        const title = el.dataset.newTitle;
-        await sendToNative({ action: "create_channel", tag, title });
-        channels.push({ tag, title, block_count: 0 });
-        toggleTag(tag);
-        channelSearch.value = "";
-        renderChannelList("");
-      });
-    });
+    if (!channelList.hasChildNodes()) {
+      const empty = document.createElement("div");
+      empty.className = "channel-empty";
+      empty.textContent = "No channels yet";
+      channelList.appendChild(empty);
+    }
   }
 
   function toggleTag(tag) {

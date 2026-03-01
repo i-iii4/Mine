@@ -16,7 +16,8 @@ use crate::storage::index::TagCount;
 /// List all tags with their block counts.
 #[tauri::command]
 pub fn list_tags(state: State<'_, AppState>) -> Result<Vec<TagCount>, CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     Ok(index::get_all_tags(&vs.conn)?)
 }
@@ -28,7 +29,8 @@ pub fn add_tag(
     slug: String,
     tag: String,
 ) -> Result<(), CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     let path = vs.vault.block_path(&slug);
@@ -61,7 +63,8 @@ pub fn remove_tag(
     slug: String,
     tag: String,
 ) -> Result<(), CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     let path = vs.vault.block_path(&slug);
@@ -88,7 +91,8 @@ pub fn rename_tag(
     old_tag: String,
     new_tag: String,
 ) -> Result<(), CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     let normalized_old = normalize_tag(&old_tag);
@@ -129,7 +133,8 @@ pub fn delete_tag_from_all(
     state: State<'_, AppState>,
     tag: String,
 ) -> Result<(), CommandError> {
-    let vault_state = state.vault_state.lock().unwrap();
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     let normalized = normalize_tag(&tag);

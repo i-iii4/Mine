@@ -16,6 +16,7 @@ const RATE_LIMIT_MS: u64 = 300;
 // ─── API response types ──────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct ArenaChannel {
     pub id: i64,
     pub title: String,
@@ -26,6 +27,7 @@ pub struct ArenaChannel {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct ArenaBlock {
     pub id: i64,
     pub title: Option<String>,
@@ -56,6 +58,7 @@ pub struct ArenaImageVariant {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct ArenaAttachment {
     pub url: String,
     pub file_name: Option<String>,

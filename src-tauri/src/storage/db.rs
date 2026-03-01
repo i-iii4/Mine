@@ -67,6 +67,8 @@ fn create_schema(conn: &Connection) -> Result<()> {
             indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
+        CREATE INDEX IF NOT EXISTS idx_blocks_saved_at ON blocks(saved_at DESC);
+
         CREATE TABLE IF NOT EXISTS block_tags (
             block_id INTEGER NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
             tag TEXT NOT NULL,
@@ -74,6 +76,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_block_tags_tag ON block_tags(tag);
+        CREATE INDEX IF NOT EXISTS idx_block_tags_block_id ON block_tags(block_id);
 
         CREATE TABLE IF NOT EXISTS channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

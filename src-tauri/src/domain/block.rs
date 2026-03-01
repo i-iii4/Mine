@@ -72,6 +72,7 @@ pub enum BlockType {
 impl BlockType {
     /// Parse a string into a BlockType.
     /// Accepts: "image", "article", "link", "video", "file".
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self, BlockError> {
         match s {
             "image" => Ok(Self::Image),

@@ -241,7 +241,10 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         .iter()
         .map(|b| b.slug.clone())
         .collect();
-    let slug = resolve_slug_conflict(&raw_slug, &existing);
+    let slug = match resolve_slug_conflict(&raw_slug, &existing) {
+        Ok(s) => s,
+        Err(e) => return send_error(&format!("{e}")),
+    };
 
     // Download media if image_url is provided
     let mut media_file = None;
