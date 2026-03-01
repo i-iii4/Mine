@@ -35,7 +35,7 @@ export function Card({ block, vaultPath, onClick }: CardProps) {
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
-        "group cursor-pointer overflow-hidden rounded-lg border border-border bg-card transition-shadow hover:shadow-md",
+        "group cursor-pointer overflow-hidden border border-border transition-shadow hover:shadow-md",
         isDragging && "opacity-30",
       )}
     >

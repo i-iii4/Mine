@@ -71,14 +71,14 @@ export function Sidebar({
   );
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
-      {/* Header */}
-      <div className="p-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-        Local Arena
-      </div>
+    <aside className="relative flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-background">
+      {/* Spacer for macOS traffic lights in overlay titlebar */}
+      <div className="h-10 shrink-0" />
+      {/* Top fade — content dissolves into the top edge */}
+      <div className="pointer-events-none absolute inset-x-0 top-10 z-10 h-8 bg-gradient-to-b from-background to-transparent" />
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-2" data-sidebar-scroll>
+      <nav className="flex-1 overflow-y-auto px-2 pt-2" data-sidebar-scroll>
         <NavItem to="/" label="All" count={totalBlocks} end />
 
         <SortableContext
@@ -117,7 +117,7 @@ export function Sidebar({
             variant="ghost"
             size="sm"
             onClick={() => setIsCreating(true)}
-            className="mt-1 w-full justify-start text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+            className="mt-1 w-full justify-start rounded-md text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
           >
             <Plus className="size-3" />
             <span>New channel</span>
@@ -131,7 +131,7 @@ export function Sidebar({
           variant="ghost"
           size="sm"
           onClick={onImportOpen}
-          className="w-full justify-start text-muted-foreground hover:bg-sidebar-accent/50"
+          className="w-full justify-start rounded-md text-muted-foreground hover:bg-sidebar-accent/50"
         >
           <Download className="size-4" />
           <span>Import from Are.na</span>
@@ -140,7 +140,7 @@ export function Sidebar({
           variant="ghost"
           size="sm"
           onClick={onSearchOpen}
-          className="w-full justify-start text-muted-foreground hover:bg-sidebar-accent/50"
+          className="w-full justify-start rounded-md text-muted-foreground hover:bg-sidebar-accent/50"
         >
           <Search className="size-4" />
           <span>Search</span>

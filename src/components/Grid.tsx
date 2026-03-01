@@ -18,7 +18,7 @@ import { Card } from "./Card";
 import { CardTagMenu } from "./CardContextMenu";
 
 const COLUMN_MIN_WIDTH = 240;
-const GAP = 16;
+const GAP = 32;
 const INITIAL_BATCH = 80;
 const BATCH_SIZE = 60;
 
@@ -161,7 +161,7 @@ export function Grid({
         <div
           ref={parentRef}
           onContextMenu={handleContextMenu}
-          className="h-full overflow-x-hidden overflow-y-auto p-4"
+          className="h-full overflow-x-hidden overflow-y-auto px-8 pb-8 pt-14"
         >
           <div className="flex items-start" style={{ gap: GAP }}>
             {columns.map((col, colIdx) => (

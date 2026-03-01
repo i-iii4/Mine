@@ -28,6 +28,63 @@ if any
 
 ---
 
+## 01.03.2026 03:30 — Визуальная стилизация: overlay titlebar, Geist, карточки, sidebar
+
+### Goal
+Привести визуальный язык приложения к финальному виду: минимализм, чёткая сетка, контраст между строгим контентом и мягким интерфейсом.
+
+### Planned
+1. Overlay titlebar с drag region
+2. Шрифт Geist Sans
+3. Стилизация карточек: острые углы, без заливки
+4. Настройка GAP и отступов сетки
+5. Sidebar: убрать заголовок, градиентный fade сверху
+
+### Actually completed
+
+**Overlay titlebar** (`src-tauri/tauri.conf.json`, `src-tauri/capabilities/default.json`, `src/App.tsx`):
+- `titleBarStyle: "Overlay"`, `hiddenTitle: true`, `decorations: true` — прозрачный бар с системными кнопками
+- `core:window:allow-start-dragging` в capabilities — разрешение для drag region
+- `data-tauri-drag-region` div (`fixed inset-x-0 top-0 z-50 h-7`) — область перетаскивания окна по верхнему краю
+
+**Geist Sans** (`src/styles/global.css`, `public/fonts/`):
+- Вариативный шрифт `Geist-Variable.woff2` скопирован в `public/fonts/` (пакет `geist` заточен под Next.js, CSS не экспортирует)
+- `@font-face` + `--font-sans: "Geist"` в `@theme inline` — применяется ко всему интерфейсу через Tailwind
+
+**Карточки** (`src/components/Card.tsx`):
+- Убран `rounded-lg` — острые углы (редакционный стиль, как Are.na/Cosmos)
+- Убран `bg-card` — только обводка, без заливки
+
+**Сетка** (`src/components/Grid.tsx`):
+- GAP = 32px (визуальный букмаркинг — карточкам нужен воздух)
+- Отступы `px-8 pb-8 pt-14` (32px по бокам, 56px сверху под overlay titlebar)
+
+**Sidebar** (`src/components/Sidebar.tsx`):
+- Убран заголовок «Local Arena» — пустой спейсер `h-10` под светофор
+- Градиентный fade сверху (`h-8 bg-gradient-to-b from-background to-transparent`) — контент при скролле растворяется
+- Фон `bg-background` вместо `bg-sidebar` (единый фон с контентом, разделение линией)
+
+### Deviations from plan
+- Pill-скругления (rounded-full) на элементах sidebar попробовали и откатили — перебор для текущего стиля
+- Vibrancy (NSVisualEffectView) попробовали через `windowEffects: ["sidebar"]` и откатили — результат не понравился
+- Cloud Dancer (Pantone 2026) как фон попробовали в двух вариантах и откатили — пока оставляем чистый белый
+
+### Checks
+- `bunx tsc --noEmit` — 0 ошибок
+- `bun run build` — успешная сборка
+- Overlay titlebar с drag region работает
+- Geist Sans применяется ко всему интерфейсу
+
+### Push
+`TBD`
+
+### Decisions and lessons learned
+- Пакет `geist` — обёртка для `next/font/local`, бесполезна вне Next.js. Для Vite/Tauri — копируем woff2 в `public/` и объявляем `@font-face` вручную
+- `data-tauri-drag-region` без `core:window:allow-start-dragging` в capabilities молча не работает — нет ошибок, просто игнорируется
+- Стратегия контраста: строгий холст (острые карточки, тонкие линии) vs мягкий интерфейс (скруглённые элементы управления) — направление определено, будет реализовано позже
+
+---
+
 ## 01.03.2026 01:45 — Grid: делегирование ContextMenu + устранение подвисаний
 
 ### Goal

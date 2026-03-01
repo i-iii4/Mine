@@ -356,6 +356,11 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       onDragCancel={handleDndCancel}
     >
     <div className="flex h-screen w-screen bg-background text-foreground">
+      {/* Window drag handle — replaces native title bar in Overlay mode */}
+      <div
+        data-tauri-drag-region
+        className="fixed inset-x-0 top-0 z-50 h-7"
+      />
       <Sidebar
         orderedTags={orderedTags}
         totalBlocks={blocks.length}

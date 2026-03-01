@@ -12,7 +12,10 @@
   "app": {
     "windows": [
       {
-        "title": "Local Arena",
+        "title": "",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "decorations": true,
         "width": 1200,
         "height": 800,
         "minWidth": 800,
