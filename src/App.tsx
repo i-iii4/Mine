@@ -43,7 +43,8 @@ const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform })
   };
 };
 
-import type { IndexedBlock, TagCount, ChannelDto } from "@/types";
+import type { IndexedBlock, TagCount, ChannelDto, PreviewCard } from "@/types";
+import { thumbnailUrl } from "@/lib/assets";
 import {
   getVaultPath,
   listBlocks,
@@ -232,6 +233,49 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     return [...withPos, ...noPos].map(({ tag, count }) => ({ tag, count }));
   }, [tags, channels]);
 
+  // ── Channel preview cards (sidebar icons) ──────────────────────────────
+
+  const channelPreviews = useMemo(() => {
+    const map = new Map<string, PreviewCard[]>();
+    // Index blocks by tag once
+    const blocksByTag = new Map<string, IndexedBlock[]>();
+    for (const b of blocks) {
+      for (const t of b.tags) {
+        const arr = blocksByTag.get(t);
+        if (arr) arr.push(b);
+        else blocksByTag.set(t, [b]);
+      }
+    }
+
+    for (const tc of orderedTags) {
+      const tagBlocks = blocksByTag.get(tc.tag) ?? [];
+      const withThumb: IndexedBlock[] = [];
+      const textOnly: IndexedBlock[] = [];
+
+      for (const b of tagBlocks) {
+        if (b.block_type === "image" || b.block_type === "link" || b.block_type === "video") {
+          withThumb.push(b);
+        } else {
+          textOnly.push(b);
+        }
+      }
+
+      const cards: PreviewCard[] = [];
+      for (const b of withThumb) {
+        if (cards.length >= 3) break;
+        cards.push({ type: "image", url: thumbnailUrl(vaultPath, b.slug) });
+      }
+      for (const _ of textOnly) {
+        if (cards.length >= 3) break;
+        cards.push({ type: "text" });
+      }
+
+      map.set(tc.tag, cards);
+    }
+
+    return map;
+  }, [blocks, orderedTags, vaultPath]);
+
   // ── Channel management ─────────────────────────────────────────────────
 
   const handleCreateChannel = useCallback(
@@ -363,6 +407,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       />
       <Sidebar
         orderedTags={orderedTags}
+        channelPreviews={channelPreviews}
         totalBlocks={blocks.length}
         isCardDragging={activeDragBlock !== null}
         onSearchOpen={() => setSearchOpen(true)}

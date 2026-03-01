@@ -26,8 +26,9 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
-import type { TagCount } from "@/types";
+import type { TagCount, PreviewCard } from "@/types";
 import { cn } from "@/lib/utils";
+import { ChannelIcon } from "./ChannelIcon";
 
 /** Convert a normalized tag slug to a display title: `web-design` -> `Web Design` */
 function titleFromTag(tag: string): string {
@@ -39,6 +40,7 @@ function titleFromTag(tag: string): string {
 
 interface SidebarProps {
   orderedTags: TagCount[];
+  channelPreviews: Map<string, PreviewCard[]>;
   totalBlocks: number;
   isCardDragging: boolean;
   onSearchOpen: () => void;
@@ -50,6 +52,7 @@ interface SidebarProps {
 
 export function Sidebar({
   orderedTags,
+  channelPreviews,
   totalBlocks,
   isCardDragging,
   onSearchOpen,
@@ -92,6 +95,7 @@ export function Sidebar({
               label={titleFromTag(tc.tag)}
               count={tc.count}
               tag={tc.tag}
+              cards={channelPreviews.get(tc.tag) ?? []}
               isCardDragging={isCardDragging}
               isEditing={editingTag === tc.tag}
               onDoubleClick={() => setEditingTag(tc.tag)}
@@ -191,6 +195,7 @@ function TagNavItem({
   label,
   count,
   tag,
+  cards,
   isCardDragging,
   isEditing,
   onDoubleClick,
@@ -202,6 +207,7 @@ function TagNavItem({
   label: string;
   count: number;
   tag: string;
+  cards: PreviewCard[];
   isCardDragging: boolean;
   isEditing: boolean;
   onDoubleClick: () => void;
@@ -210,6 +216,7 @@ function TagNavItem({
   onDelete: () => void;
 }) {
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [itemHovered, setItemHovered] = useState(false);
 
   const {
     setNodeRef,
@@ -244,6 +251,8 @@ function TagNavItem({
         style={style}
         {...attributes}
         {...listeners}
+        onPointerEnter={() => setItemHovered(true)}
+        onPointerLeave={() => setItemHovered(false)}
         className={cn(
           "group relative rounded-md transition-all",
           isDragging && "opacity-30",
@@ -259,13 +268,14 @@ function TagNavItem({
           }}
           className={({ isActive }) =>
             cn(
-              "flex items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors",
+              "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
               isActive
                 ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                 : "text-muted-foreground hover:bg-sidebar-accent/50",
             )
           }
         >
+          <ChannelIcon cards={cards} hovered={itemHovered} />
           <span className="flex-1 truncate">{label}</span>
           <span className="ml-2 shrink-0 text-xs text-muted-foreground">{count}</span>
           <DropdownMenu>

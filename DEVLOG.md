@@ -28,6 +28,52 @@ if any
 
 ---
 
+## 01.03.2026 04:55 — Иконки каналов в sidebar: стопка мини-карточек с веерной анимацией
+
+### Goal
+Добавить визуальные превью каналов в sidebar — стопка из 1–3 мини-карточек с реальными thumbnail'ами блоков. По ховеру стопка раскрывается веером.
+
+### Planned
+1. Тип `PreviewCard` в types
+2. `channelPreviews` useMemo в App.tsx — приоритет: изображения, потом текст
+3. Компонент `ChannelIcon.tsx` — стопка карточек с анимацией
+4. Интеграция в Sidebar — новый проп, рендер иконки перед названием канала
+
+### Actually completed
+Всё по плану. Дополнительно:
+- Итеративная настройка анимации: от CSS custom properties к inline transform через React state
+- Горизонтальный разброс карточек (SPREAD 4px) + поворот задних карточек вокруг bottom-left
+- Ховер: передняя карточка — translateX(-1px) rotate(-1deg) вокруг center-right; задние — дополнительный поворот и сдвиг вправо
+
+### Deviations from plan
+- CSS custom properties для transform не работали надёжно через Tailwind v4 / Vite pipeline — заменены на inline `transform` + `hovered` проп через `onPointerEnter/Leave`
+- Глобальные CSS-селекторы `.group\/icon:hover` конфликтовали между экземплярами — убраны в пользу React state
+
+### Checks
+- `bunx tsc --noEmit` — 0 ошибок
+- Каналы с изображениями — thumbnail'ы видны
+- Текстовые каналы — серые карточки с линиями
+- Пустые каналы — одна пустая карточка
+- 1, 2, 3 карточки — корректное количество
+- Ховер анимация — плавная (350ms cubic-bezier), с задержкой нет
+- Тёмная тема — обводка border-background адаптируется
+
+### Push
+`pending`
+
+### Decisions and lessons learned
+- CSS custom properties внутри `transform` функций (`rotate(var(--x))`) работают, но составные transform-строки как значение переменной (`var(--full-transform)`) — нет, браузер не может интерполировать
+- Tailwind v4 через Vite может некорректно обрабатывать экранирование `\/` в CSS-селекторах — `data-*` атрибуты надёжнее
+- Для мелких анимаций на единичных компонентах inline transform + React state проще и надёжнее CSS-only подхода
+
+### Changed files
+- `src/types/index.ts` — тип `PreviewCard`
+- `src/components/ChannelIcon.tsx` — новый компонент
+- `src/App.tsx` — `channelPreviews` useMemo, новый проп в Sidebar
+- `src/components/Sidebar.tsx` — `channelPreviews` проп, `hovered` state, `ChannelIcon` рендер
+
+---
+
 ## 01.03.2026 03:30 — Визуальная стилизация: overlay titlebar, Geist, карточки, sidebar
 
 ### Goal

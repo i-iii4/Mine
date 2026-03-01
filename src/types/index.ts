@@ -37,6 +37,13 @@ export interface ChannelDto {
   block_count: number;
 }
 
+// ─── Channel preview (sidebar icons) ────────────────────────────────────────
+
+export type PreviewCard =
+  | { type: "image"; url: string }
+  | { type: "text" }
+  | { type: "empty" };
+
 export interface ScanResult {
   indexed: number;
   errors: number;
