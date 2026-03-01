@@ -46,6 +46,11 @@ anyhow = "1"
 # Logging
 log = "0.4"
 
+# macOS window customization
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
+
 # Type generation for TypeScript
 specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 tauri-specta = { version = "=2.0.0-rc.21", features = ["typescript"] }

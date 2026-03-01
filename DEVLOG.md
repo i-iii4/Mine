@@ -28,6 +28,42 @@ if any
 
 ---
 
+## 01.03.2026 22:30 — macOS: переход окна в класс 26px (NSToolbar)
+
+### Goal
+Перевести окно приложения из класса «компактных» приложений macOS Tahoe (18px скругления, прижатый светофор) в класс «больших» (26px скругления, расширенный Liquid Glass тулбар, отступ светофора 26px от края) — как Music, Safari, Finder.
+
+### Planned
+1. Добавить macOS-зависимости `cocoa` и `objc` в Cargo.toml
+2. В setup-хуке Tauri создать пустой NSToolbar и навесить на NSWindow
+3. macOS автоматически назначает класс окна по наличию тулбара
+
+### Actually completed
+1. `src-tauri/Cargo.toml` — добавлена секция `[target.'cfg(target_os = "macos")'.dependencies]` с `cocoa = "0.26"` и `objc = "0.2"`
+2. `src-tauri/src/lib.rs:93-111` — блок `#[cfg(target_os = "macos")]`: получение NSWindow через `window.ns_window()`, создание NSToolbar, `setShowsBaselineSeparator: false`, `setToolbar:` на окно
+3. Документация: CLAUDE.md (стек), ARCHITECTURE.md (зависимости + решение 006), PLAN.md (задача 7.25)
+
+### Deviations from plan
+Нет.
+
+### Checks
+- `cargo clippy` — 0 ошибок (15 предупреждений — deprecation от `cocoa`/`objc`, рекомендуют `objc2`)
+- `cargo tauri dev` — приложение запускается, окно отображается с расширенным Liquid Glass тулбаром
+
+### Откат
+Если нужно вернуть окно в класс 18px (компактный):
+```bash
+git revert <commit-hash>
+```
+Или вручную: удалить блок `#[cfg(target_os = "macos")]` в `lib.rs:93-111` и секцию `[target.'cfg(target_os = "macos")'.dependencies]` в `Cargo.toml`. Зависимости `cocoa`/`objc` безопасно удаляются — они не используются больше нигде.
+
+### Decisions and lessons learned
+- macOS Tahoe (26) делит приложения на два класса: 18px (без тулбара) и 26px (с тулбаром). Класс определяется наличием NSToolbar на NSWindow, даже если тулбар пустой
+- Использовать `cocoa`/`objc` крейты — правильный подход. Альтернатива `tauri-plugin-mac-rounded-corners` требует `decorations: false` и борется с системой
+- `setShowsBaselineSeparator: false` — убирает линию-разделитель под тулбаром для цельного Liquid Glass
+
+---
+
 ## 01.03.2026 18:00 — Phase 9.1 + 9.2: критические и высокоприоритетные исправления по аудиту
 
 ### Goal

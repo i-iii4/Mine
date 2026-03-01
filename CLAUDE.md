@@ -28,6 +28,7 @@
 | notify | File watcher — отслеживание изменений в vault |
 | image | Генерация thumbnails |
 | ureq | Синхронный HTTP-клиент (импорт Are.na) |
+| cocoa + objc | macOS: NSToolbar для класса окна 26px (Liquid Glass) |
 | React 19 | UI-фреймворк |
 | Vite | Сборка фронтенда, HMR |
 | TypeScript | Язык фронтенда |
