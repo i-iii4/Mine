@@ -145,6 +145,7 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.21 | Grid: делегирование ContextMenu (O(N)→O(1)) + синхронный сброс visibleCount + исправление скролла контекстного меню + hover сайдбара | [x] |
 | 7.22 | Визуальная стилизация: overlay titlebar + drag region, Geist Sans, острые карточки без заливки, GAP 32px, sidebar без заголовка с градиентным fade | [x] |
 | 7.23 | Иконки каналов в sidebar: стопка из 1–3 мини-карточек с реальными превью, веерная анимация при ховере | [x] |
+| 7.24 | Fullscreen Detail: двухслойный layout (scroll + fixed metadata), Geist Mono, drag region | [x] |
 
 ### Phase 8 — Веб-клиппер (браузерное расширение) [COMPLETED]
 

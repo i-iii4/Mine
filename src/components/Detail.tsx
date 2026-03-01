@@ -6,11 +6,13 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { DialogContent } from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { DialogContent, DialogClose } from "@/components/ui/dialog";
 import type { IndexedBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
 import { addTag, removeTag } from "@/lib/commands";
+
+// Layout constants — shared between scroll layer and metadata layer
+const LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-16";
 
 interface DetailProps {
   block: IndexedBlock;
@@ -59,37 +61,144 @@ export function Detail({
     [block.slug, onTagsChanged],
   );
 
+  const filename = block.media_file ?? `${block.slug}.md`;
+  const formattedDate = new Date(block.saved_at).toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
   return (
     <DialogContent
-      className="flex max-h-[90vh] max-w-3xl flex-col gap-0 overflow-hidden p-0"
+      className="top-0 right-0 bottom-0 left-[240px] flex w-auto max-w-none sm:max-w-none translate-x-0 translate-y-0 gap-0 rounded-none border-none bg-background p-0 shadow-none data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+      overlayClassName="left-[240px]"
+      showCloseButton={false}
       onOpenAutoFocus={(e) => e.preventDefault()}
       onKeyDown={(e) => {
-        // Arrow navigation only when not typing in an input
         if (e.target instanceof HTMLInputElement) return;
         if (e.key === "ArrowLeft") onNavigate("prev");
         if (e.key === "ArrowRight") onNavigate("next");
       }}
     >
-      {/* Content */}
-      <ScrollArea className="flex-1">
-        <BlockContent block={block} vaultPath={vaultPath} />
-      </ScrollArea>
+      {/* Window drag region — sits above dialog overlay */}
+      <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-20 h-7" />
 
-      {/* Metadata */}
-      <div className="border-t border-border px-6 py-4">
-        {/* Tags */}
-        <div className="flex flex-wrap items-center gap-1.5">
+      {/* Close button */}
+      <DialogClose asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute top-3 right-3 z-10 size-8 text-muted-foreground hover:text-foreground"
+        >
+          <X className="size-4" />
+          <span className="sr-only">Close</span>
+        </Button>
+      </DialogClose>
+
+      {/* Layer 1: Scrollable content + invisible spacer */}
+      <div className="h-full w-full overflow-y-auto">
+        <div className={LAYOUT_CLASSES}>
+          <div className="min-w-0 flex-1">
+            <BlockContent block={block} vaultPath={vaultPath} />
+          </div>
+          <div className="w-56 shrink-0" aria-hidden="true" />
+        </div>
+      </div>
+
+      {/* Layer 2: Fixed metadata (same layout, doesn't scroll) */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className={LAYOUT_CLASSES}>
+          <div className="flex-1" />
+          <div className="pointer-events-auto w-56 shrink-0 overflow-y-auto">
+            <MetadataPanel
+              block={block}
+              filename={filename}
+              formattedDate={formattedDate}
+              tags={tags}
+              tagInput={tagInput}
+              onTagInputChange={setTagInput}
+              onAddTag={handleAddTag}
+              onRemoveTag={handleRemoveTag}
+            />
+          </div>
+        </div>
+      </div>
+    </DialogContent>
+  );
+}
+
+// ─── Metadata panel ─────────────────────────────────────────────────────────
+
+interface MetadataPanelProps {
+  block: IndexedBlock;
+  filename: string;
+  formattedDate: string;
+  tags: string[];
+  tagInput: string;
+  onTagInputChange: (value: string) => void;
+  onAddTag: () => void;
+  onRemoveTag: (tag: string) => void;
+}
+
+function MetadataPanel({
+  block,
+  filename,
+  formattedDate,
+  tags,
+  tagInput,
+  onTagInputChange,
+  onAddTag,
+  onRemoveTag,
+}: MetadataPanelProps) {
+  return (
+    <div className="flex flex-col gap-5 font-mono">
+      {block.width != null && block.height != null && (
+        <MetadataField label="RESOLUTION" value={`${block.width} \u00d7 ${block.height}`} />
+      )}
+
+      <MetadataField label="FILENAME" value={filename} />
+
+      <MetadataField label="DATE" value={formattedDate} />
+
+      <MetadataField label="TYPE" value={block.block_type.toUpperCase()} />
+
+      {block.url && (
+        <div>
+          <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+            SOURCE
+          </div>
+          <a
+            href={block.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 block text-xs text-foreground hover:underline"
+          >
+            {domainFromUrl(block.url)}
+          </a>
+        </div>
+      )}
+
+      {block.author && (
+        <MetadataField label="AUTHOR" value={block.author} />
+      )}
+
+      {/* Tags */}
+      <div>
+        <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+          TAGS
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {tags.map((tag) => (
             <Badge
               key={tag}
               variant="secondary"
-              className="group gap-1 text-muted-foreground"
+              className="group gap-1 font-mono text-muted-foreground"
             >
               {tag}
               <Button
                 variant="ghost"
                 size="icon-xs"
-                onClick={() => handleRemoveTag(tag)}
+                onClick={() => onRemoveTag(tag)}
                 className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100"
               >
                 <X className="size-2.5" />
@@ -99,35 +208,31 @@ export function Detail({
           <Input
             type="text"
             value={tagInput}
-            onChange={(e) => setTagInput(e.target.value)}
+            onChange={(e) => onTagInputChange(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleAddTag();
+              if (e.key === "Enter") onAddTag();
             }}
             placeholder="+ tag"
-            className="h-auto w-20 border-none bg-transparent px-0 py-0 text-xs shadow-none focus-visible:ring-0"
+            className="h-auto w-20 border-none bg-transparent px-0 py-0 font-mono text-xs shadow-none focus-visible:ring-0"
           />
         </div>
-
-        {/* Info row */}
-        <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
-          <span>{block.block_type}</span>
-          <span>{new Date(block.saved_at).toLocaleDateString()}</span>
-          {block.source && <span>{block.source}</span>}
-          {block.url && (
-            <a
-              href={block.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-500 hover:underline"
-            >
-              {domainFromUrl(block.url)}
-            </a>
-          )}
-        </div>
       </div>
-    </DialogContent>
+    </div>
   );
 }
+
+function MetadataField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 text-xs text-foreground">{value}</div>
+    </div>
+  );
+}
+
+// ─── Block content renderers ────────────────────────────────────────────────
 
 function BlockContent({
   block,
@@ -142,11 +247,11 @@ function BlockContent({
         ? mediaUrl(vaultPath, block.media_file)
         : thumbnailUrl(vaultPath, block.slug);
       return (
-        <div className="flex items-center justify-center bg-muted">
+        <div className="flex min-h-full items-center justify-center p-6">
           <img
             src={src}
             alt={block.title ?? block.slug}
-            className="max-h-[60vh] object-contain"
+            className="max-h-[85vh] object-contain"
           />
         </div>
       );
@@ -195,9 +300,9 @@ function BlockContent({
         ? mediaUrl(vaultPath, block.media_file)
         : null;
       return (
-        <div className="bg-black">
+        <div className="flex min-h-full items-center justify-center bg-black">
           {src ? (
-            <video controls className="mx-auto max-h-[60vh]">
+            <video controls className="max-h-[85vh]">
               <source src={src} />
             </video>
           ) : (
@@ -210,7 +315,7 @@ function BlockContent({
     }
     case "file":
       return (
-        <div className="flex flex-col items-center justify-center gap-3 py-12">
+        <div className="flex min-h-full flex-col items-center justify-center gap-3 py-12">
           <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-muted text-lg font-bold text-muted-foreground">
             {block.media_file?.split(".").pop()?.toUpperCase() ?? "FILE"}
           </div>
