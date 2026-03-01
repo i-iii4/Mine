@@ -27,6 +27,7 @@ export function Card({ block, vaultPath, onClick }: CardProps) {
   return (
     <div
       ref={setNodeRef}
+      data-block-slug={block.slug}
       {...attributes}
       {...listeners}
       role="button"

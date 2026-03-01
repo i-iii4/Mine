@@ -48,18 +48,28 @@ export function Grid({
   const [parentWidth, setParentWidth] = useState(0);
   const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH);
   const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
+  const [menuBlock, setMenuBlock] = useState<IndexedBlock | null>(null);
 
-  // Reset visible count only when the actual set of blocks changes
-  // (channel switch, search) — not on background data refreshes that
-  // produce the same blocks with a new array reference.
+  // Fingerprint detects real dataset changes (channel switch, search)
+  // while ignoring background refreshes with the same data.
   const blocksFingerprint = useMemo(() => {
     const len = blocks.length;
     if (len === 0) return "empty";
     return `${len}:${blocks[0]!.id}:${blocks[len - 1]!.id}`;
   }, [blocks]);
 
-  useEffect(() => {
+  // Synchronous reset: runs DURING render, before browser paint.
+  // useEffect would run AFTER paint, causing a heavy frame with stale
+  // visibleCount (e.g. 300 cards from the previous channel).
+  const [prevFingerprint, setPrevFingerprint] = useState(blocksFingerprint);
+  if (blocksFingerprint !== prevFingerprint) {
+    setPrevFingerprint(blocksFingerprint);
     setVisibleCount(INITIAL_BATCH);
+  }
+
+  // Scroll reset on channel switch (visual effect, safe in useEffect)
+  useEffect(() => {
+    parentRef.current?.scrollTo(0, 0);
   }, [blocksFingerprint]);
 
   // Measure parent width
@@ -97,6 +107,33 @@ export function Grid({
     return () => observer.disconnect();
   }, [loadMore]);
 
+  // O(1) block lookup for context menu event delegation
+  const blocksBySlug = useMemo(
+    () => new Map(blocks.map((b) => [b.slug, b])),
+    [blocks],
+  );
+
+  // Event delegation: single handler identifies which card was right-clicked.
+  // composeEventHandlers in Radix checks defaultPrevented — calling
+  // e.preventDefault() suppresses the menu on empty-space clicks.
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      const el = (e.target as HTMLElement).closest("[data-block-slug]");
+      if (!el) {
+        e.preventDefault();
+        return;
+      }
+      const slug = el.getAttribute("data-block-slug")!;
+      const block = blocksBySlug.get(slug);
+      if (block) {
+        setMenuBlock(block);
+      } else {
+        e.preventDefault();
+      }
+    },
+    [blocksBySlug],
+  );
+
   const columnCount = Math.max(
     1,
     Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
@@ -119,46 +156,53 @@ export function Grid({
   const hasMore = visibleCount < blocks.length;
 
   return (
-    <div ref={parentRef} className="h-full overflow-x-hidden overflow-y-auto p-4">
-      <div className="flex items-start" style={{ gap: GAP }}>
-        {columns.map((col, colIdx) => (
-          <div
-            key={colIdx}
-            className="flex min-w-0 flex-1 flex-col"
-            style={{ gap: GAP }}
-          >
-            {col.map((block) => (
-              <ContextMenu key={block.id}>
-                <ContextMenuTrigger asChild>
-                  <div>
-                    <Card
-                      block={block}
-                      vaultPath={vaultPath}
-                      onClick={onBlockClick}
-                    />
-                  </div>
-                </ContextMenuTrigger>
-                <CardTagMenu
-                  block={block}
-                  tags={tags}
-                  currentTag={currentTag}
-                  onToggleTag={onToggleTag}
-                  onCreateAndAssign={onCreateAndAssign}
-                  onRequestDelete={setBlockToDelete}
-                />
-              </ContextMenu>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          ref={parentRef}
+          onContextMenu={handleContextMenu}
+          className="h-full overflow-x-hidden overflow-y-auto p-4"
+        >
+          <div className="flex items-start" style={{ gap: GAP }}>
+            {columns.map((col, colIdx) => (
+              <div
+                key={colIdx}
+                className="flex min-w-0 flex-1 flex-col"
+                style={{ gap: GAP }}
+              >
+                {col.map((block) => (
+                  <Card
+                    key={block.id}
+                    block={block}
+                    vaultPath={vaultPath}
+                    onClick={onBlockClick}
+                  />
+                ))}
+              </div>
             ))}
           </div>
-        ))}
-      </div>
 
-      {/* Sentinel for infinite scroll */}
-      {hasMore && (
-        <div ref={sentinelRef} className="flex justify-center py-8">
-          <p className="text-xs text-muted-foreground">
-            {visibleCount} of {blocks.length}
-          </p>
+          {/* Sentinel for infinite scroll */}
+          {hasMore && (
+            <div ref={sentinelRef} className="flex justify-center py-8">
+              <p className="text-xs text-muted-foreground">
+                {visibleCount} of {blocks.length}
+              </p>
+            </div>
+          )}
         </div>
+      </ContextMenuTrigger>
+
+      {/* Single CardTagMenu instance — renders only when a card was right-clicked */}
+      {menuBlock && (
+        <CardTagMenu
+          block={menuBlock}
+          tags={tags}
+          currentTag={currentTag}
+          onToggleTag={onToggleTag}
+          onCreateAndAssign={onCreateAndAssign}
+          onRequestDelete={setBlockToDelete}
+        />
       )}
 
       {/* Delete confirmation — lives at Grid level, survives ContextMenu close */}
@@ -187,6 +231,6 @@ export function Grid({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </ContextMenu>
   );
 }

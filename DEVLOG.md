@@ -28,6 +28,58 @@ if any
 
 ---
 
+## 01.03.2026 01:45 — Grid: делегирование ContextMenu + устранение подвисаний
+
+### Goal
+Устранить подвисания при переходе между каналами и скролле, которые появились после миграции на shadcn/Radix. Переход к каналу иногда вызывал «радугу» (beach ball) на несколько секунд.
+
+### Planned
+1. Заменить O(N) инстансов ContextMenu (по одному на карточку) на один делегированный ContextMenu на весь Grid
+2. Исправить stale visibleCount — заменить useEffect-сброс на синхронный паттерн «set state during render»
+3. Исправить скролл контекстного меню карточки (ScrollArea внутри ContextMenuContent не работала из-за Radix bug #2307)
+4. Привести hover сайдбара к полупрозрачному варианту (по запросу пользователя)
+
+### Actually completed
+
+**Grid: делегирование ContextMenu** (`src/components/Grid.tsx`):
+- Удалён `CardWithMenu` — промежуточная обёртка с per-card `<ContextMenu>`
+- Единый `<ContextMenu>` + `<ContextMenuTrigger asChild>` на scroll-контейнер Grid
+- Обработчик `handleContextMenu` находит карточку через `closest('[data-block-slug]')` — стандартное делегирование событий
+- `e.preventDefault()` при клике на пустое место подавляет открытие через `composeEventHandlers` Radix (проверено по исходникам `@radix-ui/primitive`)
+- `blocksBySlug` Map для O(1) поиска блока по slug
+- Результат: 1 ContextMenu + 4 DOM-обработчика вместо 80 ContextMenu + 320 обработчиков
+
+**Синхронный сброс visibleCount** (`src/components/Grid.tsx`):
+- Заменён `useEffect(() => setVisibleCount(INITIAL_BATCH), [blocksFingerprint])` на паттерн «set state during render» с `prevFingerprint`
+- React прерывает рендер и начинает новый с `visibleCount = 80` — ни одного кадра со старым значением
+- Отдельный `useEffect` для сброса скролла (визуальный эффект, безопасен после paint)
+
+**Card.tsx**: добавлен `data-block-slug={block.slug}` на корневой div — семантический атрибут для делегирования событий
+
+**CardContextMenu.tsx**: заменён ScrollArea на нативный `overflow-y-auto` (Radix ScrollArea bug #2307 с max-height во flex-контейнерах), flex-layout с фиксированным поиском и кнопкой удаления
+
+**Sidebar.tsx**: hover изменён на `hover:bg-sidebar-accent/50` для всех пунктов навигации
+
+### Deviations from plan
+Первая попытка (lazy CardTagMenu в CardWithMenu) оставила per-card ContextMenu обёртки. Исправлено: полное удаление CardWithMenu и переход к делегированию событий.
+
+### Checks
+- `tsc --noEmit` — 0 ошибок
+- `vitest run` — 39 тестов, все проходят
+- Приложение запускается, правый клик на карточках работает
+- Визуально: hover сайдбара полупрозрачный, контекстное меню скроллируется
+
+### Push
+TBD
+
+### Decisions and lessons learned
+- **Производительность — архитектурное решение, не оптимизация.** `React.memo` и lazy rendering — пластыри на плохой архитектуре (O(N) инстансов). Правильный ответ — O(1) через делегирование.
+- **«Set state during render»** — документированный паттерн React для синхронного сброса состояния. `useEffect` для этой цели создаёт один лишний кадр с устаревшими данными.
+- **Radix ScrollArea не работает с max-height во flex** (issue #2307). Нативный `overflow-y-auto` надёжнее.
+- **composeEventHandlers в Radix** проверяет `defaultPrevented` перед вызовом внутреннего обработчика — это документированный контракт для подавления поведения.
+
+---
+
 ## 28.02.2026 18:30 — shadcn/ui компонентная миграция (14 примитивов)
 
 ### Goal

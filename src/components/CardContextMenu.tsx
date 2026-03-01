@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Trash2, Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   ContextMenuContent,
   ContextMenuItem,
@@ -76,9 +75,9 @@ export function CardTagMenu({
   const canCreate = trimmed.length > 0 && filtered.length === 0;
 
   return (
-    <ContextMenuContent className="w-64 p-0">
-      {/* Search — stopPropagation prevents ContextMenu typeahead */}
-      <div className="p-2 pb-1" onKeyDown={(e) => e.stopPropagation()}>
+    <ContextMenuContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
+      {/* Search — fixed at top, stopPropagation prevents ContextMenu typeahead */}
+      <div className="shrink-0 p-2 pb-1" onKeyDown={(e) => e.stopPropagation()}>
         <Input
           autoFocus
           type="text"
@@ -89,8 +88,8 @@ export function CardTagMenu({
         />
       </div>
 
-      {/* Tag list — custom buttons, not ContextMenuItems (don't close menu) */}
-      <ScrollArea className="max-h-48">
+      {/* Tag list — scrollable, custom buttons (don't close menu) */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-1 py-0.5">
         {filtered.map((tc) => {
           const hasTag = block.tags.includes(tc.tag);
@@ -136,11 +135,11 @@ export function CardTagMenu({
           </p>
         )}
         </div>
-      </ScrollArea>
+      </div>
 
-      {/* Delete — hidden while searching */}
+      {/* Delete — fixed at bottom, hidden while searching */}
       {!search && (
-        <>
+        <div className="shrink-0">
           <ContextMenuSeparator />
           <ContextMenuItem
             variant="destructive"
@@ -149,7 +148,7 @@ export function CardTagMenu({
             <Trash2 className="size-3" />
             Delete card
           </ContextMenuItem>
-        </>
+        </div>
       )}
     </ContextMenuContent>
   );

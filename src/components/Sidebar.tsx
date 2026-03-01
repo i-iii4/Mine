@@ -117,7 +117,7 @@ export function Sidebar({
             variant="ghost"
             size="sm"
             onClick={() => setIsCreating(true)}
-            className="mt-1 w-full justify-start text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            className="mt-1 w-full justify-start text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
           >
             <Plus className="size-3" />
             <span>New channel</span>
@@ -131,7 +131,7 @@ export function Sidebar({
           variant="ghost"
           size="sm"
           onClick={onImportOpen}
-          className="w-full justify-start text-muted-foreground hover:bg-sidebar-accent"
+          className="w-full justify-start text-muted-foreground hover:bg-sidebar-accent/50"
         >
           <Download className="size-4" />
           <span>Import from Are.na</span>
@@ -140,7 +140,7 @@ export function Sidebar({
           variant="ghost"
           size="sm"
           onClick={onSearchOpen}
-          className="w-full justify-start text-muted-foreground hover:bg-sidebar-accent"
+          className="w-full justify-start text-muted-foreground hover:bg-sidebar-accent/50"
         >
           <Search className="size-4" />
           <span>Search</span>
@@ -176,7 +176,7 @@ function NavItem({
           "flex items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors",
           isActive
             ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-            : "text-muted-foreground hover:bg-sidebar-accent",
+            : "text-muted-foreground hover:bg-sidebar-accent/50",
         )
       }
     >
@@ -262,7 +262,7 @@ function TagNavItem({
               "flex items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors",
               isActive
                 ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                : "text-muted-foreground hover:bg-sidebar-accent",
+                : "text-muted-foreground hover:bg-sidebar-accent/50",
             )
           }
         >
