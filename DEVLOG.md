@@ -67,7 +67,7 @@ if any
 - Тёмная тема — корректные цвета
 
 ### Push
-(hash после push)
+`0a7ff4d` Fullscreen Detail: two-layer layout with Geist Mono metadata panel
 
 ### Decisions and lessons learned
 - **Двухслойный layout** — архитектурно чистое решение для «контент скроллится, метаданные фиксированы, оба используют один layout». Общая константа `LAYOUT_CLASSES` — единственный источник правды для позиционирования.
