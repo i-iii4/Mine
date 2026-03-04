@@ -121,7 +121,7 @@ export function Sidebar({
             variant="ghost"
             size="sm"
             onClick={() => setIsCreating(true)}
-            className="mt-1 w-full justify-start rounded-1 text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+            className="mt-1 w-full justify-start rounded-1 text-muted-foreground hover:bg-accent"
           >
             <Plus className="size-3" />
             <span>New channel</span>
@@ -135,7 +135,7 @@ export function Sidebar({
           variant="ghost"
           size="sm"
           onClick={onImportOpen}
-          className="w-full justify-start rounded-1 text-muted-foreground hover:bg-sidebar-accent/50"
+          className="w-full justify-start rounded-1 text-muted-foreground hover:bg-accent"
         >
           <Download className="size-4" />
           <span>Import from Are.na</span>
@@ -144,7 +144,7 @@ export function Sidebar({
           variant="ghost"
           size="sm"
           onClick={onSearchOpen}
-          className="w-full justify-start rounded-1 text-muted-foreground hover:bg-sidebar-accent/50"
+          className="w-full justify-start rounded-1 text-muted-foreground hover:bg-accent"
         >
           <Search className="size-4" />
           <span>Search</span>
@@ -180,7 +180,7 @@ function NavItem({
           "flex items-center justify-between rounded-1 px-3 py-1.5 text-base ",
           isActive
             ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
-            : "text-muted-foreground hover:bg-sidebar-accent/50",
+            : "text-muted-foreground hover:bg-accent",
         )
       }
     >
@@ -271,7 +271,7 @@ function TagNavItem({
               "flex items-center gap-2 rounded-1 px-3 py-1.5 text-base ",
               isActive
                 ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
-                : "text-muted-foreground hover:bg-sidebar-accent/50",
+                : "text-muted-foreground hover:bg-accent",
             )
           }
         >
@@ -287,7 +287,7 @@ function TagNavItem({
                     size="icon-xs"
                     onClick={(e) => e.stopPropagation()}
                     onPointerDown={(e) => e.stopPropagation()}
-                    className="ml-1 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                    className="ml-1 shrink-0 text-muted-foreground opacity-0 hover:text-hover-foreground group-hover:opacity-100"
                   >
                     <MoreHorizontal className="size-3" />
                   </Button>

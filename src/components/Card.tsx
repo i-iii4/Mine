@@ -35,7 +35,7 @@ export function Card({ block, vaultPath, onClick }: CardProps) {
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
-        "group cursor-pointer overflow-hidden border border-border",
+        "group cursor-pointer overflow-hidden border border-border hover:border-foreground",
         isDragging && "opacity-30",
       )}
     >
@@ -100,7 +100,7 @@ function ImageCard({
         onError={() => setError(true)}
       />
       {block.title && (
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3 opacity-0 group-hover:opacity-100">
           <p className="truncate text-sm text-white">{block.title}</p>
         </div>
       )}

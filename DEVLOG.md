@@ -28,6 +28,54 @@ if any
 
 ---
 
+## 03.03.2026 — Интерактивные состояния + унификация оттенков тёмной темы
+
+### Goal
+Ввести систему интерактивных состояний (hover, focus, active, selected) с правилом «одно свойство за раз, без transition». Унифицировать все серые в тёмной теме на один тёплый оттенок (hue 78).
+
+### Planned
+1. Новые токены: accent (hover bg), active (pressed bg), hover-foreground, primary-hover, primary-active
+2. Обновить button.tsx — 5 вариантов по спецификации
+3. Карточка — hover:border-foreground
+4. Сайдбар — hover:bg-accent, selected = sidebar-accent
+5. Убрать все transition-opacity с ховер-элементов
+6. Тёмная тема — все серые на hue 78, chroma 0.006
+7. sidebar-primary — убрать синий (oklch 0.488 0.243 264), заменить на foreground
+8. primary-foreground — упростить до oklch(1 0 0)
+
+### Actually completed
+Все 8 пунктов:
+
+**global.css** — 4 новых токена (active, hover-foreground, primary-hover, primary-active), обновлены accent (#F5F5F5/#2C2A27), sidebar-accent (#F0F0F0/#2C2A27), sidebar-accent-foreground (#1A1A1A/#FFF). Тёмная тема: 23 токена переведены с hue 286/0 на hue 78. sidebar-primary убран синий. primary-foreground упрощён до белого.
+
+**button.tsx** — default: `hover:bg-primary-hover active:bg-primary-active`, outline/secondary: `hover:bg-accent active:bg-active`, ghost: `hover:text-hover-foreground`, link: `underline hover:text-hover-foreground`
+
+**Card.tsx** — `hover:border-foreground`, убран transition-opacity с оверлея
+
+**Sidebar.tsx** — `hover:bg-sidebar-accent/50` → `hover:bg-accent` (4 места), убран transition-opacity
+
+**Detail.tsx** — убран transition-opacity с кнопки удаления тега
+
+**DESIGN_SYSTEM.md** — раздел «Интерактивные состояния» (hover/focus/active/selected), «Цветовой принцип тёмной темы»
+
+### Deviations from plan
+Нет
+
+### Checks
+- `bun run build` — чистая сборка
+- Скрипт верификации: все серые в тёмной теме на hue 78 (кроме destructive и chart)
+- Новые утилиты в CSS: bg-primary-hover, bg-primary-active, text-hover-foreground, bg-active, border-foreground
+
+### Push
+<!-- commit hash -->
+
+### Decisions and lessons learned
+- Один оттенок (hue 78) для всех серых в тёмной теме. При добавлении нового серого — oklch(L 0.006 78). Не вводить нейтральные или холодные серые.
+- Переход с холодного (286) на тёплый (78) при chroma 0.006 даёт дельту max 8 RGB — неразличимо на глаз
+- sidebar-primary с ярким синим (chart-1) — мина замедленного действия. Мёртвый токен с опасным значением удалён, приведён к foreground
+
+---
+
 ## 03.03.2026 — Границы: единый цвет для всех разделителей
 
 ### Goal
@@ -53,7 +101,7 @@ if any
 - Визуально: линии сайдбара и основного содержимого совпадают
 
 ### Push
-<!-- commit hash -->
+`e59f8f4` Borders: unify all dividers to single color (#E0E0E0/#38383C)
 
 ### Decisions and lessons learned
 - В тёмной теме ранее использовались полупрозрачные значения (oklch(1 0 0 / 10%)) — заменены на непрозрачные для консистентности с остальными токенами

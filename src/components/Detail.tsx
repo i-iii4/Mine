@@ -199,7 +199,7 @@ function MetadataPanel({
                 variant="ghost"
                 size="icon-xs"
                 onClick={() => onRemoveTag(tag)}
-                className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100"
+                className="size-3.5 opacity-0 group-hover:opacity-100"
               >
                 <X className="size-2.5" />
               </Button>
