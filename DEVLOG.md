@@ -28,6 +28,44 @@ if any
 
 ---
 
+## 03.03.2026 — Фоны: тёплый сайдбар + исправление цветовых токенов
+
+### Goal
+Разделить фон сайдбара и содержимого, добавить тёплый оттенок.
+
+### Planned
+1. Сайдбар #FAFAF9 (светлая) / #1C1A17 (тёмная)
+2. Содержимое #FFFFFF (светлая) / #211F1C (тёмная)
+3. Sidebar.tsx: bg-background → bg-sidebar
+
+### Actually completed
+Все 3 пункта + исправление ошибки:
+
+**Фоны** — `--background` = #FFFFFF / #211F1C, `--sidebar` = #FAFAF9 / #1C1A17
+
+**Sidebar.tsx** — `bg-background` → `bg-sidebar`, `from-background` → `from-sidebar`
+
+**ChannelIcon.tsx** — пустая иконка: `bg-background` → `bg-sidebar`
+
+**Исправление** — `--secondary`, `--muted`, `--accent` были ошибочно установлены в цвет сайдбара (#F7F7F5), что окрасило ховеры и бейджи по всему приложению. Возвращены к нейтральному серому (oklch 0.97 / 0.269)
+
+### Deviations from plan
+- Первоначально сайдбар был #F7F7F5 — слишком заметная серая полоса. Заменён на #FAFAF9
+
+### Checks
+- `bun run build` — чистая сборка
+- `grep bg-sidebar` — используется в Sidebar.tsx и ChannelIcon.tsx
+- `--secondary/muted/accent` — нейтральные, не тёплые
+
+### Push
+<!-- commit hash -->
+
+### Decisions and lessons learned
+- `--sidebar` и `--secondary/muted/accent` — разные роли: sidebar это зона, а secondary/muted/accent — состояния элементов. Не смешивать
+- #FAFAF9 — оптимальный компромисс для светлого сайдбара: отделяет зону без «серой полосы»
+
+---
+
 ## 03.03.2026 — Цвет текста: трёхуровневая иерархия + font-mono только в метаданных
 
 ### Goal
@@ -59,7 +97,7 @@ if any
 - DESIGN_SYSTEM.md обновлён: шрифты, цвета
 
 ### Push
-<!-- commit hash will be added after push -->
+`055d017` Text colors: 3-level hierarchy (#333/#777/#999), font-mono only in metadata
 
 ### Decisions and lessons learned
 - Тёмная тема: primary/secondary с лёгким hue 286 (холодный) — чисто серый на тёмном фоне выглядит грязным

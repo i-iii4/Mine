@@ -74,11 +74,11 @@ export function Sidebar({
   );
 
   return (
-    <aside className="relative flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-background">
+    <aside className="relative flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
       {/* Spacer for macOS traffic lights in overlay titlebar */}
       <div className="h-10 shrink-0" />
       {/* Top fade — content dissolves into the top edge */}
-      <div className="pointer-events-none absolute inset-x-0 top-10 z-10 h-8 bg-gradient-to-b from-background to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 top-10 z-10 h-8 bg-gradient-to-b from-sidebar to-transparent" />
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-2 pt-2" data-sidebar-scroll>

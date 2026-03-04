@@ -67,6 +67,6 @@ function MiniCard({ card }: { card: PreviewCard }) {
         </div>
       );
     case "empty":
-      return <div className="h-full w-full rounded-2 border border-border bg-background" />;
+      return <div className="h-full w-full rounded-2 border border-border bg-sidebar" />;
   }
 }
