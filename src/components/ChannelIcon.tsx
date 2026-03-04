@@ -7,22 +7,22 @@ interface ChannelIconProps {
 
 const CARD = 24;
 const SPREAD = 4; // px horizontal spread between cards
+const MAX_CARDS = 3;
+const FIXED_W = CARD + SPREAD * (MAX_CARDS - 1); // always 32px
 
 export function ChannelIcon({ cards, hovered = false }: ChannelIconProps) {
   const items: PreviewCard[] =
     cards.length === 0 ? [{ type: "empty" }] : cards.slice(0, 3);
 
-  const totalW = CARD + SPREAD * (items.length - 1);
-
   return (
     <div
       className="relative shrink-0"
-      style={{ width: totalW, height: CARD }}
+      style={{ width: FIXED_W, height: CARD }}
     >
       {items.map((card, i) => (
         <div
           key={i}
-          className="absolute top-0 overflow-hidden rounded-sm border border-background"
+          className="absolute top-0 overflow-hidden rounded-[3px] border border-background"
           style={{
             left: (items.length - 1 - i) * SPREAD,
             width: CARD,
