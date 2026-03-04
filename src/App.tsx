@@ -247,27 +247,24 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       }
     }
 
+    const mdImageRe = /!\[.*?\]\((.+?)\)/;
+
     for (const tc of orderedTags) {
       const tagBlocks = blocksByTag.get(tc.tag) ?? [];
-      const withThumb: IndexedBlock[] = [];
-      const textOnly: IndexedBlock[] = [];
+      const cards: PreviewCard[] = [];
 
       for (const b of tagBlocks) {
+        if (cards.length >= 3) break;
+        // Visual block types have thumbnails
         if (b.block_type === "image" || b.block_type === "link" || b.block_type === "video") {
-          withThumb.push(b);
+          cards.push({ url: thumbnailUrl(vaultPath, b.slug) });
         } else {
-          textOnly.push(b);
+          // Text/article/file — check for embedded images in body
+          const match = b.body.match(mdImageRe);
+          if (match?.[1]) {
+            cards.push({ url: match[1] });
+          }
         }
-      }
-
-      const cards: PreviewCard[] = [];
-      for (const b of withThumb) {
-        if (cards.length >= 3) break;
-        cards.push({ type: "image", url: thumbnailUrl(vaultPath, b.slug) });
-      }
-      for (const _ of textOnly) {
-        if (cards.length >= 3) break;
-        cards.push({ type: "text" });
       }
 
       map.set(tc.tag, cards);

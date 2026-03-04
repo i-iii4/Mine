@@ -28,6 +28,45 @@ if any
 
 ---
 
+## 03.03.2026 — Нейтральная серая шкала + OLED-чёрный
+
+### Goal
+Убрать все тёплые/холодные оттенки из серых. Вся шкала — чисто нейтральная (R=G=B, chroma 0). Тёмная тема — абсолютный чёрный (#000000) вместо #111111.
+
+### Planned
+1. Светлая тема: убрать тёплый hue из sidebar-токенов, привести все серые к chroma 0
+2. Тёмная тема: заменить все `oklch(L 0.006 78)` на `oklch(L 0 0)`, фон #000000
+3. Бордер: светлая #EBEBEB, тёмная #222222 (сдвиг вниз под чёрный фон)
+4. Glass: светлая 80% белый, тёмная 60% чёрный
+5. Обновить DESIGN_SYSTEM.md
+
+### Actually completed
+Все 5 пунктов.
+
+**global.css** — полная перезаливка обеих тем:
+- Светлая: sidebar #FFFFFF (был #F7F7F5), sidebar-primary-foreground #FFFFFF, ring = text-secondary
+- Тёмная: background/card/popover/sidebar = oklch(0 0 0), border/input/sidebar-border = oklch(0.252 0 0), все 30+ серых — chroma 0 hue 0
+- Glass: светлая oklch(1 0 0 / 80%), тёмная oklch(0 0 0 / 60%)
+
+**DESIGN_SYSTEM.md** — переписаны секции: «Цветовой принцип» (нейтральные серые), «Цвет текста», «Фоны», «Границы», «Оверлеи». Обновлены hex-значения в таблицах интерактивных состояний.
+
+### Deviations from plan
+Нет
+
+### Checks
+- `bun run build` — чистая сборка
+- `grep oklch global.css | grep -v chart | grep -v destructive` — ни одного ненулевого hue/chroma
+
+### Push
+
+
+### Decisions and lessons learned
+- Нейтральная шкала убирает конкуренцию оттенков с контентом — изображения остаются единственным источником цвета
+- OLED-чёрный (#000) стандартен для визуальных коллекций (Cosmos, Are.na, Savee)
+- Бордер #2A2A2A → #222222 при смене фона на чёрный — иначе линии слишком яркие
+
+---
+
 ## 03.03.2026 — Интерактивные состояния + унификация оттенков тёмной темы
 
 ### Goal
@@ -67,7 +106,7 @@ if any
 - Новые утилиты в CSS: bg-primary-hover, bg-primary-active, text-hover-foreground, bg-active, border-foreground
 
 ### Push
-<!-- commit hash -->
+`f108d82` Interactive states + unify dark theme to warm hue 78
 
 ### Decisions and lessons learned
 - Один оттенок (hue 78) для всех серых в тёмной теме. При добавлении нового серого — oklch(L 0.006 78). Не вводить нейтральные или холодные серые.

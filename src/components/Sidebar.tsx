@@ -74,11 +74,12 @@ export function Sidebar({
   );
 
   return (
-    <aside className="relative flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
+    <aside className="relative flex w-60 shrink-0 flex-col border-r border-sidebar-border">
+      {/* To restore sidebar background: add bg-sidebar to aside, change from-background to from-sidebar below */}
       {/* Spacer for macOS traffic lights in overlay titlebar */}
       <div className="h-10 shrink-0" />
       {/* Top fade — content dissolves into the top edge */}
-      <div className="pointer-events-none absolute inset-x-0 top-10 z-10 h-8 bg-gradient-to-b from-sidebar to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 top-10 z-10 h-8 bg-gradient-to-b from-background to-transparent" />
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-2 pt-2" data-sidebar-scroll>
@@ -277,25 +278,27 @@ function TagNavItem({
         >
           <ChannelIcon cards={cards} hovered={itemHovered} />
           <span className="flex-1 truncate">{label}</span>
-          <span className="ml-2 shrink-0 text-sm text-muted-foreground">{count}</span>
-          <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    onClick={(e) => e.stopPropagation()}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    className="ml-1 shrink-0 text-muted-foreground opacity-0 hover:text-hover-foreground group-hover:opacity-100"
-                  >
-                    <MoreHorizontal className="size-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent side="right">Options</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent align="start">
+          <div className="relative ml-2 shrink-0">
+            <span className="text-sm text-muted-foreground group-hover:opacity-0">{count}</span>
+            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100">
+              <DropdownMenu>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={(e) => e.stopPropagation()}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        className="shrink-0 text-muted-foreground hover:text-hover-foreground"
+                      >
+                        <MoreHorizontal className="size-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">Options</TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent align="start">
               <DropdownMenuItem onSelect={onDoubleClick}>
                 <Pencil className="size-3" />
                 Rename
@@ -307,8 +310,10 @@ function TagNavItem({
                 <Trash2 className="size-3" />
                 Delete
               </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            </div>
+          </div>
         </NavLink>
       </div>
 

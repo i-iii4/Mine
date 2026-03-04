@@ -39,10 +39,9 @@ export interface ChannelDto {
 
 // ─── Channel preview (sidebar icons) ────────────────────────────────────────
 
-export type PreviewCard =
-  | { type: "image"; url: string }
-  | { type: "text" }
-  | { type: "empty" };
+export interface PreviewCard {
+  url: string;
+}
 
 export interface ScanResult {
   indexed: number;

@@ -59,55 +59,52 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 | Geist | `--font-sans` | по умолчанию | Весь интерфейс: сайдбар, карточки, кнопки, меню, диалоги |
 | Geist Mono | `--font-mono` | `font-mono` | Только панель метаданных в Detail (filename, date, type, tags) |
 
+## Цветовой принцип
+
+Все серые — чисто нейтральные (R=G=B), chroma 0, hue 0. Никаких тёплых или холодных оттенков. Цвет допустим только в акцентах: ссылки, ошибки (destructive), графики (chart-*).
+
+**Правило:** при добавлении нового серого — `oklch(L 0 0)`. Не вводить hue.
+
 ## Цвет текста
 
-Три уровня иерархии через яркость. Не чёрный — тёмно-серый (#333) для снижения контраста.
+Три уровня иерархии через яркость.
 
-### Светлая тема
-
-| Токен | oklch | Hex | Утилита | Где |
+| Роль | Токен | Светлая | Тёмная | Утилита |
 |---|---|---|---|---|
-| `--foreground` | oklch(0.321) | #333333 | `text-foreground` | Заголовки, основной текст, кнопки |
-| `--muted-foreground` | oklch(0.569) | #777777 | `text-muted-foreground` | Мета: даты, счётчики, источники, подписи |
-| `--tertiary-foreground` | oklch(0.683) | #999999 | `text-tertiary-foreground` | Плейсхолдеры, неактивные элементы |
+| Основной | `--foreground` | #333333 | #E4E4E4 | `text-foreground` |
+| Вторичный | `--muted-foreground` | #777777 | #888888 | `text-muted-foreground` |
+| Третичный | `--tertiary-foreground` | #999999 | #555555 | `text-tertiary-foreground` |
 
-### Тёмная тема
-
-| Токен | oklch | Hex |
-|---|---|---|
-| `--foreground` | oklch(0.92 0.006 78) | #E7E4E0 |
-| `--muted-foreground` | oklch(0.701 0.006 78) | #A19E9B |
-| `--tertiary-foreground` | oklch(0.45 0.006 78) | #575552 |
-
-**Правило:** иерархия через яркость, не через размер или цвет. Плейсхолдеры используют tertiary, мета-информация — muted.
+**Правило:** иерархия через яркость, не через размер или цвет. Плейсхолдеры — tertiary, мета-информация — muted.
 
 ## Фоны
 
-| Зона | Светлая | Тёмная |
-|---|---|---|
-| Содержимое (`--background`) | #FFFFFF | #211F1C |
-| Сайдбар (`--sidebar`) | #FAFAF9 | #1C1A17 |
+| Роль | Токен | Светлая | Тёмная |
+|---|---|---|---|
+| Страница | `--background` | #FFFFFF | #000000 |
+| Hover | `--accent` | #F5F5F5 | #1E1E1E |
+| Active | `--active` | #EBEBEB | #222222 |
+| Selected (сайдбар) | `--sidebar-accent` | #F0F0F0 | #1E1E1E |
 
-**Правило:** сайдбар чуть темнее содержимого в обеих темах. Тёплый оттенок (hue 78) — «бумажный» тон вместо стерильного серого. Sidebar.tsx использует `bg-sidebar`, не `bg-background`.
+Тёмная тема — абсолютный чёрный (#000000). OLED-пиксели выключены, изображения «парят» на пустоте.
 
 ## Границы
 
-Один цвет для всех разделителей: border, input, sidebar-border.
+Один цвет для всех разделителей: `--border`, `--input`, `--sidebar-border`.
 
 | Тема | oklch | Hex | Толщина |
 |---|---|---|---|
-| Светлая | oklch(0.9067 0 0) | #E0E0E0 | 1px |
-| Тёмная | oklch(0.3422 0.006 78) | #3A3835 | 1px |
+| Светлая | oklch(0.9401 0 0) | #EBEBEB | 1px |
+| Тёмная | oklch(0.252 0 0) | #222222 | 1px |
 
-**Правило:** все линии в интерфейсе — один цвет. Нет отдельных оттенков для input, sidebar-border и т.д. `--border`, `--input`, `--sidebar-border` указывают на одно значение.
+**Правило:** все линии — один цвет. `--border`, `--input`, `--sidebar-border` указывают на одно значение.
 
-## Цветовой принцип тёмной темы
+## Оверлеи
 
-Один тёплый оттенок (hue 78, chroma 0.006) для всех серых — фонов, текста, границ, интерактивных состояний. Это даёт «бумажную» теплоту вместо стерильного серого.
-
-Исключения: чистый белый/чёрный (hover-foreground, sidebar-accent-foreground), destructive (красный), chart-цвета (акцентные).
-
-**Правило:** при добавлении нового серого — oklch(L 0.006 78). Не вводить нейтральные (hue 0) или холодные (hue 286) серые.
+| Роль | Светлая | Тёмная |
+|---|---|---|
+| Backdrop (`--glass-bg`) | rgba(255,255,255,0.8) | rgba(0,0,0,0.6) |
+| Shadow overlay | 0 4px 24px rgba(0,0,0,0.12) | 0 4px 24px rgba(0,0,0,0.4) |
 
 ## Интерактивные состояния
 
@@ -117,18 +114,18 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 | Элемент | Что меняется | Светлая | Тёмная | Утилита |
 |---|---|---|---|---|
-| Текстовая кнопка | Цвет текста | #333 → #000 | #E7E4E0 → #FFF | `hover:text-hover-foreground` |
-| Кнопка с заливкой | Цвет фона | #333 → #555 | #E7E4E0 → #C7C4C0 | `hover:bg-primary-hover` |
-| Кнопка с бордером | Цвет фона | transparent → #F5F5F5 | transparent → #2C2A27 | `hover:bg-accent` |
-| Карточка | Цвет бордера | #E0E0E0 → #333 | #3A3835 → #E7E4E0 | `hover:border-foreground` |
-| Пункт сайдбара | Цвет фона | transparent → #F5F5F5 | transparent → #2C2A27 | `hover:bg-accent` |
+| Текстовая кнопка | Цвет текста | #333 → #000 | #E4E4E4 → #FFF | `hover:text-hover-foreground` |
+| Кнопка с заливкой | Цвет фона | #333 → #555 | #E4E4E4 → #CCC | `hover:bg-primary-hover` |
+| Кнопка с бордером | Цвет фона | transparent → #F5F5F5 | transparent → #1E1E1E | `hover:bg-accent` |
+| Карточка | Цвет бордера | #EBEBEB → #333 | #222 → #E4E4E4 | `hover:border-foreground` |
+| Пункт сайдбара | Цвет фона | transparent → #F5F5F5 | transparent → #1E1E1E | `hover:bg-accent` |
 
 ### Focus
 
 | Состояние | Светлая | Тёмная |
 |---|---|---|
-| Обычный инпут | border: #E0E0E0 | border: #3A3835 |
-| Focused | border: #333333 | border: #E7E4E0 |
+| Обычный инпут | border: #EBEBEB | border: #222222 |
+| Focused | border: #333333 | border: #E4E4E4 |
 
 Утилита: `focus-visible:border-foreground`. Без box-shadow, outline, glow.
 
@@ -136,29 +133,29 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 | Элемент | Светлая | Тёмная | Утилита |
 |---|---|---|---|
-| Кнопка с заливкой | #333 → #1A1A1A | #E7E4E0 → #ADAAA6 | `active:bg-primary-active` |
-| Кнопка с бордером | transparent → #EBEBEB | transparent → #353330 | `active:bg-active` |
+| Кнопка с заливкой | #333 → #1A1A1A | #E4E4E4 → #B3B3B3 | `active:bg-primary-active` |
+| Кнопка с бордером | transparent → #EBEBEB | transparent → #222222 | `active:bg-active` |
 
 ### Selected (активный пункт сайдбара)
 
 | Свойство | Светлая | Тёмная |
 |---|---|---|
-| Фон | #F0F0F0 | #2C2A27 |
-| Текст | #1A1A1A | #FFFFFF |
+| Фон | #F0F0F0 | #1E1E1E |
+| Текст | #333333 | #FFFFFF |
 
 Утилиты: `bg-sidebar-accent text-sidebar-accent-foreground font-semibold`.
 
 ### Токены интерактивных состояний
 
-| Токен | Светлая | Тёмная | Назначение |
+| Токен | Светлая (hex) | Тёмная (hex) | Назначение |
 |---|---|---|---|
-| `--accent` | oklch(0.9702 0 0) | oklch(0.2866 0.006 78) | Ховер фон (subtle) |
-| `--active` | oklch(0.9401 0 0) | oklch(0.323 0.006 78) | Нажатие фон (subtle) |
-| `--hover-foreground` | oklch(0 0 0) | oklch(1 0 0) | Ховер текста |
-| `--primary-hover` | oklch(0.4495 0 0) | oklch(0.8215 0.006 78) | Залитая кнопка ховер |
-| `--primary-active` | oklch(0.2178 0 0) | oklch(0.323 0.006 78) | Залитая кнопка нажатие |
-| `--sidebar-accent` | oklch(0.9551 0 0) | oklch(0.2866 0.006 78) | Выделенный пункт фон |
-| `--sidebar-accent-fg` | oklch(0.2178 0 0) | oklch(1 0 0) | Выделенный пункт текст |
+| `--accent` | #F5F5F5 | #1E1E1E | Ховер фон (subtle) |
+| `--active` | #EBEBEB | #222222 | Нажатие фон (subtle) |
+| `--hover-foreground` | #000000 | #FFFFFF | Ховер текста |
+| `--primary-hover` | #555555 | ~#C5C5C5 | Залитая кнопка ховер |
+| `--primary-active` | #1A1A1A | ~#B0B0B0 | Залитая кнопка нажатие |
+| `--sidebar-accent` | #F0F0F0 | #1E1E1E | Выделенный пункт фон |
+| `--sidebar-accent-fg` | #333333 | #FFFFFF | Выделенный пункт текст |
 
 ## Рендеринг
 
