@@ -100,7 +100,7 @@ function ImageCard({
         onError={() => setError(true)}
       />
       {block.title && (
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3 font-mono opacity-0 transition-opacity group-hover:opacity-100">
           <p className="truncate text-sm text-white">{block.title}</p>
         </div>
       )}
@@ -128,7 +128,7 @@ function LinkCard({
   // No thumbnail — compact card (title + domain only)
   if (thumbError) {
     return (
-      <div className="p-3">
+      <div className="p-3 font-mono">
         <p className="truncate text-sm font-medium text-foreground">
           {block.title ?? block.slug}
         </p>
@@ -165,7 +165,7 @@ function LinkCard({
           onError={() => setThumbError(true)}
         />
       </div>
-      <div className="p-3">
+      <div className="p-3 font-mono">
         <p className="truncate text-sm font-medium text-foreground">
           {block.title ?? block.slug}
         </p>
@@ -196,7 +196,7 @@ function ArticleCard({ block }: { block: IndexedBlock }) {
   const preview = stripMarkdown(block.body).slice(0, 400).trim();
 
   return (
-    <div className="p-4">
+    <div className="p-4 font-mono">
       <p className="text-sm font-medium text-foreground">
         {block.title ?? block.slug}
       </p>
@@ -240,7 +240,7 @@ function VideoCard({
         </div>
       </div>
       {block.title && (
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3">
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3 font-mono">
           <p className="truncate text-sm text-white">{block.title}</p>
         </div>
       )}
@@ -255,7 +255,7 @@ function FileCard({ block }: { block: IndexedBlock }) {
     ?.toUpperCase();
 
   return (
-    <div className="flex items-center gap-3 p-4">
+    <div className="flex items-center gap-3 p-4 font-mono">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-xs font-semibold text-muted-foreground">
         {ext ?? "FILE"}
       </div>
