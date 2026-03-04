@@ -28,6 +28,38 @@ if any
 
 ---
 
+## 03.03.2026 — Границы: единый цвет для всех разделителей
+
+### Goal
+Унифицировать все разделительные линии — один цвет на всё приложение вместо разных оттенков для border, input, sidebar-border.
+
+### Planned
+1. Единый цвет границ: #E0E0E0 (светлая) / #38383C (тёмная)
+2. Обновить `--border`, `--input`, `--sidebar-border` на одно значение
+3. Обновить DESIGN_SYSTEM.md — раздел «Границы»
+
+### Actually completed
+Все 3 пункта:
+
+**global.css** — светлая тема: `--border`, `--input`, `--sidebar-border` = oklch(0.9067 0 0). Тёмная тема: все три = oklch(0.3422 0.0069 286)
+
+**DESIGN_SYSTEM.md** — добавлен раздел «Границы» с правилом единого цвета
+
+### Deviations from plan
+Нет
+
+### Checks
+- `bun run build` — чистая сборка
+- Визуально: линии сайдбара и основного содержимого совпадают
+
+### Push
+<!-- commit hash -->
+
+### Decisions and lessons learned
+- В тёмной теме ранее использовались полупрозрачные значения (oklch(1 0 0 / 10%)) — заменены на непрозрачные для консистентности с остальными токенами
+
+---
+
 ## 03.03.2026 — Фоны: тёплый сайдбар + исправление цветовых токенов
 
 ### Goal
@@ -58,7 +90,7 @@ if any
 - `--secondary/muted/accent` — нейтральные, не тёплые
 
 ### Push
-<!-- commit hash -->
+`606f9df` Backgrounds: warm sidebar (#FAFAF9/#1C1A17), fix color token bleeding
 
 ### Decisions and lessons learned
 - `--sidebar` и `--secondary/muted/accent` — разные роли: sidebar это зона, а secondary/muted/accent — состояния элементов. Не смешивать
