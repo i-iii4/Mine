@@ -34,17 +34,17 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-background">
       <div className="flex max-w-sm flex-col items-center gap-6 text-center">
-        <h1 className="text-2xl font-semibold text-foreground">
+        <h1 className="text-lg font-semibold text-foreground">
           Local Arena
         </h1>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-base text-muted-foreground">
           Choose a folder for your vault. All blocks will be stored as files in
           this directory.
         </p>
 
         {result ? (
-          <div className="rounded-lg bg-muted px-6 py-4">
-            <p className="text-sm text-muted-foreground">
+          <div className="rounded-1 bg-muted px-6 py-4">
+            <p className="text-base text-muted-foreground">
               Indexed{" "}
               <span className="font-semibold text-foreground">
                 {result.indexed}
@@ -65,7 +65,7 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
         )}
 
         {error && (
-          <p className="text-sm text-destructive">{error}</p>
+          <p className="text-base text-destructive">{error}</p>
         )}
       </div>
     </div>

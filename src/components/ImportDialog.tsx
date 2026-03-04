@@ -156,7 +156,7 @@ export function ImportDialog({
         </DialogHeader>
 
         {error && (
-          <div className="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <div className="mb-4 rounded-1 bg-destructive/10 px-4 py-3 text-base text-destructive">
             {error}
           </div>
         )}
@@ -208,7 +208,7 @@ function UsernameStep({
 }) {
   return (
     <div>
-      <p className="mb-3 text-sm text-muted-foreground">
+      <p className="mb-3 text-base text-muted-foreground">
         Enter your Are.na username to see your public channels.
       </p>
       <div className="flex gap-3">
@@ -254,7 +254,7 @@ function SelectStep({
   return (
     <div>
       <div className="mb-3 flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
+        <p className="text-base text-muted-foreground">
           {channels.length} channels found
         </p>
         <Button
@@ -267,7 +267,7 @@ function SelectStep({
         </Button>
       </div>
 
-      <ScrollArea className="mb-4 max-h-72 rounded-lg border border-border">
+      <ScrollArea className="mb-4 max-h-72 rounded-1 border border-border">
         {channels.map((ch) => (
           <label
             key={ch.slug}
@@ -278,10 +278,10 @@ function SelectStep({
               onCheckedChange={() => onToggle(ch.slug)}
             />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-foreground">
+              <p className="truncate text-base font-semibold text-foreground">
                 {ch.title}
               </p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 {ch.length} blocks
               </p>
             </div>
@@ -294,7 +294,7 @@ function SelectStep({
           Back
         </Button>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground">
+          <span className="text-sm text-muted-foreground">
             {selected.size} channels, ~{totalBlocks} blocks
           </span>
           <Button onClick={onImport} disabled={selected.size === 0}>
@@ -310,7 +310,7 @@ function ImportingStep({ progress }: { progress: ImportProgress | null }) {
   if (!progress) {
     return (
       <div className="py-8 text-center">
-        <p className="text-sm text-muted-foreground">Connecting to Are.na...</p>
+        <p className="text-base text-muted-foreground">Connecting to Are.na...</p>
       </div>
     );
   }
@@ -320,7 +320,7 @@ function ImportingStep({ progress }: { progress: ImportProgress | null }) {
   return (
     <div className="py-4">
       <div className="mb-3">
-        <div className="mb-1.5 flex justify-between text-xs text-muted-foreground">
+        <div className="mb-1.5 flex justify-between text-sm text-muted-foreground">
           <span>{progress.channel_slug}</span>
           <span>
             {progress.current} / {progress.total}
@@ -329,11 +329,11 @@ function ImportingStep({ progress }: { progress: ImportProgress | null }) {
         <Progress value={pct} />
       </div>
       {progress.block_title && (
-        <p className="truncate text-xs text-muted-foreground">
+        <p className="truncate text-sm text-muted-foreground">
           {progress.block_title}
         </p>
       )}
-      <p className="mt-3 text-xs text-muted-foreground">
+      <p className="mt-3 text-sm text-muted-foreground">
         Do not close this window during import.
       </p>
     </div>
@@ -352,8 +352,8 @@ function DoneStep({
 
   return (
     <div>
-      <div className="mb-4 rounded-lg bg-green-50 px-4 py-3 dark:bg-green-900/30">
-        <p className="text-sm font-medium text-green-800 dark:text-green-300">
+      <div className="mb-4 rounded-1 bg-green-50 px-4 py-3 dark:bg-green-900/30">
+        <p className="text-base font-semibold text-green-800 dark:text-green-300">
           Imported {totalImported} blocks
           {totalErrors > 0 && `, ${totalErrors} skipped`}
         </p>
@@ -365,10 +365,10 @@ function DoneStep({
             key={r.channel_slug}
             className="flex items-center justify-between border-b border-border py-2 last:border-0"
           >
-            <span className="text-sm text-foreground">
+            <span className="text-base text-foreground">
               {r.channel_title}
             </span>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-sm text-muted-foreground">
               {r.imported} imported
               {r.skipped > 0 && `, ${r.skipped} errors`}
             </span>

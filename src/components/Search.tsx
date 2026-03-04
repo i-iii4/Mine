@@ -92,7 +92,7 @@ export function Search({ open, onClose, onSelect }: SearchProps) {
                   {block.title ?? block.slug}
                 </span>
                 {block.tags.length > 0 && (
-                  <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                  <span className="ml-auto shrink-0 text-sm text-muted-foreground">
                     {block.tags.slice(0, 2).join(", ")}
                   </span>
                 )}
@@ -114,7 +114,7 @@ function TypeBadge({ type }: { type: string }) {
     file: "FILE",
   };
   return (
-    <Badge variant="secondary" className="text-[10px] font-semibold text-muted-foreground">
+    <Badge variant="secondary" className="text-sm font-semibold text-muted-foreground">
       {labels[type] ?? type.toUpperCase()}
     </Badge>
   );

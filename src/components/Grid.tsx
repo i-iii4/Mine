@@ -185,7 +185,7 @@ export function Grid({
           {/* Sentinel for infinite scroll */}
           {hasMore && (
             <div ref={sentinelRef} className="flex justify-center py-8">
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 {visibleCount} of {blocks.length}
               </p>
             </div>

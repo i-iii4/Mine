@@ -22,7 +22,7 @@ export function ChannelIcon({ cards, hovered = false }: ChannelIconProps) {
       {items.map((card, i) => (
         <div
           key={i}
-          className="absolute top-0 overflow-hidden rounded-[3px] border border-background"
+          className="absolute top-0 overflow-hidden rounded-2 border border-background"
           style={{
             left: (items.length - 1 - i) * SPREAD,
             width: CARD,
@@ -61,12 +61,12 @@ function MiniCard({ card }: { card: PreviewCard }) {
     case "text":
       return (
         <div className="flex h-full w-full flex-col items-start justify-center gap-[2px] bg-muted px-[3px]">
-          <div className="h-[1px] w-[80%] rounded-full bg-muted-foreground/20" />
-          <div className="h-[1px] w-[60%] rounded-full bg-muted-foreground/20" />
-          <div className="h-[1px] w-[70%] rounded-full bg-muted-foreground/20" />
+          <div className="h-[1px] w-[80%] rounded-2 bg-muted-foreground/20" />
+          <div className="h-[1px] w-[60%] rounded-2 bg-muted-foreground/20" />
+          <div className="h-[1px] w-[70%] rounded-2 bg-muted-foreground/20" />
         </div>
       );
     case "empty":
-      return <div className="h-full w-full rounded-sm border border-border bg-background" />;
+      return <div className="h-full w-full rounded-2 border border-border bg-background" />;
   }
 }

@@ -121,7 +121,7 @@ export function Sidebar({
             variant="ghost"
             size="sm"
             onClick={() => setIsCreating(true)}
-            className="mt-1 w-full justify-start rounded-md text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+            className="mt-1 w-full justify-start rounded-1 text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
           >
             <Plus className="size-3" />
             <span>New channel</span>
@@ -135,7 +135,7 @@ export function Sidebar({
           variant="ghost"
           size="sm"
           onClick={onImportOpen}
-          className="w-full justify-start rounded-md text-muted-foreground hover:bg-sidebar-accent/50"
+          className="w-full justify-start rounded-1 text-muted-foreground hover:bg-sidebar-accent/50"
         >
           <Download className="size-4" />
           <span>Import from Are.na</span>
@@ -144,11 +144,11 @@ export function Sidebar({
           variant="ghost"
           size="sm"
           onClick={onSearchOpen}
-          className="w-full justify-start rounded-md text-muted-foreground hover:bg-sidebar-accent/50"
+          className="w-full justify-start rounded-1 text-muted-foreground hover:bg-sidebar-accent/50"
         >
           <Search className="size-4" />
           <span>Search</span>
-          <kbd className="ml-auto rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+          <kbd className="ml-auto rounded border border-border px-1.5 py-0.5 text-sm text-muted-foreground">
             {"\u2318"}K
           </kbd>
         </Button>
@@ -177,15 +177,15 @@ function NavItem({
       end={end}
       className={({ isActive }) =>
         cn(
-          "flex items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors",
+          "flex items-center justify-between rounded-1 px-3 py-1.5 text-base ",
           isActive
-            ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+            ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
             : "text-muted-foreground hover:bg-sidebar-accent/50",
         )
       }
     >
       <span className="truncate">{label}</span>
-      <span className="ml-2 shrink-0 text-xs text-muted-foreground">{count}</span>
+      <span className="ml-2 shrink-0 text-sm text-muted-foreground">{count}</span>
     </NavLink>
   );
 }
@@ -254,7 +254,7 @@ function TagNavItem({
         onPointerEnter={() => setItemHovered(true)}
         onPointerLeave={() => setItemHovered(false)}
         className={cn(
-          "group relative rounded-md transition-all",
+          "group relative rounded-1",
           isDragging && "opacity-30",
           isOver && !isDragging && isCardDragging && "ring-2 ring-ring ring-inset",
         )}
@@ -268,16 +268,16 @@ function TagNavItem({
           }}
           className={({ isActive }) =>
             cn(
-              "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
+              "flex items-center gap-2 rounded-1 px-3 py-1.5 text-base ",
               isActive
-                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
                 : "text-muted-foreground hover:bg-sidebar-accent/50",
             )
           }
         >
           <ChannelIcon cards={cards} hovered={itemHovered} />
           <span className="flex-1 truncate">{label}</span>
-          <span className="ml-2 shrink-0 text-xs text-muted-foreground">{count}</span>
+          <span className="ml-2 shrink-0 text-sm text-muted-foreground">{count}</span>
           <DropdownMenu>
             <Tooltip>
               <TooltipTrigger asChild>

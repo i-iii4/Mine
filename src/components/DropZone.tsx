@@ -89,23 +89,23 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
       {error ? (
-        <div className="max-w-sm rounded-2xl bg-destructive px-8 py-6 shadow-2xl">
-          <p className="text-sm font-medium text-white">
+        <div className="max-w-sm rounded-1 bg-destructive px-8 py-6 shadow-2xl">
+          <p className="text-base font-semibold text-white">
             Failed to import
           </p>
-          <p className="mt-1 text-xs text-white/80">{error}</p>
+          <p className="mt-1 text-sm text-white/80">{error}</p>
         </div>
       ) : importing ? (
-        <div className="rounded-2xl bg-card px-8 py-6 shadow-2xl">
-          <p className="text-sm font-medium text-foreground">
+        <div className="rounded-1 bg-card px-8 py-6 shadow-2xl">
+          <p className="text-base font-semibold text-foreground">
             Importing...
           </p>
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-white/50 px-16 py-12">
+        <div className="flex flex-col items-center gap-3 rounded-1 border-2 border-dashed border-white/50 px-16 py-12">
           <ArrowDown className="size-10 text-white" strokeWidth={2} />
-          <p className="text-lg font-medium text-white">Drop files to add</p>
-          <p className="text-sm text-white/60">
+          <p className="text-lg font-semibold text-white">Drop files to add</p>
+          <p className="text-base text-white/60">
             Images, videos, PDFs, documents
           </p>
         </div>

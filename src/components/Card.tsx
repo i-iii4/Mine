@@ -35,7 +35,7 @@ export function Card({ block, vaultPath, onClick }: CardProps) {
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
-        "group cursor-pointer overflow-hidden border border-border transition-shadow hover:shadow-md",
+        "group cursor-pointer overflow-hidden border border-border",
         isDragging && "opacity-30",
       )}
     >
@@ -82,7 +82,7 @@ function ImageCard({
       <div className="flex aspect-square items-center justify-center bg-muted">
         <div className="text-center">
           <ImageOff className="mx-auto size-6 text-muted-foreground/50" />
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 text-sm text-muted-foreground">
             {block.title ?? block.slug}
           </p>
         </div>
@@ -129,11 +129,11 @@ function LinkCard({
   if (thumbError) {
     return (
       <div className="p-3 font-mono">
-        <p className="truncate text-sm font-medium text-foreground">
+        <p className="truncate text-sm font-semibold text-foreground">
           {block.title ?? block.slug}
         </p>
         {domain && (
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">{domain}</p>
+          <p className="mt-0.5 truncate text-sm text-muted-foreground">{domain}</p>
         )}
       </div>
     );
@@ -148,9 +148,9 @@ function LinkCard({
       <div className={`relative aspect-video ${bgColor}`}>
         {!thumbLoaded && (
           <div className="flex h-full flex-col items-center justify-center gap-1">
-            <span className="text-3xl font-bold text-white/40">{initial}</span>
+            <span className="text-lg font-semibold text-white/40">{initial}</span>
             {domain && (
-              <span className="text-xs text-white/30">{domain}</span>
+              <span className="text-sm text-white/30">{domain}</span>
             )}
           </div>
         )}
@@ -166,11 +166,11 @@ function LinkCard({
         />
       </div>
       <div className="p-3 font-mono">
-        <p className="truncate text-sm font-medium text-foreground">
+        <p className="truncate text-sm font-semibold text-foreground">
           {block.title ?? block.slug}
         </p>
         {domain && (
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">{domain}</p>
+          <p className="mt-0.5 truncate text-sm text-muted-foreground">{domain}</p>
         )}
       </div>
     </div>
@@ -197,16 +197,16 @@ function ArticleCard({ block }: { block: IndexedBlock }) {
 
   return (
     <div className="p-4 font-mono">
-      <p className="text-sm font-medium text-foreground">
+      <p className="text-sm font-semibold text-foreground">
         {block.title ?? block.slug}
       </p>
       {preview && (
-        <p className="mt-1.5 line-clamp-8 text-xs leading-relaxed text-muted-foreground">
+        <p className="mt-1.5 line-clamp-8 text-sm leading-relaxed text-muted-foreground">
           {preview}
         </p>
       )}
       {block.author && (
-        <p className="mt-2 text-xs text-muted-foreground">{block.author}</p>
+        <p className="mt-2 text-sm text-muted-foreground">{block.author}</p>
       )}
     </div>
   );
@@ -233,7 +233,7 @@ function VideoCard({
         }}
       />
       <div className="absolute inset-0 flex items-center justify-center">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white">
+        <div className="flex h-10 w-10 items-center justify-center rounded-1 bg-black/50 text-white">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
             <path d="M4 2.5v11l10-5.5L4 2.5z" />
           </svg>
@@ -256,15 +256,15 @@ function FileCard({ block }: { block: IndexedBlock }) {
 
   return (
     <div className="flex items-center gap-3 p-4 font-mono">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-xs font-semibold text-muted-foreground">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-1 bg-muted text-sm font-semibold text-muted-foreground">
         {ext ?? "FILE"}
       </div>
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-foreground">
+        <p className="truncate text-sm font-semibold text-foreground">
           {block.title ?? block.slug}
         </p>
         {block.media_file && (
-          <p className="truncate text-xs text-muted-foreground">
+          <p className="truncate text-sm text-muted-foreground">
             {block.media_file}
           </p>
         )}

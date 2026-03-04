@@ -97,7 +97,7 @@ export function CardTagMenu({
             <button
               key={tc.tag}
               onClick={() => onToggleTag(block.slug, tc.tag, hasTag)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+              className="flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base hover:bg-accent"
             >
               <Checkbox
                 checked={hasTag}
@@ -107,7 +107,7 @@ export function CardTagMenu({
               <span className="flex-1 truncate text-left text-foreground">
                 {titleFromTag(tc.tag)}
               </span>
-              <span className="shrink-0 text-xs text-muted-foreground">
+              <span className="shrink-0 text-sm text-muted-foreground">
                 {tc.count}
               </span>
             </button>
@@ -120,7 +120,7 @@ export function CardTagMenu({
               onCreateAndAssign(trimmed, block.slug);
               setSearch("");
             }}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-foreground hover:bg-accent"
+            className="flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base font-semibold text-foreground hover:bg-accent"
           >
             <Plus className="size-4 shrink-0" />
             <span>
@@ -130,7 +130,7 @@ export function CardTagMenu({
         )}
 
         {filtered.length === 0 && !canCreate && (
-          <p className="px-2 py-3 text-center text-xs text-muted-foreground">
+          <p className="px-2 py-3 text-center text-sm text-muted-foreground">
             No channels
           </p>
         )}

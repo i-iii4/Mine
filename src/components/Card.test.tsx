@@ -161,7 +161,7 @@ describe("Card", () => {
     const paragraphs = container.querySelectorAll("p");
     // Should only have title and body, no author paragraph
     const authorP = Array.from(paragraphs).find(
-      (p) => p.classList.contains("mt-2") && p.classList.contains("text-xs"),
+      (p) => p.classList.contains("mt-2") && p.classList.contains("text-sm"),
     );
     expect(authorP).toBeUndefined();
   });

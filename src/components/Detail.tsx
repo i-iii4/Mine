@@ -164,14 +164,14 @@ function MetadataPanel({
 
       {block.url && (
         <div>
-          <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+          <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
             SOURCE
           </div>
           <a
             href={block.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-1 block text-xs text-foreground hover:underline"
+            className="mt-1 block text-sm text-foreground hover:underline"
           >
             {domainFromUrl(block.url)}
           </a>
@@ -184,7 +184,7 @@ function MetadataPanel({
 
       {/* Tags */}
       <div>
-        <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+        <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
           TAGS
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -213,7 +213,7 @@ function MetadataPanel({
               if (e.key === "Enter") onAddTag();
             }}
             placeholder="+ tag"
-            className="h-auto w-20 border-none bg-transparent px-0 py-0 font-mono text-xs shadow-none focus-visible:ring-0"
+            className="h-auto w-20 border-none bg-transparent px-0 py-0 font-mono text-sm shadow-none focus-visible:ring-0"
           />
         </div>
       </div>
@@ -224,10 +224,10 @@ function MetadataPanel({
 function MetadataField({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+      <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
         {label}
       </div>
-      <div className="mt-1 text-xs text-foreground">{value}</div>
+      <div className="mt-1 text-sm text-foreground">{value}</div>
     </div>
   );
 }
@@ -275,7 +275,7 @@ function BlockContent({
               {block.title ?? block.slug}
             </h2>
             {block.description && (
-              <p className="mt-2 text-sm text-muted-foreground">
+              <p className="mt-2 text-base text-muted-foreground">
                 {block.description}
               </p>
             )}
@@ -290,7 +290,7 @@ function BlockContent({
             {block.title ?? block.slug}
           </h2>
           {block.author && (
-            <p className="mt-1 text-sm text-muted-foreground">{block.author}</p>
+            <p className="mt-1 text-base text-muted-foreground">{block.author}</p>
           )}
           <ArticleBody body={block.body} vaultPath={vaultPath} />
         </div>
@@ -316,14 +316,14 @@ function BlockContent({
     case "file":
       return (
         <div className="flex min-h-full flex-col items-center justify-center gap-3">
-          <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-muted text-lg font-bold text-muted-foreground">
+          <div className="flex h-16 w-16 items-center justify-center rounded-1 bg-muted text-lg font-semibold text-muted-foreground">
             {block.media_file?.split(".").pop()?.toUpperCase() ?? "FILE"}
           </div>
-          <p className="text-sm font-medium text-foreground">
+          <p className="text-base font-semibold text-foreground">
             {block.title ?? block.slug}
           </p>
           {block.media_file && (
-            <p className="text-xs text-muted-foreground">{block.media_file}</p>
+            <p className="text-sm text-muted-foreground">{block.media_file}</p>
           )}
         </div>
       );
@@ -347,7 +347,7 @@ function ArticleBody({
           <img
             src={resolved}
             alt={alt ?? ""}
-            className="rounded-lg"
+            className="rounded-0"
             loading="lazy"
             {...props}
           />

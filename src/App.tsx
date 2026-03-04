@@ -86,7 +86,7 @@ export function App() {
   if (loading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
-        <p className="text-sm text-muted-foreground">Loading...</p>
+        <p className="text-base text-muted-foreground">Loading...</p>
       </div>
     );
   }
@@ -473,12 +473,12 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
     <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
       {activeDragBlock && (
-        <div className="pointer-events-none rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-lg">
+        <div className="pointer-events-none rounded-1 border border-border bg-card px-3 py-2 text-base shadow-lg">
           {activeDragBlock.title ?? activeDragBlock.slug}
         </div>
       )}
       {activeDragTag && (
-        <div className="pointer-events-none rounded-md bg-secondary px-3 py-1.5 text-sm font-medium shadow-lg">
+        <div className="pointer-events-none rounded-1 bg-secondary px-3 py-1.5 text-base font-semibold shadow-lg">
           {titleFromTag(activeDragTag)}
         </div>
       )}
