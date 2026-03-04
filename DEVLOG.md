@@ -58,7 +58,7 @@ if any
 - `grep oklch global.css | grep -v chart | grep -v destructive` — ни одного ненулевого hue/chroma
 
 ### Push
-
+`df961b3` — Neutral gray scale + OLED black + sidebar improvements
 
 ### Decisions and lessons learned
 - Нейтральная шкала убирает конкуренцию оттенков с контентом — изображения остаются единственным источником цвета
