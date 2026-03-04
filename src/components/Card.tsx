@@ -82,7 +82,7 @@ function ImageCard({
       <div className="flex aspect-square items-center justify-center bg-muted">
         <div className="text-center">
           <ImageOff className="mx-auto size-6 text-muted-foreground/50" />
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 text-sm text-foreground">
             {block.title ?? block.slug}
           </p>
         </div>
@@ -100,7 +100,7 @@ function ImageCard({
         onError={() => setError(true)}
       />
       {block.title && (
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3 font-mono opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3 opacity-0 transition-opacity group-hover:opacity-100">
           <p className="truncate text-sm text-white">{block.title}</p>
         </div>
       )}
@@ -128,12 +128,12 @@ function LinkCard({
   // No thumbnail — compact card (title + domain only)
   if (thumbError) {
     return (
-      <div className="p-3 font-mono">
+      <div className="p-3">
         <p className="truncate text-sm font-semibold text-foreground">
           {block.title ?? block.slug}
         </p>
         {domain && (
-          <p className="mt-0.5 truncate text-sm text-muted-foreground">{domain}</p>
+          <p className="mt-0.5 truncate text-sm text-foreground">{domain}</p>
         )}
       </div>
     );
@@ -165,12 +165,12 @@ function LinkCard({
           onError={() => setThumbError(true)}
         />
       </div>
-      <div className="p-3 font-mono">
+      <div className="p-3">
         <p className="truncate text-sm font-semibold text-foreground">
           {block.title ?? block.slug}
         </p>
         {domain && (
-          <p className="mt-0.5 truncate text-sm text-muted-foreground">{domain}</p>
+          <p className="mt-0.5 truncate text-sm text-foreground">{domain}</p>
         )}
       </div>
     </div>
@@ -196,17 +196,17 @@ function ArticleCard({ block }: { block: IndexedBlock }) {
   const preview = stripMarkdown(block.body).slice(0, 400).trim();
 
   return (
-    <div className="p-4 font-mono">
+    <div className="p-4">
       <p className="text-sm font-semibold text-foreground">
         {block.title ?? block.slug}
       </p>
       {preview && (
-        <p className="mt-1.5 line-clamp-8 text-sm leading-relaxed text-muted-foreground">
+        <p className="mt-1.5 line-clamp-8 text-sm leading-relaxed text-foreground">
           {preview}
         </p>
       )}
       {block.author && (
-        <p className="mt-2 text-sm text-muted-foreground">{block.author}</p>
+        <p className="mt-2 text-sm text-foreground">{block.author}</p>
       )}
     </div>
   );
@@ -240,7 +240,7 @@ function VideoCard({
         </div>
       </div>
       {block.title && (
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3 font-mono">
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3">
           <p className="truncate text-sm text-white">{block.title}</p>
         </div>
       )}
@@ -255,7 +255,7 @@ function FileCard({ block }: { block: IndexedBlock }) {
     ?.toUpperCase();
 
   return (
-    <div className="flex items-center gap-3 p-4 font-mono">
+    <div className="flex items-center gap-3 p-4">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-1 bg-muted text-sm font-semibold text-muted-foreground">
         {ext ?? "FILE"}
       </div>
@@ -264,7 +264,7 @@ function FileCard({ block }: { block: IndexedBlock }) {
           {block.title ?? block.slug}
         </p>
         {block.media_file && (
-          <p className="truncate text-sm text-muted-foreground">
+          <p className="truncate text-sm text-foreground">
             {block.media_file}
           </p>
         )}

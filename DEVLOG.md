@@ -28,6 +28,45 @@ if any
 
 ---
 
+## 03.03.2026 — Цвет текста: трёхуровневая иерархия + font-mono только в метаданных
+
+### Goal
+Снизить контраст текста (убрать чистый чёрный), ввести три уровня цветовой иерархии, убрать моноширинный шрифт из карточек.
+
+### Planned
+1. Заменить foreground (#0a0a0a → #333333) и все производные токены
+2. Обновить muted-foreground (#737373 → #777777)
+3. Добавить tertiary-foreground (#999999) для плейсхолдеров
+4. Тёмная тема: #E4E4E8 / #9E9EA3 / #555555 (с холодным оттенком)
+5. Перевести карточки на text-foreground (единый цвет)
+6. Убрать font-mono из карточек, оставить только в метаданных Detail
+
+### Actually completed
+Все 6 пунктов:
+
+**Цвета** — обновлены `--foreground`, `--card-foreground`, `--popover-foreground`, `--primary`, `--secondary-foreground`, `--accent-foreground`, `--sidebar-foreground` и производные в обеих темах. Добавлен `--tertiary-foreground` с регистрацией в `@theme inline`
+
+**Карточки** — весь текст переведён на `text-foreground`; `font-mono` убран из Card.tsx (6 вхождений) и контентной части Detail.tsx
+
+**Плейсхолдеры** — `input.tsx` и `command.tsx` переведены на `placeholder:text-tertiary-foreground`
+
+### Deviations from plan
+Нет
+
+### Checks
+- `bun run build` — чистая сборка
+- `grep font-mono src/` — осталось только в MetadataPanel Detail.tsx (3 вхождения) и определении `--font-mono` в global.css
+- DESIGN_SYSTEM.md обновлён: шрифты, цвета
+
+### Push
+<!-- commit hash will be added after push -->
+
+### Decisions and lessons learned
+- Тёмная тема: primary/secondary с лёгким hue 286 (холодный) — чисто серый на тёмном фоне выглядит грязным
+- Карточки лучше читаются пропорциональным шрифтом; моноширинный оправдан только для технических метаданных
+
+---
+
 ## 03.03.2026 — Дизайн-система: токены, типографика, скругления
 
 ### Goal
@@ -53,7 +92,7 @@ if any
 **Типографика** — три размера через `--text-sm/base/lg` в `@theme inline`:
 - `text-sm` = 12px/16px (мета, карточки), `text-base` = 14px/20px (интерфейс), `text-lg` = 18px/24px (заголовки)
 - Два веса: 400 (default) + 600 (`font-semibold`). Убраны `font-medium`, `font-bold`
-- Два шрифта: Geist (UI) + Geist Mono (контент карточек)
+- Два шрифта: Geist (весь UI, включая карточки) + Geist Mono (панель метаданных Detail)
 - Миграция классов: `text-sm`→`text-base`, `text-xs`→`text-sm` в 25+ файлах (кроме Card.tsx)
 
 **Рендеринг** — добавлен `-webkit-font-smoothing: antialiased` для нативного вида
@@ -72,7 +111,7 @@ if any
 - `grep` подтверждает: нет `rounded-sm/md/lg`, нет `font-medium/bold`, нет `text-xs` в коде
 
 ### Push
-<!-- commit hash will be added after push -->
+`339e9a7` Design system: radius, spacing, typography tokens + antialiased rendering
 
 ### Decisions and lessons learned
 - Tailwind v4 использует `--text-*` для шрифтов (не `--font-size-*` как в v3) — критично для `@theme inline`
