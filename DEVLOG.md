@@ -61,7 +61,7 @@ if any
 - `useSidebarResize`: DEFAULT_WIDTH 300, MAX_WIDTH 480
 
 ### Push
-— (будет добавлен после push)
+8103365 Table sidebar, custom toolbar, Rust thumbnail previews
 
 ### Decisions and lessons learned
 - Thumbnail-превью фильтруются на бэкенде (Path::exists) — фронтенд не должен гадать о наличии файлов
