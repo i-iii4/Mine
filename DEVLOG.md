@@ -28,6 +28,75 @@ if any
 
 ---
 
+## 05.03.2026 — Клавиатурная навигация, ресайз сайдбара, исправления Detail
+
+### Goal
+Полноценная клавиатурная навигация по карточкам и каналам. Ресайз сайдбара. Исправление критических багов Detail (кнопка X, навигация при открытом Detail). Устойчивость к iCloud-оптимизации macOS.
+
+### Planned
+1. Ресайз сайдбара с pill-хэндлом
+2. Рефакторинг Detail с Radix Dialog на plain div
+3. Исправление кнопки X (Tauri drag region)
+4. Клавиатурная навигация в Grid (4 стрелки)
+5. Навигация в Detail (влево/вправо)
+6. Переключение каналов Opt+Cmd+Up/Down
+7. Устойчивость карточек к iCloud offload
+
+### Actually completed
+Все 7 пунктов + дополнительные исправления.
+
+**src/hooks/useSidebarResize.ts** — новый хук: width/collapsed state, pointer events для ресайза, двойной клик для toggle, сохранение в CSS custom properties.
+
+**src/components/SidebarResizeHandle.tsx** — новый компонент: fixed positioned (z-40), 14px зона перехвата, 6px pill с анимацией при ховере.
+
+**src/components/Detail.tsx** — рефакторинг:
+- Radix Dialog → plain div (`absolute inset-0 z-10`) внутри `<main isolation: isolate>`
+- Кнопка X перенесена на `top-10 right-4` (ниже 32px drag region)
+- Клавиатура: только влево/вправо, capture phase + stopPropagation, пропуск модификаторов
+- `focus({ preventScroll: true })` — не дёргает сайдбар при переключении карточек
+
+**src/App.tsx** — основные изменения:
+- `activeBlocks` memo — фильтрация блоков по каналу на уровне App (исправлен баг навигации Detail за пределы канала)
+- `focusedBlockId` state — фокус карточки в Grid
+- `findVisualNeighbor()` — визуальная навигация по `getBoundingClientRect()` с весовой функцией `primaryAxis + 3 × crossAxis`
+- `handleDetailClose` — при закрытии Detail возвращает фокус на карточку в Grid
+- Opt+Cmd+Up/Down — переключение каналов по `orderedTags`
+- `vault-refreshed` событие из loadData — сигнал карточкам сбросить ошибку загрузки
+- `useEffect` на `location.pathname` — закрытие Detail + сброс фокуса при смене маршрута
+
+**src/components/Card.tsx** — `isFocused` проп (`ring-2 ring-ring`), `useEffect` на `vault-refreshed` для сброса ошибки загрузки (ImageCard + LinkCard)
+
+**src/components/Grid.tsx** — `focusedBlockId` проп, `onColumnCountChange` callback
+
+**src/components/Sidebar.tsx** — автоподскрол к `[aria-current="page"]` при смене `location.pathname`
+
+**src/styles/global.css** — `body.sidebar-resizing` cursor override
+
+### Deviations from plan
+- Изначально навигация в Grid была индексной (index ± columnCount). Заменена на визуальную по координатам — в masonry-сетке индексные соседи не совпадают с визуальными
+- Изначально в Detail были все 4 стрелки. Убраны вверх/вниз — в Detail достаточно линейной навигации
+
+### Checks
+- `bun run build` — чистая сборка
+- Стрелки в Grid: навигация соответствует визуальному расположению карточек
+- Enter в Grid: открывает Detail, Esc возвращает фокус
+- Влево/вправо в Detail: линейная навигация
+- Opt+Cmd+Down: переключение каналов + подскрол сайдбара
+- Opt+Cmd+Down при открытом Detail: Detail закрывается, канал переключается
+- Кнопка X в Detail работает (вне drag region)
+- Сайдбар: клик по каналам при открытом Detail — Detail закрывается
+
+### Push
+— (будет добавлен после push)
+
+### Decisions and lessons learned
+- Tauri `data-tauri-drag-region` перехватывает на нативном уровне — CSS z-index бессилен. Решение: не размещать интерактивные элементы в зоне 32px сверху
+- Radix Dialog порталит в `<body>`, что ломает stacking context. Для overlay-панелей внутри приложения лучше plain div + `isolation: isolate` на контейнере
+- Визуальная навигация (`getBoundingClientRect`) — единственный надёжный подход для masonry-сеток с переменной высотой карточек
+- Capture phase (`addEventListener(..., true)`) + `stopPropagation` — надёжный способ перехватить клавиши до dnd-kit и браузерных обработчиков доступности
+
+---
+
 ## 03.03.2026 — Нейтральная серая шкала + OLED-чёрный
 
 ### Goal

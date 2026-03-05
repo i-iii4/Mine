@@ -28,6 +28,15 @@ nav {
   user-select: none;
 }
 
+/* Sidebar resize: force col-resize cursor and disable selection globally */
+body.sidebar-resizing {
+  cursor: col-resize !important;
+  user-select: none;
+}
+body.sidebar-resizing * {
+  cursor: col-resize !important;
+}
+
 /* Hide scrollbars in WebKit (Tauri/Safari) */
 .overflow-y-auto::-webkit-scrollbar {
   display: none;

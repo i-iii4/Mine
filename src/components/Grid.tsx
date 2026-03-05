@@ -27,10 +27,13 @@ interface GridProps {
   vaultPath: string;
   tags: TagCount[];
   currentTag?: string;
+  sidebarCollapsed?: boolean;
+  focusedBlockId?: number | null;
   onBlockClick: (block: IndexedBlock) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onDeleteBlock: (slug: string) => void;
+  onColumnCountChange?: (count: number) => void;
 }
 
 export function Grid({
@@ -38,10 +41,13 @@ export function Grid({
   vaultPath,
   tags,
   currentTag,
+  sidebarCollapsed = false,
+  focusedBlockId,
   onBlockClick,
   onToggleTag,
   onCreateAndAssign,
   onDeleteBlock,
+  onColumnCountChange,
 }: GridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -139,6 +145,10 @@ export function Grid({
     Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
   );
 
+  useEffect(() => {
+    onColumnCountChange?.(columnCount);
+  }, [columnCount, onColumnCountChange]);
+
   const visibleBlocks = useMemo(
     () => blocks.slice(0, visibleCount),
     [blocks, visibleCount],
@@ -161,7 +171,13 @@ export function Grid({
         <div
           ref={parentRef}
           onContextMenu={handleContextMenu}
-          className="h-full overflow-x-hidden overflow-y-auto px-8 pb-8 pt-14"
+          className="h-full overflow-x-hidden overflow-y-auto pb-8 pt-16"
+          style={{
+            paddingLeft: sidebarCollapsed ? 72 : 32,
+            paddingRight: sidebarCollapsed ? 72 : 32,
+            transition: "padding-left 200ms ease, padding-right 200ms ease",
+          }}
+          data-grid-scroll
         >
           <div className="flex items-start" style={{ gap: GAP }}>
             {columns.map((col, colIdx) => (
@@ -175,6 +191,7 @@ export function Grid({
                     key={block.id}
                     block={block}
                     vaultPath={vaultPath}
+                    isFocused={block.id === focusedBlockId}
                     onClick={onBlockClick}
                   />
                 ))}

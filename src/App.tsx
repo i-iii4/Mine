@@ -4,7 +4,6 @@ import {
   Routes,
   Route,
   Outlet,
-  useParams,
   useOutletContext,
   useNavigate,
   useLocation,
@@ -59,16 +58,67 @@ import {
   removeTag,
   deleteBlock,
 } from "@/lib/commands";
+import { cn } from "@/lib/utils";
 import { setInternalDragActive } from "@/lib/drag";
 import { pushRecentTag } from "@/lib/recentTags";
+import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { VaultPicker } from "@/components/VaultPicker";
 import { Sidebar } from "@/components/Sidebar";
+import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { Grid } from "@/components/Grid";
 import { Search } from "@/components/Search";
-import { Dialog } from "@/components/ui/dialog";
 import { Detail } from "@/components/Detail";
 import { DropZone } from "@/components/DropZone";
 import { ImportDialog } from "@/components/ImportDialog";
+
+// ─── Visual grid navigation ────────────────────────────────────────────────
+
+/** Find the nearest card in a given arrow direction based on screen coordinates. */
+function findVisualNeighbor(
+  currentSlug: string,
+  direction: string,
+): string | null {
+  const current = document.querySelector(`[data-block-slug="${currentSlug}"]`);
+  if (!current) return null;
+
+  const rect = current.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+
+  const horizontal = direction === "ArrowLeft" || direction === "ArrowRight";
+  let bestSlug: string | null = null;
+  let bestScore = Infinity;
+
+  for (const card of document.querySelectorAll<HTMLElement>("[data-block-slug]")) {
+    const slug = card.getAttribute("data-block-slug");
+    if (slug === currentSlug) continue;
+
+    const r = card.getBoundingClientRect();
+    const dx = (r.left + r.width / 2) - cx;
+    const dy = (r.top + r.height / 2) - cy;
+
+    // Must be in the correct direction (10px dead zone)
+    const valid =
+      direction === "ArrowRight" ? dx > 10 :
+      direction === "ArrowLeft"  ? dx < -10 :
+      direction === "ArrowDown"  ? dy > 10 :
+      /* ArrowUp */                dy < -10;
+
+    if (!valid) continue;
+
+    // Primary axis + 3× cross axis — prefers cards in the same "lane"
+    const score = horizontal
+      ? Math.abs(dx) + Math.abs(dy) * 3
+      : Math.abs(dy) + Math.abs(dx) * 3;
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestSlug = slug!;
+    }
+  }
+
+  return bestSlug;
+}
 
 // ─── Root ──────────────────────────────────────────────────────────────────
 
@@ -118,8 +168,120 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<IndexedBlock | null>(null);
+  const [focusedBlockId, setFocusedBlockId] = useState<number | null>(null);
   const [activeDragBlock, setActiveDragBlock] = useState<IndexedBlock | null>(null);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
+  const [sidebarScrolled, setSidebarScrolled] = useState(false);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const gridColumnCountRef = useRef(1);
+
+  // Blocks filtered by current route (channel or all)
+  const activeBlocks = useMemo(() => {
+    if (!currentTag) return blocks;
+    return blocks.filter((b) => b.tags.includes(currentTag));
+  }, [blocks, currentTag]);
+
+  const handleColumnCountChange = useCallback((n: number) => {
+    gridColumnCountRef.current = n;
+  }, []);
+
+  // Close Detail and clear grid focus when navigating to a different route
+  useEffect(() => {
+    setSelectedBlock(null);
+    setFocusedBlockId(null);
+  }, [location.pathname]);
+
+  // ── Grid keyboard navigation (when Detail is closed) ───────────────────
+  // Refs avoid re-subscribing the keydown listener on every focus change
+  const focusedRef = useRef(focusedBlockId);
+  focusedRef.current = focusedBlockId;
+  const activeBlocksRef = useRef(activeBlocks);
+  activeBlocksRef.current = activeBlocks;
+
+  useEffect(() => {
+    if (selectedBlock || searchOpen) return; // Detail or search handles keys
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.metaKey || e.altKey || e.ctrlKey) return;
+
+      const cur = focusedRef.current;
+      const ab = activeBlocksRef.current;
+
+      if (e.key === "Enter" && cur !== null) {
+        const block = ab.find((b) => b.id === cur);
+        if (block) {
+          setSelectedBlock(block);
+          setFocusedBlockId(null);
+        }
+        return;
+      }
+
+      if (e.key === "Escape") {
+        if (cur !== null) setFocusedBlockId(null);
+        return;
+      }
+
+      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+      e.preventDefault();
+
+      if (cur === null) {
+        if (ab.length > 0) setFocusedBlockId(ab[0]!.id);
+        return;
+      }
+
+      // Visual navigation: find nearest card by screen coordinates
+      const currentBlock = ab.find((b) => b.id === cur);
+      if (!currentBlock) { setFocusedBlockId(ab[0]?.id ?? null); return; }
+
+      const targetSlug = findVisualNeighbor(currentBlock.slug, e.key);
+      if (!targetSlug) return;
+
+      const targetBlock = ab.find((b) => b.slug === targetSlug);
+      if (targetBlock) {
+        setFocusedBlockId(targetBlock.id);
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedBlock, searchOpen]);
+
+  // Auto-scroll to focused card
+  useEffect(() => {
+    if (focusedBlockId === null) return;
+    const block = activeBlocks.find((b) => b.id === focusedBlockId);
+    if (!block) return;
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-block-slug="${block.slug}"]`);
+      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }, [focusedBlockId, activeBlocks]);
+
+  // ── Sidebar resize ──────────────────────────────────────────────────────
+  const {
+    width: sidebarWidth,
+    collapsed: sidebarCollapsed,
+    isResizing: sidebarResizing,
+    startResize,
+    updateResize,
+    endResize,
+    toggleCollapsed,
+  } = useSidebarResize();
+
+  // ── Titlebar border on scroll ─────────────────────────────────────────
+  // Global scroll listener filtered by data attributes — sidebar and grid
+  // tracked independently, each controls its own segment of the border.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target.hasAttribute("data-sidebar-scroll")) {
+        setSidebarScrolled(target.scrollTop > 0);
+      }
+    };
+    document.addEventListener("scroll", handler, { capture: true, passive: true });
+    return () => document.removeEventListener("scroll", handler, { capture: true });
+  }, []);
 
   // ── dnd-kit sensors ────────────────────────────────────────────────────
   const sensors = useSensors(
@@ -131,6 +293,8 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     setBlocks(b);
     setTags(t);
     setChannels(ch);
+    // Signal cards to retry failed image loads (e.g. after iCloud files download)
+    window.dispatchEvent(new Event("vault-refreshed"));
   }, []);
 
   useEffect(() => {
@@ -166,19 +330,25 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleBlockClick = useCallback((block: IndexedBlock) => {
     setSelectedBlock(block);
+    setFocusedBlockId(null);
   }, []);
+
+  const handleDetailClose = useCallback(() => {
+    if (selectedBlock) setFocusedBlockId(selectedBlock.id);
+    setSelectedBlock(null);
+  }, [selectedBlock]);
 
   const handleDetailNavigate = useCallback(
     (direction: "prev" | "next") => {
       if (!selectedBlock) return;
-      const idx = blocks.findIndex((b) => b.id === selectedBlock.id);
+      const idx = activeBlocks.findIndex((b) => b.id === selectedBlock.id);
       if (idx === -1) return;
       const newIdx = direction === "prev" ? idx - 1 : idx + 1;
-      if (newIdx >= 0 && newIdx < blocks.length) {
-        setSelectedBlock(blocks[newIdx]!);
+      if (newIdx >= 0 && newIdx < activeBlocks.length) {
+        setSelectedBlock(activeBlocks[newIdx]!);
       }
     },
-    [selectedBlock, blocks],
+    [selectedBlock, activeBlocks],
   );
 
   // ── Tag management ──────────────────────────────────────────────────────
@@ -232,6 +402,30 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
     return [...withPos, ...noPos].map(({ tag, count }) => ({ tag, count }));
   }, [tags, channels]);
+
+  // ── Opt+Cmd+Up/Down — switch channels ─────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey && e.altKey)) return;
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      const idx = currentTag
+        ? orderedTags.findIndex((t) => t.tag === currentTag)
+        : -1;
+      if (e.key === "ArrowUp") {
+        if (idx === 0) navigate("/");
+        else if (idx > 0) navigate(`/channel/${encodeURIComponent(orderedTags[idx - 1]!.tag)}`);
+      } else {
+        if (idx === -1 && orderedTags.length > 0) {
+          navigate(`/channel/${encodeURIComponent(orderedTags[0]!.tag)}`);
+        } else if (idx >= 0 && idx < orderedTags.length - 1) {
+          navigate(`/channel/${encodeURIComponent(orderedTags[idx + 1]!.tag)}`);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [currentTag, orderedTags, navigate]);
 
   // ── Channel preview cards (sidebar icons) ──────────────────────────────
 
@@ -400,9 +594,26 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       {/* Window drag handle — replaces native title bar in Overlay mode */}
       <div
         data-tauri-drag-region
-        className="fixed inset-x-0 top-0 z-50 h-7"
-      />
+        className="fixed inset-x-0 top-0 z-50 flex h-8"
+      >
+        {/* Sidebar segment — width synced with resizable sidebar */}
+        {!sidebarCollapsed && (
+          <div
+            data-tauri-drag-region
+            className="relative h-full shrink-0 border-r border-border bg-background"
+            style={{ width: sidebarWidth }}
+          >
+            <div className={cn(
+              "pointer-events-none absolute inset-x-0 bottom-0 border-b transition-[border-color] duration-150",
+              sidebarScrolled ? "border-border" : "border-transparent",
+            )} />
+          </div>
+        )}
+      </div>
       <Sidebar
+        width={sidebarWidth}
+        collapsed={sidebarCollapsed}
+        isResizing={sidebarResizing}
         orderedTags={orderedTags}
         channelPreviews={channelPreviews}
         totalBlocks={blocks.length}
@@ -414,19 +625,32 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         onCreateChannel={handleCreateChannel}
       />
 
-      <main className="flex-1 overflow-hidden">
+      <SidebarResizeHandle
+        sidebarWidth={sidebarWidth}
+        isResizing={sidebarResizing}
+        disabled={activeDragBlock !== null || activeDragTag !== null}
+        onResizeStart={startResize}
+        onResizeUpdate={updateResize}
+        onResizeEnd={endResize}
+        onToggleCollapsed={toggleCollapsed}
+      />
+
+      <main ref={mainRef} className="relative isolate flex-1 overflow-hidden">
         <Routes>
           <Route
             element={
               <PageShell
-                blocks={blocks}
+                blocks={activeBlocks}
                 vaultPath={vaultPath}
                 tags={tags}
                 currentTag={currentTag}
+                sidebarCollapsed={sidebarCollapsed}
+                focusedBlockId={focusedBlockId}
                 onBlockClick={handleBlockClick}
                 onToggleTag={handleToggleTag}
                 onCreateAndAssign={handleCreateTagFromMenu}
                 onDeleteBlock={handleDeleteBlock}
+                onColumnCountChange={handleColumnCountChange}
               />
             }
           >
@@ -434,6 +658,16 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
             <Route path="channel/:tag" element={<ChannelPage />} />
           </Route>
         </Routes>
+
+        {selectedBlock && (
+          <Detail
+            block={selectedBlock}
+            vaultPath={vaultPath}
+            onClose={handleDetailClose}
+            onNavigate={handleDetailNavigate}
+            onTagsChanged={loadData}
+          />
+        )}
       </main>
 
       <Search
@@ -452,20 +686,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         onClose={() => setImportOpen(false)}
         onImportComplete={loadData}
       />
-
-      <Dialog
-        open={selectedBlock !== null}
-        onOpenChange={(isOpen) => { if (!isOpen) setSelectedBlock(null); }}
-      >
-        {selectedBlock && (
-          <Detail
-            block={selectedBlock}
-            vaultPath={vaultPath}
-            onNavigate={handleDetailNavigate}
-            onTagsChanged={loadData}
-          />
-        )}
-      </Dialog>
     </div>
 
     <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
@@ -491,10 +711,13 @@ interface RouteContext {
   vaultPath: string;
   tags: TagCount[];
   currentTag?: string;
+  sidebarCollapsed: boolean;
+  focusedBlockId: number | null;
   onBlockClick: (block: IndexedBlock) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onDeleteBlock: (slug: string) => void;
+  onColumnCountChange: (count: number) => void;
 }
 
 function PageShell(props: RouteContext) {
@@ -513,12 +736,6 @@ function AllBlocksPage() {
 }
 
 function ChannelPage() {
-  const { tag } = useParams<{ tag: string }>();
   const ctx = useRouteCtx();
-
-  const filtered = ctx.blocks.filter(
-    (b) => tag && b.tags.includes(decodeURIComponent(tag)),
-  );
-
-  return <Grid {...ctx} blocks={filtered} />;
+  return <Grid {...ctx} blocks={ctx.blocks} />;
 }

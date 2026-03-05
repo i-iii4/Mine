@@ -175,8 +175,30 @@ Thumbnail отображается через `convertFileSrc(vaultPath + "/.are
 - Оба слоя используют общий `LAYOUT_CLASSES` для идентичного позиционирования
 - Контент центрирован горизонтально (`mx-auto max-w-[58rem]`)
 - Метаданные (Geist Mono): RESOLUTION, FILENAME, DATE, TYPE, SOURCE, AUTHOR, TAGS
-- `data-tauri-drag-region` внутри Detail для перетаскивания окна
-- Кнопка X справа вверху, стрелки влево/вправо для навигации, Esc для закрытия
+- Кнопка X справа вверху (ниже 32px drag region), Esc для закрытия
+- Стрелки влево/вправо — линейная навигация между блоками
+- Detail — plain div с `absolute inset-0 z-10` (не Radix Dialog), внутри `<main>` со стекинг-контекстом `isolation: isolate`
+
+### Клавиатурная навигация
+
+#### Grid (экран коллекции)
+- Стрелки (4 направления) — перемещение фокуса между карточками
+- Визуальная навигация по координатам (`getBoundingClientRect`): ближайшая карточка в направлении стрелки с весовой функцией `primaryAxis + 3 × crossAxis`
+- Enter — открыть выделенную карточку в Detail
+- Esc — сбросить фокус
+- Выделение: `ring-2 ring-ring` на карточке
+- `focusedBlockId` (state) + автоподскрол (`scrollIntoView({ block: "nearest" })`)
+- При закрытии Detail фокус возвращается на последнюю просмотренную карточку
+
+#### Detail
+- Стрелки влево/вправо — линейная навигация (prev/next по массиву `activeBlocks`)
+- Capture phase + `stopPropagation` — не даёт стрелкам дойти до dnd-kit и браузера
+- Модификаторы (Cmd/Alt/Ctrl) пропускаются — не перехватывают Opt+Cmd+Arrow
+
+#### Переключение каналов
+- Opt+Cmd+Up/Down — навигация по `orderedTags` (All → каналы по порядку)
+- Автоподскрол сайдбара к активному каналу (`[aria-current="page"]`)
+- При переключении Detail закрывается (`useEffect` на `location.pathname`)
 
 ## Путь к ассетам
 

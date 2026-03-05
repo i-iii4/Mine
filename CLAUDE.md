@@ -98,7 +98,10 @@ local-arena/
 │   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог
 │   │   ├── DropZone.tsx        # Drag-and-drop файлов для создания блоков
 │   │   ├── ImportDialog.tsx    # 4-шаговый импорт из Are.na
-│   │   └── CardContextMenu.tsx # Контекстное меню карточки: теги, удаление
+│   │   ├── CardContextMenu.tsx # Контекстное меню карточки: теги, удаление
+│   │   └── SidebarResizeHandle.tsx # Ресайз-ручка сайдбара (pill-стиль)
+│   ├── hooks/
+│   │   └── useSidebarResize.ts # Хук ресайза сайдбара (pointer events + persist)
 │   ├── types/                  # TypeScript-типы (ручные, без specta)
 │   ├── lib/                    # commands.ts (IPC), assets.ts, utils.ts (cn()), recentTags.ts
 │   └── styles/                 # Глобальные стили

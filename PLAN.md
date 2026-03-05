@@ -312,3 +312,19 @@ Goal: довести проект до продакшен-качества по 
      |
 9.12 (документация)  — финальный шаг
 ```
+
+### Phase 10 — UX: навигация, сайдбар, устойчивость [COMPLETED]
+
+Goal: полноценная клавиатурная навигация, ресайз сайдбара, исправление взаимодействия Detail с Tauri drag region, устойчивость к iCloud-оптимизации.
+
+| # | Task | Status |
+|---|------|--------|
+| 10.1 | Ресайз сайдбара: pill-хэндл (Things-стиль), `useSidebarResize` хук, двойной клик для сворачивания/разворачивания | [x] |
+| 10.2 | Detail: рефакторинг с Radix Dialog на plain div (`absolute inset-0 z-10` внутри `<main isolation: isolate>`) | [x] |
+| 10.3 | Исправление кнопки X в Detail: перенос ниже 32px Tauri drag region (`top-10 right-4`) | [x] |
+| 10.4 | Исправление навигации сайдбара при открытом Detail: `useEffect` на `location.pathname` сбрасывает `selectedBlock` | [x] |
+| 10.5 | Клавиатурная навигация в Grid: визуальная навигация по `getBoundingClientRect()` (4 стрелки + Enter + Esc), `focusedBlockId` state, автоподскрол, восстановление фокуса при закрытии Detail | [x] |
+| 10.6 | Клавиатурная навигация в Detail: влево/вправо (линейная), capture phase + stopPropagation, пропуск модификаторов | [x] |
+| 10.7 | Переключение каналов Opt+Cmd+Up/Down: навигация по `orderedTags`, автоподскрол сайдбара к `[aria-current="page"]` | [x] |
+| 10.8 | Устойчивость к iCloud: сброс ошибки загрузки карточек через событие `vault-refreshed` при `loadData` | [x] |
+| 10.9 | `activeBlocks` memo: фильтрация по текущему каналу на уровне App, исправление бага навигации Detail за пределы канала | [x] |

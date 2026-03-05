@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { NavLink } from "react-router";
+import { NavLink, useLocation } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Plus, MoreHorizontal, Search, Download, Pencil, Trash2 } from "lucide-react";
@@ -39,6 +39,9 @@ function titleFromTag(tag: string): string {
 }
 
 interface SidebarProps {
+  width: number;
+  collapsed: boolean;
+  isResizing: boolean;
   orderedTags: TagCount[];
   channelPreviews: Map<string, PreviewCard[]>;
   totalBlocks: number;
@@ -51,6 +54,9 @@ interface SidebarProps {
 }
 
 export function Sidebar({
+  width,
+  collapsed,
+  isResizing,
   orderedTags,
   channelPreviews,
   totalBlocks,
@@ -63,6 +69,18 @@ export function Sidebar({
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const navRef = useRef<HTMLElement>(null);
+  const location = useLocation();
+
+  // Auto-scroll sidebar to the active channel (e.g. after Opt+Cmd+Arrow)
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const active = nav.querySelector<HTMLElement>('[aria-current="page"]');
+    if (active) {
+      active.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [location.pathname]);
 
   const handleRename = useCallback(
     (oldTag: string, newValue: string) => {
@@ -74,15 +92,21 @@ export function Sidebar({
   );
 
   return (
-    <aside className="relative flex w-60 shrink-0 flex-col border-r border-sidebar-border">
-      {/* To restore sidebar background: add bg-sidebar to aside, change from-background to from-sidebar below */}
+    <aside
+      className={cn(
+        "relative flex shrink-0 flex-col border-r border-sidebar-border",
+        collapsed && "overflow-hidden",
+      )}
+      style={{
+        width,
+        transition: isResizing ? "none" : "width 200ms ease",
+      }}
+    >
       {/* Spacer for macOS traffic lights in overlay titlebar */}
-      <div className="h-10 shrink-0" />
-      {/* Top fade — content dissolves into the top edge */}
-      <div className="pointer-events-none absolute inset-x-0 top-10 z-10 h-8 bg-gradient-to-b from-background to-transparent" />
+      <div className="h-8 shrink-0" />
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-2 pt-2" data-sidebar-scroll>
+      <nav ref={navRef} className="flex-1 overflow-y-auto px-2 pt-2" data-sidebar-scroll>
         <NavItem to="/" label="All" count={totalBlocks} end />
 
         <SortableContext
@@ -180,7 +204,7 @@ function NavItem({
         cn(
           "flex items-center justify-between rounded-1 px-3 py-1.5 text-base ",
           isActive
-            ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
             : "text-muted-foreground hover:bg-accent",
         )
       }
@@ -271,7 +295,7 @@ function TagNavItem({
             cn(
               "flex items-center gap-2 rounded-1 px-3 py-1.5 text-base ",
               isActive
-                ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
                 : "text-muted-foreground hover:bg-accent",
             )
           }

@@ -334,6 +334,24 @@ Rationale: минимальная сложность. Позже — изоли�
 
 Rationale: пользователь может открыть любой `.md` файл в Obsidian, VS Code или текстовом редакторе и увидеть как метаданные, так и содержимое. Wikilinks работают в Obsidian нативно.
 
+### 006: Визуальная навигация по координатам вместо индексной
+
+| Approach | Problem |
+|---|---|
+| Навигация по индексу массива (index ± 1 / ± columnCount) | В masonry-сетке с разной высотой карточек визуальный сосед не совпадает с соседом по индексу — стрелка «вправо» перебрасывает в другой конец экрана |
+| Навигация по `getBoundingClientRect()` (chosen) | Для каждого нажатия стрелки перебираются все карточки в DOM, фильтруются по направлению, оцениваются по расстоянию (`primaryAxis + 3 × crossAxis`). Выбирается ближайшая |
+
+Rationale: masonry-раскладка с round-robin распределением и переменной высотой карточек делает индексную навигацию непредсказуемой. Визуальная навигация всегда соответствует тому, что видит пользователь. `getBoundingClientRect()` для ~80 видимых карточек — наносекунды.
+
+### 007: Detail — plain div вместо Radix Dialog
+
+| Approach | Problem |
+|---|---|
+| Radix Dialog (DialogOverlay + DialogContent) | Порталит в `<body>`, вне `<main>` — не участвует в stacking context приложения. Кнопка закрытия попадает под Tauri drag region (нативный перехват до CSS z-index) |
+| Plain div с `absolute inset-0 z-10` внутри `<main isolation: isolate>` (chosen) | Контролируемый стекинг-контекст, кнопка X ниже 32px drag region, корректная фокусировка |
+
+Rationale: Tauri `data-tauri-drag-region` перехватывает события указателя на нативном уровне (до CSS). Radix Dialog порталит контент за пределы `<main>`, что делает невозможным управление z-index относительно drag region. Plain div внутри `<main>` с `isolation: isolate` решает обе проблемы.
+
 ## Dependencies
 
 | Package | Version | Purpose | License |

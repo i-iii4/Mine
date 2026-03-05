@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
 import type { IndexedBlock } from "@/types";
@@ -8,10 +8,11 @@ import { cn } from "@/lib/utils";
 interface CardProps {
   block: IndexedBlock;
   vaultPath: string;
+  isFocused?: boolean;
   onClick: (block: IndexedBlock) => void;
 }
 
-export function Card({ block, vaultPath, onClick }: CardProps) {
+export function Card({ block, vaultPath, isFocused, onClick }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
   });
@@ -37,6 +38,7 @@ export function Card({ block, vaultPath, onClick }: CardProps) {
       className={cn(
         "group cursor-pointer overflow-hidden border border-border hover:border-foreground",
         isDragging && "opacity-30",
+        isFocused && "ring-2 ring-ring",
       )}
     >
       <CardContent block={block} vaultPath={vaultPath} />
@@ -76,6 +78,14 @@ function ImageCard({
   const src = block.media_file
     ? mediaUrl(vaultPath, block.media_file)
     : thumbnailUrl(vaultPath, block.slug);
+
+  // Retry failed loads when vault data refreshes (e.g. iCloud files downloaded)
+  useEffect(() => {
+    if (!error) return;
+    const handler = () => setError(false);
+    window.addEventListener("vault-refreshed", handler);
+    return () => window.removeEventListener("vault-refreshed", handler);
+  }, [error]);
 
   if (error) {
     return (
@@ -124,6 +134,17 @@ function LinkCard({
   const [thumbError, setThumbError] = useState(false);
   const thumb = thumbnailUrl(vaultPath, block.slug);
   const domain = block.url ? domainFromUrl(block.url) : null;
+
+  // Retry failed loads when vault data refreshes (e.g. iCloud files downloaded)
+  useEffect(() => {
+    if (!thumbError) return;
+    const handler = () => {
+      setThumbLoaded(false);
+      setThumbError(false);
+    };
+    window.addEventListener("vault-refreshed", handler);
+    return () => window.removeEventListener("vault-refreshed", handler);
+  }, [thumbError]);
 
   // No thumbnail — compact card (title + domain only)
   if (thumbError) {

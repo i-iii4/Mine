@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
@@ -6,7 +6,6 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { DialogContent, DialogClose } from "@/components/ui/dialog";
 import type { IndexedBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
 import { addTag, removeTag } from "@/lib/commands";
@@ -17,6 +16,7 @@ const LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-16";
 interface DetailProps {
   block: IndexedBlock;
   vaultPath: string;
+  onClose: () => void;
   onNavigate: (direction: "prev" | "next") => void;
   onTagsChanged: () => void;
 }
@@ -24,6 +24,7 @@ interface DetailProps {
 export function Detail({
   block,
   vaultPath,
+  onClose,
   onNavigate,
   onTagsChanged,
 }: DetailProps) {
@@ -61,6 +62,29 @@ export function Detail({
     [block.slug, onTagsChanged],
   );
 
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // ESC to close, left/right arrows to navigate cards
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return;
+      if (e.metaKey || e.altKey || e.ctrlKey) return;
+      if (e.key === "Escape") { onClose(); return; }
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        e.stopPropagation();
+        onNavigate(e.key === "ArrowLeft" ? "prev" : "next");
+      }
+    };
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
+  }, [onClose, onNavigate]);
+
+  // Auto-focus the panel so keyboard events work immediately
+  useEffect(() => {
+    panelRef.current?.focus({ preventScroll: true });
+  }, [block]);
+
   const filename = block.media_file ?? `${block.slug}.md`;
   const formattedDate = new Date(block.saved_at).toLocaleDateString("ru-RU", {
     day: "numeric",
@@ -69,31 +93,22 @@ export function Detail({
   });
 
   return (
-    <DialogContent
-      className="top-0 right-0 bottom-0 left-[240px] flex w-auto max-w-none sm:max-w-none translate-x-0 translate-y-0 gap-0 rounded-none border-none bg-background p-0 shadow-none data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
-      overlayClassName="left-[240px]"
-      showCloseButton={false}
-      onOpenAutoFocus={(e) => e.preventDefault()}
-      onKeyDown={(e) => {
-        if (e.target instanceof HTMLInputElement) return;
-        if (e.key === "ArrowLeft") onNavigate("prev");
-        if (e.key === "ArrowRight") onNavigate("next");
-      }}
+    <div
+      ref={panelRef}
+      tabIndex={-1}
+      className="absolute inset-0 z-10 flex bg-background outline-none"
+      role="dialog"
+      aria-modal="false"
     >
-      {/* Window drag region — sits above dialog overlay */}
-      <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-20 h-7" />
-
-      {/* Close button */}
-      <DialogClose asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute top-3 right-3 z-10 size-8 text-muted-foreground hover:text-foreground"
-        >
-          <X className="size-4" />
-          <span className="sr-only">Close</span>
-        </Button>
-      </DialogClose>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={onClose}
+        className="absolute top-10 right-4 size-8 text-muted-foreground hover:text-foreground"
+      >
+        <X className="size-4" />
+        <span className="sr-only">Close</span>
+      </Button>
 
       {/* Layer 1: Scrollable content + invisible spacer */}
       <div className="h-full w-full overflow-y-auto">
@@ -123,7 +138,7 @@ export function Detail({
           </div>
         </div>
       </div>
-    </DialogContent>
+    </div>
   );
 }
 
