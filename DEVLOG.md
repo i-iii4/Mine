@@ -87,7 +87,7 @@ if any
 - Сайдбар: клик по каналам при открытом Detail — Detail закрывается
 
 ### Push
-— (будет добавлен после push)
+ad1e6d9 Keyboard navigation + resizable sidebar + iCloud image retry
 
 ### Decisions and lessons learned
 - Tauri `data-tauri-drag-region` перехватывает на нативном уровне — CSS z-index бессилен. Решение: не размещать интерактивные элементы в зоне 32px сверху
