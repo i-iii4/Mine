@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { NavLink, useLocation } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Plus, MoreHorizontal, Search, Download, Pencil, Trash2 } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -46,8 +46,6 @@ interface SidebarProps {
   channelPreviews: Map<string, PreviewCard[]>;
   totalBlocks: number;
   isCardDragging: boolean;
-  onSearchOpen: () => void;
-  onImportOpen: () => void;
   onDeleteTag: (tag: string) => void;
   onRenameTag: (oldTag: string, newTag: string) => void;
   onCreateChannel: (tag: string) => void;
@@ -61,8 +59,6 @@ export function Sidebar({
   channelPreviews,
   totalBlocks,
   isCardDragging,
-  onSearchOpen,
-  onImportOpen,
   onDeleteTag,
   onRenameTag,
   onCreateChannel,
@@ -154,30 +150,6 @@ export function Sidebar({
         )}
       </nav>
 
-      {/* Bottom actions */}
-      <div className="border-t border-sidebar-border p-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onImportOpen}
-          className="w-full justify-start rounded-1 text-muted-foreground hover:bg-accent"
-        >
-          <Download className="size-4" />
-          <span>Import from Are.na</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onSearchOpen}
-          className="w-full justify-start rounded-1 text-muted-foreground hover:bg-accent"
-        >
-          <Search className="size-4" />
-          <span>Search</span>
-          <kbd className="ml-auto rounded border border-border px-1.5 py-0.5 text-sm text-muted-foreground">
-            {"\u2318"}K
-          </kbd>
-        </Button>
-      </div>
 
     </aside>
   );

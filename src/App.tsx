@@ -618,8 +618,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         channelPreviews={channelPreviews}
         totalBlocks={blocks.length}
         isCardDragging={activeDragBlock !== null}
-        onSearchOpen={() => setSearchOpen(true)}
-        onImportOpen={() => setImportOpen(true)}
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}
         onCreateChannel={handleCreateChannel}
