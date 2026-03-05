@@ -28,6 +28,48 @@ if any
 
 ---
 
+## 05.03.2026 (вечер) — Табличный сайдбар, кастомный тулбар, Rust-превью
+
+### Goal
+Эксперимент с табличным видом сайдбара. Каждый канал — строка таблицы: `[название] [превью-карточки] [счётчик]`. Кастомный верхний тулбар вместо overlay drag region.
+
+### Actually completed
+
+**Табличный вид сайдбара (Sidebar.tsx)**:
+- Строка: название (flex-1, truncate) | карточки в ряд (flex-1, overflow-hidden, flex-wrap) | счётчик (w-8, fixed)
+- Карточки: `size-6 object-cover rounded-[2px]`, лишние скрываются через `flex-wrap` + `h-6` + `overflow-hidden`
+- Направляющие: `border-b border-sidebar-border` между строками
+- All тоже показывает превью-карточки
+- Отступы: `px-8` (32px по бокам), `pt-16` (64px от тулбара)
+- Старый ChannelIcon (стопка 3 карточек) и классический Sidebar сохранены как `.classic.tsx`
+
+**Rust-команда `list_channel_previews` (channels.rs)**:
+- Проверяет `thumb_path.exists()` на диске — фронтенд получает только slug'и с реальными thumbnails
+- Принимает `limit` — максимум карточек на канал
+- Возвращает `HashMap<String, Vec<String>>` включая ключ `__all__`
+- IPC-обёртка: `listChannelPreviews(limit)` в commands.ts
+
+**Кастомный тулбар (App.tsx)**:
+- `<header>` с `h-8` (32px), `data-tauri-drag-region`, `border-b`
+- Раскладка: `flex-col` (тулбар сверху → body снизу) вместо прежнего `flex` (sidebar + main)
+- Удалён старый overlay drag region + sidebarScrolled state
+- Удалён spacer `h-8` из Sidebar
+
+**Прочие изменения**:
+- DropZone закомментирован (будет переделан)
+- Убраны кнопки Import/Search из нижней части сайдбара
+- `useSidebarResize`: DEFAULT_WIDTH 300, MAX_WIDTH 480
+
+### Push
+— (будет добавлен после push)
+
+### Decisions and lessons learned
+- Thumbnail-превью фильтруются на бэкенде (Path::exists) — фронтенд не должен гадать о наличии файлов
+- `flex-wrap` + фиксированная высота + `overflow-hidden` — CSS-only решение для «показать сколько влезает» без JS-расчётов
+- `.classic.tsx` — сохранение предыдущей версии для A/B-сравнения вариантов дизайна
+
+---
+
 ## 05.03.2026 — Клавиатурная навигация, ресайз сайдбара, исправления Detail
 
 ### Goal

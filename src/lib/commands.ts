@@ -72,6 +72,9 @@ export const renameChannel = (old_tag: string, new_tag: string) =>
 export const deleteChannel = (tag: string) =>
   invoke<boolean>("delete_channel", { tag });
 
+export const listChannelPreviews = (limit: number) =>
+  invoke<Record<string, string[]>>("list_channel_previews", { limit });
+
 // Are.na import
 export const listArenaChannels = (username: string) =>
   invoke<ArenaChannelInfo[]>("list_arena_channels", { username });

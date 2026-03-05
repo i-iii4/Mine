@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/tooltip";
 import type { TagCount, PreviewCard } from "@/types";
 import { cn } from "@/lib/utils";
+import { ChannelIcon } from "./ChannelIcon";
 
 /** Convert a normalized tag slug to a display title: `web-design` -> `Web Design` */
 function titleFromTag(tag: string): string {
@@ -97,10 +98,12 @@ export function Sidebar({
         transition: isResizing ? "none" : "width 200ms ease",
       }}
     >
+      {/* Spacer for macOS traffic lights in overlay titlebar */}
+      <div className="h-8 shrink-0" />
 
       {/* Navigation */}
-      <nav ref={navRef} className="flex-1 overflow-y-auto px-8 pt-16" data-sidebar-scroll>
-        <NavItem to="/" label="All" count={totalBlocks} cards={channelPreviews.get("__all__") ?? []} end />
+      <nav ref={navRef} className="flex-1 overflow-y-auto px-2 pt-2" data-sidebar-scroll>
+        <NavItem to="/" label="All" count={totalBlocks} end />
 
         <SortableContext
           items={orderedTags.map((tc) => `tag:${tc.tag}`)}
@@ -158,13 +161,11 @@ function NavItem({
   to,
   label,
   count,
-  cards = [],
   end,
 }: {
   to: string;
   label: string;
   count: number;
-  cards?: PreviewCard[];
   end?: boolean;
 }) {
   return (
@@ -173,22 +174,15 @@ function NavItem({
       end={end}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-2 border-b border-sidebar-border px-3 py-1.5 text-base",
+          "flex items-center justify-between rounded-1 px-3 py-1.5 text-base ",
           isActive
             ? "bg-sidebar-accent text-sidebar-accent-foreground"
             : "text-muted-foreground hover:bg-accent",
         )
       }
     >
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      <div className="flex h-6 min-w-0 flex-1 flex-wrap items-end gap-0.5 overflow-hidden">
-        {cards.map((card, i) => (
-          <img key={i} src={card.url} className="size-6 shrink-0 rounded-[2px] object-cover" />
-        ))}
-      </div>
-      <div className="w-8 shrink-0 text-right">
-        <span className="text-sm text-muted-foreground">{count}</span>
-      </div>
+      <span className="truncate">{label}</span>
+      <span className="ml-2 shrink-0 text-sm text-muted-foreground">{count}</span>
     </NavLink>
   );
 }
@@ -219,6 +213,7 @@ function TagNavItem({
   onDelete: () => void;
 }) {
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [itemHovered, setItemHovered] = useState(false);
 
   const {
     setNodeRef,
@@ -253,6 +248,8 @@ function TagNavItem({
         style={style}
         {...attributes}
         {...listeners}
+        onPointerEnter={() => setItemHovered(true)}
+        onPointerLeave={() => setItemHovered(false)}
         className={cn(
           "group relative rounded-1",
           isDragging && "opacity-30",
@@ -268,25 +265,16 @@ function TagNavItem({
           }}
           className={({ isActive }) =>
             cn(
-              "flex items-center gap-2 border-b border-sidebar-border px-3 py-1.5 text-base",
+              "flex items-center gap-2 rounded-1 px-3 py-1.5 text-base ",
               isActive
                 ? "bg-sidebar-accent text-sidebar-accent-foreground"
                 : "text-muted-foreground hover:bg-accent",
             )
           }
         >
-          <span className="min-w-0 flex-1 truncate">{label}</span>
-          <div className="flex h-6 min-w-0 flex-1 flex-wrap items-end gap-0.5 overflow-hidden">
-            {cards.map((card, i) => (
-              <img
-                key={i}
-                src={card.url}
-                className="size-6 shrink-0 rounded-[2px] object-cover"
-                loading="lazy"
-              />
-            ))}
-          </div>
-          <div className="relative w-8 shrink-0 text-right">
+          <ChannelIcon cards={cards} hovered={itemHovered} />
+          <span className="flex-1 truncate">{label}</span>
+          <div className="relative ml-2 shrink-0">
             <span className="text-sm text-muted-foreground group-hover:opacity-0">{count}</span>
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100">
               <DropdownMenu>
@@ -391,5 +379,4 @@ function InlineInput({
     />
   );
 }
-
 

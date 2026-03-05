@@ -352,6 +352,15 @@ Rationale: masonry-раскладка с round-robin распределение�
 
 Rationale: Tauri `data-tauri-drag-region` перехватывает события указателя на нативном уровне (до CSS). Radix Dialog порталит контент за пределы `<main>`, что делает невозможным управление z-index относительно drag region. Plain div внутри `<main>` с `isolation: isolate` решает обе проблемы.
 
+### 008: Thumbnail-превью фильтруются на бэкенде
+
+| Approach | Problem |
+|---|---|
+| Фронтенд генерирует URL из slug'а, `<img onError>` скрывает сломанные | Tauri `asset://` не всегда вызывает `onError` для несуществующих файлов. `<img>` показывает знак вопроса (macOS broken image). `display: none` блокирует `onLoad`. |
+| Rust-команда `list_channel_previews` с `Path::exists()` (chosen) | Фронтенд получает только slug'и с реальными файлами. Ноль визуальных артефактов. |
+
+Rationale: бэкенд знает, какие файлы реально есть на диске. Фронтенд не должен гадать — это нарушает разделение ответственности и приводит к визуальным хакам.
+
 ## Dependencies
 
 | Package | Version | Purpose | License |

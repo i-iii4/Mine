@@ -57,8 +57,8 @@ import {
   addTag,
   removeTag,
   deleteBlock,
+  listChannelPreviews,
 } from "@/lib/commands";
-import { cn } from "@/lib/utils";
 import { setInternalDragActive } from "@/lib/drag";
 import { pushRecentTag } from "@/lib/recentTags";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
@@ -68,7 +68,7 @@ import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { Grid } from "@/components/Grid";
 import { Search } from "@/components/Search";
 import { Detail } from "@/components/Detail";
-import { DropZone } from "@/components/DropZone";
+// import { DropZone } from "@/components/DropZone";
 import { ImportDialog } from "@/components/ImportDialog";
 
 // ─── Visual grid navigation ────────────────────────────────────────────────
@@ -171,7 +171,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const [focusedBlockId, setFocusedBlockId] = useState<number | null>(null);
   const [activeDragBlock, setActiveDragBlock] = useState<IndexedBlock | null>(null);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
-  const [sidebarScrolled, setSidebarScrolled] = useState(false);
   const mainRef = useRef<HTMLDivElement>(null);
   const gridColumnCountRef = useRef(1);
 
@@ -269,24 +268,25 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     toggleCollapsed,
   } = useSidebarResize();
 
-  // ── Titlebar border on scroll ─────────────────────────────────────────
-  // Global scroll listener filtered by data attributes — sidebar and grid
-  // tracked independently, each controls its own segment of the border.
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const target = e.target as HTMLElement;
-      if (target.hasAttribute("data-sidebar-scroll")) {
-        setSidebarScrolled(target.scrollTop > 0);
-      }
-    };
-    document.addEventListener("scroll", handler, { capture: true, passive: true });
-    return () => document.removeEventListener("scroll", handler, { capture: true });
-  }, []);
 
   // ── dnd-kit sensors ────────────────────────────────────────────────────
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
+
+  // ── Channel preview cards (sidebar thumbnails) ─────────────────────────
+
+  const [channelPreviews, setChannelPreviews] = useState<Map<string, PreviewCard[]>>(new Map());
+
+  const loadPreviews = useCallback(async () => {
+    if (!vaultPath) return;
+    const raw = await listChannelPreviews(20);
+    const map = new Map<string, PreviewCard[]>();
+    for (const [key, slugs] of Object.entries(raw)) {
+      map.set(key, slugs.map((slug) => ({ url: thumbnailUrl(vaultPath, slug) })));
+    }
+    setChannelPreviews(map);
+  }, [vaultPath]);
 
   const loadData = useCallback(async () => {
     const [b, t, ch] = await Promise.all([listBlocks(), listTags(), listChannels()]);
@@ -295,7 +295,9 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     setChannels(ch);
     // Signal cards to retry failed image loads (e.g. after iCloud files download)
     window.dispatchEvent(new Event("vault-refreshed"));
-  }, []);
+    // Previews loaded after main data to not block initial render
+    loadPreviews();
+  }, [loadPreviews]);
 
   useEffect(() => {
     loadData();
@@ -427,45 +429,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     return () => window.removeEventListener("keydown", handler);
   }, [currentTag, orderedTags, navigate]);
 
-  // ── Channel preview cards (sidebar icons) ──────────────────────────────
-
-  const channelPreviews = useMemo(() => {
-    const map = new Map<string, PreviewCard[]>();
-    // Index blocks by tag once
-    const blocksByTag = new Map<string, IndexedBlock[]>();
-    for (const b of blocks) {
-      for (const t of b.tags) {
-        const arr = blocksByTag.get(t);
-        if (arr) arr.push(b);
-        else blocksByTag.set(t, [b]);
-      }
-    }
-
-    const mdImageRe = /!\[.*?\]\((.+?)\)/;
-
-    for (const tc of orderedTags) {
-      const tagBlocks = blocksByTag.get(tc.tag) ?? [];
-      const cards: PreviewCard[] = [];
-
-      for (const b of tagBlocks) {
-        if (cards.length >= 3) break;
-        // Visual block types have thumbnails
-        if (b.block_type === "image" || b.block_type === "link" || b.block_type === "video") {
-          cards.push({ url: thumbnailUrl(vaultPath, b.slug) });
-        } else {
-          // Text/article/file — check for embedded images in body
-          const match = b.body.match(mdImageRe);
-          if (match?.[1]) {
-            cards.push({ url: match[1] });
-          }
-        }
-      }
-
-      map.set(tc.tag, cards);
-    }
-
-    return map;
-  }, [blocks, orderedTags, vaultPath]);
 
   // ── Channel management ─────────────────────────────────────────────────
 
@@ -590,26 +553,20 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       onDragEnd={handleDndEnd}
       onDragCancel={handleDndCancel}
     >
-    <div className="flex h-screen w-screen bg-background text-foreground">
-      {/* Window drag handle — replaces native title bar in Overlay mode */}
-      <div
+    <div className="flex h-screen w-screen flex-col bg-background text-foreground">
+      {/* Top toolbar */}
+      <header
         data-tauri-drag-region
-        className="fixed inset-x-0 top-0 z-50 flex h-8"
+        className="flex h-8 shrink-0 items-center border-b border-border"
       >
-        {/* Sidebar segment — width synced with resizable sidebar */}
-        {!sidebarCollapsed && (
-          <div
-            data-tauri-drag-region
-            className="relative h-full shrink-0 border-r border-border bg-background"
-            style={{ width: sidebarWidth }}
-          >
-            <div className={cn(
-              "pointer-events-none absolute inset-x-0 bottom-0 border-b transition-[border-color] duration-150",
-              sidebarScrolled ? "border-border" : "border-transparent",
-            )} />
-          </div>
-        )}
-      </div>
+        {/* Traffic light spacer (macOS) */}
+        <div data-tauri-drag-region className="w-20 shrink-0" />
+        {/* Toolbar content area */}
+        <div data-tauri-drag-region className="flex flex-1 items-center px-3" />
+      </header>
+
+      {/* Body: sidebar + main */}
+      <div className="flex min-h-0 flex-1">
       <Sidebar
         width={sidebarWidth}
         collapsed={sidebarCollapsed}
@@ -677,14 +634,15 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         }}
       />
 
-      <DropZone currentTag={currentTag} onBlocksCreated={loadData} />
+      {/* <DropZone currentTag={currentTag} onBlocksCreated={loadData} /> */}
 
       <ImportDialog
         open={importOpen}
         onClose={() => setImportOpen(false)}
         onImportComplete={loadData}
       />
-    </div>
+    </div>{/* end body */}
+    </div>{/* end flex-col */}
 
     <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
       {activeDragBlock && (

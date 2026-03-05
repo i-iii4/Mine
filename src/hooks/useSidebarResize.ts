@@ -3,9 +3,9 @@ import { useState, useCallback, useRef, useEffect } from "react";
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = "arena:sidebar";
-const DEFAULT_WIDTH = 240;
+const DEFAULT_WIDTH = 300;
 const MIN_WIDTH = 220;
-const MAX_WIDTH = 320;
+const MAX_WIDTH = 480;
 const COLLAPSE_THRESHOLD = 100;
 
 // ─── Persistence ────────────────────────────────────────────────────────────

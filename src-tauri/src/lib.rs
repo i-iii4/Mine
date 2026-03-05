@@ -31,6 +31,7 @@ pub fn run() {
             commands::channels::reorder_channels,
             commands::channels::rename_channel,
             commands::channels::delete_channel,
+            commands::channels::list_channel_previews,
             commands::import::list_arena_channels,
             commands::import::import_arena_channels,
         ])

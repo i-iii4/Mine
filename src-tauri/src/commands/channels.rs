@@ -2,11 +2,12 @@
 //
 // Contract: SPEC_INTEGRATION.md#commands/channels
 
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::state::{AppState, CommandError};
-use crate::domain::block::{parse_block, serialize_block, DateTime};
+use crate::domain::block::{parse_block, serialize_block, BlockType, DateTime};
 use crate::domain::channel::Channel;
 use crate::domain::tag::normalize_tag;
 use crate::storage::{files, index};
@@ -219,6 +220,49 @@ pub fn rename_channel(
     let tags = index::get_all_tags(&vs.conn)?;
     let count = tags.iter().find(|t| t.tag == normalized_new).map(|t| t.count).unwrap_or(0);
     Ok(ChannelDto::from_channel(&new_channel, count))
+}
+
+/// Return thumbnail slugs per channel (only blocks with existing thumbnails).
+/// Includes `__all__` key for all blocks regardless of channel.
+/// Max `limit` thumbnails per channel.
+#[tauri::command]
+pub fn list_channel_previews(
+    state: State<'_, AppState>,
+    limit: usize,
+) -> Result<HashMap<String, Vec<String>>, CommandError> {
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+
+    let all_blocks = index::list_blocks(&vs.conn)?;
+    let tags = index::get_all_tags(&vs.conn)?;
+
+    // Collect blocks that have a real thumbnail on disk
+    let has_thumb: Vec<&index::IndexedBlock> = all_blocks.iter().filter(|b| {
+        matches!(b.block_type, BlockType::Image | BlockType::Link | BlockType::Video)
+            && vs.vault.thumb_path(&b.slug).exists()
+    }).collect();
+
+    let mut result = HashMap::new();
+
+    // __all__: first `limit` blocks with thumbnails
+    let all_slugs: Vec<String> = has_thumb.iter()
+        .take(limit)
+        .map(|b| b.slug.clone())
+        .collect();
+    result.insert("__all__".to_string(), all_slugs);
+
+    // Per channel
+    for tc in &tags {
+        let slugs: Vec<String> = has_thumb.iter()
+            .filter(|b| b.tags.contains(&tc.tag))
+            .take(limit)
+            .map(|b| b.slug.clone())
+            .collect();
+        result.insert(tc.tag.clone(), slugs);
+    }
+
+    Ok(result)
 }
 
 /// Delete a channel (blocks are not affected, only the channel metadata).
