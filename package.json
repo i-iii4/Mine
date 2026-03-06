@@ -10,6 +10,7 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "build:extension": "vite build --config vite.extension.config.ts && cp -r extension/dist 'safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/dist'",
+    "pack:extension": "bun run build:extension && rm -f build/local-arena-clipper.zip && mkdir -p build && cd extension && zip -r ../build/local-arena-clipper.zip manifest.json background.js content.js dist/ lib/ icons/ -x '*.DS_Store'",
     "preview": "vite preview",
     "tauri": "tauri"
   },
