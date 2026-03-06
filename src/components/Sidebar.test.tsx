@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { DndContext } from "@dnd-kit/core";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -11,11 +11,13 @@ function tag(name: string, count = 3): TagCount {
 }
 
 const defaultProps = {
+  width: 300,
+  collapsed: false,
+  isResizing: false,
   orderedTags: [tag("alpha", 10), tag("beta", 5)],
+  channelPreviews: new Map(),
   totalBlocks: 17,
   isCardDragging: false,
-  onSearchOpen: vi.fn(),
-  onImportOpen: vi.fn(),
   onDeleteTag: vi.fn(),
   onRenameTag: vi.fn(),
   onCreateChannel: vi.fn(),
@@ -34,41 +36,20 @@ function renderSidebar(props = defaultProps) {
 }
 
 describe("Sidebar", () => {
-  it("renders header", () => {
-    renderSidebar();
-    expect(screen.getByText("Local Arena")).toBeInTheDocument();
-  });
-
   it("renders All link with total block count", () => {
     renderSidebar();
     const allLink = screen.getByRole("link", { name: /All/ });
     expect(allLink).toBeInTheDocument();
-    expect(within(allLink).getByText("17")).toBeInTheDocument();
+    expect(allLink).toHaveTextContent("17");
   });
 
   it("renders tags in provided order", () => {
     renderSidebar();
     const links = screen.getAllByRole("link");
     // "All" link is first, then tags in orderedTags order
+    expect(links[0]).toHaveTextContent("All");
     expect(links[1]).toHaveTextContent("Alpha");
     expect(links[2]).toHaveTextContent("Beta");
-  });
-
-  it("does not render Tags section header", () => {
-    renderSidebar();
-    expect(screen.queryByText("Tags")).not.toBeInTheDocument();
-  });
-
-  it("renders search button with keyboard shortcut", () => {
-    renderSidebar();
-    expect(screen.getByRole("button", { name: /Search/ })).toBeInTheDocument();
-  });
-
-  it("renders import button", () => {
-    renderSidebar();
-    expect(
-      screen.getByRole("button", { name: /Import from Are.na/ }),
-    ).toBeInTheDocument();
   });
 
   it("renders New channel button", () => {
@@ -83,5 +64,18 @@ describe("Sidebar", () => {
     expect(
       screen.getByRole("button", { name: /New channel/ }),
     ).toBeInTheDocument();
+  });
+
+  it("renders tag counts", () => {
+    renderSidebar();
+    // Alpha has count 10, Beta has count 5
+    expect(screen.getByText("10")).toBeInTheDocument();
+    expect(screen.getByText("5")).toBeInTheDocument();
+  });
+
+  it("applies collapsed width via style", () => {
+    const { container } = renderSidebar({ ...defaultProps, width: 0, collapsed: true });
+    const aside = container.querySelector("aside");
+    expect(aside).toHaveStyle({ width: "0px" });
   });
 });

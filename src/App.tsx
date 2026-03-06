@@ -341,11 +341,18 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   }, [selectedBlock]);
 
   const handleDetailNavigate = useCallback(
-    (direction: "prev" | "next") => {
+    (direction: "prev" | "next" | "up" | "down") => {
       if (!selectedBlock) return;
       const idx = activeBlocks.findIndex((b) => b.id === selectedBlock.id);
       if (idx === -1) return;
-      const newIdx = direction === "prev" ? idx - 1 : idx + 1;
+      const cols = gridColumnCountRef.current;
+      let newIdx: number;
+      switch (direction) {
+        case "prev":  newIdx = idx - 1; break;
+        case "next":  newIdx = idx + 1; break;
+        case "up":    newIdx = idx - cols; break;
+        case "down":  newIdx = idx + cols; break;
+      }
       if (newIdx >= 0 && newIdx < activeBlocks.length) {
         setSelectedBlock(activeBlocks[newIdx]!);
       }

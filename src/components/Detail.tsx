@@ -17,7 +17,7 @@ interface DetailProps {
   block: IndexedBlock;
   vaultPath: string;
   onClose: () => void;
-  onNavigate: (direction: "prev" | "next") => void;
+  onNavigate: (direction: "prev" | "next" | "up" | "down") => void;
   onTagsChanged: () => void;
 }
 
@@ -74,6 +74,11 @@ export function Detail({
         e.preventDefault();
         e.stopPropagation();
         onNavigate(e.key === "ArrowLeft" ? "prev" : "next");
+      }
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        e.stopPropagation();
+        onNavigate(e.key === "ArrowUp" ? "up" : "down");
       }
     };
     document.addEventListener("keydown", handler, true);
