@@ -138,15 +138,31 @@ fn send_error(msg: &str) {
 
 // ─── Vault path discovery ───────────────────────────────────────────────────
 
+const DEFAULT_VAULT_DIR: &str = "LocalArena";
+
 /// Read vault path from the main app's config file.
 /// Location: ~/Library/Application Support/com.localarena.app/config.json
+///
+/// Fallback: if config doesn't exist (standalone mode — no desktop app),
+/// uses ~/LocalArena/ and creates the directory if needed.
 fn load_vault_path() -> Option<String> {
     let home = std::env::var("HOME").ok()?;
-    let config_path = PathBuf::from(home)
+
+    // Try config from desktop app first
+    let config_path = PathBuf::from(&home)
         .join("Library/Application Support/com.localarena.app/config.json");
-    let data = std::fs::read_to_string(&config_path).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&data).ok()?;
-    json.get("vault_path")?.as_str().map(|s| s.to_string())
+    if let Ok(data) = std::fs::read_to_string(&config_path) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
+            if let Some(path) = json.get("vault_path").and_then(|v| v.as_str()) {
+                return Some(path.to_string());
+            }
+        }
+    }
+
+    // Fallback: ~/LocalArena/ (standalone mode)
+    let default_path = PathBuf::from(&home).join(DEFAULT_VAULT_DIR);
+    let _ = std::fs::create_dir_all(&default_path);
+    Some(default_path.to_string_lossy().to_string())
 }
 
 // ─── Action handlers ────────────────────────────────────────────────────────
@@ -516,13 +532,16 @@ fn main() {
 
             "list_channels" | "save_block" | "create_channel" => {
                 let Some(ref vp) = vault_path else {
-                    send_error("Vault not configured. Open Local Arena to select a vault.");
+                    send_error("Vault not configured and HOME is not set.");
                     continue;
                 };
                 let path = PathBuf::from(vp);
+                // Ensure vault directory exists (standalone mode may have just created it)
                 if !path.is_dir() {
-                    send_error(&format!("Vault directory does not exist: {vp}"));
-                    continue;
+                    if std::fs::create_dir_all(&path).is_err() {
+                        send_error(&format!("Cannot create vault directory: {vp}"));
+                        continue;
+                    }
                 }
                 let vault = VaultLayout::new(path);
 
