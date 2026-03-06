@@ -56,8 +56,8 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 | Шрифт | Переменная | Утилита | Где |
 |---|---|---|---|
-| Geist | `--font-sans` | по умолчанию | Весь интерфейс: сайдбар, карточки, кнопки, меню, диалоги |
-| Geist Mono | `--font-mono` | `font-mono` | Только панель метаданных в Detail (filename, date, type, tags) |
+| Geist | `--font-sans` | по умолчанию | Карточки, кнопки, меню, диалоги |
+| Geist Mono | `--font-mono` | `font-mono` | Сайдбар (навигация каналов), панель метаданных в Detail |
 
 ## Цветовой принцип
 
@@ -143,7 +143,7 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 | Фон | #F0F0F0 | #1E1E1E |
 | Текст | #333333 | #FFFFFF |
 
-Утилиты: `bg-sidebar-accent text-sidebar-accent-foreground font-semibold`.
+Утилиты: `bg-sidebar-accent text-sidebar-accent-foreground`. Без изменения веса шрифта — фонового выделения достаточно.
 
 ### Токены интерактивных состояний
 
@@ -157,6 +157,171 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 | `--sidebar-accent` | #F0F0F0 | #1E1E1E | Выделенный пункт фон |
 | `--sidebar-accent-fg` | #333333 | #FFFFFF | Выделенный пункт текст |
 
+## Компоненты (shadcn/ui + CVA)
+
+Все компоненты — обёртки над Radix UI примитивами, стилизованные через CVA (Class Variance Authority). Радиусы, цвета, размеры — из токенов выше.
+
+### Button
+
+Варианты (`variant`):
+
+| Вариант | Фон | Текст | Ховер |
+|---|---|---|---|
+| `default` | `bg-foreground` | `text-background` | `bg-primary-hover` |
+| `destructive` | `bg-destructive` | `text-white` | `bg-destructive/80` |
+| `outline` | `border border-foreground bg-transparent` | `text-foreground` | `bg-accent` |
+| `ghost` | прозрачный | наследует | `hover:text-hover-foreground` |
+| `link` | прозрачный | `text-foreground underline` | `hover:text-hover-foreground` |
+
+Размеры (`size`):
+
+| Размер | Высота | Паддинги |
+|---|---|---|
+| `default` | `h-9` | `px-4 py-2` |
+| `xs` | `h-6` | `px-2`, `text-sm` |
+| `sm` | `h-8` | `px-3` |
+| `lg` | `h-10` | `px-6` |
+| `icon` | `size-9` | — |
+| `icon-xs` | `size-6` | — |
+| `icon-sm` | `size-8` | — |
+| `icon-lg` | `size-10` | — |
+
+Все кнопки: `rounded-1`, `text-base`, `font-semibold`, `cursor-pointer`.
+
+### Input
+
+Один вариант: `h-9 rounded-1 border border-input bg-transparent px-3 text-base`. Фокус — `ring-ring`. Плейсхолдер — `text-muted-foreground`.
+
+### Badge
+
+| Вариант | Стиль |
+|---|---|
+| `default` | `bg-primary text-primary-foreground` |
+| `secondary` | `bg-secondary text-secondary-foreground` |
+| `destructive` | `bg-destructive text-white` |
+| `outline` | `border text-foreground` |
+| `ghost` | `hover:bg-accent hover:text-accent-foreground` |
+| `link` | `text-primary underline-offset-4 hover:underline` |
+
+Все бейджи: `rounded-2 px-2.5 py-0.5 text-sm font-semibold`.
+
+### AlertDialog
+
+Структура: `AlertDialogContent > Header(Title + Description) > Footer(Cancel + Action)`.
+
+| Размер content | Ширина |
+|---|---|
+| `default` | `max-w-lg` |
+| `sm` | `max-w-sm` |
+
+Оверлей: `bg-black/80`. Action с `variant="destructive"` — красная кнопка.
+
+### DropdownMenu
+
+`DropdownMenuTrigger > DropdownMenuContent > DropdownMenuItem`.
+
+Content: `rounded-1 border bg-popover p-1 text-popover-foreground shadow-md`.
+Item: `rounded-1 px-2 py-1.5 text-base cursor-default`.
+Item `variant="destructive"`: красный текст, красный ховер-фон.
+
+### Tooltip
+
+`TooltipTrigger > TooltipContent`.
+
+Content: `rounded-1 bg-primary text-primary-foreground px-3 py-1.5 text-sm`. Анимация: fade + zoom при появлении/скрытии.
+
+### Dialog (Detail)
+
+Полноэкранный оверлей: `fixed inset-0 bg-glass backdrop-blur-sm`. Контент по центру: `max-w-3xl`. Закрытие: ESC или клик по оверлею.
+
+### Select
+
+Trigger: `h-9 rounded-1 border border-input bg-transparent px-3`. Content: `rounded-1 border bg-popover shadow-md`. Item: стиль как DropdownMenuItem.
+
+### Textarea
+
+`rounded-1 border border-input bg-transparent px-3 py-2 text-base`. Фокус и плейсхолдер — как Input.
+
+### Separator
+
+`bg-border`. Горизонтальный: `h-px w-full`. Вертикальный: `h-full w-px`.
+
+### ScrollArea
+
+Кастомный скроллбар: `w-2.5 rounded-full bg-border`. Скроллбары WebKit скрыты глобально.
+
+### Command (Cmd+K)
+
+Палитра команд. `CommandDialog > CommandInput > CommandList > CommandGroup > CommandItem`.
+
+Input: иконка поиска + `text-base`, без бордера. List: `max-h-[300px] overflow-auto`. Item: `rounded-1 px-2 py-1.5`, выделенный — `bg-accent text-accent-foreground`. Separator: `bg-border`. Shortcut (подсказка клавиши): `text-sm text-muted-foreground ml-auto`.
+
+### ContextMenu
+
+`ContextMenuTrigger > ContextMenuContent > ContextMenuItem`.
+
+Content: `rounded-1 border bg-popover p-1 shadow-md`. Item: `rounded-1 px-2 py-1.5 text-base`. Item `variant="destructive"`: красный текст, красный ховер-фон. Поддерживает: CheckboxItem, RadioItem, Sub (подменю), Label, Separator, Shortcut.
+
+### Checkbox
+
+Radix-обёртка: `size-4 rounded-[4px] border border-primary`. Checked: `bg-primary text-primary-foreground` с иконкой галочки. Фокус: `ring-ring`.
+
+### Progress
+
+`h-2 rounded-pill bg-primary/20`. Индикатор: `h-full bg-primary rounded-pill`.
+
+## Состояния Drag-and-Drop
+
+| Состояние | Стиль | Утилита |
+|---|---|---|
+| Перетаскивание | Полупрозрачный элемент | `opacity-30` |
+| Цель (drop target) | Подсветка рамкой | `ring-2 ring-ring ring-inset` |
+
+## Disabled
+
+Все отключённые элементы: `opacity-50 cursor-not-allowed pointer-events-none`.
+
+## Макет
+
+### Тулбар
+
+`<header>`: `h-8 border-b border-border`, `data-tauri-drag-region` для перетаскивания окна. Высота строго 32px.
+
+### Сайдбар
+
+Табличный вид. Три колонки в каждой строке:
+
+| Колонка | Содержимое | Ширина |
+|---|---|---|
+| Левая | Название канала | `flex-1 min-w-0 truncate` |
+| Центральная | Превью-карточки | `flex-1 min-w-0`, `h-6 flex-wrap overflow-hidden` |
+| Правая | Счётчик | `w-8 text-right` |
+
+Шрифт: `font-mono text-base`. Строки разделены `border-b border-sidebar-border`. Паддинги навигации: `px-8 pt-16` (32px по бокам, 64px сверху).
+
+Ширина по умолчанию: 300px. Диапазон ресайза: 220–480px. Порог сворачивания: 100px.
+
+Превью-карточки: `size-6 rounded-[2px] object-cover`. Показываются только те, для которых бэкенд подтвердил наличие файла thumbnail.
+
+### Сетка
+
+Masonry с round-robin распределением по колонкам. Gap: 32px (`--spacing-s5`). Минимальная ширина колонки: 240px. Ленивая подгрузка через IntersectionObserver.
+
+Паддинги сетки: 32px по бокам (при развёрнутом сайдбаре), 72px (при свёрнутом — компенсация ширины).
+
+Карточки: `border border-border hover:border-foreground`, без скругления (`rounded-0`).
+
+## Архитектурные принципы
+
+- **Монохром** — палитра строго чёрно-белая с оттенками серого. Цвет только для семантики: `destructive` (красный), `chart-*` (графики)
+- **Тёмная тема по умолчанию** — светлая через `@media (prefers-color-scheme: light)`. Абсолютный чёрный (#000000) как фон
+- **Без теней и градиентов** — единственное исключение: hover-оверлей на карточках изображений (`bg-gradient-to-t from-black/60`)
+- **1px solid borders** — основной визуальный разделитель. Без двойных линий, пунктиров, инсетов
+- **Нативное ощущение** — `-webkit-user-select: none` на кнопках и навигации, `overscroll-behavior: none`, скрытые скроллбары WebKit
+- **Variable-шрифты** — один файл WOFF2 на все насыщенности (100–900), `font-display: swap`
+
 ## Рендеринг
 
-- **Antialiased** — `body` задаёт `-webkit-font-smoothing: antialiased` для соответствия нативному рендерингу macOS
+- **Antialiased** — `body` задаёт `-webkit-font-smoothing: antialiased` и `-moz-osx-font-smoothing: grayscale` для соответствия нативному рендерингу macOS
+- **Скрытые скроллбары** — `.overflow-y-auto::-webkit-scrollbar { display: none }` глобально
+- **Мгновенная навигация** — без `scroll-behavior: smooth`, переходы между каналами происходят мгновенно

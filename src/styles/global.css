@@ -31,20 +31,18 @@ nav {
 /* Sidebar resize: force col-resize cursor and disable selection globally */
 body.sidebar-resizing {
   cursor: col-resize !important;
+  -webkit-user-select: none;
   user-select: none;
 }
 body.sidebar-resizing * {
   cursor: col-resize !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
 }
 
 /* Hide scrollbars in WebKit (Tauri/Safari) */
 .overflow-y-auto::-webkit-scrollbar {
   display: none;
-}
-
-/* Smooth scrolling */
-html {
-  scroll-behavior: smooth;
 }
 
 /* Prevent overscroll bounce on the body (native app feel) */

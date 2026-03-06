@@ -173,7 +173,7 @@ function NavItem({
       end={end}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-2 border-b border-sidebar-border px-3 py-1.5 text-base",
+          "flex items-center gap-2 border-b border-sidebar-border px-3 py-1.5 font-mono text-base",
           isActive
             ? "bg-sidebar-accent text-sidebar-accent-foreground"
             : "text-muted-foreground hover:bg-accent",
@@ -268,7 +268,7 @@ function TagNavItem({
           }}
           className={({ isActive }) =>
             cn(
-              "flex items-center gap-2 border-b border-sidebar-border px-3 py-1.5 text-base",
+              "flex items-center gap-2 border-b border-sidebar-border px-3 py-1.5 font-mono text-base",
               isActive
                 ? "bg-sidebar-accent text-sidebar-accent-foreground"
                 : "text-muted-foreground hover:bg-accent",
