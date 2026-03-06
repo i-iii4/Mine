@@ -5,7 +5,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 const STORAGE_KEY = "arena:sidebar";
 const DEFAULT_WIDTH = 300;
 const MIN_WIDTH = 220;
-const MAX_WIDTH = 480;
+const MAX_WIDTH = 600;
 const COLLAPSE_THRESHOLD = 100;
 
 // ─── Persistence ────────────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ export function useSidebarResize(): UseSidebarResizeReturn {
     const { startX, startWidth } = startRef.current;
     const raw = startWidth + (clientX - startX);
     // Allow width to go to 0 during drag — collapse decision is deferred to endResize
-    setDragWidth(Math.max(0, raw));
+    setDragWidth(clamp(raw, 0, MAX_WIDTH));
   }, []);
 
   const endResize = useCallback(() => {

@@ -260,7 +260,7 @@ Input: иконка поиска + `text-base`, без бордера. List: `ma
 
 `ContextMenuTrigger > ContextMenuContent > ContextMenuItem`.
 
-Content: `rounded-1 border bg-popover p-1 shadow-md`. Item: `rounded-1 px-2 py-1.5 text-base`. Item `variant="destructive"`: красный текст, красный ховер-фон. Поддерживает: CheckboxItem, RadioItem, Sub (подменю), Label, Separator, Shortcut.
+Content: `rounded-[8px] border bg-popover p-1`, тень: `0 8px 32px rgba(0,0,0,0.06)` (светлая), `0 8px 32px rgba(255,255,255,0.06)` (тёмная — белое свечение). Item: `rounded-1 px-2 py-1.5 text-base`. Item `variant="destructive"`: красный текст, красный ховер-фон. Поддерживает: CheckboxItem, RadioItem, Sub (подменю), Label, Separator, Shortcut.
 
 ### Checkbox
 
@@ -299,9 +299,11 @@ Radix-обёртка: `size-4 rounded-[4px] border border-primary`. Checked: `bg
 
 Шрифт: `font-mono text-base`. Строки разделены `border-b border-sidebar-border`. Паддинги навигации: `px-8 pt-16` (32px по бокам, 64px сверху).
 
-Ширина по умолчанию: 300px. Диапазон ресайза: 220–480px. Порог сворачивания: 100px.
+Ширина по умолчанию: 300px. Диапазон ресайза: 220–600px. Порог сворачивания: 100px.
 
-Превью-карточки: `size-6 rounded-[2px] object-cover`. Показываются только те, для которых бэкенд подтвердил наличие файла thumbnail.
+Ширина текста (название канала): 100–150px, `truncate`. Карточки занимают оставшееся пространство. Счётчик: 0 не отображается (пустое место).
+
+Превью-карточки: `size-6 rounded-none object-cover`, `gap-1` (4px). Одна строка без переноса, лишние карточки уходят в градиентную маску (`mask-image: linear-gradient(to right, black 70%, transparent 100%)`).
 
 ### Сетка
 

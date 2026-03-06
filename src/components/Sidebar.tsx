@@ -180,14 +180,14 @@ function NavItem({
         )
       }
     >
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      <div className="flex h-6 min-w-0 flex-1 flex-wrap items-end gap-0.5 overflow-hidden">
+      <span className="min-w-[100px] max-w-[150px] flex-1 truncate">{label}</span>
+      <div className="flex h-6 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
         {cards.map((card, i) => (
-          <img key={i} src={card.url} className="size-6 shrink-0 rounded-[2px] object-cover" />
+          <img key={i} src={card.url} className="size-6 shrink-0 rounded-none object-cover" />
         ))}
       </div>
       <div className="w-8 shrink-0 text-right">
-        <span className="text-sm text-muted-foreground">{count}</span>
+        <span className="text-sm text-muted-foreground">{count || ""}</span>
       </div>
     </NavLink>
   );
@@ -275,19 +275,19 @@ function TagNavItem({
             )
           }
         >
-          <span className="min-w-0 flex-1 truncate">{label}</span>
-          <div className="flex h-6 min-w-0 flex-1 flex-wrap items-end gap-0.5 overflow-hidden">
+          <span className="min-w-[100px] max-w-[150px] flex-1 truncate">{label}</span>
+          <div className="flex h-6 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
             {cards.map((card, i) => (
               <img
                 key={i}
                 src={card.url}
-                className="size-6 shrink-0 rounded-[2px] object-cover"
+                className="size-6 shrink-0 rounded-none object-cover"
                 loading="lazy"
               />
             ))}
           </div>
           <div className="relative w-8 shrink-0 text-right">
-            <span className="text-sm text-muted-foreground group-hover:opacity-0">{count}</span>
+            <span className="text-sm text-muted-foreground group-hover:opacity-0">{count || ""}</span>
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100">
               <DropdownMenu>
                 <Tooltip>
