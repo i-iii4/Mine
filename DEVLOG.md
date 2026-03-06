@@ -60,7 +60,7 @@ if any
 - `bunx tsc --noEmit` — чисто
 
 ### Push
-`COMMIT_HASH` — Design system audit, cleanup button variants, style extension popup
+`7bb96fb` — Design system audit, cleanup button variants, style extension popup
 
 ### Decisions and lessons learned
 - Аудит в обе стороны (код→документ и документ→код) необходим после каждого цикла итеративных изменений
