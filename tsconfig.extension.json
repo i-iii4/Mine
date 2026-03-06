@@ -17,11 +17,11 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "forceConsistentCasingInFileNames": true,
-    "baseUrl": ".",
+    "baseUrl": "..",
     "paths": {
       "@/*": ["src/*"]
     }
   },
-  "include": ["src", "extension/popup"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test"]
+  "include": [".", "../src/components/ui", "../src/lib/utils.ts", "../src/styles"],
+  "exclude": ["dist"]
 }

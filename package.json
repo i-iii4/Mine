@@ -9,6 +9,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
+    "build:extension": "vite build --config vite.extension.config.ts && cp -r extension/dist 'safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/dist'",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -38,6 +39,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/chrome": "^0.1.37",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.4",

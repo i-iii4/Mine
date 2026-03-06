@@ -325,3 +325,36 @@ Masonry с round-robin распределением по колонкам. Gap: 
 - **Antialiased** — `body` задаёт `-webkit-font-smoothing: antialiased` и `-moz-osx-font-smoothing: grayscale` для соответствия нативному рендерингу macOS
 - **Скрытые скроллбары** — `.overflow-y-auto::-webkit-scrollbar { display: none }` глобально
 - **Мгновенная навигация** — без `scroll-behavior: smooth`, переходы между каналами происходят мгновенно
+
+## Расширение (браузерный попап)
+
+Попап расширения — проекция основного приложения в браузер. Собирается через Vite (`vite.extension.config.ts`), импортирует те же компоненты и токены через алиас `@/`.
+
+### Что общее
+
+- **CSS-токены** — `@import "@/styles/global.css"` в `popup-layout.css`
+- **Шрифты** — Geist и Geist Mono (WOFF2 копируются в `dist/fonts/`)
+- **Компоненты** — `<Button>`, `<Input>`, `<ScrollArea>` из `@/components/ui/*`
+- **Утилиты** — `cn()` из `@/lib/utils`
+- **Цвета** — все семантические токены (`--foreground`, `--muted-foreground`, `--border`, `--accent`)
+- **Скругления, отступы, типографика** — из общей шкалы
+
+### Что отличается
+
+| Аспект | Основное приложение | Расширение |
+|---|---|---|
+| Размер окна | Полноэкранное | 360x600px (popup) |
+| Layout | Sidebar + Grid + Detail | Компактная форма (preview + channels + save) |
+| Навигация | react-router, стрелки, Cmd+K | Нет — одно состояние |
+| IPC | Tauri commands | Native messaging (`chrome.runtime.sendNativeMessage`) |
+| CSS entry | `global.css` | `popup-layout.css` (импортирует `global.css` + добавляет popup-размеры) |
+
+### Popup-специфичные стили
+
+```css
+/* popup-layout.css */
+@import "@/styles/global.css";
+body { width: 360px; min-height: 200px; max-height: 600px; overflow-y: auto; }
+```
+
+Никаких собственных токенов, цветов, шрифтов или компонентов. Дрейф дизайна невозможен — единственный источник правды в `global.css`.

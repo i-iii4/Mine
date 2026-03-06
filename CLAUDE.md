@@ -108,13 +108,19 @@ local-arena/
 ├── extension/                  # Chrome/Safari веб-клиппер
 │   ├── background.js           # Service worker: контекстное меню, native messaging
 │   ├── content.js              # Content script: извлечение метаданных, Readability.js
-│   ├── popup/                  # Popup UI: превью, выбор каналов, сохранение
-│   │   ├── popup.html
-│   │   ├── popup.css
-│   │   └── popup.js
+│   ├── popup/                  # React popup (исходники, собирается Vite)
+│   │   ├── index.html          # HTML entry point
+│   │   ├── main.tsx            # React entry
+│   │   ├── popup-layout.css    # Импорт global.css + popup-размеры
+│   │   ├── PopupApp.tsx        # Корневой компонент
+│   │   ├── components/         # PreviewCard, TypeSwitcher, ChannelList, SaveButton, StatusBar
+│   │   ├── hooks/              # useClipperState.ts
+│   │   └── lib/                # messaging.ts (типизированный native messaging)
+│   ├── dist/                   # Собранный попап (output Vite)
 │   ├── lib/                    # Вендорные библиотеки (Readability, TurndownService)
 │   ├── icons/                  # Иконки расширения
 │   └── manifest.json           # Manifest V3
+├── vite.extension.config.ts    # Vite-конфигурация для сборки расширения
 ├── public/                     # Статические ассеты
 ├── index.html
 ├── components.json             # Конфигурация shadcn/ui

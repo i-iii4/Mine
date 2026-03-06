@@ -164,25 +164,35 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 
 ## Popup UI
 
+### Сборка
+
+Popup собирается через Vite (`vite.extension.config.ts`) как React-приложение, использующее те же компоненты и CSS-токены, что и основное Tauri-приложение. Один источник правды — дрейф дизайна невозможен.
+
+```bash
+bun run build:extension   # Собирает popup → extension/dist/ + копирует в Safari Resources
+```
+
+Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` + бандл.
+
+Алиас `@/` указывает на `src/` основного приложения — все компоненты `@/components/ui/*`, утилиты `@/lib/utils`, токены `@/styles/global.css` импортируются напрямую. Tauri-модули исключены через `optimizeDeps.exclude`.
+
+Шрифты (Geist, Geist Mono) копируются в `extension/dist/fonts/` через механизм Vite `publicDir`.
+
 ### Layout
 
 ```
 ┌──────────────────────────────────────┐
-│ ┌──────┐ ┌───────┐ ┌─────┐ ┌─────┐  │
-│ │Ссылка│ │Статья │ │Видео│ │Файл │  │ ← сегментированный контрол
-│ └──────┘ └───────┘ └─────┘ └─────┘  │
+│ ┌────────┐ ┌────────┐               │
+│ │Content │ │  Link  │               │ ← TypeSwitcher (Content / Link)
+│ └────────┘ └────────┘               │
 ├──────────────────────────────────────┤
 │                                      │
 │  ┌────────────────────────────────┐  │
 │  │ Preview area                   │  │
-│  │ (thumbnail / text excerpt)     │  │
+│  │ (thumbnail + title input)      │  │
 │  └────────────────────────────────┘  │
 │                                      │
-│  Title: [_________________________]  │
-│                                      │
-│  Description: [___________________]  │
-│                                      │
-│  Channels: [search / select tags__]  │
+│  Channels: [search________________]  │
 │    ┌─────────────────────────────┐   │
 │    │ ☐ design                    │   │
 │    │ ☐ inspiration               │   │
@@ -190,35 +200,41 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 │    │ + Create "new-tag"          │   │
 │    └─────────────────────────────┘   │
 │                                      │
-│  [Cancel]              [Save ⌘⏎]    │
+│  [Save to Local Arena        ⌘⏎]    │
 │                                      │
-│  ─ Status: Ready / Saving... / ✓ ─  │
+│  ─ Status: Saving... / ✓ / Error ─  │
 └──────────────────────────────────────┘
 ```
 
-### Popup Components
+### Popup Components (React)
 
-| Component | Description |
-|---|---|
-| TypeSwitcher | Сегментированный контрол: Link / Article / Video / File. Предвыбран эвристикой |
-| Preview | Адаптивный блок: для link/video — og:image, для article — первые строки текста, для image — само изображение |
-| TitleField | Автозаполнение из метаданных, редактируемое |
-| DescriptionField | Автозаполнение из og:description, редактируемое. Скрыто для image |
-| ChannelPicker | Поиск по существующим каналам (тегам) из vault. Множественный выбор. Возможность создать новый канал прямо в поле |
-| SaveButton | Cmd+Enter. Отправляет данные в native host |
-| StatusBar | Состояние: Ready → Saving... → Saved / Error message |
+Все компоненты используют shadcn/ui примитивы и семантические токены из `global.css`.
+
+| Component | File | shadcn/ui | Description |
+|---|---|---|---|
+| PopupApp | `PopupApp.tsx` | — | Корневой компонент, состояния (loading → error → main), Cmd+Enter / Esc |
+| PreviewCard | `components/PreviewCard.tsx` | `<Input>` | Thumbnail + редактируемый title + домен |
+| TypeSwitcher | `components/TypeSwitcher.tsx` | `<Button variant="ghost" size="xs">` | Content / Link / Image / Video |
+| ChannelList | `components/ChannelList.tsx` | `<Input>`, `<ScrollArea>` | Поиск + список каналов с чекбоксами, создание нового |
+| SaveButton | `components/SaveButton.tsx` | `<Button variant="default">` | Полная ширина, `<kbd>` подсказка |
+| StatusBar | `components/StatusBar.tsx` | — | Статус: success (зелёный) / error (красный) |
+
+### Хуки и адаптеры
+
+| Module | File | Description |
+|---|---|---|
+| useClipperState | `hooks/useClipperState.ts` | Вся бизнес-логика попапа: init, метаданные, каналы, save, недавние каналы |
+| messaging | `lib/messaging.ts` | Типизированный адаптер native messaging с таймаутами на все промисы |
 
 ### Popup States
 
 | State | UI |
 |---|---|
-| Loading | Spinner, пока content script извлекает метаданные |
-| Ready | Все поля заполнены, кнопка Save активна |
-| Saving | Spinner на кнопке Save, поля заблокированы |
-| Saved | Зелёная галочка, автозакрытие через 1.5с |
-| Error | Красное сообщение, кнопка Save снова активна |
-| No Vault | Сообщение «Vault not configured. Open Local Arena to select a vault» |
-| No Host | Сообщение «Native host not installed. Reinstall Local Arena» |
+| Loading | Спиннер-анимация (CSS-паттерн основного приложения) |
+| Error | Иконка + красное сообщение |
+| Main | Все поля заполнены, кнопка Save активна |
+| Saving | Disabled кнопка Save |
+| Saved | Зелёная строка статуса, автозакрытие через 1.5с |
 
 ## Context Menu
 
@@ -472,12 +488,29 @@ extension/
 ├── manifest.json           # Manifest V3
 ├── background.js           # Service worker: context menus, native messaging
 ├── content.js              # Content script: metadata extraction, Readability
-├── popup/
-│   ├── popup.html
-│   ├── popup.js            # React или vanilla JS
-│   └── popup.css
+├── popup/                  # React popup (исходники, собирается Vite)
+│   ├── index.html          # HTML entry point для Vite
+│   ├── main.tsx            # React entry point
+│   ├── popup-layout.css    # @import global.css + popup-размеры (360x600)
+│   ├── PopupApp.tsx        # Корневой компонент (loading/error/main)
+│   ├── components/
+│   │   ├── PreviewCard.tsx  # Thumbnail + title input
+│   │   ├── TypeSwitcher.tsx # Content / Link переключатель
+│   │   ├── ChannelList.tsx  # Поиск + список каналов
+│   │   ├── SaveButton.tsx   # Кнопка сохранения
+│   │   └── StatusBar.tsx    # Статус (success/error)
+│   ├── hooks/
+│   │   └── useClipperState.ts  # Вся бизнес-логика попапа
+│   └── lib/
+│       └── messaging.ts    # Типизированный адаптер native messaging
+├── dist/                   # Собранный попап (output Vite)
+│   ├── index.html
+│   ├── assets/             # JS + CSS бандлы
+│   └── fonts/              # Geist, Geist Mono (WOFF2)
 ├── lib/
-│   └── readability.js      # Bundled Readability.js
+│   ├── readability.js      # Bundled Readability.js
+│   ├── readerable.js       # isProbablyReaderable
+│   └── turndown.browser.umd.js  # HTML → Markdown
 └── icons/
     ├── icon-16.png
     ├── icon-32.png
@@ -499,10 +532,11 @@ src-tauri/src/bin/
   "permissions": [
     "contextMenus",
     "activeTab",
-    "nativeMessaging"
+    "nativeMessaging",
+    "storage"
   ],
   "action": {
-    "default_popup": "popup/popup.html",
+    "default_popup": "dist/index.html",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
@@ -516,7 +550,7 @@ src-tauri/src/bin/
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["lib/readerable.js", "lib/readability.js", "lib/turndown.browser.umd.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

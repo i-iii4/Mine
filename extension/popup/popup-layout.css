@@ -1,0 +1,18 @@
+/* Popup-specific layout — only dimensions and scroll.
+   All tokens, fonts, and base styles come from @/styles/global.css
+   imported via Tailwind in the React components. */
+@import "@/styles/global.css";
+
+body {
+  width: 360px;
+  min-height: 200px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+@media (min-width: 361px) {
+  body {
+    width: 100%;
+    max-height: none;
+  }
+}
