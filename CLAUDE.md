@@ -27,7 +27,7 @@
 | Rust | Бэкенд: файловые операции, индексирование, thumbnails |
 | rusqlite | SQLite + FTS5 — поисковый индекс и связи между блоками |
 | notify | File watcher — отслеживание изменений в vault |
-| image | Генерация thumbnails |
+| image + ab_glyph + imageproc | Генерация thumbnails (изображения — resize, статьи — text-to-image) |
 | ureq | Синхронный HTTP-клиент (импорт Are.na) |
 | React 19 | UI-фреймворк |
 | Vite | Сборка фронтенда, HMR |

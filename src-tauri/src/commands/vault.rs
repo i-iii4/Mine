@@ -6,7 +6,7 @@
 // Contract: SPEC_INTEGRATION.md#commands/vault
 
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::state::{AppState, CommandError, VaultState};
 use crate::domain::vault::VaultLayout;
@@ -72,6 +72,7 @@ pub fn get_vault_path(
 /// Use when the index is corrupted or out of sync with the filesystem.
 #[tauri::command]
 pub fn rebuild_index(
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ScanResult, CommandError> {
     let vault_state = state.vault_state.lock()
@@ -89,7 +90,7 @@ pub fn rebuild_index(
         .map_err(|e| CommandError::Internal(format!("failed to clear index: {e}")))?;
 
     // Re-scan vault files
-    let result = handler::full_scan(&vs.conn, &vs.vault)?;
+    let result = handler::full_scan(&vs.conn, &vs.vault, Some(thumbs_done_cb(app)))?;
 
     log::info!(
         "index rebuilt: {} indexed, {} errors",
@@ -122,8 +123,8 @@ fn initialize_vault(
     // Open or create database
     let conn = db::open_or_create(&vault.index_db_path())?;
 
-    // Full scan
-    let result = handler::full_scan(&conn, &vault)?;
+    // Full scan (thumbnails generated in background thread)
+    let result = handler::full_scan(&conn, &vault, Some(thumbs_done_cb(app.clone())))?;
 
     // Start file watcher
     let db_path = vault.index_db_path();
@@ -144,6 +145,14 @@ fn initialize_vault(
     *vault_state = Some(VaultState { conn, vault });
 
     Ok(result)
+}
+
+/// Create a callback that emits "vault-changed" when background thumbnails finish.
+fn thumbs_done_cb(app: AppHandle) -> Box<dyn FnOnce() + Send> {
+    Box::new(move || {
+        log::info!("background thumbnails done, notifying frontend");
+        let _ = app.emit("vault-changed", ());
+    })
 }
 
 // ─── Config persistence ─────────────────────────────────────────────────────

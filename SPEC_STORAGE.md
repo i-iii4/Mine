@@ -166,18 +166,40 @@ delete_block_files(vault: &VaultLayout, slug: &str, media_ext: Option<&str>) -> 
 
 ## storage/thumbnails
 
-Генерация превью изображений.
+Генерация превью: resize для изображений, text-to-image для статей.
 
 ### Функции
 
 ```rust
 generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<(u32, u32)>
+generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> Result<(u32, u32)>
+is_thumb_fresh(thumb_path: &Path, source_path: &Path) -> bool
 ```
 
-### Поведение
+### Поведение — generate_thumbnail (изображения)
 
 - Читает исходное изображение (JPEG, PNG, WebP, GIF)
-- Ресайз с сохранением пропорций: макс. сторона = `max_size` (по умолчанию 240px)
-- Сохраняет как JPEG (quality 80)
+- Ресайз с сохранением пропорций: макс. сторона = `max_size` (по умолчанию 480px, 2x Retina)
+- Сохраняет как JPEG (quality 85)
 - Возвращает (width, height) результата
 - Если изображение меньше max_size — сохраняет как есть (без увеличения)
+
+### Поведение — generate_text_thumbnail (статьи)
+
+- Создаёт JPEG 480x480 с фоном #F8F8F8
+- Рисует заголовок (шрифт 1.3x, цвет #333) и тело статьи (шрифт 24px, цвет #505050)
+- Очищает markdown: заголовки, жирный/курсив, ссылки `[text](url)` → text
+- Word-wrap по ширине с учётом метрик шрифта
+- Шрифт: Noto Sans Regular (28 KB, OFL), встроен через `include_bytes!`, парсится один раз через `LazyLock<FontArc>`
+
+### Поведение — is_thumb_fresh (проверка свежести)
+
+- Сравнивает mtime миниатюры и исходного файла
+- Возвращает `true` если миниатюра существует и не старше источника
+- Используется в `full_scan` и `index_md_file` для пропуска избыточной генерации
+
+### Оптимизации
+
+- **O1 — пропуск свежих**: `is_thumb_fresh()` перед каждой генерацией
+- **O2 — LazyLock**: шрифт парсится один раз за время жизни процесса
+- **O3 — фоновая генерация**: `full_scan()` индексирует синхронно, миниатюры генерирует в потоке `thumb-gen`, по завершении вызывает `on_thumbs_done` callback

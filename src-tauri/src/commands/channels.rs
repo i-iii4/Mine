@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::state::{AppState, CommandError};
-use crate::domain::block::{parse_block, serialize_block, BlockType, DateTime};
+use crate::domain::block::{parse_block, serialize_block, DateTime};
 use crate::domain::channel::Channel;
 use crate::domain::tag::normalize_tag;
 use crate::storage::{files, index};
@@ -237,10 +237,9 @@ pub fn list_channel_previews(
     let all_blocks = index::list_blocks(&vs.conn)?;
     let tags = index::get_all_tags(&vs.conn)?;
 
-    // Collect blocks that have a real thumbnail on disk
+    // Collect blocks that have a thumbnail on disk (any type, including articles)
     let has_thumb: Vec<&index::IndexedBlock> = all_blocks.iter().filter(|b| {
-        matches!(b.block_type, BlockType::Image | BlockType::Link | BlockType::Video)
-            && vs.vault.thumb_path(&b.slug).exists()
+        vs.vault.thumb_path(&b.slug).exists()
     }).collect();
 
     let mut result = HashMap::new();

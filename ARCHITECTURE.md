@@ -172,7 +172,7 @@ saved_at: 2026-02-26T14:30:00Z
 | Indexer | Сканирование vault, парсинг frontmatter, file watcher | Rust, notify crate |
 | Frontmatter Parser | Извлечение атрибутов из `.md` файлов | Rust (yaml parsing) |
 | DB | Поисковый индекс, кэш тегов, список каналов | rusqlite + FTS5 |
-| Thumbnail Generator | Превью изображений 240px | Rust, image crate |
+| Thumbnail Generator | Превью 240px: изображения (resize), статьи (text-to-image) | Rust, image + ab_glyph + imageproc |
 | Import | Импорт каналов из Are.na | Rust, ureq (sync HTTP) |
 | Web Clipper | Chrome/Safari расширение: сохранение из браузера | Manifest V3, Readability.js, TurndownService |
 | Native Host | Мост между расширением и vault (stdin/stdout JSON) | Rust (bin/native_host.rs), ureq |
@@ -378,6 +378,8 @@ Rationale: расширение — проекция основного прил
 | rusqlite | latest | SQLite из Rust | MIT |
 | notify | latest | File system watcher | CC0/Artistic-2.0 |
 | image | latest | Обработка изображений | MIT/Apache-2.0 |
+| ab_glyph | latest | Парсинг TTF-шрифтов для текстовых миниатюр | Apache-2.0 |
+| imageproc | latest | Растеризация текста на изображения | MIT |
 | serde | latest | Сериализация | MIT/Apache-2.0 |
 | serde_yaml | latest | Парсинг YAML frontmatter | MIT/Apache-2.0 |
 | thiserror | latest | Типизированные ошибки | MIT/Apache-2.0 |

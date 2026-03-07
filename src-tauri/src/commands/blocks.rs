@@ -121,6 +121,11 @@ pub fn create_block(
             let thumb_dest = vs.vault.thumb_path(&slug);
             let _ = thumbnails::generate_thumbnail(&media_dest, &thumb_dest, thumbnails::DEFAULT_MAX_SIZE);
         }
+    } else if block.frontmatter.block_type == BlockType::Article {
+        // Article without media: render text as thumbnail
+        let thumb_dest = vs.vault.thumb_path(&slug);
+        let title = block.frontmatter.title.as_deref();
+        let _ = thumbnails::generate_text_thumbnail(title, &block.body, &thumb_dest);
     }
 
     // Index

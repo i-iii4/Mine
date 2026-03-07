@@ -38,6 +38,8 @@ ureq = { version = "2", features = ["json"] }
 
 # Image processing
 image = "0.25"
+ab_glyph = "0.2"
+imageproc = "0.25"
 
 # Error handling
 thiserror = "2"

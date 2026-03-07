@@ -8,9 +8,9 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::domain::block::parse_block;
+use crate::domain::block::{parse_block, BlockType};
 use crate::domain::vault::VaultLayout;
 use crate::storage::{files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
@@ -30,16 +30,32 @@ pub struct ScanResult {
 
 /// Scan the entire vault: parse all .md files and index them.
 ///
-/// - Errors on individual files are logged and counted, not propagated.
-/// - Generates thumbnails for blocks with media files.
-pub fn full_scan(conn: &Connection, vault: &VaultLayout) -> Result<ScanResult> {
+/// Indexing happens synchronously (fast). Thumbnail generation runs in a
+/// background thread to avoid blocking app startup. Returns immediately
+/// after indexing completes.
+///
+/// `on_thumbs_done` is called from the background thread when all thumbnails
+/// have been generated. Use this to notify the frontend to refresh previews.
+pub fn full_scan(
+    conn: &Connection,
+    vault: &VaultLayout,
+    on_thumbs_done: Option<Box<dyn FnOnce() + Send>>,
+) -> Result<ScanResult> {
     let paths = files::scan_md_files(vault)?;
     let mut indexed = 0;
     let mut errors = 0;
 
+    // Collect thumbnail work items during indexing
+    let mut thumb_jobs: Vec<ThumbJob> = Vec::new();
+
     for path in &paths {
-        match index_md_file(conn, vault, path) {
-            Ok(()) => indexed += 1,
+        match index_md_file_inner(conn, vault, path) {
+            Ok(job) => {
+                indexed += 1;
+                if let Some(j) = job {
+                    thumb_jobs.push(j);
+                }
+            }
             Err(e) => {
                 log::warn!("failed to index {}: {:#}", path.display(), e);
                 errors += 1;
@@ -47,11 +63,108 @@ pub fn full_scan(conn: &Connection, vault: &VaultLayout) -> Result<ScanResult> {
         }
     }
 
+    // Spawn background thread for thumbnail generation
+    if !thumb_jobs.is_empty() {
+        let vault_clone = vault.clone();
+        std::thread::Builder::new()
+            .name("thumb-gen".into())
+            .spawn(move || {
+                let mut generated = 0;
+                let mut skipped = 0;
+                for job in &thumb_jobs {
+                    let thumb_path = vault_clone.thumb_path(&job.slug);
+
+                    // O1: skip if thumbnail is fresh
+                    if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path) {
+                        skipped += 1;
+                        continue;
+                    }
+
+                    let result = match &job.kind {
+                        ThumbKind::Image { media_path } => {
+                            thumbnails::generate_thumbnail(media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
+                        }
+                        ThumbKind::Text { title, body } => {
+                            thumbnails::generate_text_thumbnail(title.as_deref(), body, &thumb_path)
+                        }
+                    };
+
+                    match result {
+                        Ok(_) => generated += 1,
+                        Err(e) => log::warn!("thumbnail failed for {}: {}", job.slug, e),
+                    }
+                }
+                log::info!(
+                    "thumbnails: {} generated, {} skipped (fresh), {} total",
+                    generated, skipped, thumb_jobs.len()
+                );
+                if generated > 0 {
+                    if let Some(cb) = on_thumbs_done {
+                        cb();
+                    }
+                }
+            })
+            .ok();
+    }
+
     Ok(ScanResult { indexed, errors })
 }
 
 /// Index a single .md file: read, parse, upsert, generate thumbnail.
+///
+/// Used by handle_event for individual file changes. Generates thumbnail
+/// synchronously but skips if already fresh (O1).
 pub fn index_md_file(conn: &Connection, vault: &VaultLayout, path: &Path) -> Result<()> {
+    let job = index_md_file_inner(conn, vault, path)?;
+
+    // Generate thumbnail synchronously (single file — fast enough)
+    if let Some(job) = job {
+        let thumb_path = vault.thumb_path(&job.slug);
+
+        // O1: skip if thumbnail is fresh (source unchanged since last generation)
+        if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path) {
+            return Ok(());
+        }
+
+        let result = match &job.kind {
+            ThumbKind::Image { media_path } => {
+                thumbnails::generate_thumbnail(media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
+            }
+            ThumbKind::Text { title, body } => {
+                thumbnails::generate_text_thumbnail(title.as_deref(), body, &thumb_path)
+            }
+        };
+
+        if let Err(e) = result {
+            log::warn!("thumbnail failed for {}: {}", job.slug, e);
+        }
+    }
+
+    Ok(())
+}
+
+// ─── Internal ───────────────────────────────────────────────────────────────
+
+/// Describes a pending thumbnail generation job.
+struct ThumbJob {
+    slug: String,
+    /// Path to the source file (.md) for mtime comparison.
+    source_path: PathBuf,
+    kind: ThumbKind,
+}
+
+enum ThumbKind {
+    Image { media_path: PathBuf },
+    Text { title: Option<String>, body: String },
+}
+
+/// Core indexing logic: parse + upsert. Returns a ThumbJob if a thumbnail
+/// should be (re-)generated.
+fn index_md_file_inner(
+    conn: &Connection,
+    vault: &VaultLayout,
+    path: &Path,
+) -> Result<Option<ThumbJob>> {
     let (slug, content) = files::read_block_file(path)
         .with_context(|| format!("reading {}", path.display()))?;
 
@@ -61,24 +174,36 @@ pub fn index_md_file(conn: &Connection, vault: &VaultLayout, path: &Path) -> Res
     index::upsert_block(conn, &block)
         .with_context(|| format!("indexing {}", path.display()))?;
 
-    // Generate thumbnail if block has a media file
-    if let Some(ref file_name) = block.frontmatter.file {
+    // Determine thumbnail work
+    let job = if let Some(ref file_name) = block.frontmatter.file {
         let ext = Path::new(file_name)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("");
         let media_path = vault.media_path(&slug, ext);
-
         if media_path.exists() && is_image_ext(ext) {
-            let thumb_path = vault.thumb_path(&slug);
-            if let Err(e) = thumbnails::generate_thumbnail(&media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
-            {
-                log::warn!("thumbnail failed for {}: {}", slug, e);
-            }
+            Some(ThumbJob {
+                slug,
+                source_path: path.to_path_buf(),
+                kind: ThumbKind::Image { media_path },
+            })
+        } else {
+            None
         }
-    }
+    } else if block.frontmatter.block_type == BlockType::Article {
+        Some(ThumbJob {
+            slug,
+            source_path: path.to_path_buf(),
+            kind: ThumbKind::Text {
+                title: block.frontmatter.title.clone(),
+                body: block.body.clone(),
+            },
+        })
+    } else {
+        None
+    };
 
-    Ok(())
+    Ok(job)
 }
 
 /// Handle a single vault event: dispatch to the appropriate storage operation.
@@ -172,7 +297,7 @@ mod tests {
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
 
-        let result = full_scan(&conn, &vault).unwrap();
+        let result = full_scan(&conn, &vault, None).unwrap();
         assert_eq!(result, ScanResult { indexed: 0, errors: 0 });
     }
 
@@ -186,7 +311,7 @@ mod tests {
         write_md_file(&vault, "beta", "link", &["web"]);
         write_md_file(&vault, "gamma", "article", &[]);
 
-        let result = full_scan(&conn, &vault).unwrap();
+        let result = full_scan(&conn, &vault, None).unwrap();
         assert_eq!(result, ScanResult { indexed: 3, errors: 0 });
 
         let blocks = index::list_blocks(&conn).unwrap();
@@ -203,7 +328,7 @@ mod tests {
         // Write an invalid .md file (no frontmatter)
         std::fs::write(vault.block_path("bad"), "not a valid block").unwrap();
 
-        let result = full_scan(&conn, &vault).unwrap();
+        let result = full_scan(&conn, &vault, None).unwrap();
         assert_eq!(result.indexed, 1);
         assert_eq!(result.errors, 1);
     }

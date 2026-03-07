@@ -28,6 +28,45 @@ if any
 
 ---
 
+## 06.03.2026 — Текстовые миниатюры статей + оптимизация thumbnail-пайплайна
+
+### Goal
+Статьи (type: article) не имели визуального превью в сайдбаре — для них не генерировались миниатюры. Нужно рендерить текст статьи в JPEG-превью (как Apple Notes).
+
+### Planned
+1. Добавить `generate_text_thumbnail()` — рендеринг заголовка + тела статьи в JPEG
+2. Встроить шрифт Noto Sans Regular (28 KB) через `include_bytes!`
+3. Обновить все точки создания блоков: handler, native_host, commands/blocks
+4. Снять фильтр `BlockType::Image | Link | Video` в `list_channel_previews`
+5. Три оптимизации: пропуск свежих миниатюр (mtime), LazyLock для шрифта, фоновая генерация
+
+### Actually completed
+Все 5 пунктов реализованы:
+
+- **`src-tauri/src/storage/thumbnails.rs`**: новая функция `generate_text_thumbnail()` — рисует заголовок (1.3x) и тело статьи в JPEG 480x480. Включает word-wrap, очистку markdown (заголовки, жирный, ссылки). Шрифт парсится один раз через `LazyLock<FontArc>`. Добавлена `is_thumb_fresh()` для проверки свежести миниатюр по mtime.
+- **`src-tauri/src/watcher/handler.rs`**: `full_scan()` разделён на индексирование (синхронное) и генерацию миниатюр (фоновый поток `thumb-gen`). Принимает `on_thumbs_done` callback. `index_md_file()` с проверкой свежести.
+- **`src-tauri/src/commands/vault.rs`**: callback `thumbs_done_cb()` эмитирует `vault-changed` по завершении фоновой генерации — фронтенд подхватывает новые превью.
+- **`src-tauri/src/commands/blocks.rs`**: генерация текстовой миниатюры при создании Article без медиафайла.
+- **`src-tauri/src/bin/native_host.rs`**: аналогичная генерация при сохранении статьи через клиппер.
+- **`src-tauri/src/commands/channels.rs`**: фильтр по BlockType снят — любой блок с миниатюрой попадает в превью.
+- **`src-tauri/Cargo.toml`**: добавлены `ab_glyph` 0.2, `imageproc` 0.25.
+- **`src-tauri/assets/NotoSans-Regular.ttf`**: встроенный шрифт (28 KB, OFL).
+
+### Deviations from plan
+Нет — все три оптимизации реализованы как запланировано.
+
+### Checks
+- 200 Rust-тестов проходят (включая 2 новых для text_thumbnail)
+- `cargo check` — чистая компиляция
+- Фронтенд-тесты не затронуты (изменения только в Rust)
+
+### Decisions and lessons learned
+- **LazyLock вместо повторного парсинга**: `FontArc::try_from_slice` на каждый вызов — ~0.5мс. С LazyLock — 0мс после первого вызова.
+- **Фоновый поток с callback**: handler.rs не зависит от Tauri (не импортирует AppHandle). Callback абстрагирует нотификацию — чистое разделение слоёв.
+- **mtime-проверка эффективнее content hash**: для 100+ блоков один `stat()` вызов (~1мкс) вместо чтения и хэширования файла (~100мкс).
+
+---
+
 ## 06.03.2026 — Аудит дизайн-системы, чистка компонентов
 
 ### Goal

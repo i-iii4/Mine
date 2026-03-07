@@ -332,10 +332,13 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         return send_error(&format!("failed to write block file: {e}"));
     }
 
-    // Generate thumbnail if we downloaded an image
+    // Generate thumbnail
+    let thumb_path = vault.thumb_path(&slug);
     if let Some(ref src_path) = downloaded_path {
-        let thumb_path = vault.thumb_path(&slug);
         let _ = thumbnails::generate_thumbnail(src_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE);
+    } else if bt == BlockType::Article {
+        let title = block.frontmatter.title.as_deref();
+        let _ = thumbnails::generate_text_thumbnail(title, &block.body, &thumb_path);
     }
 
     // Index the block
