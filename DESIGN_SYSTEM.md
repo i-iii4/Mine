@@ -8,12 +8,12 @@ Tailwind v4 генерирует утилиты автоматически из 
 | Токен | Значение | Утилита | Где |
 |---|---|---|---|
 | `--radius-0` | 0 | `rounded-0` | Карточки контента, изображения, текстовые блоки |
-| `--radius-1` | 3px | `rounded-1` | Кнопки, инпуты, попапы, меню, тултипы, диалоги |
-| `--radius-2` | 5px | `rounded-2` | Микро-элементы (16-24px): мини-карточки, бейджи, чекбоксы |
-| `--radius-pill` | 9999px | `rounded-pill` | Переключатели, тоглы |
+| `--radius-1` | 3px | `rounded-1` | Все элементы интерфейса: кнопки, инпуты, бейджи, попапы, меню, тултипы, диалоги |
+| — | 2px | `rounded-[2px]` | Чекбоксы (16px, компенсация масштаба) |
+| `--radius-pill` | 9999px | `rounded-pill` | Переключатели, тоглы, прогресс-бар |
 | `--radius-round` | 50% | `rounded-round` | Аватары, индикаторы статуса |
 
-**Правило:** содержимое — без скругления, интерфейс — 3px, мелкие элементы — 5px (компенсация масштаба).
+**Правило:** содержимое — без скругления (`rounded-0`), интерфейс — 3px (`rounded-1`), чекбоксы — 2px.
 
 ## Отступы
 
@@ -114,10 +114,9 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 | Элемент | Что меняется | Светлая | Тёмная | Утилита |
 |---|---|---|---|---|
-| Текстовая кнопка | Цвет текста | #333 → #000 | #E4E4E4 → #FFF | `hover:text-hover-foreground` |
-| Кнопка с заливкой | Цвет фона | #333 → #555 | #E4E4E4 → #CCC | `hover:bg-primary-hover` |
-| Кнопка с бордером | Цвет фона | transparent → #F5F5F5 | transparent → #1E1E1E | `hover:bg-accent` |
-| Карточка | Цвет бордера | #EBEBEB → #333 | #222 → #E4E4E4 | `hover:border-foreground` |
+| Кнопка default/destructive | Обводка 1px inset | `--border` | `--border` | `hover:outline-1 hover:-outline-offset-1 hover:outline-border` |
+| Кнопка ghost/link | Цвет текста | #333 → #000 | #E4E4E4 → #FFF | `hover:text-hover-foreground` |
+| Карточка | Outline 2px inset | — | — | `hover:outline-2 hover:-outline-offset-2 hover:outline-[var(--primary-hover)]` |
 | Пункт сайдбара | Цвет фона | transparent → #F5F5F5 | transparent → #1E1E1E | `hover:bg-accent` |
 
 ### Focus
@@ -131,10 +130,7 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 ### Active (нажатие)
 
-| Элемент | Светлая | Тёмная | Утилита |
-|---|---|---|---|
-| Кнопка с заливкой | #333 → #1A1A1A | #E4E4E4 → #B3B3B3 | `active:bg-primary-active` |
-| Кнопка с бордером | transparent → #EBEBEB | transparent → #222222 | `active:bg-active` |
+Не используется. Hover достаточен для обратной связи.
 
 ### Selected (активный пункт сайдбара)
 
@@ -152,8 +148,7 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 | `--accent` | #F5F5F5 | #111111 | Ховер фон (subtle) |
 | `--active` | #EBEBEB | #222222 | Нажатие фон (subtle) |
 | `--hover-foreground` | #000000 | #FFFFFF | Ховер текста |
-| `--primary-hover` | #555555 | ~#C5C5C5 | Залитая кнопка ховер |
-| `--primary-active` | #1A1A1A | ~#B0B0B0 | Залитая кнопка нажатие |
+| `--primary-hover` | #555555 | ~#C5C5C5 | Hover обводки карточек |
 | `--sidebar-accent` | #F0F0F0 | #191919 | Выделенный пункт фон |
 | `--sidebar-accent-fg` | #333333 | #FFFFFF | Выделенный пункт текст |
 
@@ -163,34 +158,42 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 ### Button
 
+Базовые свойства всех кнопок: `rounded-1` (3px), `font-semibold`, `cursor-pointer`, `select-none`.
+
+Принцип цвета: фон кнопки = +1 уровень к фону страницы (`bg-accent`). Hover обводки = +2 уровня к фону кнопки (`--border`). Шаг всегда одинаковый.
+
 Варианты (`variant`):
 
-| Вариант | Фон | Текст | Ховер |
+| Вариант | Фон | Hover | Отличие |
 |---|---|---|---|
-| `default` | `bg-foreground` | `text-background` | `bg-primary-hover` |
-| `destructive` | `bg-destructive` | `text-white` | `bg-destructive/80` |
-| `outline` | `border border-foreground bg-transparent` | `text-foreground` | `bg-accent` |
-| `ghost` | прозрачный | наследует | `hover:text-hover-foreground` |
-| `link` | прозрачный | `text-foreground underline` | `hover:text-hover-foreground` |
+| `default` | `bg-accent` | обводка 1px inset `--border` | — |
+| `destructive` | `bg-accent` | обводка 1px inset `--border` | `text-destructive` (красный текст) |
+| `ghost` | `bg-transparent` | `text-hover-foreground` (текст ярчеет) | Невидимая до взаимодействия |
+| `link` | `bg-transparent` | `text-hover-foreground` (текст ярчеет) | `underline` |
 
-Размеры (`size`):
+Размеры (`size`) — только два:
 
-| Размер | Высота | Паддинги |
-|---|---|---|
-| `default` | `h-9` | `px-4 py-2` |
-| `xs` | `h-6` | `px-2`, `text-sm` |
-| `sm` | `h-8` | `px-3` |
-| `lg` | `h-10` | `px-6` |
-| `icon` | `size-9` | — |
-| `icon-xs` | `size-6` | — |
-| `icon-sm` | `size-8` | — |
-| `icon-lg` | `size-10` | — |
+| Размер | Высота | Паддинги | Шрифт |
+|---|---|---|---|
+| `default` | `h-8` (32px) | `px-3` | `text-base` (14px) |
+| `xs` | `h-6` (24px) | `px-2` | `text-sm` (12px) |
+| `icon` | `size-8` (32px) | — | — |
+| `icon-xs` | `size-6` (24px) | — | — |
 
-Все кнопки: `rounded-1`, `text-base`, `font-semibold`, `cursor-pointer`.
+Input и Command — тоже 32px (`h-8`).
+
+**Скругление всех элементов интерфейса — 3px (`rounded-1`).** Без исключений: Button, ActionButton (обе пули), Badge, DropdownMenu, Tooltip, Input.
 
 ### Input
 
-Один вариант: `h-9 rounded-1 border border-input bg-transparent px-3 text-base`. Фокус — `ring-ring`. Плейсхолдер — `text-muted-foreground`.
+Два варианта:
+
+| Вариант | Стиль |
+|---|---|
+| `default` | `h-8 rounded-1 border border-input bg-background px-3 text-base` |
+| `ghost` | `h-8 rounded-1 bg-transparent border-none px-3 text-base` — только текст и курсор |
+
+Фокус (default): `border-foreground`. Плейсхолдер: `text-tertiary-foreground`.
 
 ### Badge
 
@@ -203,7 +206,7 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 | `ghost` | `hover:bg-accent hover:text-accent-foreground` |
 | `link` | `text-primary underline-offset-4 hover:underline` |
 
-Все бейджи: `rounded-2 px-2.5 py-0.5 text-sm font-semibold`.
+Все бейджи: `rounded-1 px-2 py-0.5 text-sm font-semibold`.
 
 ### AlertDialog
 
@@ -236,11 +239,7 @@ Content: `rounded-1 bg-primary text-primary-foreground px-3 py-1.5 text-sm`. А�
 
 ### Select
 
-Trigger: `h-9 rounded-1 border border-input bg-transparent px-3`. Content: `rounded-1 border bg-popover shadow-md`. Item: стиль как DropdownMenuItem.
-
-### Textarea
-
-`rounded-1 border border-input bg-transparent px-3 py-2 text-base`. Фокус и плейсхолдер — как Input.
+Trigger: `h-8 rounded-1 border border-input bg-transparent px-3`. Content: `rounded-1 border bg-popover shadow-md`. Item: стиль как DropdownMenuItem.
 
 ### Separator
 
@@ -264,7 +263,7 @@ Content: `rounded-[8px] border bg-popover p-1`, тень: `0 8px 32px rgba(0,0,0
 
 ### Checkbox
 
-Radix-обёртка: `size-4 rounded-[4px] border border-primary`. Checked: `bg-primary text-primary-foreground` с иконкой галочки. Фокус: `ring-ring`.
+Radix-обёртка: `size-4 rounded-[2px] border border-primary`. Checked: `bg-primary text-primary-foreground` с иконкой галочки. Фокус: `border-foreground`.
 
 ### Progress
 
@@ -294,7 +293,7 @@ Radix-обёртка: `size-4 rounded-[4px] border border-primary`. Checked: `bg
 Компонент `ActionButton` — двуслойная кнопка (две «пули»):
 - Структура: `<div role="button">` (внешняя пуля) → `<span hotkey>` + `<span label>` (внутренняя пуля)
 - Внешняя пуля: `rounded-1` (3px), `h-6` (24px), `overflow-hidden`, `pr-[2px]`
-- Внутренняя пуля: `rounded-[2px]` (2px), `bg-active`, `px-[1ch] py-[2px] uppercase`
+- Внутренняя пуля: `rounded-1` (3px), `bg-active`, `px-[1ch] py-[2px]`
 - Hotkey: текст на фоне внешней пули, `px-[1ch] py-[2px]`
 - Зазор между пулями: 2px (сверху, снизу, справа)
 - Шрифт: `font-mono text-sm`
@@ -305,8 +304,8 @@ Radix-обёртка: `size-4 rounded-[4px] border border-primary`. Checked: `bg
 | Состояние | Внешняя пуля | Хоткей | Внутренняя пуля |
 |---|---|---|---|
 | Покой | `bg-muted` | `text-foreground` | `bg-active text-foreground` |
-| Hover | `bg-foreground` | `text-background` (инверсия) | без изменений |
-| Selected | `bg-foreground` | `text-background` (инверсия) | без изменений |
+| Hover | `bg-primary-hover` | `text-background` (инверсия) | без изменений |
+| Selected | `bg-primary-hover` | `text-background` (инверсия) | без изменений |
 
 Кнопки:
 
@@ -341,7 +340,7 @@ Masonry с round-robin распределением по колонкам. Gap: 
 
 Паддинги сетки: 32px по бокам (при развёрнутом сайдбаре), 72px (при свёрнутом — компенсация ширины).
 
-Карточки: `border border-border hover:border-foreground`, без скругления (`rounded-0`).
+Карточки: `border border-border`, без скругления (`rounded-0`). Обводка = +1 уровень к фону. Hover добавляет outline 2px inset цветом `primary-hover`.
 
 ## Архитектурные принципы
 

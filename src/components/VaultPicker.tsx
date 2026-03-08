@@ -59,7 +59,7 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
             </p>
           </div>
         ) : (
-          <Button onClick={handleSelect} disabled={loading} size="lg">
+          <Button onClick={handleSelect} disabled={loading}>
             {loading ? "Scanning..." : "Select Vault"}
           </Button>
         )}

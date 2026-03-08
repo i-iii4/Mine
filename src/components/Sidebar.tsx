@@ -138,14 +138,9 @@ export function Sidebar({
             onCancel={() => onSetCreatingChannel(false)}
           />
         ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onSetCreatingChannel(true)}
-            className="mt-1 w-full justify-start rounded-1 text-muted-foreground hover:bg-accent"
-          >
+          <Button onClick={() => onSetCreatingChannel(true)}>
             <Plus className="size-3" />
-            <span>New channel</span>
+            New channel
           </Button>
         )}
 

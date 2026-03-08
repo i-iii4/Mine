@@ -74,6 +74,17 @@ import { Detail } from "@/components/Detail";
 import { ImportDialog } from "@/components/ImportDialog";
 import { ActionButton } from "@/components/ActionButton";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Progress } from "@/components/ui/progress";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
+import { Plus, Trash2, Info } from "lucide-react";
 
 // ─── Visual grid navigation ────────────────────────────────────────────────
 
@@ -170,6 +181,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const [tags, setTags] = useState<TagCount[]>([]);
   const [channels, setChannels] = useState<ChannelDto[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [designSystemOpen, setDesignSystemOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<IndexedBlock | null>(null);
@@ -670,6 +682,12 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
           </Route>
         </Routes>
 
+        {designSystemOpen && (
+          <div className="absolute inset-0 z-40 overflow-y-auto bg-background">
+            <ComponentTestBench />
+          </div>
+        )}
+
         {selectedBlock && (
           <Detail
             block={selectedBlock}
@@ -706,6 +724,12 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
           New Channel
         </ActionButton>
         <ThemeMenuButton ref={themeMenuRef} />
+        <ActionButton
+          onClick={() => setDesignSystemOpen((v) => !v)}
+          isSelected={designSystemOpen}
+        >
+          Design
+        </ActionButton>
         <div className="flex-1" />
         <ActionButton hotkey="⌘K" onClick={() => setSearchOpen(true)}>
           Search
@@ -754,6 +778,154 @@ function useRouteCtx(): RouteContext {
 }
 
 // ─── Pages ─────────────────────────────────────────────────────────────────
+
+function ComponentTestBench() {
+  return (
+    <div className="border-b border-border p-8">
+      <p className="mb-6 font-mono text-sm text-muted-foreground">Component test bench</p>
+
+      {/* Button — Sizes */}
+      <Section label="Button — Sizes">
+        <Button size="xs">xs 24px</Button>
+        <Button>default 32px</Button>
+      </Section>
+
+      {/* Button — Variants */}
+      <Section label="Button — Variants">
+        <Button variant="default">Default</Button>
+        <Button variant="ghost">Ghost</Button>
+        <Button variant="destructive">Destructive</Button>
+        <Button variant="link">Link</Button>
+      </Section>
+
+      {/* Button — with icons */}
+      <Section label="Button — Icons">
+        <Button size="xs"><Plus className="size-3" />Add</Button>
+        <Button><Plus className="size-4" />Add</Button>
+        <Button variant="destructive"><Trash2 className="size-4" />Delete</Button>
+      </Section>
+
+      {/* Button — Icon only */}
+      <Section label="Button — Icon only">
+        <Button size="icon-xs"><Plus className="size-3" /></Button>
+        <Button size="icon"><Plus className="size-4" /></Button>
+      </Section>
+
+      {/* Button — Disabled */}
+      <Section label="Button — Disabled">
+        <Button disabled>Disabled</Button>
+        <Button variant="destructive" disabled>Disabled</Button>
+      </Section>
+
+      {/* ActionButton */}
+      <Section label="ActionButton (bottom bar)">
+        <ActionButton hotkey="⌘K">Search</ActionButton>
+        <ActionButton hotkey="⌘⇧N">New Channel</ActionButton>
+        <ActionButton hotkey="⌘,">Settings</ActionButton>
+        <ActionButton>No hotkey</ActionButton>
+        <ActionButton hotkey="⌘⇧O" isSelected>Selected</ActionButton>
+      </Section>
+
+      {/* Input */}
+      <Section label="Input">
+        <Input placeholder="Default" className="w-48" />
+        <Input defaultValue="With value" className="w-48" />
+        <Input disabled placeholder="Disabled" className="w-48" />
+      </Section>
+
+      <Section label="Input — Ghost">
+        <Input variant="ghost" placeholder="Ghost input..." className="w-48" />
+        <Input variant="ghost" defaultValue="With value" className="w-48" />
+      </Section>
+
+      {/* Badge */}
+      <Section label="Badge">
+        <Badge>Default</Badge>
+        <Badge variant="secondary">Secondary</Badge>
+        <Badge variant="destructive">Destructive</Badge>
+        <Badge variant="outline">Outline</Badge>
+      </Section>
+
+      {/* Checkbox */}
+      <Section label="Checkbox">
+        <div className="flex items-center gap-2">
+          <Checkbox id="cb1" />
+          <label htmlFor="cb1" className="text-base">Unchecked</label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Checkbox id="cb2" defaultChecked />
+          <label htmlFor="cb2" className="text-base">Checked</label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Checkbox id="cb3" disabled />
+          <label htmlFor="cb3" className="text-base text-muted-foreground">Disabled</label>
+        </div>
+      </Section>
+
+      {/* Progress */}
+      <Section label="Progress">
+        <Progress value={0} className="w-64" />
+        <Progress value={45} className="w-64" />
+        <Progress value={100} className="w-64" />
+      </Section>
+
+      {/* Tooltip */}
+      <Section label="Tooltip">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button><Info className="size-4" />Hover me</Button>
+          </TooltipTrigger>
+          <TooltipContent>Tooltip content</TooltipContent>
+        </Tooltip>
+      </Section>
+
+      {/* Typography */}
+      <Section label="Typography">
+        <span className="text-sm text-foreground">text-sm (12px)</span>
+        <span className="text-base text-foreground">text-base (14px)</span>
+        <span className="text-lg text-foreground">text-lg (18px)</span>
+      </Section>
+
+      {/* Text hierarchy */}
+      <Section label="Text hierarchy">
+        <span className="text-base text-foreground">foreground</span>
+        <span className="text-base text-muted-foreground">muted-foreground</span>
+        <span className="text-base text-tertiary-foreground">tertiary-foreground</span>
+      </Section>
+
+      {/* Backgrounds */}
+      <Section label="Background levels" vertical>
+        <div className="flex gap-2">
+          <Swatch label="background" className="bg-background border border-border" />
+          <Swatch label="accent (+1)" className="bg-accent" />
+          <Swatch label="sidebar-accent (+2)" className="bg-sidebar-accent" />
+          <Swatch label="active/border (+3)" className="bg-active" />
+          <Swatch label="foreground" className="bg-foreground" />
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function Section({ label, children, vertical }: { label: string; children: React.ReactNode; vertical?: boolean }) {
+  return (
+    <div className="mb-4">
+      <p className="mb-2 font-mono text-sm text-muted-foreground">{label}</p>
+      <div className={vertical ? "flex flex-col gap-2" : "flex flex-wrap items-center gap-2"}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Swatch({ label, className }: { label: string; className: string }) {
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <div className={`size-12 rounded-1 ${className}`} />
+      <span className="text-sm text-muted-foreground">{label}</span>
+    </div>
+  );
+}
 
 function AllBlocksPage() {
   const ctx = useRouteCtx();

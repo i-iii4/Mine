@@ -109,7 +109,7 @@ export function Detail({
         variant="ghost"
         size="icon"
         onClick={onClose}
-        className="absolute top-10 right-4 size-8 text-muted-foreground hover:text-foreground"
+        className="absolute top-10 right-4 text-muted-foreground hover:text-foreground"
       >
         <X className="size-4" />
         <span className="sr-only">Close</span>
