@@ -602,7 +602,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}
         onCreateChannel={handleCreateChannel}
-        onImportClick={() => setImportOpen(true)}
       />
 
       <SidebarResizeHandle
@@ -670,6 +669,12 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         onImportComplete={loadData}
       />
     </div>{/* end body */}
+
+      {/* Bottom bar (mirrors top toolbar) */}
+      <div className="flex h-8 shrink-0 items-center border-t border-border bg-muted">
+        <div className="w-20 shrink-0" />
+        <div className="flex flex-1 items-center px-3" />
+      </div>
     </div>{/* end flex-col */}
 
     <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
