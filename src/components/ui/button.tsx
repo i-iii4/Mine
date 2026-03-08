@@ -5,14 +5,14 @@ import { Slot } from "radix-ui"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-1 text-base font-semibold cursor-pointer select-none bg-accent text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-border disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-1 text-base font-semibold cursor-pointer select-none text-foreground disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        default: "",
-        destructive: "text-destructive",
-        ghost: "bg-transparent hover:outline-none hover:text-hover-foreground",
-        link: "bg-transparent underline underline-offset-4 hover:outline-none hover:text-hover-foreground",
+        default: "bg-accent outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-border",
+        destructive: "bg-accent text-destructive outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-border",
+        ghost: "bg-transparent hover:text-hover-foreground",
+        link: "bg-transparent underline underline-offset-4 hover:text-hover-foreground",
       },
       size: {
         default: "h-8 px-3 has-[>svg]:px-2.5",

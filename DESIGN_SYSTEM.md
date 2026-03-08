@@ -223,9 +223,9 @@ Input и Command — тоже 32px (`h-8`).
 
 `DropdownMenuTrigger > DropdownMenuContent > DropdownMenuItem`.
 
-Content: `rounded-1 border bg-popover p-1 text-popover-foreground shadow-md`.
+Content: `rounded-1 border bg-popover p-1 text-popover-foreground`, тень — единая для всплывающих элементов (см. «Всплывающие элементы»).
 Item: `rounded-1 px-2 py-1.5 text-base cursor-default`.
-Item `variant="destructive"`: красный текст, красный ховер-фон.
+Item `variant="destructive"`: красный текст (`text-destructive`), стандартный ховер-фон (`focus:bg-accent`).
 
 ### Tooltip
 
@@ -259,7 +259,7 @@ Input: иконка поиска + `text-base`, без бордера. List: `ma
 
 `ContextMenuTrigger > ContextMenuContent > ContextMenuItem`.
 
-Content: `rounded-[8px] border bg-popover p-1`, тень: `0 8px 32px rgba(0,0,0,0.06)` (светлая), `0 8px 32px rgba(255,255,255,0.06)` (тёмная — белое свечение). Item: `rounded-1 px-2 py-1.5 text-base`. Item `variant="destructive"`: красный текст, красный ховер-фон. Поддерживает: CheckboxItem, RadioItem, Sub (подменю), Label, Separator, Shortcut.
+Content: `rounded-1 border bg-popover p-1`, тень — единая для всплывающих элементов (см. «Всплывающие элементы»). Item: `rounded-1 px-2 py-1.5 text-base`. Item `variant="destructive"`: красный текст (`text-destructive`), стандартный ховер-фон (`focus:bg-accent`). Поддерживает: CheckboxItem, RadioItem, Sub (подменю), Label, Separator, Shortcut.
 
 ### Checkbox
 
@@ -268,6 +268,28 @@ Radix-обёртка: `size-4 rounded-[2px] border border-primary`. Checked: `bg
 ### Progress
 
 `h-2 rounded-pill bg-primary/20`. Индикатор: `h-full bg-primary rounded-pill`.
+
+## Всплывающие элементы (floating UI)
+
+ContextMenu, DropdownMenu, Command — три всплывающих компонента с единым стандартом.
+
+### Контейнер (Content)
+
+`rounded-1 border border-border bg-popover p-1`. Тень единая:
+
+```
+shadow-[0_4px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.4)]
+```
+
+SubContent (подменю) — та же тень.
+
+### Пункты (Item)
+
+`rounded-1 px-2 py-1.5 text-base focus:bg-accent`.
+
+### Деструктивные пункты
+
+Текст красный (`text-destructive`), фон при фокусе — стандартный (`focus:bg-accent`). Без красного фона при наведении.
 
 ## Состояния Drag-and-Drop
 
@@ -346,7 +368,7 @@ Masonry с round-robin распределением по колонкам. Gap: 
 
 - **Монохром** — палитра строго чёрно-белая с оттенками серого. Цвет только для семантики: `destructive` (красный), `chart-*` (графики)
 - **Тёмная тема по умолчанию** — светлая через `@media (prefers-color-scheme: light)`. Абсолютный чёрный (#000000) как фон
-- **Без теней и градиентов** — единственное исключение: hover-оверлей на карточках изображений (`bg-gradient-to-t from-black/60`)
+- **Без теней и градиентов** — исключения: hover-оверлей на карточках изображений (`bg-gradient-to-t from-black/60`), утилитарная тень всплывающих элементов (для отделения слоя от контента)
 - **1px solid borders** — основной визуальный разделитель. Без двойных линий, пунктиров, инсетов
 - **Нативное ощущение** — `-webkit-user-select: none` на кнопках и навигации, `overscroll-behavior: none`, скрытые скроллбары WebKit
 - **Variable-шрифты** — один файл WOFF2 на все насыщенности (100–900), `font-display: swap`
