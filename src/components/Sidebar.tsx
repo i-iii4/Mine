@@ -45,6 +45,8 @@ interface SidebarProps {
   channelPreviews: Map<string, PreviewCard[]>;
   totalBlocks: number;
   isCardDragging: boolean;
+  isCreatingChannel: boolean;
+  onSetCreatingChannel: (v: boolean) => void;
   onDeleteTag: (tag: string) => void;
   onRenameTag: (oldTag: string, newTag: string) => void;
   onCreateChannel: (tag: string) => void;
@@ -58,12 +60,13 @@ export function Sidebar({
   channelPreviews,
   totalBlocks,
   isCardDragging,
+  isCreatingChannel,
+  onSetCreatingChannel,
   onDeleteTag,
   onRenameTag,
   onCreateChannel,
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
   const navRef = useRef<HTMLElement>(null);
   const location = useLocation();
 
@@ -124,21 +127,21 @@ export function Sidebar({
           ))}
         </SortableContext>
 
-        {isCreating ? (
+        {isCreatingChannel ? (
           <InlineInput
             defaultValue=""
             placeholder="New channel..."
             onSubmit={(value) => {
               onCreateChannel(value);
-              setIsCreating(false);
+              onSetCreatingChannel(false);
             }}
-            onCancel={() => setIsCreating(false)}
+            onCancel={() => onSetCreatingChannel(false)}
           />
         ) : (
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setIsCreating(true)}
+            onClick={() => onSetCreatingChannel(true)}
             className="mt-1 w-full justify-start rounded-1 text-muted-foreground hover:bg-accent"
           >
             <Plus className="size-3" />

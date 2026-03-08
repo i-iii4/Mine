@@ -82,9 +82,9 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 | Роль | Токен | Светлая | Тёмная |
 |---|---|---|---|
 | Страница | `--background` | #FFFFFF | #000000 |
-| Hover | `--accent` | #F5F5F5 | #1E1E1E |
+| Hover | `--accent` | #F5F5F5 | #111111 |
+| Selected (сайдбар) | `--sidebar-accent` | #F0F0F0 | #191919 |
 | Active | `--active` | #EBEBEB | #222222 |
-| Selected (сайдбар) | `--sidebar-accent` | #F0F0F0 | #1E1E1E |
 
 Тёмная тема — абсолютный чёрный (#000000). OLED-пиксели выключены, изображения «парят» на пустоте.
 
@@ -149,12 +149,12 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 | Токен | Светлая (hex) | Тёмная (hex) | Назначение |
 |---|---|---|---|
-| `--accent` | #F5F5F5 | #1E1E1E | Ховер фон (subtle) |
+| `--accent` | #F5F5F5 | #111111 | Ховер фон (subtle) |
 | `--active` | #EBEBEB | #222222 | Нажатие фон (subtle) |
 | `--hover-foreground` | #000000 | #FFFFFF | Ховер текста |
 | `--primary-hover` | #555555 | ~#C5C5C5 | Залитая кнопка ховер |
 | `--primary-active` | #1A1A1A | ~#B0B0B0 | Залитая кнопка нажатие |
-| `--sidebar-accent` | #F0F0F0 | #1E1E1E | Выделенный пункт фон |
+| `--sidebar-accent` | #F0F0F0 | #191919 | Выделенный пункт фон |
 | `--sidebar-accent-fg` | #333333 | #FFFFFF | Выделенный пункт текст |
 
 ## Компоненты (shadcn/ui + CVA)
@@ -286,6 +286,36 @@ Radix-обёртка: `size-4 rounded-[4px] border border-primary`. Checked: `bg
 ### Тулбар
 
 `<header>`: `h-8 border-b border-border`, `data-tauri-drag-region` для перетаскивания окна. Высота строго 32px.
+
+### Нижняя панель действий (Action Bar)
+
+`h-8 bg-muted border-t border-border px-8`. Отступы 32px с обеих сторон. Search прижат вправо через flex-spacer.
+
+Компонент `ActionButton` — двуслойная кнопка (две «пули»):
+- Структура: `<div role="button">` (внешняя пуля) → `<span hotkey>` + `<span label>` (внутренняя пуля)
+- Внешняя пуля: `rounded-1` (3px), `h-6` (24px), `overflow-hidden`, `pr-[2px]`
+- Внутренняя пуля: `rounded-[2px]` (2px), `bg-active`, `px-[1ch] py-[2px] uppercase`
+- Hotkey: текст на фоне внешней пули, `px-[1ch] py-[2px]`
+- Зазор между пулями: 2px (сверху, снизу, справа)
+- Шрифт: `font-mono text-sm`
+- `forwardRef<HTMLDivElement>` для программного управления
+
+Состояния:
+
+| Состояние | Внешняя пуля | Хоткей | Внутренняя пуля |
+|---|---|---|---|
+| Покой | `bg-muted` | `text-foreground` | `bg-active text-foreground` |
+| Hover | `bg-foreground` | `text-background` (инверсия) | без изменений |
+| Selected | `bg-foreground` | `text-background` (инверсия) | без изменений |
+
+Кнопки:
+
+| Hotkey | Label | Действие | Положение |
+|---|---|---|---|
+| ⌘⇧O | Имя vault | Выбор папки через нативный диалог | слева |
+| ⌘⇧N | New Channel | Инлайн-инпут в сайдбаре | слева |
+| ⌘, | Settings | DropdownMenu переключения темы | слева |
+| ⌘K | Search | Открытие Command palette | справа |
 
 ### Сайдбар
 

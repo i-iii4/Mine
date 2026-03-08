@@ -44,8 +44,10 @@ const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform })
 
 import type { IndexedBlock, LightBlock, TagCount, ChannelDto, PreviewCard } from "@/types";
 import { thumbnailUrl } from "@/lib/assets";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   getVaultPath,
+  selectVault,
   getBlock,
   listBlocks,
   listTags,
@@ -70,6 +72,8 @@ import { Grid } from "@/components/Grid";
 import { Search } from "@/components/Search";
 import { Detail } from "@/components/Detail";
 import { ImportDialog } from "@/components/ImportDialog";
+import { ActionButton } from "@/components/ActionButton";
+import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
 
 // ─── Visual grid navigation ────────────────────────────────────────────────
 
@@ -167,11 +171,13 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const [channels, setChannels] = useState<ChannelDto[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<IndexedBlock | null>(null);
   const [focusedBlockId, setFocusedBlockId] = useState<number | null>(null);
   const [activeDragBlock, setActiveDragBlock] = useState<LightBlock | null>(null);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
+  const themeMenuRef = useRef<ThemeMenuHandle>(null);
   const gridColumnCountRef = useRef(1);
 
   // Blocks filtered by current route (channel or all)
@@ -327,17 +333,36 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     };
   }, [loadData]);
 
-  // Global Cmd+K
+  // ── Vault switching ──────────────────────────────────────────────────────
+
+  const handleSwitchVault = useCallback(async () => {
+    const selected = await openDialog({ directory: true, multiple: false });
+    if (!selected) return;
+    await selectVault(selected);
+    window.location.reload();
+  }, []);
+
+  // Global keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.metaKey && e.key === "k") {
+      if (!e.metaKey) return;
+      if (e.key === "k") {
         e.preventDefault();
         setSearchOpen((v) => !v);
+      } else if (e.shiftKey && e.key === "O") {
+        e.preventDefault();
+        handleSwitchVault();
+      } else if (e.shiftKey && e.key === "N") {
+        e.preventDefault();
+        setIsCreatingChannel(true);
+      } else if (e.key === ",") {
+        e.preventDefault();
+        themeMenuRef.current?.toggle();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [handleSwitchVault]);
 
   // ── Block navigation ──────────────────────────────────────────────────────
 
@@ -599,6 +624,8 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         channelPreviews={channelPreviews}
         totalBlocks={blocks.length}
         isCardDragging={activeDragBlock !== null}
+        isCreatingChannel={isCreatingChannel}
+        onSetCreatingChannel={setIsCreatingChannel}
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}
         onCreateChannel={handleCreateChannel}
@@ -670,10 +697,19 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       />
     </div>{/* end body */}
 
-      {/* Bottom bar (mirrors top toolbar) */}
-      <div className="flex h-8 shrink-0 items-center border-t border-border bg-muted">
-        <div className="w-20 shrink-0" />
-        <div className="flex flex-1 items-center px-3" />
+      {/* Bottom action bar */}
+      <div className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-muted px-8">
+        <ActionButton hotkey="⌘⇧O" onClick={handleSwitchVault}>
+          {vaultPath.split("/").pop() ?? "Vault"}
+        </ActionButton>
+        <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>
+          New Channel
+        </ActionButton>
+        <ThemeMenuButton ref={themeMenuRef} />
+        <div className="flex-1" />
+        <ActionButton hotkey="⌘K" onClick={() => setSearchOpen(true)}>
+          Search
+        </ActionButton>
       </div>
     </div>{/* end flex-col */}
 
