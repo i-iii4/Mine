@@ -149,6 +149,9 @@ VaultLayout::index_db_path(&self) -> PathBuf                 // root/.arena/inde
 VaultLayout::thumbs_dir(&self) -> PathBuf                    // root/.arena/cache/thumbs/
 VaultLayout::thumb_path(&self, slug: &str) -> PathBuf        // root/.arena/cache/thumbs/slug.webp
 
+// Валидация slug для безопасного использования в путях
+validate_slug(slug: &str) -> Result<(), VaultError>
+
 // Чистое разрешение конфликтов slug (без FS)
 resolve_slug_conflict(slug: &str, existing: &HashSet<String>) -> String
 ```

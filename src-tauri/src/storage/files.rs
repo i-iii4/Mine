@@ -8,8 +8,11 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use crate::domain::block::{serialize_block, Block};
+use rusqlite::Connection;
+
+use crate::domain::block::{serialize_block, Block, BlockType};
 use crate::domain::vault::VaultLayout;
+use crate::storage::{index, thumbnails};
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -116,6 +119,59 @@ pub fn delete_block_files(
     }
 
     Ok(())
+}
+
+// ─── Block creation orchestration ────────────────────────────────────────────
+
+/// Persist a new block: write .md file, copy media, generate thumbnail, index.
+/// Returns the fully indexed block. The caller is responsible for constructing
+/// the `Block` with a unique slug (see `index::resolve_unique_slug`).
+pub fn persist_new_block(
+    conn: &Connection,
+    vault: &VaultLayout,
+    block: &Block,
+    source_file: Option<&Path>,
+) -> Result<index::IndexedBlock> {
+    // Write .md file
+    write_block_file(vault, block)?;
+
+    // Copy media + generate thumbnail
+    if let Some(source) = source_file {
+        let canonical = source.canonicalize()
+            .with_context(|| format!("invalid file path: {}", source.display()))?;
+        anyhow::ensure!(canonical.is_file(), "path is not a file");
+
+        copy_media_file(&canonical, vault, &block.slug)?;
+
+        let ext = canonical.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if is_image_ext(ext) {
+            let media_dest = vault.media_path(&block.slug, ext);
+            let thumb_dest = vault.thumb_path(&block.slug);
+            let _ = thumbnails::generate_thumbnail(
+                &media_dest,
+                &thumb_dest,
+                thumbnails::DEFAULT_MAX_SIZE,
+            );
+        }
+    } else if block.frontmatter.block_type == BlockType::Article {
+        let thumb_dest = vault.thumb_path(&block.slug);
+        let title = block.frontmatter.title.as_deref();
+        let _ = thumbnails::generate_text_thumbnail(title, &block.body, &thumb_dest);
+    }
+
+    // Index
+    index::upsert_block(conn, block)?;
+
+    // Return the indexed block
+    index::get_block(conn, &block.slug)?
+        .ok_or_else(|| anyhow::anyhow!("block not found after creation"))
+}
+
+fn is_image_ext(ext: &str) -> bool {
+    matches!(
+        ext.to_lowercase().as_str(),
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif"
+    )
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

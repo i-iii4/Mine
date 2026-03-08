@@ -28,6 +28,93 @@ if any
 
 ---
 
+## 07.03.2026 — Phase 9: исправления по результатам аудита
+
+### Goal
+Устранить критические, высокоприоритетные и средние проблемы, выявленные аудитом кодовой базы (AUDIT.md). Повысить безопасность, производительность и устойчивость к паникам.
+
+### Planned
+11 батчей: безопасность SQLite, SQL-оптимизации, транзакции, устойчивость к паникам, безопасность фронтенда, React.memo, надёжность клиппера, FTS5 escaping, рефакторинг, тесты, документация.
+
+### Actually completed
+Все 11 батчей выполнены:
+
+**Безопасность (Batch 1, 5):**
+- `validate_slug()` в domain/vault.rs — проверка на `..`, `/`, `\`, NUL, пустую строку; debug_assert в VaultLayout
+- `validate_fetch_url()` в native_host.rs — SSRF-защита (только http/https, запрет private IP)
+- `isSafeUrl()` в lib/assets.ts — валидация URL перед рендерингом `<a href>` в Detail.tsx
+- `PRAGMA busy_timeout = 5000` в db.rs
+
+**SQL-оптимизации (Batch 2):**
+- `slug_exists()` — O(1) проверка вместо загрузки всех блоков
+- `LightBlock` + `list_blocks_light()` — без description/source, body обрезан до 500 символов
+- Поле `thumbnail` читается из БД — убраны N syscalls `thumb_path().exists()` в list_channel_previews
+- `CREATE INDEX idx_blocks_type ON blocks(block_type)`
+- `resolve_unique_slug()` — инкрементальная проверка через БД
+
+**Транзакции (Batch 3):**
+- `full_scan` обёрнут в `unchecked_transaction` с одним commit
+- `upsert_block` переведён на `SAVEPOINT` через raw SQL — корректно работает и standalone, и вложенно
+
+**Устойчивость к паникам (Batch 4):**
+- `catch_unwind(AssertUnwindSafe(...))` в thumb-gen потоке
+- `DateTime::new` — замена `.unwrap()` на обработку ошибки в native_host
+- Логирование ошибок spawn вместо `.ok()`
+- Mutex poisoning recovery: `.unwrap_or_else(|e| e.into_inner())`
+
+**Фронтенд (Batch 5, 6):**
+- `LightBlock` тип на фронтенде, `listBlocks` возвращает `LightBlock[]`
+- Detail загружает полный блок через `getBlock(slug)` по требованию
+- `React.memo` для Card компонента
+- `loadError` состояние с try/catch в loadData
+- Debounce timer cleanup в Search.tsx на unmount
+
+**Клиппер (Batch 7):**
+- `pendingCallbacks` заменён на `Map<number, {resolve, timeout}>`
+- Сопоставление запросов/ответов по `_messageId`
+- Fallback на oldest pending если host не эхоит messageId
+
+**FTS5 и обработка ошибок (Batch 8):**
+- `escape_fts5()` — оборачивает каждое слово поискового запроса в двойные кавычки
+
+**Рефакторинг (Batch 9):**
+- `persist_new_block()` в storage/files.rs — оркестрация записи файла + медиа + миниатюра + индекс
+- `is_image_ext()` перенесён в storage/files.rs
+- commands/blocks.rs стал тонкой обёрткой
+- Удалён `extension/popup/_legacy/` (и в Safari-расширении)
+- Удалены закомментированные DropZone в App.tsx
+- Удалены неиспользуемые экспорты: `rebuildIndex`, `renameChannel` из commands.ts
+- Кнопка «Import from Are.na» добавлена в Sidebar
+
+**Тесты (Batch 10):**
+- 8 новых тестов: validate_slug (6), list_blocks_light (2), resolve_unique_slug (3), FTS5 escaping (1)
+- Итого: 213 тестов, все проходят
+
+**Документация (Batch 11):**
+- SPEC_STORAGE.md: добавлены LightBlock, slug_exists, resolve_unique_slug, persist_new_block, обновлён IndexedBlock
+- SPEC_DOMAIN.md: добавлен validate_slug
+- DEVLOG.md: запись о Phase 9
+
+### Deviations from plan
+- `upsert_block` использовал `unchecked_transaction()`, что ломалось при вложенных транзакциях в `full_scan`. Решено через raw SQL SAVEPOINT вместо rusqlite Transaction API
+- `files.rs` уже использовал `fs::write` (задача 9.2 была неактуальна)
+- Clippy-предупреждение `collapsible_if` в native_host.rs — не из наших изменений, оставлено
+
+### Checks
+- `cargo test` — 213 passed, 0 failed
+- `cargo clippy --all-targets` — без новых предупреждений
+- `bun run build` — фронтенд собирается
+- `bun run lint` — без ошибок
+
+### Push
+Ожидает коммит
+
+### Decisions and lessons learned
+- rusqlite `unchecked_transaction()` нельзя вкладывать — он делает `BEGIN`, не `SAVEPOINT`. Для вложенных транзакций нужен либо `savepoint()` (требует `&mut`), либо raw SQL
+- `LightBlock` с обрезанным body — хороший компромисс: ArticleCard всё ещё показывает превью, но IPC payload значительно меньше
+
+---
+
 ## 06.03.2026 — Текстовые миниатюры статей + оптимизация thumbnail-пайплайна
 
 ### Goal

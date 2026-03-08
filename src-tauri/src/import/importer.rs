@@ -11,7 +11,7 @@ use std::collections::HashSet;
 
 
 use crate::domain::block::{suggest_slug, Block, BlockType, DateTime, Frontmatter};
-use crate::domain::vault::{resolve_slug_conflict, VaultLayout};
+use crate::domain::vault::VaultLayout;
 use crate::import::arena_api::{self, ArenaBlock};
 use crate::storage::{files, index, thumbnails};
 
@@ -61,11 +61,8 @@ where
     let mut skipped = 0;
     let mut errors = Vec::new();
 
-    // Collect existing slugs to avoid conflicts
-    let mut existing_slugs: HashSet<String> = index::list_blocks(conn)?
-        .iter()
-        .map(|b| b.slug.clone())
-        .collect();
+    // Track slugs created during this import session to avoid conflicts
+    let mut session_slugs: HashSet<String> = HashSet::new();
 
     for (i, arena_block) in arena_blocks.iter().enumerate() {
         let block_title = arena_block.title.clone();
@@ -77,7 +74,7 @@ where
             block_title: block_title.clone(),
         });
 
-        match import_single_block(conn, vault, arena_block, tag, &mut existing_slugs) {
+        match import_single_block(conn, vault, arena_block, tag, &mut session_slugs) {
             Ok(_) => imported += 1,
             Err(e) => {
                 let msg = format!(
@@ -109,7 +106,7 @@ fn import_single_block(
     vault: &VaultLayout,
     arena_block: &ArenaBlock,
     tag: &str,
-    existing_slugs: &mut HashSet<String>,
+    session_slugs: &mut HashSet<String>,
 ) -> Result<()> {
     let block_type = map_block_type(&arena_block.class);
     let title = arena_block.title.clone();
@@ -118,11 +115,26 @@ fn import_single_block(
         .as_ref()
         .and_then(|s| s.url.clone());
 
-    // Generate unique slug
+    // Generate unique slug (check DB + session-local set)
     let raw_slug = suggest_slug(title.as_deref(), url.as_deref());
-    let slug = resolve_slug_conflict(&raw_slug, existing_slugs)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
-    existing_slugs.insert(slug.clone());
+    let slug = {
+        if !session_slugs.contains(&raw_slug) && !index::slug_exists(conn, &raw_slug)? {
+            raw_slug
+        } else {
+            let mut found = None;
+            for n in 2..=1000u32 {
+                let candidate = format!("{}-{}", raw_slug, n);
+                if !session_slugs.contains(&candidate) && !index::slug_exists(conn, &candidate)? {
+                    found = Some(candidate);
+                    break;
+                }
+            }
+            found.ok_or_else(|| anyhow::anyhow!(
+                "could not resolve slug conflict for '{}' after 1000 attempts", raw_slug
+            ))?
+        }
+    };
+    session_slugs.insert(slug.clone());
 
     // Download media file if applicable
     let (media_file, media_ext) = download_media(vault, &slug, arena_block)?;

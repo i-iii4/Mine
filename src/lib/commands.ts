@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   IndexedBlock,
+  LightBlock,
   TagCount,
   ChannelDto,
   ScanResult,
@@ -20,12 +21,9 @@ export const selectVault = (path: string) =>
 export const getVaultPath = () =>
   invoke<string | null>("get_vault_path");
 
-export const rebuildIndex = () =>
-  invoke<ScanResult>("rebuild_index");
-
 // Blocks
 export const listBlocks = () =>
-  invoke<IndexedBlock[]>("list_blocks");
+  invoke<LightBlock[]>("list_blocks");
 
 export const getBlock = (slug: string) =>
   invoke<IndexedBlock | null>("get_block", { slug });
@@ -65,9 +63,6 @@ export const createChannel = (tag: string, title?: string) =>
 
 export const reorderChannels = (items: { tag: string; position: number }[]) =>
   invoke<void>("reorder_channels", { items });
-
-export const renameChannel = (old_tag: string, new_tag: string) =>
-  invoke<ChannelDto>("rename_channel", { old_tag, new_tag });
 
 export const deleteChannel = (tag: string) =>
   invoke<boolean>("delete_channel", { tag });

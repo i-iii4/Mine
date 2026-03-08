@@ -48,8 +48,13 @@ pub fn full_scan(
     // Collect thumbnail work items during indexing
     let mut thumb_jobs: Vec<ThumbJob> = Vec::new();
 
+    // Wrap all indexing in a single transaction for performance (one commit
+    // instead of N commits). Individual upsert_block calls use savepoints.
+    let tx = conn.unchecked_transaction()
+        .context("failed to begin transaction for full_scan")?;
+
     for path in &paths {
-        match index_md_file_inner(conn, vault, path) {
+        match index_md_file_inner(&tx, vault, path) {
             Ok(job) => {
                 indexed += 1;
                 if let Some(j) = job {
@@ -63,48 +68,63 @@ pub fn full_scan(
         }
     }
 
+    tx.commit().context("failed to commit full_scan transaction")?;
+
     // Spawn background thread for thumbnail generation
     if !thumb_jobs.is_empty() {
         let vault_clone = vault.clone();
-        std::thread::Builder::new()
+        match std::thread::Builder::new()
             .name("thumb-gen".into())
             .spawn(move || {
-                let mut generated = 0;
-                let mut skipped = 0;
-                for job in &thumb_jobs {
-                    let thumb_path = vault_clone.thumb_path(&job.slug);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut generated = 0;
+                    let mut skipped = 0;
+                    for job in &thumb_jobs {
+                        let thumb_path = vault_clone.thumb_path(&job.slug);
 
-                    // O1: skip if thumbnail is fresh
-                    if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path) {
-                        skipped += 1;
-                        continue;
-                    }
-
-                    let result = match &job.kind {
-                        ThumbKind::Image { media_path } => {
-                            thumbnails::generate_thumbnail(media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
+                        // O1: skip if thumbnail is fresh
+                        if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path) {
+                            skipped += 1;
+                            continue;
                         }
-                        ThumbKind::Text { title, body } => {
-                            thumbnails::generate_text_thumbnail(title.as_deref(), body, &thumb_path)
-                        }
-                    };
 
-                    match result {
-                        Ok(_) => generated += 1,
-                        Err(e) => log::warn!("thumbnail failed for {}: {}", job.slug, e),
+                        let result = match &job.kind {
+                            ThumbKind::Image { media_path } => {
+                                thumbnails::generate_thumbnail(media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
+                            }
+                            ThumbKind::Text { title, body } => {
+                                thumbnails::generate_text_thumbnail(title.as_deref(), body, &thumb_path)
+                            }
+                        };
+
+                        match result {
+                            Ok(_) => generated += 1,
+                            Err(e) => log::warn!("thumbnail failed for {}: {}", job.slug, e),
+                        }
                     }
-                }
-                log::info!(
-                    "thumbnails: {} generated, {} skipped (fresh), {} total",
-                    generated, skipped, thumb_jobs.len()
-                );
-                if generated > 0 {
-                    if let Some(cb) = on_thumbs_done {
-                        cb();
+                    log::info!(
+                        "thumbnails: {} generated, {} skipped (fresh), {} total",
+                        generated, skipped, thumb_jobs.len()
+                    );
+                    generated
+                }));
+                match result {
+                    Ok(generated) => {
+                        if generated > 0 {
+                            if let Some(cb) = on_thumbs_done {
+                                cb();
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        log::error!("thumb-gen thread panicked");
                     }
                 }
             })
-            .ok();
+        {
+            Ok(_handle) => { /* detached: thumbnail generation runs in background */ }
+            Err(e) => log::error!("failed to spawn thumb-gen thread: {}", e),
+        }
     }
 
     Ok(ScanResult { indexed, errors })

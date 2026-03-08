@@ -7,11 +7,11 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
-import type { IndexedBlock, TagCount } from "@/types";
+import type { LightBlock, TagCount } from "@/types";
 import { getRecentTags } from "@/lib/recentTags";
 
 interface CardTagMenuProps {
-  block: IndexedBlock;
+  block: LightBlock;
   tags: TagCount[];
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;

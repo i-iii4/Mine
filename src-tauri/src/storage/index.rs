@@ -35,6 +35,25 @@ pub struct IndexedBlock {
     pub tags: Vec<String>,
 }
 
+/// A lightweight block for list/grid views. Body is truncated (max 500 chars),
+/// description is omitted, source is omitted.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LightBlock {
+    pub id: i64,
+    pub slug: String,
+    pub block_type: BlockType,
+    pub title: Option<String>,
+    pub url: Option<String>,
+    pub media_file: Option<String>,
+    pub thumbnail: Option<String>,
+    pub saved_at: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub author: Option<String>,
+    pub body: String,
+    pub tags: Vec<String>,
+}
+
 /// A tag with its usage count across blocks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TagCount {
@@ -49,10 +68,29 @@ pub struct TagCount {
 /// On conflict (same slug): updates all fields, replaces tags and wikilinks.
 /// FTS5 is updated automatically through triggers.
 pub fn upsert_block(conn: &Connection, block: &Block) -> Result<i64> {
-    let tx = conn.unchecked_transaction()
-        .context("failed to begin transaction for upsert_block")?;
+    // Use SAVEPOINT via raw SQL for nestability — this works both standalone
+    // and inside an outer transaction (e.g. full_scan).
+    conn.execute_batch("SAVEPOINT upsert_block")
+        .context("failed to begin savepoint for upsert_block")?;
 
-    tx.execute(
+    let result = upsert_block_inner(conn, block);
+
+    match &result {
+        Ok(_) => {
+            conn.execute_batch("RELEASE SAVEPOINT upsert_block")
+                .context("failed to release savepoint")?;
+        }
+        Err(_) => {
+            let _ = conn.execute_batch("ROLLBACK TO SAVEPOINT upsert_block");
+            let _ = conn.execute_batch("RELEASE SAVEPOINT upsert_block");
+        }
+    }
+
+    result
+}
+
+fn upsert_block_inner(conn: &Connection, block: &Block) -> Result<i64> {
+    conn.execute(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
@@ -88,7 +126,7 @@ pub fn upsert_block(conn: &Connection, block: &Block) -> Result<i64> {
     )
     .context("failed to upsert block")?;
 
-    let block_id: i64 = tx
+    let block_id: i64 = conn
         .query_row(
             "SELECT id FROM blocks WHERE slug = ?1",
             [&block.slug],
@@ -97,10 +135,10 @@ pub fn upsert_block(conn: &Connection, block: &Block) -> Result<i64> {
         .context("failed to get block id after upsert")?;
 
     // Replace tags: delete old, insert new.
-    tx.execute("DELETE FROM block_tags WHERE block_id = ?1", [block_id])
+    conn.execute("DELETE FROM block_tags WHERE block_id = ?1", [block_id])
         .context("failed to delete old tags")?;
     for tag in &block.frontmatter.tags {
-        tx.execute(
+        conn.execute(
             "INSERT INTO block_tags (block_id, tag) VALUES (?1, ?2)",
             params![block_id, tag],
         )
@@ -108,18 +146,17 @@ pub fn upsert_block(conn: &Connection, block: &Block) -> Result<i64> {
     }
 
     // Replace wikilinks: delete old, insert new.
-    tx.execute("DELETE FROM wikilinks WHERE source_id = ?1", [block_id])
+    conn.execute("DELETE FROM wikilinks WHERE source_id = ?1", [block_id])
         .context("failed to delete old wikilinks")?;
     let links = extract_wikilinks(&block.body);
     for link in &links {
-        tx.execute(
+        conn.execute(
             "INSERT OR IGNORE INTO wikilinks (source_id, target_slug) VALUES (?1, ?2)",
             params![block_id, link],
         )
         .context("failed to insert wikilink")?;
     }
 
-    tx.commit().context("failed to commit upsert_block")?;
     Ok(block_id)
 }
 
@@ -129,6 +166,104 @@ pub fn remove_block(conn: &Connection, slug: &str) -> Result<bool> {
         .execute("DELETE FROM blocks WHERE slug = ?1", [slug])
         .context("failed to delete block")?;
     Ok(count > 0)
+}
+
+/// Check if a slug already exists in the index.
+pub fn slug_exists(conn: &Connection, slug: &str) -> Result<bool> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM blocks WHERE slug = ?1)",
+            [slug],
+            |row| row.get(0),
+        )
+        .context("failed to check slug existence")?;
+    Ok(exists)
+}
+
+/// Given a raw slug, return a unique variant that does not collide with existing slugs.
+/// Tries `raw_slug` first, then `raw_slug-2`, `raw_slug-3`, ..., up to `raw_slug-1000`.
+pub fn resolve_unique_slug(conn: &Connection, raw_slug: &str) -> Result<String> {
+    if !slug_exists(conn, raw_slug)? {
+        return Ok(raw_slug.to_string());
+    }
+    for n in 2..=1000u32 {
+        let candidate = format!("{}-{}", raw_slug, n);
+        if !slug_exists(conn, &candidate)? {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!("could not resolve slug conflict for '{}' after 1000 attempts", raw_slug);
+}
+
+/// List all blocks without description/source (lightweight for grid views).
+/// Body is truncated to 500 chars to reduce IPC payload for large articles.
+pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, slug, block_type, title, url, media_file,
+                thumbnail, saved_at, width, height, author,
+                SUBSTR(body, 1, 500)
+         FROM blocks ORDER BY saved_at DESC",
+    )?;
+
+    let mut blocks: Vec<LightBlock> = stmt
+        .query_map([], |row| {
+            Ok(LightBlock {
+                id: row.get(0)?,
+                slug: row.get(1)?,
+                block_type: {
+                    let raw: String = row.get(2)?;
+                    BlockType::from_str(&raw).map_err(|_| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            format!("unknown block_type: {}", raw).into(),
+                        )
+                    })?
+                },
+                title: row.get(3)?,
+                url: row.get(4)?,
+                media_file: row.get(5)?,
+                thumbnail: row.get(6)?,
+                saved_at: row.get(7)?,
+                width: row.get::<_, Option<i64>>(8)?.map(|v| v as u32),
+                height: row.get::<_, Option<i64>>(9)?.map(|v| v as u32),
+                author: row.get(10)?,
+                body: row.get(11)?,
+                tags: Vec::new(),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if blocks.is_empty() {
+        return Ok(blocks);
+    }
+
+    // Batch-fetch tags
+    let ids: Vec<i64> = blocks.iter().map(|b| b.id).collect();
+    let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT block_id, tag FROM block_tags WHERE block_id IN ({}) ORDER BY tag",
+        placeholders
+    );
+    let mut tag_stmt = conn.prepare(&sql)?;
+    let id_params: Vec<&dyn rusqlite::types::ToSql> =
+        ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+    let rows = tag_stmt.query_map(&*id_params, |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    let mut tag_map: std::collections::HashMap<i64, Vec<String>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        let (block_id, tag) = row?;
+        tag_map.entry(block_id).or_default().push(tag);
+    }
+
+    for block in &mut blocks {
+        block.tags = tag_map.remove(&block.id).unwrap_or_default();
+    }
+
+    Ok(blocks)
 }
 
 /// Get a single block by slug. Returns None if not found.
@@ -208,11 +343,11 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
     let mut conditions = Vec::new();
     let mut param_values: Vec<String> = Vec::new();
 
-    // FTS5 free-text search
+    // FTS5 free-text search (escape special characters)
     if !query.text.is_empty() {
         joins.push("JOIN blocks_fts ON blocks_fts.rowid = b.id".to_string());
         conditions.push(format!("blocks_fts MATCH ?{}", param_values.len() + 1));
-        param_values.push(query.text.clone());
+        param_values.push(escape_fts5(&query.text));
     }
 
     // Filters
@@ -346,6 +481,20 @@ pub fn remove_channel(conn: &Connection, tag: &str) -> Result<bool> {
 }
 
 // ─── Private helpers ────────────────────────────────────────────────────────
+
+/// Escape FTS5 special characters in user input.
+/// Wraps each word in double quotes to treat them as literal tokens.
+fn escape_fts5(input: &str) -> String {
+    input
+        .split_whitespace()
+        .map(|word| {
+            // Escape internal double quotes by doubling them
+            let escaped = word.replace('"', "\"\"");
+            format!("\"{}\"", escaped)
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
     Ok(IndexedBlock {
@@ -772,6 +921,79 @@ mod tests {
         let results = search_blocks(&conn, &query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].slug, "both");
+    }
+
+    // ── list_blocks_light ─────────────────────────────────────────────────
+
+    #[test]
+    fn list_blocks_light_truncates_body() {
+        let conn = test_conn();
+        let long_body = "x".repeat(1000);
+        upsert_block(
+            &conn,
+            &make_block_full("article", "article", Some("Test"), "2026-01-01T00:00:00Z", &[], &long_body),
+        ).unwrap();
+
+        let light = list_blocks_light(&conn).unwrap();
+        assert_eq!(light.len(), 1);
+        assert!(light[0].body.len() <= 500);
+    }
+
+    #[test]
+    fn list_blocks_light_includes_tags() {
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("tagged", &["design", "web"])).unwrap();
+
+        let light = list_blocks_light(&conn).unwrap();
+        assert_eq!(light[0].tags, vec!["design", "web"]);
+    }
+
+    // ── resolve_unique_slug ─────────────────────────────────────────────
+
+    #[test]
+    fn resolve_unique_slug_no_conflict() {
+        let conn = test_conn();
+        let slug = resolve_unique_slug(&conn, "fresh").unwrap();
+        assert_eq!(slug, "fresh");
+    }
+
+    #[test]
+    fn resolve_unique_slug_with_conflict() {
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("taken", &[])).unwrap();
+        let slug = resolve_unique_slug(&conn, "taken").unwrap();
+        assert_eq!(slug, "taken-2");
+    }
+
+    #[test]
+    fn resolve_unique_slug_multiple_conflicts() {
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("doc", &[])).unwrap();
+        upsert_block(&conn, &make_block("doc-2", &[])).unwrap();
+        upsert_block(&conn, &make_block("doc-3", &[])).unwrap();
+        let slug = resolve_unique_slug(&conn, "doc").unwrap();
+        assert_eq!(slug, "doc-4");
+    }
+
+    // ── FTS5 escaping ───────────────────────────────────────────────────
+
+    #[test]
+    fn search_with_special_characters_does_not_error() {
+        let conn = test_conn();
+        upsert_block(
+            &conn,
+            &make_block_full("test", "article", Some("Hello World"), "2026-01-01T00:00:00Z", &[], "body"),
+        ).unwrap();
+
+        // These would cause FTS5 syntax errors without escaping
+        for query_text in &["\"quoted\"", "hello*world", "(parens)", "a OR b", "prefix*"] {
+            let query = SearchQuery {
+                text: query_text.to_string(),
+                filters: vec![],
+            };
+            let result = search_blocks(&conn, &query);
+            assert!(result.is_ok(), "query '{}' should not error", query_text);
+        }
     }
 
     // ── channels ─────────────────────────────────────────────────────────

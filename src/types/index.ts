@@ -21,6 +21,23 @@ export interface IndexedBlock {
   tags: string[];
 }
 
+/** Lightweight block for grid/list views (body truncated, no description/source). */
+export interface LightBlock {
+  id: number;
+  slug: string;
+  block_type: BlockType;
+  title: string | null;
+  url: string | null;
+  media_file: string | null;
+  thumbnail: string | null;
+  saved_at: string;
+  width: number | null;
+  height: number | null;
+  author: string | null;
+  body: string;
+  tags: string[];
+}
+
 export interface TagCount {
   tag: string;
   count: number;

@@ -13,7 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { IndexedBlock, TagCount } from "@/types";
+import type { LightBlock, TagCount } from "@/types";
 import { Card } from "./Card";
 import { CardTagMenu } from "./CardContextMenu";
 
@@ -23,13 +23,13 @@ const INITIAL_BATCH = 80;
 const BATCH_SIZE = 60;
 
 interface GridProps {
-  blocks: IndexedBlock[];
+  blocks: LightBlock[];
   vaultPath: string;
   tags: TagCount[];
   currentTag?: string;
   sidebarCollapsed?: boolean;
   focusedBlockId?: number | null;
-  onBlockClick: (block: IndexedBlock) => void;
+  onBlockClick: (block: LightBlock) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onDeleteBlock: (slug: string) => void;
@@ -54,7 +54,7 @@ export function Grid({
   const [parentWidth, setParentWidth] = useState(0);
   const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH);
   const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
-  const [menuBlock, setMenuBlock] = useState<IndexedBlock | null>(null);
+  const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
 
   // Fingerprint detects real dataset changes (channel switch, search)
   // while ignoring background refreshes with the same data.
@@ -156,7 +156,7 @@ export function Grid({
 
   // Distribute blocks into columns (round-robin)
   const columns = useMemo(() => {
-    const cols: IndexedBlock[][] = Array.from({ length: columnCount }, () => []);
+    const cols: LightBlock[][] = Array.from({ length: columnCount }, () => []);
     for (let i = 0; i < visibleBlocks.length; i++) {
       cols[i % columnCount]!.push(visibleBlocks[i]!);
     }

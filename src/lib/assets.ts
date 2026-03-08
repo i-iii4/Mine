@@ -19,3 +19,8 @@ export function domainFromUrl(url: string): string {
     return url;
   }
 }
+
+/** Check that a URL uses a safe protocol (http/https). */
+export function isSafeUrl(url: string): boolean {
+  return url.startsWith("http://") || url.startsWith("https://");
+}

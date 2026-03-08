@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import type { IndexedBlock } from "@/types";
-import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
+import { thumbnailUrl, mediaUrl, domainFromUrl, isSafeUrl } from "@/lib/assets";
 import { addTag, removeTag } from "@/lib/commands";
 
 // Layout constants — shared between scroll layer and metadata layer
@@ -182,7 +182,7 @@ function MetadataPanel({
 
       <MetadataField label="TYPE" value={block.block_type.toUpperCase()} />
 
-      {block.url && (
+      {block.url && isSafeUrl(block.url) && (
         <div>
           <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
             SOURCE

@@ -42,10 +42,11 @@ const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform })
   };
 };
 
-import type { IndexedBlock, TagCount, ChannelDto, PreviewCard } from "@/types";
+import type { IndexedBlock, LightBlock, TagCount, ChannelDto, PreviewCard } from "@/types";
 import { thumbnailUrl } from "@/lib/assets";
 import {
   getVaultPath,
+  getBlock,
   listBlocks,
   listTags,
   listChannels,
@@ -68,7 +69,6 @@ import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { Grid } from "@/components/Grid";
 import { Search } from "@/components/Search";
 import { Detail } from "@/components/Detail";
-// import { DropZone } from "@/components/DropZone";
 import { ImportDialog } from "@/components/ImportDialog";
 
 // ─── Visual grid navigation ────────────────────────────────────────────────
@@ -162,14 +162,14 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     ? decodeURIComponent(location.pathname.slice("/channel/".length))
     : undefined;
 
-  const [blocks, setBlocks] = useState<IndexedBlock[]>([]);
+  const [blocks, setBlocks] = useState<LightBlock[]>([]);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [channels, setChannels] = useState<ChannelDto[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<IndexedBlock | null>(null);
   const [focusedBlockId, setFocusedBlockId] = useState<number | null>(null);
-  const [activeDragBlock, setActiveDragBlock] = useState<IndexedBlock | null>(null);
+  const [activeDragBlock, setActiveDragBlock] = useState<LightBlock | null>(null);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const gridColumnCountRef = useRef(1);
@@ -210,8 +210,10 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       if (e.key === "Enter" && cur !== null) {
         const block = ab.find((b) => b.id === cur);
         if (block) {
-          setSelectedBlock(block);
           setFocusedBlockId(null);
+          getBlock(block.slug).then((full) => {
+            if (full) setSelectedBlock(full);
+          });
         }
         return;
       }
@@ -288,15 +290,24 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     setChannelPreviews(map);
   }, [vaultPath]);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const loadData = useCallback(async () => {
-    const [b, t, ch] = await Promise.all([listBlocks(), listTags(), listChannels()]);
-    setBlocks(b);
-    setTags(t);
-    setChannels(ch);
-    // Signal cards to retry failed image loads (e.g. after iCloud files download)
-    window.dispatchEvent(new Event("vault-refreshed"));
-    // Previews loaded after main data to not block initial render
-    loadPreviews();
+    try {
+      const [b, t, ch] = await Promise.all([listBlocks(), listTags(), listChannels()]);
+      setBlocks(b);
+      setTags(t);
+      setChannels(ch);
+      setLoadError(null);
+      // Signal cards to retry failed image loads (e.g. after iCloud files download)
+      window.dispatchEvent(new Event("vault-refreshed"));
+      // Previews loaded after main data to not block initial render
+      loadPreviews();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Failed to load data:", msg);
+      setLoadError(msg);
+    }
   }, [loadPreviews]);
 
   useEffect(() => {
@@ -330,9 +341,13 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   // ── Block navigation ──────────────────────────────────────────────────────
 
-  const handleBlockClick = useCallback((block: IndexedBlock) => {
-    setSelectedBlock(block);
+  const handleBlockClick = useCallback(async (block: LightBlock) => {
     setFocusedBlockId(null);
+    // Load full block data (with complete body/description) for Detail view
+    const full = await getBlock(block.slug);
+    if (full) {
+      setSelectedBlock(full);
+    }
   }, []);
 
   const handleDetailClose = useCallback(() => {
@@ -341,7 +356,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   }, [selectedBlock]);
 
   const handleDetailNavigate = useCallback(
-    (direction: "prev" | "next" | "up" | "down") => {
+    async (direction: "prev" | "next" | "up" | "down") => {
       if (!selectedBlock) return;
       const idx = activeBlocks.findIndex((b) => b.id === selectedBlock.id);
       if (idx === -1) return;
@@ -354,7 +369,9 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         case "down":  newIdx = idx + cols; break;
       }
       if (newIdx >= 0 && newIdx < activeBlocks.length) {
-        setSelectedBlock(activeBlocks[newIdx]!);
+        const target = activeBlocks[newIdx]!;
+        const full = await getBlock(target.slug);
+        if (full) setSelectedBlock(full);
       }
     },
     [selectedBlock, activeBlocks],
@@ -585,6 +602,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}
         onCreateChannel={handleCreateChannel}
+        onImportClick={() => setImportOpen(true)}
       />
 
       <SidebarResizeHandle
@@ -598,6 +616,11 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       />
 
       <main ref={mainRef} className="relative isolate flex-1 overflow-hidden">
+        {loadError && (
+          <div className="flex h-full items-center justify-center p-8">
+            <p className="text-sm text-destructive">{loadError}</p>
+          </div>
+        )}
         <Routes>
           <Route
             element={
@@ -641,8 +664,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         }}
       />
 
-      {/* <DropZone currentTag={currentTag} onBlocksCreated={loadData} /> */}
-
       <ImportDialog
         open={importOpen}
         onClose={() => setImportOpen(false)}
@@ -670,13 +691,13 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 // ─── Route context ─────────────────────────────────────────────────────────
 
 interface RouteContext {
-  blocks: IndexedBlock[];
+  blocks: LightBlock[];
   vaultPath: string;
   tags: TagCount[];
   currentTag?: string;
   sidebarCollapsed: boolean;
   focusedBlockId: number | null;
-  onBlockClick: (block: IndexedBlock) => void;
+  onBlockClick: (block: LightBlock) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onDeleteBlock: (slug: string) => void;

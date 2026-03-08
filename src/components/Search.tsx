@@ -38,6 +38,13 @@ export function Search({ open, onClose, onSelect }: SearchProps) {
     }
   }, [open]);
 
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
   // Debounced search via IPC
   const runSearch = useCallback((q: string) => {
     if (timerRef.current) clearTimeout(timerRef.current);

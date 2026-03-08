@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { NavLink, useLocation } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Plus, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { Plus, Download, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -48,6 +48,7 @@ interface SidebarProps {
   onDeleteTag: (tag: string) => void;
   onRenameTag: (oldTag: string, newTag: string) => void;
   onCreateChannel: (tag: string) => void;
+  onImportClick: () => void;
 }
 
 export function Sidebar({
@@ -61,6 +62,7 @@ export function Sidebar({
   onDeleteTag,
   onRenameTag,
   onCreateChannel,
+  onImportClick,
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -145,6 +147,16 @@ export function Sidebar({
             <span>New channel</span>
           </Button>
         )}
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onImportClick}
+          className="w-full justify-start rounded-1 text-muted-foreground hover:bg-accent"
+        >
+          <Download className="size-3" />
+          <span>Import from Are.na</span>
+        </Button>
       </nav>
 
 

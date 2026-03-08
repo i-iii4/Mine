@@ -16,6 +16,9 @@ use thiserror::Error;
 pub enum VaultError {
     #[error("could not resolve slug conflict for '{slug}' after 1000 attempts")]
     SlugConflictExhausted { slug: String },
+
+    #[error("invalid slug: {reason}")]
+    InvalidSlug { reason: String },
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -38,12 +41,20 @@ impl VaultLayout {
     }
 
     /// Path to a block's .md file: `root/slug.md`.
+    ///
+    /// Panics in debug builds if slug fails validation.
+    /// Call `validate_slug()` at IPC boundaries before using this.
     pub fn block_path(&self, slug: &str) -> PathBuf {
+        debug_assert!(validate_slug(slug).is_ok(), "invalid slug passed to block_path: {:?}", slug);
         self.root.join(format!("{}.md", slug))
     }
 
     /// Path to a block's media file: `root/slug.ext`.
+    ///
+    /// Panics in debug builds if slug fails validation.
+    /// Call `validate_slug()` at IPC boundaries before using this.
     pub fn media_path(&self, slug: &str, ext: &str) -> PathBuf {
+        debug_assert!(validate_slug(slug).is_ok(), "invalid slug passed to media_path: {:?}", slug);
         let ext = ext.strip_prefix('.').unwrap_or(ext);
         self.root.join(format!("{}.{}", slug, ext))
     }
@@ -64,9 +75,41 @@ impl VaultLayout {
     }
 
     /// Path to a specific thumbnail: `.arena/cache/thumbs/slug.jpg`.
+    ///
+    /// Panics in debug builds if slug fails validation.
+    /// Call `validate_slug()` at IPC boundaries before using this.
     pub fn thumb_path(&self, slug: &str) -> PathBuf {
+        debug_assert!(validate_slug(slug).is_ok(), "invalid slug passed to thumb_path: {:?}", slug);
         self.thumbs_dir().join(format!("{}.jpg", slug))
     }
+}
+
+// ─── Slug validation ────────────────────────────────────────────────────────
+
+/// Validate that a slug is safe for use in filesystem paths.
+/// Rejects path traversal, separators, NUL bytes, and empty strings.
+pub fn validate_slug(slug: &str) -> Result<(), VaultError> {
+    if slug.is_empty() {
+        return Err(VaultError::InvalidSlug {
+            reason: "slug is empty".to_string(),
+        });
+    }
+    if slug.contains('\0') {
+        return Err(VaultError::InvalidSlug {
+            reason: "slug contains NUL byte".to_string(),
+        });
+    }
+    if slug.contains('/') || slug.contains('\\') {
+        return Err(VaultError::InvalidSlug {
+            reason: "slug contains path separator".to_string(),
+        });
+    }
+    if slug == "." || slug == ".." || slug.starts_with("../") || slug.starts_with("..\\") {
+        return Err(VaultError::InvalidSlug {
+            reason: "slug contains path traversal".to_string(),
+        });
+    }
+    Ok(())
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -161,6 +204,48 @@ mod tests {
     #[test]
     fn root() {
         assert_eq!(layout().root(), Path::new("/vault"));
+    }
+
+    // ── validate_slug ─────────────────────────────────────────────────
+
+    #[test]
+    fn validate_slug_normal() {
+        assert!(validate_slug("sunset-tokyo").is_ok());
+        assert!(validate_slug("a").is_ok());
+        assert!(validate_slug("my-slug-2").is_ok());
+    }
+
+    #[test]
+    fn validate_slug_empty() {
+        assert!(validate_slug("").is_err());
+    }
+
+    #[test]
+    fn validate_slug_nul_byte() {
+        assert!(validate_slug("foo\0bar").is_err());
+    }
+
+    #[test]
+    fn validate_slug_forward_slash() {
+        assert!(validate_slug("foo/bar").is_err());
+    }
+
+    #[test]
+    fn validate_slug_backslash() {
+        assert!(validate_slug("foo\\bar").is_err());
+    }
+
+    #[test]
+    fn validate_slug_dotdot() {
+        assert!(validate_slug("..").is_err());
+        assert!(validate_slug("../etc").is_err());
+    }
+
+    #[test]
+    fn validate_slug_single_dot_ok() {
+        // A single dot is also suspicious but currently only ".." is blocked.
+        // "." is blocked explicitly.
+        assert!(validate_slug(".").is_err());
     }
 
     // ── resolve_slug_conflict ───────────────────────────────────────────

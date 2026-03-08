@@ -2,25 +2,24 @@
 //
 // Contract: SPEC_INTEGRATION.md#commands/blocks
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 use tauri::State;
 
 use crate::commands::state::{AppState, CommandError};
 use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
-use crate::domain::vault::resolve_slug_conflict;
-use crate::storage::{files, index, thumbnails};
+use crate::domain::vault::validate_slug;
+use crate::storage::{files, index};
 use crate::storage::index::IndexedBlock;
 
 // ─── Commands ───────────────────────────────────────────────────────────────
 
-/// List all blocks, ordered by saved_at descending.
+/// List all blocks (lightweight — without body/description), ordered by saved_at descending.
 #[tauri::command]
-pub fn list_blocks(state: State<'_, AppState>) -> Result<Vec<IndexedBlock>, CommandError> {
+pub fn list_blocks(state: State<'_, AppState>) -> Result<Vec<index::LightBlock>, CommandError> {
     let vault_state = state.vault_state.lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    Ok(index::list_blocks(&vs.conn)?)
+    Ok(index::list_blocks_light(&vs.conn)?)
 }
 
 /// Get a single block by slug.
@@ -29,6 +28,7 @@ pub fn get_block(
     state: State<'_, AppState>,
     slug: String,
 ) -> Result<Option<IndexedBlock>, CommandError> {
+    validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
     let vault_state = state.vault_state.lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
@@ -52,19 +52,9 @@ pub fn create_block(
     let bt = BlockType::from_str(&block_type)
         .map_err(|e| CommandError::Internal(e.to_string()))?;
 
-    // Generate slug
-    let raw_slug = crate::domain::block::suggest_slug(
-        title.as_deref(),
-        url.as_deref(),
-    );
-
-    // Resolve conflicts with existing slugs
-    let existing: HashSet<String> = index::list_blocks(&vs.conn)?
-        .iter()
-        .map(|b| b.slug.clone())
-        .collect();
-    let slug = resolve_slug_conflict(&raw_slug, &existing)
-        .map_err(|e| CommandError::Internal(e.to_string()))?;
+    // Generate unique slug
+    let raw_slug = crate::domain::block::suggest_slug(title.as_deref(), url.as_deref());
+    let slug = index::resolve_unique_slug(&vs.conn, &raw_slug)?;
 
     // Determine media file name
     let media_file = file_path.as_ref().map(|fp| {
@@ -80,7 +70,7 @@ pub fn create_block(
         .map_err(|e| CommandError::Internal(e.to_string()))?;
 
     let block = Block {
-        slug: slug.clone(),
+        slug,
         frontmatter: Frontmatter {
             block_type: bt,
             title,
@@ -98,42 +88,8 @@ pub fn create_block(
         body: String::new(),
     };
 
-    // Write .md file
-    files::write_block_file(&vs.vault, &block)?;
-
-    // Copy media file if provided
-    if let Some(ref fp) = file_path {
-        let source = PathBuf::from(fp);
-        let canonical = source.canonicalize()
-            .map_err(|e| CommandError::Internal(format!("invalid file path: {}", e)))?;
-        if !canonical.is_file() {
-            return Err(CommandError::Internal("path is not a file".into()));
-        }
-        files::copy_media_file(&canonical, &vs.vault, &slug)?;
-
-        // Generate thumbnail for images
-        let ext = canonical
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        if is_image_ext(ext) {
-            let media_dest = vs.vault.media_path(&slug, ext);
-            let thumb_dest = vs.vault.thumb_path(&slug);
-            let _ = thumbnails::generate_thumbnail(&media_dest, &thumb_dest, thumbnails::DEFAULT_MAX_SIZE);
-        }
-    } else if block.frontmatter.block_type == BlockType::Article {
-        // Article without media: render text as thumbnail
-        let thumb_dest = vs.vault.thumb_path(&slug);
-        let title = block.frontmatter.title.as_deref();
-        let _ = thumbnails::generate_text_thumbnail(title, &block.body, &thumb_dest);
-    }
-
-    // Index
-    index::upsert_block(&vs.conn, &block)?;
-
-    // Return the indexed block
-    index::get_block(&vs.conn, &slug)?
-        .ok_or_else(|| CommandError::Internal("block not found after creation".to_string()))
+    let source = file_path.as_ref().map(|fp| PathBuf::from(fp));
+    Ok(files::persist_new_block(&vs.conn, &vs.vault, &block, source.as_deref())?)
 }
 
 /// Delete a block: remove from index, delete .md and media files.
@@ -145,6 +101,8 @@ pub fn delete_block(
     let vault_state = state.vault_state.lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+
+    validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
 
     // Get block info for media file extension
     let block = index::get_block(&vs.conn, &slug)?;
@@ -164,11 +122,3 @@ pub fn delete_block(
     Ok(index::remove_block(&vs.conn, &slug)?)
 }
 
-// ─── Private helpers ────────────────────────────────────────────────────────
-
-fn is_image_ext(ext: &str) -> bool {
-    matches!(
-        ext.to_lowercase().as_str(),
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif"
-    )
-}

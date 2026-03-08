@@ -42,7 +42,8 @@ fn init_connection(conn: &Connection) -> Result<()> {
 fn apply_pragmas(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
-         PRAGMA foreign_keys = ON;",
+         PRAGMA foreign_keys = ON;
+         PRAGMA busy_timeout = 5000;",
     )?;
     Ok(())
 }
@@ -68,6 +69,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_blocks_saved_at ON blocks(saved_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_blocks_type ON blocks(block_type);
 
         CREATE TABLE IF NOT EXISTS block_tags (
             block_id INTEGER NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,

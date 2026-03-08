@@ -57,7 +57,7 @@ pub fn start_watching(
         }
 
         // Debounce: emit at most once per DEBOUNCE_MS
-        let mut last = last_emit.lock().unwrap();
+        let mut last = last_emit.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         if now.duration_since(*last) >= Duration::from_millis(DEBOUNCE_MS) {
             *last = now;

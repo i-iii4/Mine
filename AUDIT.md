@@ -469,3 +469,252 @@
 
 ### Интеграционные тесты: 0
 ### E2E тесты: 0
+
+---
+
+# Третий аудит — 07.03.2026
+
+**Агентов:** 10 параллельных аудиторов (commands layer, React frontend, native host + extension, CSS/design system, performance, test coverage, architecture compliance + 3 из предыдущей сессии: domain, storage, watcher/handler)
+
+## Прогресс с повторного аудита (03.03)
+
+CRIT-1—CRIT-6 (первый аудит) исправлены. Phase 9.1 и 9.2 полностью завершены. CRIT-7—CRIT-9 (повторный аудит) остаются открытыми. Phase 11 (сайдбар, текстовые миниатюры, фоновая генерация) реализована.
+
+## Системные проблемы
+
+Аудит выявил три системных проблемы, пронизывающих всю кодовую базу:
+
+1. **Масштабируемость при росте коллекции.** Множество O(N) паттернов: загрузка всех блоков через IPC (включая body), создание slug через полный список, превью каналов через N syscall-ов, отсутствие пагинации. При 10K блоков приложение станет заметно медленным.
+
+2. **Безопасность IPC-границы.** Slug от фронтенда принимается без валидации — path traversal. Бизнес-логика размазана по commands/ вместо domain/. Нет транзакций в составных операциях.
+
+3. **Устаревшая документация.** ARCHITECTURE.md: SQLite-схема содержит 8+ расхождений с кодом. SPEC_INTEGRATION.md не покрывает 6 команд. SPEC_DOMAIN.md: `thumb_path` документирует `.webp`, код возвращает `.jpg`.
+
+## Новые критические находки
+
+### CRIT-10. Path traversal через slug
+- **Файлы:** `commands/blocks.rs` (`get_block`, `delete_block`), `commands/tags.rs` (`add_tag`, `remove_tag`, `rename_tag`, `delete_tag_from_all`)
+- **Суть:** slug от фронтенда передаётся в `VaultLayout::block_path()` (`root.join(format!("{}.md", slug))`) без валидации. Slug вида `../../etc/passwd` выведет операцию за пределы vault
+- **Исправление:** валидатор `fn validate_slug(s: &str) -> Result<()>` — проверка `^[a-z0-9-]+$` на IPC-границе
+
+### CRIT-11. Загрузка ВСЕХ блоков (включая body) через IPC
+- **Файл:** `App.tsx:292`, `commands/blocks.rs`
+- **Суть:** `listBlocks()` возвращает все блоки с полем `body: String`. При 10K блоков со статьями — 50-100 МБ JSON через IPC, хранящиеся в React-состоянии
+- **Исправление:** `list_blocks` без `body`, отдельный `get_block` с `body` для Detail
+
+### CRIT-12. `create_block` загружает ВСЕ блоки для проверки slug
+- **Файл:** `commands/blocks.rs:62`
+- **Суть:** `list_blocks()` → `HashSet<String>` вместо SQL-запроса
+- **Исправление:** `SELECT slug FROM blocks WHERE slug LIKE ?1 || '%'`
+
+### CRIT-13. `list_channel_previews` — O(N) блоков + O(N) syscall-ов
+- **Файл:** `commands/channels.rs:237`
+- **Суть:** загружает все блоки, затем `thumb_path.exists()` для каждого. 10K блоков = 10K syscall-ов на каждый `vault-changed`
+- **Исправление:** `has_thumbnail BOOLEAN` в таблице `blocks`, запрос через SQL
+
+### CRIT-14. Паника в потоке thumb-gen без catch_unwind
+- **Файл:** `watcher/handler.rs`
+- **Суть:** фоновый поток не обёрнут в `catch_unwind`. Паника теряет `on_thumbs_done` callback — фронтенд не получит `vault-changed`
+- **Исправление:** `std::panic::catch_unwind` вокруг тела потока
+
+## Новые высокие находки
+
+### HIGH-21. SSRF — native host скачивает произвольные URL
+- **Файл:** `bin/native_host.rs:270-284`
+- **Суть:** `image_url` и inline-картинки из body передаются в `download_file()` без валидации схемы/IP. Можно обратиться к `169.254.169.254` (метаданные облака), `localhost` (локальные сервисы)
+- **Исправление:** валидация схемы (только `https://`), запрет приватных IP
+
+### HIGH-22. Deadlock risk — два мьютекса в initialize_vault
+- **Файл:** `commands/vault.rs:133,143`
+- **Суть:** `initialize_vault` блокирует `state.watcher` (строка 133), затем `state.vault_state` (строка 143). Обратный порядок в другом месте = deadlock
+- **Исправление:** задокументировать порядок блокировки или объединить state
+
+### HIGH-23. Mutex удерживается на время всего импорта
+- **Файл:** `commands/import.rs:56`
+- **Суть:** `vault_state.lock()` на протяжении HTTP-запросов + записи файлов + индексации. UI полностью заморожен на время импорта (минуты)
+- **Исправление:** разбить на короткие блокировки, данные клонировать до релиза мьютекса
+
+### HIGH-24. Нет тайм-аута чтения в ureq
+- **Файл:** `bin/native_host.rs:426-435`
+- **Суть:** `ureq::get(url).call()` без настройки тайм-аутов. Медленный сервер заблокирует native host навечно
+- **Исправление:** `ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build()` + `take(MAX_SIZE)`
+
+### HIGH-25. 9 IPC-вызовов без try/catch в App.tsx
+- **Файл:** `App.tsx`
+- **Суть:** `loadData`, `handleRenameTag`, `handleCreateChannel`, `handleReorderTag`, `handleCardDrop`, `handleToggleTag`, `handleCreateTagFromMenu`, `handleDeleteBlock` — ошибка бэкенда оставляет UI в неопределённом состоянии
+- **Перекрытие:** подтверждает HIGH-11 из повторного аудита
+
+### HIGH-26. Card не обёрнут в React.memo
+- **Файл:** `Card.tsx`
+- **Суть:** каждое изменение `focusedBlockId` перерисовывает все карточки в Grid
+- **Исправление:** `React.memo` на `Card` + `useCallback` на `handleClick`/`handleKeyDown`
+
+### HIGH-27. full_scan — 10K отдельных транзакций
+- **Файл:** `watcher/handler.rs`
+- **Суть:** каждый `upsert_block` создаёт свою транзакцию. 10K блоков = 10K fsync
+- **Исправление:** одна транзакция на весь `full_scan`
+
+### HIGH-28. IN-список с 10K параметров
+- **Файл:** `storage/index.rs:403`
+- **Суть:** `WHERE block_id IN (?,?,?,...,?)` с одним `?` на блок. При 10K может превысить `SQLITE_MAX_VARIABLE_NUMBER`
+- **Исправление:** батчинг по 500-900 или временная таблица
+
+### HIGH-29. Сломанная ссылка popup в контекстном меню
+- **Файл:** `extension/background.js:49`
+- **Суть:** `chrome.runtime.getURL("popup/popup.html")` — файл не существует (popup собран в `dist/index.html`)
+- **Исправление:** `chrome.runtime.getURL("dist/index.html")`
+
+### HIGH-30. ARCHITECTURE.md: SQLite-схема устарела
+- **Файл:** `ARCHITECTURE.md`
+- **Суть:** 8+ расхождений: `path` vs `slug`, отсутствуют `source`/`author`/`body`, `modified_at` vs `indexed_at`, `thumb_path` vs `thumbnail`, `target_path` vs `target_slug`, FTS5 без `content`/`content_rowid`
+- **Исправление:** привести в соответствие с `db.rs`
+
+### HIGH-31. Весь commands/ — 0 тестов (21 публичная функция)
+- **Суть:** ни одна Tauri-команда не покрыта тестами. `create_block`, `rename_channel`, `rename_tag` содержат нетривиальную оркестрацию
+- **Перекрытие:** подтверждает пробел из повторного аудита
+
+## Новые средние находки
+
+### MED-21. Бизнес-логика в commands/
+- **Файлы:** `commands/blocks.rs` (`create_block`, `delete_block`), `commands/tags.rs` (все 4 функции), `commands/channels.rs` (`rename_channel`)
+- **Суть:** полные workflows (read-modify-write-reindex) в тонком слое. PRINCIPLES.md: commands/ — только делегация
+- **Исправление:** вынести в domain-сервисы
+
+### MED-22. Прямой `std::fs::write` в commands/
+- **Файлы:** `commands/tags.rs:52,79,121,155`, `commands/channels.rs:203`
+- **Суть:** запись файлов напрямую, минуя `storage::files::write_block_file`
+- **Исправление:** использовать `storage::files`
+
+### MED-23. CommandError::Internal(String) — catch-all
+- **Файл:** `commands/state.rs:47`
+- **Суть:** все внутренние ошибки проходят через `format!("{:#}", e)` в строку. Теряется типизация
+- **Перекрытие:** подтверждено архитектурным аудитом
+
+### MED-24. ~~Дубликат `Sidebar.classic.tsx` + `ChannelIcon.classic.tsx`~~
+- **Снято:** файлы намеренно сохранены для отдельного вида (альтернативный layout сайдбара)
+
+### MED-25. ImportDialog никогда не открывается
+- **Файл:** `App.tsx:169,649`
+- **Суть:** `importOpen` инициализируется `false`, но `setImportOpen(true)` нигде не вызывается. Мёртвая функциональность
+- **Исправление:** добавить триггер в UI или убрать
+
+### MED-26. Закомментированный DropZone
+- **Файл:** `App.tsx:71,644`
+- **Суть:** импорт и использование закомментированы. PRINCIPLES.md запрещает закомментированный код
+- **Исправление:** удалить или включить
+
+### MED-27. Утечка таймера в Search.tsx
+- **Файл:** `Search.tsx:31`
+- **Суть:** debounce-таймер не очищается при unmount/закрытии компонента
+- **Исправление:** cleanup `useEffect`
+
+### MED-28. Оверлеи `bg-black/50` вместо токена `bg-glass`
+- **Файлы:** `dialog.tsx:40`, `alert-dialog.tsx:37`
+- **Суть:** DESIGN_SYSTEM.md определяет `--glass-bg`, но используется захардкоженный `bg-black/50`
+- **Исправление:** заменить на `bg-glass`
+
+### MED-29. LINK_COLORS нарушают монохром
+- **Файл:** `Card.tsx:121-124`
+- **Суть:** `bg-blue-900`, `bg-emerald-900` и т.д. — цветные фоны в монохромной палитре
+- **Исправление:** заменить на оттенки серого или семантические токены
+
+### MED-30. `cursor-pointer` отсутствует на Button
+- **Файл:** `components/ui/button.tsx:8`
+- **Суть:** DESIGN_SYSTEM.md: «Все кнопки: cursor-pointer»
+- **Исправление:** добавить `cursor-pointer` в базовые стили
+
+### MED-31. Нет busy_timeout в SQLite
+- **Файл:** `storage/db.rs`
+- **Суть:** watcher и основной поток используют отдельные соединения. Без `busy_timeout` запись может получить `SQLITE_BUSY`
+- **Исправление:** `PRAGMA busy_timeout = 5000;`
+
+### MED-32. Гонка: фоновый поток и watcher пишут один thumbnail
+- **Файл:** `watcher/handler.rs`
+- **Суть:** фоновый поток `thumb-gen` и watcher могут одновременно генерировать thumbnail для одного slug
+- **Исправление:** атомарная запись (temp + rename) или проверка перед записью
+
+### MED-33. 8 неиспользуемых CSS-токенов
+- **Файл:** `styles/global.css`
+- **Суть:** `chart-1..5`, `glass-bg`, `glass-border`, `sidebar-ring`, `sidebar-primary` и др. определены, но нигде не используются
+- **Исправление:** удалить или начать использовать (glass-bg — см. MED-28)
+
+### MED-34. `<all_urls>` загружает content scripts на каждой странице
+- **Файл:** `extension/manifest.json:27`
+- **Суть:** 4 скрипта (Readability, Turndown, content.js) внедряются на каждой вкладке
+- **Исправление:** `chrome.scripting.executeScript()` по требованию
+
+### MED-35. Нет валидации тега в native host create_channel
+- **Файл:** `bin/native_host.rs:358`
+- **Суть:** тег принимается без нормализации (пробелы, спецсимволы, пустая строка)
+- **Исправление:** нормализация через `domain/tag.rs`
+
+### MED-36. SPEC_DOMAIN.md: thumb_path `.webp` vs код `.jpg`
+- **Файл:** `SPEC_DOMAIN.md`, `domain/vault.rs:68`
+- **Суть:** документация говорит `.webp`, код возвращает `.jpg`
+- **Исправление:** обновить SPEC_DOMAIN.md
+
+### MED-37. Нет индекса на block_type
+- **Файл:** `storage/db.rs`
+- **Суть:** `search_blocks` фильтрует по `block_type` без индекса — full scan при 10K+
+- **Исправление:** `CREATE INDEX idx_blocks_block_type ON blocks(block_type)`
+
+### MED-38. `popup/_legacy/` — мёртвый код
+- **Файлы:** `extension/popup/_legacy/popup.html`, `popup.js`, `popup.css`
+- **Суть:** полная vanilla-JS реализация popup, не используется
+- **Исправление:** удалить
+
+### MED-39. Неиспользуемые экспорты в commands.ts
+- **Файл:** `src/lib/commands.ts`
+- **Суть:** `rebuildIndex`, `getBlock`, `createBlock`, `renameChannel` экспортируются, но не импортируются
+- **Исправление:** удалить неиспользуемые или подключить
+
+### MED-40. `dark:` модификаторы конфликтуют с dark-first стратегией
+- **Файлы:** `badge.tsx`, `checkbox.tsx`, `context-menu.tsx`, `dropdown-menu.tsx`
+- **Суть:** DESIGN_SYSTEM.md: «Тёмная тема по умолчанию — светлая через `prefers-color-scheme: light`». `dark:` классы работают в обратном направлении
+- **Исправление:** проверить Tailwind-стратегию (`media` vs `class`) и привести в соответствие
+
+## Обновлённое тестовое покрытие
+
+### Текущее состояние: 200 Rust-тестов + 37 фронтенд-тестов = 237 всего
+
+| Модуль | Тестов | Оценка |
+|---|---|---|
+| domain/block | 59 | Отлично |
+| domain/tag | 17 | Хорошо |
+| domain/channel | 20 | Хорошо |
+| domain/vault | 14 | Хорошо |
+| domain/search | 14 | Хорошо |
+| storage/index | 25 | Среднее |
+| storage/db | 13 | Среднее |
+| storage/files | 8 | Слабо |
+| storage/thumbnails | 7 | Слабо |
+| watcher/handler | 10 | Среднее |
+| watcher/events | 9 | Среднее |
+| **watcher/watch** | **0** | **Нет тестов** |
+| **commands/* (7 файлов)** | **0** | **Нет тестов** |
+| **import/arena_api** | **0** | **Нет тестов** |
+| import/importer | 4 | Слабо |
+| **bin/native_host** | **0** | **Нет тестов** |
+| **util.rs** | **0** | **Нет тестов** |
+| Frontend (Card, Sidebar, Search, VaultPicker, assets) | 37 | Среднее |
+| **App.tsx, Detail.tsx, Grid.tsx, DropZone.tsx, ImportDialog.tsx, CardContextMenu.tsx** | **0** | **Нет тестов** |
+
+### Критические пробелы
+1. `commands/*` — 0 тестов на 21 публичную функцию IPC-слоя
+2. `import/arena_api.rs` — 0 тестов (4 pub fn)
+3. `watcher/watch.rs` — 0 тестов
+4. `util.rs` — 0 тестов (`days_to_ymd` — сложная математика)
+5. Frontend: Detail.tsx, Grid.tsx, App.tsx, CardContextMenu.tsx — 0 тестов
+
+## Что работает хорошо
+
+1. **Границы слоёв безупречны** — domain/ не импортирует из storage/, commands/, watcher/. Подтверждено проверкой всех `use` в каждом .rs файле
+2. **Ни одного TODO/FIXME/HACK** во всей кодовой базе
+3. **Типизация через thiserror** — domain/ и storage/ используют типизированные ошибки
+4. **Фоновая генерация миниатюр** с пропуском свежих (mtime check)
+5. **Chunked rendering** в Grid.tsx — IntersectionObserver, 80+60 батчи
+6. **Event delegation** — O(1) на ContextMenu вместо O(N)
+7. **WAL-режим** + `foreign_keys = ON` в SQLite
+8. **Параметризованные SQL-запросы** — ни одного SQL injection
+9. **Нет `any`** в TypeScript-коде
+10. **200 Rust-тестов** в domain/ и storage/ — эталонное покрытие бизнес-логики

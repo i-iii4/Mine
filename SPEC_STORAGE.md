@@ -95,7 +95,30 @@ struct IndexedBlock {
     description: Option<String>,
     url: Option<String>,
     media_file: Option<String>,
+    thumbnail: Option<String>,
     saved_at: String,
+    source: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    author: Option<String>,
+    body: String,
+    tags: Vec<String>,
+}
+
+/// Облегчённый блок для списков — без description и source, body обрезан до 500 символов.
+struct LightBlock {
+    id: i64,
+    slug: String,
+    block_type: BlockType,
+    title: Option<String>,
+    url: Option<String>,
+    media_file: Option<String>,
+    thumbnail: Option<String>,
+    saved_at: String,
+    width: Option<u32>,
+    height: Option<u32>,
+    author: Option<String>,
+    body: String,       // SUBSTR(body, 1, 500)
     tags: Vec<String>,
 }
 
@@ -112,8 +135,11 @@ upsert_block(conn: &Connection, block: &Block) -> Result<i64>
 remove_block(conn: &Connection, slug: &str) -> Result<bool>
 get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>>
 list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>>
+list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>>
 list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlock>>
 get_all_tags(conn: &Connection) -> Result<Vec<TagCount>>
+slug_exists(conn: &Connection, slug: &str) -> Result<bool>
+resolve_unique_slug(conn: &Connection, raw_slug: &str) -> Result<String>
 search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<IndexedBlock>>
 upsert_channel(conn: &Connection, channel: &Channel) -> Result<i64>
 list_channels(conn: &Connection) -> Result<Vec<Channel>>
@@ -148,6 +174,7 @@ read_block_file(path: &Path) -> Result<(String, String)>  // (slug, content)
 scan_md_files(vault: &VaultLayout) -> Result<Vec<PathBuf>>
 copy_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Result<PathBuf>
 delete_block_files(vault: &VaultLayout, slug: &str, media_ext: Option<&str>) -> Result<()>
+persist_new_block(conn: &Connection, vault: &VaultLayout, block: &Block, source_file: Option<&Path>) -> Result<IndexedBlock>
 ```
 
 ### Поведение write_block_file

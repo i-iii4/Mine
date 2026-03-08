@@ -1,18 +1,18 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, memo } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
-import type { IndexedBlock } from "@/types";
+import type { LightBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
 import { cn } from "@/lib/utils";
 
 interface CardProps {
-  block: IndexedBlock;
+  block: LightBlock;
   vaultPath: string;
   isFocused?: boolean;
-  onClick: (block: IndexedBlock) => void;
+  onClick: (block: LightBlock) => void;
 }
 
-export function Card({ block, vaultPath, isFocused, onClick }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, isFocused, onClick }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
   });
@@ -44,13 +44,13 @@ export function Card({ block, vaultPath, isFocused, onClick }: CardProps) {
       <CardContent block={block} vaultPath={vaultPath} />
     </div>
   );
-}
+});
 
 function CardContent({
   block,
   vaultPath,
 }: {
-  block: IndexedBlock;
+  block: LightBlock;
   vaultPath: string;
 }) {
   switch (block.block_type) {
@@ -71,7 +71,7 @@ function ImageCard({
   block,
   vaultPath,
 }: {
-  block: IndexedBlock;
+  block: LightBlock;
   vaultPath: string;
 }) {
   const [error, setError] = useState(false);
@@ -127,7 +127,7 @@ function LinkCard({
   block,
   vaultPath,
 }: {
-  block: IndexedBlock;
+  block: LightBlock;
   vaultPath: string;
 }) {
   const [thumbLoaded, setThumbLoaded] = useState(false);
@@ -213,7 +213,7 @@ function stripMarkdown(text: string): string {
     .trim();
 }
 
-function ArticleCard({ block }: { block: IndexedBlock }) {
+function ArticleCard({ block }: { block: LightBlock }) {
   const preview = stripMarkdown(block.body).slice(0, 400).trim();
 
   return (
@@ -237,7 +237,7 @@ function VideoCard({
   block,
   vaultPath,
 }: {
-  block: IndexedBlock;
+  block: LightBlock;
   vaultPath: string;
 }) {
   const thumb = thumbnailUrl(vaultPath, block.slug);
@@ -269,7 +269,7 @@ function VideoCard({
   );
 }
 
-function FileCard({ block }: { block: IndexedBlock }) {
+function FileCard({ block }: { block: LightBlock }) {
   const ext = block.media_file
     ?.split(".")
     .pop()

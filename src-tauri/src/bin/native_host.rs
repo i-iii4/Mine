@@ -381,7 +381,10 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         color: None,
         icon: None,
         position: 0,
-        created_at: local_arena_lib::domain::block::DateTime::new(&now_iso8601()).unwrap(),
+        created_at: match local_arena_lib::domain::block::DateTime::new(&now_iso8601()) {
+            Ok(dt) => dt,
+            Err(e) => return send_error(&format!("failed to create timestamp: {e}")),
+        },
     };
 
     if let Err(e) = index::upsert_channel(&conn, &channel) {
@@ -414,10 +417,40 @@ fn ext_from_url(url: &str) -> &str {
     }
 }
 
+/// Validate that a URL is safe to fetch (http/https only, no private IPs).
+fn validate_fetch_url(url: &str) -> anyhow::Result<()> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        anyhow::bail!("only http:// and https:// URLs are allowed, got: {}", url);
+    }
+    // Extract host: skip "http(s)://" and take until "/" or ":"
+    let after_scheme = if url.starts_with("https://") { &url[8..] } else { &url[7..] };
+    let host = after_scheme
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("");
+    let lower = host.to_lowercase();
+    if lower == "localhost"
+        || lower.starts_with("127.")
+        || lower == "[::1]"
+        || lower.starts_with("10.")
+        || lower.starts_with("192.168.")
+        || lower.starts_with("169.254.")
+        || (lower.starts_with("172.")
+            && lower.split('.').nth(1).and_then(|s| s.parse::<u8>().ok()).is_some_and(|n| (16..=31).contains(&n)))
+    {
+        anyhow::bail!("private/loopback addresses are not allowed: {}", host);
+    }
+    Ok(())
+}
+
 /// Download a file from URL to local path.
 /// `referer` should be the page URL (not the image URL) — CDNs validate this.
 /// Retries up to 3 times with backoff.
 fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Result<()> {
+    validate_fetch_url(url)?;
     let mut last_err = None;
     for attempt in 0..3u64 {
         if attempt > 0 {
