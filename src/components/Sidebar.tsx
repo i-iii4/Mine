@@ -182,7 +182,7 @@ function NavItem({
       <span className="min-w-[100px] max-w-[150px] flex-1 truncate">{label}</span>
       <div className="flex h-6 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
         {cards.map((card, i) => (
-          <img key={i} src={card.url} className="size-6 shrink-0 rounded-none object-cover" />
+          <img key={i} src={card.url} className="size-6 shrink-0 rounded-none object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
         ))}
       </div>
       <div className="w-8 shrink-0 text-right">
@@ -282,6 +282,7 @@ function TagNavItem({
                 src={card.url}
                 className="size-6 shrink-0 rounded-none object-cover"
                 loading="lazy"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
               />
             ))}
           </div>

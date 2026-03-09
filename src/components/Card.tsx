@@ -36,7 +36,7 @@ export const Card = memo(function Card({ block, vaultPath, isFocused, onClick }:
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
-        "group cursor-pointer overflow-hidden border border-border hover:outline-2 hover:-outline-offset-2 hover:outline-[var(--primary-hover)]",
+        "group cursor-pointer overflow-hidden border border-border relative after:pointer-events-none after:absolute after:inset-0 hover:after:shadow-[inset_0_0_0_2px_var(--primary-hover)]",
         isDragging && "opacity-30",
         isFocused && "ring-2 ring-ring",
       )}
@@ -89,7 +89,7 @@ function ImageCard({
 
   if (error) {
     return (
-      <div className="flex aspect-square items-center justify-center bg-muted">
+      <div className="flex aspect-square items-center justify-center bg-accent">
         <div className="text-center">
           <ImageOff className="mx-auto size-6 text-muted-foreground/50" />
           <p className="mt-1 text-sm text-foreground">
@@ -277,7 +277,7 @@ function FileCard({ block }: { block: LightBlock }) {
 
   return (
     <div className="flex items-center gap-3 p-4">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-1 bg-muted text-sm font-semibold text-muted-foreground">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-1 bg-accent text-sm font-semibold text-muted-foreground">
         {ext ?? "FILE"}
       </div>
       <div className="min-w-0">

@@ -716,7 +716,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     </div>{/* end body */}
 
       {/* Bottom action bar */}
-      <div className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-muted px-8">
+      <div className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-8">
         <ActionButton hotkey="⌘⇧O" onClick={handleSwitchVault}>
           {vaultPath.split("/").pop() ?? "Vault"}
         </ActionButton>

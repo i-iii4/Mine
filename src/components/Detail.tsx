@@ -280,7 +280,7 @@ function BlockContent({
       const thumb = thumbnailUrl(vaultPath, block.slug);
       return (
         <div>
-          <div className="aspect-video bg-muted">
+          <div className="aspect-video bg-accent">
             <img
               src={thumb}
               alt=""
@@ -336,7 +336,7 @@ function BlockContent({
     case "file":
       return (
         <div className="flex min-h-full flex-col items-center justify-center gap-3">
-          <div className="flex h-16 w-16 items-center justify-center rounded-1 bg-muted text-lg font-semibold text-muted-foreground">
+          <div className="flex h-16 w-16 items-center justify-center rounded-1 bg-accent text-lg font-semibold text-muted-foreground">
             {block.media_file?.split(".").pop()?.toUpperCase() ?? "FILE"}
           </div>
           <p className="text-base font-semibold text-foreground">

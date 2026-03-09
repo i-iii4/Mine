@@ -58,7 +58,7 @@ export function ChannelIcon({ cards, hovered = false }: ChannelIconProps) {
 function MiniCard({ card }: { card: PreviewCard }) {
   return (
     <div
-      className="h-full w-full bg-muted bg-cover bg-center"
+      className="h-full w-full bg-accent bg-cover bg-center"
       style={{ backgroundImage: `url(${card.url})` }}
     />
   );

@@ -79,23 +79,31 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 ## Фоны
 
-| Роль | Токен | Светлая | Тёмная |
-|---|---|---|---|
-| Страница | `--background` | #FFFFFF | #000000 |
-| Hover | `--accent` | #F5F5F5 | #111111 |
-| Selected (сайдбар) | `--sidebar-accent` | #F0F0F0 | #191919 |
-| Active | `--active` | #EBEBEB | #222222 |
+Четырёхуровневая шкала яркости фона. Каждый уровень отличается от предыдущего на фиксированный шаг OKLCH lightness.
+
+| Уровень | Токен | Светлая (L) | Тёмная (L) | Назначение |
+|---|---|---|---|---|
+| 0 | `--background` | 1.0 | 0.0 | Фон страницы |
+| +1 | `--accent` | 0.97 | 0.22 | Hover фон, фон кнопки |
+| +2 | `--sidebar-accent` | 0.94 | 0.28 | Выделенный пункт, внутренняя пуля ActionButton |
+| +3 | `--active`, `--border` | 0.91 | 0.34 | Нажатие, границы, hover обводки кнопки |
+
+**Шаг:** светлая тема — 0.03, тёмная — 0.06 (×2). Увеличенный шаг в тёмной теме компенсирует сниженную чувствительность восприятия при низкой яркости (JND ~0.02 в OKLCH, комфортное различение — от 0.03).
+
+**Принцип:** фон элемента = +1 уровень от фона родителя. Hover обводки = +2 уровня от фона элемента. Шаг всегда одинаковый внутри темы.
 
 Тёмная тема — абсолютный чёрный (#000000). OLED-пиксели выключены, изображения «парят» на пустоте.
 
+**Примечание:** токены `--muted`, `--secondary` имеют то же значение, что и `--accent` (для совместимости с shadcn). В коде используем только `bg-accent`.
+
 ## Границы
 
-Один цвет для всех разделителей: `--border`, `--input`, `--sidebar-border`.
+Один цвет для всех разделителей: `--border`, `--input`, `--sidebar-border`. Совпадает с уровнем +3 шкалы фонов (`--active`).
 
-| Тема | oklch | Hex | Толщина |
-|---|---|---|---|
-| Светлая | oklch(0.9401 0 0) | #EBEBEB | 1px |
-| Тёмная | oklch(0.252 0 0) | #222222 | 1px |
+| Тема | oklch | Толщина |
+|---|---|---|
+| Светлая | oklch(0.91 0 0) | 1px |
+| Тёмная | oklch(0.34 0 0) | 1px |
 
 **Правило:** все линии — один цвет. `--border`, `--input`, `--sidebar-border` указывают на одно значение.
 
@@ -116,7 +124,7 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 |---|---|---|---|---|
 | Кнопка default/destructive | Обводка 1px inset | `--border` | `--border` | `hover:outline-1 hover:-outline-offset-1 hover:outline-border` |
 | Кнопка ghost/link | Цвет текста | #333 → #000 | #E4E4E4 → #FFF | `hover:text-hover-foreground` |
-| Карточка | Outline 2px inset | — | — | `hover:outline-2 hover:-outline-offset-2 hover:outline-[var(--primary-hover)]` |
+| Карточка | Inset border 2px (::after) | — | — | `after:... hover:after:shadow-[inset_0_0_0_2px_var(--primary-hover)]` |
 | Пункт сайдбара | Цвет фона | transparent → #F5F5F5 | transparent → #1E1E1E | `hover:bg-accent` |
 
 ### Focus
@@ -134,23 +142,22 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 ### Selected (активный пункт сайдбара)
 
-| Свойство | Светлая | Тёмная |
+| Свойство | Светлая (oklch L) | Тёмная (oklch L) |
 |---|---|---|
-| Фон | #F0F0F0 | #1E1E1E |
-| Текст | #333333 | #FFFFFF |
+| Фон (`--sidebar-accent`) | 0.94 | 0.28 |
+| Текст (`--sidebar-accent-foreground`) | 0.3211 | 0.9189 |
 
 Утилиты: `bg-sidebar-accent text-sidebar-accent-foreground`. Без изменения веса шрифта — фонового выделения достаточно.
 
 ### Токены интерактивных состояний
 
-| Токен | Светлая (hex) | Тёмная (hex) | Назначение |
+| Токен | Светлая (oklch L) | Тёмная (oklch L) | Назначение |
 |---|---|---|---|
-| `--accent` | #F5F5F5 | #111111 | Ховер фон (subtle) |
-| `--active` | #EBEBEB | #222222 | Нажатие фон (subtle) |
-| `--hover-foreground` | #000000 | #FFFFFF | Ховер текста |
-| `--primary-hover` | #555555 | ~#C5C5C5 | Hover обводки карточек |
-| `--sidebar-accent` | #F0F0F0 | #191919 | Выделенный пункт фон |
-| `--sidebar-accent-fg` | #333333 | #FFFFFF | Выделенный пункт текст |
+| `--accent` | 0.97 | 0.22 | Ховер фон (уровень +1) |
+| `--sidebar-accent` | 0.94 | 0.28 | Выделенный пункт фон (уровень +2) |
+| `--active` | 0.91 | 0.34 | Нажатие фон, обводка hover кнопки (уровень +3) |
+| `--hover-foreground` | 0.0 | 1.0 | Ховер текста (ghost/link кнопки) |
+| `--primary-hover` | 0.4495 | 0.8 | Hover обводки карточек |
 
 ## Компоненты (shadcn/ui + CVA)
 
@@ -310,24 +317,26 @@ SubContent (подменю) — та же тень.
 
 ### Нижняя панель действий (Action Bar)
 
-`h-8 bg-muted border-t border-border px-8`. Отступы 32px с обеих сторон. Search прижат вправо через flex-spacer.
+`h-8 bg-accent border-t border-border px-8`. Отступы 32px с обеих сторон. Search прижат вправо через flex-spacer.
 
 Компонент `ActionButton` — двуслойная кнопка (две «пули»):
 - Структура: `<div role="button">` (внешняя пуля) → `<span hotkey>` + `<span label>` (внутренняя пуля)
-- Внешняя пуля: `rounded-1` (3px), `h-6` (24px), `overflow-hidden`, `pr-[2px]`
-- Внутренняя пуля: `rounded-1` (3px), `bg-active`, `px-[1ch] py-[2px]`
+- Внешняя пуля: `rounded-1` (3px), `h-6` (24px), `p-[2px]`, `overflow-hidden`
+- Внутренняя пуля: `rounded-[2px]`, `bg-sidebar-accent` (уровень +2), `px-[1ch] py-[2px]`
 - Hotkey: текст на фоне внешней пули, `px-[1ch] py-[2px]`
-- Зазор между пулями: 2px (сверху, снизу, справа)
+- Зазор между внешней и внутренней пулей: 2px (все стороны, через `p-[2px]` на внешней)
 - Шрифт: `font-mono text-sm`
 - `forwardRef<HTMLDivElement>` для программного управления
+
+Размеры: внешняя — 24px (h-6), внутренняя — 20px (24 - 2×2px зазора).
 
 Состояния:
 
 | Состояние | Внешняя пуля | Хоткей | Внутренняя пуля |
 |---|---|---|---|
-| Покой | `bg-muted` | `text-foreground` | `bg-active text-foreground` |
-| Hover | `bg-primary-hover` | `text-background` (инверсия) | без изменений |
-| Selected | `bg-primary-hover` | `text-background` (инверсия) | без изменений |
+| Покой | `bg-accent` (уровень +1) | `text-foreground` | `bg-sidebar-accent text-foreground` (уровень +2) |
+| Hover | `bg-active` (уровень +3) | `text-foreground` | без изменений |
+| Selected | `bg-active` (уровень +3) | `text-foreground` | без изменений |
 
 Кнопки:
 
@@ -362,7 +371,7 @@ Masonry с round-robin распределением по колонкам. Gap: 
 
 Паддинги сетки: 32px по бокам (при развёрнутом сайдбаре), 72px (при свёрнутом — компенсация ширины).
 
-Карточки: `border border-border`, без скругления (`rounded-0`). Обводка = +1 уровень к фону. Hover добавляет outline 2px inset цветом `primary-hover`.
+Карточки: `border border-border`, без скругления (`rounded-0`). Обводка = +1 уровень к фону. Hover — inset border 2px цветом `primary-hover` через `::after` псевдоэлемент (обходит `overflow-hidden`, перекрывает изображения).
 
 ## Архитектурные принципы
 

@@ -43,7 +43,7 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
         </p>
 
         {result ? (
-          <div className="rounded-1 bg-muted px-6 py-4">
+          <div className="rounded-1 bg-accent px-6 py-4">
             <p className="text-base text-muted-foreground">
               Indexed{" "}
               <span className="font-semibold text-foreground">
