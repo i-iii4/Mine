@@ -838,13 +838,6 @@ function ComponentTestBench() {
         <Input variant="ghost" defaultValue="With value" className="w-48" />
       </Section>
 
-      {/* Badge */}
-      <Section label="Badge">
-        <Badge>Default</Badge>
-        <Badge variant="secondary">Secondary</Badge>
-        <Badge variant="destructive">Destructive</Badge>
-        <Badge variant="outline">Outline</Badge>
-      </Section>
 
       {/* Checkbox */}
       <Section label="Checkbox">
@@ -893,14 +886,22 @@ function ComponentTestBench() {
         <span className="text-base text-tertiary-foreground">tertiary-foreground</span>
       </Section>
 
-      {/* Backgrounds */}
-      <Section label="Background levels" vertical>
+      {/* Surfaces */}
+      <Section label="Surfaces (background layering)" vertical>
         <div className="flex gap-2">
           <Swatch label="background" className="bg-background border border-border" />
           <Swatch label="accent (+1)" className="bg-accent" />
           <Swatch label="sidebar-accent (+2)" className="bg-sidebar-accent" />
           <Swatch label="active/border (+3)" className="bg-active" />
-          <Swatch label="foreground" className="bg-foreground" />
+        </div>
+      </Section>
+
+      {/* Button tokens */}
+      <Section label="Button tokens" vertical>
+        <div className="flex gap-2">
+          <Swatch label="component-fill" className="bg-component-fill" />
+          <Swatch label="component-fill-inner" className="bg-component-fill-inner" />
+          <Swatch label="component-fill-hover" className="bg-component-fill-hover" />
         </div>
       </Section>
     </div>

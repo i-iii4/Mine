@@ -79,31 +79,41 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 ## Фоны
 
-Четырёхуровневая шкала яркости фона. Каждый уровень отличается от предыдущего на фиксированный шаг OKLCH lightness.
+Две независимые группы токенов: **поверхности** (фоновое наслоение) и **заливки компонентов** (кнопки, интерактивные элементы). Разные требования к контрасту — поверхности тонкие, кнопки считываемые.
+
+### Поверхности
 
 | Уровень | Токен | Светлая (L) | Тёмная (L) | Назначение |
 |---|---|---|---|---|
 | 0 | `--background` | 1.0 | 0.0 | Фон страницы |
-| +1 | `--accent` | 0.97 | 0.22 | Hover фон, фон кнопки |
-| +2 | `--sidebar-accent` | 0.94 | 0.28 | Выделенный пункт, внутренняя пуля ActionButton |
-| +3 | `--active`, `--border` | 0.91 | 0.34 | Нажатие, границы, hover обводки кнопки |
+| +1 | `--accent` | 0.98 | 0.20 | Hover фон, action bar |
+| +2 | `--sidebar-accent`, `--active` | 0.965 | 0.24 | Выделенный пункт сайдбара, нажатие |
+| +3 | `--border` | 0.95 | 0.28 | Границы, разделители |
 
-**Шаг:** светлая тема — 0.03, тёмная — 0.06 (×2). Увеличенный шаг в тёмной теме компенсирует сниженную чувствительность восприятия при низкой яркости (JND ~0.02 в OKLCH, комфортное различение — от 0.03).
-
-**Принцип:** фон элемента = +1 уровень от фона родителя. Hover обводки = +2 уровня от фона элемента. Шаг всегда одинаковый внутри темы.
-
-Тёмная тема — абсолютный чёрный (#000000). OLED-пиксели выключены, изображения «парят» на пустоте.
+**Шаг от accent:** светлая тема — 0.015, тёмная — 0.04.
 
 **Примечание:** токены `--muted`, `--secondary` имеют то же значение, что и `--accent` (для совместимости с shadcn). В коде используем только `bg-accent`.
 
+### Заливки компонентов (component fills)
+
+Изолированный набор токенов для кнопок. Изменение поверхностей не затрагивает кнопки и наоборот.
+
+| Токен | Светлая (L) | Тёмная (L) | Назначение |
+|---|---|---|---|
+| `--component-fill` | 0.9702 | 0.22 | Фон Button (default, destructive). ActionButton внешняя пуля |
+| `--component-fill-inner` | 0.94 | 0.28 | ActionButton внутренняя пуля |
+| `--component-fill-hover` | 0.91 | 0.34 | Hover/selected ActionButton. Hover-обводка Button |
+
+Тёмная тема — абсолютный чёрный (#000000). OLED-пиксели выключены, изображения «парят» на пустоте.
+
 ## Границы
 
-Один цвет для всех разделителей: `--border`, `--input`, `--sidebar-border`. Совпадает с уровнем +3 шкалы фонов (`--active`).
+Один цвет для всех разделителей: `--border`, `--input`, `--sidebar-border`. Уровень +3 шкалы поверхностей.
 
 | Тема | oklch | Толщина |
 |---|---|---|
-| Светлая | oklch(0.91 0 0) | 1px |
-| Тёмная | oklch(0.34 0 0) | 1px |
+| Светлая | oklch(0.95 0 0) | 1px |
+| Тёмная | oklch(0.28 0 0) | 1px |
 
 **Правило:** все линии — один цвет. `--border`, `--input`, `--sidebar-border` указывают на одно значение.
 
@@ -122,7 +132,7 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 | Элемент | Что меняется | Светлая | Тёмная | Утилита |
 |---|---|---|---|---|
-| Кнопка default/destructive | Обводка 1px inset | `--border` | `--border` | `hover:outline-1 hover:-outline-offset-1 hover:outline-border` |
+| Кнопка default/destructive | Обводка 1px inset | `--component-fill-hover` | `--component-fill-hover` | `hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover` |
 | Кнопка ghost/link | Цвет текста | #333 → #000 | #E4E4E4 → #FFF | `hover:text-hover-foreground` |
 | Карточка | Inset border 2px (::after) | — | — | `after:... hover:after:shadow-[inset_0_0_0_2px_var(--primary-hover)]` |
 | Пункт сайдбара | Цвет фона | transparent → #F5F5F5 | transparent → #1E1E1E | `hover:bg-accent` |
@@ -144,18 +154,33 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 | Свойство | Светлая (oklch L) | Тёмная (oklch L) |
 |---|---|---|
-| Фон (`--sidebar-accent`) | 0.94 | 0.28 |
+| Фон (`--sidebar-accent`) | 0.965 | 0.24 |
 | Текст (`--sidebar-accent-foreground`) | 0.3211 | 0.9189 |
 
 Утилиты: `bg-sidebar-accent text-sidebar-accent-foreground`. Без изменения веса шрифта — фонового выделения достаточно.
 
 ### Токены интерактивных состояний
 
+Поверхности:
+
 | Токен | Светлая (oklch L) | Тёмная (oklch L) | Назначение |
 |---|---|---|---|
-| `--accent` | 0.97 | 0.22 | Ховер фон (уровень +1) |
-| `--sidebar-accent` | 0.94 | 0.28 | Выделенный пункт фон (уровень +2) |
-| `--active` | 0.91 | 0.34 | Нажатие фон, обводка hover кнопки (уровень +3) |
+| `--accent` | 0.98 | 0.20 | Ховер фон (поверхность +1) |
+| `--sidebar-accent` | 0.965 | 0.24 | Выделенный пункт (поверхность +2) |
+| `--active` | 0.965 | 0.24 | Нажатие (поверхность +2) |
+
+Заливки компонентов:
+
+| Токен | Светлая (oklch L) | Тёмная (oklch L) | Назначение |
+|---|---|---|---|
+| `--component-fill` | 0.9702 | 0.22 | Фон кнопки |
+| `--component-fill-inner` | 0.94 | 0.28 | Внутренняя пуля ActionButton |
+| `--component-fill-hover` | 0.91 | 0.34 | Hover/selected, обводка hover |
+
+Прочие:
+
+| Токен | Светлая (oklch L) | Тёмная (oklch L) | Назначение |
+|---|---|---|---|
 | `--hover-foreground` | 0.0 | 1.0 | Ховер текста (ghost/link кнопки) |
 | `--primary-hover` | 0.4495 | 0.8 | Hover обводки карточек |
 
@@ -167,14 +192,14 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 Базовые свойства всех кнопок: `rounded-1` (3px), `font-semibold`, `cursor-pointer`, `select-none`.
 
-Принцип цвета: фон кнопки = +1 уровень к фону страницы (`bg-accent`). Hover обводки = +2 уровня к фону кнопки (`--border`). Шаг всегда одинаковый.
+Кнопки используют изолированный набор токенов `--component-fill-*`, не зависящий от поверхностей.
 
 Варианты (`variant`):
 
 | Вариант | Фон | Hover | Отличие |
 |---|---|---|---|
-| `default` | `bg-accent` | обводка 1px inset `--border` | — |
-| `destructive` | `bg-accent` | обводка 1px inset `--border` | `text-destructive` (красный текст) |
+| `default` | `bg-component-fill` | обводка 1px inset `--component-fill-hover` | — |
+| `destructive` | `bg-component-fill` | обводка 1px inset `--component-fill-hover` | `text-destructive` (красный текст) |
 | `ghost` | `bg-transparent` | `text-hover-foreground` (текст ярчеет) | Невидимая до взаимодействия |
 | `link` | `bg-transparent` | `text-hover-foreground` (текст ярчеет) | `underline` |
 
@@ -319,10 +344,11 @@ SubContent (подменю) — та же тень.
 
 `h-8 bg-accent border-t border-border px-8`. Отступы 32px с обеих сторон. Search прижат вправо через flex-spacer.
 
-Компонент `ActionButton` — двуслойная кнопка (две «пули»):
+Компонент `ActionButton` — двуслойная кнопка (две «пули»). Использует токены `--component-fill-*`, изолированные от поверхностей.
+
 - Структура: `<div role="button">` (внешняя пуля) → `<span hotkey>` + `<span label>` (внутренняя пуля)
 - Внешняя пуля: `rounded-1` (3px), `h-6` (24px), `p-[2px]`, `overflow-hidden`
-- Внутренняя пуля: `rounded-[2px]`, `bg-sidebar-accent` (уровень +2), `px-[1ch] py-[2px]`
+- Внутренняя пуля: `rounded-[2px]`, `bg-component-fill-inner`, `px-[1ch] py-[2px]`
 - Hotkey: текст на фоне внешней пули, `px-[1ch] py-[2px]`
 - Зазор между внешней и внутренней пулей: 2px (все стороны, через `p-[2px]` на внешней)
 - Шрифт: `font-mono text-sm`
@@ -334,9 +360,9 @@ SubContent (подменю) — та же тень.
 
 | Состояние | Внешняя пуля | Хоткей | Внутренняя пуля |
 |---|---|---|---|
-| Покой | `bg-accent` (уровень +1) | `text-foreground` | `bg-sidebar-accent text-foreground` (уровень +2) |
-| Hover | `bg-active` (уровень +3) | `text-foreground` | без изменений |
-| Selected | `bg-active` (уровень +3) | `text-foreground` | без изменений |
+| Покой | `bg-transparent` | `text-foreground` | `bg-component-fill-inner text-foreground` |
+| Hover | `bg-component-fill-hover` | `text-foreground` | без изменений |
+| Selected | `bg-component-fill-hover` | `text-foreground` | без изменений |
 
 Кнопки:
 

@@ -22,8 +22,8 @@ export const ActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
           "action-button group inline-flex h-6 shrink-0 cursor-pointer items-center rounded-1 p-[2px] font-mono text-sm",
           "select-none overflow-hidden outline-0",
           isSelected
-            ? "bg-active"
-            : "bg-accent hover:bg-active",
+            ? "bg-component-fill-hover"
+            : "bg-transparent hover:bg-component-fill-hover",
           className,
         )}
       >
@@ -35,7 +35,7 @@ export const ActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
             {hotkey}
           </span>
         ) : null}
-        <span className="shrink-0 rounded-[2px] bg-sidebar-accent px-[1ch] py-[2px] text-foreground">
+        <span className="shrink-0 rounded-[2px] bg-component-fill-inner px-[1ch] py-[2px] text-foreground">
           {children}
         </span>
       </div>
