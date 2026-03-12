@@ -61,7 +61,7 @@ if any
 - Прокрутка каналов, видимость Save, предпросмотр контента/ссылок — требует ручной проверки в Chrome
 
 ### Push
-<!-- hash будет после коммита -->
+87b6abe — Fix extension popup: layout, content preview, scroll
 
 ### Decisions and lessons learned
 - Radix ScrollArea несовместим с глубоко вложенными flex-контейнерами из-за внутренней `display: table` обёртки Viewport. В Chrome-расширениях лучше использовать нативный скролл
