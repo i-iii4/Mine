@@ -69,7 +69,7 @@ if any
 - Ручная проверка: требуется (перезагрузить расширение, проверить статью с картинками)
 
 ### Push
-(pending)
+2b5f5f4 — Fix article images, gray text, and popup title
 
 ### Decisions and lessons learned
 - Readability `_fixLazyImages` regex `/\.(jpg|jpeg|png|webp)\S*$/` пропускает CDN-URL без расширения (imgly, resize-прокси). Предобработка клона до Readability — единственный способ без модификации вендорной библиотеки
