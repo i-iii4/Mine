@@ -73,6 +73,7 @@ export interface PageMetadata {
   selection: string;
   detectedType: string;
   isArticle: boolean;
+  bodyText?: string;
   imageToSave?: string;
   imageAlt?: string;
   imageWidth?: number;

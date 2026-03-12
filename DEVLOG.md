@@ -28,6 +28,48 @@ if any
 
 ---
 
+## 12.03.2026 — Исправление попапа Chrome-расширения
+
+### Goal
+Починить визуальные баги попапа клиппера: сломанная вёрстка (каналы не скроллятся, Save обрезан внизу), отсутствие предпросмотра контента, устаревшие токены в TypeSwitcher.
+
+### Planned
+1. Перенести предпросмотр контента/ссылок под TypeSwitcher, убрать лишний PreviewCard
+2. Исправить прокрутку каналов — каналы должны скроллиться внутри своего блока
+3. Мигрировать TypeSwitcher на component-fill токены
+4. Добавить fallback-извлечение bodyText для страниц без мета-описания
+
+### Actually completed
+Все 4 пункта:
+- **PopupApp.tsx** — убран PreviewCard, добавлены блоки предпросмотра для режимов Content/Link/Image под TypeSwitcher с цепочкой отката (selection → article → description → bodyText). Структура: flex-колонка с 3 секциями (header shrink-0, channels flex-1, footer shrink-0)
+- **ChannelList.tsx** — заменён Radix ScrollArea на простой `<div overflow-y-auto>` (Radix внутренне использует `display: table` обёртку, которая ломает flex-цепочку высот)
+- **TypeSwitcher.tsx** — мигрирован на bg-component-fill / bg-component-fill-hover
+- **popup-layout.css** — `#root { height: 600px }` как детерминированная точка отсчёта для flex-цепочки (процентные высоты не работают в попапах расширений из-за циклической зависимости viewport↔body), стилизация скроллбара
+- **content.js** — добавлено поле bodyText (первые 2000 символов document.body.innerText) в extractMetadata()
+- **messaging.ts** — bodyText в интерфейсе PageMetadata
+
+### Deviations from plan
+Три итерации на прокрутку каналов:
+1. Цепочка `height: 100%` на html/body/#root — не работает в попапах Chrome (циклическая зависимость viewport↔body)
+2. Фиксированный `#root { height: 600px }` — правило попадает в сборку, но Radix ScrollArea внутренне ломает flex-цепочку через `display: table` обёртку
+3. Замена Radix ScrollArea на нативный `overflow-y-auto` div — финальное решение
+
+### Checks
+- Сборка: `bun run --bun vite build --config vite.extension.config.ts` — без ошибок
+- Линтер: `bun run lint` — чисто
+- JS-бандл: 235 КБ (было 251 КБ — Radix ScrollArea больше не бандлится)
+- Прокрутка каналов, видимость Save, предпросмотр контента/ссылок — требует ручной проверки в Chrome
+
+### Push
+<!-- hash будет после коммита -->
+
+### Decisions and lessons learned
+- Radix ScrollArea несовместим с глубоко вложенными flex-контейнерами из-за внутренней `display: table` обёртки Viewport. В Chrome-расширениях лучше использовать нативный скролл
+- `height: 100%` в попапах Chrome-расширений не работает — viewport определяется по содержимому body, создавая циклическую зависимость. Нужен фиксированный height на корневом элементе
+- Для извлечения контента: bodyText (document.body.innerText) — надёжный запасной вариант когда Readability.js не справляется и мета-теги пусты
+
+---
+
 ## 07.03.2026 — Phase 9: исправления по результатам аудита
 
 ### Goal

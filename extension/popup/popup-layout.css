@@ -5,14 +5,33 @@
 
 body {
   width: 360px;
-  min-height: 200px;
-  max-height: 600px;
-  overflow-y: auto;
+  overflow: hidden;
+}
+
+#root {
+  height: 600px;
+}
+
+/* Show thin scrollbar in popup (override global hiding) */
+.overflow-y-auto::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 @media (min-width: 361px) {
   body {
     width: 100%;
-    max-height: none;
+  }
+  #root {
+    height: 100vh;
   }
 }

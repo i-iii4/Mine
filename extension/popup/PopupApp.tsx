@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { useClipperState } from "./hooks/useClipperState";
-import { PreviewCard } from "./components/PreviewCard";
 import { TypeSwitcher } from "./components/TypeSwitcher";
 import { ChannelList } from "./components/ChannelList";
 import { SaveButton } from "./components/SaveButton";
@@ -48,48 +47,66 @@ export function PopupApp() {
   }
 
   const { metadata } = clipper;
-  const domain = getDomain(metadata?.url);
   const previewText = getPreviewText(clipper);
+  const ogImage = clipper.currentType === "image"
+    ? metadata?.imageToSave ?? metadata?.image ?? null
+    : metadata?.image ?? null;
 
   return (
-    <div className="space-y-2 p-3">
-      <PreviewCard
-        title={clipper.title}
-        onTitleChange={clipper.setTitle}
-        domain={domain}
-        thumbnailUrl={getThumbnailUrl(clipper)}
-        imagePreviewUrl={
-          clipper.currentType === "image"
-            ? metadata?.imageToSave ?? metadata?.image ?? null
-            : null
-        }
-      />
+    <div className="flex h-full flex-col p-3">
+      <div className="shrink-0 space-y-2">
+        {metadata?.detectedType !== "image" && metadata?.detectedType !== "video" && (
+          <TypeSwitcher current={clipper.currentType} onChange={clipper.setCurrentType} />
+        )}
 
-      {metadata?.detectedType !== "image" && metadata?.detectedType !== "video" && (
-        <TypeSwitcher current={clipper.currentType} onChange={clipper.setCurrentType} />
-      )}
+        {clipper.currentType === "link" && (
+          <div className="space-y-1.5 rounded-1 border border-border p-2">
+            {ogImage && (
+              <div className="max-h-[120px] overflow-hidden rounded-1">
+                <img src={ogImage} alt="" className="block max-h-[120px] w-full object-cover" />
+              </div>
+            )}
+            <p className="truncate text-sm font-semibold">{clipper.title}</p>
+            {metadata?.description && (
+              <p className="line-clamp-2 text-sm text-muted-foreground">{metadata.description}</p>
+            )}
+            <p className="truncate text-sm text-tertiary-foreground">{metadata?.url}</p>
+          </div>
+        )}
 
-      {previewText && (
-        <p className="line-clamp-5 whitespace-pre-wrap rounded-1 border border-border p-2 text-sm text-muted-foreground">
-          {previewText}
-        </p>
-      )}
+        {clipper.currentType === "content" && (
+          <div className="max-h-[120px] overflow-y-auto rounded-1 border border-border p-2">
+            <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+              {previewText || metadata?.description || "No content extracted"}
+            </p>
+          </div>
+        )}
 
-      <ChannelList
-        channels={clipper.channels}
-        selectedTags={clipper.selectedTags}
-        recentTags={clipper.recentTags}
-        onToggle={clipper.toggleTag}
-        onCreate={clipper.createChannel}
-      />
+        {clipper.currentType === "image" && ogImage && (
+          <div className="max-h-[160px] overflow-hidden rounded-1">
+            <img src={ogImage} alt="" className="block max-h-[160px] w-full object-cover" />
+          </div>
+        )}
+      </div>
 
-      <SaveButton
-        count={clipper.selectedTags.length}
-        saving={clipper.saving}
-        onClick={handleSave}
-      />
+      <div className="min-h-0 flex-1 overflow-hidden py-2">
+        <ChannelList
+          channels={clipper.channels}
+          selectedTags={clipper.selectedTags}
+          recentTags={clipper.recentTags}
+          onToggle={clipper.toggleTag}
+          onCreate={clipper.createChannel}
+        />
+      </div>
 
-      {status && <StatusBar message={status.message} type={status.type} />}
+      <div className="shrink-0 space-y-2 border-t border-border pt-2">
+        <SaveButton
+          count={clipper.selectedTags.length}
+          saving={clipper.saving}
+          onClick={handleSave}
+        />
+        {status && <StatusBar message={status.message} type={status.type} />}
+      </div>
     </div>
   );
 }
@@ -116,33 +133,14 @@ function ErrorState({ message }: { message: string }) {
   );
 }
 
-function getDomain(url?: string | null): string {
-  if (!url) return "";
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "";
-  }
-}
-
-function getThumbnailUrl(clipper: ReturnType<typeof useClipperState>): string | null {
-  const { metadata, currentType } = clipper;
-  if (!metadata) return null;
-  if (currentType === "image") return null;
-  return metadata.image ?? metadata.favicon ?? null;
-}
-
 function getPreviewText(clipper: ReturnType<typeof useClipperState>): string | null {
   if (clipper.currentType !== "content") return null;
   const { metadata, articleData } = clipper;
   if (!metadata) return null;
 
-  let text = "";
-  if (metadata.selection?.length > 0) {
-    text = metadata.selection;
-  } else if (articleData?.content) {
-    text = articleData.content.slice(0, 200);
-  }
-  if (!text) return null;
-  return text.length >= 200 ? text + "..." : text;
+  if (metadata.selection?.length > 0) return metadata.selection;
+  if (articleData?.content) return articleData.content.slice(0, 1000);
+  if (metadata.description) return metadata.description;
+  if (metadata.bodyText) return metadata.bodyText.slice(0, 1000);
+  return null;
 }

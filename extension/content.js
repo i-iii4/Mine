@@ -87,6 +87,7 @@
       ogType: getMeta("og:type") || null,
       favicon: getFavicon(),
       selection: selectionMarkdown,
+      bodyText: (document.body ? document.body.innerText : "").slice(0, 2000),
     };
   }
 

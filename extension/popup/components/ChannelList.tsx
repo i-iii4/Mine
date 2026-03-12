@@ -1,6 +1,5 @@
 import { useState, useMemo } from "react";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { ChannelInfo } from "../lib/messaging";
 
@@ -51,19 +50,19 @@ export function ChannelList({
   const showCreate = filter.trim() && filtered.length === 0;
 
   return (
-    <div className="space-y-1">
+    <div className="flex h-full flex-col gap-1">
       <Input
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
         placeholder="Search channels..."
-        className="h-8"
+        className="h-8 shrink-0"
       />
 
-      <p className="px-1 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+      <p className="shrink-0 px-1 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
         {lc ? "Channels" : "Recent"}
       </p>
 
-      <ScrollArea className="max-h-48 rounded-1 border border-border">
+      <div className="min-h-0 flex-1 overflow-y-auto rounded-1 border border-border">
         {filtered.map((ch) => {
           const selected = selectedTags.includes(ch.tag);
           return (
@@ -111,7 +110,7 @@ export function ChannelList({
         {filtered.length === 0 && !showCreate && (
           <p className="p-3 text-center text-sm text-muted-foreground">No channels yet</p>
         )}
-      </ScrollArea>
+      </div>
     </div>
   );
 }

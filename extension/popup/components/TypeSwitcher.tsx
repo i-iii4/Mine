@@ -14,7 +14,7 @@ const TYPES: { value: ClipType; label: string }[] = [
 
 export function TypeSwitcher({ current, onChange }: TypeSwitcherProps) {
   return (
-    <div className="flex rounded-1 border border-border p-0.5">
+    <div className="flex rounded-1 bg-component-fill p-0.5">
       {TYPES.map(({ value, label }) => (
         <Button
           key={value}
@@ -23,7 +23,7 @@ export function TypeSwitcher({ current, onChange }: TypeSwitcherProps) {
           onClick={() => onChange(value)}
           className={cn(
             "flex-1 rounded-[2px] text-sm text-muted-foreground",
-            current === value && "bg-muted text-foreground",
+            current === value && "bg-component-fill-hover text-foreground",
           )}
         >
           {label}
