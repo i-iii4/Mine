@@ -83,6 +83,7 @@ export interface PageMetadata {
 export interface ArticleData {
   title: string;
   content: string;
+  html?: string;
   byline: string | null;
   excerpt: string;
 }

@@ -369,6 +369,9 @@ function ArticleBody({
             alt={alt ?? ""}
             className="rounded-0"
             loading="lazy"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = "none";
+            }}
             {...props}
           />
         );
@@ -388,7 +391,7 @@ function ArticleBody({
   );
 
   return (
-    <div className="prose prose-sm prose-neutral mt-4 max-w-none dark:prose-invert">
+    <div className="prose prose-sm mt-4 max-w-none">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {body}
       </ReactMarkdown>

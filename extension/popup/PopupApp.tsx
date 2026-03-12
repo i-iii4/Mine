@@ -75,10 +75,20 @@ export function PopupApp() {
         )}
 
         {clipper.currentType === "content" && (
-          <div className="max-h-[120px] overflow-y-auto rounded-1 border border-border p-2">
-            <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-              {previewText || metadata?.description || "No content extracted"}
-            </p>
+          <div className="space-y-1.5 rounded-1 border border-border p-2">
+            <p className="truncate text-sm font-semibold">{clipper.title}</p>
+            <div className="max-h-[200px] overflow-y-auto">
+              {clipper.articleData?.html ? (
+                <div
+                  className="prose prose-sm max-w-none"
+                  dangerouslySetInnerHTML={{ __html: clipper.articleData.html }}
+                />
+              ) : (
+                <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+                  {previewText || metadata?.description || "No content extracted"}
+                </p>
+              )}
+            </div>
           </div>
         )}
 

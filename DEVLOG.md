@@ -28,6 +28,57 @@ if any
 
 ---
 
+## 12.03.2026 — Три бага: заголовок, серый текст, картинки
+
+### Goal
+Исправить три визуальных бага при клиппинге статей: отсутствие заголовка в Content-предпросмотре попапа, серый текст статей в приложении, неотображение картинок в обоих контекстах.
+
+### Planned
+1. Добавить заголовок в Content-блок попапа (по аналогии с Link)
+2. Убрать `prose-neutral dark:prose-invert`, переопределить prose-переменные на дизайн-токены
+3. Расширить CSP (`http: data:`), добавить `onError` на img
+4. Исправить пайплайн изображений: предобработка lazy-loaded картинок, кастомное правило TurndownService
+
+### Actually completed
+Все 4 пункта:
+
+**Баг 1 — заголовок в попапе:**
+- **PopupApp.tsx** — Content-блок обёрнут в `space-y-1.5` контейнер с `clipper.title` и `max-h-[200px]` скроллируемым контентом, рендеринг `articleData.html` через `dangerouslySetInnerHTML`
+- **messaging.ts** — добавлено поле `html?: string` в `ArticleData`
+- **content.js** — `extractArticle()` возвращает `html: article.content` (сырой HTML из Readability)
+
+**Баг 2 — серый текст:**
+- **global.css** — переопределение prose-переменных (`--tw-prose-body`, `--tw-prose-headings` и др.) на `var(--foreground)` / `var(--muted-foreground)` / `var(--border)`
+- **Detail.tsx** — убран `prose-neutral dark:prose-invert`, оставлен `prose prose-sm mt-4 max-w-none`
+- **PopupApp.tsx** — аналогично убран `prose-neutral dark:prose-invert`
+
+**Баг 3 — картинки:**
+- **tauri.conf.json** — CSP `img-src` расширен до `'self' asset: https: http: data:`
+- **Detail.tsx** — `onError` на кастомном img-компоненте скрывает сломанные картинки
+- **content.js** — основное исправление:
+  - `syncLiveSrc(clone)` — копирует `currentSrc` из живого DOM в клон (решает проблему `cloneNode` при динамической загрузке)
+  - `fixLazyImages(doc)` — исправляет ленивые картинки агрессивнее Readability: проверяет `data-src`, `data-original`, `data-lazy-src`, все `data-*` атрибуты с URL, `srcset`/`data-srcset`. Без ограничения на расширение файла (Readability пропускает URL без `.jpg`/`.png`/`.webp`)
+  - Кастомное правило TurndownService `imageWithFallback` через `addRule` — при пустом `src` проверяет `data-src`, `srcset`, `data-*` вместо молчаливого удаления картинки
+
+### Deviations from plan
+Нет.
+
+### Checks
+- Сборка расширения: `bun run --bun vite build --config vite.extension.config.ts` — без ошибок
+- Линтер: `bun run lint` — чисто
+- Ручная проверка: требуется (перезагрузить расширение, проверить статью с картинками)
+
+### Push
+(pending)
+
+### Decisions and lessons learned
+- Readability `_fixLazyImages` regex `/\.(jpg|jpeg|png|webp)\S*$/` пропускает CDN-URL без расширения (imgly, resize-прокси). Предобработка клона до Readability — единственный способ без модификации вендорной библиотеки
+- TurndownService при пустом `src` полностью удаляет картинку (возвращает `''`). `addRule` с тем же фильтром `"img"` переопределяет дефолтное правило
+- `document.cloneNode(true)` копирует HTML-атрибуты, а не runtime-свойства (`currentSrc`). Для JS-загруженных картинок нужна явная синхронизация
+- `prose-neutral` / `dark:prose-invert` не нужны, если prose-переменные привязаны к дизайн-токенам через `var(--foreground)` — тема переключается автоматически
+
+---
+
 ## 12.03.2026 — Исправление попапа Chrome-расширения
 
 ### Goal

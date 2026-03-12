@@ -27,6 +27,102 @@
     return "/favicon.ico";
   }
 
+  // ── Image pre-processing helpers ────────────────────────────────────────
+
+  function isPlaceholderSrc(src) {
+    if (!src) return true;
+    // Tiny base64 placeholder (< 200 bytes payload)
+    if (/^data:image\//i.test(src)) {
+      var b64Start = src.indexOf(",");
+      if (b64Start > 0 && src.length - b64Start < 200) return true;
+    }
+    // Common placeholder URL patterns
+    if (/[/.](?:pixel|blank|placeholder|spacer|empty|1x1|transparent)\b/i.test(src)) return true;
+    return false;
+  }
+
+  function isImageUrl(val) {
+    if (!val || val.length < 10) return false;
+    if (/^https?:\/\//i.test(val)) return true;
+    if (/\.(jpg|jpeg|png|webp|gif|avif|svg)\b/i.test(val)) return true;
+    if (val.startsWith("//")) return true;
+    return false;
+  }
+
+  function bestFromSrcset(srcset) {
+    if (!srcset) return "";
+    var parts = srcset.split(",");
+    var best = "";
+    var bestSize = 0;
+    for (var i = 0; i < parts.length; i++) {
+      var tokens = parts[i].trim().split(/\s+/);
+      var url = tokens[0];
+      var size = parseFloat(tokens[1]) || 0;
+      if (!best || size > bestSize) { best = url; bestSize = size; }
+    }
+    return best;
+  }
+
+  /** Copy runtime-resolved currentSrc from live DOM into cloned document. */
+  function syncLiveSrc(clone) {
+    var liveImgs = document.querySelectorAll("img");
+    var cloneImgs = clone.querySelectorAll("img");
+    var len = Math.min(liveImgs.length, cloneImgs.length);
+    for (var i = 0; i < len; i++) {
+      var live = liveImgs[i];
+      var cloned = cloneImgs[i];
+      if (live.currentSrc && (!cloned.getAttribute("src") || isPlaceholderSrc(cloned.getAttribute("src")))) {
+        cloned.setAttribute("src", live.currentSrc);
+      }
+    }
+  }
+
+  /** Fix lazy-loaded images that Readability's _fixLazyImages misses (extensionless CDN URLs). */
+  function fixLazyImages(doc) {
+    var imgs = doc.querySelectorAll("img");
+    for (var img of imgs) {
+      // Skip images that already have a valid src
+      if (img.getAttribute("src") && !isPlaceholderSrc(img.getAttribute("src"))) {
+        continue;
+      }
+
+      // Try well-known lazy-load attributes
+      var candidates = ["data-src", "data-original", "data-lazy-src", "data-lazy", "data-hi-res-src", "data-full-src"];
+      var found = false;
+      for (var attr of candidates) {
+        var val = img.getAttribute(attr);
+        if (val && isImageUrl(val)) {
+          img.setAttribute("src", val);
+          found = true;
+          break;
+        }
+      }
+
+      // Fallback: any data-* attribute that looks like an absolute URL
+      if (!found) {
+        for (var j = 0; j < img.attributes.length; j++) {
+          var a = img.attributes[j];
+          if (a.name.startsWith("data-") && /^https?:\/\//i.test(a.value)) {
+            img.setAttribute("src", a.value);
+            found = true;
+            break;
+          }
+        }
+      }
+
+      // Last resort: extract best URL from srcset / data-srcset
+      if (!found) {
+        var srcset = img.getAttribute("data-srcset") || img.getAttribute("srcset");
+        if (srcset) {
+          var best = bestFromSrcset(srcset);
+          if (best) img.setAttribute("src", best);
+        }
+      }
+    }
+  }
+
+  // ── Markdown conversion ─────────────────────────────────────────────────
+
   function htmlToMarkdown(html) {
     if (!html || typeof TurndownService === "undefined") return null;
     try {
@@ -36,6 +132,32 @@
         bulletListMarker: "-",
         emDelimiter: "*",
       });
+
+      // Override default image rule: fall back to data-src, srcset when src is empty
+      turndown.addRule("imageWithFallback", {
+        filter: "img",
+        replacement: function (_content, node) {
+          var alt = (node.getAttribute("alt") || "").replace(/[\r\n]+/g, " ").trim();
+          var src = node.getAttribute("src") || "";
+          if (!src || isPlaceholderSrc(src)) {
+            src = node.getAttribute("data-src")
+              || node.getAttribute("data-original")
+              || node.getAttribute("data-lazy-src")
+              || bestFromSrcset(node.getAttribute("srcset") || node.getAttribute("data-srcset"))
+              || "";
+          }
+          if (!src) {
+            for (var i = 0; i < node.attributes.length; i++) {
+              var a = node.attributes[i];
+              if (a.name.startsWith("data-") && /^https?:\/\//i.test(a.value)) { src = a.value; break; }
+            }
+          }
+          var title = (node.getAttribute("title") || "").replace(/[\r\n]+/g, " ").trim();
+          var titlePart = title ? ' "' + title + '"' : "";
+          return src ? "![" + alt + "](" + src + titlePart + ")" : "";
+        },
+      });
+
       return turndown.turndown(html);
     } catch (e) {
       console.error("[Local Arena] htmlToMarkdown failed:", e);
@@ -289,6 +411,8 @@
     }
     try {
       const clone = document.cloneNode(true);
+      syncLiveSrc(clone);
+      fixLazyImages(clone);
       const reader = new Readability(clone);
       const article = reader.parse();
       if (!article) {
@@ -301,6 +425,7 @@
       return {
         title: article.title || document.title,
         content: markdown,
+        html: article.content || "",
         byline: article.byline || null,
         excerpt: article.excerpt || "",
       };
