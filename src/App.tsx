@@ -76,7 +76,6 @@ import { ActionButton } from "@/components/ActionButton";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import {

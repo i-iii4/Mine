@@ -249,7 +249,7 @@ Input и Command — тоже 32px (`h-8`).
 | `default` | `max-w-lg` |
 | `sm` | `max-w-sm` |
 
-Оверлей: `bg-black/80`. Action с `variant="destructive"` — красная кнопка.
+Оверлей: `bg-black/50`. Action с `variant="destructive"` — красная кнопка.
 
 ### DropdownMenu
 
@@ -263,15 +263,11 @@ Item `variant="destructive"`: красный текст (`text-destructive`), с
 
 `TooltipTrigger > TooltipContent`.
 
-Content: `rounded-1 bg-primary text-primary-foreground px-3 py-1.5 text-sm`. Анимация: fade + zoom при появлении/скрытии.
+Content: `rounded-1 bg-foreground text-background px-3 py-1.5 text-sm`. Стрелка: `bg-foreground fill-foreground`. Анимация: fade + zoom при появлении/скрытии.
 
 ### Dialog (Detail)
 
-Полноэкранный оверлей: `fixed inset-0 bg-glass backdrop-blur-sm`. Контент по центру: `max-w-3xl`. Закрытие: ESC или клик по оверлею.
-
-### Select
-
-Trigger: `h-8 rounded-1 border border-input bg-transparent px-3`. Content: `rounded-1 border bg-popover shadow-md`. Item: стиль как DropdownMenuItem.
+Полноэкранная страница: `absolute inset-0 bg-background`. Занимает весь контейнер поверх сетки, без оверлея. Закрытие: ESC или кнопка.
 
 ### Separator
 
