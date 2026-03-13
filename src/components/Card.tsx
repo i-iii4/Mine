@@ -154,7 +154,7 @@ function LinkCard({
           {block.title ?? block.slug}
         </p>
         {domain && (
-          <p className="mt-0.5 truncate text-sm text-foreground">{domain}</p>
+          <p className="mt-0.5 truncate text-sm text-muted-foreground">{domain}</p>
         )}
       </div>
     );
@@ -191,7 +191,7 @@ function LinkCard({
           {block.title ?? block.slug}
         </p>
         {domain && (
-          <p className="mt-0.5 truncate text-sm text-foreground">{domain}</p>
+          <p className="mt-0.5 truncate text-sm text-muted-foreground">{domain}</p>
         )}
       </div>
     </div>
@@ -222,12 +222,12 @@ function ArticleCard({ block }: { block: LightBlock }) {
         {block.title ?? block.slug}
       </p>
       {preview && (
-        <p className="mt-1.5 line-clamp-8 text-sm leading-relaxed text-foreground">
+        <p className="mt-1.5 line-clamp-8 text-sm leading-relaxed text-muted-foreground">
           {preview}
         </p>
       )}
       {block.author && (
-        <p className="mt-2 text-sm text-foreground">{block.author}</p>
+        <p className="mt-2 text-sm text-muted-foreground">{block.author}</p>
       )}
     </div>
   );
@@ -285,7 +285,7 @@ function FileCard({ block }: { block: LightBlock }) {
           {block.title ?? block.slug}
         </p>
         {block.media_file && (
-          <p className="truncate text-sm text-foreground">
+          <p className="truncate text-sm text-muted-foreground">
             {block.media_file}
           </p>
         )}
