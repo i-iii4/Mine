@@ -66,7 +66,7 @@ if any
 - YouTube-видео в клиппере: TypeSwitcher, превью с play-кнопкой в обоих режимах
 
 ### Push
-TBD
+9ae6fb5 Add video page support: clipper TypeSwitcher, play overlay, YouTube embed
 
 ---
 
