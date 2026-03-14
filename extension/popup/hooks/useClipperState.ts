@@ -4,6 +4,7 @@ import {
   getContextMenuData,
   extractMetadata,
   extractArticle,
+  extractArticleAsync,
   getImageInfo,
   type NativeRequest,
   type ChannelInfo,
@@ -39,6 +40,7 @@ export function useClipperState() {
   const [currentType, setCurrentType] = useState<ClipType>("link");
   const [title, setTitle] = useState("");
   const [saving, setSaving] = useState(false);
+  const [articleLoading, setArticleLoading] = useState(false);
 
   const tabIdRef = useRef<number | null>(null);
 
@@ -107,6 +109,17 @@ export function useClipperState() {
       setCurrentType(detected);
 
       setState("main");
+
+      // Background: fetch async article for video (YouTube transcript)
+      if (meta.detectedType === "video" && tab.id) {
+        setArticleLoading(true);
+        extractArticleAsync(tab.id).then((asyncArticle) => {
+          if (asyncArticle.content) {
+            setArticleData(asyncArticle);
+          }
+          setArticleLoading(false);
+        });
+      }
     } catch (e) {
       showError("Failed to initialize: " + (e instanceof Error ? e.message : String(e)));
     }
@@ -248,6 +261,7 @@ export function useClipperState() {
     title,
     setTitle,
     saving,
+    articleLoading,
     toggleTag,
     createChannel,
     save,

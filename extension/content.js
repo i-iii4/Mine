@@ -30,6 +30,17 @@
     return "/favicon.ico";
   }
 
+  /** Upgrade YouTube thumbnail URL from hqdefault (480x360, 4:3 with bars) to maxresdefault (1280x720, 16:9). */
+  function upgradeYoutubeThumbnail(imageUrl, pageUrl) {
+    if (!imageUrl) return null;
+    if (!pageUrl || !isVideoUrl(pageUrl)) return imageUrl;
+    const match = imageUrl.match(/https?:\/\/i\.ytimg\.com\/vi\/([\w-]+)\//);
+    if (match) {
+      return `https://i.ytimg.com/vi/${match[1]}/maxresdefault.jpg`;
+    }
+    return imageUrl;
+  }
+
   function extractMetadata() {
     const sel = window.getSelection();
     const selectionText = sel.toString().trim();
@@ -55,7 +66,7 @@
         getMeta("twitter:description") ||
         getMeta("description") ||
         "",
-      image: getMeta("og:image") || getMeta("twitter:image") || null,
+      image: upgradeYoutubeThumbnail(getMeta("og:image") || getMeta("twitter:image") || null, pageUrl),
       author,
       ogType: getMeta("og:type") || null,
       favicon: getFavicon(),
@@ -278,6 +289,37 @@
     }
   }
 
+  // Async version — uses Defuddle's parseAsync() for YouTube transcripts
+  async function extractArticleAsync() {
+    if (isTwitterUrl(window.location.href)) {
+      return extractTwitterThread() ||
+        { title: document.title, content: "", byline: null, excerpt: "" };
+    }
+
+    if (typeof Defuddle === "undefined") {
+      return { title: document.title, content: "", byline: null, excerpt: "" };
+    }
+    try {
+      const result = await new Defuddle(document, {
+        separateMarkdown: true,
+      }).parseAsync();
+
+      if (!result || !result.content) {
+        return { title: document.title, content: "", byline: null, excerpt: "" };
+      }
+
+      return {
+        title: result.title || document.title,
+        content: result.contentMarkdown || "",
+        html: result.content || "",
+        byline: result.author || null,
+        excerpt: result.description || "",
+      };
+    } catch {
+      return { title: document.title, content: "", byline: null, excerpt: "" };
+    }
+  }
+
   // ── Message handler ─────────────────────────────────────────────────────
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -292,6 +334,11 @@
     if (msg.action === "extractArticle") {
       const article = extractArticle();
       sendResponse(article);
+      return true;
+    }
+
+    if (msg.action === "extractArticleAsync") {
+      extractArticleAsync().then(sendResponse);
       return true;
     }
 

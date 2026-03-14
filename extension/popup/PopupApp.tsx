@@ -62,9 +62,8 @@ export function PopupApp() {
         {clipper.currentType === "link" && (
           <div className="space-y-1.5 rounded-1 border border-border p-2">
             {ogImage && (
-              <div className="relative max-h-[120px] overflow-hidden rounded-1">
+              <div className="max-h-[120px] overflow-hidden rounded-1">
                 <img src={ogImage} alt="" className="block max-h-[120px] w-full object-cover" />
-                {metadata?.detectedType === "video" && <PlayOverlay />}
               </div>
             )}
             <p className="truncate text-sm font-semibold">{clipper.title}</p>
@@ -78,13 +77,25 @@ export function PopupApp() {
         {clipper.currentType === "content" && metadata?.detectedType === "video" && (
           <div className="space-y-1.5 rounded-1 border border-border p-2">
             {ogImage && (
-              <div className="relative max-h-[120px] overflow-hidden rounded-1">
+              <div className="max-h-[120px] overflow-hidden rounded-1">
                 <img src={ogImage} alt="" className="block max-h-[120px] w-full object-cover" />
-                <PlayOverlay />
               </div>
             )}
             <p className="truncate text-sm font-semibold">{clipper.title}</p>
-            <p className="text-sm text-muted-foreground">Transcript not available</p>
+            {clipper.articleLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="size-3 animate-spin rounded-round border-[1.5px] border-border border-t-foreground" />
+                Loading transcript...
+              </div>
+            ) : clipper.articleData?.content ? (
+              <div className="max-h-[200px] overflow-y-auto">
+                <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+                  {clipper.articleData.content.slice(0, 1000)}
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Transcript not available</p>
+            )}
           </div>
         )}
 
@@ -153,18 +164,6 @@ function ErrorState({ message }: { message: string }) {
         !
       </div>
       <p className="max-w-[280px] text-sm text-muted-foreground">{message}</p>
-    </div>
-  );
-}
-
-function PlayOverlay() {
-  return (
-    <div className="absolute inset-0 flex items-center justify-center">
-      <div className="flex h-10 w-10 items-center justify-center rounded-1 bg-black/50 text-white">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M4 2.5v11l10-5.5L4 2.5z" />
-        </svg>
-      </div>
     </div>
   );
 }

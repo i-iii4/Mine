@@ -284,12 +284,14 @@ function BlockContent({
       );
     }
     case "link": {
-      const thumb = thumbnailUrl(vaultPath, block.slug);
+      const src = block.media_file
+        ? mediaUrl(vaultPath, block.media_file)
+        : thumbnailUrl(vaultPath, block.slug);
       return (
         <div>
           <div className="aspect-video bg-accent">
             <img
-              src={thumb}
+              src={src}
               alt=""
               className="h-full w-full object-contain"
               onError={(e) => {

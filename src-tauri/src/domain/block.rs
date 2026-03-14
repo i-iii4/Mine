@@ -300,13 +300,32 @@ pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
     lines.join("\n")
 }
 
+/// Collapse 3+ consecutive newlines into a single blank line.
+fn normalize_blank_lines(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut newline_count = 0u32;
+    for ch in s.chars() {
+        if ch == '\n' {
+            newline_count += 1;
+            if newline_count <= 2 {
+                result.push(ch);
+            }
+        } else {
+            newline_count = 0;
+            result.push(ch);
+        }
+    }
+    result
+}
+
 /// Serialize a Block into full `.md` file content.
 pub fn serialize_block(block: &Block) -> String {
     let yaml = serialize_frontmatter(&block.frontmatter);
     if block.body.is_empty() {
         format!("---\n{}\n---\n", yaml)
     } else {
-        format!("---\n{}\n---\n{}", yaml, block.body)
+        let body = normalize_blank_lines(&block.body);
+        format!("---\n{}\n---\n{}", yaml, body)
     }
 }
 

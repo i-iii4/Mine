@@ -28,6 +28,64 @@ if any
 
 ---
 
+## 14.03.2026 — Нормализация пустых строк, YouTube-транскрипт, миниатюры
+
+### Goal
+1. Убрать множественные пустые строки в .md файлах (Defuddle генерирует 3+ переводов строки)
+2. Загружать YouTube-транскрипт через async Defuddle (parseAsync + InnerTube API)
+3. Исправить качество YouTube-миниатюр (hqdefault 480x360 с полосами -> maxresdefault 1280x720)
+4. Detail показывал thumbnail-кэш вместо оригинала для link-блоков
+
+### Planned
+1. Нормализация пустых строк в serialize_block()
+2. Async extractArticle + прогрессивная загрузка (попап сразу, транскрипт в фоне)
+3. Полный бандл Defuddle (index.full.js, 576KB) вместо минимального (YouTube-экстрактор)
+4. upgradeYoutubeThumbnail() — замена hqdefault на maxresdefault
+5. Detail.tsx — mediaUrl() вместо thumbnailUrl() для link-блоков
+
+### Actually completed
+
+**domain/block.rs:**
+- `normalize_blank_lines()` — схлопывает 3+ переводов строки в одну пустую строку
+- Применяется в `serialize_block()` перед записью body
+
+**extension/content.js:**
+- `extractArticleAsync()` — использует `Defuddle.parseAsync()` для YouTube-транскрипта
+- Новый message action `extractArticleAsync` в handler
+- `upgradeYoutubeThumbnail()` — заменяет `hqdefault.jpg` на `maxresdefault.jpg` для YouTube
+
+**extension/lib/defuddle.js:**
+- Заменён на полный бандл `index.full.js` (576KB) — включает YouTube, Reddit, GitHub, ChatGPT и другие экстракторы
+
+**extension/popup/lib/messaging.ts:**
+- `extractArticleAsync()` — 30с таймаут (vs 10с для синхронного)
+
+**extension/popup/hooks/useClipperState.ts:**
+- `articleLoading` state
+- Прогрессивная загрузка: попап сразу по метаданным, транскрипт в фоне для видео
+- Импорт `extractArticleAsync`
+
+**extension/popup/PopupApp.tsx:**
+- Content-видео: миниатюра + лоадер/транскрипт текстом (без iframe)
+- Link-видео: чистая миниатюра без play-кнопки
+- Удалён `PlayOverlay` (мёртвый код)
+
+**Detail.tsx:**
+- Link-блоки: `mediaUrl()` (полноразмерный файл) вместо `thumbnailUrl()` (кэш 480px)
+
+### Deviations from plan
+- Изначально использовали минимальный бандл Defuddle (164KB) — YouTube-экстрактор не работал. Заменили на полный (576KB)
+
+### Checks
+- `bun run build:extension` — 0 ошибок
+- `bun run lint` — 0 ошибок
+- YouTube: лоадер транскрипта, миниатюра maxresdefault
+
+### Push
+TBD
+
+---
+
 ## 14.03.2026 — Замена Readability + Turndown на Defuddle
 
 ### Goal

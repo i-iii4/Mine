@@ -140,6 +140,19 @@ export async function extractArticle(tabId: number): Promise<ArticleData> {
   });
 }
 
+export async function extractArticleAsync(tabId: number): Promise<ArticleData> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve({ title: "", content: "", byline: null, excerpt: "" });
+    }, 30_000);
+
+    chrome.tabs.sendMessage(tabId, { action: "extractArticleAsync" }, (resp) => {
+      clearTimeout(timer);
+      resolve((resp as ArticleData) ?? { title: "", content: "", byline: null, excerpt: "" });
+    });
+  });
+}
+
 export async function getImageInfo(
   tabId: number,
   src: string,
