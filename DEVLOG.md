@@ -52,7 +52,7 @@ if any
 - `bun run build:extension` — 0 ошибок
 
 ### Push
-PENDING
+d24ba15 — Fix YouTube transcript: read Defuddle variables.transcript, fix build pipeline
 
 ### Decisions and lessons learned
 - Defuddle кладёт YouTube-транскрипт в `variables.transcript`, а не в `contentMarkdown`. Это задокументированное поведение YouTube-экстрактора, но неочевидное.
