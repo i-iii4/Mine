@@ -62,7 +62,6 @@ import {
   deleteBlock,
   listChannelPreviews,
 } from "@/lib/commands";
-import { setInternalDragActive } from "@/lib/drag";
 import { pushRecentTag } from "@/lib/recentTags";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { VaultPicker } from "@/components/VaultPicker";
@@ -72,6 +71,7 @@ import { Grid } from "@/components/Grid";
 import { Search } from "@/components/Search";
 import { Detail } from "@/components/Detail";
 import { ImportDialog } from "@/components/ImportDialog";
+import { DropZone } from "@/components/DropZone";
 import { ActionButton } from "@/components/ActionButton";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
 import { Button } from "@/components/ui/button";
@@ -527,7 +527,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleDndStart = useCallback(
     (event: DragStartEvent) => {
-      setInternalDragActive(true);
       const id = String(event.active.id);
       if (id.startsWith("tag:")) {
         setActiveDragTag(id.slice(4));
@@ -543,7 +542,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleDndEnd = useCallback(
     (event: DragEndEvent) => {
-      setInternalDragActive(false);
       setActiveDragBlock(null);
       setActiveDragTag(null);
       const { active, over } = event;
@@ -567,7 +565,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   );
 
   const handleDndCancel = useCallback(() => {
-    setInternalDragActive(false);
     setActiveDragBlock(null);
     setActiveDragTag(null);
   }, []);
@@ -735,6 +732,8 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
           Search
         </ActionButton>
       </div>
+
+      <DropZone currentTag={currentTag} onBlocksCreated={loadData} />
     </div>{/* end flex-col */}
 
     <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>

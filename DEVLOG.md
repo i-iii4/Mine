@@ -28,6 +28,52 @@ if any
 
 ---
 
+## 14.03.2026 — Вернуть внешний file drop (DropZone)
+
+### Goal
+Восстановить drag-and-drop файлов из Finder в окно приложения. Компонент DropZone был отключён из-за конфликта с внутренним drag-and-drop (dnd-kit): при перетаскивании каналов в сайдбаре срабатывал оверлей «Drop files to add».
+
+### Planned
+1. DropZone.tsx — убрать проверку `isInternalDragActive()`, оставить `setDragging(true)` напрямую
+2. App.tsx — удалить `setInternalDragActive` из обработчиков dnd-kit, подключить DropZone в JSX
+3. Удалить `src/lib/drag.ts` (костыль с флагом + 300ms таймером)
+4. global.css — добавить `img { -webkit-user-drag: none }` для предотвращения ложной активации при перетаскивании картинок внутри Detail
+
+### Actually completed
+Все 4 пункта выполнены.
+
+**DropZone.tsx:**
+- Удалён импорт `isInternalDragActive` из `@/lib/drag`
+- Условие `if (!isInternalDragActive()) setDragging(true)` → `setDragging(true)`
+
+**App.tsx:**
+- Удалён импорт `setInternalDragActive` из `@/lib/drag`
+- Убраны 3 вызова `setInternalDragActive()` в `handleDndStart`, `handleDndEnd`, `handleDndCancel`
+- Добавлен импорт `DropZone` из `@/components/DropZone`
+- Добавлен `<DropZone currentTag={currentTag} onBlocksCreated={loadData} />` после нижней панели действий
+
+**src/lib/drag.ts** — удалён (21 строка)
+
+**global.css:**
+- Добавлено правило `img { -webkit-user-drag: none }` — предотвращает нативный drag изображений, который Tauri перехватывает как внешний file drop
+
+### Deviations from plan
+Нет
+
+### Checks
+— Компиляция без ошибок
+— DropZone подключён в JSX, ссылок на `drag.ts` нет
+
+### Push
+TBD
+
+### Decisions and lessons learned
+Костыль `drag.ts` (флаг + 300ms таймер) был не нужен: dnd-kit использует PointerSensor (pointer events), а Tauri onDragDropEvent реагирует на нативный OS-drag. Эти два механизма не пересекаются — внутренние перетаскивания физически не могут вызвать onDragDropEvent.
+
+Правило `img { -webkit-user-drag: none }` — не костыль, а платформенная конфигурация: `<img>` по умолчанию имеет `draggable="true"`, и перетаскивание картинки внутри Detail порождает нативный OS-drag, который Tauri перехватывает. Это стандартное поведение для десктопных веб-приложений.
+
+---
+
 ## 14.03.2026 — Консистентность документации + Detail не закрывался при клике на текущий канал
 
 ### Goal

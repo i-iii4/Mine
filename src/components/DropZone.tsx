@@ -3,7 +3,6 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { ArrowDown } from "lucide-react";
 import type { BlockType } from "@/types";
 import { createBlock } from "@/lib/commands";
-import { isInternalDragActive } from "@/lib/drag";
 
 interface DropZoneProps {
   currentTag?: string;
@@ -63,7 +62,7 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
     getCurrentWebviewWindow()
       .onDragDropEvent((event) => {
         if (event.payload.type === "over") {
-          if (!isInternalDragActive()) setDragging(true);
+          setDragging(true);
         } else if (event.payload.type === "drop") {
           handleDrop(event.payload.paths);
         } else if (event.payload.type === "leave") {

@@ -34,6 +34,11 @@
   --tw-prose-td-borders: var(--border);
 }
 
+/* Prevent native image drag — avoids false DropZone activation */
+img {
+  -webkit-user-drag: none;
+}
+
 /* Prevent text selection on interactive elements (native app feel) */
 button,
 [role="button"],
