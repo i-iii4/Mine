@@ -104,7 +104,7 @@ export function useClipperState() {
       } else if (dt === "image") {
         detected = "image";
       } else if (dt === "video") {
-        detected = "link";
+        detected = "content";
       }
       setCurrentType(detected);
 
@@ -212,8 +212,7 @@ export function useClipperState() {
 
     if (currentType === "content") {
       if (metadata.detectedType === "video") {
-        // Body empty for now — transcript will be added later via Defuddle
-        payload.body = "";
+        payload.body = articleData?.content || "";
       } else if (metadata.selection?.length > 0) {
         payload.body = metadata.selection;
       } else if (articleData?.content) {

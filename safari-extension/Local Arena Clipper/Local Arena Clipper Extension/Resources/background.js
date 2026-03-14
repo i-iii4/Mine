@@ -31,7 +31,7 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // Store context info for the popup to retrieve
   const context = {
     menuItemId: info.menuItemId,
@@ -41,11 +41,17 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     pageUrl: info.pageUrl || tab?.url || null,
   };
 
-  chrome.storage.session.set({ contextMenuData: context }, () => {
-    // Open popup programmatically (via action)
-    if (tab?.id) {
-      chrome.action.openPopup();
-    }
+  // Store data, then open popup as a standalone window.
+  // chrome.action.openPopup() doesn't work from context menu handlers
+  // (requires user gesture on the extension icon), so we use windows.create().
+  await chrome.storage.session.set({ contextMenuData: context });
+
+  const popupUrl = chrome.runtime.getURL("popup/popup.html");
+  chrome.windows.create({
+    url: popupUrl,
+    type: "popup",
+    width: 388,
+    height: 520,
   });
 });
 
@@ -53,8 +59,9 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 // Send a message to the native host and return the response.
 // Uses connectNative for persistent connection within a session.
+// Requests/responses are matched by messageId (not FIFO order).
 let nativePort = null;
-let pendingCallbacks = [];
+const pendingCallbacks = new Map();
 let messageId = 0;
 
 function getNativePort() {
@@ -67,17 +74,32 @@ function getNativePort() {
   }
 
   nativePort.onMessage.addListener((msg) => {
-    const cb = pendingCallbacks.shift();
-    if (cb) cb(msg);
+    // Native host echoes messageId back; fall back to oldest pending if missing
+    const id = msg._messageId;
+    if (id !== undefined && pendingCallbacks.has(id)) {
+      const { resolve, timeout } = pendingCallbacks.get(id);
+      pendingCallbacks.delete(id);
+      clearTimeout(timeout);
+      resolve(msg);
+    } else {
+      // Fallback for hosts that don't echo messageId: resolve oldest
+      const first = pendingCallbacks.keys().next();
+      if (!first.done) {
+        const { resolve, timeout } = pendingCallbacks.get(first.value);
+        pendingCallbacks.delete(first.value);
+        clearTimeout(timeout);
+        resolve(msg);
+      }
+    }
   });
 
   nativePort.onDisconnect.addListener(() => {
     const error = chrome.runtime.lastError?.message || "Native host disconnected";
-    // Reject all pending callbacks
-    for (const cb of pendingCallbacks) {
-      cb({ ok: false, error });
+    for (const [, { resolve, timeout }] of pendingCallbacks) {
+      clearTimeout(timeout);
+      resolve({ ok: false, error });
     }
-    pendingCallbacks = [];
+    pendingCallbacks.clear();
     nativePort = null;
   });
 
@@ -95,26 +117,18 @@ function sendNativeMessage(message) {
       return;
     }
 
-    pendingCallbacks.push(resolve);
+    const id = ++messageId;
 
-    // Timeout after 30 seconds
     const timeout = setTimeout(() => {
-      const idx = pendingCallbacks.indexOf(resolve);
-      if (idx >= 0) {
-        pendingCallbacks.splice(idx, 1);
+      if (pendingCallbacks.has(id)) {
+        pendingCallbacks.delete(id);
         resolve({ ok: false, error: "Native host timeout" });
       }
     }, 30000);
 
-    // Wrap resolve to clear timeout
-    const originalResolve = resolve;
-    const wrappedIdx = pendingCallbacks.length - 1;
-    pendingCallbacks[wrappedIdx] = (msg) => {
-      clearTimeout(timeout);
-      originalResolve(msg);
-    };
+    pendingCallbacks.set(id, { resolve, timeout });
 
-    port.postMessage(message);
+    port.postMessage({ ...message, _messageId: id });
   });
 }
 

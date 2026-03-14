@@ -265,6 +265,17 @@
         { title: document.title, content: "", byline: null, excerpt: "" };
     }
 
+    // YouTube: skip Defuddle sync (transcript comes from async path)
+    if (isVideoUrl(window.location.href)) {
+      return {
+        title: getMeta("og:title") || document.title || "",
+        content: "",
+        html: "",
+        byline: null,
+        excerpt: getMeta("og:description") || "",
+      };
+    }
+
     if (typeof Defuddle === "undefined") {
       return { title: document.title, content: "", byline: null, excerpt: "" };
     }
@@ -289,13 +300,34 @@
     }
   }
 
-  // Async version — uses Defuddle's parseAsync() for YouTube transcripts
+  // Async version — custom YouTube fetcher, Defuddle for everything else
   async function extractArticleAsync() {
     if (isTwitterUrl(window.location.href)) {
       return extractTwitterThread() ||
         { title: document.title, content: "", byline: null, excerpt: "" };
     }
 
+    // YouTube: Defuddle parseAsync extracts transcript via InnerTube API (needs browser cookies).
+    // Key: read result.variables.transcript (not contentMarkdown, which is an iframe embed).
+    if (isVideoUrl(window.location.href)) {
+      if (typeof Defuddle === "undefined") {
+        return { title: document.title, content: "", byline: null, excerpt: "" };
+      }
+      try {
+        const result = await new Defuddle(document, { separateMarkdown: true }).parseAsync();
+        return {
+          title: result?.title || getMeta("og:title") || document.title || "",
+          content: result?.variables?.transcript || "",
+          html: "",
+          byline: result?.author || null,
+          excerpt: result?.description || getMeta("og:description") || "",
+        };
+      } catch {
+        return { title: getMeta("og:title") || document.title || "", content: "", byline: null, excerpt: "" };
+      }
+    }
+
+    // Other pages: use Defuddle
     if (typeof Defuddle === "undefined") {
       return { title: document.title, content: "", byline: null, excerpt: "" };
     }

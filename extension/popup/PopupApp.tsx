@@ -90,8 +90,15 @@ export function PopupApp() {
             ) : clipper.articleData?.content ? (
               <div className="max-h-[200px] overflow-y-auto">
                 <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                  {clipper.articleData.content.slice(0, 1000)}
+                  {clipper.articleData.content.length > 500
+                    ? clipper.articleData.content.slice(0, 500) + "..."
+                    : clipper.articleData.content}
                 </p>
+                {clipper.articleData.content.length > 500 && (
+                  <p className="mt-1 text-xs text-tertiary-foreground">
+                    {Math.round(clipper.articleData.content.length / 1000)}k chars total
+                  </p>
+                )}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">Transcript not available</p>
