@@ -121,7 +121,7 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 | Роль | Светлая | Тёмная |
 |---|---|---|
-| Backdrop (`--glass-bg`) | rgba(255,255,255,0.8) | rgba(0,0,0,0.6) |
+| Backdrop (`--glass-bg`) | rgba(255,255,255,0.8) | rgba(12,12,12,0.6) |
 | Shadow overlay | 0 4px 24px rgba(0,0,0,0.12) | 0 4px 24px rgba(0,0,0,0.4) |
 
 ## Интерактивные состояния
@@ -135,13 +135,13 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 | Кнопка default/destructive | Обводка 1px inset | `--component-fill-hover` | `--component-fill-hover` | `hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover` |
 | Кнопка ghost/link | Цвет текста | #333 → #000 | #E4E4E4 → #FFF | `hover:text-hover-foreground` |
 | Карточка | Inset border 2px (::after) | — | — | `after:... hover:after:shadow-[inset_0_0_0_2px_var(--primary-hover)]` |
-| Пункт сайдбара | Цвет фона | transparent → #F5F5F5 | transparent → #1E1E1E | `hover:bg-accent` |
+| Пункт сайдбара | Цвет фона | transparent → #F5F5F5 | transparent → #111111 | `hover:bg-accent` |
 
 ### Focus
 
 | Состояние | Светлая | Тёмная |
 |---|---|---|
-| Обычный инпут | border: #EBEBEB | border: #222222 |
+| Обычный инпут | border: #EBEBEB | border: #1D1D1D |
 | Focused | border: #333333 | border: #E4E4E4 |
 
 Утилита: `focus-visible:border-foreground`. Без box-shadow, outline, glow.

@@ -50,6 +50,7 @@ interface SidebarProps {
   onDeleteTag: (tag: string) => void;
   onRenameTag: (oldTag: string, newTag: string) => void;
   onCreateChannel: (tag: string) => void;
+  onNavClick?: () => void;
 }
 
 export function Sidebar({
@@ -65,6 +66,7 @@ export function Sidebar({
   onDeleteTag,
   onRenameTag,
   onCreateChannel,
+  onNavClick,
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
@@ -103,7 +105,7 @@ export function Sidebar({
 
       {/* Navigation */}
       <nav ref={navRef} className="flex-1 overflow-y-auto px-8 pt-16" data-sidebar-scroll>
-        <NavItem to="/" label="Everything" count={totalBlocks} cards={channelPreviews.get("__all__") ?? []} end />
+        <NavItem to="/" label="Everything" count={totalBlocks} cards={channelPreviews.get("__all__") ?? []} end onClick={onNavClick} />
 
         <SortableContext
           items={orderedTags.map((tc) => `tag:${tc.tag}`)}
@@ -123,6 +125,7 @@ export function Sidebar({
               onRenameSubmit={(v) => handleRename(tc.tag, v)}
               onRenameCancel={() => setEditingTag(null)}
               onDelete={() => onDeleteTag(tc.tag)}
+              onClick={onNavClick}
             />
           ))}
         </SortableContext>
@@ -159,17 +162,20 @@ function NavItem({
   count,
   cards = [],
   end,
+  onClick,
 }: {
   to: string;
   label: string;
   count: number;
   cards?: PreviewCard[];
   end?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <NavLink
       to={to}
       end={end}
+      onClick={onClick}
       className={({ isActive }) =>
         cn(
           "flex items-center gap-2 border-b border-sidebar-border px-3 py-1.5 font-mono text-base",
@@ -204,6 +210,7 @@ function TagNavItem({
   onRenameSubmit,
   onRenameCancel,
   onDelete,
+  onClick,
 }: {
   to: string;
   label: string;
@@ -216,6 +223,7 @@ function TagNavItem({
   onRenameSubmit: (value: string) => void;
   onRenameCancel: () => void;
   onDelete: () => void;
+  onClick?: () => void;
 }) {
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -261,6 +269,7 @@ function TagNavItem({
         <NavLink
           to={to}
           draggable="false"
+          onClick={onClick}
           onDoubleClick={(e) => {
             e.preventDefault();
             onDoubleClick();

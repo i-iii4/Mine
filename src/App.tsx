@@ -640,6 +640,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}
         onCreateChannel={handleCreateChannel}
+        onNavClick={() => setSelectedBlock(null)}
       />
 
       <SidebarResizeHandle
