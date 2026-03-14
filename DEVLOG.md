@@ -82,7 +82,7 @@ if any
 - YouTube: лоадер транскрипта, миниатюра maxresdefault
 
 ### Push
-TBD
+e545a36 Normalize blank lines, async YouTube transcript, maxres thumbnails
 
 ---
 
