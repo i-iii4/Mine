@@ -65,7 +65,7 @@ if any
 — DropZone подключён в JSX, ссылок на `drag.ts` нет
 
 ### Push
-TBD
+f7c1559 Restore external file drop (DropZone), remove drag.ts workaround
 
 ### Decisions and lessons learned
 Костыль `drag.ts` (флаг + 300ms таймер) был не нужен: dnd-kit использует PointerSensor (pointer events), а Tauri onDragDropEvent реагирует на нативный OS-drag. Эти два механизма не пересекаются — внутренние перетаскивания физически не могут вызвать onDragDropEvent.
