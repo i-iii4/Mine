@@ -59,7 +59,7 @@ if any
 Визуальная проверка в светлой и тёмной теме
 
 ### Push
-TBD
+0cb67f2 Redesign DropZone overlay to match design system
 
 ---
 
