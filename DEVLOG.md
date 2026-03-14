@@ -28,6 +28,41 @@ if any
 
 ---
 
+## 14.03.2026 — Редизайн оверлея DropZone под дизайн-систему
+
+### Goal
+Привести оверлей DropZone в соответствие с дизайн-системой. Предыдущий вариант (bg-black/40 + backdrop-blur + border-dashed с хардкод-белым + ArrowDown 40px) выбивался из стилистики приложения.
+
+### Planned
+1. Заменить хардкод-стили на семантические токены
+2. Добавить пунктирную рамку по периметру зоны сброса
+3. Оверлей не перекрывает тулбар и action bar
+
+### Actually completed
+
+**DropZone.tsx:**
+- Бэкдроп: `bg-black/40 backdrop-blur-sm` -> `bg-glass` (токен `--glass-bg`: белый 80% / тёмный 60%)
+- Оверлей не перекрывает бары: `fixed inset-0` -> `fixed top-8 right-0 bottom-8 left-0`
+- Пунктирная рамка: `inset-2` (8px), `rounded-[4px]`, `border-border dark:border-muted-foreground`, только при drag over
+- Карточка: паттерн AlertDialogContent (`bg-background border border-border rounded-1 p-6 shadow-lg`)
+- Текст: хардкод `text-white` -> токены `text-foreground` / `text-muted-foreground`
+- Drag over и importing объединены в одну карточку с условным текстом
+- Убран импорт `ArrowDown` из lucide-react
+
+**DESIGN_SYSTEM.md:**
+- Добавлен раздел «DropZone (внешний file drop)» в секцию Drag-and-Drop
+
+### Deviations from plan
+Нет
+
+### Checks
+Визуальная проверка в светлой и тёмной теме
+
+### Push
+TBD
+
+---
+
 ## 14.03.2026 — Вернуть внешний file drop (DropZone)
 
 ### Goal

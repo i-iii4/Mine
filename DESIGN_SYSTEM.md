@@ -326,6 +326,19 @@ SubContent (подменю) — та же тень.
 | Перетаскивание | Полупрозрачный элемент | `opacity-30` |
 | Цель (drop target) | Подсветка рамкой | `ring-2 ring-ring ring-inset` |
 
+### DropZone (внешний file drop)
+
+Оверлей при перетаскивании файлов из Finder. Не перекрывает тулбар и action bar — живёт между ними (`top-8 bottom-8`).
+
+| Элемент | Светлая | Тёмная | Утилита |
+|---|---|---|---|
+| Бэкдроп | `--glass-bg` (белый 80%) | `--glass-bg` (тёмный 60%) | `bg-glass` |
+| Пунктирная рамка | `--border` (oklch 0.95) | `--muted-foreground` (#888) | `border-border dark:border-muted-foreground` |
+| Карточка | Как AlertDialogContent | Как AlertDialogContent | `bg-background border border-border rounded-1 p-6 shadow-lg` |
+| Ошибка | `--destructive` + белый текст | `--destructive` + белый текст | `bg-destructive text-white` |
+
+Пунктирная рамка: `border border-dashed`, отступ 8px от краёв оверлея (`inset-2`), скругление 4px (`rounded-[4px]`). Показывается только при drag over, не при importing/error.
+
 ## Disabled
 
 Все отключённые элементы: `opacity-50 cursor-not-allowed pointer-events-none`.

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { ArrowDown } from "lucide-react";
+
 import type { BlockType } from "@/types";
 import { createBlock } from "@/lib/commands";
 
@@ -86,27 +86,27 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
   if (!dragging && !importing && !error) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+    <div className="fixed top-8 right-0 bottom-8 left-0 z-50 flex items-center justify-center bg-glass">
+      {dragging && (
+        <div className="pointer-events-none absolute inset-2 rounded-[4px] border border-dashed border-border dark:border-muted-foreground" />
+      )}
       {error ? (
-        <div className="max-w-sm rounded-1 bg-destructive px-8 py-6 shadow-2xl">
-          <p className="text-base font-semibold text-white">
+        <div className="max-w-sm rounded-1 bg-destructive p-6 shadow-lg">
+          <p className="text-lg font-semibold text-white">
             Failed to import
           </p>
-          <p className="mt-1 text-sm text-white/80">{error}</p>
-        </div>
-      ) : importing ? (
-        <div className="rounded-1 bg-card px-8 py-6 shadow-2xl">
-          <p className="text-base font-semibold text-foreground">
-            Importing...
-          </p>
+          <p className="mt-1 text-base text-white/80">{error}</p>
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-3 rounded-1 border-2 border-dashed border-white/50 px-16 py-12">
-          <ArrowDown className="size-10 text-white" strokeWidth={2} />
-          <p className="text-lg font-semibold text-white">Drop files to add</p>
-          <p className="text-base text-white/60">
-            Images, videos, PDFs, documents
+        <div className="rounded-1 border border-border bg-background p-6 shadow-lg">
+          <p className="text-lg font-semibold text-foreground">
+            {importing ? "Importing..." : "Drop files to add"}
           </p>
+          {!importing && (
+            <p className="mt-1 text-base text-muted-foreground">
+              Images, videos, PDFs, documents
+            </p>
+          )}
         </div>
       )}
     </div>
