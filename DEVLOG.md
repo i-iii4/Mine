@@ -28,6 +28,52 @@ if any
 
 ---
 
+## 14.03.2026 — Консистентность документации + Detail не закрывался при клике на текущий канал
+
+### Goal
+1. Привести DESIGN_SYSTEM.md в полное соответствие с global.css после пересчёта поверхностей
+2. Исправить баг: при открытом Detail клик по текущему каналу в сайдбаре ничего не делал
+
+### Planned
+1. Сверить все OKLCH L значения и hex-приближения в DESIGN_SYSTEM.md с global.css
+2. Исправить расхождения
+3. Добавить колбэк закрытия Detail при клике в навигации сайдбара
+
+### Actually completed
+
+**DESIGN_SYSTEM.md — 10 исправлений:**
+- Поверхности тёмной темы: background 0.0→0.1567, accent 0.20→0.1815, active/sidebar-accent 0.24→0.2063, border 0.28→0.2311
+- Шаг поверхностей: 0.04→0.0248
+- Философия фона: «абсолютный чёрный (#000000)» → «тёмно-серый #0C0C0C»
+- Hover сайдбара (тёмная): #1E1E1E → #111111
+- Border инпута (тёмная): #222222 → #1D1D1D
+- Glass-bg (тёмная): rgba(0,0,0,0.6) → rgba(12,12,12,0.6)
+
+**Card.tsx — текстовая иерархия:**
+- 5 мест: вторичный текст (домен, превью, автор, имя файла) `text-foreground` → `text-muted-foreground`
+
+**Sidebar.tsx + App.tsx — закрытие Detail при клике на навигацию:**
+- Добавлен проп `onNavClick` в Sidebar, прокинут в NavItem и TagNavItem
+- App.tsx передаёт `() => setSelectedBlock(null)` — Detail закрывается при любом клике в навигации
+
+### Deviations from plan
+Нет
+
+### Checks
+- Все OKLCH L значения в DESIGN_SYSTEM.md совпадают с global.css
+- Все hex-приближения пересчитаны под новые значения
+- ESLint — 0 ошибок
+- Клик по текущему каналу при открытом Detail закрывает Detail
+
+### Push
+`a8af425` — Sync DESIGN_SYSTEM.md hex values, fix Detail close on sidebar click
+
+### Decisions and lessons learned
+- При изменении OKLCH L значений нужно обновлять не только L в таблицах, но и все hex-приближения в тексте (hover, focus, glass). Hex-значения разбросаны по разным секциям документа
+- react-router `NavLink` не вызывает навигацию при клике на активный маршрут — `location.pathname` не меняется, привязанные к нему `useEffect` не срабатывают. Решение — явный колбэк `onClick` на `NavLink`
+
+---
+
 ## 12.03.2026 — Пересчёт поверхностей тёмной темы
 
 ### Goal
