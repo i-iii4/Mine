@@ -50,7 +50,7 @@ Twitter/X посты должны отображаться в карточках
 - Lint: 0 ошибок
 
 ### Push
-PENDING
+9877dba — Twitter card layout: text + image grid + author, no title
 
 ### Decisions and lessons learned
 - Twitter title бессмысленен для отображения — используется только для генерации slug (имя файла)
