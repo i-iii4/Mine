@@ -68,7 +68,7 @@ if any
 Ожидается ручная проверка на статьях и ссылках
 
 ### Push
-TBD
+f90657e Replace Readability + Turndown with Defuddle for article extraction
 
 ---
 
