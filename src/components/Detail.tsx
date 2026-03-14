@@ -351,7 +351,7 @@ function BlockContent({
           </div>
           {block.body && (
             <div className="p-6">
-              <p className="whitespace-pre-wrap text-base text-foreground">{block.body}</p>
+              <ArticleBody body={block.body} vaultPath={vaultPath} />
             </div>
           )}
         </div>

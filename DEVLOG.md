@@ -39,25 +39,27 @@ if any
 ### Actually completed
 1. **`extension/content.js`** — YouTube-ветка в `extractArticleAsync()` использует Defuddle `parseAsync()` и читает `result.variables.transcript` (не `contentMarkdown`, который содержит iframe-embed). Синхронный `extractArticle()` возвращает пустой content для YouTube (транскрипт приходит только через async).
 2. **`extension/popup/hooks/useClipperState.ts`** — видео по умолчанию открывается на вкладке Content (не Link); сохранение включает транскрипт (`articleData.content` вместо хардкода `""`).
-3. **`extension/popup/PopupApp.tsx`** — превью транскрипта: 500 символов + индикатор полного размера (`Xk chars total`).
-4. **`package.json`** — `build:extension` теперь копирует `content.js`, `background.js`, `manifest.json`, `lib/` в Safari-расширение (раньше копировался только `dist/`).
+3. **`extension/popup/PopupApp.tsx`** — единый рендерер контента через `ReactMarkdown` + `remarkGfm` для всех типов (статьи, видео, любой контент). Картинка, заголовок и текст в одном скроллируемом контейнере. Раньше: статьи через `dangerouslySetInnerHTML`, видео — сырой текст в `<p>`, обрезанный до 500 символов.
+4. **`src/components/Detail.tsx`** — видео-блоки рендерят body через `<ArticleBody>` (ReactMarkdown), а не через сырой `<p>`. Единообразно со статьями.
+5. **`package.json`** — `build:extension` теперь копирует `content.js`, `background.js`, `manifest.json`, `lib/` в Safari-расширение (раньше копировался только `dist/`).
 
 ### Deviations from plan
 Первоначальный план предполагал кастомный YouTube-фетчер вместо Defuddle. Это не работает: YouTube не отдаёт `captions` в `ytInitialPlayerResponse` и InnerTube API без cookies браузера. Defuddle работает, потому что `fetchTranscript()` из content script делает запрос с cookies (same-origin). Ключевая ошибка была в чтении поля — `contentMarkdown` вместо `variables.transcript`.
 
 ### Checks
 - YouTube-видео с субтитрами: полный транскрипт (25 минут — ОК)
-- Попап: вкладка Content по умолчанию, превью + индикатор размера
+- Попап: вкладка Content, маркдаун рендерится (заголовки, жирный), скролл
+- Detail: видео-блоки рендерят маркдаун через ReactMarkdown (как статьи)
 - Safari: `content.js` идентичен Chrome-версии после сборки
 - `bun run build:extension` — 0 ошибок
 
 ### Push
-d24ba15 — Fix YouTube transcript: read Defuddle variables.transcript, fix build pipeline
+PENDING
 
 ### Decisions and lessons learned
 - Defuddle кладёт YouTube-транскрипт в `variables.transcript`, а не в `contentMarkdown`. Это задокументированное поведение YouTube-экстрактора, но неочевидное.
 - `build:extension` должен копировать ВСЕ файлы расширения в Safari, а не только собранный попап. Без этого изменения в `content.js` не попадали в Safari.
-- Попап обрезал отображение транскрипта до 1000 символов — при 25-минутном видео выглядело как неполная загрузка.
+- Рендеринг контента в попапе должен быть единым для всех типов. Два разных пути (HTML для статей, сырой текст для видео) — источник багов.
 
 ---
 

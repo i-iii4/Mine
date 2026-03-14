@@ -39,9 +39,9 @@
 | class-variance-authority | Варианты компонентов (CVA) |
 | tw-animate-css | CSS-анимации для Tailwind v4 (Dialog, DropdownMenu, ContextMenu) |
 | @dnd-kit | Drag-and-drop: сортировка каналов, перетаскивание карточек на теги |
-| react-markdown + remark-gfm | Рендеринг markdown в Detail.tsx |
+| react-markdown + remark-gfm | Рендеринг markdown в Detail.tsx и popup расширения |
 | @tailwindcss/typography | Стилизация prose-контента (статьи) |
-| Defuddle | Извлечение статей + Markdown-конвертация (content script) |
+| Defuddle | Извлечение статей + Markdown-конвертация + YouTube-транскрипты (content script) |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 
 ## Structure

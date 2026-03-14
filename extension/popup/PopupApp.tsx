@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useClipperState } from "./hooks/useClipperState";
 import { TypeSwitcher } from "./components/TypeSwitcher";
 import { ChannelList } from "./components/ChannelList";
@@ -74,53 +76,30 @@ export function PopupApp() {
           </div>
         )}
 
-        {clipper.currentType === "content" && metadata?.detectedType === "video" && (
-          <div className="space-y-1.5 rounded-1 border border-border p-2">
-            {ogImage && (
+        {clipper.currentType === "content" && (
+          <div className="max-h-[280px] overflow-y-auto rounded-1 border border-border p-2">
+            {metadata?.detectedType === "video" && ogImage && (
               <div className="max-h-[120px] overflow-hidden rounded-1">
                 <img src={ogImage} alt="" className="block max-h-[120px] w-full object-cover" />
               </div>
             )}
-            <p className="truncate text-sm font-semibold">{clipper.title}</p>
+            <p className="mt-1.5 truncate text-sm font-semibold">{clipper.title}</p>
             {clipper.articleLoading ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
                 <div className="size-3 animate-spin rounded-round border-[1.5px] border-border border-t-foreground" />
                 Loading transcript...
               </div>
             ) : clipper.articleData?.content ? (
-              <div className="max-h-[200px] overflow-y-auto">
-                <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                  {clipper.articleData.content.length > 500
-                    ? clipper.articleData.content.slice(0, 500) + "..."
-                    : clipper.articleData.content}
-                </p>
-                {clipper.articleData.content.length > 500 && (
-                  <p className="mt-1 text-xs text-tertiary-foreground">
-                    {Math.round(clipper.articleData.content.length / 1000)}k chars total
-                  </p>
-                )}
+              <div className="prose prose-sm mt-1.5 max-w-none">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {clipper.articleData.content}
+                </ReactMarkdown>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">Transcript not available</p>
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                {previewText || metadata?.description || "No content extracted"}
+              </p>
             )}
-          </div>
-        )}
-
-        {clipper.currentType === "content" && metadata?.detectedType !== "video" && (
-          <div className="space-y-1.5 rounded-1 border border-border p-2">
-            <p className="truncate text-sm font-semibold">{clipper.title}</p>
-            <div className="max-h-[200px] overflow-y-auto">
-              {clipper.articleData?.html ? (
-                <div
-                  className="prose prose-sm max-w-none"
-                  dangerouslySetInnerHTML={{ __html: clipper.articleData.html }}
-                />
-              ) : (
-                <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                  {previewText || metadata?.description || "No content extracted"}
-                </p>
-              )}
-            </div>
           </div>
         )}
 
