@@ -41,6 +41,9 @@ image = "0.25"
 ab_glyph = "0.2"
 imageproc = "0.25"
 
+# OS trash
+trash = "5"
+
 # Error handling
 thiserror = "2"
 anyhow = "1"

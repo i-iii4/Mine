@@ -98,21 +98,22 @@ pub fn delete_block_files(
     slug: &str,
     media_ext: Option<&str>,
 ) -> Result<()> {
+    // Move user content to OS trash (recoverable)
     let md_path = vault.block_path(slug);
     if md_path.exists() {
-        std::fs::remove_file(&md_path)
-            .with_context(|| format!("failed to delete: {}", md_path.display()))?;
+        trash::delete(&md_path)
+            .with_context(|| format!("failed to trash: {}", md_path.display()))?;
     }
 
     if let Some(ext) = media_ext {
         let media_path = vault.media_path(slug, ext);
         if media_path.exists() {
-            std::fs::remove_file(&media_path)
-                .with_context(|| format!("failed to delete: {}", media_path.display()))?;
+            trash::delete(&media_path)
+                .with_context(|| format!("failed to trash: {}", media_path.display()))?;
         }
     }
 
-    // Best-effort thumbnail cleanup
+    // Permanently delete thumbnail (generated cache, not user content)
     let thumb_path = vault.thumb_path(slug);
     if thumb_path.exists() {
         let _ = std::fs::remove_file(&thumb_path);
