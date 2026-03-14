@@ -477,5 +477,5 @@ Goal: полноценная поддержка видео-страниц в к�
 | 13.2 | Клиппер: видео-Content сохраняется как block_type=video с URL | [x] |
 | 13.3 | Detail.tsx: YouTube iframe embed для видео-блоков с URL | [x] |
 | 13.4 | Detail.tsx: body ниже видео (подготовка к транскрипту) | [x] |
-| 13.5 | Замена Readability+Turndown на Defuddle в content.js | [ ] |
+| 13.5 | Замена Readability+Turndown на Defuddle в content.js | [x] |
 | 13.6 | Извлечение транскрипта YouTube через Defuddle или API | [ ] |

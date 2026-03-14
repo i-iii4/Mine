@@ -24,7 +24,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["lib/readerable.js", "lib/readability.js", "lib/turndown.browser.umd.js", "content.js"],
+      "js": ["lib/defuddle.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

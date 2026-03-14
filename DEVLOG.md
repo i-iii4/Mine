@@ -28,6 +28,50 @@ if any
 
 ---
 
+## 14.03.2026 — Замена Readability + Turndown на Defuddle
+
+### Goal
+Заменить три вендорных библиотеки (Readability.js 88KB + readerable.js 4KB + TurndownService 26KB = 118KB) одной — Defuddle (164KB). Один вызов вместо цепочки Readability→Turndown, встроенная обработка lazy-load картинок, богатые метаданные (author, published, wordCount).
+
+### Planned
+1. Скопировать Defuddle UMD-бандл в `extension/lib/`
+2. Переписать `extractArticle()` — использовать `new Defuddle(document, { separateMarkdown: true })`
+3. Убрать хелперы изображений и `htmlToMarkdown()` (~90 строк)
+4. Убрать `isProbablyReaderable` из `isArticlePage()`
+5. Упростить `extractMetadata()` — выделение как plain text
+6. Обновить manifest.json и документацию
+
+### Actually completed
+
+**extension/content.js:**
+- Удалены: `isPlaceholderSrc()`, `isImageUrl()`, `bestFromSrcset()`, `syncLiveSrc()`, `fixLazyImages()`, `htmlToMarkdown()` — ~90 строк
+- `extractArticle()`: `Readability` + `TurndownService` → `new Defuddle(document, { separateMarkdown: true }).parse()`
+- Возвращаемый объект сохраняет ту же структуру: `content` = `contentMarkdown`, `html` = `content`, `byline` = `author`
+- `extractMetadata()`: выделение как plain text (убран вызов `htmlToMarkdown`)
+- `isArticlePage()`: убран `isProbablyReaderable`, 3 сигнала с порогом >= 2
+
+**extension/manifest.json:**
+- `["lib/readerable.js", "lib/readability.js", "lib/turndown.browser.umd.js", "content.js"]` → `["lib/defuddle.js", "content.js"]`
+
+**extension/lib/:**
+- Добавлен: `defuddle.js` (164KB, UMD из npm)
+- Удалены: `readability.js`, `readerable.js`, `turndown.browser.umd.js`
+
+**CLAUDE.md:**
+- Стек: `Readability.js` + `TurndownService` → `Defuddle`
+- Структура: обновлены описания content.js и lib/
+
+### Deviations from plan
+Нет
+
+### Checks
+Ожидается ручная проверка на статьях и ссылках
+
+### Push
+TBD
+
+---
+
 ## 14.03.2026 — Полноценная поддержка видео в клиппере и Detail
 
 ### Goal

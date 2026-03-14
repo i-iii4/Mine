@@ -41,8 +41,7 @@
 | @dnd-kit | Drag-and-drop: сортировка каналов, перетаскивание карточек на теги |
 | react-markdown + remark-gfm | Рендеринг markdown в Detail.tsx |
 | @tailwindcss/typography | Стилизация prose-контента (статьи) |
-| Readability.js | Извлечение статей из веб-страниц (content script) |
-| TurndownService | HTML → Markdown (content script) |
+| Defuddle | Извлечение статей + Markdown-конвертация (content script) |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 
 ## Structure
@@ -107,7 +106,7 @@ local-arena/
 │   └── styles/                 # Глобальные стили
 ├── extension/                  # Chrome/Safari веб-клиппер
 │   ├── background.js           # Service worker: контекстное меню, native messaging
-│   ├── content.js              # Content script: извлечение метаданных, Readability.js
+│   ├── content.js              # Content script: извлечение метаданных, Defuddle
 │   ├── popup/                  # React popup (исходники, собирается Vite)
 │   │   ├── index.html          # HTML entry point
 │   │   ├── main.tsx            # React entry
@@ -117,7 +116,7 @@ local-arena/
 │   │   ├── hooks/              # useClipperState.ts
 │   │   └── lib/                # messaging.ts (типизированный native messaging)
 │   ├── dist/                   # Собранный попап (output Vite)
-│   ├── lib/                    # Вендорные библиотеки (Readability, TurndownService)
+│   ├── lib/                    # Вендорные библиотеки (Defuddle UMD)
 │   ├── icons/                  # Иконки расширения
 │   └── manifest.json           # Manifest V3
 ├── vite.extension.config.ts    # Vite-конфигурация для сборки расширения
