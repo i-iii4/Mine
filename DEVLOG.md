@@ -28,6 +28,48 @@ if any
 
 ---
 
+## 14.03.2026 — Полноценная поддержка видео в клиппере и Detail
+
+### Goal
+На видео-страницах (YouTube, Vimeo) клиппер не показывал превью и не давал выбрать формат. Detail.tsx не поддерживал YouTube iframe — только локальные видеофайлы.
+
+### Planned
+1. Попап: TypeSwitcher на видео-страницах, превью с play-кнопкой
+2. Save: видео-Content сохраняется как block_type=video с URL
+3. Detail: YouTube iframe embed, body ниже (для будущего транскрипта)
+
+### Actually completed
+
+**PopupApp.tsx:**
+- TypeSwitcher видим на видео-страницах (убрано условие `detectedType !== "video"`)
+- Play-кнопка поверх thumbnail в обоих режимах (Link и Content) для видео
+- Компонент `PlayOverlay` (паттерн из `Card.tsx:VideoCard`)
+
+**useClipperState.ts:**
+- Видео по умолчанию маппится на `currentType = "link"` (не `"video"`)
+- Видео-Content сохраняется с `block_type = "video"` (не `"article"`)
+- Body пока пустое — подготовка к транскрипту через Defuddle
+- `image_url` передаётся для видео-Content (og:image для thumbnail)
+
+**Detail.tsx:**
+- Хелпер `youtubeEmbedUrl()` — извлекает video ID из YouTube URL
+- Видео-блок с URL: YouTube `<iframe>` embed с полноэкранным управлением
+- Видео-блок без URL: локальный `<video>` (как прежде)
+- Body рендерится ниже видео (`whitespace-pre-wrap`)
+
+### Deviations from plan
+Нет
+
+### Checks
+- `bun run build:extension` — 0 ошибок
+- `bun run lint` — 0 ошибок
+- YouTube-видео в клиппере: TypeSwitcher, превью с play-кнопкой в обоих режимах
+
+### Push
+TBD
+
+---
+
 ## 14.03.2026 — Редизайн оверлея DropZone под дизайн-систему
 
 ### Goal

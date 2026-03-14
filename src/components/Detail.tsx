@@ -252,6 +252,13 @@ function MetadataField({ label, value }: { label: string; value: string }) {
   );
 }
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function youtubeEmbedUrl(url: string): string | null {
+  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
+  return match ? `https://www.youtube.com/embed/${match[1]}` : null;
+}
+
 // ─── Block content renderers ────────────────────────────────────────────────
 
 function BlockContent({
@@ -316,18 +323,33 @@ function BlockContent({
         </div>
       );
     case "video": {
-      const src = block.media_file
+      const embedUrl = block.url ? youtubeEmbedUrl(block.url) : null;
+      const localSrc = block.media_file
         ? mediaUrl(vaultPath, block.media_file)
         : null;
       return (
-        <div className="flex min-h-full items-center justify-center bg-black">
-          {src ? (
-            <video controls className="max-h-[85vh]">
-              <source src={src} />
-            </video>
-          ) : (
-            <div className="flex aspect-video items-center justify-center text-muted-foreground">
-              No video file
+        <div className="flex min-h-full flex-col">
+          <div className="flex flex-1 items-center justify-center bg-black">
+            {embedUrl ? (
+              <iframe
+                src={embedUrl}
+                className="aspect-video w-full max-h-[85vh]"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+            ) : localSrc ? (
+              <video controls className="max-h-[85vh]">
+                <source src={localSrc} />
+              </video>
+            ) : (
+              <div className="flex aspect-video items-center justify-center text-muted-foreground">
+                No video file
+              </div>
+            )}
+          </div>
+          {block.body && (
+            <div className="p-6">
+              <p className="whitespace-pre-wrap text-base text-foreground">{block.body}</p>
             </div>
           )}
         </div>

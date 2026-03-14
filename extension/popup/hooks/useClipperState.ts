@@ -102,7 +102,7 @@ export function useClipperState() {
       } else if (dt === "image") {
         detected = "image";
       } else if (dt === "video") {
-        detected = "video";
+        detected = "link";
       }
       setCurrentType(detected);
 
@@ -178,8 +178,9 @@ export function useClipperState() {
     }
 
     let blockType: string;
-    if (currentType === "content") blockType = "article";
-    else if (currentType === "image") blockType = "image";
+    if (currentType === "content") {
+      blockType = metadata.detectedType === "video" ? "video" : "article";
+    } else if (currentType === "image") blockType = "image";
     else blockType = currentType;
 
     const payload: NativeRequest = {
@@ -197,7 +198,10 @@ export function useClipperState() {
     };
 
     if (currentType === "content") {
-      if (metadata.selection?.length > 0) {
+      if (metadata.detectedType === "video") {
+        // Body empty for now — transcript will be added later via Defuddle
+        payload.body = "";
+      } else if (metadata.selection?.length > 0) {
         payload.body = metadata.selection;
       } else if (articleData?.content) {
         payload.body = articleData.content;
@@ -209,7 +213,7 @@ export function useClipperState() {
       payload.image_url = metadata.imageToSave;
       payload.width = metadata.imageWidth ?? null;
       payload.height = metadata.imageHeight ?? null;
-    } else if (metadata.image && (currentType === "link" || currentType === "video")) {
+    } else if (metadata.image && (currentType === "link" || metadata.detectedType === "video")) {
       payload.image_url = metadata.image;
     }
 

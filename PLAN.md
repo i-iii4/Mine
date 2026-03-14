@@ -466,3 +466,16 @@ Goal: расширение собирается через Vite, использ�
   ↓
 12.5 (Safari)  ←→  12.7 (проверка)  — параллельно
 ```
+
+### Phase 13 — Видео-блоки: YouTube embed + транскрипт [IN PROGRESS]
+
+Goal: полноценная поддержка видео-страниц в клиппере и основном приложении. YouTube iframe в Detail, транскрипт через Defuddle.
+
+| # | Task | Status |
+|---|------|--------|
+| 13.1 | Клиппер: TypeSwitcher на видео-страницах, play-кнопка в превью | [x] |
+| 13.2 | Клиппер: видео-Content сохраняется как block_type=video с URL | [x] |
+| 13.3 | Detail.tsx: YouTube iframe embed для видео-блоков с URL | [x] |
+| 13.4 | Detail.tsx: body ниже видео (подготовка к транскрипту) | [x] |
+| 13.5 | Замена Readability+Turndown на Defuddle в content.js | [ ] |
+| 13.6 | Извлечение транскрипта YouTube через Defuddle или API | [ ] |

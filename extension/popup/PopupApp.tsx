@@ -55,15 +55,16 @@ export function PopupApp() {
   return (
     <div className="flex h-full flex-col p-3">
       <div className="shrink-0 space-y-2">
-        {metadata?.detectedType !== "image" && metadata?.detectedType !== "video" && (
+        {metadata?.detectedType !== "image" && (
           <TypeSwitcher current={clipper.currentType} onChange={clipper.setCurrentType} />
         )}
 
         {clipper.currentType === "link" && (
           <div className="space-y-1.5 rounded-1 border border-border p-2">
             {ogImage && (
-              <div className="max-h-[120px] overflow-hidden rounded-1">
+              <div className="relative max-h-[120px] overflow-hidden rounded-1">
                 <img src={ogImage} alt="" className="block max-h-[120px] w-full object-cover" />
+                {metadata?.detectedType === "video" && <PlayOverlay />}
               </div>
             )}
             <p className="truncate text-sm font-semibold">{clipper.title}</p>
@@ -74,7 +75,20 @@ export function PopupApp() {
           </div>
         )}
 
-        {clipper.currentType === "content" && (
+        {clipper.currentType === "content" && metadata?.detectedType === "video" && (
+          <div className="space-y-1.5 rounded-1 border border-border p-2">
+            {ogImage && (
+              <div className="relative max-h-[120px] overflow-hidden rounded-1">
+                <img src={ogImage} alt="" className="block max-h-[120px] w-full object-cover" />
+                <PlayOverlay />
+              </div>
+            )}
+            <p className="truncate text-sm font-semibold">{clipper.title}</p>
+            <p className="text-sm text-muted-foreground">Transcript not available</p>
+          </div>
+        )}
+
+        {clipper.currentType === "content" && metadata?.detectedType !== "video" && (
           <div className="space-y-1.5 rounded-1 border border-border p-2">
             <p className="truncate text-sm font-semibold">{clipper.title}</p>
             <div className="max-h-[200px] overflow-y-auto">
@@ -139,6 +153,18 @@ function ErrorState({ message }: { message: string }) {
         !
       </div>
       <p className="max-w-[280px] text-sm text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
+function PlayOverlay() {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center">
+      <div className="flex h-10 w-10 items-center justify-center rounded-1 bg-black/50 text-white">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M4 2.5v11l10-5.5L4 2.5z" />
+        </svg>
+      </div>
     </div>
   );
 }
