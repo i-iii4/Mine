@@ -28,6 +28,36 @@ if any
 
 ---
 
+## 14.03.2026 — Twitter-карточки и улучшения тайтлов
+
+### Goal
+Twitter/X посты должны отображаться в карточках как в Are.na: иконка платформы не нужна, текст твита (3 строки max), картинки плиткой, автор внизу. Title для Twitter бессмысленен — убрать из карточки и Detail.
+
+### Planned
+Новый компонент `TwitterCard`, title из текста твита (не `"Thread by @handle"`), скрытие title в Detail для Twitter.
+
+### Actually completed
+1. **`src/components/Card.tsx`** — новый `TwitterCard`: текст (line-clamp-3), картинки из body (1 — одна, 2+ — grid-cols-2), автор внизу. Изображения резолвятся через `mediaUrl()` (локальные файлы). Маршрутизация по URL (twitter.com/x.com + /status/).
+2. **`src/components/Detail.tsx`** — title скрыт для Twitter-постов. `isTwitterUrl()` добавлен.
+3. **`extension/content.js`** — title = первые 80 символов текста твита (для slug). Убран `"Thread by @handle"` из metadata и extractTwitterThread.
+4. **Отступы** — gap-0.5 (2px) между картинками в гриде, mt-3 (12px) между текстом и картинками.
+
+### Checks
+- Twitter-пост с текстом + картинками: карточка показывает текст, плитку, автора
+- Twitter-пост без картинок: только текст + автор
+- Обычные статьи: ArticleCard без изменений
+- Detail: Twitter без title, статьи с title
+- Lint: 0 ошибок
+
+### Push
+PENDING
+
+### Decisions and lessons learned
+- Twitter title бессмысленен для отображения — используется только для генерации slug (имя файла)
+- Картинки в body уже скачаны бэкендом (`localize_body_images`), URL перезаписаны на локальные имена файлов — нужно резолвить через `mediaUrl()`
+
+---
+
 ## 14.03.2026 — Полный YouTube-транскрипт через Defuddle
 
 ### Goal

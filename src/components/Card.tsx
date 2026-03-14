@@ -46,6 +46,11 @@ export const Card = memo(function Card({ block, vaultPath, isFocused, onClick }:
   );
 });
 
+function isTwitterUrl(url: string): boolean {
+  const lc = url.toLowerCase();
+  return (lc.includes("twitter.com/") || lc.includes("x.com/")) && lc.includes("/status/");
+}
+
 function CardContent({
   block,
   vaultPath,
@@ -59,6 +64,9 @@ function CardContent({
     case "link":
       return <LinkCard block={block} vaultPath={vaultPath} />;
     case "article":
+      if (block.url && isTwitterUrl(block.url)) {
+        return <TwitterCard block={block} vaultPath={vaultPath} />;
+      }
       return <ArticleCard block={block} />;
     case "video":
       return <VideoCard block={block} vaultPath={vaultPath} />;
@@ -211,6 +219,50 @@ function stripMarkdown(text: string): string {
     .replace(/^---+$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function extractTweetData(body: string): { text: string; images: string[] } {
+  const images: string[] = [];
+  const imgRegex = /!\[.*?\]\((.*?)\)/g;
+  let match;
+  while ((match = imgRegex.exec(body)) !== null) {
+    if (match[1]) images.push(match[1]);
+  }
+  const firstSection = body.split(/^---+$/m)[0] ?? body;
+  const text = stripMarkdown(firstSection).trim();
+  return { text, images };
+}
+
+function TwitterCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {
+  const { text, images } = extractTweetData(block.body);
+
+  const resolveImg = (src: string) =>
+    src.startsWith("http://") || src.startsWith("https://") ? src : mediaUrl(vaultPath, src);
+
+  return (
+    <div className="p-4">
+      {text && (
+        <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{text}</p>
+      )}
+
+      {images.length === 1 && (
+        <div className="mt-3">
+          <img src={resolveImg(images[0]!)} alt="" className="w-full object-cover" loading="lazy" />
+        </div>
+      )}
+      {images.length >= 2 && (
+        <div className="mt-3 grid grid-cols-2 gap-0.5">
+          {images.slice(0, 4).map((src) => (
+            <img key={src} src={resolveImg(src)} alt="" className="aspect-square w-full object-cover" loading="lazy" />
+          ))}
+        </div>
+      )}
+
+      {block.author && (
+        <p className="mt-2 text-sm text-muted-foreground">by {block.author}</p>
+      )}
+    </div>
+  );
 }
 
 function ArticleCard({ block }: { block: LightBlock }) {

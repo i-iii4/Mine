@@ -49,11 +49,10 @@
     let title = getMeta("og:title") || getMeta("twitter:title") || document.title || "";
     let author = getMeta("author") || getMeta("article:author") || null;
 
-    // Twitter/X: override title and author from URL
+    // Twitter/X: author from URL, title left as og:title (overridden by extractTwitterThread later)
     if (isTwitterUrl(pageUrl)) {
       const handleMatch = pageUrl.match(/(?:twitter\.com|x\.com)\/([^/]+)\/status/i);
       if (handleMatch) {
-        title = `Thread by @${handleMatch[1]}`;
         author = `@${handleMatch[1]}`;
       }
     }
@@ -247,11 +246,15 @@
       if (i < tweets.length - 1) parts.push("---");
     }
 
+    // Title = first ~80 chars of tweet text (used for slug generation, not displayed)
+    const firstText = (tweets[0]?.text || "").replace(/\n/g, " ").trim();
+    const tweetTitle = firstText.slice(0, 80) || `@${authorHandle}`;
+
     return {
-      title: `Thread by @${authorHandle}`,
+      title: tweetTitle,
       content: parts.join("\n\n"),
       byline: `@${authorHandle}`,
-      excerpt: (tweets[0]?.text || "").slice(0, 200),
+      excerpt: firstText.slice(0, 200),
     };
   }
 

@@ -259,6 +259,11 @@ function youtubeEmbedUrl(url: string): string | null {
   return match ? `https://www.youtube.com/embed/${match[1]}` : null;
 }
 
+function isTwitterUrl(url: string): boolean {
+  const lc = url.toLowerCase();
+  return (lc.includes("twitter.com/") || lc.includes("x.com/")) && lc.includes("/status/");
+}
+
 // ─── Block content renderers ────────────────────────────────────────────────
 
 function BlockContent({
@@ -312,18 +317,24 @@ function BlockContent({
         </div>
       );
     }
-    case "article":
+    case "article": {
+      const isTwitter = block.url ? isTwitterUrl(block.url) : false;
       return (
         <div>
-          <h2 className="text-lg font-semibold text-foreground">
-            {block.title ?? block.slug}
-          </h2>
+          {!isTwitter && (
+            <h2 className="text-lg font-semibold text-foreground">
+              {block.title ?? block.slug}
+            </h2>
+          )}
           {block.author && (
-            <p className="mt-1 text-base text-muted-foreground">{block.author}</p>
+            <p className={isTwitter ? "text-base text-muted-foreground" : "mt-1 text-base text-muted-foreground"}>
+              {block.author}
+            </p>
           )}
           <ArticleBody body={block.body} vaultPath={vaultPath} />
         </div>
       );
+    }
     case "video": {
       const embedUrl = block.url ? youtubeEmbedUrl(block.url) : null;
       const localSrc = block.media_file
