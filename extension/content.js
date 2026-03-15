@@ -101,6 +101,8 @@
     if (isVideoUrl(meta.url)) return "video";
     // Twitter threads — always save as article
     if (isTwitterUrl(meta.url)) return "article";
+    // Instagram posts — always save as article
+    if (isInstagramPostUrl(meta.url)) return "article";
     // Article pages
     if (isArticlePage(meta)) return "article";
     // Default
@@ -306,11 +308,261 @@
     };
   }
 
+  // ── Instagram post extraction ──────────────────────────────────────────
+
+  function isInstagramPostUrl(url) {
+    const lc = url.toLowerCase();
+    return lc.includes("instagram.com/p/") || lc.includes("instagram.com/reel/");
+  }
+
+  function extractInstagramShortcode(url) {
+    const match = url.match(/instagram\.com\/(?:p|reel)\/([\w-]+)/);
+    return match ? match[1] : null;
+  }
+
+  /**
+   * Convert Instagram shortcode to numeric media ID.
+   * Shortcodes are base64-encoded (custom alphabet) media IDs.
+   */
+  function shortcodeToMediaId(shortcode) {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let id = BigInt(0);
+    for (const char of shortcode) {
+      id = id * BigInt(64) + BigInt(alphabet.indexOf(char));
+    }
+    return id.toString();
+  }
+
+  async function extractInstagramPost() {
+    const shortcode = extractInstagramShortcode(window.location.href);
+    if (!shortcode) return null;
+
+    try {
+      const mediaId = shortcodeToMediaId(shortcode);
+
+      const resp = await fetch(`https://i.instagram.com/api/v1/media/${mediaId}/info/`, {
+        headers: {
+          "X-IG-App-ID": "936619743392459",
+        },
+        credentials: "include",
+      });
+
+      if (!resp.ok) return null;
+      const json = await resp.json();
+
+      const items = json.items || [];
+      if (items.length === 0) return null;
+      const item = items[0];
+
+      // Caption
+      const caption = item.caption?.text || "";
+
+      // Author
+      const author = item.user?.username || "";
+
+      // Media URLs (carousel or single)
+      const mediaUrls = [];
+      const carousel = item.carousel_media || [];
+      if (carousel.length > 0) {
+        for (const slide of carousel) {
+          if (slide.video_versions?.length > 0) {
+            mediaUrls.push(slide.video_versions[0].url);
+          } else if (slide.image_versions2?.candidates?.length > 0) {
+            mediaUrls.push(slide.image_versions2.candidates[0].url);
+          }
+        }
+      } else {
+        if (item.video_versions?.length > 0) {
+          mediaUrls.push(item.video_versions[0].url);
+        } else if (item.image_versions2?.candidates?.length > 0) {
+          mediaUrls.push(item.image_versions2.candidates[0].url);
+        }
+      }
+
+      // Build markdown body
+      const parts = [];
+      if (caption) parts.push(caption);
+      for (const url of mediaUrls) {
+        parts.push(`![](${url})`);
+      }
+
+      const titleText = caption.replace(/\n/g, " ").trim().slice(0, 80) || `@${author}`;
+
+      return {
+        title: titleText,
+        content: parts.join("\n\n"),
+        byline: author ? `@${author}` : null,
+        excerpt: caption.slice(0, 200),
+      };
+    } catch (e) {
+      console.error("[Local Arena] Instagram extraction failed:", e);
+      return null;
+    }
+  }
+
+  // ── Instagram feed clip button ─────────────────────────────────────────
+
+  function initInstagramFeedButton() {
+    if (!window.location.hostname.includes("instagram.com")) return;
+
+    const BUTTON_ATTR = "data-la-clip";
+
+    function findShortcode(article) {
+      for (const a of article.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]')) {
+        const match = a.getAttribute("href")?.match(/\/(p|reel)\/([\w-]+)/);
+        if (match) return match[2];
+      }
+      return null;
+    }
+
+    function createClipButton() {
+      const btn = document.createElement("button");
+      btn.setAttribute(BUTTON_ATTR, "");
+      btn.title = "Save to Local Arena";
+      Object.assign(btn.style, {
+        position: "absolute",
+        top: "62px",
+        right: "12px",
+        zIndex: "10",
+        width: "32px",
+        height: "32px",
+        borderRadius: "50%",
+        background: "rgba(0,0,0,0.6)",
+        border: "none",
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        opacity: "1",
+        padding: "0",
+      });
+      btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>';
+      return btn;
+    }
+
+    async function clipPost(shortcode, btn) {
+      btn.style.opacity = "0.5";
+      btn.style.pointerEvents = "none";
+
+      try {
+        const mediaId = shortcodeToMediaId(shortcode);
+        const resp = await fetch(`https://i.instagram.com/api/v1/media/${mediaId}/info/`, {
+          headers: { "X-IG-App-ID": "936619743392459" },
+          credentials: "include",
+        });
+        if (!resp.ok) throw new Error(`API ${resp.status}`);
+        const json = await resp.json();
+
+        const item = (json.items || [])[0];
+        if (!item) throw new Error("No items");
+
+        const caption = item.caption?.text || "";
+        const author = item.user?.username || "";
+
+        const mediaUrls = [];
+        const carousel = item.carousel_media || [];
+        if (carousel.length > 0) {
+          for (const slide of carousel) {
+            if (slide.video_versions?.length > 0) {
+              mediaUrls.push(slide.video_versions[0].url);
+            } else if (slide.image_versions2?.candidates?.length > 0) {
+              mediaUrls.push(slide.image_versions2.candidates[0].url);
+            }
+          }
+        } else {
+          if (item.video_versions?.length > 0) {
+            mediaUrls.push(item.video_versions[0].url);
+          } else if (item.image_versions2?.candidates?.length > 0) {
+            mediaUrls.push(item.image_versions2.candidates[0].url);
+          }
+        }
+
+        const parts = [];
+        if (caption) parts.push(caption);
+        for (const url of mediaUrls) {
+          parts.push(`![](${url})`);
+        }
+
+        const titleText = caption.replace(/\n/g, " ").trim().slice(0, 80) || `@${author}`;
+        const postUrl = `https://www.instagram.com/p/${shortcode}/`;
+
+        // Store pre-extracted data and open popup
+        const preloadData = {
+          metadata: {
+            url: postUrl,
+            title: titleText,
+            description: caption.slice(0, 200),
+            image: mediaUrls[0] || null,
+            author: `@${author}`,
+            ogType: null,
+            favicon: null,
+            selection: "",
+            detectedType: "article",
+            isArticle: true,
+          },
+          article: {
+            title: titleText,
+            content: parts.join("\n\n"),
+            byline: `@${author}`,
+            excerpt: caption.slice(0, 200),
+          },
+        };
+
+        chrome.runtime.sendMessage({
+          target: "background",
+          action: "openClipperWithData",
+          data: preloadData,
+        });
+
+        btn.style.opacity = "1";
+        btn.style.pointerEvents = "auto";
+      } catch (e) {
+        console.error("[Local Arena] Instagram feed clip failed:", e);
+        btn.style.opacity = "1";
+        btn.style.background = "rgba(239,68,68,0.8)";
+        btn.style.pointerEvents = "auto";
+      }
+    }
+
+    function scanArticles() {
+      for (const article of document.querySelectorAll("article")) {
+        if (article.querySelector(`[${BUTTON_ATTR}]`)) continue;
+        const shortcode = findShortcode(article);
+        if (!shortcode) continue;
+
+        if (getComputedStyle(article).position === "static") {
+          article.style.position = "relative";
+        }
+
+        const btn = createClipButton();
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          clipPost(shortcode, btn);
+        });
+
+        article.appendChild(btn);
+      }
+    }
+
+    // Scan every 500ms for new posts (Instagram is SPA, DOM changes dynamically)
+    setInterval(scanArticles, 500);
+    scanArticles();
+  }
+
+  // Start Instagram feed button injection
+  initInstagramFeedButton();
+
   // ── Article extraction (Defuddle) ─────────────────────────────────────
 
   function extractArticle() {
     // Twitter/X: async only (extractTwitterThread uses syndication API)
     if (isTwitterUrl(window.location.href)) {
+      return { title: document.title, content: "", byline: null, excerpt: "" };
+    }
+
+    // Instagram: async only (GraphQL API)
+    if (isInstagramPostUrl(window.location.href)) {
       return { title: document.title, content: "", byline: null, excerpt: "" };
     }
 
@@ -353,6 +605,12 @@
   async function extractArticleAsync() {
     if (isTwitterUrl(window.location.href)) {
       return (await extractTwitterThread()) ||
+        { title: document.title, content: "", byline: null, excerpt: "" };
+    }
+
+    // Instagram: GraphQL API (same-origin, needs browser cookies)
+    if (isInstagramPostUrl(window.location.href)) {
+      return (await extractInstagramPost()) ||
         { title: document.title, content: "", byline: null, excerpt: "" };
     }
 

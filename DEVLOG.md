@@ -28,6 +28,40 @@ if any
 
 ---
 
+## 15.03.2026 — Instagram клиппер: парсер постов + кнопка в ленте
+
+### Goal
+Сохранение Instagram-постов: текст, все картинки из карусели, видео. Два сценария: (1) открытый пост через обычный клиппер, (2) кнопка-оверлей в ленте без навигации.
+
+### Planned
+Instagram-парсер через REST API v1, кнопка на изображениях в ленте, открытие попапа с предзагруженными данными.
+
+### Actually completed
+1. **`extension/content.js`** — `extractInstagramPost()`: REST API v1 (`i.instagram.com/api/v1/media/{mediaId}/info/`), конвертация shortcode → media ID через base64-алгоритм. Извлекает caption, автора, все медиа карусели (изображения + видео). Кнопка-оверлей в ленте: сканирует `<article>` каждые 500мс, инжектит кнопку на правый верхний угол изображения.
+2. **`extension/background.js`** — `openClipperWithData`: принимает предзагруженные данные от content script, открывает попап позиционированный у правого верхнего угла браузерного окна (700x388).
+3. **`extension/popup/hooks/useClipperState.ts`** — проверка `preloadedClipData` в `chrome.storage.session` при инициализации. Если данные есть — используются вместо извлечения из вкладки.
+4. **`CLAUDE.md`** — тестовый vault `~/Desktop/Тест/`, обновлено описание content.js.
+
+### Deviations from plan
+Первоначально использовался GraphQL API с `doc_id`, но он вернул HTML (нужны cookies + `doc_id` устаревает каждые 2—4 недели). Переключились на REST API v1 — стабильнее, использует media ID.
+
+### Checks
+- Открытый Instagram-пост → клиппер → текст + все картинки карусели сохранены
+- Кнопка в ленте → видна на каждом посте → клик → попап с данными поста
+- Twitter, YouTube, статьи → без изменений
+- Lint: 0 ошибок, build: 0 ошибок
+
+### Push
+PENDING
+
+### Decisions and lessons learned
+- REST API v1 (`i.instagram.com/api/v1/media/{mediaId}/info/`) стабильнее GraphQL — не зависит от `doc_id` который меняется каждые 2—4 недели
+- Instagram CDN URL истекают (часы—дни) — обязательно скачивать через `localize_body_images()`
+- Shortcode → media ID: base64-декодирование с алфавитом `ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_`
+- Попап из content script через `chrome.windows.create()` — нужно явно позиционировать, иначе окно в левом верхнем углу экрана
+
+---
+
 ## 15.03.2026 — Twitter GIF и видео: скачивание через syndication API
 
 ### Goal

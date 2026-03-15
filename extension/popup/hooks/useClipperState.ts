@@ -69,6 +69,20 @@ export function useClipperState() {
         setChannels(chResult.channels);
       }
 
+      // Check for pre-loaded data (from Instagram feed button)
+      const preloaded = await chrome.storage.session.get("preloadedClipData");
+      if (preloaded.preloadedClipData) {
+        const { metadata: preMeta, article: preArticle } = preloaded.preloadedClipData;
+        chrome.storage.session.remove("preloadedClipData");
+
+        setMetadata(preMeta as PageMetadata);
+        setArticleData(preArticle as ArticleData);
+        setTitle(preMeta.title ?? "");
+        setCurrentType("content");
+        setState("main");
+        return;
+      }
+
       const ctxData = await getContextMenuData();
 
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

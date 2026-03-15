@@ -106,7 +106,7 @@ local-arena/
 │   └── styles/                 # Глобальные стили
 ├── extension/                  # Chrome/Safari веб-клиппер
 │   ├── background.js           # Service worker: контекстное меню, native messaging
-│   ├── content.js              # Content script: извлечение метаданных, Defuddle
+│   ├── content.js              # Content script: метаданные, Defuddle, Twitter/Instagram парсеры
 │   ├── popup/                  # React popup (исходники, собирается Vite)
 │   │   ├── index.html          # HTML entry point
 │   │   ├── main.tsx            # React entry
@@ -165,6 +165,10 @@ local-arena/
 - Node.js: не требуется (используем Bun)
 - Bun: >= 1.2
 - Tauri CLI: `cargo install tauri-cli`
+
+## Test data
+
+Тестовый vault: `~/Desktop/Тест/` — сохранённые блоки из веб-клиппера (статьи, Twitter, Instagram, YouTube).
 
 ## Development
 

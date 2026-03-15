@@ -142,6 +142,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true; // async response
   }
 
+  if (msg.action === "openClipperWithData") {
+    chrome.storage.session.set({ preloadedClipData: msg.data }).then(async () => {
+      const popupUrl = chrome.runtime.getURL("dist/index.html");
+      const current = await chrome.windows.getCurrent();
+      const left = current.left + current.width - 388 - 20;
+      const top = current.top + 80;
+      chrome.windows.create({
+        url: popupUrl,
+        type: "popup",
+        width: 388,
+        height: 700,
+        left: Math.round(left),
+        top: Math.round(top),
+      });
+    });
+    sendResponse({ ok: true });
+    return true;
+  }
+
   if (msg.action === "getContextMenuData") {
     chrome.storage.session.get("contextMenuData", (data) => {
       sendResponse(data.contextMenuData || null);
