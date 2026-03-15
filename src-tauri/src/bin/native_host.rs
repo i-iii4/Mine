@@ -295,18 +295,22 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     let body = {
         let mut raw = p.body.unwrap_or_default();
 
-        // For Twitter: fetch video/GIF MP4 URLs via syndication API and append to body.
-        // localize_body_images() below will download them as regular files.
+        // For Twitter: fetch video MP4 URLs via syndication API.
+        // Insert after the first tweet's text (before first "---"), not at end.
+        // Content script can't call syndication API (CORS), so backend handles it.
         if bt == BlockType::Article {
             if let Some(ref url) = p.url {
                 if let Some(tweet_id) = extract_twitter_video_id(url) {
                     if let Ok(video_urls) = fetch_tweet_videos(&tweet_id) {
                         for video_url in &video_urls {
-                            if !raw.contains(video_url.as_str()) {
-                                raw.push_str("\n\n![](");
-                                raw.push_str(video_url);
-                                raw.push(')');
+                            if raw.contains(video_url.as_str()) {
+                                continue; // already present
                             }
+                            // Insert after first tweet text, before first ---
+                            let insert_pos = raw.find("\n\n---\n")
+                                .unwrap_or(raw.len());
+                            let markup = format!("\n\n![]({})", video_url);
+                            raw.insert_str(insert_pos, &markup);
                         }
                     }
                 }

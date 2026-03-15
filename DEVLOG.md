@@ -28,6 +28,39 @@ if any
 
 ---
 
+## 15.03.2026 — Медиа-галерея в карточках, Instagram Stories, Twitter video fix
+
+### Goal
+Карточки социальных постов (Twitter, Instagram) должны показывать все медиа из поста, а не только то, что помещается в обрезанный body. Instagram Stories должны сохраняться. Видео в Twitter-тредах должно быть при первом твите, а не в конце.
+
+### Actually completed
+1. **`src-tauri/src/storage/db.rs`** — миграция: столбцы `first_image` и `media_urls` в таблице `blocks`.
+2. **`src-tauri/src/storage/index.rs`** — `extract_first_image()` и `extract_media_urls()`: при индексировании извлекают все `![](url)` из body, сохраняют как JSON-массив в `media_urls`. `LightBlock` получает оба поля. SQL-запрос `list_blocks_light` включает `first_image` и `media_urls`.
+3. **`src/types/index.ts`** — `LightBlock`: добавлены `first_image` и `media_urls`.
+4. **`src/components/Card.tsx`** — `SocialCard` (бывший `TwitterCard`): если body обрезан и медиа потеряны, берёт из `media_urls` (JSON-массив). Единый компонент для Twitter и Instagram (`isInstagramUrl`). Переименован `TwitterCard` → `SocialCard`.
+5. **`extension/content.js`** — Instagram Stories: URL `/stories/USERNAME/ID/` распознаётся, Story ID используется напрямую как media PK. `useClipperState.ts`: async обновляет title из articleData (исправлен бессмысленный og:title для Stories).
+6. **`src-tauri/src/bin/native_host.rs`** — Twitter-видео вставляется после текста первого твита (перед первым `---`), а не в конец body. Проверка дубликатов.
+
+### Deviations from plan
+- Первоначально добавили `first_image` (одно изображение). Недостаточно для галереи — добавили `media_urls` (JSON-массив).
+- Видео в конце треда: content script не может вызвать syndication API (CORS). Бэкенд добавлял видео в конец body. Исправлено — вставка после первого твита.
+
+### Checks
+- Instagram-пост с длинным текстом + карусель → карточка показывает галерею
+- Instagram Stories → сохраняются с картинкой/видео
+- Twitter-тред с видео → видео при первом твите
+- Обычные статьи → без изменений
+
+### Push
+PENDING
+
+### Decisions and lessons learned
+- `SUBSTR(body, 1, 500)` в `LightBlock` обрезает медиа-ссылки для длинных постов. Решение: отдельное поле `media_urls` (JSON) заполняется при индексировании из полного body.
+- Content script на twitter.com/x.com не может вызвать syndication API (`cdn.syndication.twimg.com`) из-за CORS (`Access-Control-Allow-Origin: https://platform.twitter.com`). Видео-обнаружение — ответственность бэкенда.
+- Позиция вставки видео в body имеет значение: `raw.find("\n\n---\n")` находит границу первого твита в треде.
+
+---
+
 ## 15.03.2026 — Instagram клиппер: парсер постов + кнопка в ленте
 
 ### Goal

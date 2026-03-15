@@ -51,6 +51,8 @@ pub struct LightBlock {
     pub height: Option<u32>,
     pub author: Option<String>,
     pub body: String,
+    pub first_image: Option<String>,
+    pub media_urls: Option<String>,
     pub tags: Vec<String>,
 }
 
@@ -59,6 +61,42 @@ pub struct LightBlock {
 pub struct TagCount {
     pub tag: String,
     pub count: usize,
+}
+
+/// Extract the first markdown image URL from body text.
+fn extract_first_image(body: &str) -> Option<String> {
+    let start = body.find("![")?;
+    let bracket = body[start + 2..].find("](")?;
+    let url_start = start + 2 + bracket + 2;
+    let paren_end = body[url_start..].find(')')?;
+    let url = &body[url_start..url_start + paren_end];
+    if url.is_empty() { None } else { Some(url.to_string()) }
+}
+
+/// Extract all markdown image/video URLs from body text as JSON array.
+fn extract_media_urls(body: &str) -> Option<String> {
+    let mut urls = Vec::new();
+    let mut search_from = 0;
+    while let Some(offset) = body[search_from..].find("![") {
+        let start = search_from + offset;
+        if let Some(bracket) = body[start + 2..].find("](") {
+            let url_start = start + 2 + bracket + 2;
+            if let Some(paren_end) = body[url_start..].find(')') {
+                let url = &body[url_start..url_start + paren_end];
+                if !url.is_empty() {
+                    urls.push(url.to_string());
+                }
+                search_from = url_start + paren_end + 1;
+                continue;
+            }
+        }
+        search_from = start + 2;
+    }
+    if urls.is_empty() {
+        None
+    } else {
+        serde_json::to_string(&urls).ok()
+    }
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -90,10 +128,13 @@ pub fn upsert_block(conn: &Connection, block: &Block) -> Result<i64> {
 }
 
 fn upsert_block_inner(conn: &Connection, block: &Block) -> Result<i64> {
+    let first_image = extract_first_image(&block.body);
+    let media_urls = extract_media_urls(&block.body);
+
     conn.execute(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
-            thumbnail, saved_at, source, width, height, author, body)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            thumbnail, saved_at, source, width, height, author, body, first_image, media_urls)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
             title = excluded.title,
@@ -107,6 +148,8 @@ fn upsert_block_inner(conn: &Connection, block: &Block) -> Result<i64> {
             height = excluded.height,
             author = excluded.author,
             body = excluded.body,
+            first_image = excluded.first_image,
+            media_urls = excluded.media_urls,
             indexed_at = datetime('now')",
         params![
             block.slug,
@@ -122,6 +165,8 @@ fn upsert_block_inner(conn: &Connection, block: &Block) -> Result<i64> {
             block.frontmatter.height.map(|h| h as i64),
             block.frontmatter.author,
             block.body,
+            first_image,
+            media_urls,
         ],
     )
     .context("failed to upsert block")?;
@@ -201,7 +246,7 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, url, media_file,
                 thumbnail, saved_at, width, height, author,
-                SUBSTR(body, 1, 500)
+                SUBSTR(body, 1, 500), first_image, media_urls
          FROM blocks ORDER BY saved_at DESC",
     )?;
 
@@ -229,6 +274,8 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
                 height: row.get::<_, Option<i64>>(9)?.map(|v| v as u32),
                 author: row.get(10)?,
                 body: row.get(11)?,
+                first_image: row.get(12)?,
+                media_urls: row.get(13)?,
                 tags: Vec::new(),
             })
         })?

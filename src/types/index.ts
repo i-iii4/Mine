@@ -35,6 +35,8 @@ export interface LightBlock {
   height: number | null;
   author: string | null;
   body: string;
+  first_image: string | null;
+  media_urls: string | null;
   tags: string[];
 }
 

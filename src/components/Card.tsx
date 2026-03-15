@@ -51,6 +51,11 @@ function isTwitterUrl(url: string): boolean {
   return (lc.includes("twitter.com/") || lc.includes("x.com/")) && lc.includes("/status/");
 }
 
+function isInstagramUrl(url: string): boolean {
+  const lc = url.toLowerCase();
+  return lc.includes("instagram.com/p/") || lc.includes("instagram.com/reel/") || lc.includes("instagram.com/stories/");
+}
+
 function CardContent({
   block,
   vaultPath,
@@ -64,8 +69,8 @@ function CardContent({
     case "link":
       return <LinkCard block={block} vaultPath={vaultPath} />;
     case "article":
-      if (block.url && isTwitterUrl(block.url)) {
-        return <TwitterCard block={block} vaultPath={vaultPath} />;
+      if (block.url && (isTwitterUrl(block.url) || isInstagramUrl(block.url))) {
+        return <SocialCard block={block} vaultPath={vaultPath} />;
       }
       return <ArticleCard block={block} />;
     case "video":
@@ -258,8 +263,18 @@ function isVideoFile(src: string): boolean {
   return /\.mp4(\?|$)|\.webm(\?|$)/i.test(src);
 }
 
-function TwitterCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {
+function SocialCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {
   const { text, media } = extractTweetData(block.body);
+
+  // If body was truncated and lost media references, use media_urls from index
+  if (media.length === 0 && block.media_urls) {
+    try {
+      const urls: string[] = JSON.parse(block.media_urls);
+      for (const src of urls) {
+        media.push({ src, isVideo: isVideoFile(src), isVideoPoster: false });
+      }
+    } catch { /* invalid JSON — skip */ }
+  }
 
   const resolveSrc = (src: string) =>
     src.startsWith("http://") || src.startsWith("https://") ? src : mediaUrl(vaultPath, src);

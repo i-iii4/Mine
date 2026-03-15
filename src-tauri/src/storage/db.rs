@@ -121,6 +121,11 @@ fn create_schema(conn: &Connection) -> Result<()> {
             VALUES (new.id, new.title, new.description, new.body);
         END;",
     )?;
+
+    // Migration: add media_urls column (JSON array of image/video URLs from body)
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN first_image TEXT");
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_urls TEXT");
+
     Ok(())
 }
 

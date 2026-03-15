@@ -132,6 +132,10 @@ export function useClipperState() {
         extractArticleAsync(tab.id).then((asyncArticle) => {
           if (asyncArticle.content) {
             setArticleData(asyncArticle);
+            // Update title from async data (Twitter/Instagram return better titles than og:title)
+            if (asyncArticle.title) {
+              setTitle(asyncArticle.title);
+            }
           }
           setArticleLoading(false);
         });
