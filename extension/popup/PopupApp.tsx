@@ -91,7 +91,17 @@ export function PopupApp() {
               </div>
             ) : clipper.articleData?.content ? (
               <div className="prose prose-sm mt-1.5 max-w-none">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    img: ({ src, alt, ...props }) => {
+                      if (/\.mp4(\?|$)|\.webm(\?|$)/i.test(src ?? "")) {
+                        return <video src={src} autoPlay loop muted playsInline />;
+                      }
+                      return <img src={src} alt={alt ?? ""} loading="lazy" {...props} />;
+                    },
+                  }}
+                >
                   {clipper.articleData.content}
                 </ReactMarkdown>
               </div>

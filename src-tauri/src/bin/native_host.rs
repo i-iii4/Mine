@@ -291,9 +291,28 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         None
     };
 
-    // Download inline images for article bodies
+    // Download inline images (and videos) for article bodies
     let body = {
-        let raw = p.body.unwrap_or_default();
+        let mut raw = p.body.unwrap_or_default();
+
+        // For Twitter: fetch video/GIF MP4 URLs via syndication API and append to body.
+        // localize_body_images() below will download them as regular files.
+        if bt == BlockType::Article {
+            if let Some(ref url) = p.url {
+                if let Some(tweet_id) = extract_twitter_video_id(url) {
+                    if let Ok(video_urls) = fetch_tweet_videos(&tweet_id) {
+                        for video_url in &video_urls {
+                            if !raw.contains(video_url.as_str()) {
+                                raw.push_str("\n\n![](");
+                                raw.push_str(video_url);
+                                raw.push(')');
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if bt == BlockType::Article && !raw.is_empty() {
             let page_url = p.url.as_deref().unwrap_or("");
             localize_body_images(&raw, vault, &slug, page_url)
@@ -514,6 +533,7 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
 
         if url.starts_with("http://") || url.starts_with("https://") {
             let ext = ext_from_url(&url);
+
             let img_name = format!("{slug}-img{img_idx}.{ext}");
             let dest = vault.root().join(&img_name);
 
@@ -536,6 +556,61 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
     }
 
     result
+}
+
+// ─── Twitter video discovery ────────────────────────────────────────────────
+
+/// Extract tweet ID from Twitter/X status URL. Returns None for non-Twitter URLs.
+fn extract_twitter_video_id(url: &str) -> Option<String> {
+    let lc = url.to_lowercase();
+    if !(lc.contains("twitter.com/") || lc.contains("x.com/")) || !lc.contains("/status/") {
+        return None;
+    }
+    url.split("/status/")
+        .nth(1)
+        .and_then(|s| s.split(&['?', '/', '#'][..]).next())
+        .filter(|s| s.chars().all(|c| c.is_ascii_digit()) && !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Fetch video/GIF MP4 URLs from Twitter syndication API.
+/// Returns only video and animated_gif types (not photos — those are already in body from DOM).
+fn fetch_tweet_videos(tweet_id: &str) -> anyhow::Result<Vec<String>> {
+    let api_url = format!(
+        "https://cdn.syndication.twimg.com/tweet-result?id={}&token=0",
+        tweet_id
+    );
+    let resp = ureq::get(&api_url)
+        .set("User-Agent", "Mozilla/5.0")
+        .call()?;
+    let data: serde_json::Value = resp.into_json()?;
+
+    let mut urls = Vec::new();
+    if let Some(media) = data.get("mediaDetails").and_then(|v| v.as_array()) {
+        for item in media {
+            let media_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if media_type != "video" && media_type != "animated_gif" {
+                continue;
+            }
+            if let Some(variants) = item
+                .pointer("/video_info/variants")
+                .and_then(|v| v.as_array())
+            {
+                let best = variants
+                    .iter()
+                    .filter(|v| {
+                        v.get("content_type").and_then(|c| c.as_str()) == Some("video/mp4")
+                    })
+                    .max_by_key(|v| v.get("bitrate").and_then(|b| b.as_u64()).unwrap_or(0));
+                if let Some(variant) = best {
+                    if let Some(url) = variant.get("url").and_then(|u| u.as_str()) {
+                        urls.push(url.to_string());
+                    }
+                }
+            }
+        }
+    }
+    Ok(urls)
 }
 
 // ─── Main loop ──────────────────────────────────────────────────────────────

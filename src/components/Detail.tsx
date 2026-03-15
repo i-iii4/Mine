@@ -398,6 +398,17 @@ function ArticleBody({
     () => ({
       img: ({ src, alt, ...props }) => {
         const resolved = resolveImageSrc(src ?? "", vaultPath);
+        // Video/GIF (downloaded MP4) — render as inline video with controls
+        if (/\.mp4(\?|$)|\.webm(\?|$)/i.test(src ?? "")) {
+          return (
+            <video
+              src={resolved}
+              controls
+              playsInline
+              className="rounded-0"
+            />
+          );
+        }
         return (
           <img
             src={resolved}

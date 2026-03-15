@@ -168,8 +168,8 @@
   }
 
   /**
-   * Extract a single tweet's text and media images from an article element.
-   * Skips emoji, avatars, and card images — only pbs.twimg.com/media counts.
+   * Extract a single tweet's text and media from DOM.
+   * Used for thread tweets (not the main tweet, which uses syndication API).
    */
   function extractTweetContent(article) {
     const tweetTextEl = article.querySelector('div[data-testid="tweetText"]');
@@ -178,30 +178,78 @@
       text = tweetTextToMarkdown(tweetTextEl);
     }
 
-    const images = [];
+    const media = [];
+
+    // Static images
     for (const img of article.querySelectorAll('div[data-testid="tweetPhoto"] img')) {
       let src = img.src || "";
       if (src.includes("pbs.twimg.com/media")) {
         const base = src.split("?")[0];
         src = base + "?format=jpg&name=large";
-        images.push(src);
+        media.push(src);
       }
     }
 
-    return { text, images };
+    // GIFs — direct MP4 URLs
+    for (const video of article.querySelectorAll("video")) {
+      const src = video.src || video.querySelector("source")?.src || "";
+      if (src && !src.startsWith("blob:") && src.includes("video.twimg.com/")) {
+        media.push(src);
+      }
+    }
+
+    return { text, media };
   }
 
-  function extractTwitterThread() {
+  /**
+   * Fetch all media URLs from Twitter syndication API.
+   * Returns array of direct URLs (photos, GIFs as MP4, videos as MP4 highest bitrate).
+   * More reliable than DOM parsing — doesn't depend on lazy-loaded elements.
+   */
+  async function fetchTweetMedia(tweetId) {
+    try {
+      const resp = await fetch(
+        `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&token=0`
+      );
+      if (!resp.ok) return [];
+      const data = await resp.json();
+      const urls = [];
+      for (const m of (data.mediaDetails || [])) {
+        if (m.type === "photo" && m.media_url_https) {
+          urls.push(m.media_url_https + "?name=large");
+        } else if (m.type === "video" || m.type === "animated_gif") {
+          const variants = (m.video_info?.variants || [])
+            .filter(v => v.content_type === "video/mp4" && v.bitrate != null)
+            .sort((a, b) => b.bitrate - a.bitrate);
+          if (variants.length > 0) {
+            urls.push(variants[0].url);
+          }
+        }
+      }
+      return urls;
+    } catch {
+      return [];
+    }
+  }
+
+  async function extractTwitterThread() {
     const url = window.location.href;
 
-    // Extract author handle from URL: x.com/handle/status/123
-    const urlMatch = url.match(/(?:twitter\.com|x\.com)\/([^/]+)\/status/i);
+    // Extract author handle and tweet ID from URL
+    const urlMatch = url.match(/(?:twitter\.com|x\.com)\/([^/]+)\/status\/(\d+)/i);
     if (!urlMatch) return null;
     const authorHandle = urlMatch[1];
     const authorHandleLc = authorHandle.toLowerCase();
+    const tweetId = urlMatch[2];
 
     const articles = document.querySelectorAll('article[data-testid="tweet"]');
     if (articles.length === 0) return null;
+
+    // Fetch media from syndication API (includes videos that DOM can't capture)
+    let apiMedia = [];
+    if (tweetId) {
+      apiMedia = await fetchTweetMedia(tweetId);
+    }
 
     const tweets = [];
     let foundAuthorTweet = false;
@@ -210,26 +258,27 @@
       const isAuthor = isTweetByAuthor(article, authorHandleLc);
 
       if (!isAuthor) {
-        // Once we've seen author's tweets and hit a non-author tweet, stop.
-        // Everything below is replies from other users.
         if (foundAuthorTweet) break;
-        // Haven't found author yet — skip (promoted/pinned content above)
         continue;
       }
 
       foundAuthorTweet = true;
-      const { text, images } = extractTweetContent(article);
-      if (text || images.length > 0) {
-        tweets.push({ text, images });
+      const { text, media } = extractTweetContent(article);
+      // First tweet: prefer API media (complete — photos + GIFs + videos).
+      // Fallback to DOM media if API returned nothing.
+      const isFirstTweet = tweets.length === 0;
+      const finalMedia = isFirstTweet && apiMedia.length > 0 ? apiMedia : media;
+      if (text || finalMedia.length > 0) {
+        tweets.push({ text, media: finalMedia });
       }
     }
 
-    // If author matching failed entirely, grab just the first tweet
-    // (it's always the main tweet on the page)
+    // Fallback: grab first tweet
     if (tweets.length === 0 && articles.length > 0) {
-      const { text, images } = extractTweetContent(articles[0]);
-      if (text || images.length > 0) {
-        tweets.push({ text, images });
+      const { text, media } = extractTweetContent(articles[0]);
+      const finalMedia = apiMedia.length > 0 ? apiMedia : media;
+      if (text || finalMedia.length > 0) {
+        tweets.push({ text, media: finalMedia });
       }
     }
 
@@ -240,13 +289,12 @@
     for (let i = 0; i < tweets.length; i++) {
       const t = tweets[i];
       if (t.text) parts.push(t.text);
-      for (const imgUrl of t.images) {
-        parts.push(`![](${imgUrl})`);
+      for (const src of (t.media || [])) {
+        parts.push(`![](${src})`);
       }
       if (i < tweets.length - 1) parts.push("---");
     }
 
-    // Title = first ~80 chars of tweet text (used for slug generation, not displayed)
     const firstText = (tweets[0]?.text || "").replace(/\n/g, " ").trim();
     const tweetTitle = firstText.slice(0, 80) || `@${authorHandle}`;
 
@@ -261,11 +309,9 @@
   // ── Article extraction (Defuddle) ─────────────────────────────────────
 
   function extractArticle() {
-    // Twitter/X: use specialized thread extractor
-    // (Defuddle, like Readability, grabs comments and recommended content)
+    // Twitter/X: async only (extractTwitterThread uses syndication API)
     if (isTwitterUrl(window.location.href)) {
-      return extractTwitterThread() ||
-        { title: document.title, content: "", byline: null, excerpt: "" };
+      return { title: document.title, content: "", byline: null, excerpt: "" };
     }
 
     // YouTube: skip Defuddle sync (transcript comes from async path)
@@ -306,7 +352,7 @@
   // Async version — custom YouTube fetcher, Defuddle for everything else
   async function extractArticleAsync() {
     if (isTwitterUrl(window.location.href)) {
-      return extractTwitterThread() ||
+      return (await extractTwitterThread()) ||
         { title: document.title, content: "", byline: null, excerpt: "" };
     }
 

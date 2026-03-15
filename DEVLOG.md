@@ -28,6 +28,45 @@ if any
 
 ---
 
+## 15.03.2026 — Twitter GIF и видео: скачивание через syndication API
+
+### Goal
+Twitter-посты с GIF и видео должны сохраняться с медиа, которое воспроизводится в приложении и в Obsidian.
+
+### Planned
+Извлечение GIF/видео URL, скачивание MP4, рендеринг в карточках и Detail.
+
+### Actually completed
+1. **`extension/content.js`** — `extractTweetContent()` извлекает `<video>` из DOM (GIF = прямой MP4). `extractTwitterThread()` стал async: вызывает syndication API (`cdn.syndication.twimg.com/tweet-result?id=ID`) для получения всех медиа основного твита (фото + GIF + видео). API как основной источник медиа, DOM как fallback.
+2. **`src-tauri/src/bin/native_host.rs`** — `fetch_tweet_videos()`: вызывает syndication API для Twitter URL, получает MP4 URL видео/GIF (наивысший битрейт), добавляет в body перед `localize_body_images()`. Все медиа скачиваются как локальные файлы.
+3. **`src/components/Card.tsx`** — `TwitterCard`: рендерит `.mp4` как `<video autoPlay loop muted>`, остальное как `<img>`. Медиа из первого твита, максимум 4.
+4. **`src/components/Detail.tsx`** — `ArticleBody`: `.mp4` в маркдауне рендерится как `<video controls playsInline>`. Убран Twitter embed (дублировал контент).
+5. **`extension/popup/PopupApp.tsx`** — ReactMarkdown с кастомным `img` component для `.mp4`.
+6. **`extension/popup/hooks/useClipperState.ts`** — async загрузка для Twitter (sync content пуст из-за syndication API).
+7. **`src-tauri/tauri.conf.json`** — CSP: добавлены `media-src 'self' asset: https:` и `frame-src 'self' https://www.youtube.com`.
+
+### Deviations from plan
+Первоначально планировался стриминг видео по внешней ссылке (без скачивания). Исследование показало: (1) WKWebView в Tauri не воспроизводит видео с `video.twimg.com` (ошибка `MEDIA_ERR_SRC_NOT_SUPPORTED`), хотя другие CDN работают; (2) URL Twitter-видео непостоянные — могут истечь. Итоговое решение — скачивание MP4 (3—20 МБ).
+
+### Checks
+- Твит с видео → видео скачано, воспроизводится в приложении
+- Твит с GIF → GIF скачан, воспроизводится
+- Твит с картинками → без изменений
+- Твит с картинками + видео → оба скачаны, оба отображаются
+- Обычные статьи, YouTube → без изменений
+- `cargo clippy --bin native-host` — 0 новых предупреждений
+
+### Push
+PENDING
+
+### Decisions and lessons learned
+- Syndication API (`cdn.syndication.twimg.com`) — публичный, без авторизации, возвращает все медиа твита с прямыми MP4 URL. Вызывается из Rust бэкенда (нет CORS).
+- Content script не может вызвать syndication API (CORS: `Access-Control-Allow-Origin: https://platform.twitter.com`). Бэкенд — правильное место для внешних API-вызовов.
+- Стриминг видео с Twitter CDN не работает в Tauri WKWebView. Скачивание — единственный надёжный вариант.
+- `crossOrigin="anonymous"` на `<video>` ломает воспроизведение — заставляет браузер проверять CORS. Без этого атрибута видео загружается как opaque request.
+
+---
+
 ## 14.03.2026 — Twitter-карточки и улучшения тайтлов
 
 ### Goal

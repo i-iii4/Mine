@@ -110,8 +110,10 @@ export function useClipperState() {
 
       setState("main");
 
-      // Background: fetch async article for video (YouTube transcript)
-      if (meta.detectedType === "video" && tab.id) {
+      // Background: fetch async article for video (YouTube transcript) and Twitter (syndication API)
+      const needsAsync = meta.detectedType === "video"
+        || (meta.detectedType === "article" && !article.content);
+      if (needsAsync && tab.id) {
         setArticleLoading(true);
         extractArticleAsync(tab.id).then((asyncArticle) => {
           if (asyncArticle.content) {

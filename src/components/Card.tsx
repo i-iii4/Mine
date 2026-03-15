@@ -221,40 +221,98 @@ function stripMarkdown(text: string): string {
     .trim();
 }
 
-function extractTweetData(body: string): { text: string; images: string[] } {
-  const images: string[] = [];
-  const imgRegex = /!\[.*?\]\((.*?)\)/g;
-  let match;
-  while ((match = imgRegex.exec(body)) !== null) {
-    if (match[1]) images.push(match[1]);
-  }
+interface TweetMedia {
+  src: string;
+  isVideo: boolean; // true = GIF (local .mp4) or video poster with play overlay
+  isVideoPoster: boolean; // true = HLS video poster (not downloadable), show play icon
+}
+
+function extractTweetData(body: string): { text: string; media: TweetMedia[] } {
   const firstSection = body.split(/^---+$/m)[0] ?? body;
+  const media: TweetMedia[] = [];
+  // Match both regular images and video-poster-marked images
+  const lines = firstSection.split("\n");
+  let nextIsVideoPoster = false;
+  for (const line of lines) {
+    if (line.trim() === "<!-- tweet-video -->") {
+      nextIsVideoPoster = true;
+      continue;
+    }
+    const imgMatch = line.match(/^!\[.*?\]\((.+?)\)$/);
+    if (imgMatch?.[1]) {
+      const src = imgMatch[1];
+      const isVideoFile = /\.mp4(\?|$)|\.webm(\?|$)/i.test(src);
+      media.push({
+        src,
+        isVideo: isVideoFile || nextIsVideoPoster,
+        isVideoPoster: nextIsVideoPoster,
+      });
+      nextIsVideoPoster = false;
+    }
+  }
   const text = stripMarkdown(firstSection).trim();
-  return { text, images };
+  return { text, media };
+}
+
+function isVideoFile(src: string): boolean {
+  return /\.mp4(\?|$)|\.webm(\?|$)/i.test(src);
 }
 
 function TwitterCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {
-  const { text, images } = extractTweetData(block.body);
+  const { text, media } = extractTweetData(block.body);
 
-  const resolveImg = (src: string) =>
+  const resolveSrc = (src: string) =>
     src.startsWith("http://") || src.startsWith("https://") ? src : mediaUrl(vaultPath, src);
+
+  const renderMedia = (m: TweetMedia, className: string) => {
+    const resolved = resolveSrc(m.src);
+    if (isVideoFile(m.src)) {
+      // GIF (downloaded MP4) — autoplay loop
+      return (
+        <video
+          key={m.src}
+          src={resolved}
+          className={className}
+          autoPlay
+          loop
+          muted
+          playsInline
+        />
+      );
+    }
+    if (m.isVideoPoster) {
+      // Video poster — static image + play overlay
+      return (
+        <div key={m.src} className="relative">
+          <img src={resolved} alt="" className={className} loading="lazy" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="flex size-8 items-center justify-center rounded-full bg-black/50 text-white">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M4 2.5v11l10-5.5L4 2.5z" />
+              </svg>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    // Static image
+    return <img key={m.src} src={resolved} alt="" className={className} loading="lazy" />;
+  };
 
   return (
     <div className="p-4">
       {text && (
-        <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{text}</p>
+        <p className="line-clamp-3 text-sm text-muted-foreground">{text}</p>
       )}
 
-      {images.length === 1 && (
+      {media.length === 1 && (
         <div className="mt-3">
-          <img src={resolveImg(images[0]!)} alt="" className="w-full object-cover" loading="lazy" />
+          {renderMedia(media[0]!, "w-full object-cover")}
         </div>
       )}
-      {images.length >= 2 && (
+      {media.length >= 2 && (
         <div className="mt-3 grid grid-cols-2 gap-0.5">
-          {images.slice(0, 4).map((src) => (
-            <img key={src} src={resolveImg(src)} alt="" className="aspect-square w-full object-cover" loading="lazy" />
-          ))}
+          {media.slice(0, 4).map((m) => renderMedia(m, "aspect-square w-full object-cover"))}
         </div>
       )}
 
