@@ -37,7 +37,7 @@ if any
 Instagram-парсер через REST API v1, кнопка на изображениях в ленте, открытие попапа с предзагруженными данными.
 
 ### Actually completed
-1. **`extension/content.js`** — `extractInstagramPost()`: REST API v1 (`i.instagram.com/api/v1/media/{mediaId}/info/`), конвертация shortcode → media ID через base64-алгоритм. Извлекает caption, автора, все медиа карусели (изображения + видео). Кнопка-оверлей в ленте: сканирует `<article>` каждые 500мс, инжектит кнопку на правый верхний угол изображения.
+1. **`extension/content.js`** — `extractInstagramPost()`: REST API v1 (`i.instagram.com/api/v1/media/{mediaId}/info/`), конвертация shortcode → media ID через base64-алгоритм. Извлекает caption, автора, все медиа карусели (изображения + видео). Поддержка Stories: URL `/stories/USERNAME/ID/` — числовой ID используется напрямую как media PK (без конвертации shortcode). Кнопка-оверлей в ленте: сканирует `<article>` каждые 500мс, инжектит кнопку на правый верхний угол изображения.
 2. **`extension/background.js`** — `openClipperWithData`: принимает предзагруженные данные от content script, открывает попап позиционированный у правого верхнего угла браузерного окна (700x388).
 3. **`extension/popup/hooks/useClipperState.ts`** — проверка `preloadedClipData` в `chrome.storage.session` при инициализации. Если данные есть — используются вместо извлечения из вкладки.
 4. **`CLAUDE.md`** — тестовый vault `~/Desktop/Тест/`, обновлено описание content.js.
@@ -47,15 +47,18 @@ Instagram-парсер через REST API v1, кнопка на изображ�
 
 ### Checks
 - Открытый Instagram-пост → клиппер → текст + все картинки карусели сохранены
+- Instagram Stories → клиппер → картинка/видео сохранены
 - Кнопка в ленте → видна на каждом посте → клик → попап с данными поста
 - Twitter, YouTube, статьи → без изменений
 - Lint: 0 ошибок, build: 0 ошибок
 
 ### Push
 39bcbf0 — Instagram clipper: post parser + feed overlay button
+PENDING — Add Instagram Stories support
 
 ### Decisions and lessons learned
 - REST API v1 (`i.instagram.com/api/v1/media/{mediaId}/info/`) стабильнее GraphQL — не зависит от `doc_id` который меняется каждые 2—4 недели
+- Story ID из URL = Media PK. Тот же endpoint, тот же парсинг ответа. Конвертация shortcode не нужна — ID уже числовой
 - Instagram CDN URL истекают (часы—дни) — обязательно скачивать через `localize_body_images()`
 - Shortcode → media ID: base64-декодирование с алфавитом `ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_`
 - Попап из content script через `chrome.windows.create()` — нужно явно позиционировать, иначе окно в левом верхнем углу экрана

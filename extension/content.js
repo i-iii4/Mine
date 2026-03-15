@@ -312,7 +312,7 @@
 
   function isInstagramPostUrl(url) {
     const lc = url.toLowerCase();
-    return lc.includes("instagram.com/p/") || lc.includes("instagram.com/reel/");
+    return lc.includes("instagram.com/p/") || lc.includes("instagram.com/reel/") || lc.includes("instagram.com/stories/");
   }
 
   function extractInstagramShortcode(url) {
@@ -334,11 +334,22 @@
   }
 
   async function extractInstagramPost() {
-    const shortcode = extractInstagramShortcode(window.location.href);
-    if (!shortcode) return null;
+    const url = window.location.href;
+
+    // Stories: numeric ID directly from URL. Posts/Reels: shortcode → media ID.
+    const storyMatch = url.match(/instagram\.com\/stories\/[\w.]+\/(\d+)/);
+    const shortcode = extractInstagramShortcode(url);
+
+    let mediaId;
+    if (storyMatch) {
+      mediaId = storyMatch[1];
+    } else if (shortcode) {
+      mediaId = shortcodeToMediaId(shortcode);
+    } else {
+      return null;
+    }
 
     try {
-      const mediaId = shortcodeToMediaId(shortcode);
 
       const resp = await fetch(`https://i.instagram.com/api/v1/media/${mediaId}/info/`, {
         headers: {
