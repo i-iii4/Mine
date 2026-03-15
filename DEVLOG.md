@@ -54,7 +54,7 @@ Instagram-парсер через REST API v1, кнопка на изображ�
 
 ### Push
 39bcbf0 — Instagram clipper: post parser + feed overlay button
-PENDING — Add Instagram Stories support
+49e7086 — Add Instagram Stories support to clipper
 
 ### Decisions and lessons learned
 - REST API v1 (`i.instagram.com/api/v1/media/{mediaId}/info/`) стабильнее GraphQL — не зависит от `doc_id` который меняется каждые 2—4 недели
