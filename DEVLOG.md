@@ -52,7 +52,7 @@ Instagram-парсер через REST API v1, кнопка на изображ�
 - Lint: 0 ошибок, build: 0 ошибок
 
 ### Push
-PENDING
+39bcbf0 — Instagram clipper: post parser + feed overlay button
 
 ### Decisions and lessons learned
 - REST API v1 (`i.instagram.com/api/v1/media/{mediaId}/info/`) стабильнее GraphQL — не зависит от `doc_id` который меняется каждые 2—4 недели
