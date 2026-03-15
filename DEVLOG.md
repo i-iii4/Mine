@@ -57,7 +57,7 @@ Twitter-посты с GIF и видео должны сохраняться с �
 - `cargo clippy --bin native-host` — 0 новых предупреждений
 
 ### Push
-PENDING
+020f92d — Twitter GIF and video: download via syndication API
 
 ### Decisions and lessons learned
 - Syndication API (`cdn.syndication.twimg.com`) — публичный, без авторизации, возвращает все медиа твита с прямыми MP4 URL. Вызывается из Rust бэкенда (нет CORS).
