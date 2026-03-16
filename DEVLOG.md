@@ -52,7 +52,7 @@ if any
 - Обычные статьи → без изменений
 
 ### Push
-PENDING
+e98a0bf — Media gallery in cards, Instagram Stories, Twitter video position fix
 
 ### Decisions and lessons learned
 - `SUBSTR(body, 1, 500)` в `LightBlock` обрезает медиа-ссылки для длинных постов. Решение: отдельное поле `media_urls` (JSON) заполняется при индексировании из полного body.
