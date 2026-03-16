@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import type { IndexedBlock } from "@/types";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { thumbnailUrl, mediaUrl, domainFromUrl, isSafeUrl } from "@/lib/assets";
 import { addTag, removeTag } from "@/lib/commands";
 
@@ -187,14 +188,12 @@ function MetadataPanel({
           <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
             SOURCE
           </div>
-          <a
-            href={block.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-1 block text-sm text-foreground hover:underline"
+          <button
+            onClick={() => openUrl(block.url!)}
+            className="mt-1 block text-sm text-foreground hover:underline text-left"
           >
             {domainFromUrl(block.url)}
-          </a>
+          </button>
         </div>
       )}
 

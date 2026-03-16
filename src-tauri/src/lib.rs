@@ -36,6 +36,7 @@ pub fn run() {
             commands::import::import_arena_channels,
         ])
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
