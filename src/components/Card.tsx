@@ -1,4 +1,4 @@
-import { useState, useEffect, memo } from "react";
+import { useState, useEffect, useMemo, memo } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
 import type { LightBlock } from "@/types";
@@ -263,8 +263,8 @@ function isVideoFile(src: string): boolean {
   return /\.mp4(\?|$)|\.webm(\?|$)/i.test(src);
 }
 
-function SocialCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {
-  const { text, media } = extractTweetData(block.body);
+const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {
+  const { text, media } = useMemo(() => extractTweetData(block.body), [block.body]);
 
   // If body was truncated and lost media references, use media_urls from index
   if (media.length === 0 && block.media_urls) {
@@ -336,10 +336,10 @@ function SocialCard({ block, vaultPath }: { block: LightBlock; vaultPath: string
       )}
     </div>
   );
-}
+});
 
-function ArticleCard({ block }: { block: LightBlock }) {
-  const preview = stripMarkdown(block.body).slice(0, 400).trim();
+const ArticleCard = memo(function ArticleCard({ block }: { block: LightBlock }) {
+  const preview = useMemo(() => stripMarkdown(block.body).slice(0, 400).trim(), [block.body]);
 
   return (
     <div className="p-4">
@@ -356,7 +356,7 @@ function ArticleCard({ block }: { block: LightBlock }) {
       )}
     </div>
   );
-}
+});
 
 function VideoCard({
   block,

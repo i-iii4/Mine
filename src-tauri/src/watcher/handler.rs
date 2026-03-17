@@ -132,32 +132,36 @@ pub fn full_scan(
 
 /// Index a single .md file: read, parse, upsert, generate thumbnail.
 ///
-/// Used by handle_event for individual file changes. Generates thumbnail
-/// synchronously but skips if already fresh (O1).
+/// Used by handle_event for individual file changes. Thumbnail is generated
+/// in a background thread to avoid blocking the file watcher.
 pub fn index_md_file(conn: &Connection, vault: &VaultLayout, path: &Path) -> Result<()> {
     let job = index_md_file_inner(conn, vault, path)?;
 
-    // Generate thumbnail synchronously (single file — fast enough)
     if let Some(job) = job {
         let thumb_path = vault.thumb_path(&job.slug);
 
-        // O1: skip if thumbnail is fresh (source unchanged since last generation)
         if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path) {
             return Ok(());
         }
 
-        let result = match &job.kind {
-            ThumbKind::Image { media_path } => {
-                thumbnails::generate_thumbnail(media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
-            }
-            ThumbKind::Text { title, body } => {
-                thumbnails::generate_text_thumbnail(title.as_deref(), body, &thumb_path)
-            }
-        };
-
-        if let Err(e) = result {
-            log::warn!("thumbnail failed for {}: {}", job.slug, e);
-        }
+        // Generate thumbnail in background thread to avoid blocking file watcher
+        let slug = job.slug.clone();
+        std::thread::Builder::new()
+            .name(format!("thumb-{}", &slug))
+            .spawn(move || {
+                let result = match &job.kind {
+                    ThumbKind::Image { media_path } => {
+                        thumbnails::generate_thumbnail(media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
+                    }
+                    ThumbKind::Text { title, body } => {
+                        thumbnails::generate_text_thumbnail(title.as_deref(), body, &thumb_path)
+                    }
+                };
+                if let Err(e) = result {
+                    log::warn!("thumbnail failed for {}: {}", slug, e);
+                }
+            })
+            .ok();
     }
 
     Ok(())
@@ -242,7 +246,15 @@ pub fn handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) 
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                 if is_image_ext(ext) {
                     let thumb_path = vault.thumb_path(&slug);
-                    thumbnails::generate_thumbnail(path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)?;
+                    let path_owned = path.to_path_buf();
+                    std::thread::Builder::new()
+                        .name(format!("thumb-media-{}", &slug))
+                        .spawn(move || {
+                            if let Err(e) = thumbnails::generate_thumbnail(&path_owned, &thumb_path, thumbnails::DEFAULT_MAX_SIZE) {
+                                log::warn!("thumbnail failed for {}: {}", slug, e);
+                            }
+                        })
+                        .ok();
                 }
             }
         }
