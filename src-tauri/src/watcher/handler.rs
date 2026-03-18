@@ -195,6 +195,13 @@ fn index_md_file_inner(
     let block = parse_block(&slug, &content)
         .with_context(|| format!("parsing {}", path.display()))?;
 
+    // Channel files → index as channel, no thumbnail
+    if block.frontmatter.block_type == BlockType::Channel {
+        index::upsert_channel_from_block(conn, &block)
+            .with_context(|| format!("indexing channel {}", path.display()))?;
+        return Ok(None);
+    }
+
     index::upsert_block(conn, &block)
         .with_context(|| format!("indexing {}", path.display()))?;
 

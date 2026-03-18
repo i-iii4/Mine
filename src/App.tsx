@@ -193,8 +193,9 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   // Blocks filtered by current route (channel or all)
   const activeBlocks = useMemo(() => {
-    if (!currentTag) return blocks;
-    return blocks.filter((b) => b.tags.includes(currentTag));
+    const visible = blocks.filter((b) => b.block_type !== "channel");
+    if (!currentTag) return visible;
+    return visible.filter((b) => b.tags.includes(currentTag));
   }, [blocks, currentTag]);
 
   const handleColumnCountChange = useCallback((n: number) => {

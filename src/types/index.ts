@@ -1,7 +1,7 @@
 // TypeScript types matching Rust Serialize output.
 // Manually maintained until specta type generation is set up (Phase 7).
 
-export type BlockType = "image" | "article" | "link" | "video" | "file";
+export type BlockType = "image" | "article" | "link" | "video" | "file" | "channel";
 
 export interface IndexedBlock {
   id: number;

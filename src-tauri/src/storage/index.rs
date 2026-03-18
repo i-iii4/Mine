@@ -470,6 +470,21 @@ pub fn upsert_channel(conn: &Connection, channel: &Channel) -> Result<i64> {
     Ok(id)
 }
 
+/// Index a channel from a parsed Block with type: channel.
+/// Maps frontmatter fields to Channel struct and upserts.
+pub fn upsert_channel_from_block(conn: &Connection, block: &Block) -> Result<i64> {
+    let channel = Channel {
+        tag: block.slug.clone(),
+        title: block.frontmatter.title.clone().unwrap_or_else(|| block.slug.clone()),
+        description: block.frontmatter.description.clone(),
+        color: block.frontmatter.color.clone(),
+        icon: block.frontmatter.icon.clone(),
+        position: block.frontmatter.position.unwrap_or(0),
+        created_at: block.frontmatter.saved_at.clone(),
+    };
+    upsert_channel(conn, &channel)
+}
+
 /// List all channels ordered by position, then title.
 pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
     let mut stmt = conn.prepare(

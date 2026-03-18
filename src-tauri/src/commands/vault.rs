@@ -8,6 +8,8 @@
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use rusqlite::Connection;
+
 use crate::commands::state::{AppState, CommandError, VaultState};
 use crate::domain::vault::VaultLayout;
 use crate::storage::db;
@@ -126,6 +128,9 @@ fn initialize_vault(
     // Full scan (thumbnails generated in background thread)
     let result = handler::full_scan(&conn, &vault, Some(thumbs_done_cb(app.clone())))?;
 
+    // Migrate channels from SQLite to .md files (one-time)
+    migrate_channels_to_files(&conn, &vault);
+
     // Start file watcher
     let db_path = vault.index_db_path();
     match watch::start_watching(app, &vault, &db_path) {
@@ -153,6 +158,53 @@ fn thumbs_done_cb(app: AppHandle) -> Box<dyn FnOnce() + Send> {
         log::info!("background thumbnails done, notifying frontend");
         let _ = app.emit("vault-changed", ());
     })
+}
+
+// ─── Channel migration ──────────────────────────────────────────────────────
+
+/// One-time migration: create .md files for channels that only exist in SQLite.
+/// After this, channels are read from .md files (type: channel) during full_scan.
+fn migrate_channels_to_files(conn: &Connection, vault: &VaultLayout) {
+    use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
+    use crate::storage::{files, index};
+
+    let channels = match index::list_channels(conn) {
+        Ok(ch) => ch,
+        Err(_) => return,
+    };
+
+    for ch in channels {
+        let md_path = vault.block_path(&ch.tag);
+        if md_path.exists() {
+            continue; // Already migrated
+        }
+
+        let block = Block {
+            slug: ch.tag.clone(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Channel,
+                title: Some(ch.title),
+                description: ch.description,
+                url: None,
+                file: None,
+                thumbnail: None,
+                tags: Vec::new(),
+                saved_at: ch.created_at,
+                source: None,
+                width: None,
+                height: None,
+                author: None,
+                position: Some(ch.position),
+                color: ch.color,
+                icon: ch.icon,
+            },
+            body: String::new(),
+        };
+
+        if let Err(e) = files::write_block_file(vault, &block) {
+            log::warn!("failed to migrate channel '{}' to file: {e:#}", ch.tag);
+        }
+    }
 }
 
 // ─── Config persistence ─────────────────────────────────────────────────────
