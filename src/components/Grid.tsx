@@ -27,6 +27,7 @@ interface GridProps {
   vaultPath: string;
   tags: TagCount[];
   currentTag?: string;
+  scrollToTop: number;
   sidebarCollapsed?: boolean;
   focusedBlockId?: number | null;
   onBlockClick: (block: LightBlock) => void;
@@ -41,6 +42,7 @@ export function Grid({
   vaultPath,
   tags,
   currentTag,
+  scrollToTop,
   sidebarCollapsed = false,
   focusedBlockId,
   onBlockClick,
@@ -73,10 +75,12 @@ export function Grid({
     setVisibleCount(INITIAL_BATCH);
   }
 
-  // Scroll reset on channel switch (visual effect, safe in useEffect)
+  // Scroll to top only on explicit signal (same-channel click)
   useEffect(() => {
-    parentRef.current?.scrollTo(0, 0);
-  }, [blocksFingerprint]);
+    if (scrollToTop > 0) {
+      parentRef.current?.scrollTo(0, 0);
+    }
+  }, [scrollToTop]);
 
   // Measure parent width
   useEffect(() => {

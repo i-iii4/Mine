@@ -51,6 +51,7 @@ interface SidebarProps {
   onRenameTag: (oldTag: string, newTag: string) => void;
   onCreateChannel: (tag: string) => void;
   onNavClick?: () => void;
+  onScrollToTop?: () => void;
 }
 
 export function Sidebar({
@@ -67,6 +68,7 @@ export function Sidebar({
   onRenameTag,
   onCreateChannel,
   onNavClick,
+  onScrollToTop,
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
@@ -105,7 +107,7 @@ export function Sidebar({
 
       {/* Navigation */}
       <nav ref={navRef} className="flex-1 overflow-y-auto px-8 pt-16" data-sidebar-scroll>
-        <NavItem to="/" label="Everything" count={totalBlocks} cards={channelPreviews.get("__all__") ?? []} end onClick={onNavClick} />
+        <NavItem to="/" label="Everything" count={totalBlocks} cards={channelPreviews.get("__all__") ?? []} end onClick={onNavClick} onSameClick={onScrollToTop} />
 
         <SortableContext
           items={orderedTags.map((tc) => `tag:${tc.tag}`)}
@@ -126,6 +128,7 @@ export function Sidebar({
               onRenameCancel={() => setEditingTag(null)}
               onDelete={() => onDeleteTag(tc.tag)}
               onClick={onNavClick}
+              onSameClick={onScrollToTop}
             />
           ))}
         </SortableContext>
@@ -163,6 +166,7 @@ const NavItem = memo(function NavItem({
   cards = [],
   end,
   onClick,
+  onSameClick,
 }: {
   to: string;
   label: string;
@@ -170,12 +174,23 @@ const NavItem = memo(function NavItem({
   cards?: PreviewCard[];
   end?: boolean;
   onClick?: () => void;
+  onSameClick?: () => void;
 }) {
+  const loc = useLocation();
+  const isCurrentRoute = end ? loc.pathname === to : loc.pathname.startsWith(to);
+
   return (
     <NavLink
       to={to}
       end={end}
-      onClick={onClick}
+      onClick={(e) => {
+        if (isCurrentRoute && onSameClick) {
+          e.preventDefault();
+          onSameClick();
+        } else {
+          onClick?.();
+        }
+      }}
       className={({ isActive }) =>
         cn(
           "flex items-center gap-2 border-b border-sidebar-border px-3 py-1.5 font-mono text-base",
@@ -211,6 +226,7 @@ const TagNavItem = memo(function TagNavItem({
   onRenameCancel,
   onDelete,
   onClick,
+  onSameClick,
 }: {
   to: string;
   label: string;
@@ -224,6 +240,7 @@ const TagNavItem = memo(function TagNavItem({
   onRenameCancel: () => void;
   onDelete: () => void;
   onClick?: () => void;
+  onSameClick?: () => void;
 }) {
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -269,7 +286,16 @@ const TagNavItem = memo(function TagNavItem({
         <NavLink
           to={to}
           draggable="false"
-          onClick={onClick}
+          onClick={(e) => {
+            const loc = window.location.pathname;
+            const isCurrentRoute = loc === to || loc.startsWith(to + "/");
+            if (isCurrentRoute && onSameClick) {
+              e.preventDefault();
+              onSameClick();
+            } else {
+              onClick?.();
+            }
+          }}
           onDoubleClick={(e) => {
             e.preventDefault();
             onDoubleClick();

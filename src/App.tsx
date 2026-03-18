@@ -184,6 +184,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [focusedBlockId, setFocusedBlockId] = useState<number | null>(null);
+  const [scrollToTopSignal, setScrollToTopSignal] = useState(0);
   const [activeDragBlock, setActiveDragBlock] = useState<LightBlock | null>(null);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -383,6 +384,10 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     if (selectedBlock) setFocusedBlockId(selectedBlock.id);
     setSelectedBlock(null);
   }, [selectedBlock]);
+
+  const handleScrollToTop = useCallback(() => {
+    setScrollToTopSignal((n) => n + 1);
+  }, []);
 
   const handleDetailNavigate = useCallback(
     async (direction: "prev" | "next" | "up" | "down") => {
@@ -630,6 +635,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         onRenameTag={handleRenameTag}
         onCreateChannel={handleCreateChannel}
         onNavClick={handleDetailClose}
+        onScrollToTop={handleScrollToTop}
       />
 
       <SidebarResizeHandle
@@ -656,6 +662,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
                 vaultPath={vaultPath}
                 tags={tags}
                 currentTag={currentTag}
+                scrollToTop={scrollToTopSignal}
                 sidebarCollapsed={sidebarCollapsed}
                 focusedBlockId={focusedBlockId}
                 onBlockClick={handleBlockClick}
@@ -751,6 +758,7 @@ interface RouteContext {
   vaultPath: string;
   tags: TagCount[];
   currentTag?: string;
+  scrollToTop: number;
   sidebarCollapsed: boolean;
   focusedBlockId: number | null;
   onBlockClick: (block: LightBlock) => void;
