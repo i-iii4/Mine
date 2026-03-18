@@ -84,6 +84,9 @@ pub fn create_block(
             width: None,
             height: None,
             author: None,
+            position: None,
+            color: None,
+            icon: None,
         },
         body: String::new(),
     };
@@ -115,10 +118,14 @@ pub fn delete_block(
         })
     });
 
-    // Delete files
-    files::delete_block_files(&vs.vault, &slug, media_ext.as_deref())?;
+    // Remove from index first (UI updates immediately)
+    let removed = index::remove_block(&vs.conn, &slug)?;
 
-    // Remove from index
-    Ok(index::remove_block(&vs.conn, &slug)?)
+    // Then delete files (may be slow for iCloud placeholders)
+    if let Err(e) = files::delete_block_files(&vs.vault, &slug, media_ext.as_deref()) {
+        log::warn!("failed to delete files for {slug}: {e:#}");
+    }
+
+    Ok(removed)
 }
 

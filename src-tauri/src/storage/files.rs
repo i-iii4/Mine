@@ -98,18 +98,22 @@ pub fn delete_block_files(
     slug: &str,
     media_ext: Option<&str>,
 ) -> Result<()> {
-    // Move user content to OS trash (recoverable)
+    // Move user content to OS trash (recoverable).
+    // Fallback to permanent delete if trash fails (e.g. iCloud placeholders).
     let md_path = vault.block_path(slug);
     if md_path.exists() {
-        trash::delete(&md_path)
-            .with_context(|| format!("failed to trash: {}", md_path.display()))?;
+        if trash::delete(&md_path).is_err() {
+            std::fs::remove_file(&md_path)
+                .with_context(|| format!("failed to delete: {}", md_path.display()))?;
+        }
     }
 
     if let Some(ext) = media_ext {
         let media_path = vault.media_path(slug, ext);
         if media_path.exists() {
-            trash::delete(&media_path)
-                .with_context(|| format!("failed to trash: {}", media_path.display()))?;
+            if trash::delete(&media_path).is_err() {
+                let _ = std::fs::remove_file(&media_path);
+            }
         }
     }
 

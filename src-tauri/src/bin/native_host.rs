@@ -346,6 +346,9 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             width: p.width,
             height: p.height,
             author: p.author,
+            position: None,
+            color: None,
+            icon: None,
         },
         body,
     };

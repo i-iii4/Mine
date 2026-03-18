@@ -67,6 +67,7 @@ pub enum BlockType {
     Link,
     Video,
     File,
+    Channel,
 }
 
 impl BlockType {
@@ -80,6 +81,7 @@ impl BlockType {
             "link" => Ok(Self::Link),
             "video" => Ok(Self::Video),
             "file" => Ok(Self::File),
+            "channel" => Ok(Self::Channel),
             other => Err(BlockError::InvalidBlockType {
                 value: other.to_string(),
             }),
@@ -94,6 +96,7 @@ impl BlockType {
             Self::Link => "link",
             Self::Video => "video",
             Self::File => "file",
+            Self::Channel => "channel",
         }
     }
 }
@@ -140,6 +143,10 @@ pub struct Frontmatter {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub author: Option<String>,
+    // Channel-specific fields
+    pub position: Option<u32>,
+    pub color: Option<String>,
+    pub icon: Option<String>,
 }
 
 /// A complete block: frontmatter + body + file identity.
@@ -192,6 +199,11 @@ pub fn parse_frontmatter(yaml: &str) -> Result<Frontmatter, BlockError> {
     let width = get_opt_u64(&value, "width").map(|n| n as u32);
     let height = get_opt_u64(&value, "height").map(|n| n as u32);
 
+    // Channel-specific fields
+    let position = get_opt_u64(&value, "position").map(|n| n as u32);
+    let color = get_opt_string(&value, "color");
+    let icon = get_opt_string(&value, "icon");
+
     // Tags (optional, defaults to empty vec)
     let tags = parse_tags(&value)?;
 
@@ -208,6 +220,9 @@ pub fn parse_frontmatter(yaml: &str) -> Result<Frontmatter, BlockError> {
         width,
         height,
         author,
+        position,
+        color,
+        icon,
     })
 }
 
@@ -295,6 +310,16 @@ pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
     }
     if let Some(ref v) = frontmatter.author {
         lines.push(format!("author: {}", yaml_quote(v)));
+    }
+    // Channel-specific fields
+    if let Some(v) = frontmatter.position {
+        lines.push(format!("position: {}", v));
+    }
+    if let Some(ref v) = frontmatter.color {
+        lines.push(format!("color: {}", yaml_quote(v)));
+    }
+    if let Some(ref v) = frontmatter.icon {
+        lines.push(format!("icon: {}", yaml_quote(v)));
     }
 
     lines.join("\n")

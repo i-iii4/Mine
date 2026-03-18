@@ -178,6 +178,9 @@ fn import_single_block(
             width: None,
             height: None,
             author: None,
+            position: None,
+            color: None,
+            icon: None,
         },
         body: extract_body(arena_block),
     };
