@@ -80,7 +80,7 @@ function CardContent({
   }
 }
 
-function ImageCard({
+const ImageCard = memo(function ImageCard({
   block,
   vaultPath,
 }: {
@@ -129,14 +129,14 @@ function ImageCard({
       )}
     </div>
   );
-}
+});
 
 const LINK_COLORS = [
   "bg-blue-900", "bg-emerald-900", "bg-violet-900", "bg-amber-900",
   "bg-rose-900", "bg-cyan-900", "bg-indigo-900", "bg-teal-900",
 ];
 
-function LinkCard({
+const LinkCard = memo(function LinkCard({
   block,
   vaultPath,
 }: {
@@ -209,7 +209,7 @@ function LinkCard({
       </div>
     </div>
   );
-}
+});
 
 function stripMarkdown(text: string): string {
   return text
@@ -358,7 +358,7 @@ const ArticleCard = memo(function ArticleCard({ block }: { block: LightBlock }) 
   );
 });
 
-function VideoCard({
+const VideoCard = memo(function VideoCard({
   block,
   vaultPath,
 }: {
@@ -392,9 +392,9 @@ function VideoCard({
       )}
     </div>
   );
-}
+});
 
-function FileCard({ block }: { block: LightBlock }) {
+const FileCard = memo(function FileCard({ block }: { block: LightBlock }) {
   const ext = block.media_file
     ?.split(".")
     .pop()
@@ -417,5 +417,5 @@ function FileCard({ block }: { block: LightBlock }) {
       </div>
     </div>
   );
-}
+});
 

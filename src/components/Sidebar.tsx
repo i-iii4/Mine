@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, memo } from "react";
 import { NavLink, useLocation } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -156,7 +156,7 @@ export function Sidebar({
 
 // ─── Components ──────────────────────────────────────────────────────────────
 
-function NavItem({
+const NavItem = memo(function NavItem({
   to,
   label,
   count,
@@ -196,9 +196,9 @@ function NavItem({
       </div>
     </NavLink>
   );
-}
+});
 
-function TagNavItem({
+const TagNavItem = memo(function TagNavItem({
   to,
   label,
   count,
@@ -352,7 +352,7 @@ function TagNavItem({
       </AlertDialog>
     </>
   );
-}
+});
 
 function InlineInput({
   placeholder,
