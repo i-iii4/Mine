@@ -6,16 +6,16 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import type { IndexedBlock } from "@/types";
+import type { IndexedBlock, LightBlock } from "@/types";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { thumbnailUrl, mediaUrl, domainFromUrl, isSafeUrl } from "@/lib/assets";
-import { addTag, removeTag } from "@/lib/commands";
+import { addTag, removeTag, getBlock } from "@/lib/commands";
 
 // Layout constants — shared between scroll layer and metadata layer
 const LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-16";
 
 interface DetailProps {
-  block: IndexedBlock;
+  block: LightBlock | IndexedBlock;
   vaultPath: string;
   onClose: () => void;
   onNavigate: (direction: "prev" | "next" | "up" | "down") => void;
@@ -269,9 +269,23 @@ function BlockContent({
   block,
   vaultPath,
 }: {
-  block: IndexedBlock;
+  block: LightBlock | IndexedBlock;
   vaultPath: string;
 }) {
+  // Lazy-load full body if truncated (LightBlock has SUBSTR(body, 1, 500))
+  const [fullBody, setFullBody] = useState<string | null>(null);
+  useEffect(() => {
+    setFullBody(null);
+    if (block.body.length >= 498) {
+      getBlock(block.slug).then((full) => {
+        if (full) setFullBody(full.body);
+      });
+    }
+  }, [block.slug, block.body.length]);
+
+  const body = fullBody ?? block.body;
+  const description = "description" in block ? (block as IndexedBlock).description : null;
+
   switch (block.block_type) {
     case "image": {
       const src = block.media_file
@@ -307,9 +321,9 @@ function BlockContent({
             <h2 className="text-lg font-semibold text-foreground">
               {block.title ?? block.slug}
             </h2>
-            {block.description && (
+            {description && (
               <p className="mt-2 text-base text-muted-foreground">
-                {block.description}
+                {description}
               </p>
             )}
           </div>
@@ -330,7 +344,7 @@ function BlockContent({
               {block.author}
             </p>
           )}
-          <ArticleBody body={block.body} vaultPath={vaultPath} />
+          <ArticleBody body={body} vaultPath={vaultPath} />
         </div>
       );
     }
@@ -359,9 +373,9 @@ function BlockContent({
               </div>
             )}
           </div>
-          {block.body && (
+          {body && (
             <div className="p-6">
-              <ArticleBody body={block.body} vaultPath={vaultPath} />
+              <ArticleBody body={body} vaultPath={vaultPath} />
             </div>
           )}
         </div>

@@ -48,7 +48,6 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   getVaultPath,
   selectVault,
-  getBlock,
   listBlocks,
   listTags,
   listChannels,
@@ -183,7 +182,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const [designSystemOpen, setDesignSystemOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
-  const [selectedBlock, setSelectedBlock] = useState<IndexedBlock | null>(null);
+  const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [focusedBlockId, setFocusedBlockId] = useState<number | null>(null);
   const [activeDragBlock, setActiveDragBlock] = useState<LightBlock | null>(null);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
@@ -228,9 +227,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
         const block = ab.find((b) => b.id === cur);
         if (block) {
           setFocusedBlockId(null);
-          getBlock(block.slug).then((full) => {
-            if (full) setSelectedBlock(full);
-          });
+          setSelectedBlock(block);
         }
         return;
       }
@@ -377,13 +374,9 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   // ── Block navigation ──────────────────────────────────────────────────────
 
-  const handleBlockClick = useCallback(async (block: LightBlock) => {
+  const handleBlockClick = useCallback((block: LightBlock) => {
     setFocusedBlockId(null);
-    // Load full block data (with complete body/description) for Detail view
-    const full = await getBlock(block.slug);
-    if (full) {
-      setSelectedBlock(full);
-    }
+    setSelectedBlock(block);
   }, []);
 
   const handleDetailClose = useCallback(() => {
@@ -406,8 +399,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       }
       if (newIdx >= 0 && newIdx < activeBlocks.length) {
         const target = activeBlocks[newIdx]!;
-        const full = await getBlock(target.slug);
-        if (full) setSelectedBlock(full);
+        setSelectedBlock(target);
       }
     },
     [selectedBlock, activeBlocks],
