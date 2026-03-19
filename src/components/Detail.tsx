@@ -66,6 +66,7 @@ export function Detail({
   const panelRef = useRef<HTMLDivElement>(null);
 
   // ESC to close, left/right arrows to navigate cards
+  // Up/Down arrows left for native scroll of Detail content
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
@@ -75,11 +76,6 @@ export function Detail({
         e.preventDefault();
         e.stopPropagation();
         onNavigate(e.key === "ArrowLeft" ? "prev" : "next");
-      }
-      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-        e.preventDefault();
-        e.stopPropagation();
-        onNavigate(e.key === "ArrowUp" ? "up" : "down");
       }
     };
     document.addEventListener("keydown", handler, true);
