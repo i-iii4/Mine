@@ -52,6 +52,32 @@ c7a9dc9, 78426c8, 066f474
 
 ---
 
+## 18.03.2026 — Detail: прокрутка содержимого стрелками, производительность, удаление
+
+### Goal
+Стрелки вверх/вниз в Detail прокручивают содержимое (не переключают карточки). Удаление блоков работает с iCloud. Мгновенное открытие карточек.
+
+### Actually completed
+1. **`Detail.tsx`** — стрелки вверх/вниз: убран перехват ArrowUp/ArrowDown (оставлены только Left/Right для навигации). Фокус перемещён на скроллируемый контейнер (`tabIndex` + `ref` на `overflow-y-auto` div).
+2. **`Detail.tsx`** — progressive rendering: принимает `LightBlock | IndexedBlock`, lazy-load полного body через `getBlock()` в `useEffect` при `body.length >= 498`.
+3. **`App.tsx`** — `handleBlockClick` без IPC: `setSelectedBlock(block)` мгновенно (убран `await getBlock()`). Навигация стрелками и Enter тоже без IPC.
+4. **`Grid.tsx`** — скролл к верху только при повторном клике на текущий канал (`scrollToTop` signal).
+5. **`files.rs`** — fallback на `std::fs::remove_file` если `trash::delete` не работает (iCloud placeholders).
+6. **`blocks.rs`** — удаление из индекса перед удалением файлов (UI обновляется мгновенно).
+7. **`Card.tsx`** — `useMemo` для `extractTweetData`/`stripMarkdown`, `memo()` на все 6 карточных компонентов.
+8. **`Sidebar.tsx`** — `memo()` на `NavItem` и `TagNavItem`.
+9. **`handler.rs`** — thumbnail генерация в фоновых потоках.
+
+### Push
+9f47b69, 6f44ae5, 028021b, 3468d74, 5cc0607, e260164
+
+### Decisions and lessons learned
+- `getBlock()` IPC блокировал открытие карточки (Mutex-контенция с loadData). Убрав IPC из click path — мгновенное открытие.
+- Фокус на внешнем `div` Detail не позволяет нативную прокрутку стрелками. Фокус должен быть на скроллируемом контейнере.
+- `trash::delete` не работает с iCloud placeholders — нужен fallback.
+
+---
+
 ## 15.03.2026 — Медиа-галерея в карточках, Instagram Stories, Twitter video fix
 
 ### Goal
