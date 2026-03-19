@@ -28,6 +28,30 @@ if any
 
 ---
 
+## 18.03.2026 — Каналы как маркдаун-файлы
+
+### Goal
+Каналы хранятся как .md файлы с `type: channel` в frontmatter. SQLite — кэш. При rebuild_index каналы не теряются. Obsidian видит каналы как заметки в графе.
+
+### Actually completed
+1. `domain/block.rs` — `BlockType::Channel`, frontmatter: `position`, `color`, `icon`
+2. `watcher/handler.rs` — маршрутизация `type: channel` → `upsert_channel_from_block()`
+3. `storage/index.rs` — `upsert_channel_from_block()`
+4. `commands/vault.rs` — `migrate_channels_to_files()` (однократная миграция SQLite → .md)
+5. `commands/channels.rs` — create/delete/reorder/rename пишут .md файлы
+6. `bin/native_host.rs` — `create_channel` пишет .md
+7. `types/index.ts` — `BlockType += "channel"`, `App.tsx` фильтрует channel-блоки
+
+### Push
+c7a9dc9, 78426c8, 066f474
+
+### Decisions and lessons learned
+- Каналы = .md файлы с `type: channel`. SQLite `channels` table — кэш
+- Миграция однократная: SQLite каналы без .md файлов → создаём файлы
+- `rebuild_index` восстанавливает каналы из .md (не теряет метаданные)
+
+---
+
 ## 15.03.2026 — Медиа-галерея в карточках, Instagram Stories, Twitter video fix
 
 ### Goal
