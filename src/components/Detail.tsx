@@ -96,8 +96,6 @@ export function Detail({
 
   return (
     <div
-      ref={panelRef}
-      tabIndex={-1}
       className="absolute inset-0 z-10 flex bg-background outline-none"
       role="dialog"
       aria-modal="false"
@@ -113,7 +111,7 @@ export function Detail({
       </Button>
 
       {/* Layer 1: Scrollable content + invisible spacer */}
-      <div className="h-full w-full overflow-y-auto">
+      <div ref={panelRef} tabIndex={-1} className="h-full w-full overflow-y-auto outline-none">
         <div className={LAYOUT_CLASSES}>
           <div className="min-w-0 flex-1">
             <BlockContent block={block} vaultPath={vaultPath} />
