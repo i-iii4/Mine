@@ -413,6 +413,32 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         },
     };
 
+    // Write channel .md file (source of truth)
+    let block = local_arena_lib::domain::block::Block {
+        slug: channel.tag.clone(),
+        frontmatter: local_arena_lib::domain::block::Frontmatter {
+            block_type: local_arena_lib::domain::block::BlockType::Channel,
+            title: Some(channel.title.clone()),
+            description: None,
+            url: None,
+            file: None,
+            thumbnail: None,
+            tags: Vec::new(),
+            saved_at: channel.created_at.clone(),
+            source: None,
+            width: None,
+            height: None,
+            author: None,
+            position: Some(channel.position),
+            color: None,
+            icon: None,
+        },
+        body: String::new(),
+    };
+    if let Err(e) = files::write_block_file(vault, &block) {
+        return send_error(&format!("failed to write channel file: {e}"));
+    }
+
     if let Err(e) = index::upsert_channel(&conn, &channel) {
         return send_error(&format!("failed to create channel: {e}"));
     }

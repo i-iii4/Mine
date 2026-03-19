@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::state::{AppState, CommandError};
-use crate::domain::block::{parse_block, serialize_block, DateTime};
+use crate::domain::block::{parse_block, serialize_block, Block, BlockType, DateTime, Frontmatter};
 use crate::domain::channel::Channel;
 use crate::domain::tag::normalize_tag;
 use crate::storage::{files, index};
@@ -87,6 +87,11 @@ pub fn create_channel(
     let channel = Channel::new(&tag, title.as_deref(), dt)
         .map_err(|e| CommandError::Internal(e.to_string()))?;
 
+    // Write channel .md file (source of truth)
+    let block = channel_to_block(&channel);
+    files::write_block_file(&vs.vault, &block)?;
+
+    // Index immediately (don't wait for watcher)
     index::upsert_channel(&vs.conn, &channel)?;
 
     // Get block count for this tag
@@ -130,6 +135,9 @@ pub fn reorder_channels(
                 .map_err(|e| CommandError::Internal(e.to_string()))?;
             let channel = Channel::new(&item.tag, None, dt)
                 .map_err(|e| CommandError::Internal(e.to_string()))?;
+            // Write .md file for new channel
+            let block = channel_to_block(&channel);
+            files::write_block_file(&vs.vault, &block)?;
             index::upsert_channel(&vs.conn, &channel)?;
         }
     }
@@ -140,6 +148,23 @@ pub fn reorder_channels(
         .collect();
 
     index::update_channel_positions(&vs.conn, &positions)?;
+
+    // Update position in .md files
+    for (tag, pos) in &positions {
+        let md_path = vs.vault.block_path(tag);
+        if md_path.exists() {
+            if let Ok((slug, content)) = files::read_block_file(&md_path) {
+                if let Ok(mut block) = parse_block(&slug, &content) {
+                    if block.frontmatter.block_type == BlockType::Channel {
+                        block.frontmatter.position = Some(*pos);
+                        let serialized = serialize_block(&block);
+                        let _ = std::fs::write(&md_path, serialized);
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -204,15 +229,31 @@ pub fn rename_channel(
         index::upsert_block(&vs.conn, &block)?;
     }
 
-    // Create new channel with same metadata, remove old one
-    let now = crate::commands::state::now_iso8601();
-    let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
-    let mut new_channel = Channel::new(&normalized_new, None, dt)
-        .map_err(|e| CommandError::Internal(e.to_string()))?;
-    new_channel.description = existing.description.clone();
-    new_channel.color = existing.color.clone();
-    new_channel.icon = existing.icon.clone();
-    new_channel.position = existing.position;
+    // Create new channel .md file with same metadata, remove old one
+    let mut new_channel = Channel {
+        tag: normalized_new.clone(),
+        title: normalized_new.clone(),
+        description: existing.description.clone(),
+        color: existing.color.clone(),
+        icon: existing.icon.clone(),
+        position: existing.position,
+        created_at: existing.created_at.clone(),
+    };
+    new_channel.title = {
+        let mut chars = normalized_new.chars();
+        match chars.next() {
+            Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+            None => normalized_new.clone(),
+        }
+    };
+
+    // Write new channel .md, delete old
+    let new_block = channel_to_block(&new_channel);
+    files::write_block_file(&vs.vault, &new_block)?;
+    let old_path = vs.vault.block_path(&normalized_old);
+    if old_path.exists() {
+        let _ = std::fs::remove_file(&old_path);
+    }
 
     index::upsert_channel(&vs.conn, &new_channel)?;
     index::remove_channel(&vs.conn, &normalized_old)?;
@@ -266,7 +307,8 @@ pub fn list_channel_previews(
     Ok(result)
 }
 
-/// Delete a channel (blocks are not affected, only the channel metadata).
+/// Delete a channel: remove .md file and index entry.
+/// Blocks are not affected (tags stay in block frontmatter).
 #[tauri::command]
 pub fn delete_channel(
     state: State<'_, AppState>,
@@ -275,5 +317,41 @@ pub fn delete_channel(
     let vault_state = state.vault_state.lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+
+    // Delete .md file
+    let md_path = vs.vault.block_path(&tag);
+    if md_path.exists() {
+        if trash::delete(&md_path).is_err() {
+            let _ = std::fs::remove_file(&md_path);
+        }
+    }
+
     Ok(index::remove_channel(&vs.conn, &tag)?)
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/// Convert a Channel to a Block with type: channel for writing to .md file.
+fn channel_to_block(channel: &Channel) -> Block {
+    Block {
+        slug: channel.tag.clone(),
+        frontmatter: Frontmatter {
+            block_type: BlockType::Channel,
+            title: Some(channel.title.clone()),
+            description: channel.description.clone(),
+            url: None,
+            file: None,
+            thumbnail: None,
+            tags: Vec::new(),
+            saved_at: channel.created_at.clone(),
+            source: None,
+            width: None,
+            height: None,
+            author: None,
+            position: Some(channel.position),
+            color: channel.color.clone(),
+            icon: channel.icon.clone(),
+        },
+        body: String::new(),
+    }
 }
