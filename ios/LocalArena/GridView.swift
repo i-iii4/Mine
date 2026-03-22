@@ -5,21 +5,31 @@ struct GridView: View {
     let vaultPath: String
 
     var body: some View {
-        ScrollView {
-            HStack(alignment: .top, spacing: Arena.gridGap) {
-                // Masonry: round-robin into 2 columns (same as desktop)
-                ForEach(0..<2, id: \.self) { col in
-                    LazyVStack(spacing: Arena.gridGap) {
-                        ForEach(columnBlocks(col), id: \.slug) { block in
-                            BlockCard(block: block, vaultPath: vaultPath)
+        NavigationStack {
+            ScrollView {
+                HStack(alignment: .top, spacing: Arena.gridGap) {
+                    ForEach(0..<2, id: \.self) { col in
+                        LazyVStack(spacing: Arena.gridGap) {
+                            ForEach(columnBlocks(col), id: \.slug) { block in
+                                NavigationLink(value: block.slug) {
+                                    BlockCard(block: block, vaultPath: vaultPath)
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
                     }
                 }
+                .padding(.horizontal, Arena.gridGap)
+                .padding(.vertical, Arena.gridGap)
             }
-            .padding(.horizontal, Arena.gridGap)
-            .padding(.top, Arena.gridGap)
+            .background(Arena.bg.ignoresSafeArea())
+            .navigationBarHidden(true)
+            .navigationDestination(for: String.self) { slug in
+                if let block = blocks.first(where: { $0.slug == slug }) {
+                    DetailView(block: block, vaultPath: vaultPath)
+                }
+            }
         }
-        .background(Arena.bg)
     }
 
     private func columnBlocks(_ col: Int) -> [FfiLightBlock] {

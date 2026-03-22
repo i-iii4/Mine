@@ -43,13 +43,16 @@ Rust-ядро вызывается из Swift на iOS. Приложение з�
 7. 134 карточки отображаются на симуляторе
 
 ### Push
-PENDING
+fdfdaac, 4a6abb6, 3d398ad, efbee7b, e30b2b3, 1df7459, PENDING
 
 ### Decisions and lessons learned
 - `trash` crate → `cfg(not(target_os = "ios"))`, `notify` → optional
 - `Connection` в UniFFI → `Mutex<Connection>` внутри Object
 - xcframework modulemap → переименовать в `module.modulemap`
 - Тестовые данные в симулятор через `xcrun simctl`
+- SwiftUI `.scaledToFill()` без `.clipped()` → overflow. Паттерн: `Color.clear.aspectRatio(1).overlay(image.scaledToFill()).clipped()`
+- Detail: читать полный body из .md файла напрямую (не через Rust FFI) — проще и быстрее
+- Шрифт 10pt адаптирован из 12px десктопа для ширины колонки ~190px
 
 ---
 

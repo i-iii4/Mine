@@ -20,6 +20,7 @@
 		17E3D21D3AB16B18350B567D /* someone-made-a-game-in-which-you-have-to-program-a-drone-using-a-simple-python-l.md in Resources */ = {isa = PBXBuildFile; fileRef = 8FBEB39EAC8D29D3C336CE3E /* someone-made-a-game-in-which-you-have-to-program-a-drone-using-a-simple-python-l.md */; };
 		1E2002CDA66F3E0D35C31143 /* игры.md in Resources */ = {isa = PBXBuildFile; fileRef = 3A0A8AB02AA202C1F6283AC0 /* игры.md */; };
 		2062062C4C9A64831770352A /* crdt-explained.md in Resources */ = {isa = PBXBuildFile; fileRef = 0D03EDC5F35E8B11E23E32F6 /* crdt-explained.md */; };
+		216384DCA71B58B2DB53BE3B /* DetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D53373B311C1D7F9E08701 /* DetailView.swift */; };
 		230A35F5204DDF533E46C332 /* tsepi-markova-matematika-predskazaniy-veritasium-3.md in Resources */ = {isa = PBXBuildFile; fileRef = 55B141683B1A613929D4D61B /* tsepi-markova-matematika-predskazaniy-veritasium-3.md */; };
 		24017007D53CCE0D495BFFAA /* ben-v-x-photoshops-new-ai-rotate-tool-works-perfect-https-t-co-oeu999ylcy-x.md in Resources */ = {isa = PBXBuildFile; fileRef = 890825132562DDBDEAA0E57C /* ben-v-x-photoshops-new-ai-rotate-tool-works-perfect-https-t-co-oeu999ylcy-x.md */; };
 		24559821C2C5A3ACC471BA8A /* brutalist-web-design.md in Resources */ = {isa = PBXBuildFile; fileRef = C25867AEE569847D848AEBA7 /* brutalist-web-design.md */; };
@@ -76,6 +77,7 @@
 		7EEFEEB02A9A21A695EF6175 /* how-to-use-roam-research-a-tool-for-metacognition.md in Resources */ = {isa = PBXBuildFile; fileRef = AD961C5E0352A7FD1DC5C480 /* how-to-use-roam-research-a-tool-for-metacognition.md */; };
 		7FFC02B183610F6EFF0D9D5F /* obsidian-md.md in Resources */ = {isa = PBXBuildFile; fileRef = 1BCB667FAB72016A26E9CCA8 /* obsidian-md.md */; };
 		8342C17F913C693DA686DFFE /* welcome-to-lesswrong-lesswrong-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 2ADF392CD8D52416BCEB85C5 /* welcome-to-lesswrong-lesswrong-2.md */; };
+		86E60B5793E6D0B361839369 /* CardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E1F3464522AB4F8E184CC7E /* CardViews.swift */; };
 		86F7559FBB4589B084A0E188 /* untitled-7.md in Resources */ = {isa = PBXBuildFile; fileRef = 16C90DC397D1DD08C9C55722 /* untitled-7.md */; };
 		8BE10E1AB68F80A513A5CB6F /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the.md in Resources */ = {isa = PBXBuildFile; fileRef = F7F6B377A5EC476E3E996794 /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the.md */; };
 		8F09DA3297039D0C1CD22846 /* GridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87C09D98DC3051B93B7D2CB7 /* GridView.swift */; };
@@ -103,6 +105,7 @@
 		ABD6EB7F6BCE65C9D2B5F3CB /* untitled-9.md in Resources */ = {isa = PBXBuildFile; fileRef = 24A9181640F6E70B7A61C466 /* untitled-9.md */; };
 		AFE0CA7498096388997ED548 /* design-talk-2026.md in Resources */ = {isa = PBXBuildFile; fileRef = 31A8D0D4E3F1F573C18DC0AD /* design-talk-2026.md */; };
 		AFFFAE9D4D89C9902C2F624D /* da.md in Resources */ = {isa = PBXBuildFile; fileRef = 2AAE1E3F43C95AE91FE42078 /* da.md */; };
+		B064F462ACF8D4B94907F24A /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB4EA738CC12E41DB1E5425C /* Theme.swift */; };
 		B3B519FB0FA6C93B48F91CF1 /* 2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases.md in Resources */ = {isa = PBXBuildFile; fileRef = 6CC05998E6B1FB897B48B146 /* 2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases.md */; };
 		B4B0BDE7BA633ABBA4F0E665 /* simz-v-x-https-t-co-9ipunhqp2d-x.md in Resources */ = {isa = PBXBuildFile; fileRef = 37AFDA88FD629994FB0F3E7A /* simz-v-x-https-t-co-9ipunhqp2d-x.md */; };
 		B4EA378EC377DD1B70868F75 /* linear-app.md in Resources */ = {isa = PBXBuildFile; fileRef = EAB1829C6ECBA75A45565998 /* linear-app.md */; };
@@ -209,6 +212,7 @@
 		55B141683B1A613929D4D61B /* tsepi-markova-matematika-predskazaniy-veritasium-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "tsepi-markova-matematika-predskazaniy-veritasium-3.md"; sourceTree = "<group>"; };
 		5741FCE3F10559ACE09FA82F /* japan.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = japan.md; sourceTree = "<group>"; };
 		589E56C508570F5D5C8B724A /* LocalArena.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LocalArena.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5E1F3464522AB4F8E184CC7E /* CardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardViews.swift; sourceTree = "<group>"; };
 		5F4D5F556919A7DE96440E4A /* cleanshot-2026-03-04-at-12-03-40-2x-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-03-04-at-12-03-40-2x-2.md"; sourceTree = "<group>"; };
 		61450729FC92E4C2457AB807 /* dashboard.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = dashboard.md; sourceTree = "<group>"; };
 		61D6B6BD959A6444C0894AB1 /* cleanshot-2026-02-28-at-09-15-23-2x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-02-28-at-09-15-23-2x.md"; sourceTree = "<group>"; };
@@ -246,6 +250,7 @@
 		912A20B7E0BBFFC5D5A864C1 /* this-game-has-such-incredible-rocks-and-cliffs-i-love-how-subtly-different-the-d.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "this-game-has-such-incredible-rocks-and-cliffs-i-love-how-subtly-different-the-d.md"; sourceTree = "<group>"; };
 		9D0F2C3425872162C1967D62 /* mymind.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = mymind.md; sourceTree = "<group>"; };
 		9D30E9672A865DD3A81A9C7A /* how-to-use-roam-research-a-tool-for-metacognition-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "how-to-use-roam-research-a-tool-for-metacognition-2.md"; sourceTree = "<group>"; };
+		A1D53373B311C1D7F9E08701 /* DetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailView.swift; sourceTree = "<group>"; };
 		A3EF41717FA7367005D5A7A1 /* mymind-app.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "mymind-app.md"; sourceTree = "<group>"; };
 		AB3926736152692420BF02A3 /* cleanshot-2026-03-05-at-14-29-59-2x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-03-05-at-14-29-59-2x.md"; sourceTree = "<group>"; };
 		AC7CBF84D75D73DAFC2EC706 /* 2-jake-wallis-simons-v-x-my-husband-deals-with-the-voting-britain-we-are-so.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "2-jake-wallis-simons-v-x-my-husband-deals-with-the-voting-britain-we-are-so.md"; sourceTree = "<group>"; };
@@ -257,6 +262,7 @@
 		B507D8F2CFD332BF4B204A47 /* v-x-skeb-https-t-co-entvnu6w9q-x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "v-x-skeb-https-t-co-entvnu6w9q-x.md"; sourceTree = "<group>"; };
 		B6AB7EB72F31683F25A8309C /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-2.md"; sourceTree = "<group>"; };
 		B86D6E82D51EA194D2E5AD63 /* thread-by-rtsdimon.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-rtsdimon.md"; sourceTree = "<group>"; };
+		BB4EA738CC12E41DB1E5425C /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		BCBF265ED20DAD8B5BB4B2A5 /* fintech.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = fintech.md; sourceTree = "<group>"; };
 		BE94EA0F84F23442E62F33E0 /* thread-by-sapinker.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-sapinker.md"; sourceTree = "<group>"; };
 		C187C1C54EC4534FFFF0D5EB /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-2.md"; sourceTree = "<group>"; };
@@ -458,10 +464,13 @@
 		4BE8BE0DAE29BD54C4E65821 /* LocalArena */ = {
 			isa = PBXGroup;
 			children = (
+				5E1F3464522AB4F8E184CC7E /* CardViews.swift */,
 				89F1773A497F5FECB4DC6074 /* ContentView.swift */,
+				A1D53373B311C1D7F9E08701 /* DetailView.swift */,
 				87C09D98DC3051B93B7D2CB7 /* GridView.swift */,
 				3FE421104B50617640F0C309 /* Info.plist */,
 				8962E71A1089E170EBAF7F91 /* LocalArenaApp.swift */,
+				BB4EA738CC12E41DB1E5425C /* Theme.swift */,
 				AF3B65612D52E384A077C57C /* VaultViewModel.swift */,
 				1EDB7086DF4AF4E72376FB58 /* TestData */,
 			);
@@ -698,9 +707,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				86E60B5793E6D0B361839369 /* CardViews.swift in Sources */,
 				51ADFC5294107AA3D03A351C /* ContentView.swift in Sources */,
+				216384DCA71B58B2DB53BE3B /* DetailView.swift in Sources */,
 				8F09DA3297039D0C1CD22846 /* GridView.swift in Sources */,
 				A249A93BC47BC4A18F7D9C7E /* LocalArenaApp.swift in Sources */,
+				B064F462ACF8D4B94907F24A /* Theme.swift in Sources */,
 				44639A7E51D5D8922A04D287 /* VaultViewModel.swift in Sources */,
 				2730690230D2CA35AEAADB3E /* local_arena_ffi.swift in Sources */,
 			);
