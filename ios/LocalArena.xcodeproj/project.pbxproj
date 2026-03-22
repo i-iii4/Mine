@@ -7,22 +7,291 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		010FFF993CDCA669E8D2550E /* ai-2027-3.md in Resources */ = {isa = PBXBuildFile; fileRef = 6B1049C65409EF3CF9C778B9 /* ai-2027-3.md */; };
+		02ECACD78BAFEFC687A41026 /* tsepi-markova-matematika-predskazaniy-veritasium-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 8AE6039990641A183A030067 /* tsepi-markova-matematika-predskazaniy-veritasium-2.md */; };
+		061B3553D15EE3AE37FCDC73 /* ai-2027-5.md in Resources */ = {isa = PBXBuildFile; fileRef = 08B0D7967336DEE31BCE76EB /* ai-2027-5.md */; };
+		067C7C0986A5821BF7C9500E /* thread-by-evilrabbit.md in Resources */ = {isa = PBXBuildFile; fileRef = CEEFB6F407657FDBD6EDD12C /* thread-by-evilrabbit.md */; };
+		0AD183DFBB9FD11466A197BC /* srcl-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 32A31A804CF69A23C7EB27ED /* srcl-2.md */; };
+		0C1CA36627719AFF86546AD8 /* untitled-8.md in Resources */ = {isa = PBXBuildFile; fileRef = D897F0221250B3F908C109E6 /* untitled-8.md */; };
+		109E4F50FEC41E608976356A /* untitled-5.md in Resources */ = {isa = PBXBuildFile; fileRef = 3C93F378015B8B1F557B2384 /* untitled-5.md */; };
+		119DD403F6A9B55108246E4A /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 742C8ADE20DA6D52B7D08D08 /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta-2.md */; };
+		12408DA669ECD6E9A088D9E8 /* 2026-essential-collection-3-18-wed-20-00-in-stock-dayoff-bag-black.md in Resources */ = {isa = PBXBuildFile; fileRef = D38ABF11DD724DEEE3C1ADA3 /* 2026-essential-collection-3-18-wed-20-00-in-stock-dayoff-bag-black.md */; };
+		125697CBF591A987526B4E83 /* тест-3.md in Resources */ = {isa = PBXBuildFile; fileRef = E4C104B994A8DD59515F1BE2 /* тест-3.md */; };
+		17E3D21D3AB16B18350B567D /* someone-made-a-game-in-which-you-have-to-program-a-drone-using-a-simple-python-l.md in Resources */ = {isa = PBXBuildFile; fileRef = 8FBEB39EAC8D29D3C336CE3E /* someone-made-a-game-in-which-you-have-to-program-a-drone-using-a-simple-python-l.md */; };
+		1E2002CDA66F3E0D35C31143 /* игры.md in Resources */ = {isa = PBXBuildFile; fileRef = 3A0A8AB02AA202C1F6283AC0 /* игры.md */; };
+		2062062C4C9A64831770352A /* crdt-explained.md in Resources */ = {isa = PBXBuildFile; fileRef = 0D03EDC5F35E8B11E23E32F6 /* crdt-explained.md */; };
+		230A35F5204DDF533E46C332 /* tsepi-markova-matematika-predskazaniy-veritasium-3.md in Resources */ = {isa = PBXBuildFile; fileRef = 55B141683B1A613929D4D61B /* tsepi-markova-matematika-predskazaniy-veritasium-3.md */; };
+		24017007D53CCE0D495BFFAA /* ben-v-x-photoshops-new-ai-rotate-tool-works-perfect-https-t-co-oeu999ylcy-x.md in Resources */ = {isa = PBXBuildFile; fileRef = 890825132562DDBDEAA0E57C /* ben-v-x-photoshops-new-ai-rotate-tool-works-perfect-https-t-co-oeu999ylcy-x.md */; };
+		24559821C2C5A3ACC471BA8A /* brutalist-web-design.md in Resources */ = {isa = PBXBuildFile; fileRef = C25867AEE569847D848AEBA7 /* brutalist-web-design.md */; };
+		24F711D3963FA4D694480A82 /* nastoyaschego-ne-suschestvuet-ali-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 41528211063EAE0045C8857E /* nastoyaschego-ne-suschestvuet-ali-2.md */; };
 		2730690230D2CA35AEAADB3E /* local_arena_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A171B864BDD3837A62EC272 /* local_arena_ffi.swift */; };
+		2758572FD6D1A3BC349B9C2D /* 1.md in Resources */ = {isa = PBXBuildFile; fileRef = 12A2B04E3C404549DB52859B /* 1.md */; };
+		28607D7FE7DC35E700607D70 /* thread-by-obsdmd.md in Resources */ = {isa = PBXBuildFile; fileRef = 53E4CEA0A93A6749BB66FA45 /* thread-by-obsdmd.md */; };
+		287E4EE4408E62C40F220854 /* тест-4.md in Resources */ = {isa = PBXBuildFile; fileRef = D44612AE3908785EEAE1A1C8 /* тест-4.md */; };
+		296940D4B3B130CB438701E1 /* cleanshot-2026-03-05-at-14-29-59-2x.md in Resources */ = {isa = PBXBuildFile; fileRef = AB3926736152692420BF02A3 /* cleanshot-2026-03-05-at-14-29-59-2x.md */; };
+		29902C636BED5D5949C23577 /* youtube.md in Resources */ = {isa = PBXBuildFile; fileRef = 2077C531AEC4EF6D45D5845C /* youtube.md */; };
+		2C8090B290E89A12E2CA5537 /* thread-by-vurdv8a8gbgrctd-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 8F6387B68BF53AD4EFB7556A /* thread-by-vurdv8a8gbgrctd-2.md */; };
+		2E7A37C5EEFCE968F12182F9 /* thread-by-obsdmd-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 25825408B00E54C0BCE31235 /* thread-by-obsdmd-2.md */; };
+		31B73414DB3FADB8795AAFB1 /* interview-with-the-co-founder-of-inflow-ness-labs.md in Resources */ = {isa = PBXBuildFile; fileRef = B2553A51D4B9408A060C1FF6 /* interview-with-the-co-founder-of-inflow-ness-labs.md */; };
+		3237E63971D6F6F3A13F3B2A /* graphic-design.md in Resources */ = {isa = PBXBuildFile; fileRef = 346E9B013EC9FF94EB72754E /* graphic-design.md */; };
+		343854AF56ECB9999E6AAC07 /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong.md in Resources */ = {isa = PBXBuildFile; fileRef = 294048A87876BA4E42C6DB46 /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong.md */; };
+		3A5D1DA68759B485F51F1E6E /* cleanshot-2026-03-04-at-12-03-40-2x.md in Resources */ = {isa = PBXBuildFile; fileRef = 6269D218D39260E806ED8AEA /* cleanshot-2026-03-04-at-12-03-40-2x.md */; };
+		3D122C0518BE17316FD95B57 /* cleanshot-2026-03-14-at-08-53-48-2x.md in Resources */ = {isa = PBXBuildFile; fileRef = 35377F2ADFE2D5003005A5E9 /* cleanshot-2026-03-14-at-08-53-48-2x.md */; };
+		411190AF048C135FF54B715F /* thread-by-kky0699-2.md in Resources */ = {isa = PBXBuildFile; fileRef = CE37969EA01C9BDE0532579E /* thread-by-kky0699-2.md */; };
 		44639A7E51D5D8922A04D287 /* VaultViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF3B65612D52E384A077C57C /* VaultViewModel.swift */; };
+		454CC9A082E6E45699F566DF /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta.md in Resources */ = {isa = PBXBuildFile; fileRef = 3B68338C910E1ABFA8071D32 /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta.md */; };
+		463A717A4F13FB0B574144E2 /* политика.md in Resources */ = {isa = PBXBuildFile; fileRef = 106B0787E3428CB7360F98EE /* политика.md */; };
+		4A13767E6D1DE7C543B5EB1C /* 2-mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-3.md in Resources */ = {isa = PBXBuildFile; fileRef = D81195098927119FCF9F6306 /* 2-mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-3.md */; };
+		4BB013BE4374A3D05EC097BA /* thread-by-aisafetymemes.md in Resources */ = {isa = PBXBuildFile; fileRef = 086DAE4AFF7808228FEC24B7 /* thread-by-aisafetymemes.md */; };
+		4D296968AF56D3C553D892A0 /* cleanshot-2026-02-28-at-23-38-55-2x.md in Resources */ = {isa = PBXBuildFile; fileRef = D6748ED08BA4F8B51FFD14FE /* cleanshot-2026-02-28-at-23-38-55-2x.md */; };
+		4E209E6DB5D101880C01F450 /* dashboard.md in Resources */ = {isa = PBXBuildFile; fileRef = 61450729FC92E4C2457AB807 /* dashboard.md */; };
 		51ADFC5294107AA3D03A351C /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89F1773A497F5FECB4DC6074 /* ContentView.swift */; };
+		531C67DED0BEEC626268D32C /* nastoyaschego-ne-suschestvuet-ali.md in Resources */ = {isa = PBXBuildFile; fileRef = 54136984253C5A522DECA468 /* nastoyaschego-ne-suschestvuet-ali.md */; };
+		5342E0280F291E2D49D2B769 /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta-3.md in Resources */ = {isa = PBXBuildFile; fileRef = 16E2C8601A830A0679BE33B7 /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta-3.md */; };
+		53ADF7A1E3F6DE52D35A78DA /* sekonomte-25-pri-pokupke-baldur-s-gate-3-v-steam-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 6D9E0D55AA93F37BDD378445 /* sekonomte-25-pri-pokupke-baldur-s-gate-3-v-steam-2.md */; };
+		5548E466DD9EB2C3A82A0309 /* thread-by-sapinker.md in Resources */ = {isa = PBXBuildFile; fileRef = BE94EA0F84F23442E62F33E0 /* thread-by-sapinker.md */; };
+		5763FE2851B331E2A99B4646 /* color-palette-ase.md in Resources */ = {isa = PBXBuildFile; fileRef = C6543096DE69C0D29EAC6AE5 /* color-palette-ase.md */; };
+		587B8C15FE3273A6510991B1 /* mymind.md in Resources */ = {isa = PBXBuildFile; fileRef = 9D0F2C3425872162C1967D62 /* mymind.md */; };
+		592FCE9D42F57A7C156B4429 /* sekonomte-70-pri-pokupke-the-last-stand-aftermath-v-steam.md in Resources */ = {isa = PBXBuildFile; fileRef = 89A9D7ED64483D0BFE9069BC /* sekonomte-70-pri-pokupke-the-last-stand-aftermath-v-steam.md */; };
+		5A1CFC73E0F74220D6291A6E /* bauhaus-legacy.md in Resources */ = {isa = PBXBuildFile; fileRef = D5D0021C188D96B7DB138557 /* bauhaus-legacy.md */; };
+		5C0F2A2ED3572AE7617AF1A5 /* vercel-platform.md in Resources */ = {isa = PBXBuildFile; fileRef = 10F09647695DE3321237805A /* vercel-platform.md */; };
+		5CF3B72CEF975CECBD219189 /* art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for.md in Resources */ = {isa = PBXBuildFile; fileRef = 4B5C8804E531A46D5541FAC8 /* art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for.md */; };
+		5F1CC6342C6545DBBF2FD7F3 /* untitled.md in Resources */ = {isa = PBXBuildFile; fileRef = 1AAC6FB3AFBFC1D720270EA5 /* untitled.md */; };
+		602827DD577465119A50156E /* ссыки.md in Resources */ = {isa = PBXBuildFile; fileRef = FE9D276C2918DE92AD30C262 /* ссыки.md */; };
+		61062B6D3718B7AEF7944310 /* mymind-app.md in Resources */ = {isa = PBXBuildFile; fileRef = A3EF41717FA7367005D5A7A1 /* mymind-app.md */; };
+		6180664FA5E8D5CF9433D8DB /* obzor-macbook-neo-o-ch-m-nikto-ne-skazal.md in Resources */ = {isa = PBXBuildFile; fileRef = 8788B06B53F3BE4B26B19ADD /* obzor-macbook-neo-o-ch-m-nikto-ne-skazal.md */; };
+		621516D4A0AD100E608D29B7 /* welcome-to-lesswrong-lesswrong.md in Resources */ = {isa = PBXBuildFile; fileRef = 65BCCD772479600881DA2F40 /* welcome-to-lesswrong-lesswrong.md */; };
+		638C47B81AA5B73380EB8AA0 /* cleanshot-2026-02-27-at-18-51-44-2x-2.md in Resources */ = {isa = PBXBuildFile; fileRef = DDD1FF666A466C0CB7EC1A2F /* cleanshot-2026-02-27-at-18-51-44-2x-2.md */; };
+		66185F35F7A83E104ECF6FE4 /* how-to-use-roam-research-a-tool-for-metacognition-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 9D30E9672A865DD3A81A9C7A /* how-to-use-roam-research-a-tool-for-metacognition-2.md */; };
+		6CC96129F96152356CB0881F /* cleanshot-2026-03-04-at-12-03-40-2x-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 5F4D5F556919A7DE96440E4A /* cleanshot-2026-03-04-at-12-03-40-2x-2.md */; };
+		6E99DBF7FF4983A442FAAB63 /* interview-with-the-co-founder-of-inflow-ness-labs-3.md in Resources */ = {isa = PBXBuildFile; fileRef = 27AACF83D99973E206537C78 /* interview-with-the-co-founder-of-inflow-ness-labs-3.md */; };
+		70C227ECD3F028CFD3DB6CA2 /* watch-this-story-by-on-instagram-before-it-disappears-4.md in Resources */ = {isa = PBXBuildFile; fileRef = 2AF005C066C3472A4AD7F93C /* watch-this-story-by-on-instagram-before-it-disappears-4.md */; };
+		72AB9AF9B9BB53C07C0F7DC2 /* ссылки.md in Resources */ = {isa = PBXBuildFile; fileRef = 7E9101A983C65A384E930BED /* ссылки.md */; };
+		72B6E330850233F714424071 /* untitled-4.md in Resources */ = {isa = PBXBuildFile; fileRef = 6871AC87BEE261E0143830D2 /* untitled-4.md */; };
+		733A7B2872B2216F971BA188 /* sekonomte-25-pri-pokupke-baldur-s-gate-3-v-steam.md in Resources */ = {isa = PBXBuildFile; fileRef = 100D20E39A90B4B25D74E178 /* sekonomte-25-pri-pokupke-baldur-s-gate-3-v-steam.md */; };
+		76804362B0A8EB0E2A0911C1 /* thread-by-japantracul-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 20B68CD6F0552182CC2B3C9A /* thread-by-japantracul-2.md */; };
+		7A24A66BDA97292693585514 /* cleanshot-2026-02-28-at-09-15-23-2x.md in Resources */ = {isa = PBXBuildFile; fileRef = 61D6B6BD959A6444C0894AB1 /* cleanshot-2026-02-28-at-09-15-23-2x.md */; };
+		7C1BCC9F465FEBFD0CC420E0 /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-2.md in Resources */ = {isa = PBXBuildFile; fileRef = B6AB7EB72F31683F25A8309C /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-2.md */; };
+		7D6F7B2C2D18267CDC0883BB /* rationality-a-z-lesswrong-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 11E5D958FFD3C68A8F8F3A7A /* rationality-a-z-lesswrong-2.md */; };
+		7EEFEEB02A9A21A695EF6175 /* how-to-use-roam-research-a-tool-for-metacognition.md in Resources */ = {isa = PBXBuildFile; fileRef = AD961C5E0352A7FD1DC5C480 /* how-to-use-roam-research-a-tool-for-metacognition.md */; };
+		7FFC02B183610F6EFF0D9D5F /* obsidian-md.md in Resources */ = {isa = PBXBuildFile; fileRef = 1BCB667FAB72016A26E9CCA8 /* obsidian-md.md */; };
+		8342C17F913C693DA686DFFE /* welcome-to-lesswrong-lesswrong-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 2ADF392CD8D52416BCEB85C5 /* welcome-to-lesswrong-lesswrong-2.md */; };
+		86F7559FBB4589B084A0E188 /* untitled-7.md in Resources */ = {isa = PBXBuildFile; fileRef = 16C90DC397D1DD08C9C55722 /* untitled-7.md */; };
+		8BE10E1AB68F80A513A5CB6F /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the.md in Resources */ = {isa = PBXBuildFile; fileRef = F7F6B377A5EC476E3E996794 /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the.md */; };
 		8F09DA3297039D0C1CD22846 /* GridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87C09D98DC3051B93B7D2CB7 /* GridView.swift */; };
+		91822D05D43894EE888C575A /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-3.md in Resources */ = {isa = PBXBuildFile; fileRef = D60C0BBE012B2E782E7F20B3 /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-3.md */; };
+		937C9EC4C11542B5DD5B6CB0 /* 2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 00EF0A56362534C38B4886E5 /* 2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases-2.md */; };
+		93F149FF7B8EB0BE5928DAC3 /* stripe-homepage.md in Resources */ = {isa = PBXBuildFile; fileRef = 4C5310BFDB5DE7981EA6E04C /* stripe-homepage.md */; };
+		94551818600DCC3C009FDA83 /* thread-by-obsdmd-3.md in Resources */ = {isa = PBXBuildFile; fileRef = 86F23DEDAC77CC800E657D9D /* thread-by-obsdmd-3.md */; };
+		94ED39A6D74B2B35C10389B1 /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x.md in Resources */ = {isa = PBXBuildFile; fileRef = FDF7303D29788022BA839C6A /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x.md */; };
+		97AA576E9E286134AAA4AD17 /* 2-modern-machines-v-x-during-world-war-2-air-combat-happened-at-short-distances.md in Resources */ = {isa = PBXBuildFile; fileRef = E9A3DCDEA1CCF86D315A80EE /* 2-modern-machines-v-x-during-world-war-2-air-combat-happened-at-short-distances.md */; };
+		98B5757723E8FC9B84F51188 /* stardew-valley-v-steam.md in Resources */ = {isa = PBXBuildFile; fileRef = D69C60C4FA10FE94BD18F648 /* stardew-valley-v-steam.md */; };
+		9CF038F5D7218150A43EA329 /* thread-by-japantracul.md in Resources */ = {isa = PBXBuildFile; fileRef = 0423B46152C477F3CDAE6EE2 /* thread-by-japantracul.md */; };
 		A249A93BC47BC4A18F7D9C7E /* LocalArenaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8962E71A1089E170EBAF7F91 /* LocalArenaApp.swift */; };
+		A25C204B182D3CE67A5AEE80 /* sekonomte-95-pri-pokupke-for-honor-v-steam.md in Resources */ = {isa = PBXBuildFile; fileRef = 75F322E2EFA7E37BEFA57A48 /* sekonomte-95-pri-pokupke-for-honor-v-steam.md */; };
+		A2A0B14A634676EDC37B2247 /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-2.md in Resources */ = {isa = PBXBuildFile; fileRef = C187C1C54EC4534FFFF0D5EB /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-2.md */; };
+		A3020832EC22BE317F081512 /* cosmos-so.md in Resources */ = {isa = PBXBuildFile; fileRef = 30A41B03F7CF26927013E6A4 /* cosmos-so.md */; };
+		A3149A45276AEBAAB16995A4 /* ai-2027-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 481545D766630F471614E6A5 /* ai-2027-2.md */; };
+		A3991C7FE95813978AEF53F6 /* tiny-experiments-by-anne-laure-le-cunff-ness-labs.md in Resources */ = {isa = PBXBuildFile; fileRef = FDB3EF32FEAA4B2326FDC9A8 /* tiny-experiments-by-anne-laure-le-cunff-ness-labs.md */; };
+		A468B8AA36518E48645BD5B0 /* design-systems-book.md in Resources */ = {isa = PBXBuildFile; fileRef = 8C38225D920B7B6A7E6C7145 /* design-systems-book.md */; };
+		A55DD012C5869485D831ED44 /* new-release-info-2026-03-13-21-00-japan-time-approach-03-animal-2.md in Resources */ = {isa = PBXBuildFile; fileRef = F4A576FCE630C4C4B48B9742 /* new-release-info-2026-03-13-21-00-japan-time-approach-03-animal-2.md */; };
+		A77BFE200070C1F6FBC1976C /* macbook-neo-1-23kg-gpd-micropc2-500g-gpd-pocket-4-770g.md in Resources */ = {isa = PBXBuildFile; fileRef = D9EBE69640F64C5CF216FA61 /* macbook-neo-1-23kg-gpd-micropc2-500g-gpd-pocket-4-770g.md */; };
+		A8F6A782875030DB21330A5F /* design.md in Resources */ = {isa = PBXBuildFile; fileRef = DF1CE7C6E30C55B85C4AC1C0 /* design.md */; };
+		AA79336F0B9566324518B763 /* cleanshot-2026-03-04-at-12-03-07-2x.md in Resources */ = {isa = PBXBuildFile; fileRef = 4EF1BFDE012E38EF19EC5856 /* cleanshot-2026-03-04-at-12-03-07-2x.md */; };
+		AABB891B68A5701C922BE17C /* how-to-use-roam-research-a-tool-for-metacognition-3.md in Resources */ = {isa = PBXBuildFile; fileRef = D4049D3F30012DF930281FB6 /* how-to-use-roam-research-a-tool-for-metacognition-3.md */; };
+		AAFF52D485159491FE6EA0D0 /* untitled-6.md in Resources */ = {isa = PBXBuildFile; fileRef = CC78457E56BBEB222BFE6D64 /* untitled-6.md */; };
+		ABD6EB7F6BCE65C9D2B5F3CB /* untitled-9.md in Resources */ = {isa = PBXBuildFile; fileRef = 24A9181640F6E70B7A61C466 /* untitled-9.md */; };
+		AFE0CA7498096388997ED548 /* design-talk-2026.md in Resources */ = {isa = PBXBuildFile; fileRef = 31A8D0D4E3F1F573C18DC0AD /* design-talk-2026.md */; };
+		AFFFAE9D4D89C9902C2F624D /* da.md in Resources */ = {isa = PBXBuildFile; fileRef = 2AAE1E3F43C95AE91FE42078 /* da.md */; };
+		B3B519FB0FA6C93B48F91CF1 /* 2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases.md in Resources */ = {isa = PBXBuildFile; fileRef = 6CC05998E6B1FB897B48B146 /* 2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases.md */; };
+		B4B0BDE7BA633ABBA4F0E665 /* simz-v-x-https-t-co-9ipunhqp2d-x.md in Resources */ = {isa = PBXBuildFile; fileRef = 37AFDA88FD629994FB0F3E7A /* simz-v-x-https-t-co-9ipunhqp2d-x.md */; };
+		B4EA378EC377DD1B70868F75 /* linear-app.md in Resources */ = {isa = PBXBuildFile; fileRef = EAB1829C6ECBA75A45565998 /* linear-app.md */; };
+		B5A7A69F3307A0B8E5A89EBA /* tokyo-walk.md in Resources */ = {isa = PBXBuildFile; fileRef = 76986FB13450389521FE4D0E /* tokyo-walk.md */; };
+		B62899E2FD5F610B2129804C /* figma-design.md in Resources */ = {isa = PBXBuildFile; fileRef = FEE5C4C1D2CD91657C32ADB6 /* figma-design.md */; };
+		B63708F526757D0ECE4B6E3D /* 2-jake-wallis-simons-v-x-my-husband-deals-with-the-voting-britain-we-are-so.md in Resources */ = {isa = PBXBuildFile; fileRef = AC7CBF84D75D73DAFC2EC706 /* 2-jake-wallis-simons-v-x-my-husband-deals-with-the-voting-britain-we-are-so.md */; };
+		B713B81131ED751AAF04760E /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-5.md in Resources */ = {isa = PBXBuildFile; fileRef = 74DC46E3972938EA04802A1D /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-5.md */; };
+		B885DB6B46F3B97742DF1F9A /* длинное-название-коллекции.md in Resources */ = {isa = PBXBuildFile; fileRef = B47F229BD73720F79E6A112C /* длинное-название-коллекции.md */; };
+		B9FE4231810475B054C7628E /* pochemu-ya-brosil-it-problemy-it-o-kotorykh-molchat-na-mitapakh-fil-ranzhin.md in Resources */ = {isa = PBXBuildFile; fileRef = 491141DE58BE67E7B92C9D0D /* pochemu-ya-brosil-it-problemy-it-o-kotorykh-molchat-na-mitapakh-fil-ranzhin.md */; };
+		BC1894D4605F2BD194A36485 /* how-to-use-roam-research-a-tool-for-metacognition-4.md in Resources */ = {isa = PBXBuildFile; fileRef = 4CE207DBE68BADB1BDB26E5E /* how-to-use-roam-research-a-tool-for-metacognition-4.md */; };
+		BE6B2BA82AA873135823BA00 /* interview-with-the-co-founder-of-inflow-ness-labs-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 902A0149B2E8FCA272FB90D1 /* interview-with-the-co-founder-of-inflow-ness-labs-2.md */; };
+		BFB52C412BD425F46BECE341 /* thread-by-denfaminicogame.md in Resources */ = {isa = PBXBuildFile; fileRef = DDAC9F13797D7F8856249D38 /* thread-by-denfaminicogame.md */; };
+		BFC0067B67D08FF2453BA6BB /* cleanshot-2026-02-27-at-16-17-39-2x-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 493F04A221F9727FA3C037DE /* cleanshot-2026-02-27-at-16-17-39-2x-2.md */; };
+		C2D1ED37E66A8CBD438BE2AE /* cleanshot-2026-02-28-at-23-37-51-2x.md in Resources */ = {isa = PBXBuildFile; fileRef = D255E339F3B0B67C69A9A141 /* cleanshot-2026-02-28-at-23-37-51-2x.md */; };
+		C681176B10ADB91A270EC5A6 /* тест.md in Resources */ = {isa = PBXBuildFile; fileRef = FB2C29D827DEFF5AC055CFEC /* тест.md */; };
+		C6DE558B7B09F0E86D0282BD /* thread-by-dopemind10.md in Resources */ = {isa = PBXBuildFile; fileRef = 1F4DD844758B29F2025A7D20 /* thread-by-dopemind10.md */; };
+		CAD0273F316F0B961B3C3E66 /* ai-2027.md in Resources */ = {isa = PBXBuildFile; fileRef = 32AE2CCAC93F3C14B900EC03 /* ai-2027.md */; };
+		CB3F5FB4934C4007D8819066 /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 2768D7F23E77621CF5D283D7 /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the-2.md */; };
+		CBF9F9E5B5555D77D57A42E6 /* watch-this-story-by-on-instagram-before-it-disappears-3.md in Resources */ = {isa = PBXBuildFile; fileRef = 431BBB681C0B596F356CE4BA /* watch-this-story-by-on-instagram-before-it-disappears-3.md */; };
+		D067C4DAF68CA99247D11ED8 /* катушка.md in Resources */ = {isa = PBXBuildFile; fileRef = 65A5256EE85E14D4CECF1712 /* катушка.md */; };
+		D6D660185ADF40A484AC94F2 /* test.md in Resources */ = {isa = PBXBuildFile; fileRef = 1CCDF2357DD146CBEC594603 /* test.md */; };
+		D7EAB917DACC91A79023A529 /* 2025-in-ai-predictions-lesswrong.md in Resources */ = {isa = PBXBuildFile; fileRef = 5385410CBD5DA4B109AC82FD /* 2025-in-ai-predictions-lesswrong.md */; };
+		DC91D153DD0C02CEC3CB0FDA /* ai-2027-4.md in Resources */ = {isa = PBXBuildFile; fileRef = FAAC456EBE38908BF61ACBC2 /* ai-2027-4.md */; };
+		DD248AF8AEDB30FBF45C8C9D /* design-systems-guide.md in Resources */ = {isa = PBXBuildFile; fileRef = 826163C824D5E3DF78056756 /* design-systems-guide.md */; };
+		E22EF85F264B2FA23512F44C /* fintech.md in Resources */ = {isa = PBXBuildFile; fileRef = BCBF265ED20DAD8B5BB4B2A5 /* fintech.md */; };
+		E4B07A1EFAD175DD9BC71C04 /* neomechanica.md in Resources */ = {isa = PBXBuildFile; fileRef = 15DB8AE9D5C322AB23FB04A0 /* neomechanica.md */; };
+		E761D9073C2B1C0D87254A05 /* tauri-vs-electron.md in Resources */ = {isa = PBXBuildFile; fileRef = 0ED4002D6F23D9042EBD1C09 /* tauri-vs-electron.md */; };
+		E7CEABE6DF665AD8CC057844 /* srcl.md in Resources */ = {isa = PBXBuildFile; fileRef = D64979A0770E450340C3C89E /* srcl.md */; };
+		E918324D93F18F0D1BE99650 /* thread-by-obsdmd-4.md in Resources */ = {isa = PBXBuildFile; fileRef = 40294D02EA3CD0A30F772181 /* thread-by-obsdmd-4.md */; };
+		EA6CECFEAECDE72C6242A546 /* rationality-a-z-lesswrong.md in Resources */ = {isa = PBXBuildFile; fileRef = F724BDB4496FE7C7652B7E65 /* rationality-a-z-lesswrong.md */; };
+		EA743064044F519D0B64104A /* тсет.md in Resources */ = {isa = PBXBuildFile; fileRef = 0C9E8A90C96BB5222FDB1678 /* тсет.md */; };
+		F069025A1B72176BCA4B0BCB /* art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for-3.md in Resources */ = {isa = PBXBuildFile; fileRef = 54ADC2522C10BD78E45E5B90 /* art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for-3.md */; };
+		F132942B32D3951AC86E4197 /* thread-by-rtsdimon.md in Resources */ = {isa = PBXBuildFile; fileRef = B86D6E82D51EA194D2E5AD63 /* thread-by-rtsdimon.md */; };
+		F1B1F26534985F0CA00C379F /* japan.md in Resources */ = {isa = PBXBuildFile; fileRef = 5741FCE3F10559ACE09FA82F /* japan.md */; };
+		F3C6075DCEB88A7822760D15 /* untitled-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 85044078D4566D666B17DB66 /* untitled-2.md */; };
+		F3DA91E07B052EBF32A37621 /* thread-by-daveshapi.md in Resources */ = {isa = PBXBuildFile; fileRef = 13C8EDD279FF0857351866FE /* thread-by-daveshapi.md */; };
 		F610E4F370894161D68D24D2 /* LocalArenaCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8C87519A8EC3FE3ED1E3DC18 /* LocalArenaCore.xcframework */; };
+		F8735D3894FBB28F35129A5A /* v-x-skeb-https-t-co-entvnu6w9q-x.md in Resources */ = {isa = PBXBuildFile; fileRef = B507D8F2CFD332BF4B204A47 /* v-x-skeb-https-t-co-entvnu6w9q-x.md */; };
+		F9E4C9B90FE78985C3A3011C /* this-game-has-such-incredible-rocks-and-cliffs-i-love-how-subtly-different-the-d.md in Resources */ = {isa = PBXBuildFile; fileRef = 912A20B7E0BBFFC5D5A864C1 /* this-game-has-such-incredible-rocks-and-cliffs-i-love-how-subtly-different-the-d.md */; };
+		FA00502440D11BB36BCE688C /* mao-v-x-3-31-book-https-t-co-9mt3mr3huq-https-t-co-06ah3wxuhi-x.md in Resources */ = {isa = PBXBuildFile; fileRef = 6DDEA101B0CF7DD7AA39556A /* mao-v-x-3-31-book-https-t-co-9mt3mr3huq-https-t-co-06ah3wxuhi-x.md */; };
+		FA491C25768F64026EBAB654 /* cleanshot-2026-03-04-at-12-03-40-2x-3.md in Resources */ = {isa = PBXBuildFile; fileRef = 325CE07453DAF70AEBAC2EC0 /* cleanshot-2026-03-04-at-12-03-40-2x-3.md */; };
+		FB405CE3CE5295500316318D /* interview-with-the-co-founder-of-inflow-ness-labs-4.md in Resources */ = {isa = PBXBuildFile; fileRef = ACC3F94D50D6C8026D19BD17 /* interview-with-the-co-founder-of-inflow-ness-labs-4.md */; };
+		FBBC834E1467FBCAF8E58CD5 /* local-first-software.md in Resources */ = {isa = PBXBuildFile; fileRef = 6A561CB480337E4B07AB3B0E /* local-first-software.md */; };
+		FEED457DDA7EDCB48D184CD6 /* thread-by-perplexity-ai.md in Resources */ = {isa = PBXBuildFile; fileRef = 764E0E4353ABA0F2D4726F5D /* thread-by-perplexity-ai.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		00EF0A56362534C38B4886E5 /* 2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases-2.md"; sourceTree = "<group>"; };
+		0423B46152C477F3CDAE6EE2 /* thread-by-japantracul.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-japantracul.md"; sourceTree = "<group>"; };
+		086DAE4AFF7808228FEC24B7 /* thread-by-aisafetymemes.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-aisafetymemes.md"; sourceTree = "<group>"; };
+		08B0D7967336DEE31BCE76EB /* ai-2027-5.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "ai-2027-5.md"; sourceTree = "<group>"; };
+		0C9E8A90C96BB5222FDB1678 /* тсет.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "тсет.md"; sourceTree = "<group>"; };
+		0D03EDC5F35E8B11E23E32F6 /* crdt-explained.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "crdt-explained.md"; sourceTree = "<group>"; };
+		0ED4002D6F23D9042EBD1C09 /* tauri-vs-electron.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "tauri-vs-electron.md"; sourceTree = "<group>"; };
+		100D20E39A90B4B25D74E178 /* sekonomte-25-pri-pokupke-baldur-s-gate-3-v-steam.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "sekonomte-25-pri-pokupke-baldur-s-gate-3-v-steam.md"; sourceTree = "<group>"; };
+		106B0787E3428CB7360F98EE /* политика.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "политика.md"; sourceTree = "<group>"; };
+		10F09647695DE3321237805A /* vercel-platform.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "vercel-platform.md"; sourceTree = "<group>"; };
+		11E5D958FFD3C68A8F8F3A7A /* rationality-a-z-lesswrong-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "rationality-a-z-lesswrong-2.md"; sourceTree = "<group>"; };
+		12A2B04E3C404549DB52859B /* 1.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = 1.md; sourceTree = "<group>"; };
+		13C8EDD279FF0857351866FE /* thread-by-daveshapi.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-daveshapi.md"; sourceTree = "<group>"; };
+		15DB8AE9D5C322AB23FB04A0 /* neomechanica.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = neomechanica.md; sourceTree = "<group>"; };
+		16C90DC397D1DD08C9C55722 /* untitled-7.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "untitled-7.md"; sourceTree = "<group>"; };
+		16E2C8601A830A0679BE33B7 /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta-3.md"; sourceTree = "<group>"; };
+		1AAC6FB3AFBFC1D720270EA5 /* untitled.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = untitled.md; sourceTree = "<group>"; };
+		1BCB667FAB72016A26E9CCA8 /* obsidian-md.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "obsidian-md.md"; sourceTree = "<group>"; };
+		1CCDF2357DD146CBEC594603 /* test.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = test.md; sourceTree = "<group>"; };
+		1F4DD844758B29F2025A7D20 /* thread-by-dopemind10.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-dopemind10.md"; sourceTree = "<group>"; };
+		2077C531AEC4EF6D45D5845C /* youtube.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = youtube.md; sourceTree = "<group>"; };
+		20B68CD6F0552182CC2B3C9A /* thread-by-japantracul-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-japantracul-2.md"; sourceTree = "<group>"; };
+		24A9181640F6E70B7A61C466 /* untitled-9.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "untitled-9.md"; sourceTree = "<group>"; };
+		25825408B00E54C0BCE31235 /* thread-by-obsdmd-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-obsdmd-2.md"; sourceTree = "<group>"; };
+		2768D7F23E77621CF5D283D7 /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the-2.md"; sourceTree = "<group>"; };
+		27AACF83D99973E206537C78 /* interview-with-the-co-founder-of-inflow-ness-labs-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "interview-with-the-co-founder-of-inflow-ness-labs-3.md"; sourceTree = "<group>"; };
+		294048A87876BA4E42C6DB46 /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong.md"; sourceTree = "<group>"; };
+		2AAE1E3F43C95AE91FE42078 /* da.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = da.md; sourceTree = "<group>"; };
+		2ADF392CD8D52416BCEB85C5 /* welcome-to-lesswrong-lesswrong-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "welcome-to-lesswrong-lesswrong-2.md"; sourceTree = "<group>"; };
+		2AF005C066C3472A4AD7F93C /* watch-this-story-by-on-instagram-before-it-disappears-4.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "watch-this-story-by-on-instagram-before-it-disappears-4.md"; sourceTree = "<group>"; };
+		30A41B03F7CF26927013E6A4 /* cosmos-so.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cosmos-so.md"; sourceTree = "<group>"; };
+		31A8D0D4E3F1F573C18DC0AD /* design-talk-2026.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "design-talk-2026.md"; sourceTree = "<group>"; };
+		325CE07453DAF70AEBAC2EC0 /* cleanshot-2026-03-04-at-12-03-40-2x-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-03-04-at-12-03-40-2x-3.md"; sourceTree = "<group>"; };
+		32A31A804CF69A23C7EB27ED /* srcl-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "srcl-2.md"; sourceTree = "<group>"; };
+		32AE2CCAC93F3C14B900EC03 /* ai-2027.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "ai-2027.md"; sourceTree = "<group>"; };
+		346E9B013EC9FF94EB72754E /* graphic-design.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "graphic-design.md"; sourceTree = "<group>"; };
+		35377F2ADFE2D5003005A5E9 /* cleanshot-2026-03-14-at-08-53-48-2x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-03-14-at-08-53-48-2x.md"; sourceTree = "<group>"; };
+		37AFDA88FD629994FB0F3E7A /* simz-v-x-https-t-co-9ipunhqp2d-x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "simz-v-x-https-t-co-9ipunhqp2d-x.md"; sourceTree = "<group>"; };
+		3A0A8AB02AA202C1F6283AC0 /* игры.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "игры.md"; sourceTree = "<group>"; };
+		3B68338C910E1ABFA8071D32 /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta.md"; sourceTree = "<group>"; };
+		3C93F378015B8B1F557B2384 /* untitled-5.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "untitled-5.md"; sourceTree = "<group>"; };
+		3FE421104B50617640F0C309 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		40294D02EA3CD0A30F772181 /* thread-by-obsdmd-4.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-obsdmd-4.md"; sourceTree = "<group>"; };
+		41528211063EAE0045C8857E /* nastoyaschego-ne-suschestvuet-ali-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "nastoyaschego-ne-suschestvuet-ali-2.md"; sourceTree = "<group>"; };
+		431BBB681C0B596F356CE4BA /* watch-this-story-by-on-instagram-before-it-disappears-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "watch-this-story-by-on-instagram-before-it-disappears-3.md"; sourceTree = "<group>"; };
+		481545D766630F471614E6A5 /* ai-2027-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "ai-2027-2.md"; sourceTree = "<group>"; };
+		491141DE58BE67E7B92C9D0D /* pochemu-ya-brosil-it-problemy-it-o-kotorykh-molchat-na-mitapakh-fil-ranzhin.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "pochemu-ya-brosil-it-problemy-it-o-kotorykh-molchat-na-mitapakh-fil-ranzhin.md"; sourceTree = "<group>"; };
+		493F04A221F9727FA3C037DE /* cleanshot-2026-02-27-at-16-17-39-2x-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-02-27-at-16-17-39-2x-2.md"; sourceTree = "<group>"; };
+		4B5C8804E531A46D5541FAC8 /* art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for.md"; sourceTree = "<group>"; };
+		4C5310BFDB5DE7981EA6E04C /* stripe-homepage.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "stripe-homepage.md"; sourceTree = "<group>"; };
+		4CE207DBE68BADB1BDB26E5E /* how-to-use-roam-research-a-tool-for-metacognition-4.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "how-to-use-roam-research-a-tool-for-metacognition-4.md"; sourceTree = "<group>"; };
+		4EF1BFDE012E38EF19EC5856 /* cleanshot-2026-03-04-at-12-03-07-2x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-03-04-at-12-03-07-2x.md"; sourceTree = "<group>"; };
+		5385410CBD5DA4B109AC82FD /* 2025-in-ai-predictions-lesswrong.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "2025-in-ai-predictions-lesswrong.md"; sourceTree = "<group>"; };
+		53E4CEA0A93A6749BB66FA45 /* thread-by-obsdmd.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-obsdmd.md"; sourceTree = "<group>"; };
+		54136984253C5A522DECA468 /* nastoyaschego-ne-suschestvuet-ali.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "nastoyaschego-ne-suschestvuet-ali.md"; sourceTree = "<group>"; };
+		54ADC2522C10BD78E45E5B90 /* art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for-3.md"; sourceTree = "<group>"; };
+		55B141683B1A613929D4D61B /* tsepi-markova-matematika-predskazaniy-veritasium-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "tsepi-markova-matematika-predskazaniy-veritasium-3.md"; sourceTree = "<group>"; };
+		5741FCE3F10559ACE09FA82F /* japan.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = japan.md; sourceTree = "<group>"; };
 		589E56C508570F5D5C8B724A /* LocalArena.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LocalArena.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5F4D5F556919A7DE96440E4A /* cleanshot-2026-03-04-at-12-03-40-2x-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-03-04-at-12-03-40-2x-2.md"; sourceTree = "<group>"; };
+		61450729FC92E4C2457AB807 /* dashboard.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = dashboard.md; sourceTree = "<group>"; };
+		61D6B6BD959A6444C0894AB1 /* cleanshot-2026-02-28-at-09-15-23-2x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-02-28-at-09-15-23-2x.md"; sourceTree = "<group>"; };
+		6269D218D39260E806ED8AEA /* cleanshot-2026-03-04-at-12-03-40-2x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-03-04-at-12-03-40-2x.md"; sourceTree = "<group>"; };
+		65A5256EE85E14D4CECF1712 /* катушка.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "катушка.md"; sourceTree = "<group>"; };
+		65BCCD772479600881DA2F40 /* welcome-to-lesswrong-lesswrong.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "welcome-to-lesswrong-lesswrong.md"; sourceTree = "<group>"; };
+		6871AC87BEE261E0143830D2 /* untitled-4.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "untitled-4.md"; sourceTree = "<group>"; };
 		6A171B864BDD3837A62EC272 /* local_arena_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = local_arena_ffi.swift; sourceTree = "<group>"; };
+		6A561CB480337E4B07AB3B0E /* local-first-software.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "local-first-software.md"; sourceTree = "<group>"; };
+		6B1049C65409EF3CF9C778B9 /* ai-2027-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "ai-2027-3.md"; sourceTree = "<group>"; };
+		6CC05998E6B1FB897B48B146 /* 2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases.md"; sourceTree = "<group>"; };
+		6D9E0D55AA93F37BDD378445 /* sekonomte-25-pri-pokupke-baldur-s-gate-3-v-steam-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "sekonomte-25-pri-pokupke-baldur-s-gate-3-v-steam-2.md"; sourceTree = "<group>"; };
+		6DDEA101B0CF7DD7AA39556A /* mao-v-x-3-31-book-https-t-co-9mt3mr3huq-https-t-co-06ah3wxuhi-x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "mao-v-x-3-31-book-https-t-co-9mt3mr3huq-https-t-co-06ah3wxuhi-x.md"; sourceTree = "<group>"; };
+		742C8ADE20DA6D52B7D08D08 /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta-2.md"; sourceTree = "<group>"; };
+		74DC46E3972938EA04802A1D /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-5.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-5.md"; sourceTree = "<group>"; };
+		75F322E2EFA7E37BEFA57A48 /* sekonomte-95-pri-pokupke-for-honor-v-steam.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "sekonomte-95-pri-pokupke-for-honor-v-steam.md"; sourceTree = "<group>"; };
+		764E0E4353ABA0F2D4726F5D /* thread-by-perplexity-ai.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-perplexity-ai.md"; sourceTree = "<group>"; };
+		76986FB13450389521FE4D0E /* tokyo-walk.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "tokyo-walk.md"; sourceTree = "<group>"; };
+		7E9101A983C65A384E930BED /* ссылки.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "ссылки.md"; sourceTree = "<group>"; };
+		826163C824D5E3DF78056756 /* design-systems-guide.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "design-systems-guide.md"; sourceTree = "<group>"; };
+		85044078D4566D666B17DB66 /* untitled-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "untitled-2.md"; sourceTree = "<group>"; };
+		86F23DEDAC77CC800E657D9D /* thread-by-obsdmd-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-obsdmd-3.md"; sourceTree = "<group>"; };
+		8788B06B53F3BE4B26B19ADD /* obzor-macbook-neo-o-ch-m-nikto-ne-skazal.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "obzor-macbook-neo-o-ch-m-nikto-ne-skazal.md"; sourceTree = "<group>"; };
 		87C09D98DC3051B93B7D2CB7 /* GridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridView.swift; sourceTree = "<group>"; };
+		890825132562DDBDEAA0E57C /* ben-v-x-photoshops-new-ai-rotate-tool-works-perfect-https-t-co-oeu999ylcy-x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "ben-v-x-photoshops-new-ai-rotate-tool-works-perfect-https-t-co-oeu999ylcy-x.md"; sourceTree = "<group>"; };
 		8962E71A1089E170EBAF7F91 /* LocalArenaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalArenaApp.swift; sourceTree = "<group>"; };
+		89A9D7ED64483D0BFE9069BC /* sekonomte-70-pri-pokupke-the-last-stand-aftermath-v-steam.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "sekonomte-70-pri-pokupke-the-last-stand-aftermath-v-steam.md"; sourceTree = "<group>"; };
 		89F1773A497F5FECB4DC6074 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		8AE6039990641A183A030067 /* tsepi-markova-matematika-predskazaniy-veritasium-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "tsepi-markova-matematika-predskazaniy-veritasium-2.md"; sourceTree = "<group>"; };
+		8C38225D920B7B6A7E6C7145 /* design-systems-book.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "design-systems-book.md"; sourceTree = "<group>"; };
 		8C87519A8EC3FE3ED1E3DC18 /* LocalArenaCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = LocalArenaCore.xcframework; sourceTree = "<group>"; };
+		8F6387B68BF53AD4EFB7556A /* thread-by-vurdv8a8gbgrctd-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-vurdv8a8gbgrctd-2.md"; sourceTree = "<group>"; };
+		8FBEB39EAC8D29D3C336CE3E /* someone-made-a-game-in-which-you-have-to-program-a-drone-using-a-simple-python-l.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "someone-made-a-game-in-which-you-have-to-program-a-drone-using-a-simple-python-l.md"; sourceTree = "<group>"; };
+		902A0149B2E8FCA272FB90D1 /* interview-with-the-co-founder-of-inflow-ness-labs-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "interview-with-the-co-founder-of-inflow-ness-labs-2.md"; sourceTree = "<group>"; };
+		912A20B7E0BBFFC5D5A864C1 /* this-game-has-such-incredible-rocks-and-cliffs-i-love-how-subtly-different-the-d.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "this-game-has-such-incredible-rocks-and-cliffs-i-love-how-subtly-different-the-d.md"; sourceTree = "<group>"; };
+		9D0F2C3425872162C1967D62 /* mymind.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = mymind.md; sourceTree = "<group>"; };
+		9D30E9672A865DD3A81A9C7A /* how-to-use-roam-research-a-tool-for-metacognition-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "how-to-use-roam-research-a-tool-for-metacognition-2.md"; sourceTree = "<group>"; };
+		A3EF41717FA7367005D5A7A1 /* mymind-app.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "mymind-app.md"; sourceTree = "<group>"; };
+		AB3926736152692420BF02A3 /* cleanshot-2026-03-05-at-14-29-59-2x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-03-05-at-14-29-59-2x.md"; sourceTree = "<group>"; };
+		AC7CBF84D75D73DAFC2EC706 /* 2-jake-wallis-simons-v-x-my-husband-deals-with-the-voting-britain-we-are-so.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "2-jake-wallis-simons-v-x-my-husband-deals-with-the-voting-britain-we-are-so.md"; sourceTree = "<group>"; };
+		ACC3F94D50D6C8026D19BD17 /* interview-with-the-co-founder-of-inflow-ness-labs-4.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "interview-with-the-co-founder-of-inflow-ness-labs-4.md"; sourceTree = "<group>"; };
+		AD961C5E0352A7FD1DC5C480 /* how-to-use-roam-research-a-tool-for-metacognition.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "how-to-use-roam-research-a-tool-for-metacognition.md"; sourceTree = "<group>"; };
 		AF3B65612D52E384A077C57C /* VaultViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultViewModel.swift; sourceTree = "<group>"; };
+		B2553A51D4B9408A060C1FF6 /* interview-with-the-co-founder-of-inflow-ness-labs.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "interview-with-the-co-founder-of-inflow-ness-labs.md"; sourceTree = "<group>"; };
+		B47F229BD73720F79E6A112C /* длинное-название-коллекции.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "длинное-название-коллекции.md"; sourceTree = "<group>"; };
+		B507D8F2CFD332BF4B204A47 /* v-x-skeb-https-t-co-entvnu6w9q-x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "v-x-skeb-https-t-co-entvnu6w9q-x.md"; sourceTree = "<group>"; };
+		B6AB7EB72F31683F25A8309C /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-2.md"; sourceTree = "<group>"; };
+		B86D6E82D51EA194D2E5AD63 /* thread-by-rtsdimon.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-rtsdimon.md"; sourceTree = "<group>"; };
+		BCBF265ED20DAD8B5BB4B2A5 /* fintech.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = fintech.md; sourceTree = "<group>"; };
+		BE94EA0F84F23442E62F33E0 /* thread-by-sapinker.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-sapinker.md"; sourceTree = "<group>"; };
+		C187C1C54EC4534FFFF0D5EB /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-2.md"; sourceTree = "<group>"; };
+		C25867AEE569847D848AEBA7 /* brutalist-web-design.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "brutalist-web-design.md"; sourceTree = "<group>"; };
+		C6543096DE69C0D29EAC6AE5 /* color-palette-ase.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "color-palette-ase.md"; sourceTree = "<group>"; };
+		CC78457E56BBEB222BFE6D64 /* untitled-6.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "untitled-6.md"; sourceTree = "<group>"; };
+		CE37969EA01C9BDE0532579E /* thread-by-kky0699-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-kky0699-2.md"; sourceTree = "<group>"; };
+		CEEFB6F407657FDBD6EDD12C /* thread-by-evilrabbit.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-evilrabbit.md"; sourceTree = "<group>"; };
+		D255E339F3B0B67C69A9A141 /* cleanshot-2026-02-28-at-23-37-51-2x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-02-28-at-23-37-51-2x.md"; sourceTree = "<group>"; };
+		D38ABF11DD724DEEE3C1ADA3 /* 2026-essential-collection-3-18-wed-20-00-in-stock-dayoff-bag-black.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "2026-essential-collection-3-18-wed-20-00-in-stock-dayoff-bag-black.md"; sourceTree = "<group>"; };
+		D4049D3F30012DF930281FB6 /* how-to-use-roam-research-a-tool-for-metacognition-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "how-to-use-roam-research-a-tool-for-metacognition-3.md"; sourceTree = "<group>"; };
+		D44612AE3908785EEAE1A1C8 /* тест-4.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "тест-4.md"; sourceTree = "<group>"; };
+		D5D0021C188D96B7DB138557 /* bauhaus-legacy.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "bauhaus-legacy.md"; sourceTree = "<group>"; };
+		D60C0BBE012B2E782E7F20B3 /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-3.md"; sourceTree = "<group>"; };
+		D64979A0770E450340C3C89E /* srcl.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = srcl.md; sourceTree = "<group>"; };
+		D6748ED08BA4F8B51FFD14FE /* cleanshot-2026-02-28-at-23-38-55-2x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-02-28-at-23-38-55-2x.md"; sourceTree = "<group>"; };
+		D69C60C4FA10FE94BD18F648 /* stardew-valley-v-steam.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "stardew-valley-v-steam.md"; sourceTree = "<group>"; };
+		D81195098927119FCF9F6306 /* 2-mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "2-mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-3.md"; sourceTree = "<group>"; };
+		D897F0221250B3F908C109E6 /* untitled-8.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "untitled-8.md"; sourceTree = "<group>"; };
+		D9EBE69640F64C5CF216FA61 /* macbook-neo-1-23kg-gpd-micropc2-500g-gpd-pocket-4-770g.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "macbook-neo-1-23kg-gpd-micropc2-500g-gpd-pocket-4-770g.md"; sourceTree = "<group>"; };
+		DDAC9F13797D7F8856249D38 /* thread-by-denfaminicogame.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-denfaminicogame.md"; sourceTree = "<group>"; };
+		DDD1FF666A466C0CB7EC1A2F /* cleanshot-2026-02-27-at-18-51-44-2x-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-02-27-at-18-51-44-2x-2.md"; sourceTree = "<group>"; };
+		DF1CE7C6E30C55B85C4AC1C0 /* design.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = design.md; sourceTree = "<group>"; };
+		E4C104B994A8DD59515F1BE2 /* тест-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "тест-3.md"; sourceTree = "<group>"; };
+		E9A3DCDEA1CCF86D315A80EE /* 2-modern-machines-v-x-during-world-war-2-air-combat-happened-at-short-distances.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "2-modern-machines-v-x-during-world-war-2-air-combat-happened-at-short-distances.md"; sourceTree = "<group>"; };
+		EAB1829C6ECBA75A45565998 /* linear-app.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "linear-app.md"; sourceTree = "<group>"; };
+		F4A576FCE630C4C4B48B9742 /* new-release-info-2026-03-13-21-00-japan-time-approach-03-animal-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "new-release-info-2026-03-13-21-00-japan-time-approach-03-animal-2.md"; sourceTree = "<group>"; };
+		F724BDB4496FE7C7652B7E65 /* rationality-a-z-lesswrong.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "rationality-a-z-lesswrong.md"; sourceTree = "<group>"; };
+		F7F6B377A5EC476E3E996794 /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the.md"; sourceTree = "<group>"; };
+		FAAC456EBE38908BF61ACBC2 /* ai-2027-4.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "ai-2027-4.md"; sourceTree = "<group>"; };
+		FB2C29D827DEFF5AC055CFEC /* тест.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "тест.md"; sourceTree = "<group>"; };
+		FDB3EF32FEAA4B2326FDC9A8 /* tiny-experiments-by-anne-laure-le-cunff-ness-labs.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "tiny-experiments-by-anne-laure-le-cunff-ness-labs.md"; sourceTree = "<group>"; };
+		FDF7303D29788022BA839C6A /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x.md"; sourceTree = "<group>"; };
+		FE9D276C2918DE92AD30C262 /* ссыки.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "ссыки.md"; sourceTree = "<group>"; };
+		FEE5C4C1D2CD91657C32ADB6 /* figma-design.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "figma-design.md"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -37,6 +306,147 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1EDB7086DF4AF4E72376FB58 /* TestData */ = {
+			isa = PBXGroup;
+			children = (
+				12A2B04E3C404549DB52859B /* 1.md */,
+				AC7CBF84D75D73DAFC2EC706 /* 2-jake-wallis-simons-v-x-my-husband-deals-with-the-voting-britain-we-are-so.md */,
+				D81195098927119FCF9F6306 /* 2-mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-3.md */,
+				E9A3DCDEA1CCF86D315A80EE /* 2-modern-machines-v-x-during-world-war-2-air-combat-happened-at-short-distances.md */,
+				00EF0A56362534C38B4886E5 /* 2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases-2.md */,
+				6CC05998E6B1FB897B48B146 /* 2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases.md */,
+				2768D7F23E77621CF5D283D7 /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the-2.md */,
+				F7F6B377A5EC476E3E996794 /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the.md */,
+				5385410CBD5DA4B109AC82FD /* 2025-in-ai-predictions-lesswrong.md */,
+				D38ABF11DD724DEEE3C1ADA3 /* 2026-essential-collection-3-18-wed-20-00-in-stock-dayoff-bag-black.md */,
+				B47F229BD73720F79E6A112C /* длинное-название-коллекции.md */,
+				3A0A8AB02AA202C1F6283AC0 /* игры.md */,
+				65A5256EE85E14D4CECF1712 /* катушка.md */,
+				106B0787E3428CB7360F98EE /* политика.md */,
+				FE9D276C2918DE92AD30C262 /* ссыки.md */,
+				7E9101A983C65A384E930BED /* ссылки.md */,
+				E4C104B994A8DD59515F1BE2 /* тест-3.md */,
+				D44612AE3908785EEAE1A1C8 /* тест-4.md */,
+				FB2C29D827DEFF5AC055CFEC /* тест.md */,
+				0C9E8A90C96BB5222FDB1678 /* тсет.md */,
+				481545D766630F471614E6A5 /* ai-2027-2.md */,
+				6B1049C65409EF3CF9C778B9 /* ai-2027-3.md */,
+				FAAC456EBE38908BF61ACBC2 /* ai-2027-4.md */,
+				08B0D7967336DEE31BCE76EB /* ai-2027-5.md */,
+				32AE2CCAC93F3C14B900EC03 /* ai-2027.md */,
+				54ADC2522C10BD78E45E5B90 /* art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for-3.md */,
+				4B5C8804E531A46D5541FAC8 /* art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for.md */,
+				D5D0021C188D96B7DB138557 /* bauhaus-legacy.md */,
+				890825132562DDBDEAA0E57C /* ben-v-x-photoshops-new-ai-rotate-tool-works-perfect-https-t-co-oeu999ylcy-x.md */,
+				C25867AEE569847D848AEBA7 /* brutalist-web-design.md */,
+				742C8ADE20DA6D52B7D08D08 /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta-2.md */,
+				16E2C8601A830A0679BE33B7 /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta-3.md */,
+				3B68338C910E1ABFA8071D32 /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta.md */,
+				493F04A221F9727FA3C037DE /* cleanshot-2026-02-27-at-16-17-39-2x-2.md */,
+				DDD1FF666A466C0CB7EC1A2F /* cleanshot-2026-02-27-at-18-51-44-2x-2.md */,
+				61D6B6BD959A6444C0894AB1 /* cleanshot-2026-02-28-at-09-15-23-2x.md */,
+				D255E339F3B0B67C69A9A141 /* cleanshot-2026-02-28-at-23-37-51-2x.md */,
+				D6748ED08BA4F8B51FFD14FE /* cleanshot-2026-02-28-at-23-38-55-2x.md */,
+				4EF1BFDE012E38EF19EC5856 /* cleanshot-2026-03-04-at-12-03-07-2x.md */,
+				5F4D5F556919A7DE96440E4A /* cleanshot-2026-03-04-at-12-03-40-2x-2.md */,
+				325CE07453DAF70AEBAC2EC0 /* cleanshot-2026-03-04-at-12-03-40-2x-3.md */,
+				6269D218D39260E806ED8AEA /* cleanshot-2026-03-04-at-12-03-40-2x.md */,
+				AB3926736152692420BF02A3 /* cleanshot-2026-03-05-at-14-29-59-2x.md */,
+				35377F2ADFE2D5003005A5E9 /* cleanshot-2026-03-14-at-08-53-48-2x.md */,
+				C6543096DE69C0D29EAC6AE5 /* color-palette-ase.md */,
+				30A41B03F7CF26927013E6A4 /* cosmos-so.md */,
+				0D03EDC5F35E8B11E23E32F6 /* crdt-explained.md */,
+				2AAE1E3F43C95AE91FE42078 /* da.md */,
+				61450729FC92E4C2457AB807 /* dashboard.md */,
+				8C38225D920B7B6A7E6C7145 /* design-systems-book.md */,
+				826163C824D5E3DF78056756 /* design-systems-guide.md */,
+				31A8D0D4E3F1F573C18DC0AD /* design-talk-2026.md */,
+				DF1CE7C6E30C55B85C4AC1C0 /* design.md */,
+				FEE5C4C1D2CD91657C32ADB6 /* figma-design.md */,
+				BCBF265ED20DAD8B5BB4B2A5 /* fintech.md */,
+				346E9B013EC9FF94EB72754E /* graphic-design.md */,
+				9D30E9672A865DD3A81A9C7A /* how-to-use-roam-research-a-tool-for-metacognition-2.md */,
+				D4049D3F30012DF930281FB6 /* how-to-use-roam-research-a-tool-for-metacognition-3.md */,
+				4CE207DBE68BADB1BDB26E5E /* how-to-use-roam-research-a-tool-for-metacognition-4.md */,
+				AD961C5E0352A7FD1DC5C480 /* how-to-use-roam-research-a-tool-for-metacognition.md */,
+				902A0149B2E8FCA272FB90D1 /* interview-with-the-co-founder-of-inflow-ness-labs-2.md */,
+				27AACF83D99973E206537C78 /* interview-with-the-co-founder-of-inflow-ness-labs-3.md */,
+				ACC3F94D50D6C8026D19BD17 /* interview-with-the-co-founder-of-inflow-ness-labs-4.md */,
+				B2553A51D4B9408A060C1FF6 /* interview-with-the-co-founder-of-inflow-ness-labs.md */,
+				5741FCE3F10559ACE09FA82F /* japan.md */,
+				EAB1829C6ECBA75A45565998 /* linear-app.md */,
+				6A561CB480337E4B07AB3B0E /* local-first-software.md */,
+				D9EBE69640F64C5CF216FA61 /* macbook-neo-1-23kg-gpd-micropc2-500g-gpd-pocket-4-770g.md */,
+				6DDEA101B0CF7DD7AA39556A /* mao-v-x-3-31-book-https-t-co-9mt3mr3huq-https-t-co-06ah3wxuhi-x.md */,
+				B6AB7EB72F31683F25A8309C /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-2.md */,
+				74DC46E3972938EA04802A1D /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-5.md */,
+				FDF7303D29788022BA839C6A /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x.md */,
+				A3EF41717FA7367005D5A7A1 /* mymind-app.md */,
+				9D0F2C3425872162C1967D62 /* mymind.md */,
+				41528211063EAE0045C8857E /* nastoyaschego-ne-suschestvuet-ali-2.md */,
+				54136984253C5A522DECA468 /* nastoyaschego-ne-suschestvuet-ali.md */,
+				15DB8AE9D5C322AB23FB04A0 /* neomechanica.md */,
+				F4A576FCE630C4C4B48B9742 /* new-release-info-2026-03-13-21-00-japan-time-approach-03-animal-2.md */,
+				1BCB667FAB72016A26E9CCA8 /* obsidian-md.md */,
+				8788B06B53F3BE4B26B19ADD /* obzor-macbook-neo-o-ch-m-nikto-ne-skazal.md */,
+				491141DE58BE67E7B92C9D0D /* pochemu-ya-brosil-it-problemy-it-o-kotorykh-molchat-na-mitapakh-fil-ranzhin.md */,
+				11E5D958FFD3C68A8F8F3A7A /* rationality-a-z-lesswrong-2.md */,
+				F724BDB4496FE7C7652B7E65 /* rationality-a-z-lesswrong.md */,
+				6D9E0D55AA93F37BDD378445 /* sekonomte-25-pri-pokupke-baldur-s-gate-3-v-steam-2.md */,
+				100D20E39A90B4B25D74E178 /* sekonomte-25-pri-pokupke-baldur-s-gate-3-v-steam.md */,
+				89A9D7ED64483D0BFE9069BC /* sekonomte-70-pri-pokupke-the-last-stand-aftermath-v-steam.md */,
+				75F322E2EFA7E37BEFA57A48 /* sekonomte-95-pri-pokupke-for-honor-v-steam.md */,
+				37AFDA88FD629994FB0F3E7A /* simz-v-x-https-t-co-9ipunhqp2d-x.md */,
+				8FBEB39EAC8D29D3C336CE3E /* someone-made-a-game-in-which-you-have-to-program-a-drone-using-a-simple-python-l.md */,
+				32A31A804CF69A23C7EB27ED /* srcl-2.md */,
+				D64979A0770E450340C3C89E /* srcl.md */,
+				D69C60C4FA10FE94BD18F648 /* stardew-valley-v-steam.md */,
+				4C5310BFDB5DE7981EA6E04C /* stripe-homepage.md */,
+				0ED4002D6F23D9042EBD1C09 /* tauri-vs-electron.md */,
+				1CCDF2357DD146CBEC594603 /* test.md */,
+				C187C1C54EC4534FFFF0D5EB /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-2.md */,
+				D60C0BBE012B2E782E7F20B3 /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-3.md */,
+				294048A87876BA4E42C6DB46 /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong.md */,
+				912A20B7E0BBFFC5D5A864C1 /* this-game-has-such-incredible-rocks-and-cliffs-i-love-how-subtly-different-the-d.md */,
+				086DAE4AFF7808228FEC24B7 /* thread-by-aisafetymemes.md */,
+				13C8EDD279FF0857351866FE /* thread-by-daveshapi.md */,
+				DDAC9F13797D7F8856249D38 /* thread-by-denfaminicogame.md */,
+				1F4DD844758B29F2025A7D20 /* thread-by-dopemind10.md */,
+				CEEFB6F407657FDBD6EDD12C /* thread-by-evilrabbit.md */,
+				20B68CD6F0552182CC2B3C9A /* thread-by-japantracul-2.md */,
+				0423B46152C477F3CDAE6EE2 /* thread-by-japantracul.md */,
+				CE37969EA01C9BDE0532579E /* thread-by-kky0699-2.md */,
+				25825408B00E54C0BCE31235 /* thread-by-obsdmd-2.md */,
+				86F23DEDAC77CC800E657D9D /* thread-by-obsdmd-3.md */,
+				40294D02EA3CD0A30F772181 /* thread-by-obsdmd-4.md */,
+				53E4CEA0A93A6749BB66FA45 /* thread-by-obsdmd.md */,
+				764E0E4353ABA0F2D4726F5D /* thread-by-perplexity-ai.md */,
+				B86D6E82D51EA194D2E5AD63 /* thread-by-rtsdimon.md */,
+				BE94EA0F84F23442E62F33E0 /* thread-by-sapinker.md */,
+				8F6387B68BF53AD4EFB7556A /* thread-by-vurdv8a8gbgrctd-2.md */,
+				FDB3EF32FEAA4B2326FDC9A8 /* tiny-experiments-by-anne-laure-le-cunff-ness-labs.md */,
+				76986FB13450389521FE4D0E /* tokyo-walk.md */,
+				8AE6039990641A183A030067 /* tsepi-markova-matematika-predskazaniy-veritasium-2.md */,
+				55B141683B1A613929D4D61B /* tsepi-markova-matematika-predskazaniy-veritasium-3.md */,
+				85044078D4566D666B17DB66 /* untitled-2.md */,
+				6871AC87BEE261E0143830D2 /* untitled-4.md */,
+				3C93F378015B8B1F557B2384 /* untitled-5.md */,
+				CC78457E56BBEB222BFE6D64 /* untitled-6.md */,
+				16C90DC397D1DD08C9C55722 /* untitled-7.md */,
+				D897F0221250B3F908C109E6 /* untitled-8.md */,
+				24A9181640F6E70B7A61C466 /* untitled-9.md */,
+				1AAC6FB3AFBFC1D720270EA5 /* untitled.md */,
+				B507D8F2CFD332BF4B204A47 /* v-x-skeb-https-t-co-entvnu6w9q-x.md */,
+				10F09647695DE3321237805A /* vercel-platform.md */,
+				431BBB681C0B596F356CE4BA /* watch-this-story-by-on-instagram-before-it-disappears-3.md */,
+				2AF005C066C3472A4AD7F93C /* watch-this-story-by-on-instagram-before-it-disappears-4.md */,
+				2ADF392CD8D52416BCEB85C5 /* welcome-to-lesswrong-lesswrong-2.md */,
+				65BCCD772479600881DA2F40 /* welcome-to-lesswrong-lesswrong.md */,
+				2077C531AEC4EF6D45D5845C /* youtube.md */,
+			);
+			path = TestData;
+			sourceTree = "<group>";
+		};
 		20906A08553056EECA01EB8D /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -50,8 +460,10 @@
 			children = (
 				89F1773A497F5FECB4DC6074 /* ContentView.swift */,
 				87C09D98DC3051B93B7D2CB7 /* GridView.swift */,
+				3FE421104B50617640F0C309 /* Info.plist */,
 				8962E71A1089E170EBAF7F91 /* LocalArenaApp.swift */,
 				AF3B65612D52E384A077C57C /* VaultViewModel.swift */,
+				1EDB7086DF4AF4E72376FB58 /* TestData */,
 			);
 			path = LocalArena;
 			sourceTree = "<group>";
@@ -90,6 +502,7 @@
 			buildConfigurationList = 028EE28E9A21BC1C199283C8 /* Build configuration list for PBXNativeTarget "LocalArena" */;
 			buildPhases = (
 				34C59F0CD8C503D29CC03871 /* Sources */,
+				16533C14C329C777C3735D65 /* Resources */,
 				3B1A567FD1509DACF694023C /* Frameworks */,
 			);
 			buildRules = (
@@ -111,6 +524,11 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					75C6122E660873BC780E4437 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
 			};
 			buildConfigurationList = F8AAC3A929A59B5EE8D3715C /* Build configuration list for PBXProject "LocalArena" */;
 			compatibilityVersion = "Xcode 14.0";
@@ -130,6 +548,150 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		16533C14C329C777C3735D65 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2758572FD6D1A3BC349B9C2D /* 1.md in Resources */,
+				B63708F526757D0ECE4B6E3D /* 2-jake-wallis-simons-v-x-my-husband-deals-with-the-voting-britain-we-are-so.md in Resources */,
+				4A13767E6D1DE7C543B5EB1C /* 2-mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-3.md in Resources */,
+				97AA576E9E286134AAA4AD17 /* 2-modern-machines-v-x-during-world-war-2-air-combat-happened-at-short-distances.md in Resources */,
+				937C9EC4C11542B5DD5B6CB0 /* 2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases-2.md in Resources */,
+				B3B519FB0FA6C93B48F91CF1 /* 2-obsidian-v-x-obsidian-1-12-is-now-available-to-everyone-obsidian-cli-bases.md in Resources */,
+				CB3F5FB4934C4007D8819066 /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the-2.md in Resources */,
+				8BE10E1AB68F80A513A5CB6F /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the.md in Resources */,
+				D7EAB917DACC91A79023A529 /* 2025-in-ai-predictions-lesswrong.md in Resources */,
+				12408DA669ECD6E9A088D9E8 /* 2026-essential-collection-3-18-wed-20-00-in-stock-dayoff-bag-black.md in Resources */,
+				A3149A45276AEBAAB16995A4 /* ai-2027-2.md in Resources */,
+				010FFF993CDCA669E8D2550E /* ai-2027-3.md in Resources */,
+				DC91D153DD0C02CEC3CB0FDA /* ai-2027-4.md in Resources */,
+				061B3553D15EE3AE37FCDC73 /* ai-2027-5.md in Resources */,
+				CAD0273F316F0B961B3C3E66 /* ai-2027.md in Resources */,
+				F069025A1B72176BCA4B0BCB /* art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for-3.md in Resources */,
+				5CF3B72CEF975CECBD219189 /* art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for.md in Resources */,
+				5A1CFC73E0F74220D6291A6E /* bauhaus-legacy.md in Resources */,
+				24017007D53CCE0D495BFFAA /* ben-v-x-photoshops-new-ai-rotate-tool-works-perfect-https-t-co-oeu999ylcy-x.md in Resources */,
+				24559821C2C5A3ACC471BA8A /* brutalist-web-design.md in Resources */,
+				119DD403F6A9B55108246E4A /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta-2.md in Resources */,
+				5342E0280F291E2D49D2B769 /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta-3.md in Resources */,
+				454CC9A082E6E45699F566DF /* chto-seychas-govorit-bogomaz-eto-polnoe-vrane-ataka-vsu-na-bryansk-10-marta.md in Resources */,
+				BFC0067B67D08FF2453BA6BB /* cleanshot-2026-02-27-at-16-17-39-2x-2.md in Resources */,
+				638C47B81AA5B73380EB8AA0 /* cleanshot-2026-02-27-at-18-51-44-2x-2.md in Resources */,
+				7A24A66BDA97292693585514 /* cleanshot-2026-02-28-at-09-15-23-2x.md in Resources */,
+				C2D1ED37E66A8CBD438BE2AE /* cleanshot-2026-02-28-at-23-37-51-2x.md in Resources */,
+				4D296968AF56D3C553D892A0 /* cleanshot-2026-02-28-at-23-38-55-2x.md in Resources */,
+				AA79336F0B9566324518B763 /* cleanshot-2026-03-04-at-12-03-07-2x.md in Resources */,
+				6CC96129F96152356CB0881F /* cleanshot-2026-03-04-at-12-03-40-2x-2.md in Resources */,
+				FA491C25768F64026EBAB654 /* cleanshot-2026-03-04-at-12-03-40-2x-3.md in Resources */,
+				3A5D1DA68759B485F51F1E6E /* cleanshot-2026-03-04-at-12-03-40-2x.md in Resources */,
+				296940D4B3B130CB438701E1 /* cleanshot-2026-03-05-at-14-29-59-2x.md in Resources */,
+				3D122C0518BE17316FD95B57 /* cleanshot-2026-03-14-at-08-53-48-2x.md in Resources */,
+				5763FE2851B331E2A99B4646 /* color-palette-ase.md in Resources */,
+				A3020832EC22BE317F081512 /* cosmos-so.md in Resources */,
+				2062062C4C9A64831770352A /* crdt-explained.md in Resources */,
+				AFFFAE9D4D89C9902C2F624D /* da.md in Resources */,
+				4E209E6DB5D101880C01F450 /* dashboard.md in Resources */,
+				A468B8AA36518E48645BD5B0 /* design-systems-book.md in Resources */,
+				DD248AF8AEDB30FBF45C8C9D /* design-systems-guide.md in Resources */,
+				AFE0CA7498096388997ED548 /* design-talk-2026.md in Resources */,
+				A8F6A782875030DB21330A5F /* design.md in Resources */,
+				B62899E2FD5F610B2129804C /* figma-design.md in Resources */,
+				E22EF85F264B2FA23512F44C /* fintech.md in Resources */,
+				3237E63971D6F6F3A13F3B2A /* graphic-design.md in Resources */,
+				66185F35F7A83E104ECF6FE4 /* how-to-use-roam-research-a-tool-for-metacognition-2.md in Resources */,
+				AABB891B68A5701C922BE17C /* how-to-use-roam-research-a-tool-for-metacognition-3.md in Resources */,
+				BC1894D4605F2BD194A36485 /* how-to-use-roam-research-a-tool-for-metacognition-4.md in Resources */,
+				7EEFEEB02A9A21A695EF6175 /* how-to-use-roam-research-a-tool-for-metacognition.md in Resources */,
+				BE6B2BA82AA873135823BA00 /* interview-with-the-co-founder-of-inflow-ness-labs-2.md in Resources */,
+				6E99DBF7FF4983A442FAAB63 /* interview-with-the-co-founder-of-inflow-ness-labs-3.md in Resources */,
+				FB405CE3CE5295500316318D /* interview-with-the-co-founder-of-inflow-ness-labs-4.md in Resources */,
+				31B73414DB3FADB8795AAFB1 /* interview-with-the-co-founder-of-inflow-ness-labs.md in Resources */,
+				F1B1F26534985F0CA00C379F /* japan.md in Resources */,
+				B4EA378EC377DD1B70868F75 /* linear-app.md in Resources */,
+				FBBC834E1467FBCAF8E58CD5 /* local-first-software.md in Resources */,
+				A77BFE200070C1F6FBC1976C /* macbook-neo-1-23kg-gpd-micropc2-500g-gpd-pocket-4-770g.md in Resources */,
+				FA00502440D11BB36BCE688C /* mao-v-x-3-31-book-https-t-co-9mt3mr3huq-https-t-co-06ah3wxuhi-x.md in Resources */,
+				7C1BCC9F465FEBFD0CC420E0 /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-2.md in Resources */,
+				B713B81131ED751AAF04760E /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x-5.md in Resources */,
+				94ED39A6D74B2B35C10389B1 /* mari-yamazaki-v-x-4-4-29-https-t-co-jke72pjysg-https-t-co-pf6e3dxmz8-x.md in Resources */,
+				61062B6D3718B7AEF7944310 /* mymind-app.md in Resources */,
+				587B8C15FE3273A6510991B1 /* mymind.md in Resources */,
+				24F711D3963FA4D694480A82 /* nastoyaschego-ne-suschestvuet-ali-2.md in Resources */,
+				531C67DED0BEEC626268D32C /* nastoyaschego-ne-suschestvuet-ali.md in Resources */,
+				E4B07A1EFAD175DD9BC71C04 /* neomechanica.md in Resources */,
+				A55DD012C5869485D831ED44 /* new-release-info-2026-03-13-21-00-japan-time-approach-03-animal-2.md in Resources */,
+				7FFC02B183610F6EFF0D9D5F /* obsidian-md.md in Resources */,
+				6180664FA5E8D5CF9433D8DB /* obzor-macbook-neo-o-ch-m-nikto-ne-skazal.md in Resources */,
+				B9FE4231810475B054C7628E /* pochemu-ya-brosil-it-problemy-it-o-kotorykh-molchat-na-mitapakh-fil-ranzhin.md in Resources */,
+				7D6F7B2C2D18267CDC0883BB /* rationality-a-z-lesswrong-2.md in Resources */,
+				EA6CECFEAECDE72C6242A546 /* rationality-a-z-lesswrong.md in Resources */,
+				53ADF7A1E3F6DE52D35A78DA /* sekonomte-25-pri-pokupke-baldur-s-gate-3-v-steam-2.md in Resources */,
+				733A7B2872B2216F971BA188 /* sekonomte-25-pri-pokupke-baldur-s-gate-3-v-steam.md in Resources */,
+				592FCE9D42F57A7C156B4429 /* sekonomte-70-pri-pokupke-the-last-stand-aftermath-v-steam.md in Resources */,
+				A25C204B182D3CE67A5AEE80 /* sekonomte-95-pri-pokupke-for-honor-v-steam.md in Resources */,
+				B4B0BDE7BA633ABBA4F0E665 /* simz-v-x-https-t-co-9ipunhqp2d-x.md in Resources */,
+				17E3D21D3AB16B18350B567D /* someone-made-a-game-in-which-you-have-to-program-a-drone-using-a-simple-python-l.md in Resources */,
+				0AD183DFBB9FD11466A197BC /* srcl-2.md in Resources */,
+				E7CEABE6DF665AD8CC057844 /* srcl.md in Resources */,
+				98B5757723E8FC9B84F51188 /* stardew-valley-v-steam.md in Resources */,
+				93F149FF7B8EB0BE5928DAC3 /* stripe-homepage.md in Resources */,
+				E761D9073C2B1C0D87254A05 /* tauri-vs-electron.md in Resources */,
+				D6D660185ADF40A484AC94F2 /* test.md in Resources */,
+				A2A0B14A634676EDC37B2247 /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-2.md in Resources */,
+				91822D05D43894EE888C575A /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-3.md in Resources */,
+				343854AF56ECB9999E6AAC07 /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong.md in Resources */,
+				F9E4C9B90FE78985C3A3011C /* this-game-has-such-incredible-rocks-and-cliffs-i-love-how-subtly-different-the-d.md in Resources */,
+				4BB013BE4374A3D05EC097BA /* thread-by-aisafetymemes.md in Resources */,
+				F3DA91E07B052EBF32A37621 /* thread-by-daveshapi.md in Resources */,
+				BFB52C412BD425F46BECE341 /* thread-by-denfaminicogame.md in Resources */,
+				C6DE558B7B09F0E86D0282BD /* thread-by-dopemind10.md in Resources */,
+				067C7C0986A5821BF7C9500E /* thread-by-evilrabbit.md in Resources */,
+				76804362B0A8EB0E2A0911C1 /* thread-by-japantracul-2.md in Resources */,
+				9CF038F5D7218150A43EA329 /* thread-by-japantracul.md in Resources */,
+				411190AF048C135FF54B715F /* thread-by-kky0699-2.md in Resources */,
+				2E7A37C5EEFCE968F12182F9 /* thread-by-obsdmd-2.md in Resources */,
+				94551818600DCC3C009FDA83 /* thread-by-obsdmd-3.md in Resources */,
+				E918324D93F18F0D1BE99650 /* thread-by-obsdmd-4.md in Resources */,
+				28607D7FE7DC35E700607D70 /* thread-by-obsdmd.md in Resources */,
+				FEED457DDA7EDCB48D184CD6 /* thread-by-perplexity-ai.md in Resources */,
+				F132942B32D3951AC86E4197 /* thread-by-rtsdimon.md in Resources */,
+				5548E466DD9EB2C3A82A0309 /* thread-by-sapinker.md in Resources */,
+				2C8090B290E89A12E2CA5537 /* thread-by-vurdv8a8gbgrctd-2.md in Resources */,
+				A3991C7FE95813978AEF53F6 /* tiny-experiments-by-anne-laure-le-cunff-ness-labs.md in Resources */,
+				B5A7A69F3307A0B8E5A89EBA /* tokyo-walk.md in Resources */,
+				02ECACD78BAFEFC687A41026 /* tsepi-markova-matematika-predskazaniy-veritasium-2.md in Resources */,
+				230A35F5204DDF533E46C332 /* tsepi-markova-matematika-predskazaniy-veritasium-3.md in Resources */,
+				F3C6075DCEB88A7822760D15 /* untitled-2.md in Resources */,
+				72B6E330850233F714424071 /* untitled-4.md in Resources */,
+				109E4F50FEC41E608976356A /* untitled-5.md in Resources */,
+				AAFF52D485159491FE6EA0D0 /* untitled-6.md in Resources */,
+				86F7559FBB4589B084A0E188 /* untitled-7.md in Resources */,
+				0C1CA36627719AFF86546AD8 /* untitled-8.md in Resources */,
+				ABD6EB7F6BCE65C9D2B5F3CB /* untitled-9.md in Resources */,
+				5F1CC6342C6545DBBF2FD7F3 /* untitled.md in Resources */,
+				F8735D3894FBB28F35129A5A /* v-x-skeb-https-t-co-entvnu6w9q-x.md in Resources */,
+				5C0F2A2ED3572AE7617AF1A5 /* vercel-platform.md in Resources */,
+				CBF9F9E5B5555D77D57A42E6 /* watch-this-story-by-on-instagram-before-it-disappears-3.md in Resources */,
+				70C227ECD3F028CFD3DB6CA2 /* watch-this-story-by-on-instagram-before-it-disappears-4.md in Resources */,
+				8342C17F913C693DA686DFFE /* welcome-to-lesswrong-lesswrong-2.md in Resources */,
+				621516D4A0AD100E608D29B7 /* welcome-to-lesswrong-lesswrong.md in Resources */,
+				29902C636BED5D5949C23577 /* youtube.md in Resources */,
+				B885DB6B46F3B97742DF1F9A /* длинное-название-коллекции.md in Resources */,
+				1E2002CDA66F3E0D35C31143 /* игры.md in Resources */,
+				D067C4DAF68CA99247D11ED8 /* катушка.md in Resources */,
+				463A717A4F13FB0B574144E2 /* политика.md in Resources */,
+				602827DD577465119A50156E /* ссыки.md in Resources */,
+				72AB9AF9B9BB53C07C0F7DC2 /* ссылки.md in Resources */,
+				125697CBF591A987526B4E83 /* тест-3.md in Resources */,
+				287E4EE4408E62C40F220854 /* тест-4.md in Resources */,
+				C681176B10ADB91A270EC5A6 /* тест.md in Resources */,
+				EA743064044F519D0B64104A /* тсет.md in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		34C59F0CD8C503D29CC03871 /* Sources */ = {
@@ -152,19 +714,17 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\".\"",
 				);
+				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/Generated",
 				);
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				INFOPLIST_FILE = LocalArena/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -241,19 +801,17 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\".\"",
 				);
+				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/Generated",
 				);
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				INFOPLIST_FILE = LocalArena/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

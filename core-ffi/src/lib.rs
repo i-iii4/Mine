@@ -74,6 +74,39 @@ impl ArenaVault {
         Ok(blocks.into_iter().map(light_block_to_ffi).collect())
     }
 
+    /// Scan all .md files in vault and index them in SQLite.
+    /// Must be called after open() to populate the database.
+    fn scan_vault(&self) -> Result<u32, ArenaError> {
+        let conn = self.conn.lock()
+            .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
+
+        let vault_dir = PathBuf::from(&self.vault_path);
+        let entries = std::fs::read_dir(&vault_dir)
+            .map_err(|e| ArenaError::Io { msg: e.to_string() })?;
+
+        let mut count = 0u32;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            if let Ok((slug, content)) = local_arena_lib::storage::files::read_block_file(&path) {
+                match local_arena_lib::domain::block::parse_block(&slug, &content) {
+                    Ok(block) => {
+                        if block.frontmatter.block_type == local_arena_lib::domain::block::BlockType::Channel {
+                            let _ = index::upsert_channel_from_block(&conn, &block);
+                        } else {
+                            let _ = index::upsert_block(&conn, &block);
+                        }
+                        count += 1;
+                    }
+                    Err(_) => continue,
+                }
+            }
+        }
+        Ok(count)
+    }
+
     /// Get the vault path.
     fn vault_path(&self) -> String {
         self.vault_path.clone()

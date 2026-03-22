@@ -271,6 +271,11 @@ void*_Nonnull uniffi_local_arena_ffi_fn_constructor_arenavault_open(RustBuffer v
 RustBuffer uniffi_local_arena_ffi_fn_method_arenavault_list_blocks(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LOCAL_ARENA_FFI_FN_METHOD_ARENAVAULT_SCAN_VAULT
+#define UNIFFI_FFIDEF_UNIFFI_LOCAL_ARENA_FFI_FN_METHOD_ARENAVAULT_SCAN_VAULT
+uint32_t uniffi_local_arena_ffi_fn_method_arenavault_scan_vault(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LOCAL_ARENA_FFI_FN_METHOD_ARENAVAULT_VAULT_PATH
 #define UNIFFI_FFIDEF_UNIFFI_LOCAL_ARENA_FFI_FN_METHOD_ARENAVAULT_VAULT_PATH
 RustBuffer uniffi_local_arena_ffi_fn_method_arenavault_vault_path(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
@@ -570,6 +575,12 @@ uint16_t uniffi_local_arena_ffi_checksum_func_parse_block_file(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LOCAL_ARENA_FFI_CHECKSUM_METHOD_ARENAVAULT_LIST_BLOCKS
 #define UNIFFI_FFIDEF_UNIFFI_LOCAL_ARENA_FFI_CHECKSUM_METHOD_ARENAVAULT_LIST_BLOCKS
 uint16_t uniffi_local_arena_ffi_checksum_method_arenavault_list_blocks(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LOCAL_ARENA_FFI_CHECKSUM_METHOD_ARENAVAULT_SCAN_VAULT
+#define UNIFFI_FFIDEF_UNIFFI_LOCAL_ARENA_FFI_CHECKSUM_METHOD_ARENAVAULT_SCAN_VAULT
+uint16_t uniffi_local_arena_ffi_checksum_method_arenavault_scan_vault(void
     
 );
 #endif

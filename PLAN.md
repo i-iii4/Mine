@@ -480,6 +480,29 @@ Goal: полноценная поддержка видео-страниц в к�
 | 13.5 | Замена Readability+Turndown на Defuddle в content.js | [x] |
 | 13.6 | Извлечение транскрипта YouTube через Defuddle или API | [x] |
 
+### Phase M1 — Rust core UniFFI bindings [COMPLETED]
+
+| # | Task | Status |
+|---|------|--------|
+| M1.1 | Cargo workspace (root + core-ffi) | [x] |
+| M1.2 | Feature gate `desktop` для Tauri-зависимостей | [x] |
+| M1.3 | core-ffi crate: ArenaVault, FfiLightBlock, ArenaError | [x] |
+| M1.4 | iOS targets (aarch64-apple-ios, aarch64-apple-ios-sim) | [x] |
+| M1.5 | Swift bindings (uniffi-bindgen) | [x] |
+| M1.6 | xcframework для device + simulator | [x] |
+
+### Phase M2 — iOS приложение [IN PROGRESS]
+
+| # | Task | Status |
+|---|------|--------|
+| M2.1 | Xcode project (xcodegen), SwiftUI scaffold | [x] |
+| M2.2 | scanVault() — индексация .md файлов | [x] |
+| M2.3 | GridView с карточками (smoke test) | [x] |
+| M2.4 | Дизайн-система: тёмная тема, цвета, типографика | [ ] |
+| M2.5 | Thumbnails в карточках | [ ] |
+| M2.6 | Channel list / навигация | [ ] |
+| M2.7 | Detail view (просмотр блока) | [ ] |
+
 ### Backlog
 
 | Task | Description |

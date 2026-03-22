@@ -28,6 +28,31 @@ if any
 
 ---
 
+## 22.03.2026 — Phase M1—M2: iOS app scaffold (SwiftUI + Rust UniFFI)
+
+### Goal
+Rust-ядро вызывается из Swift на iOS. Приложение запускается на симуляторе и показывает карточки из vault.
+
+### Actually completed
+1. Cargo workspace — `local-arena` (десктоп) + `local-arena-ffi` (iOS UniFFI)
+2. Feature gate `desktop` — domain/ и storage/ компилируются для iOS без Tauri
+3. `core-ffi` crate — ArenaVault (open, scanVault, listBlocks), FfiLightBlock, ArenaError
+4. Swift bindings через uniffi-bindgen, xcframework для device + simulator
+5. Xcode project (xcodegen) — SwiftUI: GridView с CardView, VaultViewModel
+6. `scanVault()` — индексация .md файлов из Swift
+7. 134 карточки отображаются на симуляторе
+
+### Push
+PENDING
+
+### Decisions and lessons learned
+- `trash` crate → `cfg(not(target_os = "ios"))`, `notify` → optional
+- `Connection` в UniFFI → `Mutex<Connection>` внутри Object
+- xcframework modulemap → переименовать в `module.modulemap`
+- Тестовые данные в симулятор через `xcrun simctl`
+
+---
+
 ## 18.03.2026 — Каналы как маркдаун-файлы
 
 ### Goal
