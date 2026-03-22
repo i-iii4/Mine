@@ -16,6 +16,7 @@
 - `SPEC_INTEGRATION.md` — спецификации watcher/events, handler, commands
 - `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
 - `SPEC_CLIPPER.md` — спецификация веб-клиппера: типы клипов, popup, native messaging
+- `SPEC_MOBILE.md` — спецификация iOS-приложения: SwiftUI + Rust UniFFI, iCloud sync, Share Extension
 - `AUDIT.md` — результаты аудитов кодовой базы (01.03.2026 — первый, 03.03.2026 — повторный), план доработки — Phase 9 в PLAN.md
 - `DESIGN_SYSTEM.md` — дизайн-система: токены скруглений, отступов, типографики, правила поведения
 

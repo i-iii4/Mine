@@ -478,4 +478,10 @@ Goal: полноценная поддержка видео-страниц в к�
 | 13.3 | Detail.tsx: YouTube iframe embed для видео-блоков с URL | [x] |
 | 13.4 | Detail.tsx: body ниже видео (подготовка к транскрипту) | [x] |
 | 13.5 | Замена Readability+Turndown на Defuddle в content.js | [x] |
-| 13.6 | Извлечение транскрипта YouTube через Defuddle или API | [ ] |
+| 13.6 | Извлечение транскрипта YouTube через Defuddle или API | [x] |
+
+### Backlog
+
+| Task | Description |
+|---|---|
+| Validate vault | Команда проверки целостности vault: валидация frontmatter, осиротевшие медиа, консистентность индекса, автоисправление |
