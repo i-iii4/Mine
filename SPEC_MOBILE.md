@@ -179,11 +179,11 @@ Masonry-сетка блоков, как на десктопе. Pull-to-refresh. 
 
 ### 2. Detail
 
-Полноэкранный просмотр блока. Свайп влево/вправо для навигации (вместо стрелок). Теги, метаданные, share button.
+Полноэкранный просмотр блока. Кастомная кнопка «назад» (шеврон в полупрозрачном круге). Видео — автоплей через `AutoplayVideo` (AVPlayer). Теги, метаданные внизу. Свайп-навигация — не реализована.
 
 ### 3. Channel list
 
-Список каналов с preview-картинками. Создание, переименование, удаление.
+Список каналов с preview-картинками. Создание, переименование, удаление. **Статус: не начато (M2.6).**
 
 ### 4. Search
 
@@ -199,18 +199,13 @@ Masonry-сетка блоков, как на десктопе. Pull-to-refresh. 
 ios/
 ├── LocalArena/                    # Main app target
 │   ├── App.swift                  # @main, app lifecycle
-│   ├── ContentView.swift          # Root view (TabView or NavigationStack)
-│   ├── Views/
-│   │   ├── GridView.swift         # Masonry grid
-│   │   ├── CardView.swift         # Block card
-│   │   ├── DetailView.swift       # Full block view
-│   │   ├── ChannelListView.swift  # Sidebar / channels
-│   │   └── SearchView.swift       # FTS5 search
-│   ├── ViewModels/
-│   │   ├── VaultViewModel.swift   # Rust core bridge
-│   │   └── SyncViewModel.swift    # iCloud + CloudKit
-│   └── Bridge/
-│       └── RustBridge.swift       # UniFFI generated + extensions
+│   ├── ContentView.swift          # Root ZStack, фон, сидинг тестовых данных
+│   ├── GridView.swift             # Masonry 2 колонки, @State навигация
+│   ├── CardViews.swift            # BlockCard роутер + SocialCard, ImageCard, ArticleCard, LinkCard, VideoCard
+│   ├── DetailView.swift           # Полный просмотр, AutoplayVideo, custom back button
+│   ├── VaultViewModel.swift       # Мост SwiftUI → Rust FFI
+│   ├── Theme.swift                # Arena enum: цвета, отступы, типографика
+│   └── Info.plist                 # UILaunchScreen (обязателен для полноэкранного режима)
 ├── LocalArenaShare/               # Share Extension target
 │   ├── ShareViewController.swift  # Share sheet UI
 │   └── ContentExtractor.swift     # URL → metadata extraction
@@ -231,8 +226,8 @@ ios/
 - Xcode project в `ios/`
 - iCloud Drive container setup
 - Grid view (SwiftUI LazyVGrid)
-- Detail view (NavigationStack)
-- Channel list
+- Detail view (@State навигация, без NavigationStack)
+- Channel list (M2.6 — не начато)
 
 ### Phase M3 — Sync
 - iCloud Drive file monitoring (NSMetadataQuery)

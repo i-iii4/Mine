@@ -64,10 +64,9 @@ System font (SF Pro) — не кастомные шрифты. Размеры а
 
 | Десктоп | iOS | SwiftUI | Где |
 |---|---|---|---|
-| `text-sm` (12px) | 13pt | `.caption` | Мета, даты, счётчики |
-| `text-base` (14px) | 15pt | `.subheadline` | Карточки, подписи |
-| — | 17pt | `.body` | Основной текст (Detail body) |
-| `text-lg` (18px) | 20pt | `.title3` | Заголовки |
+| `text-sm` (12px) | 10pt | `Arena.fontRegular()` | Карточки, подписи (адаптировано для ~190px колонки) |
+| `text-base` (14px) | 13pt | `Arena.fontRegular(13)` | Detail body |
+| `text-lg` (18px) | 16pt | `Arena.fontSemibold(16)` | Заголовки Detail |
 
 ### Веса
 
@@ -126,7 +125,7 @@ System font (SF Pro) — не кастомные шрифты. Размеры а
 | Десктоп | iOS | SwiftUI |
 |---|---|---|
 | Sidebar (каналы) | Tab Bar + Channel sheet | `TabView` + `.sheet` |
-| Detail lightbox | Push navigation + swipe back | `NavigationStack` |
+| Detail lightbox | Custom push (@State + back button) | `@State` + `withAnimation` |
 | Cmd+K search | Search bar | `.searchable()` |
 | Context menu | Long press menu | `.contextMenu` |
 
@@ -134,7 +133,7 @@ System font (SF Pro) — не кастомные шрифты. Размеры а
 
 | Десктоп | iOS |
 |---|---|
-| Masonry (round-robin columns) | `LazyVGrid(columns: adaptive(minimum: 160))` |
+| Masonry (round-robin columns) | Фиксированные 2 колонки: `HStack` + 2 `LazyVStack` (round-robin) |
 | Infinite scroll (IntersectionObserver) | SwiftUI `List` / `ScrollView` с lazy loading |
 | Chunk loading (80 + 60) | Не нужно — SwiftUI LazyVGrid загружает по мере прокрутки |
 
@@ -147,18 +146,18 @@ System font (SF Pro) — не кастомные шрифты. Размеры а
 | Image | `<img>` full width | `AsyncImage` full width |
 | Link | Thumbnail + title + domain | Аналогично |
 | Article | Title + preview text | Аналогично |
-| Video | Thumbnail + play icon | Аналогично |
-| Social (Twitter/IG) | Text + media grid | Аналогично |
+| Video | Thumbnail + play icon | `LoopingVideoView` (AVPlayerLooper — muted autoplay loop) |
+| Social (Twitter/IG) | Text + media grid | Аналогично + `LoopingVideoView` для .mp4 медиа |
 
 ### Detail
 
 | Десктоп | iOS |
 |---|---|
-| Full-screen overlay | Full-screen push в `NavigationStack` |
-| Left/right arrows | Swipe left/right (UIPageViewController или TabView) |
-| Metadata panel (right) | Bottom sheet или scroll section |
-| ESC to close | Swipe back или навигационная кнопка |
-| ReactMarkdown body | `AttributedString` или `WKWebView` для markdown |
+| Full-screen overlay | @State push с `withAnimation(.easeInOut)` |
+| Left/right arrows | Не реализовано (будущее) |
+| Metadata panel (right) | Scroll section внизу DetailView |
+| ESC to close | Кастомная кнопка назад (шеврон в полупрозрачном круге) |
+| ReactMarkdown body | `Text()` с plain text (markdown-рендер — будущее) |
 
 ### Share Extension (аналог popup клиппера)
 
@@ -175,7 +174,7 @@ System font (SF Pro) — не кастомные шрифты. Размеры а
 |---|---|
 | Tap | Открыть карточку (→ Detail) |
 | Long press | Context menu (теги, удаление) |
-| Swipe left/right в Detail | Предыдущая/следующая карточка |
+| ~~Swipe left/right в Detail~~ | ~~Предыдущая/следующая карточка~~ (не реализовано) |
 | Pull to refresh | Пере-сканировать vault |
 | Pinch to zoom (images) | Увеличение изображения |
 

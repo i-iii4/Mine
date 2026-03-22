@@ -46,6 +46,10 @@
 | @tailwindcss/typography | Стилизация prose-контента (статьи) |
 | Defuddle | Извлечение статей + Markdown-конвертация + YouTube-транскрипты (content script) |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
+| SwiftUI | iOS UI-фреймворк (нативный, без WebView) |
+| UniFFI (Mozilla) | FFI-генератор: Rust → Swift bindings |
+| AVKit + AVFoundation | Видеовоспроизведение на iOS (LoopingVideoView, AutoplayVideo) |
+| Xcode | Сборка iOS-приложения, xcframework |
 
 ## Structure
 
@@ -122,6 +126,25 @@ local-arena/
 │   ├── lib/                    # Вендорные библиотеки (Defuddle UMD)
 │   ├── icons/                  # Иконки расширения
 │   └── manifest.json           # Manifest V3
+├── core-ffi/                   # Rust FFI-слой для iOS (UniFFI)
+│   ├── Cargo.toml              # Зависимости: local-arena (без desktop), uniffi
+│   ├── src/
+│   │   └── lib.rs              # ArenaVault Object, FfiLightBlock Record, scanVault, listBlocks
+│   └── uniffi-bindgen/
+│       └── main.rs             # Генерация Swift bindings
+├── ios/                        # iOS-приложение (SwiftUI)
+│   ├── LocalArena.xcodeproj
+│   ├── LocalArena/
+│   │   ├── LocalArenaApp.swift # @main, WindowGroup, VaultViewModel
+│   │   ├── ContentView.swift   # Корневой ZStack, сидинг тестовых данных
+│   │   ├── GridView.swift      # Masonry 2 колонки, @State навигация (без NavigationStack)
+│   │   ├── CardViews.swift     # BlockCard роутер, SocialCard, ImageCard, ArticleCard, LinkCard, VideoCard
+│   │   ├── DetailView.swift    # Полный просмотр блока, AutoplayVideo, кастомная кнопка назад
+│   │   ├── VaultViewModel.swift # Мост SwiftUI → Rust FFI (open, scan, listBlocks)
+│   │   ├── Theme.swift         # Arena enum: цвета, отступы, типографика
+│   │   ├── Info.plist          # UILaunchScreen (обязательно для полноэкранного режима)
+│   │   └── TestData/           # Тестовые .md файлы (копируются в Documents при первом запуске)
+│   └── LocalArenaCore.xcframework # Скомпилированный Rust core (device + simulator)
 ├── vite.extension.config.ts    # Vite-конфигурация для сборки расширения
 ├── public/                     # Статические ассеты
 ├── index.html

@@ -164,6 +164,61 @@ saved_at: 2026-02-26T14:30:00Z
               └──────────────────────┘
 ```
 
+### iOS Architecture
+
+```
+┌───────────────────────────────────────────────┐
+│              iOS App (SwiftUI)                 │
+│                                                │
+│  GridView ──► DetailView                       │
+│  (@State навигация, без NavigationStack)       │
+│  CardViews: Social, Image, Article, Link, Video│
+│  LoopingVideoView (AVPlayerLooper — автоплей)  │
+│       │                                        │
+│  VaultViewModel (@MainActor)                   │
+│       │                                        │
+│  ┌────▼───────────────────┐                    │
+│  │  UniFFI Swift Bindings  │                   │
+│  │  ArenaVault.open()      │                   │
+│  │  .scanVault()           │                   │
+│  │  .listBlocks()          │                   │
+│  └────────┬───────────────┘                    │
+└───────────┼────────────────────────────────────┘
+            │ FFI (C ABI)
+┌───────────▼───────────────┐
+│  core-ffi crate (Rust)     │
+│  ArenaVault — Object       │
+│    Mutex<Connection>       │
+│  FfiLightBlock — Record    │
+│                            │
+│  Зависимость: local-arena  │
+│  (default-features = false │
+│   → без desktop/Tauri)     │
+└───────────┬───────────────┘
+            │
+┌───────────▼───────────────┐
+│  local-arena (domain +     │
+│  storage, без Tauri)       │
+│  Feature gate: `desktop`   │
+│  → notify, trash, tauri    │
+│    опциональны             │
+└───────────────────────────┘
+```
+
+| Компонент | Назначение | Технология |
+|---|---|---|
+| SwiftUI Views | Сетка, карточки, детальный просмотр | SwiftUI, AVKit |
+| VaultViewModel | Мост SwiftUI → Rust FFI | Swift (@MainActor) |
+| core-ffi | UniFFI bindings: ArenaVault Object, FfiLightBlock Record | Rust, uniffi |
+| local-arena | Domain + storage (общий с десктопом) | Rust, rusqlite |
+| xcframework | Скомпилированная библиотека для device + simulator | Xcode, lipo |
+
+**Ключевые решения iOS:**
+- `Mutex<Connection>` — UniFFI Object должен быть `Send + Sync`, rusqlite Connection — нет
+- Feature gate `desktop` — Tauri, notify, trash опциональны; iOS использует только domain + storage
+- Без `NavigationStack` — резервирует ~100px под nav bar даже при `.toolbar(.hidden)`; ручная навигация через `@State`
+- `UILaunchScreen` (пустой dict в Info.plist) — обязательно, иначе iOS запускает app в compatibility mode
+
 | Component | Purpose | Technology |
 |---|---|---|
 | Tauri Shell | Нативное окно, IPC между фронтом и бэком | Tauri v2 |
