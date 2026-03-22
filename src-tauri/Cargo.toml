@@ -13,15 +13,20 @@ default-run = "local-arena"
 name = "local_arena_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = ["desktop"]
+desktop = ["tauri", "tauri-plugin-log", "tauri-plugin-dialog", "tauri-plugin-opener", "tauri-build", "notify"]
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
-# Tauri
-tauri = { version = "2", features = ["protocol-asset"] }
-tauri-plugin-log = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-opener = "2"
+# Tauri (desktop only)
+tauri = { version = "2", features = ["protocol-asset"], optional = true }
+tauri-plugin-log = { version = "2", optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
+tauri-plugin-opener = { version = "2", optional = true }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -32,7 +37,7 @@ serde_yaml = "0.9"
 rusqlite = { version = "0.33", features = ["bundled"] }
 
 # File system
-notify = "8"
+notify = { version = "8", optional = true }
 
 # HTTP client (for Are.na import)
 ureq = { version = "2", features = ["json"] }
@@ -41,9 +46,6 @@ ureq = { version = "2", features = ["json"] }
 image = "0.25"
 ab_glyph = "0.2"
 imageproc = "0.25"
-
-# OS trash
-trash = "5"
 
 # Error handling
 thiserror = "2"
@@ -56,6 +58,10 @@ log = "0.4"
 specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 tauri-specta = { version = "=2.0.0-rc.21", features = ["typescript"] }
 
+# OS trash (not available on iOS)
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+trash = "5"
+
 [[bin]]
 name = "native-host"
 path = "src/bin/native_host.rs"
@@ -64,8 +70,7 @@ path = "src/bin/native_host.rs"
 indoc = "2"
 tempfile = "3"
 
-[features]
-custom-protocol = ["tauri/custom-protocol"]
+# custom-protocol is in [features] at top
 
 [profile.release]
 strip = true

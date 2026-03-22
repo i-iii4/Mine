@@ -1,13 +1,19 @@
+#[cfg(feature = "desktop")]
 mod commands;
 pub mod domain;
+#[cfg(feature = "desktop")]
 mod import;
 pub mod storage;
 pub mod util;
+#[cfg(feature = "desktop")]
 mod watcher;
 
+#[cfg(feature = "desktop")]
 use commands::state::AppState;
+#[cfg(feature = "desktop")]
 use tauri::menu::{AboutMetadata, MenuBuilder, SubmenuBuilder};
 
+#[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

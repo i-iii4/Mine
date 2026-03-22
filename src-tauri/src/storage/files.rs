@@ -102,7 +102,13 @@ pub fn delete_block_files(
     // Fallback to permanent delete if trash fails (e.g. iCloud placeholders).
     let md_path = vault.block_path(slug);
     if md_path.exists() {
-        if trash::delete(&md_path).is_err() {
+        let trashed = {
+            #[cfg(not(target_os = "ios"))]
+            { trash::delete(&md_path).is_ok() }
+            #[cfg(target_os = "ios")]
+            { false }
+        };
+        if !trashed {
             std::fs::remove_file(&md_path)
                 .with_context(|| format!("failed to delete: {}", md_path.display()))?;
         }
@@ -111,7 +117,13 @@ pub fn delete_block_files(
     if let Some(ext) = media_ext {
         let media_path = vault.media_path(slug, ext);
         if media_path.exists() {
-            if trash::delete(&media_path).is_err() {
+            let trashed = {
+                #[cfg(not(target_os = "ios"))]
+                { trash::delete(&media_path).is_ok() }
+                #[cfg(target_os = "ios")]
+                { false }
+            };
+            if !trashed {
                 let _ = std::fs::remove_file(&media_path);
             }
         }

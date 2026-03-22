@@ -321,7 +321,13 @@ pub fn delete_channel(
     // Delete .md file
     let md_path = vs.vault.block_path(&tag);
     if md_path.exists() {
-        if trash::delete(&md_path).is_err() {
+        let trashed = {
+            #[cfg(not(target_os = "ios"))]
+            { trash::delete(&md_path).is_ok() }
+            #[cfg(target_os = "ios")]
+            { false }
+        };
+        if !trashed {
             let _ = std::fs::remove_file(&md_path);
         }
     }
