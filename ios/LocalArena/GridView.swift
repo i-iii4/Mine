@@ -2,61 +2,29 @@ import SwiftUI
 
 struct GridView: View {
     let blocks: [FfiLightBlock]
-
-    let columns = [
-        GridItem(.adaptive(minimum: 160), spacing: 8)
-    ]
+    let vaultPath: String
 
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(blocks, id: \.slug) { block in
-                    CardView(block: block)
+            HStack(alignment: .top, spacing: Arena.gridGap) {
+                // Masonry: round-robin into 2 columns (same as desktop)
+                ForEach(0..<2, id: \.self) { col in
+                    LazyVStack(spacing: Arena.gridGap) {
+                        ForEach(columnBlocks(col), id: \.slug) { block in
+                            BlockCard(block: block, vaultPath: vaultPath)
+                        }
+                    }
                 }
             }
-            .padding(.horizontal)
+            .padding(.horizontal, Arena.gridGap)
+            .padding(.top, Arena.gridGap)
         }
+        .background(Arena.bg)
     }
-}
 
-struct CardView: View {
-    let block: FfiLightBlock
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Type badge
-            HStack {
-                Text(block.blockType.uppercased())
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-
-            // Title
-            if let title = block.title {
-                Text(title)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .lineLimit(2)
-            }
-
-            // Body preview
-            if !block.body.isEmpty {
-                Text(block.body)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-            }
-
-            // Author
-            if let author = block.author {
-                Text(author)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.systemGray6))
+    private func columnBlocks(_ col: Int) -> [FfiLightBlock] {
+        blocks.enumerated()
+            .filter { $0.offset % 2 == col }
+            .map { $0.element }
     }
 }

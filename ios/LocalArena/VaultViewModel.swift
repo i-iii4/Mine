@@ -7,6 +7,7 @@ class VaultViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var error: String?
     @Published var blockCount: UInt32 = 0
+    @Published var vaultPathString: String = ""
 
     private var vault: ArenaVault?
 
@@ -23,6 +24,7 @@ class VaultViewModel: ObservableObject {
                     self.vault = vault
                     self.blocks = blocks
                     self.blockCount = indexed
+                    self.vaultPathString = path
                     self.isLoading = false
                 }
             } catch {

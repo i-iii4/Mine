@@ -4,36 +4,43 @@ struct ContentView: View {
     @EnvironmentObject var vaultModel: VaultViewModel
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if vaultModel.isLoading {
-                    ProgressView("Loading vault...")
-                } else if let error = vaultModel.error {
+        Group {
+            if vaultModel.isLoading {
+                ZStack {
+                    Arena.bg.ignoresSafeArea()
+                    ProgressView()
+                        .tint(Arena.muted)
+                }
+            } else if let error = vaultModel.error {
+                ZStack {
+                    Arena.bg.ignoresSafeArea()
                     VStack(spacing: 12) {
                         Image(systemName: "exclamationmark.triangle")
-                            .font(.largeTitle)
-                            .foregroundStyle(.secondary)
+                            .font(.title)
+                            .foregroundStyle(Arena.muted)
                         Text(error)
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Arena.muted)
                             .padding()
                     }
-                } else if vaultModel.blocks.isEmpty {
+                }
+            } else if vaultModel.blocks.isEmpty {
+                ZStack {
+                    Arena.bg.ignoresSafeArea()
                     VStack(spacing: 12) {
                         Image(systemName: "tray")
-                            .font(.largeTitle)
-                            .foregroundStyle(.secondary)
+                            .font(.title)
+                            .foregroundStyle(Arena.muted)
                         Text("No blocks yet")
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Arena.muted)
                     }
-                } else {
-                    GridView(blocks: vaultModel.blocks)
                 }
+            } else {
+                GridView(blocks: vaultModel.blocks, vaultPath: vaultModel.vaultPathString)
             }
-            .navigationTitle("Local Arena")
-            .navigationBarTitleDisplayMode(.inline)
         }
+        .preferredColorScheme(.dark)
         .onAppear {
             setupAndOpenVault()
         }
@@ -44,11 +51,9 @@ struct ContentView: View {
         let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
         let vaultPath = docs.appendingPathComponent("Vault")
 
-        // Create vault + .arena dirs
         let arenaDir = vaultPath.appendingPathComponent(".arena/cache/thumbs")
         try? fm.createDirectory(at: arenaDir, withIntermediateDirectories: true)
 
-        // Copy test .md files from bundle on first launch
         let marker = vaultPath.appendingPathComponent(".arena/.seeded")
         if !fm.fileExists(atPath: marker.path) {
             if let testDir = Bundle.main.resourceURL?.appendingPathComponent("TestData") {
