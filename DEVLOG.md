@@ -43,7 +43,7 @@ if any
 7. DetailView — кастомная кнопка «назад» (шеврон в полупрозрачном круге)
 
 ### Push
-PENDING
+35252b7
 
 ### Decisions and lessons learned
 - Без `UILaunchScreen` (пустой dict) iOS запускает app в compatibility mode — маленький квадрат
