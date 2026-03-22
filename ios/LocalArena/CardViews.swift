@@ -1,4 +1,6 @@
 import SwiftUI
+import AVFoundation
+import AVKit
 
 // MARK: - Card Router
 
@@ -132,13 +134,18 @@ struct SocialCard: View {
     @ViewBuilder
     private func mediaImage(_ filename: String) -> some View {
         let path = "\(vaultPath)/\(filename)"
-        if let img = UIImage(contentsOfFile: path) {
+        let isVideo = filename.hasSuffix(".mp4") || filename.hasSuffix(".webm") || filename.hasSuffix(".mov")
+
+        if !isVideo, let img = UIImage(contentsOfFile: path) {
             Image(uiImage: img)
                 .resizable()
+        } else if isVideo {
+            LoopingVideoView(url: URL(fileURLWithPath: path))
         } else {
             Rectangle().fill(Arena.border)
         }
     }
+
 
     private func extractMediaUrls(_ block: FfiLightBlock) -> [String] {
         // Parse ![](filename) from body
@@ -248,27 +255,12 @@ struct VideoCard: View {
     let vaultPath: String
 
     var body: some View {
-        ZStack {
-            let thumbPath = "\(vaultPath)/.arena/cache/thumbs/\(block.slug).jpg"
-            if let img = UIImage(contentsOfFile: thumbPath) {
-                Image(uiImage: img)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(16/9, contentMode: .fill)
-                    .clipped()
-            } else {
-                Rectangle()
-                    .fill(Arena.bg)
-                    .aspectRatio(16/9, contentMode: .fit)
-            }
+        let mediaFile = block.mediaFile ?? "\(block.slug).mp4"
+        let videoUrl = URL(fileURLWithPath: "\(vaultPath)/\(mediaFile)")
 
-            // Play icon
-            Image(systemName: "play.fill")
-                .font(.system(size: 20))
-                .foregroundStyle(.white)
-                .padding(12)
-                .background(Circle().fill(.black.opacity(0.5)))
+        ZStack {
+            LoopingVideoView(url: videoUrl)
+                .aspectRatio(16/9, contentMode: .fit)
 
             // Title overlay at bottom
             if let title = block.title, !title.isEmpty {
@@ -292,6 +284,59 @@ struct VideoCard: View {
 }
 
 // MARK: - Helpers
+
+// MARK: - Looping Video (no controls, muted, autoplay)
+
+struct LoopingVideoView: UIViewRepresentable {
+    let url: URL
+
+    func makeUIView(context: Context) -> LoopingPlayerUIView {
+        LoopingPlayerUIView(url: url)
+    }
+
+    func updateUIView(_ uiView: LoopingPlayerUIView, context: Context) {}
+}
+
+class LoopingPlayerUIView: UIView {
+    private var playerLayer: AVPlayerLayer?
+    private var player: AVQueuePlayer?
+    private var looper: AVPlayerLooper?
+
+    init(url: URL) {
+        super.init(frame: .zero)
+        let item = AVPlayerItem(url: url)
+        let queuePlayer = AVQueuePlayer(items: [item])
+        queuePlayer.isMuted = true
+        looper = AVPlayerLooper(player: queuePlayer, templateItem: item)
+
+        let layer = AVPlayerLayer(player: queuePlayer)
+        layer.videoGravity = .resizeAspectFill
+        self.layer.addSublayer(layer)
+
+        self.player = queuePlayer
+        self.playerLayer = layer
+        queuePlayer.play()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        playerLayer?.frame = bounds
+    }
+
+    deinit {
+        player?.pause()
+    }
+}
+
+func videoFirstFrame(_ url: URL) -> UIImage? {
+    let asset = AVAsset(url: url)
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    guard let cgImage = try? generator.copyCGImage(at: .zero, actualTime: nil) else { return nil }
+    return UIImage(cgImage: cgImage)
+}
 
 func stripMarkdown(_ text: String) -> String {
     text.replacingOccurrences(of: #"!\[.*?\]\(.*?\)"#, with: "", options: .regularExpression)

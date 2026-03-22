@@ -4,14 +4,28 @@ struct GridView: View {
     let blocks: [FfiLightBlock]
     let vaultPath: String
 
+    @State private var selectedSlug: String?
+
     var body: some View {
-        NavigationStack {
+        if let slug = selectedSlug,
+           let block = blocks.first(where: { $0.slug == slug }) {
+            DetailView(block: block, vaultPath: vaultPath) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    selectedSlug = nil
+                }
+            }
+            .transition(.move(edge: .trailing))
+        } else {
             ScrollView {
                 HStack(alignment: .top, spacing: Arena.gridGap) {
                     ForEach(0..<2, id: \.self) { col in
                         LazyVStack(spacing: Arena.gridGap) {
                             ForEach(columnBlocks(col), id: \.slug) { block in
-                                NavigationLink(value: block.slug) {
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        selectedSlug = block.slug
+                                    }
+                                } label: {
                                     BlockCard(block: block, vaultPath: vaultPath)
                                 }
                                 .buttonStyle(.plain)
@@ -22,13 +36,7 @@ struct GridView: View {
                 .padding(.horizontal, Arena.gridGap)
                 .padding(.vertical, Arena.gridGap)
             }
-            .background(Arena.bg.ignoresSafeArea())
-            .navigationBarHidden(true)
-            .navigationDestination(for: String.self) { slug in
-                if let block = blocks.first(where: { $0.slug == slug }) {
-                    DetailView(block: block, vaultPath: vaultPath)
-                }
-            }
+            .transition(.move(edge: .leading))
         }
     }
 

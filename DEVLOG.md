@@ -28,6 +28,32 @@ if any
 
 ---
 
+## 22.03.2026 — Phase M2: полноэкранный режим, видео-автоплей, навигация
+
+### Goal
+Приложение на весь экран iPhone, видео воспроизводится в ленте и в детальном виде, навигация без NavigationStack.
+
+### Actually completed
+1. `UILaunchScreen` в Info.plist — приложение на весь экран (без compatibility mode)
+2. Сидинг тестовых данных — копирование .md из корня бандла (не из TestData/)
+3. Убран `NavigationStack` из GridView — ручная навигация через `@State`, без отступа nav bar
+4. `LoopingVideoView` (`UIViewRepresentable` + `AVQueuePlayer` + `AVPlayerLooper`) — автоплей в ленте
+5. `AutoplayVideo` (`AVPlayer` + `VideoPlayer`) — автоплей в DetailView
+6. SocialCard/VideoCard — для .mp4 медиа показывается автоплей, не статический кадр
+7. DetailView — кастомная кнопка «назад» (шеврон в полупрозрачном круге)
+
+### Push
+PENDING
+
+### Decisions and lessons learned
+- Без `UILaunchScreen` (пустой dict) iOS запускает app в compatibility mode — маленький квадрат
+- `NavigationStack` резервирует ~100px под nav bar даже при `.toolbar(.hidden)` — убрали полностью
+- `AVPlayerLooper(player:templateItem:)` — бесшовный loop, лучше ручного seek на .zero
+- `videoFirstFrame()` через `AVAssetImageGenerator` оставлен как fallback
+- Тестовые медиафайлы копируются в симулятор через `xcrun simctl` (не в бандл)
+
+---
+
 ## 22.03.2026 — Phase M1—M2: iOS app scaffold (SwiftUI + Rust UniFFI)
 
 ### Goal
@@ -43,7 +69,7 @@ Rust-ядро вызывается из Swift на iOS. Приложение з�
 7. 134 карточки отображаются на симуляторе
 
 ### Push
-fdfdaac, 4a6abb6, 3d398ad, efbee7b, e30b2b3, 1df7459, PENDING
+fdfdaac, 4a6abb6, 3d398ad, efbee7b, e30b2b3, 1df7459, 90694c1
 
 ### Decisions and lessons learned
 - `trash` crate → `cfg(not(target_os = "ios"))`, `notify` → optional

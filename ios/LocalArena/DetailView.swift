@@ -1,14 +1,30 @@
 import SwiftUI
+import AVKit
 
 struct DetailView: View {
     let block: FfiLightBlock
     let vaultPath: String
+    var onBack: (() -> Void)? = nil
 
     @State private var fullBody: String = ""
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                // Back button
+                if let onBack {
+                    Button(action: onBack) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Arena.fg)
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(Color.white.opacity(0.1)))
+                    }
+                    .padding(.horizontal, Arena.cardPadding)
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+                }
+
                 // Image blocks: full image at top
                 if block.blockType == "image" {
                     imageContent()
@@ -50,13 +66,19 @@ struct DetailView: View {
                             .padding(.top, 12)
                     }
 
-                    // Inline images from body
+                    // Inline media from body
                     let mediaUrls = extractBodyMedia(fullBody)
                     if !mediaUrls.isEmpty {
                         VStack(spacing: Arena.mediaGap) {
                             ForEach(Array(mediaUrls.enumerated()), id: \.offset) { _, filename in
                                 let path = "\(vaultPath)/\(filename)"
-                                if let img = UIImage(contentsOfFile: path) {
+                                let isVideo = filename.hasSuffix(".mp4") || filename.hasSuffix(".mov") || filename.hasSuffix(".webm")
+
+                                if isVideo {
+                                    AutoplayVideo(url: URL(fileURLWithPath: path))
+                                        .aspectRatio(16/9, contentMode: .fit)
+                                        .frame(maxWidth: .infinity)
+                                } else if let img = UIImage(contentsOfFile: path) {
                                     Image(uiImage: img)
                                         .resizable()
                                         .scaledToFit()
@@ -74,9 +96,6 @@ struct DetailView: View {
             }
         }
         .background(Arena.bg)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Arena.bg, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
             loadFullBody()
         }
@@ -268,5 +287,36 @@ struct DetailView: View {
         display.dateStyle = .medium
         display.locale = Locale(identifier: "ru_RU")
         return display.string(from: date)
+    }
+}
+
+// MARK: - Autoplay Video
+
+struct AutoplayVideo: View {
+    let url: URL
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        VideoPlayer(player: player)
+            .onAppear {
+                let p = AVPlayer(url: url)
+                p.isMuted = true
+                player = p
+                p.play()
+
+                // Loop
+                NotificationCenter.default.addObserver(
+                    forName: .AVPlayerItemDidPlayToEndTime,
+                    object: p.currentItem,
+                    queue: .main
+                ) { _ in
+                    p.seek(to: .zero)
+                    p.play()
+                }
+            }
+            .onDisappear {
+                player?.pause()
+                player = nil
+            }
     }
 }

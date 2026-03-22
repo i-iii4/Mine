@@ -400,6 +400,22 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
     typealias FfiType = Int64
     typealias SwiftType = Int64
@@ -467,6 +483,12 @@ public protocol ArenaVaultProtocol: AnyObject, Sendable {
      * List all blocks (lightweight, for grid views).
      */
     func listBlocks() throws  -> [FfiLightBlock]
+    
+    /**
+     * Scan all .md files in vault and index them in SQLite.
+     * Must be called after open() to populate the database.
+     */
+    func scanVault() throws  -> UInt32
     
     /**
      * Get the vault path.
@@ -547,6 +569,17 @@ public static func `open`(vaultPath: String)throws  -> ArenaVault  {
 open func listBlocks()throws  -> [FfiLightBlock]  {
     return try  FfiConverterSequenceTypeFfiLightBlock.lift(try rustCallWithError(FfiConverterTypeArenaError_lift) {
     uniffi_local_arena_ffi_fn_method_arenavault_list_blocks(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Scan all .md files in vault and index them in SQLite.
+     * Must be called after open() to populate the database.
+     */
+open func scanVault()throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeArenaError_lift) {
+    uniffi_local_arena_ffi_fn_method_arenavault_scan_vault(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -980,6 +1013,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_local_arena_ffi_checksum_method_arenavault_list_blocks() != 7893) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_local_arena_ffi_checksum_method_arenavault_scan_vault() != 52430) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_local_arena_ffi_checksum_method_arenavault_vault_path() != 20866) {
