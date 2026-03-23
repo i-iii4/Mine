@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var vaultModel: VaultViewModel
+    @State private var selectedChannel: String?
+    @State private var showChannelList = true
 
     var body: some View {
         ZStack {
@@ -29,8 +31,35 @@ struct ContentView: View {
                         .font(.subheadline)
                         .foregroundStyle(Arena.muted)
                 }
+            } else if showChannelList {
+                ChannelListView(
+                    channels: vaultModel.channels,
+                    activeChannel: selectedChannel,
+                    vaultPath: vaultModel.vaultPathString
+                ) { channel in
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedChannel = channel
+                        showChannelList = false
+                    }
+                }
+                .transition(.move(edge: .leading))
             } else {
-                GridView(blocks: vaultModel.blocks, vaultPath: vaultModel.vaultPathString)
+                let filteredBlocks = vaultModel.blocksForChannel(selectedChannel)
+                let channelLabel = selectedChannel.flatMap { tag in
+                    vaultModel.channels.first { $0.id == tag }?.label
+                } ?? "Everything"
+
+                GridView(
+                    blocks: filteredBlocks,
+                    vaultPath: vaultModel.vaultPathString,
+                    channelLabel: channelLabel,
+                    onShowChannels: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showChannelList = true
+                        }
+                    }
+                )
+                .transition(.move(edge: .trailing))
             }
         }
         .preferredColorScheme(.dark)

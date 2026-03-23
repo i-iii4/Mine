@@ -6,6 +6,7 @@ enum Arena {
     static let bg = Color(white: 0.049)            // #0C0C0C — oklch(0.1567)
     static let border = Color(white: 0.10)          // oklch(0.2311) — all borders
     static let fg = Color(white: 0.894)             // #E4E4E4 — primary text
+    static let sidebarAccent = Color(white: 0.082)   // oklch(0.2063) — selected channel
     static let muted = Color(white: 0.533)          // #888888 — secondary text
     static let tertiary = Color(white: 0.333)       // #555555 — tertiary text
 

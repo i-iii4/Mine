@@ -78,6 +78,7 @@
 		7FFC02B183610F6EFF0D9D5F /* obsidian-md.md in Resources */ = {isa = PBXBuildFile; fileRef = 1BCB667FAB72016A26E9CCA8 /* obsidian-md.md */; };
 		8342C17F913C693DA686DFFE /* welcome-to-lesswrong-lesswrong-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 2ADF392CD8D52416BCEB85C5 /* welcome-to-lesswrong-lesswrong-2.md */; };
 		86E60B5793E6D0B361839369 /* CardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E1F3464522AB4F8E184CC7E /* CardViews.swift */; };
+		A1B2C3D4E5F60718A9B0C1D2 /* ChannelListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718A9B0C1D3 /* ChannelListView.swift */; };
 		86F7559FBB4589B084A0E188 /* untitled-7.md in Resources */ = {isa = PBXBuildFile; fileRef = 16C90DC397D1DD08C9C55722 /* untitled-7.md */; };
 		8BE10E1AB68F80A513A5CB6F /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the.md in Resources */ = {isa = PBXBuildFile; fileRef = F7F6B377A5EC476E3E996794 /* 2-politics-uk-v-x-new-the-statue-of-winston-churchill-has-been-defaced-with-the.md */; };
 		8F09DA3297039D0C1CD22846 /* GridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87C09D98DC3051B93B7D2CB7 /* GridView.swift */; };
@@ -213,6 +214,7 @@
 		5741FCE3F10559ACE09FA82F /* japan.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = japan.md; sourceTree = "<group>"; };
 		589E56C508570F5D5C8B724A /* LocalArena.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LocalArena.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5E1F3464522AB4F8E184CC7E /* CardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardViews.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718A9B0C1D3 /* ChannelListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelListView.swift; sourceTree = "<group>"; };
 		5F4D5F556919A7DE96440E4A /* cleanshot-2026-03-04-at-12-03-40-2x-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-03-04-at-12-03-40-2x-2.md"; sourceTree = "<group>"; };
 		61450729FC92E4C2457AB807 /* dashboard.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = dashboard.md; sourceTree = "<group>"; };
 		61D6B6BD959A6444C0894AB1 /* cleanshot-2026-02-28-at-09-15-23-2x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "cleanshot-2026-02-28-at-09-15-23-2x.md"; sourceTree = "<group>"; };
@@ -465,6 +467,7 @@
 			isa = PBXGroup;
 			children = (
 				5E1F3464522AB4F8E184CC7E /* CardViews.swift */,
+				A1B2C3D4E5F60718A9B0C1D3 /* ChannelListView.swift */,
 				89F1773A497F5FECB4DC6074 /* ContentView.swift */,
 				A1D53373B311C1D7F9E08701 /* DetailView.swift */,
 				87C09D98DC3051B93B7D2CB7 /* GridView.swift */,
@@ -708,6 +711,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				86E60B5793E6D0B361839369 /* CardViews.swift in Sources */,
+				A1B2C3D4E5F60718A9B0C1D2 /* ChannelListView.swift in Sources */,
 				51ADFC5294107AA3D03A351C /* ContentView.swift in Sources */,
 				216384DCA71B58B2DB53BE3B /* DetailView.swift in Sources */,
 				8F09DA3297039D0C1CD22846 /* GridView.swift in Sources */,

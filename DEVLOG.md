@@ -28,6 +28,31 @@ if any
 
 ---
 
+## 22.03.2026 — Phase M2.6: список каналов
+
+### Goal
+Список каналов с горизонтальным скроллом thumbnail'ов (Apple TV-стиль). Фильтрация сетки по каналу.
+
+### Actually completed
+1. `Channel` модель — вычисляется из блоков в Swift (без FFI): группировка по тегам, count, thumbSlugs
+2. `ChannelListView.swift` — полноэкранный список каналов
+3. `ChannelRow` — двухстрочная структура: label + count + chevron / ScrollView(.horizontal) с thumbnail'ами
+4. `ContentView` — навигация ChannelList ↔ Grid через @State
+5. `GridView` — фильтрация по каналу, заголовок с гамбургером и названием канала
+6. `Theme.swift` — `Arena.sidebarAccent` токен
+
+### Push
+PENDING
+
+### Decisions and lessons learned
+- Горизонтальный скролл вместо gradient mask — проще, нативнее, без артефактов
+- `.glassEffect()` и `.ultraThinMaterial` на тёмном фоне (#0C0C0C) создают видимые серые прямоугольники — не подходят
+- `.mask(LinearGradient)` после `.frame(maxWidth: .infinity)` не работает в SwiftUI — gradient не привязывается к расширенному фрейму
+- ScrollView thumbnail'ов: padding(.leading) внутри, справа уходят за край экрана
+- Каналы вычисляются client-side из блоков — нет необходимости в FFI-функциях
+
+---
+
 ## 22.03.2026 — Phase M2: полноэкранный режим, видео-автоплей, навигация
 
 ### Goal

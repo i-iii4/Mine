@@ -502,7 +502,7 @@ Goal: полноценная поддержка видео-страниц в к�
 | M2.5 | Thumbnails и медиа в карточках | [x] |
 | M2.5a | Полноэкранный режим (UILaunchScreen) | [x] |
 | M2.5b | Видео-автоплей в ленте и Detail (AVPlayerLooper) | [x] |
-| M2.6 | Channel list / навигация | [ ] |
+| M2.6 | Channel list / навигация | [x] |
 | M2.7 | Detail view (просмотр блока) | [x] |
 
 ### Backlog
