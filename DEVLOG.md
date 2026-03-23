@@ -42,7 +42,7 @@ if any
 6. `Theme.swift` — `Arena.sidebarAccent` токен
 
 ### Push
-PENDING
+3a51a82
 
 ### Decisions and lessons learned
 - Горизонтальный скролл вместо gradient mask — проще, нативнее, без артефактов
