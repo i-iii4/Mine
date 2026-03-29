@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useMemo, useCallback } from "react";
+import { useRef, useState, useEffect, useMemo, useCallback, memo } from "react";
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -13,14 +13,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { VirtuosoMasonry } from "@virtuoso.dev/masonry";
 import type { LightBlock, TagCount } from "@/types";
 import { Card } from "./Card";
 import { CardTagMenu } from "./CardContextMenu";
 
 const COLUMN_MIN_WIDTH = 240;
 const GAP = 32;
-const INITIAL_BATCH = 80;
-const BATCH_SIZE = 60;
+
+const supportsGridLanes = typeof CSS !== "undefined" && CSS.supports("display", "grid-lanes");
 
 interface GridProps {
   blocks: LightBlock[];
@@ -35,6 +36,12 @@ interface GridProps {
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onDeleteBlock: (slug: string) => void;
   onColumnCountChange?: (count: number) => void;
+}
+
+interface GridContext {
+  vaultPath: string;
+  focusedBlockId?: number | null;
+  onBlockClick: (block: LightBlock) => void;
 }
 
 export function Grid({
@@ -52,28 +59,9 @@ export function Grid({
   onColumnCountChange,
 }: GridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const sentinelRef = useRef<HTMLDivElement>(null);
   const [parentWidth, setParentWidth] = useState(0);
-  const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH);
   const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
-
-  // Fingerprint detects real dataset changes (channel switch, search)
-  // while ignoring background refreshes with the same data.
-  const blocksFingerprint = useMemo(() => {
-    const len = blocks.length;
-    if (len === 0) return "empty";
-    return `${len}:${blocks[0]!.id}:${blocks[len - 1]!.id}`;
-  }, [blocks]);
-
-  // Synchronous reset: runs DURING render, before browser paint.
-  // useEffect would run AFTER paint, causing a heavy frame with stale
-  // visibleCount (e.g. 300 cards from the previous channel).
-  const [prevFingerprint, setPrevFingerprint] = useState(blocksFingerprint);
-  if (blocksFingerprint !== prevFingerprint) {
-    setPrevFingerprint(blocksFingerprint);
-    setVisibleCount(INITIAL_BATCH);
-  }
 
   // Scroll to top only on explicit signal (same-channel click)
   useEffect(() => {
@@ -82,7 +70,7 @@ export function Grid({
     }
   }, [scrollToTop]);
 
-  // Measure parent width
+  // Measure parent width (needed for column count in Virtuoso mode)
   useEffect(() => {
     const el = parentRef.current;
     if (!el) return;
@@ -97,25 +85,14 @@ export function Grid({
     return () => observer.disconnect();
   }, []);
 
-  // Load more when sentinel enters viewport
-  const loadMore = useCallback(() => {
-    setVisibleCount((prev) => Math.min(prev + BATCH_SIZE, blocks.length));
-  }, [blocks.length]);
+  const columnCount = Math.max(
+    1,
+    Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
+  );
 
   useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) loadMore();
-      },
-      { rootMargin: "400px" },
-    );
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [loadMore]);
+    onColumnCountChange?.(columnCount);
+  }, [columnCount, onColumnCountChange]);
 
   // O(1) block lookup for context menu event delegation
   const blocksBySlug = useMemo(
@@ -123,9 +100,6 @@ export function Grid({
     [blocks],
   );
 
-  // Event delegation: single handler identifies which card was right-clicked.
-  // composeEventHandlers in Radix checks defaultPrevented — calling
-  // e.preventDefault() suppresses the menu on empty-space clicks.
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
       const el = (e.target as HTMLElement).closest("[data-block-slug]");
@@ -144,30 +118,10 @@ export function Grid({
     [blocksBySlug],
   );
 
-  const columnCount = Math.max(
-    1,
-    Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
+  const gridContext: GridContext = useMemo(
+    () => ({ vaultPath, focusedBlockId, onBlockClick }),
+    [vaultPath, focusedBlockId, onBlockClick],
   );
-
-  useEffect(() => {
-    onColumnCountChange?.(columnCount);
-  }, [columnCount, onColumnCountChange]);
-
-  const visibleBlocks = useMemo(
-    () => blocks.slice(0, visibleCount),
-    [blocks, visibleCount],
-  );
-
-  // Distribute blocks into columns (round-robin)
-  const columns = useMemo(() => {
-    const cols: LightBlock[][] = Array.from({ length: columnCount }, () => []);
-    for (let i = 0; i < visibleBlocks.length; i++) {
-      cols[i % columnCount]!.push(visibleBlocks[i]!);
-    }
-    return cols;
-  }, [visibleBlocks, columnCount]);
-
-  const hasMore = visibleCount < blocks.length;
 
   return (
     <ContextMenu>
@@ -183,38 +137,20 @@ export function Grid({
           }}
           data-grid-scroll
         >
-          <div className="flex items-start" style={{ gap: GAP }}>
-            {columns.map((col, colIdx) => (
-              <div
-                key={colIdx}
-                className="flex min-w-0 flex-1 flex-col"
-                style={{ gap: GAP }}
-              >
-                {col.map((block) => (
-                  <Card
-                    key={block.id}
-                    block={block}
-                    vaultPath={vaultPath}
-                    isFocused={block.id === focusedBlockId}
-                    onClick={onBlockClick}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
-
-          {/* Sentinel for infinite scroll */}
-          {hasMore && (
-            <div ref={sentinelRef} className="flex justify-center py-8">
-              <p className="text-sm text-muted-foreground">
-                {visibleCount} of {blocks.length}
-              </p>
-            </div>
+          {supportsGridLanes ? (
+            <GridLanesLayout blocks={blocks} context={gridContext} />
+          ) : (
+            parentWidth > 0 && (
+              <VirtuosoMasonryLayout
+                blocks={blocks}
+                columnCount={columnCount}
+                context={gridContext}
+              />
+            )
           )}
         </div>
       </ContextMenuTrigger>
 
-      {/* Single CardTagMenu instance — renders only when a card was right-clicked */}
       {menuBlock && (
         <CardTagMenu
           block={menuBlock}
@@ -226,7 +162,6 @@ export function Grid({
         />
       )}
 
-      {/* Delete confirmation — lives at Grid level, survives ContextMenu close */}
       <AlertDialog
         open={blockToDelete !== null}
         onOpenChange={(open) => { if (!open) setBlockToDelete(null); }}
@@ -255,3 +190,81 @@ export function Grid({
     </ContextMenu>
   );
 }
+
+// ── CSS Grid Lanes (WebKit/Safari 26.4+) ────────────────────────────────────
+
+function GridLanesLayout({
+  blocks,
+  context,
+}: {
+  blocks: LightBlock[];
+  context: GridContext;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid-lanes" as string,
+        gridTemplateColumns: `repeat(auto-fill, minmax(${COLUMN_MIN_WIDTH}px, 1fr))`,
+        gap: GAP,
+      }}
+    >
+      {blocks.map((block) => (
+        <div
+          key={block.id}
+          style={{
+            contentVisibility: "auto",
+            containIntrinsicSize: "auto 200px",
+          }}
+        >
+          <Card
+            block={block}
+            vaultPath={context.vaultPath}
+            isFocused={block.id === context.focusedBlockId}
+            onClick={context.onBlockClick}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── VirtuosoMasonry (Chrome/Firefox fallback) ───────────────────────────────
+
+function VirtuosoMasonryLayout({
+  blocks,
+  columnCount,
+  context,
+}: {
+  blocks: LightBlock[];
+  columnCount: number;
+  context: GridContext;
+}) {
+  return (
+    <VirtuosoMasonry
+      data={blocks}
+      columnCount={columnCount}
+      ItemContent={VirtuosoCardItem}
+      context={context}
+      style={{ columnGap: GAP }}
+    />
+  );
+}
+
+const VirtuosoCardItem = memo(function VirtuosoCardItem({
+  data,
+  context,
+}: {
+  data: LightBlock;
+  context: GridContext;
+}) {
+  return (
+    <div style={{ paddingBottom: GAP }}>
+      <Card
+        block={data}
+        vaultPath={context.vaultPath}
+        isFocused={data.id === context.focusedBlockId}
+        onClick={context.onBlockClick}
+      />
+    </div>
+  );
+});

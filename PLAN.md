@@ -505,6 +505,15 @@ Goal: полноценная поддержка видео-страниц в к�
 | M2.6 | Channel list / навигация | [x] |
 | M2.7 | Detail view (просмотр блока) | [x] |
 
+### Phase 10 — Виртуализированная masonry-сетка (tanstack-virtual) [PLANNED]
+
+Goal: настоящая виртуализация с measure-once-cache для 10000+ блоков.
+
+| # | Task | Status |
+|---|------|--------|
+| 10.1 | `@tanstack/react-virtual` + masonry virtualizer с динамическим измерением высот | [ ] |
+| 10.2 | Scroll anchoring при ресайзе окна и сайдбара | [ ] |
+
 ### Backlog
 
 | Task | Description |
