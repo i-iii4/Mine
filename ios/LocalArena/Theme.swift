@@ -11,15 +11,17 @@ enum Arena {
     static let tertiary = Color(white: 0.333)       // #555555 — tertiary text
 
     // ── Spacing ──────────────────────────────────────────────────────────
-    static let cardPadding: CGFloat = 16            // p-4
-    static let gridGap: CGFloat = 8                 // adapted from 32px desktop
+    static let cardPadding: CGFloat = 16            // p-4 — padding inside cards
+    static let gridGap: CGFloat = 20                // gap between cards (> cardPadding)
     static let mediaGap: CGFloat = 2                // gap-0.5
     static let textToMedia: CGFloat = 12            // mt-3
     static let textToAuthor: CGFloat = 8            // mt-2
     static let titleToBody: CGFloat = 6             // mt-1.5
 
     // ── Typography ───────────────────────────────────────────────────────
-    static let textSm: CGFloat = 10                 // adapted from 12px desktop
+    static let textSm: CGFloat = 12                 // text-sm (12px desktop)
+    static let textBase: CGFloat = 14                // text-base (14px desktop)
+    static let textLg: CGFloat = 18                  // text-lg (18px desktop)
     static let lineHeight: CGFloat = 16             // line-height for text-sm
 
     static func fontRegular(_ size: CGFloat = textSm) -> Font {

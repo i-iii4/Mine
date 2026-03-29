@@ -27,6 +27,7 @@ struct BlockCard: View {
                 ArticleCard(block: block)
             }
         }
+        .background(Color(white: 0.065))
         .overlay(
             Rectangle()
                 .stroke(Arena.border, lineWidth: 0.5)
@@ -233,7 +234,7 @@ struct LinkCard: View {
                 }
                 if let url = block.url {
                     Text(domainFromUrl(url))
-                        .font(Arena.fontRegular(11))
+                        .font(Arena.fontRegular())
                         .foregroundStyle(Arena.tertiary)
                         .lineLimit(1)
                 }

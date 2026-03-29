@@ -1,4 +1,7 @@
 import Foundation
+import Combine
+
+extension FfiLightBlock: @retroactive Identifiable {}
 
 struct Channel: Identifiable {
     let id: String          // tag (or "__all__")
@@ -17,6 +20,8 @@ class VaultViewModel: ObservableObject {
     @Published var vaultPathString: String = ""
 
     private var vault: ArenaVault?
+    private var metadataQuery: NSMetadataQuery?
+    private var queryObservers: [Any] = []
 
     var channels: [Channel] {
         // "Everything" first
@@ -59,6 +64,13 @@ class VaultViewModel: ObservableObject {
             .joined(separator: " ")
     }
 
+    func switchVault(url: URL) {
+        BookmarkManager.save(url)
+        _ = url.startAccessingSecurityScopedResource()
+        blocks = []
+        openVault(path: url.path)
+    }
+
     func openVault(path: String) {
         isLoading = true
         error = nil
@@ -74,11 +86,66 @@ class VaultViewModel: ObservableObject {
                     self.blockCount = indexed
                     self.vaultPathString = path
                     self.isLoading = false
+                    self.startMonitoring()
                 }
             } catch {
                 await MainActor.run { [self] in
                     self.error = error.localizedDescription
                     self.isLoading = false
+                }
+            }
+        }
+    }
+
+    // MARK: - iCloud Drive monitoring
+
+    private func startMonitoring() {
+        stopMonitoring()
+        guard !vaultPathString.isEmpty else { return }
+
+        let query = NSMetadataQuery()
+        query.searchScopes = [vaultPathString]
+        query.predicate = NSPredicate(format: "%K LIKE '*.md'", NSMetadataItemFSNameKey)
+
+        let didUpdate = NotificationCenter.default.addObserver(
+            forName: .NSMetadataQueryDidUpdate,
+            object: query,
+            queue: .main
+        ) { [weak self] _ in
+            self?.rescanVault()
+        }
+
+        let didFinish = NotificationCenter.default.addObserver(
+            forName: .NSMetadataQueryDidFinishGathering,
+            object: query,
+            queue: .main
+        ) { [weak self] _ in
+            self?.rescanVault()
+        }
+
+        queryObservers = [didUpdate, didFinish]
+        metadataQuery = query
+        query.start()
+    }
+
+    private func stopMonitoring() {
+        metadataQuery?.stop()
+        metadataQuery = nil
+        for observer in queryObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        queryObservers = []
+    }
+
+    private func rescanVault() {
+        guard let vault else { return }
+
+        Task.detached {
+            let _ = try? vault.scanVault()
+            let blocks = try? vault.listBlocks()
+            await MainActor.run { [self] in
+                if let blocks {
+                    self.blocks = blocks
                 }
             }
         }

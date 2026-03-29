@@ -4,26 +4,26 @@ import AVKit
 struct DetailView: View {
     let block: FfiLightBlock
     let vaultPath: String
-    var onBack: (() -> Void)? = nil
 
+    @Environment(\.dismiss) private var dismiss
     @State private var fullBody: String = ""
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // Back button
-                if let onBack {
-                    Button(action: onBack) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(Arena.fg)
-                            .frame(width: 36, height: 36)
+                // Close button (X)
+                HStack {
+                    Spacer()
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(Arena.fontSemibold(Arena.textBase))
+                            .foregroundStyle(Arena.muted)
+                            .frame(width: 30, height: 30)
                             .background(Circle().fill(Color.white.opacity(0.1)))
                     }
-                    .padding(.horizontal, Arena.cardPadding)
-                    .padding(.top, 8)
-                    .padding(.bottom, 4)
                 }
+                .padding(.horizontal, Arena.cardPadding)
+                .padding(.top, 8)
 
                 // Image blocks: full image at top
                 if block.blockType == "image" {
@@ -45,14 +45,14 @@ struct DetailView: View {
                     // Title (not for social posts)
                     if !isSocialUrl(block.url), let title = block.title, !title.isEmpty {
                         Text(title)
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(Arena.fontSemibold(Arena.textLg))
                             .foregroundStyle(Arena.fg)
                     }
 
                     // Author
                     if let author = block.author, !author.isEmpty {
                         Text(author)
-                            .font(Arena.fontRegular(12))
+                            .font(Arena.fontRegular())
                             .foregroundStyle(Arena.muted)
                             .padding(.top, 4)
                     }
@@ -60,7 +60,7 @@ struct DetailView: View {
                     // Body (full, not truncated)
                     if !fullBody.isEmpty {
                         Text(fullBody)
-                            .font(Arena.fontRegular(13))
+                            .font(Arena.fontRegular(Arena.textBase))
                             .foregroundStyle(Arena.fg)
                             .lineSpacing(4)
                             .padding(.top, 12)
@@ -164,13 +164,13 @@ struct DetailView: View {
             if !block.tags.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("TAGS")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(Arena.fontSemibold())
                         .foregroundStyle(Arena.tertiary)
                         .tracking(1)
                     HStack(spacing: 4) {
                         ForEach(block.tags, id: \.self) { tag in
                             Text(tag)
-                                .font(Arena.fontRegular(11))
+                                .font(Arena.fontRegular())
                                 .foregroundStyle(Arena.muted)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -190,11 +190,11 @@ struct DetailView: View {
     private func metaRow(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
+                .font(Arena.fontSemibold())
                 .foregroundStyle(Arena.tertiary)
                 .tracking(1)
             Text(value)
-                .font(Arena.fontRegular(12))
+                .font(Arena.fontRegular())
                 .foregroundStyle(Arena.fg)
         }
     }

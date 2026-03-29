@@ -4,25 +4,40 @@ struct ChannelListView: View {
     let channels: [Channel]
     let activeChannel: String?
     let vaultPath: String
-    let onSelect: (String?) -> Void
+    var onPickFolder: (() -> Void)?
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(channels) { channel in
-                    ChannelRow(
-                        channel: channel,
-                        isActive: isActive(channel),
-                        vaultPath: vaultPath
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        let selected = channel.id == "__all__" ? nil : channel.id
-                        onSelect(selected)
+                    NavigationLink(value: channel.id) {
+                        ChannelRow(
+                            channel: channel,
+                            isActive: isActive(channel),
+                            vaultPath: vaultPath
+                        )
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.top, 16)
+        }
+        .safeAreaInset(edge: .bottom) {
+            Button(action: { onPickFolder?() }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder")
+                        .font(Arena.fontRegular())
+                    Text("Change Vault")
+                        .font(Arena.fontRegular())
+                }
+                .foregroundStyle(Arena.muted)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(Arena.bg)
+            }
+            .overlay(alignment: .top) {
+                Rectangle().fill(Arena.border).frame(height: 0.5)
+            }
         }
     }
 
@@ -44,7 +59,7 @@ struct ChannelRow: View {
             // Row 1: label + count + chevron
             HStack {
                 Text(channel.label)
-                    .font(.system(size: 14, weight: .regular, design: .monospaced))
+                    .font(Arena.fontRegular(Arena.textBase))
                     .foregroundStyle(isActive ? Arena.fg : Arena.muted)
                     .lineLimit(1)
                 Text("\(channel.count)")
@@ -52,12 +67,12 @@ struct ChannelRow: View {
                     .foregroundStyle(Arena.tertiary)
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12))
+                    .font(Arena.fontRegular())
                     .foregroundStyle(Arena.tertiary)
             }
             .padding(.horizontal, 12)
 
-            // Row 2: horizontal scrolling thumbnails — left padding, bleeds right
+            // Row 2: horizontal scrolling thumbnails
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
                     ForEach(channel.thumbSlugs, id: \.self) { slug in
