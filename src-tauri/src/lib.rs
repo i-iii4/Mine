@@ -21,6 +21,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::vault::select_vault,
             commands::vault::get_vault_path,
+            commands::vault::list_known_vaults,
             commands::vault::rebuild_index,
             commands::blocks::list_blocks,
             commands::blocks::get_block,

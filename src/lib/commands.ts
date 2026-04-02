@@ -21,6 +21,9 @@ export const selectVault = (path: string) =>
 export const getVaultPath = () =>
   invoke<string | null>("get_vault_path");
 
+export const listKnownVaults = () =>
+  invoke<string[]>("list_known_vaults");
+
 // Blocks
 export const listBlocks = () =>
   invoke<LightBlock[]>("list_blocks");

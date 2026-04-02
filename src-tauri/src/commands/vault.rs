@@ -18,6 +18,12 @@ use crate::watcher::watch;
 
 // ─── Commands ───────────────────────────────────────────────────────────────
 
+/// List all known vault paths (directories that still exist on disk).
+#[tauri::command]
+pub fn list_known_vaults(app: AppHandle) -> Vec<String> {
+    load_known_vaults(&app)
+}
+
 /// Select a vault directory: open/create DB, create directories, full scan.
 /// Persists the path so next launch auto-restores.
 #[tauri::command]
@@ -214,26 +220,68 @@ fn config_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|dir| dir.join("config.json"))
 }
 
-/// Save the vault path to the config file.
-fn save_vault_path(app: &AppHandle, path: &str) {
-    let Some(config) = config_path(app) else { return };
+/// Load the full config JSON, or empty object if missing.
+fn load_config(app: &AppHandle) -> serde_json::Value {
+    let Some(config) = config_path(app) else {
+        return serde_json::json!({});
+    };
+    let Ok(data) = std::fs::read_to_string(&config) else {
+        return serde_json::json!({});
+    };
+    serde_json::from_str(&data).unwrap_or_else(|_| serde_json::json!({}))
+}
 
+/// Write the full config JSON to disk.
+fn write_config(app: &AppHandle, json: &serde_json::Value) {
+    let Some(config) = config_path(app) else { return };
     if let Some(parent) = config.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-
-    let json = serde_json::json!({ "vault_path": path });
-    if let Err(e) = std::fs::write(&config, json.to_string()) {
+    if let Err(e) = std::fs::write(&config, serde_json::to_string_pretty(json).unwrap_or_default()) {
         log::warn!("failed to save config: {e}");
     }
 }
 
+/// Save the vault path to the config file and add to known_vaults.
+fn save_vault_path(app: &AppHandle, path: &str) {
+    let mut cfg = load_config(app);
+    cfg["vault_path"] = serde_json::json!(path);
+
+    // Add to known_vaults if not already there
+    let known = cfg["known_vaults"].as_array_mut();
+    let path_val = serde_json::json!(path);
+    if let Some(arr) = known {
+        if !arr.contains(&path_val) {
+            arr.push(path_val);
+        }
+    } else {
+        cfg["known_vaults"] = serde_json::json!([path]);
+    }
+
+    write_config(app, &cfg);
+}
+
 /// Load the saved vault path from the config file.
 fn load_saved_vault_path(app: &AppHandle) -> Option<String> {
-    let config = config_path(app)?;
-    let data = std::fs::read_to_string(&config).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&data).ok()?;
-    json.get("vault_path")?.as_str().map(|s| s.to_string())
+    let cfg = load_config(app);
+    cfg.get("vault_path")?.as_str().map(|s| s.to_string())
+}
+
+/// Load known vaults, filtering out directories that no longer exist.
+fn load_known_vaults(app: &AppHandle) -> Vec<String> {
+    let cfg = load_config(app);
+    let Some(arr) = cfg.get("known_vaults").and_then(|v| v.as_array()) else {
+        // Fallback: if no known_vaults, use current vault_path
+        return cfg.get("vault_path")
+            .and_then(|v| v.as_str())
+            .filter(|p| PathBuf::from(p).is_dir())
+            .map(|s| vec![s.to_string()])
+            .unwrap_or_default();
+    };
+    arr.iter()
+        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+        .filter(|p| PathBuf::from(p).is_dir())
+        .collect()
 }
 
 /// Remove the saved vault path (directory no longer valid).

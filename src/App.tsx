@@ -64,6 +64,7 @@ import {
 import { pushRecentTag } from "@/lib/recentTags";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { VaultPicker } from "@/components/VaultPicker";
+import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { Sidebar } from "@/components/Sidebar";
 import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { Grid } from "@/components/Grid";
@@ -714,9 +715,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
       {/* Bottom action bar */}
       <div className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-8">
-        <ActionButton hotkey="⌘⇧O" onClick={handleSwitchVault}>
-          {vaultPath.split("/").pop() ?? "Vault"}
-        </ActionButton>
+        <VaultSwitcher currentPath={vaultPath} hotkey="⌘⇧O" />
         <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>
           New Channel
         </ActionButton>

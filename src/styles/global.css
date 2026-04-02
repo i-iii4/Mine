@@ -85,8 +85,8 @@ body {
   --radius-2: 5px;
   --radius-pill: 9999px;
   --radius-round: 50%;
-  --radius-card: var(--radius-1);
-  --radius-media: var(--radius-1);
+  --radius-card: var(--radius-0);
+  --radius-media: var(--radius-0);
   --spacing-s1: 4px;
   --spacing-s2: 8px;
   --spacing-s3: 16px;
