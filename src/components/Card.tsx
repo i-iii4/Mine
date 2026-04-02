@@ -4,15 +4,21 @@ import { ImageOff } from "lucide-react";
 import type { LightBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
 import { cn } from "@/lib/utils";
+import { CardHoverMenu } from "./CardHoverMenu";
 
 interface CardProps {
   block: LightBlock;
   vaultPath: string;
   isFocused?: boolean;
   onClick: (block: LightBlock) => void;
+  tags?: import("@/types").TagCount[];
+  currentTag?: string;
+  onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign?: (tag: string, blockSlug: string) => void;
+  onRequestDelete?: (slug: string) => void;
 }
 
-export const Card = memo(function Card({ block, vaultPath, isFocused, onClick }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, isFocused, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestDelete }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
   });
@@ -41,6 +47,16 @@ export const Card = memo(function Card({ block, vaultPath, isFocused, onClick }:
         isFocused && "ring-2 ring-ring",
       )}
     >
+      {tags && onToggleTag && onCreateAndAssign && onRequestDelete && (
+        <CardHoverMenu
+          block={block}
+          tags={tags}
+          currentTag={currentTag}
+          onToggleTag={onToggleTag}
+          onCreateAndAssign={onCreateAndAssign}
+          onRequestDelete={onRequestDelete}
+        />
+      )}
       <CardContent block={block} vaultPath={vaultPath} />
     </div>
   );

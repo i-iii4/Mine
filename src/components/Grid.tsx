@@ -42,6 +42,11 @@ interface GridContext {
   vaultPath: string;
   focusedBlockId?: number | null;
   onBlockClick: (block: LightBlock) => void;
+  tags: TagCount[];
+  currentTag?: string;
+  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onDeleteBlock: (slug: string) => void;
 }
 
 export function Grid({
@@ -119,8 +124,8 @@ export function Grid({
   );
 
   const gridContext: GridContext = useMemo(
-    () => ({ vaultPath, focusedBlockId, onBlockClick }),
-    [vaultPath, focusedBlockId, onBlockClick],
+    () => ({ vaultPath, focusedBlockId, onBlockClick, tags, currentTag, onToggleTag, onCreateAndAssign, onDeleteBlock }),
+    [vaultPath, focusedBlockId, onBlockClick, tags, currentTag, onToggleTag, onCreateAndAssign, onDeleteBlock],
   );
 
   return (
@@ -221,6 +226,11 @@ function GridLanesLayout({
             vaultPath={context.vaultPath}
             isFocused={block.id === context.focusedBlockId}
             onClick={context.onBlockClick}
+            tags={context.tags}
+            currentTag={context.currentTag}
+            onToggleTag={context.onToggleTag}
+            onCreateAndAssign={context.onCreateAndAssign}
+            onRequestDelete={context.onDeleteBlock}
           />
         </div>
       ))}
@@ -264,6 +274,11 @@ const VirtuosoCardItem = memo(function VirtuosoCardItem({
         vaultPath={context.vaultPath}
         isFocused={data.id === context.focusedBlockId}
         onClick={context.onBlockClick}
+        tags={context.tags}
+        currentTag={context.currentTag}
+        onToggleTag={context.onToggleTag}
+        onCreateAndAssign={context.onCreateAndAssign}
+        onRequestDelete={context.onDeleteBlock}
       />
     </div>
   );

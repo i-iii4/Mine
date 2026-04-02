@@ -289,6 +289,24 @@ Input: иконка поиска + `text-base`, без бордера. List: `ma
 
 Content: `rounded-1 border bg-popover p-1`, тень — единая для всплывающих элементов (см. «Всплывающие элементы»). Item: `rounded-1 px-2 py-1.5 text-base`. Item `variant="destructive"`: красный текст (`text-destructive`), стандартный ховер-фон (`focus:bg-accent`). Поддерживает: CheckboxItem, RadioItem, Sub (подменю), Label, Separator, Shortcut.
 
+### Card Hover Menu
+
+Три кнопки в правом верхнем углу карточки, появляются при hover.
+
+- Расположение: `absolute right-2 top-2`, `z-10`
+- Появление: `opacity-0 group-hover:opacity-100 transition-opacity`
+- Кнопки: `Button variant="ghost" size="icon-xs"` с overlay-фоном
+- Overlay-фон: `bg-black/60 backdrop-blur-sm` (полупрозрачный, для читаемости на любом контенте)
+- Скругление: `rounded-1` (3px) — как все элементы системы
+- Текст/иконки: `text-white` (контрастно на overlay-фоне)
+- Hover: `hover:bg-black/80`
+- `stopPropagation` на контейнере — клик по кнопкам не открывает Detail
+
+Кнопки (слева направо):
+1. **Collection** (`Plus`) — `DropdownMenu` со списком коллекций (переиспользует `CollectionPicker`)
+2. **Source** (`ExternalLink`) — `window.open(url)`. Disabled если `block.url` нет
+3. **More** (`MoreHorizontal`) — `DropdownMenu`: Add to collection (подменю), Open source, Remove from collection, Delete from Mine
+
 ### Checkbox
 
 Radix-обёртка: `size-4 rounded-[2px] border border-primary`. Checked: `bg-primary text-primary-foreground` с иконкой галочки. Фокус: `border-foreground`.
