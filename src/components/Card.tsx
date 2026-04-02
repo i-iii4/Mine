@@ -42,7 +42,7 @@ export const Card = memo(function Card({ block, vaultPath, isFocused, onClick, t
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
-        "group cursor-pointer overflow-hidden border border-border relative after:pointer-events-none after:absolute after:inset-0 hover:after:shadow-[inset_0_0_0_2px_var(--primary-hover)]",
+        "group cursor-pointer overflow-hidden border border-border relative rounded-[var(--radius-card)] after:pointer-events-none after:absolute after:inset-0 hover:after:shadow-[inset_0_0_0_2px_var(--primary-hover)]",
         isDragging && "opacity-30",
         isFocused && "ring-2 ring-ring",
       )}

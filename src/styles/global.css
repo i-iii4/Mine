@@ -39,6 +39,12 @@ img {
   -webkit-user-drag: none;
 }
 
+/* Card media rounding — controlled from one place via --radius-media */
+[data-block-slug] img,
+[data-block-slug] video {
+  border-radius: var(--radius-media);
+}
+
 /* Prevent text selection on interactive elements (native app feel) */
 button,
 [role="button"],
@@ -79,6 +85,8 @@ body {
   --radius-2: 5px;
   --radius-pill: 9999px;
   --radius-round: 50%;
+  --radius-card: var(--radius-1);
+  --radius-media: var(--radius-1);
   --spacing-s1: 4px;
   --spacing-s2: 8px;
   --spacing-s3: 16px;

@@ -216,6 +216,13 @@ Input и Command — тоже 32px (`h-8`).
 
 **Скругление всех элементов интерфейса — 3px (`rounded-1`).** Без исключений: Button, ActionButton (обе пули), Badge, DropdownMenu, Tooltip, Input.
 
+**Семантические токены скругления** (управляются из `global.css`):
+- `--radius-card` → скругление карточек (по умолчанию `var(--radius-1)` = 3px)
+- `--radius-media` → скругление медиа внутри карточек (по умолчанию `var(--radius-1)` = 3px)
+
+Карточки: `rounded-[var(--radius-card)]` на обёртке `[data-block-slug]`.
+Медиа: глобальное CSS-правило `[data-block-slug] img, [data-block-slug] video { border-radius: var(--radius-media) }`.
+
 ### Input
 
 Два варианта:
@@ -298,9 +305,9 @@ Content: `rounded-1 border bg-popover p-1`, тень — единая для в�
 **Кнопки:** стандартные `Button variant="default"` из дизайн-системы (`bg-component-fill`, `rounded-1`). Адаптируются к теме автоматически.
 
 **Расположение:**
-- **More** (`MoreHorizontal`, `icon-xs`) — верхний правый угол (`absolute right-2 top-2`)
-- **Source** (`ExternalLink`, `size="xs"`, текст «Source») — нижний левый угол
-- **Collect** (`FolderPlus`, `size="xs"`, текст «Collect») — нижний правый угол
+- **More** (`MoreHorizontal`, `size="icon"` 32px) — верхний правый угол (`absolute right-2 top-2`)
+- **Source** (`ExternalLink`, `size="default"` 32px, текст «Source») — нижний левый угол
+- **Collect** (`FolderPlus`, `size="default"` 32px, текст «Collect») — нижний правый угол
 
 **Появление:** `opacity-0 group-hover:opacity-100 transition-opacity`
 

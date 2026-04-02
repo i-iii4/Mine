@@ -48,8 +48,8 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         <div className="absolute right-2 top-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="default" size="icon-xs">
-                <MoreHorizontal className="size-3.5" />
+              <Button variant="default" size="icon">
+                <MoreHorizontal className="size-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -103,7 +103,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           {/* Source — низ лево */}
           <Button
             variant="default"
-            size="xs"
+            size="default"
             disabled={!hasUrl}
             onClick={(e) => {
               e.stopPropagation();
@@ -117,7 +117,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           {/* Collect — низ право */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="default" size="xs">
+              <Button variant="default" size="default">
                 <FolderPlus className="size-3" />
                 Collect
               </Button>
