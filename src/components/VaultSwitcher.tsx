@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { Check, Plus } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { listKnownVaults, selectVault } from "@/lib/commands";
+import { cn } from "@/lib/utils";
 
 interface VaultSwitcherProps {
   currentPath: string;
@@ -50,12 +50,24 @@ export function VaultSwitcher({ currentPath, hotkey }: VaultSwitcherProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="xs">
-          {vaultName(currentPath)}
-          {hotkey && (
-            <kbd className="ml-2 text-sm text-muted-foreground">{hotkey}</kbd>
+        <div
+          role="button"
+          tabIndex={0}
+          className={cn(
+            "action-button group inline-flex h-6 shrink-0 cursor-pointer items-center rounded-1 p-[2px] font-mono text-sm",
+            "select-none overflow-hidden outline-0",
+            "bg-transparent hover:bg-component-fill-hover",
           )}
-        </Button>
+        >
+          {hotkey && (
+            <span className="shrink-0 px-[1ch] py-[2px] text-foreground">
+              {hotkey}
+            </span>
+          )}
+          <span className="shrink-0 rounded-[2px] bg-component-fill-inner px-[1ch] py-[2px] text-foreground">
+            {vaultName(currentPath)}
+          </span>
+        </div>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start">
         {sorted.map((path) => (
