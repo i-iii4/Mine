@@ -134,9 +134,9 @@ local-arena/
 │   └── uniffi-bindgen/
 │       └── main.rs             # Генерация Swift bindings
 ├── ios/                        # iOS-приложение (SwiftUI)
-│   ├── LocalArena.xcodeproj
+│   ├── Mine.xcodeproj
 │   ├── LocalArena/
-│   │   ├── LocalArenaApp.swift # @main, WindowGroup, VaultViewModel
+│   │   ├── MineApp.swift # @main, WindowGroup, VaultViewModel
 │   │   ├── ContentView.swift   # Корневой ZStack, сидинг тестовых данных
 │   │   ├── GridView.swift      # Masonry 2 колонки, @State навигация (без NavigationStack)
 │   │   ├── CardViews.swift     # BlockCard роутер, SocialCard, ImageCard, ArticleCard, LinkCard, VideoCard
@@ -145,7 +145,7 @@ local-arena/
 │   │   ├── Theme.swift         # Arena enum: цвета, отступы, типографика
 │   │   ├── Info.plist          # UILaunchScreen (обязательно для полноэкранного режима)
 │   │   └── TestData/           # Тестовые .md файлы (копируются в Documents при первом запуске)
-│   └── LocalArenaCore.xcframework # Скомпилированный Rust core (device + simulator)
+│   └── MineCore.xcframework # Скомпилированный Rust core (device + simulator)
 ├── vite.extension.config.ts    # Vite-конфигурация для сборки расширения
 ├── public/                     # Статические ассеты
 ├── index.html

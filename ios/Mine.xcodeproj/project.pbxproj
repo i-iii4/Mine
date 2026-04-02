@@ -92,7 +92,7 @@
 		97AA576E9E286134AAA4AD17 /* 2-modern-machines-v-x-during-world-war-2-air-combat-happened-at-short-distances.md in Resources */ = {isa = PBXBuildFile; fileRef = E9A3DCDEA1CCF86D315A80EE /* 2-modern-machines-v-x-during-world-war-2-air-combat-happened-at-short-distances.md */; };
 		98B5757723E8FC9B84F51188 /* stardew-valley-v-steam.md in Resources */ = {isa = PBXBuildFile; fileRef = D69C60C4FA10FE94BD18F648 /* stardew-valley-v-steam.md */; };
 		9CF038F5D7218150A43EA329 /* thread-by-japantracul.md in Resources */ = {isa = PBXBuildFile; fileRef = 0423B46152C477F3CDAE6EE2 /* thread-by-japantracul.md */; };
-		A249A93BC47BC4A18F7D9C7E /* LocalArenaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8962E71A1089E170EBAF7F91 /* LocalArenaApp.swift */; };
+		A249A93BC47BC4A18F7D9C7E /* MineApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8962E71A1089E170EBAF7F91 /* MineApp.swift */; };
 		A25C204B182D3CE67A5AEE80 /* sekonomte-95-pri-pokupke-for-honor-v-steam.md in Resources */ = {isa = PBXBuildFile; fileRef = 75F322E2EFA7E37BEFA57A48 /* sekonomte-95-pri-pokupke-for-honor-v-steam.md */; };
 		A2A0B14A634676EDC37B2247 /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-2.md in Resources */ = {isa = PBXBuildFile; fileRef = C187C1C54EC4534FFFF0D5EB /* the-first-two-weeks-are-the-hardest-my-first-digital-declutter-lesswrong-2.md */; };
 		A3020832EC22BE317F081512 /* cosmos-so.md in Resources */ = {isa = PBXBuildFile; fileRef = 30A41B03F7CF26927013E6A4 /* cosmos-so.md */; };
@@ -145,7 +145,7 @@
 		F1B1F26534985F0CA00C379F /* japan.md in Resources */ = {isa = PBXBuildFile; fileRef = 5741FCE3F10559ACE09FA82F /* japan.md */; };
 		F3C6075DCEB88A7822760D15 /* untitled-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 85044078D4566D666B17DB66 /* untitled-2.md */; };
 		F3DA91E07B052EBF32A37621 /* thread-by-daveshapi.md in Resources */ = {isa = PBXBuildFile; fileRef = 13C8EDD279FF0857351866FE /* thread-by-daveshapi.md */; };
-		F610E4F370894161D68D24D2 /* LocalArenaCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8C87519A8EC3FE3ED1E3DC18 /* LocalArenaCore.xcframework */; };
+		F610E4F370894161D68D24D2 /* MineCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8C87519A8EC3FE3ED1E3DC18 /* MineCore.xcframework */; };
 		F8735D3894FBB28F35129A5A /* v-x-skeb-https-t-co-entvnu6w9q-x.md in Resources */ = {isa = PBXBuildFile; fileRef = B507D8F2CFD332BF4B204A47 /* v-x-skeb-https-t-co-entvnu6w9q-x.md */; };
 		F9E4C9B90FE78985C3A3011C /* this-game-has-such-incredible-rocks-and-cliffs-i-love-how-subtly-different-the-d.md in Resources */ = {isa = PBXBuildFile; fileRef = 912A20B7E0BBFFC5D5A864C1 /* this-game-has-such-incredible-rocks-and-cliffs-i-love-how-subtly-different-the-d.md */; };
 		FA00502440D11BB36BCE688C /* mao-v-x-3-31-book-https-t-co-9mt3mr3huq-https-t-co-06ah3wxuhi-x.md in Resources */ = {isa = PBXBuildFile; fileRef = 6DDEA101B0CF7DD7AA39556A /* mao-v-x-3-31-book-https-t-co-9mt3mr3huq-https-t-co-06ah3wxuhi-x.md */; };
@@ -214,7 +214,7 @@
 		54ADC2522C10BD78E45E5B90 /* art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "art-on-contract-last-year-i-wrote-an-interactive-tool-to-generate-ascii-art-for-3.md"; sourceTree = "<group>"; };
 		55B141683B1A613929D4D61B /* tsepi-markova-matematika-predskazaniy-veritasium-3.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "tsepi-markova-matematika-predskazaniy-veritasium-3.md"; sourceTree = "<group>"; };
 		5741FCE3F10559ACE09FA82F /* japan.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = japan.md; sourceTree = "<group>"; };
-		589E56C508570F5D5C8B724A /* LocalArena.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LocalArena.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		589E56C508570F5D5C8B724A /* Mine.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mine.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5E1F3464522AB4F8E184CC7E /* CardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardViews.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718A9B0C1D3 /* ChannelListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelListView.swift; sourceTree = "<group>"; };
 		B2C3D4E5F60718A9B0C1D2E4 /* BookmarkManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManager.swift; sourceTree = "<group>"; };
@@ -244,12 +244,12 @@
 		8788B06B53F3BE4B26B19ADD /* obzor-macbook-neo-o-ch-m-nikto-ne-skazal.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "obzor-macbook-neo-o-ch-m-nikto-ne-skazal.md"; sourceTree = "<group>"; };
 		87C09D98DC3051B93B7D2CB7 /* GridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridView.swift; sourceTree = "<group>"; };
 		890825132562DDBDEAA0E57C /* ben-v-x-photoshops-new-ai-rotate-tool-works-perfect-https-t-co-oeu999ylcy-x.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "ben-v-x-photoshops-new-ai-rotate-tool-works-perfect-https-t-co-oeu999ylcy-x.md"; sourceTree = "<group>"; };
-		8962E71A1089E170EBAF7F91 /* LocalArenaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalArenaApp.swift; sourceTree = "<group>"; };
+		8962E71A1089E170EBAF7F91 /* MineApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MineApp.swift; sourceTree = "<group>"; };
 		89A9D7ED64483D0BFE9069BC /* sekonomte-70-pri-pokupke-the-last-stand-aftermath-v-steam.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "sekonomte-70-pri-pokupke-the-last-stand-aftermath-v-steam.md"; sourceTree = "<group>"; };
 		89F1773A497F5FECB4DC6074 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		8AE6039990641A183A030067 /* tsepi-markova-matematika-predskazaniy-veritasium-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "tsepi-markova-matematika-predskazaniy-veritasium-2.md"; sourceTree = "<group>"; };
 		8C38225D920B7B6A7E6C7145 /* design-systems-book.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "design-systems-book.md"; sourceTree = "<group>"; };
-		8C87519A8EC3FE3ED1E3DC18 /* LocalArenaCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = LocalArenaCore.xcframework; sourceTree = "<group>"; };
+		8C87519A8EC3FE3ED1E3DC18 /* MineCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = MineCore.xcframework; sourceTree = "<group>"; };
 		8F6387B68BF53AD4EFB7556A /* thread-by-vurdv8a8gbgrctd-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "thread-by-vurdv8a8gbgrctd-2.md"; sourceTree = "<group>"; };
 		8FBEB39EAC8D29D3C336CE3E /* someone-made-a-game-in-which-you-have-to-program-a-drone-using-a-simple-python-l.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "someone-made-a-game-in-which-you-have-to-program-a-drone-using-a-simple-python-l.md"; sourceTree = "<group>"; };
 		902A0149B2E8FCA272FB90D1 /* interview-with-the-co-founder-of-inflow-ness-labs-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "interview-with-the-co-founder-of-inflow-ness-labs-2.md"; sourceTree = "<group>"; };
@@ -311,7 +311,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F610E4F370894161D68D24D2 /* LocalArenaCore.xcframework in Frameworks */,
+				F610E4F370894161D68D24D2 /* MineCore.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -462,12 +462,12 @@
 		20906A08553056EECA01EB8D /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				589E56C508570F5D5C8B724A /* LocalArena.app */,
+				589E56C508570F5D5C8B724A /* Mine.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		4BE8BE0DAE29BD54C4E65821 /* LocalArena */ = {
+		4BE8BE0DAE29BD54C4E65821 /* Mine */ = {
 			isa = PBXGroup;
 			children = (
 				B2C3D4E5F60718A9B0C1D2E4 /* BookmarkManager.swift */,
@@ -478,18 +478,18 @@
 				C3D4E5F60718A9B0C1D2E3F5 /* FolderPicker.swift */,
 				87C09D98DC3051B93B7D2CB7 /* GridView.swift */,
 				3FE421104B50617640F0C309 /* Info.plist */,
-				8962E71A1089E170EBAF7F91 /* LocalArenaApp.swift */,
+				8962E71A1089E170EBAF7F91 /* MineApp.swift */,
 				BB4EA738CC12E41DB1E5425C /* Theme.swift */,
 				AF3B65612D52E384A077C57C /* VaultViewModel.swift */,
 				1EDB7086DF4AF4E72376FB58 /* TestData */,
 			);
-			path = LocalArena;
+			path = Mine;
 			sourceTree = "<group>";
 		};
 		6721776ED03319F1A0BFAE5A /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				8C87519A8EC3FE3ED1E3DC18 /* LocalArenaCore.xcframework */,
+				8C87519A8EC3FE3ED1E3DC18 /* MineCore.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -506,7 +506,7 @@
 			isa = PBXGroup;
 			children = (
 				A3E7787CEA01945A0224A67F /* Generated */,
-				4BE8BE0DAE29BD54C4E65821 /* LocalArena */,
+				4BE8BE0DAE29BD54C4E65821 /* Mine */,
 				6721776ED03319F1A0BFAE5A /* Frameworks */,
 				20906A08553056EECA01EB8D /* Products */,
 			);
@@ -515,9 +515,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		75C6122E660873BC780E4437 /* LocalArena */ = {
+		75C6122E660873BC780E4437 /* Mine */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 028EE28E9A21BC1C199283C8 /* Build configuration list for PBXNativeTarget "LocalArena" */;
+			buildConfigurationList = 028EE28E9A21BC1C199283C8 /* Build configuration list for PBXNativeTarget "Mine" */;
 			buildPhases = (
 				34C59F0CD8C503D29CC03871 /* Sources */,
 				16533C14C329C777C3735D65 /* Resources */,
@@ -527,11 +527,11 @@
 			);
 			dependencies = (
 			);
-			name = LocalArena;
+			name = Mine;
 			packageProductDependencies = (
 			);
-			productName = LocalArena;
-			productReference = 589E56C508570F5D5C8B724A /* LocalArena.app */;
+			productName = Mine;
+			productReference = 589E56C508570F5D5C8B724A /* Mine.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -548,7 +548,7 @@
 					};
 				};
 			};
-			buildConfigurationList = F8AAC3A929A59B5EE8D3715C /* Build configuration list for PBXProject "LocalArena" */;
+			buildConfigurationList = F8AAC3A929A59B5EE8D3715C /* Build configuration list for PBXProject "Mine" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -562,7 +562,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				75C6122E660873BC780E4437 /* LocalArena */,
+				75C6122E660873BC780E4437 /* Mine */,
 			);
 		};
 /* End PBXProject section */
@@ -723,7 +723,7 @@
 				216384DCA71B58B2DB53BE3B /* DetailView.swift in Sources */,
 				C3D4E5F60718A9B0C1D2E3F4 /* FolderPicker.swift in Sources */,
 				8F09DA3297039D0C1CD22846 /* GridView.swift in Sources */,
-				A249A93BC47BC4A18F7D9C7E /* LocalArenaApp.swift in Sources */,
+				A249A93BC47BC4A18F7D9C7E /* MineApp.swift in Sources */,
 				B064F462ACF8D4B94907F24A /* Theme.swift in Sources */,
 				44639A7E51D5D8922A04D287 /* VaultViewModel.swift in Sources */,
 				2730690230D2CA35AEAADB3E /* local_arena_ffi.swift in Sources */,
@@ -748,7 +748,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/Generated",
 				);
-				INFOPLIST_FILE = LocalArena/Info.plist;
+				INFOPLIST_FILE = Mine/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -757,7 +757,7 @@
 				OTHER_LDFLAGS = (
 					"-lsqlite3",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.localarena.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mine.app;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -835,7 +835,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/Generated",
 				);
-				INFOPLIST_FILE = LocalArena/Info.plist;
+				INFOPLIST_FILE = Mine/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -844,7 +844,7 @@
 				OTHER_LDFLAGS = (
 					"-lsqlite3",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.localarena.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mine.app;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -917,7 +917,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		028EE28E9A21BC1C199283C8 /* Build configuration list for PBXNativeTarget "LocalArena" */ = {
+		028EE28E9A21BC1C199283C8 /* Build configuration list for PBXNativeTarget "Mine" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				0E32D04DC3392728D7296C41 /* Debug */,
@@ -926,7 +926,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
-		F8AAC3A929A59B5EE8D3715C /* Build configuration list for PBXProject "LocalArena" */ = {
+		F8AAC3A929A59B5EE8D3715C /* Build configuration list for PBXProject "Mine" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				EE781EBDAC628914122A3828 /* Debug */,
