@@ -27,6 +27,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(serde::Deserialize)]
 struct Request {
     action: String,
+    vault_path: Option<String>,
     #[serde(flatten)]
     params: serde_json::Value,
 }
@@ -138,10 +139,10 @@ fn send_error(msg: &str) {
 
 // ─── Vault path discovery ───────────────────────────────────────────────────
 
-const DEFAULT_VAULT_DIR: &str = "LocalArena";
+const DEFAULT_VAULT_DIR: &str = "Mine";
 
 /// Read vault path from the main app's config file.
-/// Location: ~/Library/Application Support/com.localarena.app/config.json
+/// Location: ~/Library/Application Support/com.mine.app/config.json
 ///
 /// Fallback: if config doesn't exist (standalone mode — no desktop app),
 /// uses ~/LocalArena/ and creates the directory if needed.
@@ -150,7 +151,7 @@ fn load_vault_path() -> Option<String> {
 
     // Try config from desktop app first
     let config_path = PathBuf::from(&home)
-        .join("Library/Application Support/com.localarena.app/config.json");
+        .join("Library/Application Support/com.mine.app/config.json");
     if let Ok(data) = std::fs::read_to_string(&config_path) {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
             if let Some(path) = json.get("vault_path").and_then(|v| v.as_str()) {
@@ -165,7 +166,51 @@ fn load_vault_path() -> Option<String> {
     Some(default_path.to_string_lossy().to_string())
 }
 
+/// Load known vaults from config, filter to existing directories.
+fn load_known_vaults() -> Vec<String> {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return vec![],
+    };
+    let config_path = PathBuf::from(&home)
+        .join("Library/Application Support/com.mine.app/config.json");
+    let data = match std::fs::read_to_string(&config_path) {
+        Ok(d) => d,
+        Err(_) => return vec![],
+    };
+    let json: serde_json::Value = match serde_json::from_str(&data) {
+        Ok(j) => j,
+        Err(_) => return vec![],
+    };
+    match json.get("known_vaults").and_then(|v| v.as_array()) {
+        Some(arr) => arr.iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .filter(|p| PathBuf::from(p).is_dir())
+            .collect(),
+        None => {
+            // Fallback: use vault_path if no known_vaults
+            json.get("vault_path")
+                .and_then(|v| v.as_str())
+                .filter(|p| PathBuf::from(p).is_dir())
+                .map(|s| vec![s.to_string()])
+                .unwrap_or_default()
+        }
+    }
+}
+
 // ─── Action handlers ────────────────────────────────────────────────────────
+
+fn handle_list_known_vaults() {
+    #[derive(serde::Serialize)]
+    struct KnownVaultsResponse {
+        ok: bool,
+        vaults: Vec<String>,
+        current: Option<String>,
+    }
+    let vaults = load_known_vaults();
+    let current = load_vault_path();
+    send_response(&KnownVaultsResponse { ok: true, vaults, current });
+}
 
 fn handle_get_status() {
     let vault_path = load_vault_path();
@@ -668,11 +713,12 @@ fn main() {
             }
         };
 
-        // Load vault for actions that need it
-        let vault_path = load_vault_path();
+        // Load vault: prefer per-request vault_path, fallback to config
+        let vault_path = req.vault_path.clone().or_else(|| load_vault_path());
 
         match req.action.as_str() {
             "get_status" => handle_get_status(),
+            "list_known_vaults" => handle_list_known_vaults(),
 
             "list_channels" | "save_block" | "create_channel" => {
                 let Some(ref vp) = vault_path else {

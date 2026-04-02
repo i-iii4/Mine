@@ -57,6 +57,21 @@ export function PopupApp() {
   return (
     <div className="flex h-full flex-col p-3">
       <div className="shrink-0 space-y-2">
+        {/* Vault selector */}
+        {clipper.knownVaults.length > 1 && (
+          <select
+            value={clipper.selectedVault ?? ""}
+            onChange={(e) => clipper.switchVault(e.target.value)}
+            className="w-full rounded-1 border border-border bg-background px-2 py-1 text-sm text-foreground"
+          >
+            {clipper.knownVaults.map((v) => (
+              <option key={v} value={v}>
+                {v.split("/").pop()}
+              </option>
+            ))}
+          </select>
+        )}
+
         {metadata?.detectedType !== "image" && (
           <TypeSwitcher current={clipper.currentType} onChange={clipper.setCurrentType} />
         )}

@@ -55,6 +55,16 @@ export async function getContextMenuData(): Promise<ContextMenuData | null> {
   });
 }
 
+export interface KnownVaultsResponse extends NativeResponse {
+  vaults: string[];
+  current: string | null;
+}
+
+export async function listKnownVaults(): Promise<KnownVaultsResponse> {
+  const resp = await sendToNative({ action: "list_known_vaults" });
+  return resp as KnownVaultsResponse;
+}
+
 export interface ContextMenuData {
   menuItemId: string;
   srcUrl?: string;

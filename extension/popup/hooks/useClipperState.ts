@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   sendToNative,
+  listKnownVaults,
   getContextMenuData,
   extractMetadata,
   extractArticle,
@@ -27,6 +28,8 @@ export interface ClipperState {
   currentType: ClipType;
   title: string;
   saving: boolean;
+  knownVaults: string[];
+  selectedVault: string | null;
 }
 
 export function useClipperState() {
@@ -41,8 +44,11 @@ export function useClipperState() {
   const [title, setTitle] = useState("");
   const [saving, setSaving] = useState(false);
   const [articleLoading, setArticleLoading] = useState(false);
+  const [knownVaults, setKnownVaults] = useState<string[]>([]);
+  const [selectedVault, setSelectedVault] = useState<string | null>(null);
 
   const tabIdRef = useRef<number | null>(null);
+  const vaultRef = useRef<string | null>(null);
 
   // --- Init ---
 
@@ -62,6 +68,14 @@ export function useClipperState() {
       if (!status.ok) {
         showError(status.error ?? "Cannot connect to Mine");
         return;
+      }
+
+      // Load known vaults
+      const vaultsResult = await listKnownVaults();
+      if (vaultsResult.ok) {
+        setKnownVaults(vaultsResult.vaults);
+        setSelectedVault(vaultsResult.current);
+        vaultRef.current = vaultsResult.current;
       }
 
       const chResult = await sendToNative({ action: "list_channels" });
@@ -188,7 +202,7 @@ export function useClipperState() {
   }, []);
 
   const createChannel = useCallback(async (name: string) => {
-    await sendToNative({ action: "create_channel", tag: name, title: name });
+    await sendToNative({ action: "create_channel", tag: name, title: name, vault_path: vaultRef.current });
     setChannels((prev) => [...prev, { tag: name, title: name, block_count: 0 }]);
     setSelectedTags((prev) => [...prev, name]);
   }, []);
@@ -218,6 +232,7 @@ export function useClipperState() {
 
     const payload: NativeRequest = {
       action: "save_block",
+      vault_path: vaultRef.current,
       block_type: blockType,
       title: title || null,
       description: null,
@@ -267,6 +282,17 @@ export function useClipperState() {
     return { ok: false as const, error: result.error ?? "Failed to save" };
   }, [metadata, articleData, currentType, title, selectedTags, recentTags, saving]);
 
+  const switchVault = useCallback(async (vaultPath: string) => {
+    setSelectedVault(vaultPath);
+    vaultRef.current = vaultPath;
+    // Reload channels for new vault
+    const chResult = await sendToNative({ action: "list_channels", vault_path: vaultPath });
+    if (chResult.ok && chResult.channels) {
+      setChannels(chResult.channels);
+    }
+    setSelectedTags([]);
+  }, []);
+
   return {
     state,
     error,
@@ -284,5 +310,8 @@ export function useClipperState() {
     toggleTag,
     createChannel,
     save,
+    knownVaults,
+    selectedVault,
+    switchVault,
   };
 }
