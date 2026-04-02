@@ -1,4 +1,4 @@
-// Native messaging host for the Local Arena web clipper browser extension.
+// Native messaging host for the Mine web clipper browser extension.
 //
 // Communicates with the browser extension via stdin/stdout using the
 // Chrome native messaging protocol: 4-byte little-endian length header + JSON.
@@ -15,10 +15,10 @@ use std::collections::HashSet;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
-use local_arena_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
-use local_arena_lib::domain::vault::{resolve_slug_conflict, VaultLayout};
-use local_arena_lib::storage::{db, files, index, thumbnails};
-use local_arena_lib::util::now_iso8601;
+use mine_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
+use mine_lib::domain::vault::{resolve_slug_conflict, VaultLayout};
+use mine_lib::storage::{db, files, index, thumbnails};
+use mine_lib::util::now_iso8601;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -248,7 +248,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     };
 
     // Generate slug
-    let raw_slug = local_arena_lib::domain::block::suggest_slug(
+    let raw_slug = mine_lib::domain::block::suggest_slug(
         p.title.as_deref(),
         p.url.as_deref(),
     );
@@ -400,24 +400,24 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
             .join(" ")
     });
 
-    let channel = local_arena_lib::domain::channel::Channel {
+    let channel = mine_lib::domain::channel::Channel {
         tag: p.tag.clone(),
         title,
         description: None,
         color: None,
         icon: None,
         position: 0,
-        created_at: match local_arena_lib::domain::block::DateTime::new(&now_iso8601()) {
+        created_at: match mine_lib::domain::block::DateTime::new(&now_iso8601()) {
             Ok(dt) => dt,
             Err(e) => return send_error(&format!("failed to create timestamp: {e}")),
         },
     };
 
     // Write channel .md file (source of truth)
-    let block = local_arena_lib::domain::block::Block {
+    let block = mine_lib::domain::block::Block {
         slug: channel.tag.clone(),
-        frontmatter: local_arena_lib::domain::block::Frontmatter {
-            block_type: local_arena_lib::domain::block::BlockType::Channel,
+        frontmatter: mine_lib::domain::block::Frontmatter {
+            block_type: mine_lib::domain::block::BlockType::Channel,
             title: Some(channel.title.clone()),
             description: None,
             url: None,

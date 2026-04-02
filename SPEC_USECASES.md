@@ -1,4 +1,4 @@
-# Use Cases: Local Arena
+# Use Cases: Mine
 
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_PRD.md](SPEC_PRD.md) | [CLAUDE.md](CLAUDE.md)
 
@@ -10,7 +10,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 | **Cosmos** | Визуальная студия вдохновения | Полуавтомат: кластеры + ИИ-теги | Мультимодальный поиск: цвет, настроение, семантика |
 | **Mymind** | ИИ-расширение памяти | Автомат: ИИ всё организует сам | Сохраняй всё, не думай об организации |
 
-## Позиционирование Local Arena
+## Позиционирование Mine
 
 Локальный визуальный букмаркинг. Файлы на диске, теги вместо папок, полный контроль над данными. Без облака, без подписки, без ограничений.
 
@@ -28,7 +28,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 
 **Сценарий:**
 1. Находит интересное изображение/статью/ссылку в браузере
-2. Нажимает расширение Local Arena (или горячую клавишу)
+2. Нажимает расширение Mine (или горячую клавишу)
 3. Выбирает теги (= каналы) из списка или вводит новые
 4. Контент сохраняется в vault:
    - Ссылка → `.md` с frontmatter (url, title, tags) + миниатюра (og:image)

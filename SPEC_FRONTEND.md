@@ -4,7 +4,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.m
 
 ## Overview
 
-React 19 + TypeScript + TailwindCSS v4 фронтенд для Local Arena. Работает внутри Tauri v2 WebView (Safari/WebKit). Взаимодействует с Rust-бэкендом через `@tauri-apps/api/core` (invoke). Ассеты (thumbnails, медиафайлы) отображаются через `convertFileSrc`.
+React 19 + TypeScript + TailwindCSS v4 фронтенд для Mine. Работает внутри Tauri v2 WebView (Safari/WebKit). Взаимодействует с Rust-бэкендом через `@tauri-apps/api/core` (invoke). Ассеты (thumbnails, медиафайлы) отображаются через `convertFileSrc`.
 
 ## TypeScript types
 
@@ -120,7 +120,7 @@ Vault-пикер — не маршрут, а состояние: если `vault
 ### Sidebar
 
 Содержимое:
-1. Заголовок «Local Arena»
+1. Заголовок «Mine»
 2. Пункт «All» — навигация на `/`
 3. Список каналов (из `listChannels()`) — навигация на `/channel/:tag`
 4. Каждый канал: название + счётчик блоков

@@ -406,7 +406,7 @@
         excerpt: caption.slice(0, 200),
       };
     } catch (e) {
-      console.error("[Local Arena] Instagram extraction failed:", e);
+      console.error("[Mine] Instagram extraction failed:", e);
       return null;
     }
   }
@@ -429,7 +429,7 @@
     function createClipButton() {
       const btn = document.createElement("button");
       btn.setAttribute(BUTTON_ATTR, "");
-      btn.title = "Save to Local Arena";
+      btn.title = "Save to Mine";
       Object.assign(btn.style, {
         position: "absolute",
         top: "62px",
@@ -528,7 +528,7 @@
         btn.style.opacity = "1";
         btn.style.pointerEvents = "auto";
       } catch (e) {
-        console.error("[Local Arena] Instagram feed clip failed:", e);
+        console.error("[Mine] Instagram feed clip failed:", e);
         btn.style.opacity = "1";
         btn.style.background = "rgba(239,68,68,0.8)";
         btn.style.pointerEvents = "auto";

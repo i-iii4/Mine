@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Local Arena",
+  "productName": "Mine",
   "version": "0.1.0",
-  "identifier": "com.localarena.app",
+  "identifier": "com.mine.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",

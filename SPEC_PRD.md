@@ -1,4 +1,4 @@
-# PRD: Local Arena
+# PRD: Mine
 
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_USECASES.md](SPEC_USECASES.md)
 

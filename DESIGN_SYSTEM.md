@@ -1,4 +1,4 @@
-# Дизайн-система Local Arena
+# Дизайн-система Mine
 
 Токены определены в `src/styles/global.css` → `@theme inline`.
 Tailwind v4 генерирует утилиты автоматически из `--radius-*`, `--spacing-*`, `--text-*`.

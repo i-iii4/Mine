@@ -53,9 +53,9 @@ pub fn run() {
             }
 
             // ── Native macOS menu ────────────────────────────────────────
-            let app_menu = SubmenuBuilder::new(app, "Local Arena")
+            let app_menu = SubmenuBuilder::new(app, "Mine")
                 .about(Some(AboutMetadata {
-                    name: Some("Local Arena".into()),
+                    name: Some("Mine".into()),
                     version: Some(env!("CARGO_PKG_VERSION").into()),
                     copyright: Some("2026".into()),
                     credits: Some("Local-first visual bookmarking".into()),

@@ -60,7 +60,7 @@ export function useClipperState() {
 
       const status = await sendToNative({ action: "get_status" });
       if (!status.ok) {
-        showError(status.error ?? "Cannot connect to Local Arena");
+        showError(status.error ?? "Cannot connect to Mine");
         return;
       }
 

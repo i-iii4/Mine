@@ -14,7 +14,7 @@ describe("VaultPicker", () => {
 
   it("renders heading and button", () => {
     render(<VaultPicker onVaultSelected={vi.fn()} />);
-    expect(screen.getByText("Local Arena")).toBeInTheDocument();
+    expect(screen.getByText("Mine")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Select Vault" }),
     ).toBeInTheDocument();

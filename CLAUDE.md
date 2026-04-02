@@ -1,4 +1,4 @@
-# Local Arena — локальная альтернатива Are.na для визуального букмаркинга
+# Mine — локальная альтернатива Are.na для визуального букмаркинга
 
 Десктопное приложение для визуального букмаркинга. Файлы хранятся локально (плоская структура, Markdown + frontmatter), каналы — это теги. Интерфейс — окно в файловую систему. Никакого облака, никакого Electron.
 
@@ -45,6 +45,7 @@
 | react-markdown + remark-gfm | Рендеринг markdown в Detail.tsx и popup расширения |
 | @tailwindcss/typography | Стилизация prose-контента (статьи) |
 | Defuddle | Извлечение статей + Markdown-конвертация + YouTube-транскрипты (content script) |
+| @virtuoso.dev/masonry | Виртуализированная masonry-сетка (Chrome/Firefox fallback) |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 | SwiftUI | iOS UI-фреймворк (нативный, без WebView) |
 | UniFFI (Mozilla) | FFI-генератор: Rust → Swift bindings |
@@ -165,7 +166,7 @@ local-arena/
 ## Vault structure (пользовательские данные)
 
 ```
-~/LocalArena/                       # Vault — выбирается пользователем
+~/Mine/                       # Vault — выбирается пользователем
 ├── .arena/                         # Служебные данные
 │   ├── index.db                    # SQLite: FTS5, кэш тегов, каналы
 │   └── cache/

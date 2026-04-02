@@ -1457,7 +1457,7 @@ ad1e6d9 Keyboard navigation + resizable sidebar + iCloud image retry
 - Отступы `px-8 pb-8 pt-14` (32px по бокам, 56px сверху под overlay titlebar)
 
 **Sidebar** (`src/components/Sidebar.tsx`):
-- Убран заголовок «Local Arena» — пустой спейсер `h-10` под светофор
+- Убран заголовок «Mine» — пустой спейсер `h-10` под светофор
 - Градиентный fade сверху (`h-8 bg-gradient-to-b from-background to-transparent`) — контент при скролле растворяется
 - Фон `bg-background` вместо `bg-sidebar` (единый фон с контентом, разделение линией)
 

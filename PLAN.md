@@ -505,14 +505,16 @@ Goal: полноценная поддержка видео-страниц в к�
 | M2.6 | Channel list / навигация | [x] |
 | M2.7 | Detail view (просмотр блока) | [x] |
 
-### Phase 10 — Виртуализированная masonry-сетка (tanstack-virtual) [PLANNED]
+### Phase 10 — Виртуализированная masonry-сетка [IN PROGRESS]
 
-Goal: настоящая виртуализация с measure-once-cache для 10000+ блоков.
+Goal: настоящая виртуализация для 10000+ блоков. Два пути через feature detection.
 
 | # | Task | Status |
 |---|------|--------|
-| 10.1 | `@tanstack/react-virtual` + masonry virtualizer с динамическим измерением высот | [ ] |
-| 10.2 | Scroll anchoring при ресайзе окна и сайдбара | [ ] |
+| 10.1 | CSS Grid Lanes + content-visibility: auto (WebKit path) | [x] |
+| 10.2 | `@virtuoso.dev/masonry` fallback (Chrome/Firefox) | [x] |
+| 10.3 | Feature detection `CSS.supports("display", "grid-lanes")` | [x] |
+| 10.4 | Scroll anchoring при ресайзе окна и сайдбара | [ ] |
 
 ### Backlog
 

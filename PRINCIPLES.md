@@ -1,4 +1,4 @@
-# Engineering Principles: Local Arena
+# Engineering Principles: Mine
 
 Related documents: [CLAUDE.md](CLAUDE.md) | [ARCHITECTURE.md](ARCHITECTURE.md)
 

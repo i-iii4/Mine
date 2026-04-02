@@ -1,5 +1,5 @@
 {
-  "name": "local-arena",
+  "name": "mine",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -10,7 +10,7 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "build:extension": "vite build --config vite.extension.config.ts && cp extension/content.js extension/background.js extension/manifest.json 'safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/' && cp -r extension/dist 'safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/dist' && cp extension/lib/* 'safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/'",
-    "pack:extension": "bun run build:extension && rm -f build/local-arena-clipper.zip && mkdir -p build && cd extension && zip -r ../build/local-arena-clipper.zip manifest.json background.js content.js dist/ lib/ icons/ -x '*.DS_Store'",
+    "pack:extension": "bun run build:extension && rm -f build/mine-clipper.zip && mkdir -p build && cd extension && zip -r ../build/mine-clipper.zip manifest.json background.js content.js dist/ lib/ icons/ -x '*.DS_Store'",
     "preview": "vite preview",
     "tauri": "tauri"
   },

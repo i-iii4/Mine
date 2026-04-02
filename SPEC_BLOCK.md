@@ -8,7 +8,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.m
 
 ## Назначение
 
-`domain/block` — чистая бизнес-логика работы с блоками. Блок — центральная единица данных Local Arena: `.md` файл с YAML frontmatter + опциональный медиафайл.
+`domain/block` — чистая бизнес-логика работы с блоками. Блок — центральная единица данных Mine: `.md` файл с YAML frontmatter + опциональный медиафайл.
 
 **Зависимости:** нет. Модуль не знает о Tauri, SQLite, файловой системе.
 **Зависят от него:** storage/index, storage/files, commands/blocks, watcher/handler.

@@ -35,7 +35,7 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
     <div className="flex h-screen w-screen items-center justify-center bg-background">
       <div className="flex max-w-sm flex-col items-center gap-6 text-center">
         <h1 className="text-lg font-semibold text-foreground">
-          Local Arena
+          Mine
         </h1>
         <p className="text-base text-muted-foreground">
           Choose a folder for your vault. All blocks will be stored as files in

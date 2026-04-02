@@ -1,16 +1,16 @@
 [package]
-name = "local-arena"
+name = "mine"
 version = "0.1.0"
 description = "Local-first alternative to Are.na for visual bookmarking"
 authors = ["i_iii"]
 license = "MIT"
-repository = "https://github.com/i-iii4/local-arena"
+repository = "https://github.com/i-iii4/mine"
 edition = "2021"
 rust-version = "1.77.2"
-default-run = "local-arena"
+default-run = "mine"
 
 [lib]
-name = "local_arena_lib"
+name = "mine_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]

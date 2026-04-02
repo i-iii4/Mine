@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Local Arena Clipper",
+  "name": "Mine Clipper",
   "version": "0.1.0",
-  "description": "Save links, articles, and images to Local Arena",
+  "description": "Save links, articles, and images to Mine",
   "permissions": [
     "contextMenus",
     "activeTab",
@@ -34,7 +34,7 @@
         "default": "Alt+A",
         "mac": "Alt+A"
       },
-      "description": "Open Local Arena Clipper"
+      "description": "Open Mine Clipper"
     }
   },
   "icons": {

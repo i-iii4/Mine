@@ -4,7 +4,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 
 ## Overview
 
-Браузерное расширение для сохранения контента из веба в Local Arena vault. Работает автономно через native messaging — не требует запущенного приложения.
+Браузерное расширение для сохранения контента из веба в Mine vault. Работает автономно через native messaging — не требует запущенного приложения.
 
 Поддерживаемые браузеры: Chrome (Manifest V3), Safari (через xcrun safari-web-extension-converter).
 
@@ -200,7 +200,7 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 │    │ + Create "new-tag"          │   │
 │    └─────────────────────────────┘   │
 │                                      │
-│  [Save to Local Arena        ⌘⏎]    │
+│  [Save to Mine        ⌘⏎]    │
 │                                      │
 │  ─ Status: Saving... / ✓ / Error ─  │
 └──────────────────────────────────────┘
@@ -242,10 +242,10 @@ Background service worker регистрирует 4 пункта:
 
 | ID | Title | Context | Visible when |
 |---|---|---|---|
-| `save-page` | Save page to Local Arena | `page` | Всегда |
-| `save-image` | Save image to Local Arena | `image` | Правый клик по `<img>` |
-| `save-selection` | Save selection to Local Arena | `selection` | Есть выделенный текст |
-| `save-link` | Save link to Local Arena | `link` | Правый клик по `<a>` |
+| `save-page` | Save page to Mine | `page` | Всегда |
+| `save-image` | Save image to Mine | `image` | Правый клик по `<img>` |
+| `save-selection` | Save selection to Mine | `selection` | Есть выделенный текст |
+| `save-link` | Save link to Mine | `link` | Правый клик по `<a>` |
 
 При выборе пункта открывается popup с предвыбранным типом и заполненными полями.
 
@@ -417,7 +417,7 @@ Response:
 
 | OS | Path |
 |---|---|
-| macOS | `~/Library/Application Support/LocalArena/native-host` |
+| macOS | `~/Library/Application Support/Mine/native-host` |
 
 ### Manifest (Chrome)
 
@@ -426,8 +426,8 @@ Response:
 ```json
 {
   "name": "com.localarena.clipper",
-  "description": "Local Arena Web Clipper",
-  "path": "~/Library/Application Support/LocalArena/native-host",
+  "description": "Mine Web Clipper",
+  "path": "~/Library/Application Support/Mine/native-host",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://<extension-id>/"
@@ -526,9 +526,9 @@ src-tauri/src/bin/
 ```json
 {
   "manifest_version": 3,
-  "name": "Local Arena Clipper",
+  "name": "Mine Clipper",
   "version": "0.1.0",
-  "description": "Save links, articles, and images to Local Arena",
+  "description": "Save links, articles, and images to Mine",
   "permissions": [
     "contextMenus",
     "activeTab",
@@ -560,7 +560,7 @@ src-tauri/src/bin/
         "default": "Alt+A",
         "mac": "Alt+A"
       },
-      "description": "Open Local Arena Clipper"
+      "description": "Open Mine Clipper"
     }
   },
   "icons": {

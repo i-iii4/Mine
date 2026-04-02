@@ -5,8 +5,8 @@
 
 uniffi::setup_scaffolding!();
 
-use local_arena_lib::domain::block::parse_block;
-use local_arena_lib::storage::{db, index};
+use mine_lib::domain::block::parse_block;
+use mine_lib::storage::{db, index};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -90,10 +90,10 @@ impl ArenaVault {
             if path.extension().and_then(|e| e.to_str()) != Some("md") {
                 continue;
             }
-            if let Ok((slug, content)) = local_arena_lib::storage::files::read_block_file(&path) {
-                match local_arena_lib::domain::block::parse_block(&slug, &content) {
+            if let Ok((slug, content)) = mine_lib::storage::files::read_block_file(&path) {
+                match mine_lib::domain::block::parse_block(&slug, &content) {
                     Ok(block) => {
-                        if block.frontmatter.block_type == local_arena_lib::domain::block::BlockType::Channel {
+                        if block.frontmatter.block_type == mine_lib::domain::block::BlockType::Channel {
                             let _ = index::upsert_channel_from_block(&conn, &block);
                         } else {
                             let _ = index::upsert_block(&conn, &block);

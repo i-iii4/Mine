@@ -1,18 +1,18 @@
 [package]
-name = "local-arena-ffi"
+name = "mine-ffi"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
 crate-type = ["staticlib", "cdylib"]
-name = "local_arena_ffi"
+name = "mine_ffi"
 
 [[bin]]
 name = "uniffi-bindgen"
 path = "uniffi-bindgen/main.rs"
 
 [dependencies]
-local-arena = { path = "../src-tauri", default-features = false }
+mine = { path = "../src-tauri", default-features = false }
 uniffi = { version = "0.29", features = ["cli"] }
 thiserror = "2"
 rusqlite = { version = "0.33", features = ["bundled"] }
