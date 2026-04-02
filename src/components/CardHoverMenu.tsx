@@ -1,5 +1,6 @@
 import { memo } from "react";
-import { MoreHorizontal, Trash2, FolderPlus, Link, ExternalLink } from "lucide-react";
+import { MoreHorizontal, Trash2, Plus, ExternalLink } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -23,6 +24,10 @@ interface CardHoverMenuProps {
   onRequestDelete: (slug: string) => void;
 }
 
+function stopProp(e: React.MouseEvent | React.PointerEvent) {
+  e.stopPropagation();
+}
+
 export const CardHoverMenu = memo(function CardHoverMenu({
   block,
   tags,
@@ -36,104 +41,102 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   return (
     <>
       {/* Overlay — затенение при hover */}
-      <div className="pointer-events-none absolute inset-0 z-10 bg-black/40 opacity-0 transition-opacity group-hover:opacity-100" />
+      <div className="pointer-events-none absolute inset-0 z-[4] bg-black/40 opacity-0 transition-opacity group-hover:opacity-100" />
 
-      {/* Контейнер кнопок — перехватывает клики */}
+      {/* More (···) — верхний правый */}
       <div
-        className="absolute inset-0 z-10 opacity-0 transition-opacity group-hover:opacity-100"
-        onClick={(e) => e.stopPropagation()}
-        onPointerDown={(e) => e.stopPropagation()}
+        className="absolute right-2 top-2 z-[5] opacity-0 transition-opacity group-hover:opacity-100"
+        onClick={stopProp}
+        onPointerDown={stopProp}
       >
-        {/* More (···) — верхний правый */}
-        <div className="absolute right-2 top-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="default" size="icon">
-                <MoreHorizontal className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
-                  <FolderPlus className="size-3" />
-                  Collect
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
-                  <CollectionPicker
-                    block={block}
-                    tags={tags}
-                    currentTag={currentTag}
-                    onToggleTag={onToggleTag}
-                    onCreateAndAssign={onCreateAndAssign}
-                    stopKeyPropagation
-                  />
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="default" size="icon">
+              <MoreHorizontal className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Plus className="size-3" />
+                Channel
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
+                <CollectionPicker
+                  block={block}
+                  tags={tags}
+                  currentTag={currentTag}
+                  onToggleTag={onToggleTag}
+                  onCreateAndAssign={onCreateAndAssign}
+                  stopKeyPropagation
+                />
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
 
-              {hasUrl && (
-                <DropdownMenuItem onSelect={() => window.open(block.url!, "_blank", "noopener,noreferrer")}>
-                  <ExternalLink className="size-3" />
-                  Source
-                </DropdownMenuItem>
-              )}
-
-              <DropdownMenuSeparator />
-
-              {currentTag && block.tags.includes(currentTag) && (
-                <DropdownMenuItem
-                  onSelect={() => onToggleTag(block.slug, currentTag, true)}
-                >
-                  Remove from &ldquo;{titleFromTag(currentTag)}&rdquo;
-                </DropdownMenuItem>
-              )}
-
-              <DropdownMenuItem
-                variant="destructive"
-                onSelect={() => onRequestDelete(block.slug)}
-              >
-                <Trash2 className="size-3" />
-                Delete
+            {hasUrl && (
+              <DropdownMenuItem onSelect={() => openUrl(block.url!)}>
+                <ExternalLink className="size-3" />
+                Source
               </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+            )}
 
-        {/* Нижний ряд: Source (лево) + Collect (право) */}
-        <div className="absolute bottom-2 left-2 right-2 flex justify-between">
-          {/* Source — низ лево */}
-          <Button
-            variant="default"
-            size="default"
-            disabled={!hasUrl}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (block.url) window.open(block.url, "_blank", "noopener,noreferrer");
-            }}
-          >
-            <ExternalLink className="size-3" />
-            Source
-          </Button>
+            <DropdownMenuSeparator />
 
-          {/* Collect — низ право */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="default" size="default">
-                <FolderPlus className="size-3" />
-                Collect
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0" align="end">
-              <CollectionPicker
-                block={block}
-                tags={tags}
-                currentTag={currentTag}
-                onToggleTag={onToggleTag}
-                onCreateAndAssign={onCreateAndAssign}
-                stopKeyPropagation
-              />
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+            {currentTag && block.tags.includes(currentTag) && (
+              <DropdownMenuItem
+                onSelect={() => onToggleTag(block.slug, currentTag, true)}
+              >
+                Remove from &ldquo;{titleFromTag(currentTag)}&rdquo;
+              </DropdownMenuItem>
+            )}
+
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => onRequestDelete(block.slug)}
+            >
+              <Trash2 className="size-3" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* Нижний ряд: Source (лево) + Channel (право) */}
+      <div
+        className="absolute bottom-2 left-2 right-2 z-[5] flex justify-between opacity-0 transition-opacity group-hover:opacity-100"
+        onClick={stopProp}
+        onPointerDown={stopProp}
+      >
+        {/* Source — низ лево */}
+        <Button
+          variant="default"
+          size="default"
+          disabled={!hasUrl}
+          onClick={() => { if (block.url) openUrl(block.url); }}
+        >
+          Source
+          <ExternalLink className="size-3" />
+        </Button>
+
+        {/* Channel — низ право */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="default" size="default">
+              Channel
+              <Plus className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0" align="end">
+            <CollectionPicker
+              block={block}
+              tags={tags}
+              currentTag={currentTag}
+              onToggleTag={onToggleTag}
+              onCreateAndAssign={onCreateAndAssign}
+              stopKeyPropagation
+            />
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </>
   );

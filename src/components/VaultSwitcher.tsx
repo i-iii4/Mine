@@ -69,7 +69,7 @@ export function VaultSwitcher({ currentPath, hotkey }: VaultSwitcherProps) {
           </span>
         </div>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start">
+      <DropdownMenuContent side="top" align="start" sideOffset={8}>
         {sorted.map((path) => (
           <DropdownMenuItem
             key={path}

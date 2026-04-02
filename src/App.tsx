@@ -62,6 +62,34 @@ import {
   listChannelPreviews,
 } from "@/lib/commands";
 import { pushRecentTag } from "@/lib/recentTags";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { VaultPicker } from "@/components/VaultPicker";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
@@ -83,7 +111,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
-import { Plus, Trash2, Info } from "lucide-react";
+import { Plus, Trash2, Info, ExternalLink } from "lucide-react";
 
 // ─── Visual grid navigation ────────────────────────────────────────────────
 
@@ -318,8 +346,8 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       setLoadError(null);
       // Signal cards to retry failed image loads (e.g. after iCloud files download)
       window.dispatchEvent(new Event("vault-refreshed"));
-      // Previews loaded after main data to not block initial render
-      loadPreviews();
+      // Previews loaded after main data
+      await loadPreviews();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("Failed to load data:", msg);
@@ -869,6 +897,71 @@ function ComponentTestBench() {
           </TooltipTrigger>
           <TooltipContent>Tooltip content</TooltipContent>
         </Tooltip>
+      </Section>
+
+      {/* DropdownMenu */}
+      <Section label="DropdownMenu">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button>Open menu</Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem><Plus className="size-3" />Action</DropdownMenuItem>
+            <DropdownMenuItem><ExternalLink className="size-3" />Open link</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive"><Trash2 className="size-3" />Delete</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost">With submenu</Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger><Plus className="size-3" />Submenu</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem>Sub item 1</DropdownMenuItem>
+                <DropdownMenuItem>Sub item 2</DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem>Regular item</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </Section>
+
+      {/* ContextMenu */}
+      <Section label="ContextMenu (right-click the box)">
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div className="flex h-16 w-48 items-center justify-center rounded-1 border border-dashed border-border text-sm text-muted-foreground">
+              Right-click here
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem>Action</ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem variant="destructive"><Trash2 className="size-3" />Delete</ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      </Section>
+
+      {/* AlertDialog */}
+      <Section label="AlertDialog">
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="destructive">Open dialog</Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent size="sm">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+              <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction variant="destructive">Confirm</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </Section>
 
       {/* Typography */}

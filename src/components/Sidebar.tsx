@@ -133,6 +133,17 @@ export function Sidebar({
           ))}
         </SortableContext>
 
+        {isCreatingChannel && (
+          <InlineInput
+            defaultValue=""
+            placeholder="New channel..."
+            onSubmit={(value) => {
+              onCreateChannel(value);
+              onSetCreatingChannel(false);
+            }}
+            onCancel={() => onSetCreatingChannel(false)}
+          />
+        )}
 
       </nav>
 

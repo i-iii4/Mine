@@ -28,6 +28,36 @@ if any
 
 ---
 
+## 02.04.2026 — Desktop: hover menu, vault switcher, bugfixes
+
+### Goal
+Hover-меню карточки (Source, Channel, More), переключение пространств, исправления UX.
+
+### Actually completed
+1. CardHoverMenu: overlay bg-black/40 + три кнопки (More top-right, Source bottom-left, Channel bottom-right)
+2. CollectionPicker: переиспользуемый компонент (вынесен из CardTagMenu)
+3. Source: openUrl через @tauri-apps/plugin-opener (не window.open)
+4. VaultSwitcher: DropdownMenu с известными пространствами + Add space
+5. known_vaults в config.json, list_known_vaults Rust-команда
+6. Clipper: vault selector в popup, list_known_vaults в native host, vault_path per-request
+7. Instagram: иконка floppy disk → Plus
+8. Sidebar: InlineInput для создания канала (вызывается из нижней панели)
+9. loadPreviews с await — миниатюры обновляются сразу после DnD
+10. Styleguide: добавлены DropdownMenu, ContextMenu, AlertDialog
+11. DESIGN_SYSTEM.md: Card Hover Menu паттерн, семантические токены --radius-card/--radius-media
+12. Переименование Local Arena → Mine (все файлы, Rust crates, iOS, bundle ID)
+
+### Push
+PENDING
+
+### Decisions and lessons learned
+- window.open не работает в Tauri WebView — использовать openUrl из plugin-opener
+- Hover overlay inset-0 с stopPropagation блокирует клик по карточке — кнопки в отдельных absolute контейнерах
+- loadPreviews без await — миниатюры не обновлялись после DnD
+- Кнопки карточки — стандартный Button variant="default", не кастомные стили
+
+---
+
 ## 22.03.2026 — Phase M2.6: список каналов
 
 ### Goal
