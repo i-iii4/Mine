@@ -291,21 +291,24 @@ Content: `rounded-1 border bg-popover p-1`, тень — единая для в�
 
 ### Card Hover Menu
 
-Три кнопки в правом верхнем углу карточки, появляются при hover.
+При hover на карточку появляются overlay-затенение и три кнопки.
 
-- Расположение: `absolute right-2 top-2`, `z-10`
-- Появление: `opacity-0 group-hover:opacity-100 transition-opacity`
-- Кнопки: `Button variant="ghost" size="icon-xs"` с overlay-фоном
-- Overlay-фон: `bg-black/60 backdrop-blur-sm` (полупрозрачный, для читаемости на любом контенте)
-- Скругление: `rounded-1` (3px) — как все элементы системы
-- Текст/иконки: `text-white` (контрастно на overlay-фоне)
-- Hover: `hover:bg-black/80`
+**Overlay:** `bg-black/40` на всю карточку. Одинаков в обеих темах — затенение контрастирует с любым контентом.
+
+**Кнопки:** стандартные `Button variant="default"` из дизайн-системы (`bg-component-fill`, `rounded-1`). Адаптируются к теме автоматически.
+
+**Расположение:**
+- **More** (`MoreHorizontal`, `icon-xs`) — верхний правый угол (`absolute right-2 top-2`)
+- **Source** (`ExternalLink`, `size="xs"`, текст «Source») — нижний левый угол
+- **Collect** (`FolderPlus`, `size="xs"`, текст «Collect») — нижний правый угол
+
+**Появление:** `opacity-0 group-hover:opacity-100 transition-opacity`
+
+**Поведение:**
 - `stopPropagation` на контейнере — клик по кнопкам не открывает Detail
-
-Кнопки (слева направо):
-1. **Collection** (`Plus`) — `DropdownMenu` со списком коллекций (переиспользует `CollectionPicker`)
-2. **Source** (`ExternalLink`) — `window.open(url)`. Disabled если `block.url` нет
-3. **More** (`MoreHorizontal`) — `DropdownMenu`: Add to collection (подменю), Open source, Remove from collection, Delete from Mine
+- Source: `window.open(url)`. Disabled если `block.url` нет
+- Collect: `DropdownMenu` со списком коллекций (`CollectionPicker`)
+- More: `DropdownMenu` — Collect (подменю), Source, Remove from collection, Delete
 
 ### Checkbox
 
