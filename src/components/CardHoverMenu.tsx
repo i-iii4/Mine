@@ -1,6 +1,6 @@
 import { memo } from "react";
-import { MoreHorizontal, Trash2, Plus, ExternalLink } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { MoreHorizontal, Trash2, Plus, ExternalLink, FolderOpen, Copy } from "lucide-react";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -17,6 +17,7 @@ import { CollectionPicker, titleFromTag } from "./CollectionPicker";
 
 interface CardHoverMenuProps {
   block: LightBlock;
+  vaultPath: string;
   tags: TagCount[];
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
@@ -30,6 +31,7 @@ function stopProp(e: React.MouseEvent | React.PointerEvent) {
 
 export const CardHoverMenu = memo(function CardHoverMenu({
   block,
+  vaultPath,
   tags,
   currentTag,
   onToggleTag,
@@ -37,6 +39,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   onRequestDelete,
 }: CardHoverMenuProps) {
   const hasUrl = !!block.url;
+  const filePath = `${vaultPath}/${block.slug}.md`;
 
   return (
     <>
@@ -79,6 +82,18 @@ export const CardHoverMenu = memo(function CardHoverMenu({
                 Source
               </DropdownMenuItem>
             )}
+
+            <DropdownMenuSeparator />
+
+            <DropdownMenuItem onSelect={() => revealItemInDir(filePath)}>
+              <FolderOpen className="size-3" />
+              Reveal in Finder
+            </DropdownMenuItem>
+
+            <DropdownMenuItem onSelect={() => navigator.clipboard.writeText(filePath)}>
+              <Copy className="size-3" />
+              Copy Path
+            </DropdownMenuItem>
 
             <DropdownMenuSeparator />
 

@@ -50,6 +50,7 @@ export const Card = memo(function Card({ block, vaultPath, isFocused, onClick, t
       {tags && onToggleTag && onCreateAndAssign && onRequestDelete && (
         <CardHoverMenu
           block={block}
+          vaultPath={vaultPath}
           tags={tags}
           currentTag={currentTag}
           onToggleTag={onToggleTag}
