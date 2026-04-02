@@ -50,6 +50,9 @@ export const removeTag = (slug: string, tag: string) =>
 export const renameTag = (old_tag: string, new_tag: string) =>
   invoke<void>("rename_tag", { old_tag, new_tag });
 
+export const renameChannel = (old_tag: string, new_tag: string) =>
+  invoke<unknown>("rename_channel", { old_tag, new_tag });
+
 export const deleteTagFromAll = (tag: string) =>
   invoke<void>("delete_tag_from_all", { tag });
 

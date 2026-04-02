@@ -209,13 +209,23 @@ pub fn rename_channel(
     let existing = channels.iter().find(|c| c.tag == normalized_old)
         .ok_or_else(|| CommandError::Internal(format!("channel '{}' not found", old_tag)))?;
 
+    // Wrap DB operations in a transaction to prevent partial renames
+    vs.conn.execute("BEGIN", []).map_err(|e| CommandError::Internal(e.to_string()))?;
+
     // Update all blocks that have the old tag
     let affected_blocks = index::list_blocks_by_tag(&vs.conn, &normalized_old)?;
     for indexed_block in &affected_blocks {
+        if indexed_block.slug.is_empty() { continue; }
         let path = vs.vault.block_path(&indexed_block.slug);
-        let (_, content) = files::read_block_file(&path)?;
+        let content = match files::read_block_file(&path) {
+            Ok((_, c)) => c,
+            Err(e) => {
+                vs.conn.execute("ROLLBACK", []).ok();
+                return Err(CommandError::Internal(format!("failed to read {}: {}", indexed_block.slug, e)));
+            }
+        };
         let mut block = parse_block(&indexed_block.slug, &content)
-            .map_err(|e| CommandError::Internal(e.to_string()))?;
+            .map_err(|e| { vs.conn.execute("ROLLBACK", []).ok(); CommandError::Internal(e.to_string()) })?;
 
         // Replace old tag with new tag
         block.frontmatter.tags.retain(|t| t != &normalized_old);
@@ -224,27 +234,28 @@ pub fn rename_channel(
         }
 
         let serialized = serialize_block(&block);
-        std::fs::write(&path, serialized)
-            .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
+        if let Err(e) = std::fs::write(&path, serialized) {
+            vs.conn.execute("ROLLBACK", []).ok();
+            return Err(CommandError::Internal(format!("failed to write: {}", e)));
+        }
         index::upsert_block(&vs.conn, &block)?;
     }
 
-    // Create new channel .md file with same metadata, remove old one
+    // Create new channel with same metadata
     let mut new_channel = Channel {
         tag: normalized_new.clone(),
-        title: normalized_new.clone(),
+        title: {
+            let mut chars = normalized_new.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                None => normalized_new.clone(),
+            }
+        },
         description: existing.description.clone(),
         color: existing.color.clone(),
         icon: existing.icon.clone(),
         position: existing.position,
         created_at: existing.created_at.clone(),
-    };
-    new_channel.title = {
-        let mut chars = normalized_new.chars();
-        match chars.next() {
-            Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-            None => normalized_new.clone(),
-        }
     };
 
     // Write new channel .md, delete old
@@ -257,6 +268,8 @@ pub fn rename_channel(
 
     index::upsert_channel(&vs.conn, &new_channel)?;
     index::remove_channel(&vs.conn, &normalized_old)?;
+
+    vs.conn.execute("COMMIT", []).map_err(|e| CommandError::Internal(e.to_string()))?;
 
     let tags = index::get_all_tags(&vs.conn)?;
     let count = tags.iter().find(|t| t.tag == normalized_new).map(|t| t.count).unwrap_or(0);

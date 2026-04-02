@@ -55,6 +55,7 @@ import {
   deleteChannel,
   reorderChannels,
   renameTag,
+  renameChannel,
   deleteTagFromAll,
   addTag,
   removeTag,
@@ -444,7 +445,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleRenameTag = useCallback(
     async (oldTag: string, newTag: string) => {
-      await renameTag(oldTag, newTag);
+      await renameChannel(oldTag, newTag);
       await loadData();
       const currentPath = window.location.pathname;
       if (currentPath === `/channel/${encodeURIComponent(oldTag)}`) {
