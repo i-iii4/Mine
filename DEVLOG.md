@@ -48,7 +48,7 @@ Hover-меню карточки (Source, Channel, More), переключени�
 12. Переименование Local Arena → Mine (все файлы, Rust crates, iOS, bundle ID)
 
 ### Push
-PENDING
+03c9cce
 
 ### Decisions and lessons learned
 - window.open не работает в Tauri WebView — использовать openUrl из plugin-opener
