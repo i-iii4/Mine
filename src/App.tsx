@@ -452,11 +452,14 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleRenameTag = useCallback(
     async (oldTag: string, newTag: string) => {
-      await renameChannel(oldTag, newTag);
-      // Navigate BEFORE loadData so currentTag updates immediately
-      const currentPath = window.location.pathname;
-      if (currentPath === `/channel/${encodeURIComponent(oldTag)}`) {
-        navigate(`/channel/${encodeURIComponent(newTag)}`);
+      try {
+        await renameChannel(oldTag, newTag);
+        const currentPath = window.location.pathname;
+        if (currentPath === `/channel/${encodeURIComponent(oldTag)}`) {
+          navigate(`/channel/${encodeURIComponent(newTag)}`);
+        }
+      } catch (err) {
+        console.error("Failed to rename channel:", err);
       }
       await loadData();
     },
@@ -465,11 +468,14 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleDeleteTagFromAll = useCallback(
     async (tag: string) => {
-      await deleteTagFromAll(tag);
-      await deleteChannel(tag).catch((err) => console.error("Failed to delete channel:", err));
-      // Redirect if currently viewing the deleted channel
-      if (currentTag === tag) {
-        navigate("/");
+      try {
+        await deleteTagFromAll(tag);
+        await deleteChannel(tag).catch((err) => console.error("Failed to delete channel:", err));
+        if (currentTag === tag) {
+          navigate("/");
+        }
+      } catch (err) {
+        console.error("Failed to delete tag:", err);
       }
       await loadData();
     },
@@ -534,7 +540,11 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleCreateChannel = useCallback(
     async (tag: string) => {
-      await createChannel(tag);
+      try {
+        await createChannel(tag);
+      } catch (err) {
+        console.error("Failed to create channel:", err);
+      }
       await loadData();
     },
     [loadData],
@@ -547,9 +557,13 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       const newIndex = currentOrder.indexOf(overTag);
       if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
 
-      const newOrder = arrayMove(currentOrder, oldIndex, newIndex);
-      const items = newOrder.map((tag, i) => ({ tag, position: i }));
-      await reorderChannels(items);
+      try {
+        const newOrder = arrayMove(currentOrder, oldIndex, newIndex);
+        const items = newOrder.map((tag, i) => ({ tag, position: i }));
+        await reorderChannels(items);
+      } catch (err) {
+        console.error("Failed to reorder channels:", err);
+      }
       await loadData();
     },
     [orderedTags, loadData],
@@ -559,7 +573,11 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleCardDrop = useCallback(
     async (slug: string, tag: string) => {
-      await addTag(slug, tag);
+      try {
+        await addTag(slug, tag);
+      } catch (err) {
+        console.error("Failed to add tag:", err);
+      }
       await loadData();
     },
     [loadData],
@@ -613,11 +631,15 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleToggleTag = useCallback(
     async (slug: string, tag: string, hasTag: boolean) => {
-      if (hasTag) {
-        await removeTag(slug, tag);
-      } else {
-        await addTag(slug, tag);
-        pushRecentTag(tag);
+      try {
+        if (hasTag) {
+          await removeTag(slug, tag);
+        } else {
+          await addTag(slug, tag);
+          pushRecentTag(tag);
+        }
+      } catch (err) {
+        console.error("Failed to toggle tag:", err);
       }
       await loadData();
     },
@@ -626,8 +648,12 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleCreateTagFromMenu = useCallback(
     async (tag: string, blockSlug: string) => {
-      await addTag(blockSlug, tag);
-      pushRecentTag(tag);
+      try {
+        await addTag(blockSlug, tag);
+        pushRecentTag(tag);
+      } catch (err) {
+        console.error("Failed to create tag:", err);
+      }
       await loadData();
     },
     [loadData],
@@ -637,7 +663,11 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     async (slug: string) => {
       setSelectedBlock(null);
       setFocusedBlockId(null);
-      await deleteBlock(slug);
+      try {
+        await deleteBlock(slug);
+      } catch (err) {
+        console.error("Failed to delete block:", err);
+      }
       await loadData();
     },
     [loadData],
