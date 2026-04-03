@@ -28,6 +28,45 @@ if any
 
 ---
 
+## 03.04.2026 — Аудит навигации: 30 проблем, 20 исправлено
+
+### Goal
+Устранить чёрный экран при переключении каналов. Полный аудит цепочки клик → роутинг → фильтрация → рендер.
+
+### Actually completed
+
+**Аудит (6 субагентов):** App.tsx routing, Sidebar navigation, Grid/VirtuosoMasonry, Backend channels, Storage SQL, Domain tag/slug. Найдено 30 проблем (5 CRITICAL, 9 HIGH, 13 MEDIUM, 3 LOW).
+
+**Фаза 1 — Чёрный экран (7 исправлений):**
+1. `key={currentTag}` на VirtuosoMasonry и GridLanes — полный remount при смене канала
+2. Scroll to top при смене currentTag (не только по сигналу)
+3. ResizeObserver: игнорировать width=0 (sidebar transition)
+4. handleRenameTag: navigate ПЕРЕД loadData
+5. handleDeleteTagFromAll: redirect на "/" при удалении текущего канала
+
+**Фаза 2 — DnD guards (3 исправления):**
+6. isDragging + isCardDragging guards на NavLink onClick
+7. create_channel: uniqueness check после нормализации
+
+**Фаза 3 — Тесты (8 исправлений):**
+8. Frontmatter position/color/icon во всех тестах (8 мест). 213 тестов проходят
+
+**Фаза 4 — UX polish (3 исправления):**
+9. Redirect на "/" при навигации на несуществующий канал
+10. useLocation() вместо window.location в TagNavItem
+11. columnGap → gap для flex совместимости
+
+### Push
+9476b46, 73a5f01, 2d98938
+
+### Decisions and lessons learned
+- VirtuosoMasonry не сбрасывает scroll/heights при смене data — решение: key prop для полного remount
+- Route меняется мгновенно, blocks устаревшие — не баг фильтрации, а timing issue
+- rename_tag НЕ обновляет channels table — всегда использовать rename_channel
+- 213 тестов не компилировались из-за добавления полей в Frontmatter без обновления тестов
+
+---
+
 ## 02.04.2026 — Desktop: hover menu, vault switcher, bugfixes
 
 ### Goal
