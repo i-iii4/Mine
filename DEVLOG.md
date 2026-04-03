@@ -49,7 +49,7 @@ VirtuosoMasonry инициализировался с `data=[]` до завер�
 - Код изменений минимален (4 файла, точечные правки)
 
 ### Push
-<!-- commit hash будет добавлен после push -->
+`86b50e2` Fix empty grid on launch, channel rename race, dark startup flash
 
 ### Decisions and lessons learned
 - VirtuosoMasonry не обрабатывает переход data=[] → data=[N] при viewport=0 — это известное ограничение виртуализационных библиотек. Защита на стороне потребителя (не рендерить до готовности данных) — стандартный паттерн.
