@@ -46,7 +46,7 @@ interface GridContext {
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
-  onDeleteBlock: (slug: string) => void;
+  onRequestDelete: (slug: string) => void;
 }
 
 export function Grid({
@@ -122,9 +122,13 @@ export function Grid({
     [blocksBySlug],
   );
 
+  const handleRequestDelete = useCallback((slug: string) => {
+    setBlockToDelete(slug);
+  }, []);
+
   const gridContext: GridContext = useMemo(
-    () => ({ vaultPath, focusedBlockId, onBlockClick, tags, currentTag, onToggleTag, onCreateAndAssign, onDeleteBlock }),
-    [vaultPath, focusedBlockId, onBlockClick, tags, currentTag, onToggleTag, onCreateAndAssign, onDeleteBlock],
+    () => ({ vaultPath, focusedBlockId, onBlockClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestDelete: handleRequestDelete }),
+    [vaultPath, focusedBlockId, onBlockClick, tags, currentTag, onToggleTag, onCreateAndAssign, handleRequestDelete],
   );
 
   return (
@@ -163,7 +167,7 @@ export function Grid({
           currentTag={currentTag}
           onToggleTag={onToggleTag}
           onCreateAndAssign={onCreateAndAssign}
-          onRequestDelete={setBlockToDelete}
+          onRequestDelete={handleRequestDelete}
         />
       )}
 
@@ -230,7 +234,7 @@ function GridLanesLayout({
             currentTag={context.currentTag}
             onToggleTag={context.onToggleTag}
             onCreateAndAssign={context.onCreateAndAssign}
-            onRequestDelete={context.onDeleteBlock}
+            onRequestDelete={context.onRequestDelete}
           />
         </div>
       ))}
@@ -278,7 +282,7 @@ const VirtuosoCardItem = memo(function VirtuosoCardItem({
         currentTag={context.currentTag}
         onToggleTag={context.onToggleTag}
         onCreateAndAssign={context.onCreateAndAssign}
-        onRequestDelete={context.onDeleteBlock}
+        onRequestDelete={context.onRequestDelete}
       />
     </div>
   );
