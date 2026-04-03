@@ -446,11 +446,12 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const handleRenameTag = useCallback(
     async (oldTag: string, newTag: string) => {
       await renameChannel(oldTag, newTag);
-      await loadData();
+      // Navigate BEFORE loadData so currentTag updates immediately
       const currentPath = window.location.pathname;
       if (currentPath === `/channel/${encodeURIComponent(oldTag)}`) {
         navigate(`/channel/${encodeURIComponent(newTag)}`);
       }
+      await loadData();
     },
     [loadData, navigate],
   );
@@ -459,9 +460,13 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     async (tag: string) => {
       await deleteTagFromAll(tag);
       await deleteChannel(tag).catch((err) => console.error("Failed to delete channel:", err));
+      // Redirect if currently viewing the deleted channel
+      if (currentTag === tag) {
+        navigate("/");
+      }
       await loadData();
     },
-    [loadData],
+    [loadData, currentTag, navigate],
   );
 
   // ── Ordered tags: channels by position, then remaining alphabetically ──

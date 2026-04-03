@@ -69,11 +69,10 @@ export function Grid({
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
 
   // Scroll to top only on explicit signal (same-channel click)
+  // Scroll to top on explicit signal OR channel change
   useEffect(() => {
-    if (scrollToTop > 0) {
-      parentRef.current?.scrollTo(0, 0);
-    }
-  }, [scrollToTop]);
+    parentRef.current?.scrollTo(0, 0);
+  }, [scrollToTop, currentTag]);
 
   // Measure parent width (needed for column count in Virtuoso mode)
   useEffect(() => {
@@ -82,7 +81,7 @@ export function Grid({
 
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (entry) setParentWidth(entry.contentRect.width);
+      if (entry && entry.contentRect.width > 0) setParentWidth(entry.contentRect.width);
     });
 
     setParentWidth(el.clientWidth);
@@ -143,10 +142,11 @@ export function Grid({
           data-grid-scroll
         >
           {supportsGridLanes ? (
-            <GridLanesLayout blocks={blocks} context={gridContext} />
+            <GridLanesLayout key={currentTag ?? "__all__"} blocks={blocks} context={gridContext} />
           ) : (
             parentWidth > 0 && (
               <VirtuosoMasonryLayout
+                key={currentTag ?? "__all__"}
                 blocks={blocks}
                 columnCount={columnCount}
                 context={gridContext}
