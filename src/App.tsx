@@ -221,6 +221,13 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const themeMenuRef = useRef<ThemeMenuHandle>(null);
   const gridColumnCountRef = useRef(1);
 
+  // Redirect if navigated to a channel that doesn't exist
+  useEffect(() => {
+    if (currentTag && tags.length > 0 && !tags.some((t) => t.tag === currentTag)) {
+      navigate("/");
+    }
+  }, [currentTag, tags, navigate]);
+
   // Blocks filtered by current route (channel or all)
   const activeBlocks = useMemo(() => {
     const visible = blocks.filter((b) => b.block_type !== "channel");

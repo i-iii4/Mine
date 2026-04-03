@@ -255,7 +255,7 @@ function VirtuosoMasonryLayout({
       columnCount={columnCount}
       ItemContent={VirtuosoCardItem}
       context={context}
-      style={{ columnGap: GAP }}
+      style={{ gap: GAP }}
     />
   );
 }

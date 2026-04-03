@@ -237,6 +237,7 @@ const TagNavItem = memo(function TagNavItem({
   onClick?: () => void;
   onSameClick?: () => void;
 }) {
+  const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   const {
@@ -286,8 +287,7 @@ const TagNavItem = memo(function TagNavItem({
               e.preventDefault();
               return;
             }
-            const loc = window.location.pathname;
-            const isCurrentRoute = loc === to || loc.startsWith(to + "/");
+            const isCurrentRoute = location.pathname === to || location.pathname.startsWith(to + "/");
             if (isCurrentRoute && onSameClick) {
               e.preventDefault();
               onSameClick();
