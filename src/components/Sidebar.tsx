@@ -282,6 +282,10 @@ const TagNavItem = memo(function TagNavItem({
           to={to}
           draggable="false"
           onClick={(e) => {
+            if (isDragging || isCardDragging) {
+              e.preventDefault();
+              return;
+            }
             const loc = window.location.pathname;
             const isCurrentRoute = loc === to || loc.startsWith(to + "/");
             if (isCurrentRoute && onSameClick) {

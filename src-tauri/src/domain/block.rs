@@ -979,6 +979,9 @@ mod tests {
             width: None,
             height: None,
             author: None,
+            position: None,
+            color: None,
+            icon: None,
         };
         let yaml = serialize_frontmatter(&fm);
         // Must contain type and saved_at.
@@ -1006,6 +1009,9 @@ mod tests {
             width: None,
             height: None,
             author: Some("Author".to_string()),
+            position: None,
+            color: None,
+            icon: None,
         };
         let yaml = serialize_frontmatter(&fm);
         assert!(yaml.contains("type: article"));
@@ -1031,6 +1037,9 @@ mod tests {
             width: Some(100),
             height: Some(200),
             author: Some("A".to_string()),
+            position: None,
+            color: None,
+            icon: None,
         };
         let yaml = serialize_frontmatter(&fm);
         // Per spec: type, title, description, url, file, thumbnail, tags,
@@ -1080,6 +1089,9 @@ mod tests {
                 width: None,
                 height: None,
                 author: None,
+                position: None,
+                color: None,
+                icon: None,
             },
             body: String::new(),
         };
@@ -1105,6 +1117,9 @@ mod tests {
                 width: None,
                 height: None,
                 author: None,
+                position: None,
+                color: None,
+                icon: None,
             },
             body: "Article body here.".to_string(),
         };

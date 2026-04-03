@@ -87,6 +87,12 @@ pub fn create_channel(
     let channel = Channel::new(&tag, title.as_deref(), dt)
         .map_err(|e| CommandError::Internal(e.to_string()))?;
 
+    // Check uniqueness after normalization
+    let existing = index::list_channels(&vs.conn)?;
+    if existing.iter().any(|c| c.tag == channel.tag) {
+        return Err(CommandError::Internal(format!("channel '{}' already exists", channel.tag)));
+    }
+
     // Write channel .md file (source of truth)
     let block = channel_to_block(&channel);
     files::write_block_file(&vs.vault, &block)?;

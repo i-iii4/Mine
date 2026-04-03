@@ -218,6 +218,9 @@ mod tests {
                 width: Some(1920),
                 height: Some(1080),
                 author: None,
+                position: None,
+                color: None,
+                icon: None,
             },
             body: String::new(),
         }

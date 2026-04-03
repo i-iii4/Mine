@@ -322,6 +322,9 @@ mod tests {
                 width: None,
                 height: None,
                 author: None,
+                position: None,
+                color: None,
+                icon: None,
             },
             body: String::new(),
         };
