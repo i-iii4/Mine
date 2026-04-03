@@ -224,6 +224,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   // Redirect if navigated to a channel that doesn't exist
   useEffect(() => {
     if (currentTag && tags.length > 0 && !tags.some((t) => t.tag === currentTag)) {
+      console.log("[REDIRECT] channel not found:", currentTag, "tags:", tags.map(t => t.tag));
       navigate("/");
     }
   }, [currentTag, tags, navigate]);
@@ -347,18 +348,25 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const loadData = useCallback(async () => {
     try {
+      console.log("[LOAD] starting loadData...");
       const [b, t, ch] = await Promise.all([listBlocks(), listTags(), listChannels()]);
+      console.log("[LOAD] data received:", b.length, "blocks,", t.length, "tags,", ch.length, "channels");
+      // Check for problematic blocks
+      const emptySlugBlocks = b.filter((x: any) => !x.slug);
+      if (emptySlugBlocks.length > 0) {
+        console.error("[LOAD] BLOCKS WITH EMPTY SLUG:", emptySlugBlocks);
+      }
       setBlocks(b);
       setTags(t);
       setChannels(ch);
       setLoadError(null);
-      // Signal cards to retry failed image loads (e.g. after iCloud files download)
       window.dispatchEvent(new Event("vault-refreshed"));
-      // Previews loaded after main data
+      console.log("[LOAD] calling loadPreviews...");
       await loadPreviews();
+      console.log("[LOAD] loadData complete");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("Failed to load data:", msg);
+      console.error("[LOAD] FAILED:", msg, err);
       setLoadError(msg);
     }
   }, [loadPreviews]);
@@ -661,16 +669,22 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleDeleteBlock = useCallback(
     async (slug: string) => {
+      console.log("[DELETE] start", slug, "currentTag:", currentTag, "selectedBlock:", selectedBlock?.slug);
       setSelectedBlock(null);
       setFocusedBlockId(null);
+      console.log("[DELETE] cleared selectedBlock/focusedBlockId");
       try {
+        console.log("[DELETE] calling deleteBlock IPC...");
         await deleteBlock(slug);
+        console.log("[DELETE] deleteBlock IPC done");
       } catch (err) {
-        console.error("Failed to delete block:", err);
+        console.error("[DELETE] deleteBlock FAILED:", err);
       }
+      console.log("[DELETE] calling loadData...");
       await loadData();
+      console.log("[DELETE] loadData done, blocks:", blocks.length, "tags:", tags.length);
     },
-    [loadData],
+    [loadData, currentTag, selectedBlock, blocks.length, tags.length],
   );
 
   return (

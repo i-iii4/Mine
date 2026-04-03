@@ -187,8 +187,10 @@ export function Grid({
             <AlertDialogAction
               variant="destructive"
               onClick={() => {
+                console.log("[GRID] AlertDialog confirm delete:", blockToDelete);
                 if (blockToDelete) onDeleteBlock(blockToDelete);
                 setBlockToDelete(null);
+                console.log("[GRID] blockToDelete cleared");
               }}
             >
               Delete
@@ -271,6 +273,7 @@ const VirtuosoCardItem = memo(function VirtuosoCardItem({
   data: LightBlock;
   context: GridContext;
 }) {
+  if (!data) return null;
   return (
     <div style={{ paddingBottom: GAP }}>
       <Card
