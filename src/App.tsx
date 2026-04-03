@@ -220,9 +220,11 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const mainRef = useRef<HTMLDivElement>(null);
   const themeMenuRef = useRef<ThemeMenuHandle>(null);
   const gridColumnCountRef = useRef(1);
+  const suppressRedirectRef = useRef(false);
 
   // Redirect if navigated to a channel that doesn't exist
   useEffect(() => {
+    if (suppressRedirectRef.current) return;
     if (currentTag && tags.length > 0 && !tags.some((t) => t.tag === currentTag)) {
       console.log("[REDIRECT] channel not found:", currentTag, "tags:", tags.map(t => t.tag));
       navigate("/");
@@ -460,16 +462,18 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleRenameTag = useCallback(
     async (oldTag: string, newTag: string) => {
+      suppressRedirectRef.current = true;
       try {
-        await renameChannel(oldTag, newTag);
-        const currentPath = window.location.pathname;
-        if (currentPath === `/channel/${encodeURIComponent(oldTag)}`) {
-          navigate(`/channel/${encodeURIComponent(newTag)}`);
+        const result = await renameChannel(oldTag, newTag);
+        await loadData();
+        if (window.location.pathname === `/channel/${encodeURIComponent(oldTag)}`) {
+          navigate(`/channel/${encodeURIComponent(result.tag)}`);
         }
       } catch (err) {
         console.error("Failed to rename channel:", err);
+      } finally {
+        suppressRedirectRef.current = false;
       }
-      await loadData();
     },
     [loadData, navigate],
   );

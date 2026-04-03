@@ -148,7 +148,7 @@ export function Grid({
           {supportsGridLanes ? (
             <GridLanesLayout key={currentTag ?? "__all__"} blocks={blocks} context={gridContext} />
           ) : (
-            parentWidth > 0 && (
+            parentWidth > 0 && blocks.length > 0 && (
               <VirtuosoMasonryLayout
                 key={currentTag ?? "__all__"}
                 blocks={blocks}
