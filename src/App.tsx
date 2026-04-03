@@ -635,6 +635,8 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
 
   const handleDeleteBlock = useCallback(
     async (slug: string) => {
+      setSelectedBlock(null);
+      setFocusedBlockId(null);
       await deleteBlock(slug);
       await loadData();
     },
