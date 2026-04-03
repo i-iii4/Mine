@@ -219,7 +219,7 @@ function GridLanesLayout({
         gap: GAP,
       }}
     >
-      {blocks.map((block) => (
+      {blocks.map((block, idx) => (
         <div
           key={block.id}
           style={{
@@ -231,6 +231,7 @@ function GridLanesLayout({
             block={block}
             vaultPath={context.vaultPath}
             isFocused={block.id === context.focusedBlockId}
+            priority={idx < 12}
             onClick={context.onBlockClick}
             tags={context.tags}
             currentTag={context.currentTag}

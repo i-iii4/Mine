@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, memo } from "react";
+import { useState, useEffect, useMemo, memo, createContext, useContext } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
 import type { LightBlock } from "@/types";
@@ -6,10 +6,14 @@ import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
 
+const PriorityContext = createContext(false);
+const usePriority = () => useContext(PriorityContext);
+
 interface CardProps {
   block: LightBlock;
   vaultPath: string;
   isFocused?: boolean;
+  priority?: boolean;
   onClick: (block: LightBlock) => void;
   tags?: import("@/types").TagCount[];
   currentTag?: string;
@@ -18,7 +22,7 @@ interface CardProps {
   onRequestDelete?: (slug: string) => void;
 }
 
-export const Card = memo(function Card({ block, vaultPath, isFocused, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestDelete }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, isFocused, priority, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestDelete }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
   });
@@ -58,7 +62,7 @@ export const Card = memo(function Card({ block, vaultPath, isFocused, onClick, t
           onRequestDelete={onRequestDelete}
         />
       )}
-      <CardContent block={block} vaultPath={vaultPath} />
+      <CardContent block={block} vaultPath={vaultPath} priority={priority} />
     </div>
   );
 });
@@ -76,25 +80,34 @@ function isInstagramUrl(url: string): boolean {
 function CardContent({
   block,
   vaultPath,
+  priority,
 }: {
   block: LightBlock;
   vaultPath: string;
+  priority?: boolean;
 }) {
-  switch (block.block_type) {
-    case "image":
-      return <ImageCard block={block} vaultPath={vaultPath} />;
-    case "link":
-      return <LinkCard block={block} vaultPath={vaultPath} />;
-    case "article":
-      if (block.url && (isTwitterUrl(block.url) || isInstagramUrl(block.url))) {
-        return <SocialCard block={block} vaultPath={vaultPath} />;
-      }
-      return <ArticleCard block={block} />;
-    case "video":
-      return <VideoCard block={block} vaultPath={vaultPath} />;
-    case "file":
-      return <FileCard block={block} />;
-  }
+  const content = (() => {
+    switch (block.block_type) {
+      case "image":
+        return <ImageCard block={block} vaultPath={vaultPath} />;
+      case "link":
+        return <LinkCard block={block} vaultPath={vaultPath} />;
+      case "article":
+        if (block.url && (isTwitterUrl(block.url) || isInstagramUrl(block.url))) {
+          return <SocialCard block={block} vaultPath={vaultPath} />;
+        }
+        return <ArticleCard block={block} />;
+      case "video":
+        return <VideoCard block={block} vaultPath={vaultPath} />;
+      case "file":
+        return <FileCard block={block} />;
+    }
+  })();
+  return (
+    <PriorityContext.Provider value={!!priority}>
+      {content}
+    </PriorityContext.Provider>
+  );
 }
 
 const ImageCard = memo(function ImageCard({
@@ -104,6 +117,7 @@ const ImageCard = memo(function ImageCard({
   block: LightBlock;
   vaultPath: string;
 }) {
+  const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const [error, setError] = useState(false);
   const src = block.media_file
     ? mediaUrl(vaultPath, block.media_file)
@@ -136,7 +150,7 @@ const ImageCard = memo(function ImageCard({
         src={src}
         alt={block.title ?? block.slug}
         className="w-full"
-        loading="lazy"
+        loading={imgLoading}
         onError={() => setError(true)}
       />
       {block.title && (
@@ -281,6 +295,7 @@ function isVideoFile(src: string): boolean {
 }
 
 const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {
+  const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const { text, media } = useMemo(() => extractTweetData(block.body), [block.body]);
 
   // If body was truncated and lost media references, use media_urls from index
@@ -316,7 +331,7 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
       // Video poster — static image + play overlay
       return (
         <div key={m.src} className="relative">
-          <img src={resolved} alt="" className={className} loading="lazy" />
+          <img src={resolved} alt="" className={className} loading={imgLoading} />
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="flex size-8 items-center justify-center rounded-full bg-black/50 text-white">
               <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
@@ -328,7 +343,7 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
       );
     }
     // Static image
-    return <img key={m.src} src={resolved} alt="" className={className} loading="lazy" />;
+    return <img key={m.src} src={resolved} alt="" className={className} loading={imgLoading} />;
   };
 
   return (
@@ -382,6 +397,7 @@ const VideoCard = memo(function VideoCard({
   block: LightBlock;
   vaultPath: string;
 }) {
+  const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const thumb = thumbnailUrl(vaultPath, block.slug);
 
   return (
@@ -390,7 +406,7 @@ const VideoCard = memo(function VideoCard({
         src={thumb}
         alt=""
         className="h-full w-full object-cover"
-        loading="lazy"
+        loading={imgLoading}
         onError={(e) => {
           (e.target as HTMLImageElement).style.display = "none";
         }}
