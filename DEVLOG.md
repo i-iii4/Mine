@@ -56,7 +56,8 @@ VirtuosoMasonry инициализировался с `data=[]` до завер�
 - Нормализация тегов — двойной барьер (при записи + при чтении)
 
 ### Push
-`86b50e2` Fix empty grid on launch, channel rename race, dark startup flash
+- `86b50e2` Fix empty grid on launch, channel rename race, dark startup flash
+- `bfa6296` Fix tag normalization: parse_tags, rename_channel, web clipper
 
 ### Decisions and lessons learned
 - VirtuosoMasonry не обрабатывает переход data=[] → data=[N] при viewport=0 — защита на стороне потребителя (не рендерить до готовности данных).
