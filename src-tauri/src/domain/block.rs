@@ -494,7 +494,10 @@ fn parse_tags(parent: &Value) -> Result<Vec<String>, BlockError> {
     let mut tags = Vec::with_capacity(seq.len());
     for item in seq {
         let s = item.as_str().ok_or(BlockError::InvalidTagValue)?;
-        tags.push(s.to_string());
+        let normalized = crate::domain::tag::normalize_tag(s);
+        if !normalized.is_empty() && !tags.contains(&normalized) {
+            tags.push(normalized);
+        }
     }
 
     Ok(tags)

@@ -233,8 +233,8 @@ pub fn rename_channel(
         let mut block = parse_block(&indexed_block.slug, &content)
             .map_err(|e| { vs.conn.execute("ROLLBACK", []).ok(); CommandError::Internal(e.to_string()) })?;
 
-        // Replace old tag with new tag
-        block.frontmatter.tags.retain(|t| t != &normalized_old);
+        // Replace old tag with new tag (compare normalized to handle legacy non-normalized tags)
+        block.frontmatter.tags.retain(|t| normalize_tag(t) != normalized_old);
         if !block.frontmatter.tags.contains(&normalized_new) {
             block.frontmatter.tags.push(normalized_new.clone());
         }

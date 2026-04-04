@@ -385,7 +385,10 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             url: p.url,
             file: media_file,
             thumbnail,
-            tags: p.tags.unwrap_or_default(),
+            tags: p.tags.unwrap_or_default().iter()
+                .map(|t| mine_lib::domain::tag::normalize_tag(t))
+                .filter(|t| !t.is_empty())
+                .collect(),
             saved_at,
             source: Some("web-clipper".to_string()),
             width: p.width,
