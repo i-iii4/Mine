@@ -56,7 +56,7 @@ if any
 Удалён неиспользуемый import `renameTag` (App.tsx), `Plus` (Sidebar.tsx). Исправлена типизация `MetadataPanelProps.block` (Detail.tsx). Типизация `preloadedClipData` в clipper (useClipperState.ts).
 
 ### Push
-<!-- commit hash -->
+`a83e34e` Sidebar compact mode, new app icon, dropdown fixes, standard shadows
 
 ### Decisions and lessons learned
 - Dev-режим Tauri запускает голый бинарник без `.app` bundle — иконка не отображается в Dock. Нужна release-сборка для проверки.
