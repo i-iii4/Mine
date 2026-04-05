@@ -1,37 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
-  <!-- Background: rounded square -->
-  <rect width="1024" height="1024" rx="220" fill="#0A0A0A"/>
-
-  <!-- Grid pattern: 2x2 blocks representing visual bookmarks -->
-  <!-- Top-left: large image block -->
-  <rect x="120" y="120" width="380" height="320" rx="32" fill="#E5E5E5"/>
-
-  <!-- Top-right: text block -->
-  <rect x="524" y="120" width="380" height="200" rx="32" fill="#404040"/>
-  <rect x="564" y="168" width="200" height="12" rx="6" fill="#737373"/>
-  <rect x="564" y="196" width="300" height="8" rx="4" fill="#525252"/>
-  <rect x="564" y="216" width="260" height="8" rx="4" fill="#525252"/>
-  <rect x="564" y="236" width="280" height="8" rx="4" fill="#525252"/>
-  <rect x="564" y="256" width="180" height="8" rx="4" fill="#525252"/>
-
-  <!-- Bottom-left: link card -->
-  <rect x="120" y="464" width="380" height="180" rx="32" fill="#404040"/>
-  <rect x="160" y="512" width="180" height="12" rx="6" fill="#737373"/>
-  <rect x="160" y="540" width="300" height="8" rx="4" fill="#525252"/>
-  <rect x="160" y="560" width="240" height="8" rx="4" fill="#525252"/>
-
-  <!-- Middle-right: image block -->
-  <rect x="524" y="344" width="380" height="300" rx="32" fill="#D4D4D4"/>
-
-  <!-- Bottom-right: small card -->
-  <rect x="524" y="668" width="380" height="140" rx="32" fill="#404040"/>
-  <rect x="564" y="708" width="160" height="12" rx="6" fill="#737373"/>
-  <rect x="564" y="736" width="280" height="8" rx="4" fill="#525252"/>
-  <rect x="564" y="756" width="220" height="8" rx="4" fill="#525252"/>
-
-  <!-- Bottom-left: another image -->
-  <rect x="120" y="668" width="380" height="236" rx="32" fill="#A3A3A3"/>
-
-  <!-- Accent dot: connection indicator -->
-  <circle cx="512" cy="512" r="48" fill="#FAFAFA" opacity="0.9"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Eye outline: two arcs with sharp points at left and right -->
+  <path fill-rule="evenodd" fill="black" d="
+    M 72 512
+    C 200 190, 824 190, 952 512
+    C 824 834, 200 834, 72 512
+    Z
+    M 140 512
+    C 248 248, 776 248, 884 512
+    C 776 776, 248 776, 140 512
+    Z
+  "/>
+  <!-- Rectangular pupil -->
+  <rect x="370" y="448" width="284" height="128" fill="black"/>
 </svg>

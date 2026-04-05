@@ -145,7 +145,7 @@ export function Detail({
 // ─── Metadata panel ─────────────────────────────────────────────────────────
 
 interface MetadataPanelProps {
-  block: IndexedBlock;
+  block: LightBlock | IndexedBlock;
   filename: string;
   formattedDate: string;
   tags: string[];

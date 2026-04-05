@@ -54,7 +54,6 @@ import {
   createChannel,
   deleteChannel,
   reorderChannels,
-  renameTag,
   renameChannel,
   deleteTagFromAll,
   addTag,

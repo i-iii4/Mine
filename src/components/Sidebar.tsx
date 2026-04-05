@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect, memo } from "react";
 import { NavLink, useLocation } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Plus, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -93,6 +93,8 @@ export function Sidebar({
     [onRenameTag],
   );
 
+  const compact = width > 0 && width < 320;
+
   return (
     <aside
       className={cn(
@@ -106,8 +108,8 @@ export function Sidebar({
     >
 
       {/* Navigation */}
-      <nav ref={navRef} className="flex-1 overflow-y-auto px-8 pt-16" data-sidebar-scroll>
-        <NavItem to="/" label="Everything" count={totalBlocks} cards={channelPreviews.get("__all__") ?? []} end onClick={onNavClick} onSameClick={onScrollToTop} />
+      <nav ref={navRef} className={cn("flex-1 overflow-y-auto pt-16", compact ? "px-2" : "px-8")} data-sidebar-scroll>
+        <NavItem to="/" label="Everything" count={totalBlocks} cards={channelPreviews.get("__all__") ?? []} compact={compact} end onClick={onNavClick} onSameClick={onScrollToTop} />
 
         <SortableContext
           items={orderedTags.map((tc) => `tag:${tc.tag}`)}
@@ -121,6 +123,7 @@ export function Sidebar({
               count={tc.count}
               tag={tc.tag}
               cards={channelPreviews.get(tc.tag) ?? []}
+              compact={compact}
               isCardDragging={isCardDragging}
               isEditing={editingTag === tc.tag}
               onDoubleClick={() => setEditingTag(tc.tag)}
@@ -159,6 +162,7 @@ const NavItem = memo(function NavItem({
   label,
   count,
   cards = [],
+  compact,
   end,
   onClick,
   onSameClick,
@@ -167,6 +171,7 @@ const NavItem = memo(function NavItem({
   label: string;
   count: number;
   cards?: PreviewCard[];
+  compact?: boolean;
   end?: boolean;
   onClick?: () => void;
   onSameClick?: () => void;
@@ -187,27 +192,34 @@ const NavItem = memo(function NavItem({
         }
       }}
       className={({ isActive }) =>
-        cn(
-          "flex items-center gap-2 border-b border-sidebar-border px-3 py-1 font-mono text-base",
-          isActive
-            ? "bg-sidebar-accent text-sidebar-accent-foreground"
-            : "text-muted-foreground hover:bg-accent",
-        )
+        compact
+          ? cn(
+              "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 text-base",
+              isActive
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-muted-foreground hover:bg-accent",
+            )
+          : cn(
+              "flex items-center gap-2 border-b border-sidebar-border px-3 py-1 font-mono text-base",
+              isActive
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-muted-foreground hover:bg-accent",
+            )
       }
     >
-      <span className="min-w-[100px] max-w-[150px] flex-1 truncate">{label}</span>
-      <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
-        {cards.map((card, i) => card.text ? (
-          <div key={i} className="size-8 shrink-0 bg-accent">
-            <img src={card.url} className="size-8 object-cover dark:invert" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-          </div>
-        ) : (
-          <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-        ))}
-      </div>
-      <div className="w-8 shrink-0 text-right">
-        <span className="text-sm text-muted-foreground">{count || ""}</span>
-      </div>
+      <span className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 truncate"}>{label}</span>
+      {!compact && (
+        <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
+          {cards.map((card, i) => card.text ? (
+            <div key={i} className="size-8 shrink-0 bg-accent">
+              <img src={card.url} className="size-8 object-cover dark:invert" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+            </div>
+          ) : (
+            <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+          ))}
+        </div>
+      )}
+      <span className="w-8 shrink-0 text-right text-sm text-muted-foreground">{count || ""}</span>
     </NavLink>
   );
 });
@@ -218,6 +230,7 @@ const TagNavItem = memo(function TagNavItem({
   count,
   tag,
   cards,
+  compact,
   isCardDragging,
   isEditing,
   onDoubleClick,
@@ -232,6 +245,7 @@ const TagNavItem = memo(function TagNavItem({
   count: number;
   tag: string;
   cards: PreviewCard[];
+  compact?: boolean;
   isCardDragging: boolean;
   isEditing: boolean;
   onDoubleClick: () => void;
@@ -243,6 +257,7 @@ const TagNavItem = memo(function TagNavItem({
 }) {
   const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const {
     setNodeRef,
@@ -304,45 +319,49 @@ const TagNavItem = memo(function TagNavItem({
             onDoubleClick();
           }}
           className={({ isActive }) =>
-            cn(
-              "flex items-center gap-2 border-b border-sidebar-border px-3 py-1 font-mono text-base",
-              isActive
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "text-muted-foreground hover:bg-accent",
-            )
+            compact
+              ? cn(
+                  "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 text-base",
+                  isActive
+                    ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )
+              : cn(
+                  "flex items-center gap-2 border-b border-sidebar-border px-3 py-1 font-mono text-base",
+                  isActive
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-muted-foreground hover:bg-accent",
+                )
           }
         >
-          <span className="min-w-[100px] max-w-[150px] flex-1 truncate">{label}</span>
-          <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
-            {cards.map((card, i) => card.text ? (
-              <div key={i} className="size-8 shrink-0 bg-accent">
-                <img src={card.url} className="size-8 object-cover dark:invert" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+          <span className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 truncate"}>{label}</span>
+          {!compact && (
+            <>
+              <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
+                {cards.map((card, i) => card.text ? (
+                  <div key={i} className="size-8 shrink-0 bg-accent">
+                    <img src={card.url} className="size-8 object-cover dark:invert" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                  </div>
+                ) : (
+                  <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                ))}
               </div>
-            ) : (
-              <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-            ))}
-          </div>
+            </>
+          )}
           <div className="relative w-8 shrink-0 text-right">
-            <span className="text-sm text-muted-foreground group-hover:opacity-0">{count || ""}</span>
-            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100">
-              <DropdownMenu>
-                <Tooltip>
-                  <TooltipTrigger asChild>
+            <span className={cn("text-sm text-muted-foreground group-hover:opacity-0", menuOpen && "opacity-0")}>{count || ""}</span>
+            <div className={cn("absolute inset-0 flex items-center justify-end opacity-0 group-hover:opacity-100", menuOpen && "opacity-100")}>
+              <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
                     <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={(e) => e.stopPropagation()}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        className="shrink-0 text-muted-foreground hover:text-hover-foreground"
+                      <button
+                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                        onPointerDown={(e) => { e.stopPropagation(); }}
+                        className="text-muted-foreground hover:text-foreground"
                       >
                         <MoreHorizontal className="size-3" />
-                      </Button>
+                      </button>
                     </DropdownMenuTrigger>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">Options</TooltipContent>
-                </Tooltip>
-                <DropdownMenuContent align="start">
+                <DropdownMenuContent side="right" align="start">
               <DropdownMenuItem onSelect={onDoubleClick}>
                 <Pencil className="size-3" />
                 Rename

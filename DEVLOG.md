@@ -28,6 +28,44 @@ if any
 
 ---
 
+## 05.04.2026 — Compact-режим сайдбара, иконка, dropdown, тени
+
+### Goal
+Добавить compact-режим сайдбара (стиль shadcn SidebarMenuButton), новую иконку приложения, исправить dropdown-поведение.
+
+### Actually completed
+
+**1. Compact-режим сайдбара (Sidebar.tsx)**
+При ширине < 320px сайдбар переключается в compact: только название канала + счётчик, без превью-карточек. Стиль: `rounded-1 p-2 text-base`, hover `bg-accent`, active `bg-sidebar-accent`. Padding навигации: `px-2` (compact) vs `px-8` (полный).
+
+**2. Иконка приложения**
+Новая иконка — миндалевидный глаз с прямоугольным зрачком. SVG → PNG 1024px → `cargo tauri icon` → все форматы (icns, ico, iOS, Android). Видна только в release-сборке (dev-режим использует голый бинарник, не .app bundle).
+
+**3. Dropdown сайдбара**
+- `modal={false}` — клики вне dropdown проходят к элементам (навигация одним кликом)
+- `side="right"` — dropdown открывается справа от кнопки
+- `e.preventDefault()` на trigger-кнопке — предотвращает просачивание клика до NavLink (вызывало мерцание экрана)
+- `menuOpen` state + `onOpenChange` — иконка остаётся видимой пока dropdown открыт
+- Убран Tooltip-обёртка на иконке
+- Trigger без Button-компонента — голый `<button>` для точного выравнивания иконки с счётчиком
+
+**4. Тени — возврат к стандартным**
+Кастомные тени `shadow-[0_4px_24px_rgba(0,0,0,0.12)]` заменены на стандартный shadcn `shadow-md` в DropdownMenu и ContextMenu.
+
+**5. Исправления TypeScript**
+Удалён неиспользуемый import `renameTag` (App.tsx), `Plus` (Sidebar.tsx). Исправлена типизация `MetadataPanelProps.block` (Detail.tsx). Типизация `preloadedClipData` в clipper (useClipperState.ts).
+
+### Push
+<!-- commit hash -->
+
+### Decisions and lessons learned
+- Dev-режим Tauri запускает голый бинарник без `.app` bundle — иконка не отображается в Dock. Нужна release-сборка для проверки.
+- `modal={false}` на Radix DropdownMenu — штатный API для non-modal меню. Без overlay клики проходят к элементам напрямую.
+- Мерцание при клике на dropdown вызвано тем, что click event просачивался через trigger до NavLink → навигация → VirtuosoMasonry перемонтировался. `e.preventDefault()` решает это.
+- `justify-center` vs `justify-end` на иконке не решало проблему выравнивания — Button `icon-xs` (24px) добавлял 6px padding. Голый `<button>` без фиксированного размера = точное выравнивание.
+
+---
+
 ## 04.04.2026 — Переработка sidebar-превью: приоритет картинок, видео-кадры, тёмная тема
 
 ### Goal

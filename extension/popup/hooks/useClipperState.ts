@@ -86,7 +86,7 @@ export function useClipperState() {
       // Check for pre-loaded data (from Instagram feed button)
       const preloaded = await chrome.storage.session.get("preloadedClipData");
       if (preloaded.preloadedClipData) {
-        const { metadata: preMeta, article: preArticle } = preloaded.preloadedClipData;
+        const { metadata: preMeta, article: preArticle } = preloaded.preloadedClipData as { metadata: PageMetadata; article: ArticleData };
         chrome.storage.session.remove("preloadedClipData");
 
         setMetadata(preMeta as PageMetadata);
