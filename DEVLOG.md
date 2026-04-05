@@ -51,7 +51,7 @@ if any
 Карточки увеличены с 24x24 (`size-6`) до 32x32 (`size-8`). Отступы строк уменьшены с `py-1.5` (6px) до `py-1` (4px).
 
 ### Push
-<!-- commit hash -->
+`1f65fad` Sidebar previews: image priority, video frame extraction, dark theme
 
 ### Decisions and lessons learned
 - `h264-decoder` crate (0.2.4) — парсер заголовков, НЕ декодер пикселей. `openh264` (Cisco OpenH264 через Rust bindings) — настоящий декодер.
