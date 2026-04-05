@@ -188,7 +188,7 @@ const NavItem = memo(function NavItem({
       }}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-2 border-b border-sidebar-border px-3 py-1.5 font-mono text-base",
+          "flex items-center gap-2 border-b border-sidebar-border px-3 py-1 font-mono text-base",
           isActive
             ? "bg-sidebar-accent text-sidebar-accent-foreground"
             : "text-muted-foreground hover:bg-accent",
@@ -196,9 +196,13 @@ const NavItem = memo(function NavItem({
       }
     >
       <span className="min-w-[100px] max-w-[150px] flex-1 truncate">{label}</span>
-      <div className="flex h-6 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
-        {cards.map((card, i) => (
-          <img key={i} src={card.url} className="size-6 shrink-0 rounded-none object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+      <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
+        {cards.map((card, i) => card.text ? (
+          <div key={i} className="size-8 shrink-0 bg-accent">
+            <img src={card.url} className="size-8 object-cover dark:invert" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+          </div>
+        ) : (
+          <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
         ))}
       </div>
       <div className="w-8 shrink-0 text-right">
@@ -301,7 +305,7 @@ const TagNavItem = memo(function TagNavItem({
           }}
           className={({ isActive }) =>
             cn(
-              "flex items-center gap-2 border-b border-sidebar-border px-3 py-1.5 font-mono text-base",
+              "flex items-center gap-2 border-b border-sidebar-border px-3 py-1 font-mono text-base",
               isActive
                 ? "bg-sidebar-accent text-sidebar-accent-foreground"
                 : "text-muted-foreground hover:bg-accent",
@@ -309,15 +313,13 @@ const TagNavItem = memo(function TagNavItem({
           }
         >
           <span className="min-w-[100px] max-w-[150px] flex-1 truncate">{label}</span>
-          <div className="flex h-6 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
-            {cards.map((card, i) => (
-              <img
-                key={i}
-                src={card.url}
-                className="size-6 shrink-0 rounded-none object-cover"
-                loading="lazy"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-              />
+          <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
+            {cards.map((card, i) => card.text ? (
+              <div key={i} className="size-8 shrink-0 bg-accent">
+                <img src={card.url} className="size-8 object-cover dark:invert" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              </div>
+            ) : (
+              <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
             ))}
           </div>
           <div className="relative w-8 shrink-0 text-right">

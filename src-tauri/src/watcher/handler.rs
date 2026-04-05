@@ -10,7 +10,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-use crate::domain::block::{parse_block, BlockType};
+use crate::domain::block::{parse_block, Block, BlockType};
 use crate::domain::vault::VaultLayout;
 use crate::storage::{files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
@@ -92,6 +92,9 @@ pub fn full_scan(
                             ThumbKind::Image { media_path } => {
                                 thumbnails::generate_thumbnail(media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
                             }
+                            ThumbKind::Video { media_path } => {
+                                thumbnails::generate_video_thumbnail(media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
+                            }
                             ThumbKind::Text { title, body } => {
                                 thumbnails::generate_text_thumbnail(title.as_deref(), body, &thumb_path)
                             }
@@ -153,6 +156,9 @@ pub fn index_md_file(conn: &Connection, vault: &VaultLayout, path: &Path) -> Res
                     ThumbKind::Image { media_path } => {
                         thumbnails::generate_thumbnail(media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
                     }
+                    ThumbKind::Video { media_path } => {
+                        thumbnails::generate_video_thumbnail(media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
+                    }
                     ThumbKind::Text { title, body } => {
                         thumbnails::generate_text_thumbnail(title.as_deref(), body, &thumb_path)
                     }
@@ -179,6 +185,7 @@ struct ThumbJob {
 
 enum ThumbKind {
     Image { media_path: PathBuf },
+    Video { media_path: PathBuf },
     Text { title: Option<String>, body: String },
 }
 
@@ -205,8 +212,9 @@ fn index_md_file_inner(
     index::upsert_block(conn, &block)
         .with_context(|| format!("indexing {}", path.display()))?;
 
-    // Determine thumbnail work
+    // Determine thumbnail work — prefer images over text
     let job = if let Some(ref file_name) = block.frontmatter.file {
+        // Block has a media file (image, video, etc.)
         let ext = Path::new(file_name)
             .extension()
             .and_then(|e| e.to_str())
@@ -218,10 +226,26 @@ fn index_md_file_inner(
                 source_path: path.to_path_buf(),
                 kind: ThumbKind::Image { media_path },
             })
+        } else if is_video_ext(ext) && media_path.exists() {
+            Some(ThumbJob {
+                slug,
+                source_path: path.to_path_buf(),
+                kind: ThumbKind::Video { media_path },
+            })
         } else {
-            None
+            try_thumbnail_field(&block, vault, slug, path)
         }
+    } else if let Some(job) = try_thumbnail_field(&block, vault, slug.clone(), path) {
+        // No media file, but has a thumbnail field (video poster, OG image)
+        Some(job)
+    } else if let Some(job) = try_first_image(&block, vault, slug.clone(), path) {
+        // Article with embedded images — use first image
+        Some(job)
+    } else if let Some(job) = try_first_video(&block, vault, slug.clone(), path) {
+        // Article with embedded video — extract first frame
+        Some(job)
     } else if block.frontmatter.block_type == BlockType::Article {
+        // Pure text article — baked text thumbnail (inverted via CSS in dark mode)
         Some(ThumbJob {
             slug,
             source_path: path.to_path_buf(),
@@ -235,6 +259,102 @@ fn index_md_file_inner(
     };
 
     Ok(job)
+}
+
+/// Try to use the `thumbnail` frontmatter field (video poster, OG image) as thumbnail source.
+fn try_thumbnail_field(block: &Block, vault: &VaultLayout, slug: String, source: &Path) -> Option<ThumbJob> {
+    let thumb_file = block.frontmatter.thumbnail.as_ref()?;
+    let ext = Path::new(thumb_file.as_str())
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    if !is_image_ext(ext) { return None; }
+    let media_path = vault.root().join(thumb_file);
+    if !media_path.exists() { return None; }
+    Some(ThumbJob {
+        slug,
+        source_path: source.to_path_buf(),
+        kind: ThumbKind::Image { media_path },
+    })
+}
+
+/// Try to use the first embedded image from article body as thumbnail source.
+fn try_first_image(block: &Block, vault: &VaultLayout, slug: String, source: &Path) -> Option<ThumbJob> {
+    if block.frontmatter.block_type != BlockType::Article { return None; }
+    let first_img = extract_first_image_filename(&block.body)?;
+    let ext = Path::new(&first_img)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    if !is_image_ext(ext) { return None; }
+    let media_path = vault.root().join(&first_img);
+    if !media_path.exists() { return None; }
+    Some(ThumbJob {
+        slug,
+        source_path: source.to_path_buf(),
+        kind: ThumbKind::Image { media_path },
+    })
+}
+
+/// Try to use the first embedded video from article body as thumbnail source.
+fn try_first_video(block: &Block, vault: &VaultLayout, slug: String, source: &Path) -> Option<ThumbJob> {
+    if block.frontmatter.block_type != BlockType::Article { return None; }
+    let first_vid = extract_first_video_filename(&block.body)?;
+    let media_path = vault.root().join(&first_vid);
+    if !media_path.exists() { return None; }
+    Some(ThumbJob {
+        slug,
+        source_path: source.to_path_buf(),
+        kind: ThumbKind::Video { media_path },
+    })
+}
+
+/// Extract the filename of the first video from markdown body.
+/// Returns local filenames only (not URLs).
+fn extract_first_video_filename(body: &str) -> Option<String> {
+    let mut search_from = 0;
+    while let Some(start) = body[search_from..].find("![") {
+        let abs_start = search_from + start;
+        let rest = &body[abs_start + 2..];
+        let Some(bracket) = rest.find("](") else { break };
+        let url_start = abs_start + 2 + bracket + 2;
+        let Some(paren_end) = body[url_start..].find(')') else { break };
+        let url = &body[url_start..url_start + paren_end];
+        search_from = url_start + paren_end + 1;
+
+        if url.is_empty() || url.starts_with("http://") || url.starts_with("https://") {
+            continue;
+        }
+        let ext = Path::new(url).extension().and_then(|e| e.to_str()).unwrap_or("");
+        if is_video_ext(ext) {
+            return Some(url.to_string());
+        }
+    }
+    None
+}
+
+/// Extract the filename of the first image (not video) from markdown body.
+/// Skips URLs and non-image files (.mp4, .webm).
+fn extract_first_image_filename(body: &str) -> Option<String> {
+    let mut search_from = 0;
+    while let Some(start) = body[search_from..].find("![") {
+        let abs_start = search_from + start;
+        let rest = &body[abs_start + 2..];
+        let Some(bracket) = rest.find("](") else { break };
+        let url_start = abs_start + 2 + bracket + 2;
+        let Some(paren_end) = body[url_start..].find(')') else { break };
+        let url = &body[url_start..url_start + paren_end];
+        search_from = url_start + paren_end + 1;
+
+        if url.is_empty() || url.starts_with("http://") || url.starts_with("https://") {
+            continue;
+        }
+        let ext = Path::new(url).extension().and_then(|e| e.to_str()).unwrap_or("");
+        if is_image_ext(ext) {
+            return Some(url.to_string());
+        }
+    }
+    None
 }
 
 /// Handle a single vault event: dispatch to the appropriate storage operation.
@@ -292,6 +412,10 @@ fn is_image_ext(ext: &str) -> bool {
         ext.to_lowercase().as_str(),
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif"
     )
+}
+
+fn is_video_ext(ext: &str) -> bool {
+    matches!(ext.to_lowercase().as_str(), "mp4" | "webm" | "mov")
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

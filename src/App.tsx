@@ -340,8 +340,8 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     if (!vaultPath) return;
     const raw = await listChannelPreviews(20);
     const map = new Map<string, PreviewCard[]>();
-    for (const [key, slugs] of Object.entries(raw)) {
-      map.set(key, slugs.map((slug) => ({ url: thumbnailUrl(vaultPath, slug) })));
+    for (const [key, items] of Object.entries(raw)) {
+      map.set(key, items.map((item) => ({ url: thumbnailUrl(vaultPath, item.slug), text: item.text })));
     }
     setChannelPreviews(map);
   }, [vaultPath]);

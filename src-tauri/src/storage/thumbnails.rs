@@ -8,7 +8,7 @@
 
 use ab_glyph::{FontArc, PxScale};
 use anyhow::{Context, Result};
-use image::{GenericImageView, Rgb, RgbImage};
+use image::{GenericImageView, Rgb, Rgba, RgbImage, RgbaImage};
 use imageproc::drawing::draw_text_mut;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -99,21 +99,22 @@ const PADDING: u32 = 32;
 /// Line height multiplier.
 const LINE_HEIGHT: f32 = 1.6;
 
-/// Background color (warm white).
-const BG_COLOR: Rgb<u8> = Rgb([248, 248, 248]);
+/// Background color: transparent (PNG with alpha for theme-adaptive rendering).
+const BG_COLOR: Rgba<u8> = Rgba([0, 0, 0, 0]);
 
-/// Text color (dark gray, matches --foreground light theme).
-const TEXT_COLOR: Rgb<u8> = Rgb([80, 80, 80]);
+/// Text color (dark gray — inverted via CSS `dark:invert` in dark mode).
+const TEXT_COLOR: Rgba<u8> = Rgba([80, 80, 80, 255]);
 
 /// Title text color (darker).
-const TITLE_COLOR: Rgb<u8> = Rgb([51, 51, 51]);
+const TITLE_COLOR: Rgba<u8> = Rgba([51, 51, 51, 255]);
 
 /// Generate a text thumbnail: renders article title + first lines of body as an image.
 ///
-/// - Creates a 480x480 JPEG with warm-white background
-/// - Renders title in larger/bolder text, then body lines below
+/// - Creates a 480x480 PNG with **transparent background**
+/// - Renders title in larger text, then body lines below
 /// - Strips markdown formatting before rendering
-/// - Saves as JPEG to `dest`
+/// - Saves as PNG (browser reads format from content, not extension)
+/// - Sidebar wraps in `bg-background` div + `dark:invert` for theme adaptation
 pub fn generate_text_thumbnail(
     title: Option<&str>,
     body: &str,
@@ -122,7 +123,7 @@ pub fn generate_text_thumbnail(
     let font = &*FONT;
 
     let size = TEXT_THUMB_SIZE;
-    let mut img = RgbImage::from_pixel(size, size, BG_COLOR);
+    let mut img = RgbaImage::from_pixel(size, size, BG_COLOR);
 
     let usable_width = size - PADDING * 2;
     let line_step = (FONT_SIZE * LINE_HEIGHT) as u32;
@@ -132,31 +133,32 @@ pub fn generate_text_thumbnail(
     if let Some(title) = title {
         let title_scale = PxScale::from(FONT_SIZE * 1.3);
         let title_clean = strip_markdown(title);
-        let wrapped = wrap_text(&title_clean, &font, title_scale, usable_width as f32);
+        let wrapped = wrap_text(&title_clean, font, title_scale, usable_width as f32);
         for line in wrapped.iter().take(2) {
             if y + line_step > size - PADDING {
                 break;
             }
-            draw_text_mut(&mut img, TITLE_COLOR, PADDING as i32, y as i32, title_scale, &font, line);
+            draw_text_mut(&mut img, TITLE_COLOR, PADDING as i32, y as i32, title_scale, font, line);
             y += (FONT_SIZE * 1.3 * LINE_HEIGHT) as u32;
         }
-        y += line_step / 2; // gap after title
+        y += line_step / 2;
     }
 
     // Draw body lines
     let body_scale = PxScale::from(FONT_SIZE);
     let clean_body = strip_markdown(body);
-    let wrapped = wrap_text(&clean_body, &font, body_scale, usable_width as f32);
+    let wrapped = wrap_text(&clean_body, font, body_scale, usable_width as f32);
 
     for line in &wrapped {
         if y + line_step > size - PADDING {
             break;
         }
-        draw_text_mut(&mut img, TEXT_COLOR, PADDING as i32, y as i32, body_scale, &font, line);
+        draw_text_mut(&mut img, TEXT_COLOR, PADDING as i32, y as i32, body_scale, font, line);
         y += line_step;
     }
 
-    // Save as JPEG
+    // Save as PNG (transparent background, theme-adaptive via CSS).
+    // File may have .jpg extension — browsers detect format from content, not extension.
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create directory: {}", parent.display()))?;
@@ -165,11 +167,145 @@ pub fn generate_text_thumbnail(
     let file = std::fs::File::create(dest)
         .with_context(|| format!("failed to create text thumbnail: {}", dest.display()))?;
     let mut writer = std::io::BufWriter::new(file);
-    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, JPEG_QUALITY);
+    let encoder = image::codecs::png::PngEncoder::new(&mut writer);
     img.write_with_encoder(encoder)
         .with_context(|| format!("failed to encode text thumbnail: {}", dest.display()))?;
 
     Ok((size, size))
+}
+
+/// Generate a thumbnail from the first frame of an MP4 video.
+///
+/// - Parses MP4 container, finds H.264 video track
+/// - Extracts SPS/PPS + first video sample
+/// - Decodes H.264 to YUV via OpenH264, converts to RGB
+/// - Resizes and saves as JPEG
+pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<(u32, u32)> {
+    use mp4::TrackType;
+    use openh264::decoder::Decoder;
+    use openh264::formats::YUVSource;
+
+    let file = std::fs::File::open(source)
+        .with_context(|| format!("failed to open video: {}", source.display()))?;
+    let size = file.metadata()?.len();
+    let reader = std::io::BufReader::new(file);
+    let mut mp4_reader = mp4::Mp4Reader::read_header(reader, size)
+        .with_context(|| "failed to parse MP4 header")?;
+
+    // Find H.264 video track
+    let video_track_id = mp4_reader.tracks().iter()
+        .find(|(_, t)| t.track_type().ok() == Some(TrackType::Video))
+        .map(|(&id, _)| id)
+        .ok_or_else(|| anyhow::anyhow!("no video track found in MP4"))?;
+
+    let track = mp4_reader.tracks().get(&video_track_id)
+        .ok_or_else(|| anyhow::anyhow!("track disappeared"))?;
+
+    // Extract SPS/PPS from AVCC configuration (needed to initialize decoder)
+    let avc1 = track.trak.mdia.minf.stbl.stsd.avc1.as_ref()
+        .ok_or_else(|| anyhow::anyhow!("not an AVC/H.264 track"))?;
+
+    let mut h264_stream: Vec<u8> = Vec::new();
+
+    // Prepend SPS NAL units with Annex B start codes
+    for sps in &avc1.avcc.sequence_parameter_sets {
+        h264_stream.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        h264_stream.extend_from_slice(&sps.bytes);
+    }
+    // Prepend PPS NAL units
+    for pps in &avc1.avcc.picture_parameter_sets {
+        h264_stream.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        h264_stream.extend_from_slice(&pps.bytes);
+    }
+
+    let nal_length_size = avc1.avcc.length_size_minus_one + 1;
+    let sample_count = mp4_reader.sample_count(video_track_id)
+        .unwrap_or(1)
+        .min(30); // Check up to 30 samples to skip black frames
+
+    // Decode with OpenH264
+    let mut decoder = Decoder::new()
+        .map_err(|e| anyhow::anyhow!("failed to create H.264 decoder: {:?}", e))?;
+
+    // Feed SPS/PPS first
+    for packet in openh264::nal_units(&h264_stream) {
+        let _ = decoder.decode(packet);
+    }
+
+    let mut decoded_frame = None;
+    for sample_id in 1..=sample_count {
+        let Some(sample) = mp4_reader.read_sample(video_track_id, sample_id)
+            .with_context(|| format!("failed to read video sample {}", sample_id))? else { continue };
+
+        // Convert AVCC → Annex B
+        let mut sample_stream: Vec<u8> = Vec::new();
+        let data = &sample.bytes;
+        let mut offset = 0;
+        while offset + nal_length_size as usize <= data.len() {
+            let nal_len = match nal_length_size {
+                4 => u32::from_be_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]) as usize,
+                2 => u16::from_be_bytes([data[offset], data[offset+1]]) as usize,
+                1 => data[offset] as usize,
+                _ => return Err(anyhow::anyhow!("unsupported NAL length size: {}", nal_length_size)),
+            };
+            offset += nal_length_size as usize;
+            if offset + nal_len > data.len() { break; }
+            sample_stream.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+            sample_stream.extend_from_slice(&data[offset..offset + nal_len]);
+            offset += nal_len;
+        }
+
+        // Decode sample
+        for packet in openh264::nal_units(&sample_stream) {
+            if let Ok(Some(yuv)) = decoder.decode(packet) {
+                let (w_usize, h_usize) = yuv.dimensions();
+                let (w, h) = (w_usize as u32, h_usize as u32);
+                let mut rgb_buf = vec![0u8; yuv.estimate_rgb_u8_size()];
+                yuv.write_rgb8(&mut rgb_buf);
+
+                // Skip near-black frames (average brightness < 10)
+                let avg_brightness: u64 = rgb_buf.iter().map(|&b| b as u64).sum::<u64>()
+                    / rgb_buf.len().max(1) as u64;
+                if avg_brightness < 10 {
+                    continue;
+                }
+
+                decoded_frame = Some((rgb_buf, w, h));
+                break;
+            }
+        }
+        if decoded_frame.is_some() { break; }
+    }
+
+    let (rgb_buf, w, h) = decoded_frame
+        .ok_or_else(|| anyhow::anyhow!("failed to decode any frame from H.264 stream"))?;
+
+    let img = RgbImage::from_raw(w, h, rgb_buf)
+        .ok_or_else(|| anyhow::anyhow!("RGB buffer size mismatch"))?;
+
+    let dyn_img = image::DynamicImage::ImageRgb8(img);
+    let resized = if w <= max_size && h <= max_size {
+        dyn_img
+    } else {
+        dyn_img.resize(max_size, max_size, image::imageops::FilterType::Lanczos3)
+    };
+
+    let (rw, rh) = resized.dimensions();
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+    }
+
+    let rgb = resized.to_rgb8();
+    let file = std::fs::File::create(dest)
+        .with_context(|| format!("failed to create video thumbnail: {}", dest.display()))?;
+    let mut writer = std::io::BufWriter::new(file);
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, JPEG_QUALITY);
+    rgb.write_with_encoder(encoder)
+        .with_context(|| format!("failed to encode video thumbnail: {}", dest.display()))?;
+
+    Ok((rw, rh))
 }
 
 /// Simple word-wrap: splits text into lines that fit within `max_width` pixels.

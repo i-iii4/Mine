@@ -58,8 +58,14 @@ export interface ChannelDto {
 
 // ─── Channel preview (sidebar icons) ────────────────────────────────────────
 
+export interface PreviewItem {
+  slug: string;
+  text: boolean;
+}
+
 export interface PreviewCard {
   url: string;
+  text: boolean;
 }
 
 export interface ScanResult {

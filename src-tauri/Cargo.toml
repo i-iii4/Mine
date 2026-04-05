@@ -47,6 +47,10 @@ image = "0.25"
 ab_glyph = "0.2"
 imageproc = "0.25"
 
+# Video frame extraction (MP4/H.264 thumbnail generation)
+mp4 = "0.14"
+openh264 = "0.6"
+
 # Error handling
 thiserror = "2"
 anyhow = "1"
