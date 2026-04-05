@@ -582,6 +582,8 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
     let mut result = body.to_string();
     let mut img_idx: u32 = 0;
     let mut search_from = 0;
+    // Track downloaded files for deduplication
+    let mut downloaded: Vec<(PathBuf, String)> = Vec::new();
 
     loop {
         if img_idx >= MAX_INLINE_IMAGES {
@@ -619,6 +621,41 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
             let dest = vault.root().join(&img_name);
 
             if download_file(&url, &dest, page_url).is_ok() {
+                // Check for duplicate by byte comparison
+                let dup = downloaded.iter().find(|(p, _)| files_identical(p, &dest));
+                if let Some((_, existing_name)) = dup {
+                    let existing_name = existing_name.clone();
+                    // Duplicate — remove this image line, delete the file
+                    let _ = std::fs::remove_file(&dest);
+                    // Remove the entire ![...](...) and surrounding whitespace
+                    let remove_end = paren_end + 1;
+                    let mut line_start = img_start;
+                    while line_start > 0 && result.as_bytes().get(line_start - 1) == Some(&b'\n') {
+                        line_start -= 1;
+                    }
+                    let mut line_end = remove_end;
+                    while line_end < result.len() && result.as_bytes().get(line_end) == Some(&b'\n') {
+                        line_end += 1;
+                    }
+                    // Also remove caption line if it matches alt text
+                    let alt = result[alt_start..bracket_pos].trim().to_string();
+                    if !alt.is_empty() && line_end < result.len() {
+                        let next_newline = result[line_end..].find('\n').map(|p| line_end + p).unwrap_or(result.len());
+                        let next_line = result[line_end..next_newline].trim();
+                        if next_line == alt {
+                            line_end = next_newline;
+                            while line_end < result.len() && result.as_bytes().get(line_end) == Some(&b'\n') {
+                                line_end += 1;
+                            }
+                        }
+                    }
+                    result = result[..line_start].to_string() + &result[line_end..];
+                    search_from = line_start;
+                    log::info!("deduplicated image: {} is identical to {}", img_name, existing_name);
+                    continue;
+                }
+
+                downloaded.push((dest, img_name.clone()));
                 let alt = result[alt_start..bracket_pos].to_string();
                 let new_markup = format!("![{alt}]({img_name})");
                 let new_len = new_markup.len();
@@ -637,6 +674,22 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
     }
 
     result
+}
+
+/// Compare two files byte-by-byte. Returns true if identical.
+fn files_identical(a: &std::path::Path, b: &std::path::Path) -> bool {
+    use std::io::Read;
+    let (Ok(meta_a), Ok(meta_b)) = (std::fs::metadata(a), std::fs::metadata(b)) else { return false };
+    if meta_a.len() != meta_b.len() { return false; }
+    let (Ok(mut fa), Ok(mut fb)) = (std::fs::File::open(a), std::fs::File::open(b)) else { return false };
+    let mut buf_a = [0u8; 8192];
+    let mut buf_b = [0u8; 8192];
+    loop {
+        let na = fa.read(&mut buf_a).unwrap_or(0);
+        let nb = fb.read(&mut buf_b).unwrap_or(0);
+        if na != nb || buf_a[..na] != buf_b[..nb] { return false; }
+        if na == 0 { return true; }
+    }
 }
 
 // ─── Twitter video discovery ────────────────────────────────────────────────

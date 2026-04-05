@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { MoreHorizontal, Trash2, Plus, ExternalLink, FolderOpen, Copy } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 import type { LightBlock, TagCount } from "@/types";
 import { CollectionPicker, titleFromTag } from "./CollectionPicker";
 
@@ -40,19 +41,22 @@ export const CardHoverMenu = memo(function CardHoverMenu({
 }: CardHoverMenuProps) {
   const hasUrl = !!block.url;
   const filePath = `${vaultPath}/${block.slug}.md`;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [channelOpen, setChannelOpen] = useState(false);
+  const anyOpen = menuOpen || channelOpen;
 
   return (
     <>
       {/* Overlay — затенение при hover */}
-      <div className="pointer-events-none absolute inset-0 z-[4] bg-black/40 opacity-0 transition-opacity group-hover:opacity-100" />
+      <div className={cn("pointer-events-none absolute inset-0 z-[4] bg-[var(--card-hover-overlay)] transition-opacity group-hover:opacity-100", anyOpen ? "opacity-100" : "opacity-0")} />
 
       {/* More (···) — верхний правый */}
       <div
-        className="absolute right-2 top-2 z-[5] opacity-0 transition-opacity group-hover:opacity-100"
+        className={cn("absolute right-2 top-2 z-[5] transition-opacity group-hover:opacity-100", anyOpen ? "opacity-100" : "opacity-0")}
         onClick={stopProp}
         onPointerDown={stopProp}
       >
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={setMenuOpen} modal={false}>
           <DropdownMenuTrigger asChild>
             <Button variant="default" size="icon">
               <MoreHorizontal className="size-4" />
@@ -118,25 +122,27 @@ export const CardHoverMenu = memo(function CardHoverMenu({
 
       {/* Нижний ряд: Source (лево) + Channel (право) */}
       <div
-        className="absolute bottom-2 left-2 right-2 z-[5] flex justify-between opacity-0 transition-opacity group-hover:opacity-100"
+        className={cn("absolute bottom-2 left-2 right-2 z-[5] flex gap-2 transition-opacity group-hover:opacity-100", anyOpen ? "opacity-100" : "opacity-0")}
         onClick={stopProp}
         onPointerDown={stopProp}
       >
         {/* Source — низ лево */}
-        <Button
-          variant="default"
-          size="default"
-          disabled={!hasUrl}
-          onClick={() => { if (block.url) openUrl(block.url); }}
-        >
-          Source
-          <ExternalLink className="size-3" />
-        </Button>
+        {hasUrl && (
+          <Button
+            variant="default"
+            size="default"
+            className="flex-1"
+            onClick={() => { if (block.url) openUrl(block.url); }}
+          >
+            Source
+            <ExternalLink className="size-3" />
+          </Button>
+        )}
 
         {/* Channel — низ право */}
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={setChannelOpen} modal={false}>
           <DropdownMenuTrigger asChild>
-            <Button variant="default" size="default">
+            <Button variant="default" size="default" className="flex-1">
               Channel
               <Plus className="size-3" />
             </Button>

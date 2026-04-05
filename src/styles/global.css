@@ -173,6 +173,7 @@ body {
   --hover-foreground: oklch(0 0 0);
   --primary-hover: oklch(0.4495 0 0);
   --primary-active: oklch(0.2178 0 0);
+  --card-hover-overlay: transparent;
   --destructive: oklch(0.577 0.245 27.325);
   /* surface +3 / border */
   --border: oklch(0.95 0 0);
@@ -233,6 +234,7 @@ body {
     --hover-foreground: oklch(1 0 0);
     --primary-hover: oklch(0.8 0 0);
     --primary-active: oklch(0.7 0 0);
+    --card-hover-overlay: transparent;
     --destructive: oklch(0.704 0.191 22.216);
     --ring: oklch(0.6268 0 0);
     --chart-1: oklch(0.488 0.243 264.376);
@@ -281,6 +283,7 @@ body {
   --hover-foreground: oklch(1 0 0);
   --primary-hover: oklch(0.8 0 0);
   --primary-active: oklch(0.7 0 0);
+  --card-hover-overlay: transparent;
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(0.2311 0 0);
   --input: oklch(0.2311 0 0);
@@ -321,6 +324,7 @@ body {
   --hover-foreground: oklch(0 0 0);
   --primary-hover: oklch(0.4495 0 0);
   --primary-active: oklch(0.2178 0 0);
+  --card-hover-overlay: transparent;
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.95 0 0);
   --input: oklch(0.95 0 0);

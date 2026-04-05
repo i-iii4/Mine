@@ -8,25 +8,25 @@ const HOST_NAME = "com.localarena.clipper";
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: "save-page",
-    title: "Save page to Local Arena",
+    title: "Save page to Mine",
     contexts: ["page"],
   });
 
   chrome.contextMenus.create({
     id: "save-image",
-    title: "Save image to Local Arena",
+    title: "Save image to Mine",
     contexts: ["image"],
   });
 
   chrome.contextMenus.create({
     id: "save-selection",
-    title: "Save selection to Local Arena",
+    title: "Save selection to Mine",
     contexts: ["selection"],
   });
 
   chrome.contextMenus.create({
     id: "save-link",
-    title: "Save link to Local Arena",
+    title: "Save link to Mine",
     contexts: ["link"],
   });
 });
@@ -112,7 +112,7 @@ function sendNativeMessage(message) {
     if (!port) {
       resolve({
         ok: false,
-        error: "Native host not installed. Reinstall Local Arena.",
+        error: "Native host not installed. Reinstall Mine.",
       });
       return;
     }

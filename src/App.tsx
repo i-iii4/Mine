@@ -221,14 +221,15 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const gridColumnCountRef = useRef(1);
   const suppressRedirectRef = useRef(false);
 
-  // Redirect if navigated to a channel that doesn't exist
+  // Redirect if navigated to a channel that doesn't exist (check both tags and channels)
   useEffect(() => {
     if (suppressRedirectRef.current) return;
-    if (currentTag && tags.length > 0 && !tags.some((t) => t.tag === currentTag)) {
-      console.log("[REDIRECT] channel not found:", currentTag, "tags:", tags.map(t => t.tag));
+    if (currentTag && (tags.length > 0 || channels.length > 0)
+      && !tags.some((t) => t.tag === currentTag)
+      && !channels.some((c) => c.tag === currentTag)) {
       navigate("/");
     }
-  }, [currentTag, tags, navigate]);
+  }, [currentTag, tags, channels, navigate]);
 
   // Blocks filtered by current route (channel or all)
   const activeBlocks = useMemo(() => {

@@ -1,4 +1,36 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+
+/** Remove duplicate images from markdown by comparing alt text.
+ *  If two images have identical alt text, the second is a duplicate (e.g. OG hero + body image). */
+function deduplicateImages(markdown: string): string {
+  const imgRegex = /!\[([^\]]*)\]\([^)]+\)/g;
+  const matches = [...markdown.matchAll(imgRegex)];
+  if (matches.length < 2) return markdown;
+
+  const seen = new Set<string>();
+  let result = markdown;
+  for (const match of matches) {
+    const alt = match[1].trim();
+    if (!alt) continue;
+    if (seen.has(alt)) {
+      // Remove this duplicate line and its caption
+      const lines = result.split("\n");
+      const idx = lines.findIndex((l) => l.includes(match[0]));
+      if (idx >= 0) {
+        lines.splice(idx, 1);
+        if (idx < lines.length && lines[idx].trim() === "") lines.splice(idx, 1);
+        if (idx < lines.length && lines[idx].trim() === alt) {
+          lines.splice(idx, 1);
+          if (idx < lines.length && lines[idx].trim() === "") lines.splice(idx, 1);
+        }
+        result = lines.join("\n");
+      }
+    } else {
+      seen.add(alt);
+    }
+  }
+  return result;
+}
 import {
   sendToNative,
   listKnownVaults,
@@ -118,6 +150,11 @@ export function useClipperState() {
       // Apply context menu overrides
       if (ctxData) {
         await applyContextMenu(ctxData, meta, tab.id);
+      }
+
+      // Deduplicate images with identical alt text (e.g. OG hero + same image in body)
+      if (article.content) {
+        article.content = deduplicateImages(article.content);
       }
 
       setMetadata(meta);

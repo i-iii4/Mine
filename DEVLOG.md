@@ -28,10 +28,10 @@ if any
 
 ---
 
-## 05.04.2026 — Compact-режим сайдбара, иконка, dropdown, тени
+## 05.04.2026 — Карточки, hover, дедупликация, compact-режим, иконка
 
 ### Goal
-Добавить compact-режим сайдбара (стиль shadcn SidebarMenuButton), новую иконку приложения, исправить dropdown-поведение.
+Переработка карточек (hover overlay, ArticleCard с картинками), дедупликация изображений в клиппере, compact-режим сайдбара, новая иконка.
 
 ### Actually completed
 
@@ -55,10 +55,30 @@ if any
 **5. Исправления TypeScript**
 Удалён неиспользуемый import `renameTag` (App.tsx), `Plus` (Sidebar.tsx). Исправлена типизация `MetadataPanelProps.block` (Detail.tsx). Типизация `preloadedClipData` в clipper (useClipperState.ts).
 
+**6. Hover overlay карточек (CardHoverMenu.tsx, global.css)**
+CSS-переменная `--card-hover-overlay`: transparent (отключён). Убран inset border `hover:after:shadow` с Card.tsx. Удалены мёртвые overlay-заголовки из ImageCard и VideoCard. CardHoverMenu: `menuOpen`/`channelOpen` state для сохранения кнопок при открытом dropdown, `modal={false}` на обоих DropdownMenu.
+
+**7. ArticleCard с картинками (Card.tsx)**
+Статьи с `first_image` (картинка, не видео) показывают: заголовок (`line-clamp-2`) + 3 строки текста (`line-clamp-3`) + картинка. Статьи без картинок: `line-clamp-8`. Исправлен `stripMarkdown` для многострочных image-ссылок (`[^\]]*` вместо `.*?`).
+
+**8. Контекстное меню карточек (CardContextMenu.tsx, Grid.tsx)**
+Убран пункт Delete из контекстного меню (правый клик). Меню теперь идентично кнопке Channel — только CollectionPicker.
+
+**9. Дедупликация изображений в клиппере (native_host.rs, useClipperState.ts)**
+Проблема: Defuddle извлекает hero-изображение и ту же картинку из тела статьи → два файла с идентичным содержимым. Два уровня дедупликации:
+- Native host: побайтовое сравнение скачанных файлов в `localize_body_images`. Дубликат удаляется с диска, строка убирается из markdown.
+- Popup: дедупликация по alt-тексту в `deduplicateImages` для корректного превью.
+
+**10. Redirect для пустых каналов (App.tsx)**
+Redirect-эффект теперь проверяет и `tags`, и `channels`. Пустые каналы (0 блоков) больше не перенаправляют на "/".
+
 ### Push
 `a83e34e` Sidebar compact mode, new app icon, dropdown fixes, standard shadows
 
 ### Decisions and lessons learned
+- `dark:` вариант Tailwind v4 использует `@media (prefers-color-scheme: dark)`. Если ОС в тёмной теме, а приложение вручную переключено на светлую через `data-theme="light"` — `dark:` всё равно срабатывает. Решение: CSS-переменные вместо `dark:` модификаторов.
+- Дедупликация по URL не работает (CDN отдаёт разные URL для одного изображения). По hash/bytes после скачивания — надёжно.
+- Chrome вызывает native host по пути из манифеста (`~/Library/Application Support/*/NativeMessagingHosts/`). Перекомпиляция в `target/debug/` не обновляет установленный бинарник автоматически.
 - Dev-режим Tauri запускает голый бинарник без `.app` bundle — иконка не отображается в Dock. Нужна release-сборка для проверки.
 - `modal={false}` на Radix DropdownMenu — штатный API для non-modal меню. Без overlay клики проходят к элементам напрямую.
 - Мерцание при клике на dropdown вызвано тем, что click event просачивался через trigger до NavLink → навигация → VirtuosoMasonry перемонтировался. `e.preventDefault()` решает это.

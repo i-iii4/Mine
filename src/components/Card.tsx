@@ -46,7 +46,7 @@ export const Card = memo(function Card({ block, vaultPath, isFocused, priority, 
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
-        "group cursor-pointer overflow-hidden border border-border relative rounded-[var(--radius-card)] after:pointer-events-none after:absolute after:inset-0 hover:after:shadow-[inset_0_0_0_2px_var(--primary-hover)]",
+        "group cursor-pointer overflow-hidden border border-border relative rounded-[var(--radius-card)]",
         isDragging && "opacity-30",
         isFocused && "ring-2 ring-ring",
       )}
@@ -96,7 +96,7 @@ function CardContent({
         if (block.url && (isTwitterUrl(block.url) || isInstagramUrl(block.url))) {
           return <SocialCard block={block} vaultPath={vaultPath} />;
         }
-        return <ArticleCard block={block} />;
+        return <ArticleCard block={block} vaultPath={vaultPath} />;
       case "video":
         return <VideoCard block={block} vaultPath={vaultPath} />;
       case "file":
@@ -153,11 +153,6 @@ const ImageCard = memo(function ImageCard({
         loading={imgLoading}
         onError={() => setError(true)}
       />
-      {block.title && (
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3 opacity-0 group-hover:opacity-100">
-          <p className="truncate text-sm text-white">{block.title}</p>
-        </div>
-      )}
     </div>
   );
 });
@@ -248,7 +243,7 @@ function stripMarkdown(text: string): string {
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/\*(.+?)\*/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
-    .replace(/!\[.*?\]\(.*?\)/g, "")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
     .replace(/\[(.+?)\]\(.*?\)/g, "$1")
     .replace(/^[-*+]\s+/gm, "")
     .replace(/^>\s+/gm, "")
@@ -370,18 +365,32 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
   );
 });
 
-const ArticleCard = memo(function ArticleCard({ block }: { block: LightBlock }) {
+function isImageFile(name: string): boolean {
+  return /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(name);
+}
+
+const ArticleCard = memo(function ArticleCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {
   const preview = useMemo(() => stripMarkdown(block.body).slice(0, 400).trim(), [block.body]);
+  const firstImage = block.first_image && isImageFile(block.first_image) ? block.first_image : null;
+  const hasImage = !!firstImage;
 
   return (
     <div className="p-4">
-      <p className="text-sm font-semibold text-foreground">
+      <p className="line-clamp-2 text-sm font-semibold text-foreground">
         {block.title ?? block.slug}
       </p>
       {preview && (
-        <p className="mt-1.5 line-clamp-8 text-sm leading-relaxed text-muted-foreground">
+        <p className={cn("mt-1.5 text-sm leading-relaxed text-muted-foreground", hasImage ? "line-clamp-3" : "line-clamp-8")}>
           {preview}
         </p>
+      )}
+      {firstImage && (
+        <img
+          src={mediaUrl(vaultPath, firstImage)}
+          alt=""
+          className="mt-3 w-full"
+          loading="lazy"
+        />
       )}
       {block.author && (
         <p className="mt-2 text-sm text-muted-foreground">{block.author}</p>
@@ -418,11 +427,6 @@ const VideoCard = memo(function VideoCard({
           </svg>
         </div>
       </div>
-      {block.title && (
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-3">
-          <p className="truncate text-sm text-white">{block.title}</p>
-        </div>
-      )}
     </div>
   );
 });

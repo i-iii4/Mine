@@ -167,7 +167,6 @@ export function Grid({
           currentTag={currentTag}
           onToggleTag={onToggleTag}
           onCreateAndAssign={onCreateAndAssign}
-          onRequestDelete={handleRequestDelete}
         />
       )}
 
