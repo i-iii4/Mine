@@ -73,7 +73,8 @@ CSS-переменная `--card-hover-overlay`: transparent (отключён).
 Redirect-эффект теперь проверяет и `tags`, и `channels`. Пустые каналы (0 блоков) больше не перенаправляют на "/".
 
 ### Push
-`a83e34e` Sidebar compact mode, new app icon, dropdown fixes, standard shadows
+- `a83e34e` Sidebar compact mode, new app icon, dropdown fixes, standard shadows
+- `c874b90` Cards: hover overlay, ArticleCard images, context menu, image dedup
 
 ### Decisions and lessons learned
 - `dark:` вариант Tailwind v4 использует `@media (prefers-color-scheme: dark)`. Если ОС в тёмной теме, а приложение вручную переключено на светлую через `data-theme="light"` — `dark:` всё равно срабатывает. Решение: CSS-переменные вместо `dark:` модификаторов.
