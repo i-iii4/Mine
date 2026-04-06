@@ -263,10 +263,10 @@ pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Re
                 let mut rgb_buf = vec![0u8; yuv.estimate_rgb_u8_size()];
                 yuv.write_rgb8(&mut rgb_buf);
 
-                // Skip near-black frames (average brightness < 10)
+                // Skip near-black frames (average brightness < 40)
                 let avg_brightness: u64 = rgb_buf.iter().map(|&b| b as u64).sum::<u64>()
                     / rgb_buf.len().max(1) as u64;
-                if avg_brightness < 10 {
+                if avg_brightness < 40 {
                     continue;
                 }
 
