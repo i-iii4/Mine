@@ -5,6 +5,7 @@ import { useClipperState } from "./hooks/useClipperState";
 import { TypeSwitcher } from "./components/TypeSwitcher";
 import { ChannelList } from "./components/ChannelList";
 import { SaveButton } from "./components/SaveButton";
+import { ScreenshotPreview } from "./components/ScreenshotPreview";
 import { StatusBar } from "./components/StatusBar";
 
 export function PopupApp() {
@@ -55,8 +56,8 @@ export function PopupApp() {
     : metadata?.image ?? null;
 
   return (
-    <div className="flex h-full flex-col p-3">
-      <div className="shrink-0 space-y-2">
+    <div className="flex flex-col gap-2 p-3">
+      <div className="space-y-2">
         {/* Vault selector */}
         {clipper.knownVaults.length > 1 && (
           <select
@@ -133,19 +134,26 @@ export function PopupApp() {
             <img src={ogImage} alt="" className="block max-h-[160px] w-full object-cover" />
           </div>
         )}
+
+        {clipper.currentType === "screenshot" && clipper.screenshotDataUrl && (
+          <ScreenshotPreview
+            dataUrl={clipper.screenshotDataUrl}
+            onRetake={clipper.retakeScreenshot}
+            onCrop={clipper.startCropMode}
+            cropSupported={clipper.cropSupported}
+          />
+        )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden py-2">
-        <ChannelList
-          channels={clipper.channels}
-          selectedTags={clipper.selectedTags}
-          recentTags={clipper.recentTags}
-          onToggle={clipper.toggleTag}
-          onCreate={clipper.createChannel}
-        />
-      </div>
+      <ChannelList
+        channels={clipper.channels}
+        selectedTags={clipper.selectedTags}
+        recentTags={clipper.recentTags}
+        onToggle={clipper.toggleTag}
+        onCreate={clipper.createChannel}
+      />
 
-      <div className="shrink-0 space-y-2 border-t border-border pt-2">
+      <div className="space-y-2 border-t border-border pt-2">
         <SaveButton
           count={clipper.selectedTags.length}
           saving={clipper.saving}

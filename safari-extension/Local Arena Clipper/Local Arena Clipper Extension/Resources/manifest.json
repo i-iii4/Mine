@@ -9,6 +9,9 @@
     "nativeMessaging",
     "storage"
   ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
   "action": {
     "default_popup": "dist/index.html",
     "default_icon": {

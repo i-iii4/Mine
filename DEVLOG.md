@@ -28,6 +28,173 @@ if any
 
 ---
 
+## 10.04.2026 (evening) — Screenshot preview в дизайн-системе, bounds persistence, fixes
+
+### Goal
+Довести Screenshot/Crop flow до рабочего состояния: кнопки по дизайн-системе, стабильная позиция Instagram popup окна, починка двух регрессов (context menu ERR_FILE_NOT_FOUND, пропавший vault dropdown).
+
+### Actually completed
+
+**1. ScreenshotPreview — переделано по паттерну CardHoverMenu.tsx**
+Прошлая итерация использовала нестандартные классы (`backdrop-blur-sm bg-background/85 hover:bg-background`), вариант `secondary` которого нет в CVA, плюс кнопки поверх картинки создавали illusion что они читаемы. Переделано строго по эталону `src/components/CardHoverMenu.tsx:123-160`:
+- `group relative` контейнер + `bg-[var(--card-hover-overlay)]` overlay на hover
+- Нижний ряд `absolute bottom-2 left-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100`
+- Кнопки — стандартный shadcn `Button variant="default" size="default"` с `flex-1`, **ничего кастомного**
+- Иконки `Crop`/`Camera` из lucide-react, `size-3` после текста
+- Никакого Tooltip, никакого backdrop-blur, никакого override'a hover-поведения
+
+**2. Tailwind v4 @source директива для popup bundle (popup-layout.css)**
+Диагностика через `strings` показала что у Button в popup отсутствовали классы `inline-flex`, `whitespace-nowrap`, `outline-0`, `cursor-pointer`, `select-none`. Причина — Tailwind v4 auto-detection сканит только файлы рядом с CSS entry (extension/popup), но не идёт по alias `@/` в `src/components/ui/`. Классы из `button.tsx` случайно генерировались только для тех, что дублировались в popup-файлах (`gap-2`, `h-8`, `rounded-1`), а уникальные — терялись. Кнопка разваливалась на inline-элементы, svg падал на новую строку. Фикс — одна директива в popup-layout.css:
+```css
+@source "../../src/components";
+@source "../../src/lib";
+```
+CSS bundle вырос с 38KB до 68KB — все shadcn-классы теперь в бандле.
+
+**3. Popup content-based sizing для DIA compatibility (не помогло, но всё равно лучше)**
+Попытка починить DIA: в DIA popup'ы с `default_popup` открываются как detached macOS окно с traffic lights вместо dropdown. Проверена гипотеза что DIA детачит popup по initial size. Убран `#root { height: 600px }` из popup-layout.css, ChannelList получил explicit `max-h-[260px] overflow-y-auto`, PopupApp избавлен от `h-full` зависимости. Popup теперь sized по контенту (~350-500px). **Гипотеза не подтвердилась — DIA всё равно открывает как окно.** После сравнения установленных в DIA расширений (mymind, Cosmos, Readwise, Claude — все работают как dropdown, все **без** `default_popup`, используют `action.onClicked` + page overlay) стало ясно: DIA **всегда** детачит любой popup с `default_popup`. Это платформенное решение Browser Company, не баг нашего кода. Обходится только переездом на `action.onClicked` + injected overlay, что несовместимо с radix portals в shadcn. Решено принять как есть.
+
+**4. Crop flow: убран openPopup(), заменён badge + toast**
+Прошлая итерация пыталась вызывать `chrome.action.openPopup()` из background после завершения crop. Не работало — функция требует active user gesture в том же execution context, а после async pipeline (mouseup → capture → canvas crop → sendMessage) gesture давно потерян. Убрано полностью. Теперь:
+- Content script **всегда** показывает Shadow DOM toast «Screenshot ready — click the Mine icon to save» сразу после mouseup
+- Background проставляет `chrome.action.setBadgeText({text: "1"})` с тёмно-серым фоном
+- Пользователь кликает иконку в toolbar → стандартный popup → `init()` читает `cropResult` → rehydrate с кропнутым превью → badge очищается
+
+**5. Popup bounds persistence (background.js)**
+Instagram feed popup (и починенный context menu popup) теперь запоминает позицию между открытиями. При первом open — default top-right от активного browser window. Когда пользователь перетаскивает — `chrome.windows.onBoundsChanged` пишет `{left, top, width, height}` в `chrome.storage.local.popupBounds`. Следующий open читает из storage. Tracking IDs хранятся в `chrome.storage.session` чтобы выживать перезапуск service worker и фильтровать только «наши» popup окна от посторонних. `onRemoved` чистит id при закрытии.
+
+**6. Context menu URL fixed (background.js)**
+`chrome.contextMenus.onClicked` handler открывал `chrome.runtime.getURL("popup/popup.html")` — этот файл **не существует** в проекте вообще, никогда не существовал. Правый клик → Save to Mine выдавал `ERR_FILE_NOT_FOUND` в открывшемся detached window. Фикс — заменил на `dist/index.html`, добавил тот же `resolvePopupBounds()` + tracking flow что и для Instagram feed. Context menu теперь работает.
+
+**7. Native host binary sync (critical fix)**
+**Главный баг сегодняшнего дня.** В проекте два cargo target directory: `/local-arena/target/debug/` (workspace root) и `/local-arena/src-tauri/target/debug/` (исторический). Cargo workspace пишет artefacts в workspace root, но ручные сборки из `src-tauri/` шли в src-tauri target. Я когда-то копировал native-host в installed location (`~/Library/Application Support/LocalArena/native-host`), с тех пор неоднократно пересобирал, но повторное копирование забыл. Installed binary оказался **старой версии без `list_known_vaults`, `upload_port`, `pre_uploaded_file`** — последние 2-3 дня изменений native host'а физически не применялись. Диагностика через `strings -a installed_binary | grep list_known_vaults` показала 0 совпадений, в свежем target — 1. Скопировал свежий binary.
+
+Это объясняет сразу три наблюдаемых бага:
+- Пропавший vault dropdown — `list_known_vaults` не обрабатывался, native host возвращал error, `knownVaults = []`, условие `length > 1` было false
+- Screenshot upload молча падал — upload HTTP server не был запущен
+- `pre_uploaded_file` в save_block игнорировался — старый SaveBlockParams не имел этого поля
+
+### Deviations from plan
+- Content-based popup sizing — сделано как предложено, но не решило DIA проблему (гипотеза оказалась неверной). Оставлено как улучшение, потому что всё равно лучше чем фиксированная высота.
+- `chrome.action.openPopup()` — отказался полностью после того как убедился что он принципиально unreliable в MV3 async-контекстах.
+- Page overlay вариант обсуждался как замена popup UI, но отклонён из-за фундаментальной несовместимости с Radix portals в shadcn.
+
+### Push
+— (будет обновлено после push)
+
+### Decisions and lessons learned
+- **Всегда после изменений в `src-tauri/src/bin/native_host.rs` нужно `cp target/debug/native-host ~/Library/Application Support/LocalArena/native-host`.** Ни Vite, ни `bun run build:extension`, ни Chrome reload не обновляют native host — он отдельный процесс. Стоит добавить post-build скрипт в `package.json` или checksum check перед extension build.
+- **Два cargo target dir — рецепт катастрофы.** Надо разобраться, откуда взялся `src-tauri/target/` и удалить, либо сконфигурировать workspace так, чтобы использовалась только одна директория.
+- **DIA не поддерживает inline popup, это архитектурное решение Browser Company.** Любое расширение с `default_popup` в DIA детачится. Обойти можно только отказом от `default_popup` + переход на `action.onClicked` + page overlay. Несовместимо с radix portals → несовместимо с shadcn → значительный refactor. Пока принято как есть.
+- **`chrome.action.openPopup()` бесполезен в MV3 async callback цепочке.** User gesture не propagates через execution context boundaries. Единственные валидные gesture для openPopup: (1) прямой клик на иконку — но тогда popup и так открылся бы через default_popup, (2) keyboard command binding, (3) contextMenus.onClicked handler (единственное привилегированное исключение).
+- **Tailwind v4 auto-detect сканит только файлы рядом с CSS entry, не следует по JS-импортам.** При multiple build entry points (main app + extension popup) надо явно указывать `@source` директивы на импортируемые директории, иначе будут непредсказуемо отсутствующие классы.
+- **`chrome.runtime.sendMessage` без ожидания callback + `window.close()` — классический race.** Popup умирает до того как background обрабатывает сообщение, даже несмотря на `await storage.set()` перед этим. Фикс — `await` на response, потом `window.close()`. Эту ошибку я допускал два раза в разных местах, теперь привычка.
+- **Диагностика через `strings` на бинарнике решает вопросы быстрее чем debug logs.** 5 секунд на `strings installed_binary | grep symbol` сразу сказали "в installed binary нет нового кода", без необходимости запускать runtime, писать print statements или гадать.
+
+---
+
+## 10.04.2026 (late) — Crop Area + Retake/Crop кнопки в дизайн-системе
+
+### Goal
+Пользователь хочет видеть полное превью скриншота без crop'а, иметь кнопку Retake для перезахвата и новую кнопку Crop Area — при нажатии выбирать прямоугольную область на странице с затемнением остального.
+
+### Actually completed
+
+**1. Превью без crop'а (PopupApp.tsx → ScreenshotPreview.tsx)**
+Старое `max-h-[160px] w-full object-cover` обрезало картинку. Новое: `max-h-[220px] w-auto max-w-full object-contain` — полное изображение вписывается в границы с сохранением пропорций, подложка `bg-muted/30` под letterboxing.
+
+**2. Retake/Crop Area кнопки в дизайн-системе (popup/components/ScreenshotPreview.tsx)**
+Новый компонент, заменяет inline-markup из PopupApp. Использует shadcn `Button` из `@/components/ui/button` (path alias, тот же source что и основной фронт — никакого дублирования компонентов). `size="xs"`, `backdrop-blur-sm bg-background/85` для читаемости поверх картинки. Иконки `Crop` и `Camera` из lucide-react. Tooltip от shadcn показывает причину disabled state.
+
+**3. Crop Area flow (новая фича)**
+Пользователь в popup жмёт Crop Area → popup сериализует всё состояние в `chrome.storage.session.cropPendingState` → `window.close()`. Background получает `startCropMode`, пересылает `startCropOverlay` в content script. Content script инжектит Shadow DOM overlay: crosshair-курсор, rect-drag с затемнением через `box-shadow: 0 0 0 9999px rgba(0,0,0,0.55)` на самой рамке (один элемент = «окно в темноту»). Размер в px показывается в углу рамки. На mouseup при размере ≥ 20×20 content script просит background захватить viewport, кропит на OffscreenCanvas с DPR-scaling, JPEG q=0.9, отправляет result обратно. Background пишет в `cropResult` и вызывает `chrome.action.openPopup()`. Popup при init обнаруживает `cropPendingState + cropResult` и восстанавливает состояние с обрезанным скриншотом.
+
+**4. Persist state в session**
+`useClipperState.startCropMode()` сохраняет: tabId, metadata, articleData, selectedTags, recentTags, title, currentType, selectedVault, screenshotDataUrl. Init hydrate в той же функции после проверки `preloadedClipData`. Cancel path (Esc) восстанавливает старый не-кропнутый скриншот, done path — новый обрезанный.
+
+**5. Crop Area disabled на не поддерживаемых страницах**
+`applyCropCapability(tab.url)` проверяет protocol — только `http/https/file`. chrome://, chrome-extension://, view-source:, Chrome Web Store — disabled с tooltip.
+
+**6. Content script crop module (content.js)**
+Новый блок кода в IIFE:
+- `startCropOverlay()` — создаёт Shadow DOM host, рендерит overlay с изолированными стилями
+- `performCrop(rect)` — запрос виспорта у background, Image → OffscreenCanvas → JPEG dataUrl
+- Блокировка скролла на время drag'а через `document.documentElement.style.overflow = "hidden"`
+- Guard против двойного запуска overlay
+- Handler `startCropOverlay` в onMessage
+
+**7. Background handlers (background.js)**
+Добавлены три обработчика:
+- `startCropMode` — пересылка `startCropOverlay` в активную вкладку
+- `captureForCrop` — вызов `chrome.tabs.captureVisibleTab` для content script (content scripts не имеют прямого доступа к этому API)
+- `cropDone` — запись в `cropResult` + `chrome.action.openPopup()`
+
+### Deviations from plan
+Ничего — всё согласно плану в `~/.claude/plans/ethereal-whistling-planet.md` + согласованным ответам (сразу capture по mouseup, Shadow DOM, disabled + tooltip, persist state).
+
+### Push
+— (будет обновлено после push)
+
+### Decisions and lessons learned
+- **Stale closure в useCallback**: в прошлой сессии забыл `screenshotDataUrl` в deps массиве `save`. Урок: всегда проверять exhaustive-deps, особенно в больших хуках. Возможно включить правило `react-hooks/exhaustive-deps` для extension/popup.
+- **DPR критичен для кропа**: `captureVisibleTab` возвращает physical pixels (2880×1800 на Retina MacBook), координаты рамки — CSS pixels (1440×900). Без умножения на `devicePixelRatio` получил бы обрезанный верхний левый квадрант в 4 раза меньше ожидаемого. Учётся во всех трёх размерностях: sx, sy, sw, sh.
+- **`box-shadow` трюк для затемнения**: один `box-shadow: 0 0 0 9999px rgba(0,0,0,0.55)` на рамке — элегантнее четырёх div'ов вокруг, элегантнее SVG mask. Индустриальный стандарт.
+- **Shadow DOM с closed mode**: изолирует стили полностью. Критично для страниц с агрессивным CSS (`* { pointer-events: none !important }` сломал бы обычный div-overlay).
+- **`chrome.action.openPopup()`**: в MV3 доступен с Chrome 99+, но исторически нужен user gesture. Внутри service worker при активной вкладке работает. Fallback — content script мог бы показать плашку «Click extension icon to save», но пока не реализовал — если openPopup молча упадёт, пользователь просто сам откроет popup и увидит rehydrated state.
+- **Button `size="xs"`**: в проекте уже есть xs-размер (24px), default-вариант — не пришлось создавать новый. Path alias `@` в popup vite config позволяет импортировать shadcn-компоненты напрямую из `src/components/ui/` — никакого дублирования.
+- **Почему crop overlay в content.js, а не отдельный файл**: content_scripts в manifest — массив injections, каждый элемент = отдельная IIFE. Два файла — два изолированных state. Один файл — один message handler на всю content-логику. Меньше магии, проще отладка.
+- **Tooltip wrapper для disabled Button**: Radix Tooltip требует чтобы trigger не был disabled (disabled элементы не получают pointer events → tooltip не открывается). Стандартный workaround — обернуть Button в `<span>`, span получает hover event от тултипа.
+
+---
+
+## 10.04.2026 — Screenshot-режим в веб-клиппере
+
+### Goal
+Добавить четвёртый режим в clipper: захват скриншота видимой области вкладки и сохранение как image-блок в vault.
+
+### Planned
+1. Новый пункт Screenshot в TypeSwitcher
+2. `chrome.tabs.captureVisibleTab` при переключении типа, превью в popup
+3. Upload бинарника через локальный HTTP-сервер в native host (обход лимита 1 МБ на сообщение native messaging)
+4. `pre_uploaded_file` в save_block — native host использует уже залитый файл без повторного скачивания
+
+### Actually completed
+
+**1. Native host: HTTP upload-сервер (native_host.rs, Cargo.toml)**
+Добавлена зависимость `tiny_http = "0.12"`. При старте native host привязывает TCP к `127.0.0.1:0` (случайный порт), генерирует 32-символьный hex-токен, запускает `tiny_http::Server` в отдельном потоке. Эндпоинт `POST /upload?filename=<name>` принимает сырые байты, проверяет `Authorization: Bearer <token>`, санирует имя файла (запрещены `..`, `/`, `\`), сохраняет в корень vault с дедупликацией имени при конфликте. Порт и токен возвращаются в ответе `get_status`.
+
+**2. Native host: pre_uploaded_file в save_block**
+Новое поле `pre_uploaded_file: Option<String>` в `SaveBlockParams`. Если задано — хост проверяет что файл есть в vault и использует его как `media_file` без повторного скачивания `image_url`.
+
+**3. Extension manifest (manifest.json)**
+Добавлен `host_permissions: ["http://127.0.0.1/*"]` — без этого fetch из popup блокируется CORS. `activeTab` достаточно для `captureVisibleTab`.
+
+**4. Popup: screenshot flow (useClipperState.ts, messaging.ts)**
+- `uploadPortRef`/`uploadTokenRef` сохраняют данные из `get_status`
+- `handleTypeChange` при переключении на Screenshot вызывает `chrome.tabs.captureVisibleTab` и кладёт dataUrl в state
+- `save` для типа screenshot конвертирует dataUrl в Blob, загружает через `uploadFile()` и передаёт имя в `save_block` как `pre_uploaded_file`
+- Хелпер `uploadFile()` в messaging.ts: POST blob на `http://127.0.0.1:{port}/upload?filename=...` с Bearer-токеном
+
+**5. Popup UI (PopupApp.tsx, TypeSwitcher.tsx)**
+Новый пункт Screenshot в TypeSwitcher. PopupApp показывает превью захваченного кадра под заголовком.
+
+### Deviations from plan
+
+**Stale closure в save callback.** Первая реализация работала через раз: `screenshotDataUrl` был в `useState`, но отсутствовал в deps-массиве `useCallback` у функции `save`. React переиспользовал мемоизированный колбэк со старым замыканием, где `screenshotDataUrl === null`. При клике на Save код читал null и показывал ошибку. Диагностика — добавил временные `console.error` с префиксом `[DEBUG]`, вывел значения в `showError`, локализовал точку отказа. Фикс — добавить `screenshotDataUrl` в deps. После удалил debug-код.
+
+### Push
+— (будет обновлено после push)
+
+### Decisions and lessons learned
+- Chrome native messaging: жёсткий лимит 1 МБ на сообщение, обход через data URL не работает. Индустриальный стандарт (Obsidian, Raycast, 1Password) — локальный HTTP-сервер для бинарных файлов.
+- `tiny_http` — синхронный, без async runtime, ~500 строк, идеально для stdin/stdout-native host.
+- `host_permissions: ["http://127.0.0.1/*"]` в Manifest V3 обязательно для fetch до localhost, `activeTab` этого не покрывает.
+- Stale closures в useCallback — классический react-хуковый баг. Правило `react-hooks/exhaustive-deps` в ESLint ловит это, стоит убедиться что оно включено для extension/popup.
+- Refs (`uploadPortRef`, `uploadTokenRef`) к stale closure не уязвимы, потому что `.current` читается в момент вызова, а не на момент создания колбэка. Но для screenshot dataUrl ref не подходит — нужен ре-рендер для показа превью.
+- Безопасность HTTP-сервера: listener только на `127.0.0.1`, одноразовый токен при каждом запуске, санитайзер имён файлов. Листенер живёт только пока жив native host (до закрытия канала stdio Chrome).
+
+---
+
 ## 05.04.2026 — Карточки, hover, дедупликация, compact-режим, иконка
 
 ### Goal

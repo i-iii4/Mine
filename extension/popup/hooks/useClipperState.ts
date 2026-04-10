@@ -34,6 +34,7 @@ function deduplicateImages(markdown: string): string {
 import {
   sendToNative,
   listKnownVaults,
+  uploadFile,
   getContextMenuData,
   extractMetadata,
   extractArticle,
@@ -46,7 +47,7 @@ import {
   type ContextMenuData,
 } from "../lib/messaging";
 
-export type ClipType = "content" | "link" | "image" | "video";
+export type ClipType = "content" | "link" | "image" | "video" | "screenshot";
 export type PopupState = "loading" | "error" | "main";
 
 export interface ClipperState {
@@ -78,9 +79,97 @@ export function useClipperState() {
   const [articleLoading, setArticleLoading] = useState(false);
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
   const [selectedVault, setSelectedVault] = useState<string | null>(null);
+  const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
+  const [cropSupported, setCropSupported] = useState<boolean>(false);
+  const uploadPortRef = useRef<number | null>(null);
+  const uploadTokenRef = useRef<string | null>(null);
 
   const tabIdRef = useRef<number | null>(null);
   const vaultRef = useRef<string | null>(null);
+
+  const captureScreenshot = useCallback(() => {
+    chrome.tabs.captureVisibleTab(
+      null as unknown as number,
+      { format: "jpeg", quality: 85 },
+      (dataUrl) => {
+        if (chrome.runtime.lastError) {
+          showError(`Screenshot failed: ${chrome.runtime.lastError.message}`);
+          return;
+        }
+        if (dataUrl) setScreenshotDataUrl(dataUrl);
+      },
+    );
+  }, []);
+
+  const handleTypeChange = useCallback((type: ClipType) => {
+    setCurrentType(type);
+    if (type === "screenshot" && !screenshotDataUrl) {
+      captureScreenshot();
+    }
+  }, [screenshotDataUrl, captureScreenshot]);
+
+  const retakeScreenshot = useCallback(() => {
+    captureScreenshot();
+  }, [captureScreenshot]);
+
+  const startCropMode = useCallback(async () => {
+    if (!cropSupported || tabIdRef.current === null) return;
+
+    // Persist entire popup state so we can rehydrate after the popup reopens
+    await chrome.storage.session.set({
+      cropPendingState: {
+        tabId: tabIdRef.current,
+        metadata,
+        articleData,
+        selectedTags,
+        recentTags,
+        title,
+        currentType,
+        selectedVault: vaultRef.current,
+        screenshotDataUrl,
+      },
+    });
+
+    // Wait for background to confirm the overlay was successfully mounted in the
+    // content script before closing the popup. If we close too early, the
+    // chrome.tabs.sendMessage roundtrip inside background loses its sender
+    // context and the overlay never appears.
+    const response = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      chrome.runtime.sendMessage(
+        {
+          target: "background",
+          action: "startCropMode",
+          tabId: tabIdRef.current,
+        },
+        (resp) => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(resp ?? { ok: false, error: "No response" });
+          }
+        },
+      );
+    });
+
+    if (!response.ok) {
+      // Overlay didn't start — common causes: stale content script after
+      // extension reload, or chrome:// page slipping past cropSupported check.
+      await chrome.storage.session.remove("cropPendingState");
+      showError(response.error ?? "Failed to start crop mode. Try reloading the tab.");
+      return;
+    }
+
+    window.close();
+  }, [
+    cropSupported,
+    metadata,
+    articleData,
+    selectedTags,
+    recentTags,
+    title,
+    currentType,
+    screenshotDataUrl,
+  ]);
 
   // --- Init ---
 
@@ -101,6 +190,8 @@ export function useClipperState() {
         showError(status.error ?? "Cannot connect to Mine");
         return;
       }
+      uploadPortRef.current = (status.upload_port as number) ?? null;
+      uploadTokenRef.current = (status.upload_token as string) ?? null;
 
       // Load known vaults
       const vaultsResult = await listKnownVaults();
@@ -129,6 +220,51 @@ export function useClipperState() {
         return;
       }
 
+      // Check for crop mode result — popup was reopened after user finished cropping
+      const cropData = await chrome.storage.session.get(["cropPendingState", "cropResult"]);
+      if (cropData.cropPendingState && cropData.cropResult) {
+        const pending = cropData.cropPendingState as {
+          tabId: number;
+          metadata: PageMetadata | null;
+          articleData: ArticleData | null;
+          selectedTags: string[];
+          recentTags: string[];
+          title: string;
+          currentType: ClipType;
+          selectedVault: string | null;
+          screenshotDataUrl: string | null;
+        };
+        const result = cropData.cropResult as { status: "done" | "cancelled"; dataUrl?: string };
+
+        chrome.storage.session.remove(["cropPendingState", "cropResult"]);
+
+        tabIdRef.current = pending.tabId;
+        vaultRef.current = pending.selectedVault;
+        setSelectedVault(pending.selectedVault);
+        setMetadata(pending.metadata);
+        setArticleData(pending.articleData);
+        setSelectedTags(pending.selectedTags);
+        setRecentTags(pending.recentTags);
+        setTitle(pending.title);
+        setCurrentType(pending.currentType);
+
+        if (result.status === "done" && result.dataUrl) {
+          setScreenshotDataUrl(result.dataUrl);
+        } else {
+          // Cancelled — keep previous (un-cropped) screenshot
+          setScreenshotDataUrl(pending.screenshotDataUrl);
+        }
+
+        // Re-check crop capability for the same tab
+        const tabUrl = pending.tabId !== null
+          ? (await chrome.tabs.get(pending.tabId).catch(() => null))?.url ?? null
+          : null;
+        applyCropCapability(tabUrl);
+
+        setState("main");
+        return;
+      }
+
       const ctxData = await getContextMenuData();
 
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -137,6 +273,7 @@ export function useClipperState() {
         return;
       }
       tabIdRef.current = tab.id;
+      applyCropCapability(tab.url ?? null);
 
       const [meta, article] = await Promise.all([
         extractMetadata(tab.id),
@@ -193,6 +330,29 @@ export function useClipperState() {
       }
     } catch (e) {
       showError("Failed to initialize: " + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  function applyCropCapability(url: string | null) {
+    if (!url) {
+      setCropSupported(false);
+      return;
+    }
+    try {
+      const u = new URL(url);
+      // Content scripts only run on http/https/file — everything else (chrome://,
+      // chrome-extension://, chrome.google.com/webstore, view-source:) is off-limits.
+      if (u.protocol === "http:" || u.protocol === "https:" || u.protocol === "file:") {
+        if (u.hostname === "chrome.google.com" && u.pathname.startsWith("/webstore")) {
+          setCropSupported(false);
+          return;
+        }
+        setCropSupported(true);
+        return;
+      }
+      setCropSupported(false);
+    } catch {
+      setCropSupported(false);
     }
   }
 
@@ -264,7 +424,7 @@ export function useClipperState() {
     let blockType: string;
     if (currentType === "content") {
       blockType = metadata.detectedType === "video" ? "video" : "article";
-    } else if (currentType === "image") blockType = "image";
+    } else if (currentType === "image" || currentType === "screenshot") blockType = "image";
     else blockType = currentType;
 
     const payload: NativeRequest = {
@@ -293,7 +453,35 @@ export function useClipperState() {
       }
     }
 
-    if (currentType === "image" && metadata.imageToSave) {
+    if (currentType === "screenshot") {
+      if (!screenshotDataUrl) {
+        setSaving(false);
+        showError("Screenshot not captured yet");
+        return;
+      }
+      if (!uploadPortRef.current || !uploadTokenRef.current) {
+        setSaving(false);
+        showError("Upload server not configured");
+        return;
+      }
+      try {
+        const blob = await fetch(screenshotDataUrl).then((r) => r.blob());
+        const ext = blob.type === "image/png" ? "png" : "jpg";
+        const filename = `${(title || "screenshot").replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 60)}.${ext}`;
+        const uploadResult = await uploadFile(uploadPortRef.current, uploadTokenRef.current, filename, blob);
+        if (uploadResult.ok && uploadResult.filename) {
+          payload.pre_uploaded_file = uploadResult.filename;
+        } else {
+          setSaving(false);
+          showError(`Upload failed: ${uploadResult.error ?? "unknown"}`);
+          return;
+        }
+      } catch (e) {
+        setSaving(false);
+        showError(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
+    } else if (currentType === "image" && metadata.imageToSave) {
       payload.image_url = metadata.imageToSave;
       payload.width = metadata.imageWidth ?? null;
       payload.height = metadata.imageHeight ?? null;
@@ -317,7 +505,7 @@ export function useClipperState() {
       return { ok: true as const };
     }
     return { ok: false as const, error: result.error ?? "Failed to save" };
-  }, [metadata, articleData, currentType, title, selectedTags, recentTags, saving]);
+  }, [metadata, articleData, currentType, title, selectedTags, recentTags, saving, screenshotDataUrl]);
 
   const switchVault = useCallback(async (vaultPath: string) => {
     setSelectedVault(vaultPath);
@@ -339,7 +527,11 @@ export function useClipperState() {
     selectedTags,
     recentTags,
     currentType,
-    setCurrentType,
+    setCurrentType: handleTypeChange,
+    screenshotDataUrl,
+    retakeScreenshot,
+    startCropMode,
+    cropSupported,
     title,
     setTitle,
     saving,

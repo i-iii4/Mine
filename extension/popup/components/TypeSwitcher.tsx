@@ -10,6 +10,7 @@ interface TypeSwitcherProps {
 const TYPES: { value: ClipType; label: string }[] = [
   { value: "content", label: "Content" },
   { value: "link", label: "Link" },
+  { value: "screenshot", label: "Screenshot" },
 ];
 
 export function TypeSwitcher({ current, onChange }: TypeSwitcherProps) {

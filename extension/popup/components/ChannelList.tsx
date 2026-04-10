@@ -50,7 +50,7 @@ export function ChannelList({
   const showCreate = filter.trim() && filtered.length === 0;
 
   return (
-    <div className="flex h-full flex-col gap-1">
+    <div className="flex flex-col gap-1">
       <Input
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
@@ -62,7 +62,7 @@ export function ChannelList({
         {lc ? "Channels" : "Recent"}
       </p>
 
-      <div className="min-h-0 flex-1 overflow-y-auto rounded-1 border border-border">
+      <div className="max-h-[260px] overflow-y-auto rounded-1 border border-border">
         {filtered.map((ch) => {
           const selected = selectedTags.includes(ch.tag);
           return (

@@ -2,6 +2,76 @@
 // Connects popup/content scripts to the native host via stdio.
 
 const HOST_NAME = "com.localarena.clipper";
+const POPUP_DEFAULT_WIDTH = 388;
+const POPUP_DEFAULT_HEIGHT = 700;
+
+// ── Popup window bounds persistence ───────────────────────────────────────
+//
+// chrome.windows.create doesn't remember position between sessions. We persist
+// last-known bounds in chrome.storage.local and restore them on next open.
+// Tracked window IDs live in chrome.storage.session so we survive service
+// worker restarts and only save bounds for OUR popup, not every popup in the
+// browser.
+
+const POPUP_WINDOW_IDS_KEY = "popupWindowIds";
+
+async function resolvePopupBounds() {
+  const stored = await chrome.storage.local.get("popupBounds");
+  if (stored.popupBounds && typeof stored.popupBounds.left === "number") {
+    return {
+      width: stored.popupBounds.width ?? POPUP_DEFAULT_WIDTH,
+      height: stored.popupBounds.height ?? POPUP_DEFAULT_HEIGHT,
+      left: stored.popupBounds.left,
+      top: stored.popupBounds.top,
+    };
+  }
+  // Default: top-right of the currently focused browser window
+  try {
+    const current = await chrome.windows.getCurrent();
+    return {
+      width: POPUP_DEFAULT_WIDTH,
+      height: POPUP_DEFAULT_HEIGHT,
+      left: Math.round(current.left + current.width - POPUP_DEFAULT_WIDTH - 20),
+      top: Math.round(current.top + 80),
+    };
+  } catch {
+    return { width: POPUP_DEFAULT_WIDTH, height: POPUP_DEFAULT_HEIGHT };
+  }
+}
+
+async function rememberPopupWindow(windowId) {
+  const stored = await chrome.storage.session.get(POPUP_WINDOW_IDS_KEY);
+  const ids = new Set(stored[POPUP_WINDOW_IDS_KEY] ?? []);
+  ids.add(windowId);
+  await chrome.storage.session.set({ [POPUP_WINDOW_IDS_KEY]: [...ids] });
+}
+
+async function isOurPopup(windowId) {
+  const stored = await chrome.storage.session.get(POPUP_WINDOW_IDS_KEY);
+  return (stored[POPUP_WINDOW_IDS_KEY] ?? []).includes(windowId);
+}
+
+async function forgetPopupWindow(windowId) {
+  const stored = await chrome.storage.session.get(POPUP_WINDOW_IDS_KEY);
+  const ids = (stored[POPUP_WINDOW_IDS_KEY] ?? []).filter((id) => id !== windowId);
+  await chrome.storage.session.set({ [POPUP_WINDOW_IDS_KEY]: ids });
+}
+
+chrome.windows.onBoundsChanged.addListener(async (win) => {
+  if (!(await isOurPopup(win.id))) return;
+  await chrome.storage.local.set({
+    popupBounds: {
+      left: win.left,
+      top: win.top,
+      width: win.width,
+      height: win.height,
+    },
+  });
+});
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  forgetPopupWindow(windowId);
+});
 
 // ── Context menus ─────────────────────────────────────────────────────────
 
@@ -46,13 +116,14 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // (requires user gesture on the extension icon), so we use windows.create().
   await chrome.storage.session.set({ contextMenuData: context });
 
-  const popupUrl = chrome.runtime.getURL("popup/popup.html");
-  chrome.windows.create({
+  const popupUrl = chrome.runtime.getURL("dist/index.html");
+  const bounds = await resolvePopupBounds();
+  const win = await chrome.windows.create({
     url: popupUrl,
     type: "popup",
-    width: 388,
-    height: 520,
+    ...bounds,
   });
+  if (win?.id) rememberPopupWindow(win.id);
 });
 
 // ── Native messaging ──────────────────────────────────────────────────────
@@ -145,17 +216,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "openClipperWithData") {
     chrome.storage.session.set({ preloadedClipData: msg.data }).then(async () => {
       const popupUrl = chrome.runtime.getURL("dist/index.html");
-      const current = await chrome.windows.getCurrent();
-      const left = current.left + current.width - 388 - 20;
-      const top = current.top + 80;
-      chrome.windows.create({
+      const bounds = await resolvePopupBounds();
+      const win = await chrome.windows.create({
         url: popupUrl,
         type: "popup",
-        width: 388,
-        height: 700,
-        left: Math.round(left),
-        top: Math.round(top),
+        ...bounds,
       });
+      if (win?.id) rememberPopupWindow(win.id);
     });
     sendResponse({ ok: true });
     return true;
@@ -166,6 +233,67 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse(data.contextMenuData || null);
       // Clear after reading
       chrome.storage.session.remove("contextMenuData");
+    });
+    return true;
+  }
+
+  // Crop mode: popup asks background to trigger overlay in the target tab.
+  // Must wait for the content script to acknowledge before resolving, so the
+  // popup only closes after the overlay is actually visible on the page.
+  if (msg.action === "startCropMode") {
+    const tabId = msg.tabId;
+    if (typeof tabId !== "number") {
+      sendResponse({ ok: false, error: "Missing tabId" });
+      return true;
+    }
+    chrome.tabs.sendMessage(tabId, { action: "startCropOverlay" }, (resp) => {
+      if (chrome.runtime.lastError) {
+        sendResponse({
+          ok: false,
+          error:
+            "Could not reach the page. Reload the tab after updating the extension.",
+        });
+        return;
+      }
+      sendResponse(resp || { ok: true });
+    });
+    return true; // async
+  }
+
+  // Content script asks background to capture the viewport (content scripts
+  // cannot call chrome.tabs.captureVisibleTab directly).
+  if (msg.action === "captureForCrop") {
+    const windowId = sender.tab?.windowId;
+    const capture = windowId !== undefined
+      ? (cb) => chrome.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 95 }, cb)
+      : (cb) => chrome.tabs.captureVisibleTab({ format: "jpeg", quality: 95 }, cb);
+    capture((dataUrl) => {
+      if (chrome.runtime.lastError || !dataUrl) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError?.message ?? "Capture failed" });
+        return;
+      }
+      sendResponse({ ok: true, dataUrl });
+    });
+    return true;
+  }
+
+  // Content script reports crop completion (either done with dataUrl, or cancelled).
+  // Background just persists the result. We don't try chrome.action.openPopup() —
+  // it requires a user gesture on the extension icon itself, which isn't
+  // available in an async callback from the content script. Content script
+  // shows an on-page toast asking the user to click the extension icon; popup
+  // will rehydrate from chrome.storage.session on next open.
+  if (msg.action === "cropDone") {
+    const result = msg.status === "done"
+      ? { status: "done", dataUrl: msg.dataUrl }
+      : { status: "cancelled" };
+    chrome.storage.session.set({ cropResult: result }).then(() => {
+      // Badge the extension icon so the user sees something changed
+      if (msg.status === "done") {
+        chrome.action.setBadgeText({ text: "1" });
+        chrome.action.setBadgeBackgroundColor({ color: "#333333" });
+      }
+      sendResponse({ ok: true });
     });
     return true;
   }

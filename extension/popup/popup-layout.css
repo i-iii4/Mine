@@ -3,13 +3,25 @@
    imported via Tailwind in the React components. */
 @import "@/styles/global.css";
 
-body {
-  width: 360px;
-  overflow: hidden;
+/* Tailwind v4 auto-scan only picks files near the CSS entry (extension/popup).
+   We import shadcn components from ../../src/components — Tailwind doesn't
+   follow JS imports, so we must point it at that directory explicitly.
+   Without this, utility classes used only inside shadcn sources (e.g.
+   inline-flex, whitespace-nowrap, outline-0 in button.tsx) would be missing
+   from the popup bundle, breaking Button's flex layout. */
+@source "../../src/components";
+@source "../../src/lib";
+
+/* Content-based sizing — DIA/Arc detach popups that declare large fixed
+   dimensions upfront. Width stays fixed so the popup has a predictable
+   layout, but height grows with content up to the browser-imposed cap. */
+html, body {
+  margin: 0;
+  padding: 0;
 }
 
-#root {
-  height: 600px;
+body {
+  width: 360px;
 }
 
 /* Show thin scrollbar in popup (override global hiding) */
@@ -25,13 +37,4 @@ body {
 
 .overflow-y-auto::-webkit-scrollbar-track {
   background: transparent;
-}
-
-@media (min-width: 361px) {
-  body {
-    width: 100%;
-  }
-  #root {
-    height: 100vh;
-  }
 }

@@ -37,6 +37,8 @@ struct StatusResponse {
     ok: bool,
     vault_path: Option<String>,
     version: String,
+    upload_port: Option<u16>,
+    upload_token: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -82,6 +84,8 @@ struct SaveBlockParams {
     body: Option<String>,
     tags: Option<Vec<String>>,
     image_url: Option<String>,
+    /// File already uploaded via HTTP /upload endpoint
+    pre_uploaded_file: Option<String>,
     author: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
@@ -212,13 +216,15 @@ fn handle_list_known_vaults() {
     send_response(&KnownVaultsResponse { ok: true, vaults, current });
 }
 
-fn handle_get_status() {
+fn handle_get_status_with_upload(upload: &Option<UploadServer>) {
     let vault_path = load_vault_path();
     let ok = vault_path.is_some();
     send_response(&StatusResponse {
         ok,
         vault_path,
         version: VERSION.to_string(),
+        upload_port: upload.as_ref().map(|u| u.port),
+        upload_token: upload.as_ref().map(|u| u.token.clone()),
     });
 }
 
@@ -307,24 +313,52 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         Err(e) => return send_error(&format!("{e}")),
     };
 
-    // Download media if image_url is provided
+    // Resolve media: pre-uploaded file, data URL, or HTTP download
     let mut media_file = None;
     let mut warning = None;
     let mut downloaded_path: Option<PathBuf> = None;
 
-    if let Some(ref image_url) = p.image_url {
-        let ext = ext_from_url(image_url);
-        let dest_name = format!("{}.{}", slug, ext);
-        let dest_path = vault.root().join(&dest_name);
-
-        let referer = p.url.as_deref().unwrap_or(image_url);
-        match download_file(image_url, &dest_path, referer) {
-            Ok(()) => {
-                media_file = Some(dest_name);
-                downloaded_path = Some(dest_path);
+    if let Some(ref uploaded) = p.pre_uploaded_file {
+        // File already uploaded via HTTP /upload endpoint
+        let path = vault.root().join(uploaded);
+        if path.exists() {
+            media_file = Some(uploaded.clone());
+            downloaded_path = Some(path);
+        } else {
+            warning = Some(format!("pre-uploaded file not found: {uploaded}"));
+        }
+    } else if let Some(ref image_url) = p.image_url {
+        if image_url.starts_with("data:") {
+            // Data URL (screenshot) — decode base64 and write directly
+            match decode_data_url(image_url) {
+                Ok((bytes, ext)) => {
+                    let dest_name = format!("{}.{}", slug, ext);
+                    let dest_path = vault.root().join(&dest_name);
+                    match std::fs::write(&dest_path, &bytes) {
+                        Ok(()) => {
+                            media_file = Some(dest_name);
+                            downloaded_path = Some(dest_path);
+                        }
+                        Err(e) => warning = Some(format!("failed to write screenshot: {e}")),
+                    }
+                }
+                Err(e) => warning = Some(format!("failed to decode data URL: {e}")),
             }
-            Err(e) => {
-                warning = Some(format!("failed to download media: {e}"));
+        } else {
+            // HTTP URL — download file
+            let ext = ext_from_url(image_url);
+            let dest_name = format!("{}.{}", slug, ext);
+            let dest_path = vault.root().join(&dest_name);
+
+            let referer = p.url.as_deref().unwrap_or(image_url);
+            match download_file(image_url, &dest_path, referer) {
+                Ok(()) => {
+                    media_file = Some(dest_name);
+                    downloaded_path = Some(dest_path);
+                }
+                Err(e) => {
+                    warning = Some(format!("failed to download media: {e}"));
+                }
             }
         }
     }
@@ -508,6 +542,28 @@ fn capitalize_first(s: &str) -> String {
 }
 
 /// Extract file extension from URL, stripping query string and fragment.
+/// Decode a data URL (e.g. `data:image/png;base64,...`) into bytes and file extension.
+fn decode_data_url(data_url: &str) -> anyhow::Result<(Vec<u8>, String)> {
+    use base64::Engine;
+    // Format: data:image/png;base64,iVBOR...
+    let rest = data_url.strip_prefix("data:")
+        .ok_or_else(|| anyhow::anyhow!("not a data URL"))?;
+    let (header, data) = rest.split_once(',')
+        .ok_or_else(|| anyhow::anyhow!("malformed data URL: no comma"))?;
+    // Extract MIME type → extension
+    let mime = header.split(';').next().unwrap_or("image/png");
+    let ext = match mime {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        _ => "png",
+    };
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data)
+        .map_err(|e| anyhow::anyhow!("base64 decode failed: {e}"))?;
+    Ok((bytes, ext.to_string()))
+}
+
 fn ext_from_url(url: &str) -> &str {
     let path = url.split('?').next().unwrap_or(url);
     let path = path.split('#').next().unwrap_or(path);
@@ -749,7 +805,136 @@ fn fetch_tweet_videos(tweet_id: &str) -> anyhow::Result<Vec<String>> {
 
 // ─── Main loop ──────────────────────────────────────────────────────────────
 
+// ─── Upload server ─────────────────────────────────────────────────────────
+
+struct UploadServer {
+    port: u16,
+    token: String,
+}
+
+fn generate_token() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    format!("{:032x}", seed ^ 0xdeadbeef_cafebabe_u128)
+}
+
+fn start_upload_server() -> Option<UploadServer> {
+    let server = match tiny_http::Server::http("127.0.0.1:0") {
+        Ok(s) => s,
+        Err(_) => return None,
+    };
+    let port = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(0);
+    if port == 0 { return None; }
+    let token = generate_token();
+    let token_clone = token.clone();
+
+    // Seed shared vault path used by the upload handler
+    if let Ok(mut v) = UPLOAD_VAULT.lock() {
+        *v = load_vault_path();
+    }
+
+    std::thread::Builder::new()
+        .name("upload-server".into())
+        .spawn(move || {
+            for request in server.incoming_requests() {
+                handle_upload_request(request, &token_clone);
+            }
+        })
+        .ok()?;
+
+    Some(UploadServer { port, token })
+}
+
+static UPLOAD_VAULT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
+    // CORS preflight
+    if *request.method() == "OPTIONS".parse::<tiny_http::Method>().unwrap() {
+        let response = tiny_http::Response::empty(200)
+            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap())
+            .with_header("Access-Control-Allow-Methods: POST, OPTIONS".parse::<tiny_http::Header>().unwrap())
+            .with_header("Access-Control-Allow-Headers: Authorization, Content-Type".parse::<tiny_http::Header>().unwrap());
+        let _ = request.respond(response);
+        return;
+    }
+
+    // Auth check
+    let auth = request.headers().iter()
+        .find(|h| h.field.as_str() == "Authorization" || h.field.as_str() == "authorization")
+        .map(|h| h.value.as_str().to_string());
+    let expected = format!("Bearer {token}");
+    if auth.as_deref() != Some(&expected) {
+        let response = tiny_http::Response::from_string("Unauthorized")
+            .with_status_code(403)
+            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap());
+        let _ = request.respond(response);
+        return;
+    }
+
+    // Only POST /upload
+    if *request.method() != tiny_http::Method::Post || !request.url().starts_with("/upload") {
+        let response = tiny_http::Response::from_string("Not Found")
+            .with_status_code(404)
+            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap());
+        let _ = request.respond(response);
+        return;
+    }
+
+    // Extract filename from query: /upload?filename=screenshot.jpg
+    let filename = request.url()
+        .split('?')
+        .nth(1)
+        .and_then(|q| q.split('&').find(|p| p.starts_with("filename=")))
+        .map(|p| p.strip_prefix("filename=").unwrap_or("upload.jpg").to_string())
+        .unwrap_or_else(|| "upload.jpg".to_string());
+
+    // Read body
+    let mut body = Vec::new();
+    if let Err(e) = request.as_reader().read_to_end(&mut body) {
+        let response = tiny_http::Response::from_string(format!("Read error: {e}"))
+            .with_status_code(500)
+            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap());
+        let _ = request.respond(response);
+        return;
+    }
+
+    // Write to vault
+    let vault_path = UPLOAD_VAULT.lock().ok().and_then(|v| v.clone());
+    let Some(vp) = vault_path else {
+        let response = tiny_http::Response::from_string("Vault not configured")
+            .with_status_code(500)
+            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap());
+        let _ = request.respond(response);
+        return;
+    };
+
+    let dest = PathBuf::from(&vp).join(&filename);
+    if let Err(e) = std::fs::write(&dest, &body) {
+        let response = tiny_http::Response::from_string(format!("Write error: {e}"))
+            .with_status_code(500)
+            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap());
+        let _ = request.respond(response);
+        return;
+    }
+
+    let json = format!(r#"{{"ok":true,"filename":"{}","size":{}}}"#, filename, body.len());
+    let response = tiny_http::Response::from_string(json)
+        .with_header("Content-Type: application/json".parse::<tiny_http::Header>().unwrap())
+        .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap());
+    let _ = request.respond(response);
+}
+
 fn main() {
+    // Start upload HTTP server
+    let upload_server = start_upload_server();
+
+    // Update vault path for upload server
+    if let Some(vp) = load_vault_path() {
+        if let Ok(mut v) = UPLOAD_VAULT.lock() {
+            *v = Some(vp);
+        }
+    }
+
     // Process messages until stdin is closed
     loop {
         let msg = match read_message() {
@@ -773,7 +958,7 @@ fn main() {
         let vault_path = req.vault_path.clone().or_else(|| load_vault_path());
 
         match req.action.as_str() {
-            "get_status" => handle_get_status(),
+            "get_status" => handle_get_status_with_upload(&upload_server),
             "list_known_vaults" => handle_list_known_vaults(),
 
             "list_channels" | "save_block" | "create_channel" => {

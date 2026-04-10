@@ -230,7 +230,7 @@ saved_at: 2026-02-26T14:30:00Z
 | Thumbnail Generator | Превью 240px: изображения (resize), статьи (text-to-image) | Rust, image + ab_glyph + imageproc |
 | Import | Импорт каналов из Are.na | Rust, ureq (sync HTTP) |
 | Web Clipper | Chrome/Safari расширение: сохранение из браузера | Manifest V3, Readability.js, TurndownService |
-| Native Host | Мост между расширением и vault (stdin/stdout JSON) | Rust (bin/native_host.rs), ureq |
+| Native Host | Мост между расширением и vault (stdin/stdout JSON + локальный HTTP upload) | Rust (bin/native_host.rs), ureq, tiny_http |
 | Vault | Пользовательские файлы на диске | Файловая система |
 
 ## Data flow

@@ -163,6 +163,32 @@ export async function extractArticleAsync(tabId: number): Promise<ArticleData> {
   });
 }
 
+/** Upload binary data to native host's HTTP server. Returns filename. */
+export async function uploadFile(
+  port: number,
+  token: string,
+  filename: string,
+  blob: Blob,
+): Promise<{ ok: boolean; filename?: string; error?: string }> {
+  try {
+    const resp = await fetch(
+      `http://127.0.0.1:${port}/upload?filename=${encodeURIComponent(filename)}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": blob.type || "application/octet-stream",
+        },
+        body: blob,
+      },
+    );
+    if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
+    return await resp.json();
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
 export async function getImageInfo(
   tabId: number,
   src: string,

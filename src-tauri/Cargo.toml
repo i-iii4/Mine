@@ -51,6 +51,12 @@ imageproc = "0.25"
 mp4 = "0.14"
 openh264 = "0.6"
 
+# Base64 (data URL decoding for screenshots)
+base64 = "0.22"
+
+# HTTP server for binary file uploads from extension
+tiny_http = "0.12"
+
 # Error handling
 thiserror = "2"
 anyhow = "1"

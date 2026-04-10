@@ -143,6 +143,45 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 
 Результат: `.md` (type: file) + скачанный файл.
 
+### 7. Screenshot (скриншот viewport)
+
+Пользователь вручную переключается в режим Screenshot из TypeSwitcher. Расширение захватывает видимую область вкладки через `chrome.tabs.captureVisibleTab({ format: "jpeg", quality: 85 })`, показывает превью в popup и загружает файл в vault через локальный HTTP-сервер native host (см. Upload Server).
+
+| Field | Source |
+|---|---|
+| type | `image` |
+| title | Заголовок страницы (редактируется) |
+| url | URL страницы (для ссылки на источник) |
+| file | JPEG/PNG, залит через HTTP upload, имя передаётся в save_block как `pre_uploaded_file` |
+| source | `web-clipper` |
+
+Почему отдельный HTTP-канал, а не native messaging: Chrome ограничивает native messaging-сообщения 1 МБ, а скриншот Retina-viewport легко выходит за этот порог.
+
+#### Crop Area mode
+
+Скриншот можно захватить не целиком, а выделенной областью. В превью скриншота есть кнопка `Crop Area` рядом с `Retake`. При клике:
+
+1. Popup сериализует всё текущее состояние (метаданные, статью, выбранные теги, title, vault, полный скриншот) в `chrome.storage.session` под ключом `cropPendingState` и вызывает `window.close()`.
+2. Background получает сообщение `startCropMode` и пересылает `startCropOverlay` в content script активной вкладки.
+3. Content script инжектит Shadow DOM overlay: полупрозрачное затемнение на всю страницу, crosshair-курсор, плавающая плашка `Click and drag to select area • Esc to cancel`.
+4. Пользователь тянет мышью прямоугольник. Подсветка выделенной области — через трюк `box-shadow: 0 0 0 9999px rgba(0,0,0,0.55)` на самой рамке (одна рамка = «окно в темноту», без четырёх div'ов вокруг).
+5. На mouseup при размере ≥ 20×20 px:
+   - Content script просит background захватить viewport через `chrome.tabs.captureVisibleTab({format:'jpeg',quality:95})`.
+   - Получает dataUrl, грузит его в `Image`, кропит на `OffscreenCanvas` размером `width × height × devicePixelRatio`, конвертирует результат в JPEG q=0.9.
+   - Отправляет background сообщение `cropDone` с обрезанным dataUrl.
+6. Background пишет `{status:"done", dataUrl}` в `chrome.storage.session.cropResult` и вызывает `chrome.action.openPopup()`.
+7. Popup при init обнаруживает `cropPendingState + cropResult`, восстанавливает состояние и заменяет превью на обрезанный скриншот. Выбранные теги, title, канал — всё на месте.
+
+Отмена (Esc до или во время drag'а): content script убивает overlay, пишет `cropResult = {status:"cancelled"}`, background переоткрывает popup. Popup восстанавливает прежний (не кропнутый) скриншот из persisted state.
+
+Условия доступности: кнопка `Crop Area` disabled на страницах, где content script не инжектится — `chrome://*`, `chrome-extension://*`, `view-source:*`, Chrome Web Store. Проверка по `tab.url.protocol` и `hostname`, tooltip показывает причину.
+
+Ключевые инварианты:
+- `devicePixelRatio` всегда учитывается при кропе: `captureVisibleTab` возвращает изображение в физических пикселях, координаты рамки — в CSS-пикселях.
+- Shadow DOM с `mode: "closed"` изолирует overlay от CSS страницы и наоборот.
+- Во время drag'а `document.documentElement.style.overflow = "hidden"` блокирует скролл страницы — иначе координаты рамки уехали бы.
+- `z-index: 2147483647` (int32 max) гарантирует, что overlay поверх любого контента страницы.
+
 ## Auto-detection Heuristic
 
 При открытии popup расширение определяет тип страницы:
@@ -313,9 +352,13 @@ Response:
 {
   "ok": true,
   "vault_path": "/Users/user/LocalArena",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "upload_port": 54231,
+  "upload_token": "a1b2c3d4e5f6..."
 }
 ```
+
+`upload_port` и `upload_token` выдаются попапу один раз при инициализации и используются для заливки бинарных файлов через локальный HTTP-сервер native host (см. Upload Server).
 
 #### `list_channels`
 
@@ -411,6 +454,53 @@ Response:
 }
 ```
 
+## Upload Server (HTTP)
+
+Chrome ограничивает отдельное native messaging-сообщение 1 МБ. Скриншот Retina-viewport после JPEG-сжатия легко занимает 1-3 МБ, и данные не помещаются в протокол stdin/stdout. Поэтому native host при старте поднимает локальный HTTP-сервер для бинарных загрузок.
+
+### Lifecycle
+
+1. При старте native host привязывает TCP-listener к `127.0.0.1:0` (ОС выбирает свободный порт).
+2. Генерирует случайный 32-символьный hex-токен (`generate_token()`).
+3. Запускает `tiny_http::Server` в отдельном потоке.
+4. Порт и токен возвращаются попапу в ответе `get_status`.
+5. Сервер живёт до завершения процесса native host (завершается, когда Chrome закрывает канал stdio).
+
+### Endpoint `POST /upload`
+
+- `Authorization: Bearer {token}` — обязательный заголовок, несовпадение → `403`
+- `Content-Type` — MIME-тип файла (`image/jpeg`, `image/png`, и т.д.)
+- Query `?filename=<name.ext>` — имя файла (используется санитайзер на стороне хоста)
+- Body — сырые байты файла (не base64)
+
+Успешный ответ:
+```json
+{ "ok": true, "filename": "page-screenshot.jpg" }
+```
+
+Файл сохраняется в корень vault. Имя дедуплицируется при конфликте (`name-2.jpg`).
+
+### Интеграция с `save_block`
+
+После успешного upload попап передаёт полученное имя в `save_block` через поле `pre_uploaded_file`. Native host проверяет, что файл существует в vault, и использует его как `media_file` блока — без повторного скачивания через `image_url`.
+
+```json
+{
+  "action": "save_block",
+  "block_type": "image",
+  "title": "Article — Screenshot",
+  "pre_uploaded_file": "article-screenshot.jpg",
+  "tags": ["reference"]
+}
+```
+
+### Безопасность
+
+- Слушает только `127.0.0.1`, не доступен извне.
+- Одноразовый токен, сгенерированный при каждом запуске, — защита от локальных процессов, которые не знают токен.
+- Имена файлов санируются (запрещены `..`, `/`, `\`).
+- Расширение получает `host_permissions: ["http://127.0.0.1/*"]` в manifest — без этого fetch до localhost блокируется CORS.
+
 ## Native Host Binary
 
 ### Расположение
@@ -452,6 +542,8 @@ Native host — отдельный Rust-бинарник (не Tauri). Пере�
 | `storage::files` | write_block_file |
 | `storage::thumbnails` | generate_thumbnail |
 | `ureq` | Скачивание медиафайлов и og:image |
+| `tiny_http` | Локальный HTTP-сервер для бинарных upload'ов (скриншоты, крупные файлы) |
+| `base64` | Декодирование data URL |
 
 ### Vault Path Discovery
 

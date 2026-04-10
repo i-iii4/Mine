@@ -670,9 +670,309 @@
     }
   }
 
+  // ── Crop overlay ────────────────────────────────────────────────────────
+  //
+  // User clicks "Crop Area" in popup → popup persists state + closes → background
+  // messages us with "startCropOverlay". We inject a Shadow-DOM overlay on top of
+  // the page, user drags a rectangle, we ask background for a full-viewport
+  // screenshot, crop it on OffscreenCanvas (scaling by devicePixelRatio), and send
+  // the cropped dataUrl back to background with "cropDone". Background persists
+  // the result and reopens the popup, which rehydrates state from session storage.
+
+  let cropOverlayHost = null;
+  let cropToastHost = null;
+
+  function destroyCropOverlay() {
+    if (cropOverlayHost) {
+      cropOverlayHost.remove();
+      cropOverlayHost = null;
+    }
+    document.documentElement.style.cursor = "";
+  }
+
+  function showCropToast(message) {
+    if (cropToastHost) cropToastHost.remove();
+
+    const host = document.createElement("div");
+    host.style.cssText = "position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none;";
+    const shadow = host.attachShadow({ mode: "closed" });
+    shadow.innerHTML = `
+      <style>
+        :host { all: initial; }
+        .toast {
+          background: rgba(0,0,0,0.85);
+          color: #fff;
+          padding: 10px 16px;
+          border-radius: 3px;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          font-size: 13px;
+          font-weight: 600;
+          box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+        }
+      </style>
+      <div class="toast">${message}</div>
+    `;
+    document.body.appendChild(host);
+    cropToastHost = host;
+
+    setTimeout(() => {
+      if (cropToastHost === host) {
+        host.remove();
+        cropToastHost = null;
+      }
+    }, 6000);
+  }
+
+  function sendCropResult(payload) {
+    // Show on-page toast immediately on success — chrome.action.openPopup() is
+    // unreliable in MV3, so we always ask the user to click the extension icon.
+    // The popup rehydrates full state (tags, title, vault) from chrome.storage.session.
+    if (payload.status === "done") {
+      showCropToast("Screenshot ready — click the Mine icon to save");
+    }
+    chrome.runtime.sendMessage({ target: "background", action: "cropDone", ...payload }, () => {
+      void chrome.runtime.lastError;
+    });
+  }
+
+  async function performCrop(rect) {
+    // Ask background for a full viewport capture
+    const captureResp = await new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { target: "background", action: "captureForCrop" },
+        (resp) => resolve(resp || { ok: false, error: "No response" }),
+      );
+    });
+
+    if (!captureResp.ok || !captureResp.dataUrl) {
+      sendCropResult({ status: "cancelled" });
+      return;
+    }
+
+    const dpr = window.devicePixelRatio || 1;
+    const sx = Math.round(rect.x * dpr);
+    const sy = Math.round(rect.y * dpr);
+    const sw = Math.round(rect.width * dpr);
+    const sh = Math.round(rect.height * dpr);
+
+    try {
+      // Load the captured viewport into an image
+      const img = await new Promise((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error("Failed to load captured image"));
+        el.src = captureResp.dataUrl;
+      });
+
+      // Crop via OffscreenCanvas (or fall back to regular canvas)
+      const canvas = typeof OffscreenCanvas !== "undefined"
+        ? new OffscreenCanvas(sw, sh)
+        : Object.assign(document.createElement("canvas"), { width: sw, height: sh });
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+      let croppedDataUrl;
+      if (canvas.convertToBlob) {
+        const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 });
+        croppedDataUrl = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(blob);
+        });
+      } else {
+        croppedDataUrl = canvas.toDataURL("image/jpeg", 0.9);
+      }
+
+      sendCropResult({ status: "done", dataUrl: croppedDataUrl });
+    } catch (e) {
+      console.error("[Mine] crop failed:", e);
+      sendCropResult({ status: "cancelled" });
+    }
+  }
+
+  function startCropOverlay() {
+    // Guard against double-start
+    if (cropOverlayHost) return;
+
+    const host = document.createElement("div");
+    host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;";
+    const shadow = host.attachShadow({ mode: "closed" });
+
+    // Styles and markup inside shadow — isolated from page CSS
+    shadow.innerHTML = `
+      <style>
+        :host { all: initial; }
+        .overlay {
+          position: fixed;
+          inset: 0;
+          pointer-events: auto;
+          cursor: crosshair;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          font-size: 13px;
+          color: #fff;
+          user-select: none;
+          -webkit-user-select: none;
+        }
+        .dim {
+          position: absolute;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.55);
+          transition: background 120ms;
+        }
+        .dim.active { background: transparent; }
+        .selection {
+          position: absolute;
+          box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+          outline: 1px solid #fff;
+          pointer-events: none;
+          display: none;
+        }
+        .selection.visible { display: block; }
+        .size-label {
+          position: absolute;
+          background: rgba(0, 0, 0, 0.75);
+          color: #fff;
+          padding: 3px 6px;
+          border-radius: 3px;
+          font-variant-numeric: tabular-nums;
+          pointer-events: none;
+          display: none;
+        }
+        .size-label.visible { display: block; }
+        .hint {
+          position: fixed;
+          top: 16px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: rgba(0, 0, 0, 0.8);
+          color: #fff;
+          padding: 8px 14px;
+          border-radius: 6px;
+          pointer-events: none;
+          white-space: nowrap;
+        }
+        kbd {
+          background: rgba(255, 255, 255, 0.15);
+          padding: 1px 5px;
+          border-radius: 3px;
+          font-family: inherit;
+          font-size: 11px;
+        }
+      </style>
+      <div class="overlay">
+        <div class="dim"></div>
+        <div class="selection"></div>
+        <div class="size-label"></div>
+        <div class="hint">Click and drag to select area &nbsp;•&nbsp; <kbd>Esc</kbd> to cancel</div>
+      </div>
+    `;
+
+    document.body.appendChild(host);
+    cropOverlayHost = host;
+
+    const overlay = shadow.querySelector(".overlay");
+    const dim = shadow.querySelector(".dim");
+    const selection = shadow.querySelector(".selection");
+    const sizeLabel = shadow.querySelector(".size-label");
+
+    // Lock page scroll so coordinates stay stable throughout the drag
+    const prevOverflow = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+
+    let startX = 0;
+    let startY = 0;
+    let dragging = false;
+    let rect = { x: 0, y: 0, width: 0, height: 0 };
+
+    function updateSelection() {
+      selection.style.left = `${rect.x}px`;
+      selection.style.top = `${rect.y}px`;
+      selection.style.width = `${rect.width}px`;
+      selection.style.height = `${rect.height}px`;
+      selection.classList.add("visible");
+      dim.classList.add("active");
+
+      sizeLabel.textContent = `${Math.round(rect.width)} × ${Math.round(rect.height)}`;
+      sizeLabel.classList.add("visible");
+      // Place label inside top-left of selection, fall back to outside if too small
+      const labelX = rect.x + 4;
+      const labelY = rect.height > 28 ? rect.y + 4 : Math.max(0, rect.y - 22);
+      sizeLabel.style.left = `${labelX}px`;
+      sizeLabel.style.top = `${labelY}px`;
+    }
+
+    function onMouseDown(e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      dragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      rect = { x: startX, y: startY, width: 0, height: 0 };
+    }
+
+    function onMouseMove(e) {
+      if (!dragging) return;
+      const x = Math.min(e.clientX, startX);
+      const y = Math.min(e.clientY, startY);
+      const w = Math.abs(e.clientX - startX);
+      const h = Math.abs(e.clientY - startY);
+      rect = { x, y, width: w, height: h };
+      updateSelection();
+    }
+
+    function cleanup() {
+      overlay.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("keydown", onKeyDown);
+      document.documentElement.style.overflow = prevOverflow;
+      destroyCropOverlay();
+    }
+
+    function onMouseUp() {
+      if (!dragging) return;
+      dragging = false;
+
+      // Reject tiny selections — probably an accidental click
+      if (rect.width < 20 || rect.height < 20) {
+        selection.classList.remove("visible");
+        sizeLabel.classList.remove("visible");
+        dim.classList.remove("active");
+        return;
+      }
+
+      const finalRect = { ...rect };
+      cleanup();
+      performCrop(finalRect);
+    }
+
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        cleanup();
+        sendCropResult({ status: "cancelled" });
+      }
+    }
+
+    overlay.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("keydown", onKeyDown, true);
+  }
+
   // ── Message handler ─────────────────────────────────────────────────────
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.action === "startCropOverlay") {
+      try {
+        startCropOverlay();
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+      return false; // synchronous — response already sent
+    }
+
     if (msg.action === "extractMetadata") {
       const meta = extractMetadata();
       meta.detectedType = detectType(meta);
