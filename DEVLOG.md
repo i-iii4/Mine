@@ -80,7 +80,7 @@ Instagram feed popup (и починенный context menu popup) теперь �
 - Page overlay вариант обсуждался как замена popup UI, но отклонён из-за фундаментальной несовместимости с Radix portals в shadcn.
 
 ### Push
-— (будет обновлено после push)
+`b972ffd` Clipper: screenshot mode, crop area, popup bounds, design-system fixes
 
 ### Decisions and lessons learned
 - **Всегда после изменений в `src-tauri/src/bin/native_host.rs` нужно `cp target/debug/native-host ~/Library/Application Support/LocalArena/native-host`.** Ни Vite, ни `bun run build:extension`, ни Chrome reload не обновляют native host — он отдельный процесс. Стоит добавить post-build скрипт в `package.json` или checksum check перед extension build.
@@ -133,7 +133,7 @@ Instagram feed popup (и починенный context menu popup) теперь �
 Ничего — всё согласно плану в `~/.claude/plans/ethereal-whistling-planet.md` + согласованным ответам (сразу capture по mouseup, Shadow DOM, disabled + tooltip, persist state).
 
 ### Push
-— (будет обновлено после push)
+`b972ffd` Clipper: screenshot mode, crop area, popup bounds, design-system fixes (включает продолжение в вечерней записи)
 
 ### Decisions and lessons learned
 - **Stale closure в useCallback**: в прошлой сессии забыл `screenshotDataUrl` в deps массиве `save`. Урок: всегда проверять exhaustive-deps, особенно в больших хуках. Возможно включить правило `react-hooks/exhaustive-deps` для extension/popup.
