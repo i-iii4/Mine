@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import type { ChannelInfo } from "../lib/messaging";
 
@@ -21,6 +22,9 @@ export function ChannelList({
   const [filter, setFilter] = useState("");
   const lc = filter.toLowerCase();
 
+  // Stable order: once we're showing the list, toggling a checkbox must
+  // not move that row. Sort ONLY by recentTags order and block_count —
+  // independent of selectedTags, so selection changes don't reshuffle.
   const filtered = useMemo(() => {
     const list = lc
       ? channels.filter(
@@ -30,10 +34,6 @@ export function ChannelList({
 
     const recentSet = new Set(recentTags);
     list.sort((a, b) => {
-      const aSel = selectedTags.includes(a.tag);
-      const bSel = selectedTags.includes(b.tag);
-      if (aSel !== bSel) return aSel ? -1 : 1;
-
       const aRecent = recentSet.has(a.tag);
       const bRecent = recentSet.has(b.tag);
       if (aRecent && !bRecent) return -1;
@@ -45,12 +45,12 @@ export function ChannelList({
     });
 
     return list;
-  }, [channels, lc, selectedTags, recentTags]);
+  }, [channels, lc, recentTags]);
 
   const showCreate = filter.trim() && filtered.length === 0;
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-2">
       <Input
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
@@ -58,36 +58,25 @@ export function ChannelList({
         className="h-8 shrink-0"
       />
 
-      <p className="shrink-0 px-1 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-        {lc ? "Channels" : "Recent"}
-      </p>
-
       <div className="max-h-[260px] overflow-y-auto rounded-1 border border-border">
         {filtered.map((ch) => {
           const selected = selectedTags.includes(ch.tag);
           return (
-            <button
+            <label
               key={ch.tag}
-              onClick={() => onToggle(ch.tag)}
               className={cn(
-                "flex w-full items-center gap-2 border-b border-border px-2 py-1 text-left text-sm",
+                "flex w-full cursor-pointer items-center gap-2 border-b border-border px-2 py-1.5 text-left text-base last:border-b-0",
                 "hover:bg-accent",
                 selected && "font-semibold",
               )}
             >
-              <span
-                className={cn(
-                  "flex size-3.5 shrink-0 items-center justify-center rounded-[3px] border text-[10px]",
-                  selected
-                    ? "border-foreground bg-foreground text-background"
-                    : "border-border",
-                )}
-              >
-                {selected ? "\u2713" : ""}
-              </span>
+              <Checkbox
+                checked={selected}
+                onCheckedChange={() => onToggle(ch.tag)}
+              />
               <span className="min-w-0 flex-1 truncate">{ch.title}</span>
               <span className="shrink-0 text-sm text-muted-foreground">{ch.block_count}</span>
-            </button>
+            </label>
           );
         })}
 
@@ -98,9 +87,9 @@ export function ChannelList({
               onCreate(name);
               setFilter("");
             }}
-            className="flex w-full items-center gap-2 px-2 py-1 text-left text-sm font-semibold hover:bg-accent"
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-base font-semibold hover:bg-accent"
           >
-            <span className="flex size-3.5 shrink-0 items-center justify-center rounded-[3px] border border-border text-[10px]">
+            <span className="flex size-4 shrink-0 items-center justify-center rounded-[2px] border border-input text-[10px]">
               +
             </span>
             <span>Create &ldquo;{filter.trim()}&rdquo;</span>

@@ -1,42 +1,23 @@
-import { useEffect } from "react";
-import { X } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { PopupApp } from "./PopupApp";
-
-interface OverlayShellProps {
-  onClose: () => void;
-}
 
 /**
  * Container for the in-page overlay version of the clipper.
  *
- * Positions the clipper UI top-right of the viewport, matches the width
- * of the detached popup window (360px), adds an explicit close button
- * (no OS window chrome to click outside of). Hosts the existing
- * <PopupApp /> unchanged — same state, same behaviour.
+ * Position: fixed top-right. Width matches the detached popup (360px).
+ * Border + shadow follow the design system for floating elements
+ * (DESIGN_SYSTEM.md → "Всплывающие элементы").
  *
- * Esc closes the overlay in addition to PopupApp's own Esc handler
- * (which calls window.close() — a no-op inside a Shadow DOM).
+ * Close behaviour: click outside the overlay host — handled in
+ * overlay-entry.tsx via a window-level capture-phase click listener.
+ * No explicit close button.
+ *
+ * pointer-events: the shadow host has pointer-events:none so clicks on
+ * the empty viewport pass through to the page. The OverlayShell root
+ * div explicitly opts its subtree back IN via pointer-events-auto.
  */
-export function OverlayShell({ onClose }: OverlayShellProps) {
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", onKeyDown, { capture: true });
-    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
-  }, [onClose]);
-
+export function OverlayShell() {
   return (
-    <div className="fixed right-4 top-4 w-[360px] rounded-1 border border-border bg-background shadow-[0_4px_24px_rgba(0,0,0,0.4)]">
-      <div className="absolute right-2 top-2 z-10">
-        <Button variant="ghost" size="icon-xs" onClick={onClose}>
-          <X />
-        </Button>
-      </div>
+    <div className="pointer-events-auto fixed right-4 top-4 w-[360px] rounded-1 border border-border bg-background shadow-[0_4px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.4)]">
       <PopupApp />
     </div>
   );

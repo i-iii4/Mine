@@ -50,6 +50,7 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "dist/assets/popup.css",
         "dist/fonts/Geist-Variable.woff2",
         "dist/fonts/GeistMono-Variable.woff2"
       ],

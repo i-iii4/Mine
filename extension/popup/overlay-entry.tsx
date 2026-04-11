@@ -1,26 +1,49 @@
 import { createRoot, type Root } from "react-dom/client";
 import { OverlayShell } from "./OverlayShell";
-import popupCss from "./popup-layout.css?inline";
 
 // Overlay entry — injected into the active tab's content-script isolated
 // world via chrome.scripting.executeScript. Mounts <PopupApp /> inside a
 // closed Shadow DOM so page styles cannot leak in and our styles cannot
-// leak out. Exposes window.__mineOverlay so other scripts in the same
-// isolated world (content.js — Instagram feed button, crop flow) can
-// call showClipperOverlay() / hideClipperOverlay() / closeClipperOverlay()
-// directly without message round-trips.
+// leak out.
+//
+// CSS is loaded at runtime from dist/assets/popup.css (the SAME bundle
+// the detached window uses). This avoids duplicating Tailwind generation
+// between two builds: all utility classes that work in the window
+// context also work in the overlay. The CSS is post-processed to rewrite
+// `:root` selectors to `:root, :host` so custom properties resolve
+// inside Shadow DOM (where `:root` matches nothing).
 
 interface OverlayHandle {
   host: HTMLDivElement;
   root: Root;
+  onDocClick: (e: MouseEvent) => void;
 }
 
 let current: OverlayHandle | null = null;
+let cachedCss: string | null = null;
 
-// Fonts must live in the light DOM — @font-face inside Shadow DOM is not
-// honoured by Chrome for child descendant text. document.fonts.add is
-// the modern replacement; it registers the font globally on the page
-// document, which Shadow DOM descendants pick up via CSS font-family.
+async function loadCss(): Promise<string> {
+  if (cachedCss !== null) return cachedCss;
+  try {
+    const url = chrome.runtime.getURL("dist/assets/popup.css");
+    const raw = await fetch(url).then((r) => r.text());
+    // Tailwind v4 + shadcn emit all color custom properties on :root only.
+    // Inside Shadow DOM, :root matches nothing — no variables, no styles.
+    // Rewrite :root{ to :root,:host{ so the same declarations apply to
+    // the shadow host. Rules already using `:root, :host` (font vars
+    // from @theme) are not matched by the narrower `:root{` pattern.
+    cachedCss = raw.replace(/:root\{/g, ":root,:host{");
+  } catch (e) {
+    console.error("[Mine] failed to load popup.css:", e);
+    cachedCss = "";
+  }
+  return cachedCss;
+}
+
+// Fonts must be registered against the document, not inside Shadow DOM —
+// @font-face declarations inside a shadow root are honoured only for the
+// root itself, not for descendants. document.fonts.add() registers them
+// globally on the page document, which shadow descendants inherit.
 let fontsLoaded = false;
 async function ensureFontsLoaded() {
   if (fontsLoaded) return;
@@ -42,55 +65,85 @@ async function ensureFontsLoaded() {
     document.fonts.add(sans);
     document.fonts.add(mono);
   } catch {
-    // Fonts fail gracefully — PopupApp will use the next available
-    // font-family in the stack.
+    // Fall back to the next font in the stack
   }
 }
 
-function mount(): OverlayHandle {
+async function mount(): Promise<OverlayHandle> {
+  ensureFontsLoaded();
+  const css = await loadCss();
+
   const host = document.createElement("div");
   host.setAttribute("data-mine-clipper-overlay", "");
   host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;";
 
-  const shadow = host.attachShadow({ mode: "closed" });
+  // Open mode: event.composedPath() inside capture-phase window
+  // listeners reveals full path into the shadow tree. Closed mode
+  // would hide internals and break click-outside detection for nested
+  // components like VaultSelect that use containerRef.current + path
+  // inclusion to distinguish inside/outside clicks. Extension host is
+  // not security-sensitive, so open mode is fine here.
+  const shadow = host.attachShadow({ mode: "open" });
 
-  // Inject the same CSS bundle the detached popup uses. Tailwind v4
-  // emits :root-scoped custom properties — we need them on :host too
-  // so they resolve inside the shadow tree.
   const style = document.createElement("style");
-  style.textContent = popupCss + `
+  style.textContent = css + `
     :host {
       all: initial;
       display: block;
-      pointer-events: auto;
       font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       color-scheme: dark light;
+    }
+
+    /* Tailwind v4 uses CSS @property rules (initial-value: solid) for
+       --tw-border-style, --tw-outline-style, --tw-divide-y-reverse, etc.
+       @property declarations only register on the document level, not
+       inside a Shadow DOM, so the initial-value never applies here —
+       --tw-border-style resolves to unset and .border { border-style:
+       var(--tw-border-style) } renders as border-style:none. We set the
+       values explicitly on every element in the shadow tree to restore
+       visible borders, outlines and dividers. */
+    *, *::before, *::after {
+      --tw-border-style: solid;
+      --tw-outline-style: solid;
+      --tw-divide-y-reverse: 0;
+      --tw-divide-x-reverse: 0;
     }
   `;
   shadow.appendChild(style);
 
-  // React mount point inside the shadow
   const root = document.createElement("div");
   root.id = "root";
   shadow.appendChild(root);
 
   document.body.appendChild(host);
 
-  const reactRoot = createRoot(root);
-  reactRoot.render(<OverlayShell onClose={closeClipperOverlay} />);
+  // Click-outside-to-close: pointer-events:none on host means the real
+  // target of outside clicks is the underlying page element (the event
+  // still bubbles on window). We listen in capture phase on the window
+  // and check composedPath() for the overlay host.
+  function onDocClick(e: MouseEvent) {
+    const path = e.composedPath?.() ?? [];
+    if (path.includes(host)) return; // inside overlay
+    closeClipperOverlay();
+  }
+  // Defer listener registration by one frame so the click that OPENED
+  // the overlay doesn't immediately close it.
+  setTimeout(() => {
+    window.addEventListener("click", onDocClick, { capture: true });
+  }, 0);
 
-  return { host, root: reactRoot };
+  const reactRoot = createRoot(root);
+  reactRoot.render(<OverlayShell />);
+
+  return { host, root: reactRoot, onDocClick };
 }
 
-export function showClipperOverlay(): void {
-  ensureFontsLoaded();
+export async function showClipperOverlay(): Promise<void> {
   if (current) {
-    // Already mounted — just make sure it's visible (we might have hidden
-    // it before entering crop mode)
     current.host.style.display = "";
     return;
   }
-  current = mount();
+  current = await mount();
 }
 
 export function hideClipperOverlay(): void {
@@ -99,6 +152,7 @@ export function hideClipperOverlay(): void {
 
 export function closeClipperOverlay(): void {
   if (!current) return;
+  window.removeEventListener("click", current.onDocClick, { capture: true });
   current.root.unmount();
   current.host.remove();
   current = null;
@@ -111,17 +165,15 @@ interface MineOverlayApi {
   close: () => void;
 }
 const api: MineOverlayApi = {
-  show: showClipperOverlay,
+  show: () => void showClipperOverlay(),
   hide: hideClipperOverlay,
   close: closeClipperOverlay,
 };
 (globalThis as unknown as { __mineOverlay: MineOverlayApi }).__mineOverlay = api;
 
-// Listener: when background tells us to show/hide the overlay (from
-// chrome.action.onClicked or contextMenus.onClicked), react.
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.action === "showClipperOverlay") {
-    showClipperOverlay();
+    void showClipperOverlay();
     return false;
   }
   if (msg?.action === "hideClipperOverlay") {

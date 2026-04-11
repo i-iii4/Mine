@@ -28,6 +28,138 @@ if any
 
 ---
 
+## 11.04.2026 — Clipper в Shadow DOM overlay: full migration + gotchas
+
+### Goal
+Отказаться от detached popup-window (title bar, address bar, traffic lights — всё что DIA и Chrome показывают для `chrome.windows.create({type: "popup"})`) и перевести primary clipper UI в in-page overlay через Shadow DOM content script injection. Визуально и функционально идентично текущему popup, но без window chrome.
+
+### Planned
+1. Новый vite entry — overlay.js как IIFE bundle, инжектится в активную вкладку через chrome.scripting.executeScript
+2. Shadow DOM host с closed mode, CSS инлайн через `?inline` импорт popup-layout.css
+3. action.onClicked routing в background: overlay для http/https/file, fallback на detached window для chrome://
+4. Убрать chrome.action.openPopup()-попытки, Instagram feed button → direct showClipperOverlay без background roundtrip
+5. Crop flow: в overlay context — просто hide/show overlay вместо persist state + toast + extra click
+6. Dual-context design: один React код работает и в window fallback, и в content-script overlay (runtime detection через `typeof chrome.tabs === 'undefined'`)
+
+### Actually completed
+
+Основная работа — `b29ec7b` (overlay migration), следующие коммиты — последовательный фикс всех gotcha, которые всплыли при тестировании.
+
+**1. Overlay bundle + routing (b29ec7b)**
+Создан `vite.overlay.config.ts` с lib-mode IIFE сборкой, `extension/popup/overlay-entry.tsx` с Shadow DOM mount logic, `OverlayShell.tsx` с positioning wrapper. Background добавил `openClipperUi(tab)` который пытается executeScript → tabs.sendMessage и фоллбэчится на windows.create. Убрал `default_popup` из манифеста, добавил `scripting` + `tabs` permissions + `web_accessible_resources` для fonts. `useClipperState.init()` получил context-aware routing — в content script читает URL из `window.location`, extractors вызывает через `window.__mineClipper` exposed из content.js, в window fallback — через старый `chrome.tabs.sendMessage`.
+
+**2. Shared CSS bundle между window и overlay**
+Попытка #1 была inline CSS через `?inline` import в vite.overlay.config.ts. Не сработало: `@source ../../src/components` в `popup-layout.css` не применялся через `?inline` pipeline — Tailwind scan пропускал `hover:outline-1`, `hover:-outline-offset-1` и другие hover variants из `src/components/ui/button.tsx`. Window bundle их генерировал, overlay — нет.
+
+Решение — **один CSS pipeline**: `vite.extension.config.ts` эмитит стабильный `dist/assets/popup.css` (без хеша через `assetFileNames`), `overlay-entry.tsx` грузит его через `fetch(chrome.runtime.getURL("dist/assets/popup.css"))` при первом mount, post-process'ит и инжектирует в shadow tree. Кэширует в module variable. Overlay bundle уменьшился с 500KB до 415KB (без inline CSS). `popup.css` попал в `web_accessible_resources`.
+
+**3. `:root` → `:root, :host` replace для custom properties в Shadow DOM**
+Tailwind v4 + shadcn эмитят все цветовые токены на `:root { --background: ...; --foreground: ...; }`. **Внутри Shadow DOM селектор `:root` не матчит ничего** — это спецификация CSS Scoping. Результат: все custom properties undefined внутри shadow tree, `bg-background` резолвится в прозрачный, весь overlay становится белым на белом фоне страницы.
+
+Фикс — runtime regex replace в `overlay-entry.tsx`:
+```ts
+const popupCss = rawCss.replace(/:root\{/g, ":root,:host{");
+```
+Переписывает `:root{...}` в `:root,:host{...}`. Правила теперь применяются к shadow host, variables доступны через inheritance всему shadow tree. Правила `:root, :host` (font vars из `@theme`) не матчатся regex'ом (после `:root` стоит запятая, не `{`).
+
+**4. Pointer-events passthrough**
+`overlay-entry.tsx` ставит на shadow host `pointer-events: none` + `inset: 0` — host занимает весь viewport, но прозрачен для кликов, чтобы пользователь мог взаимодействовать со страницей. По CSS-спеке `pointer-events:none` propagates to descendants **unless** они явно переопределяют. Дефолтное `auto` у React children не считается «явным» — события проваливают через весь subtree.
+
+Фикс: `OverlayShell.tsx` корневой div получил `pointer-events-auto` класс — явное восстановление events в scope overlay content.
+
+**5. `chrome.storage.session.setAccessLevel` для content-script context**
+`chrome.storage.session` по умолчанию доступен только из trusted context'ов (service worker, extension pages). Content script — untrusted, первый `storage.session.get` бросал «Access to storage is not allowed from this context». Фикс — в background.js на top-level вызывается `chrome.storage.session.setAccessLevel({accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS"})` обёрнутый в try/catch + optional chaining для совместимости с DIA/Arc forks.
+
+**6. Stale native host binary**
+Отдельный баг, не связанный с overlay: installed binary в `~/Library/Application Support/LocalArena/native-host` был **старой версии без `list_known_vaults`** — я когда-то скопировал его и забыл обновить после изменений в `native_host.rs`. Диагностика через `strings -a binary | grep list_known_vaults`. Фикс — копирование свежего `target/debug/native-host`.
+
+Причина — два cargo target dir в проекте (`/target/` workspace root и `/src-tauri/target/` legacy). Workspace build пишет в первый, legacy команды — во второй. Оба существуют одновременно.
+
+**7. ScreenshotPreview — точный паттерн CardHoverMenu**
+Прошлая итерация использовала нестандартные классы. Переделано строго по `src/components/CardHoverMenu.tsx:123-160`: group-hover overlay, `absolute bottom-2 left-2 right-2` нижний ряд, стандартный `Button variant="default" size="default" flex-1`, иконки `size-3`. Никаких `backdrop-blur`, никаких hover overrides.
+
+**8. Tailwind v4 `@property` gotcha — невидимые бордеры**
+После всех предыдущих фиксов overlay рендерился с правильными цветами, но ни у одного элемента не было visible обводки — ни у окна, ни у списка каналов, ни у Input, ни у Checkbox. Диагностика:
+- `.border { border-style: var(--tw-border-style); border-width: 1px }` — правило есть в popup.css
+- `@property --tw-border-style { initial-value: solid; inherits: false }` — тоже есть
+- **Но `@property` декларации действуют на document level**. Внутри Shadow DOM они не регистрируют initial-value для descendants
+- `--tw-border-style` резолвится в unset → `border-style: none` → border-width 1px без стиля → невидимо
+
+Фикс — в overlay-entry.tsx shadow style inject добавить:
+```css
+*, *::before, *::after {
+  --tw-border-style: solid;
+  --tw-outline-style: solid;
+  --tw-divide-y-reverse: 0;
+  --tw-divide-x-reverse: 0;
+}
+```
+Явное установление значений на каждом элементе shadow tree восстанавливает работу `.border`, `.outline-*`, `.hover:outline-1` и прочих утилит. Без этого весь Shadow DOM + Tailwind v4 стек нерабочий для border-ов — это фундаментальная несовместимость, не наш баг.
+
+**9. VaultSelect — custom shadow-friendly dropdown**
+Native `<select>` с `appearance:none` всё равно рендерит OS-native список опций (Chrome на macOS показывает системный dropdown, стилизовать `<option>` нельзя). Shadcn DropdownMenu жёстко использует Radix Portal → рендерит content в `document.body` вне shadow tree → теряет стили.
+
+Написан `VaultSelect.tsx` — custom trigger button + absolute-positioned menu, без Radix. 60 строк, полностью в дизайн-системе: `h-8 rounded-1 border-input` trigger, menu с `bg-popover` + стандартная popover тень, items с `hover:bg-accent`, активный — с галочкой. Click-outside + Esc. Работает в Shadow DOM, потому что всё mount'ится внутрь react tree без портала.
+
+**10. Closed → open Shadow DOM mode**
+После всего VaultSelect открывался, но клики по option'ам не переключали vault. Корень — `attachShadow({mode: "closed"})`: `event.composedPath()` в capture-phase window-listener **не раскрывает internal elements** closed shadow tree. VaultSelect's click-outside handler видел `path` как `[host, ...ancestors, window]` без своего containerRef.current → решал что клик снаружи → закрывал dropdown до того как React's onClick на item успевал сработать.
+
+Фикс — переключить на `mode: "open"`. В open mode composedPath возвращает полный путь включая shadow internals. Extension-context не security-sensitive, open mode приемлем.
+
+**11. Скрытие overlay во время screenshot capture**
+`captureVisibleTab` захватывал viewport вместе с видимым clipper overlay'ем. Фикс — в `captureScreenshot`:
+```ts
+overlay?.hide();
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    chrome.runtime.sendMessage({captureForCrop}, (resp) => {
+      requestAnimationFrame(() => overlay.show());
+      // ...
+    });
+  });
+});
+```
+Два animation frame нужны: первый для применения `display:none`, второй для paint cycle браузера. После этого `captureVisibleTab` видит чистый viewport. После возврата dataUrl — один rAF и показ overlay обратно.
+
+**12. Crop Area sender.tab.id**
+В content-script context `tabIdRef.current = CONTENT_SCRIPT_CONTEXT = -1` (sentinel). `startCropMode` отправлял в background `{action: "startCropMode", tabId: -1}`, background делал `chrome.tabs.sendMessage(-1, ...)` → error «No tab with id -1» → overlay оставался скрытым после `overlay.hide()`, crop overlay никогда не появлялся.
+
+Фикс — background handler берёт tabId из `sender.tab?.id` (всегда доступно для message from content script), игнорируя значение из msg.
+
+**13. Переделка ChannelList**
+- Убрал `RECENT` заголовок
+- Стабильная сортировка: убрано условие «selected в начало» — активация чекбокса не меняет позицию строки
+- Кастомный `<span>` checkbox заменён на shadcn `<Checkbox>` (Radix без portals)
+- `<button>` → `<label>` обёртка чтобы клик по всей строке переключал checkbox
+
+**14. OverlayShell визуал**
+Убран X Close button (пользователь предпочитает click-outside). Стандартная тень из DESIGN_SYSTEM.md для всплывающих элементов: `shadow-[0_4px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.4)]`. Click-outside обработан в overlay-entry через window capture listener + composedPath check на host.
+
+**15. Diagnostic badges в action.onClicked**
+Добавлен badge «•» на 1.5 секунды при клике на иконку + badge «ERR» если openClipperUi бросил exception. Позволяет диагностировать dead service worker / застрявший default_popup без devtools.
+
+### Deviations from plan
+- **CSS bundling стратегия изменена** с inline через `?inline` на fetch shared `popup.css`. Причина — `?inline` pipeline не обрабатывал `@source` директиву корректно, Tailwind scan пропускал ряд классов.
+- **Shadow DOM mode** изменён closed → open из-за `composedPath` проблемы с nested click-outside patterns.
+- **Crop flow** полностью упрощён в overlay context (hide/show вместо persist+reload), но в window-entry fallback остался старый код для совместимости.
+- **Native host binary** — обнаружен несвязанный баг с устаревшим installed binary, пофикшен попутно.
+
+### Push
+— (будет обновлено после push)
+
+### Decisions and lessons learned
+- **Tailwind v4 + Shadow DOM — системная несовместимость.** `@property` не регистрируется в shadow tree → `border`, `outline`, `divide` утилиты не работают без ручного override. Это не наш баг, это архитектура Tailwind v4 и CSS Houdini. Workaround через `* { --tw-*: value }` — стандартная community рекомендация.
+- **`:root` vs `:host` в Shadow DOM** — spec'ификация CSS Scoping Module явно определяет что `:root` внутри shadow tree не матчит ничего. Все токены Tailwind/shadcn нужно runtime-переписывать на `:root, :host`. Альтернатива — модифицировать global.css в source, но это инвазивнее и влияет на main app.
+- **Closed vs open Shadow DOM** — closed mode ломает `composedPath` для external listeners. Это не очевидно из документации Shadow DOM, выясняется только при попытке сделать nested click-outside detection. Open mode следует использовать всегда если нет реальной security threat (extensions её обычно не имеют).
+- **Radix UI portals несовместимы с Shadow DOM** — все shadcn Dialog/DropdownMenu/Tooltip/Command/Popover/Select портируют content в light DOM body, где shadow стили не применяются. Для overlay нужны или custom компоненты, или forks shadcn без Portal. Button, Input, Checkbox — OK (без portals).
+- **Два animation frame перед captureVisibleTab** — один не хватает. React commit + DOM mutation в первом, browser paint cycle — во втором.
+- **Sentinel tabId в dual-context code** — грязный паттерн, но работает когда background может resolve'ить реальный tabId через sender.tab.id. Чистая альтернатива — два разных action-имени — не стоила бы усилий.
+- **`window.__mineOverlay` global api** — exposed from overlay-entry для access от других modules в том же isolated world (content.js, useClipperState через globalThis). Это shared state через window, анти-паттерн в «чистом» React/TS, но для content script isolated world — стандартная практика.
+- **Stable asset filenames — критично для cross-bundle references.** Window bundle генерирует `popup.css`, overlay fetch'ит его по фиксированному имени. Без `assetFileNames: () => "assets/popup.css"` имя содержало бы хеш, и overlay-entry не мог бы найти файл.
+- **Tailwind scan via `?inline`** — нестабильный pipeline. Предпочтительно шарить готовый CSS файл между сборками вместо запуска Tailwind в двух conflicting configs.
+
+---
+
 ## 10.04.2026 (evening) — Screenshot preview в дизайн-системе, bounds persistence, fixes
 
 ### Goal

@@ -7,6 +7,7 @@ import { ChannelList } from "./components/ChannelList";
 import { SaveButton } from "./components/SaveButton";
 import { ScreenshotPreview } from "./components/ScreenshotPreview";
 import { StatusBar } from "./components/StatusBar";
+import { VaultSelect } from "./components/VaultSelect";
 
 export function PopupApp() {
   const clipper = useClipperState();
@@ -58,19 +59,12 @@ export function PopupApp() {
   return (
     <div className="flex flex-col gap-2 p-3">
       <div className="space-y-2">
-        {/* Vault selector */}
         {clipper.knownVaults.length > 1 && (
-          <select
-            value={clipper.selectedVault ?? ""}
-            onChange={(e) => clipper.switchVault(e.target.value)}
-            className="w-full rounded-1 border border-border bg-background px-2 py-1 text-sm text-foreground"
-          >
-            {clipper.knownVaults.map((v) => (
-              <option key={v} value={v}>
-                {v.split("/").pop()}
-              </option>
-            ))}
-          </select>
+          <VaultSelect
+            value={clipper.selectedVault}
+            options={clipper.knownVaults}
+            onChange={clipper.switchVault}
+          />
         )}
 
         {metadata?.detectedType !== "image" && (

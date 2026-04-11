@@ -37,6 +37,15 @@ export default defineConfig({
     emptyDirBeforeWrite: true,
     rollupOptions: {
       input: path.resolve(__dirname, "extension/popup/index.html"),
+      output: {
+        // Stable name for the CSS bundle so overlay-entry can fetch it
+        // via chrome.runtime.getURL("dist/assets/popup.css"). The JS
+        // bundle still gets a hash — only CSS is pinned.
+        assetFileNames: (info) => {
+          if (info.name?.endsWith(".css")) return "assets/popup.css";
+          return "assets/[name]-[hash][extname]";
+        },
+      },
     },
   },
   optimizeDeps: {

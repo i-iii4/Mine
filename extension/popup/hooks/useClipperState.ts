@@ -94,20 +94,43 @@ export function useClipperState() {
   const vaultRef = useRef<string | null>(null);
 
   const captureScreenshot = useCallback(() => {
+    // Hide the overlay before capture so the clipper UI doesn't appear
+    // in the screenshot. In overlay context __mineOverlay is exposed by
+    // overlay-entry.tsx on the isolated-world window; in window-entry
+    // context it's undefined and we skip the hide step entirely.
+    const overlay = (globalThis as unknown as {
+      __mineOverlay?: { hide: () => void; show: () => void };
+    }).__mineOverlay;
+
+    function showAgain() {
+      if (overlay) {
+        // One animation frame so React + paint complete before we
+        // restore the overlay — avoids a visible flash mid-capture.
+        requestAnimationFrame(() => overlay.show());
+      }
+    }
+
     if (IS_CONTENT_SCRIPT_CONTEXT) {
-      // chrome.tabs is not exposed to content scripts — ask background
-      // to capture the viewport on our behalf.
-      chrome.runtime.sendMessage(
-        { target: "background", action: "captureForCrop" },
-        (resp) => {
-          if (chrome.runtime.lastError) {
-            showError(`Screenshot failed: ${chrome.runtime.lastError.message}`);
-            return;
-          }
-          if (resp?.ok && resp.dataUrl) setScreenshotDataUrl(resp.dataUrl);
-          else showError(resp?.error ?? "Screenshot capture failed");
-        },
-      );
+      overlay?.hide();
+      // Wait two animation frames: one for the host display:none to
+      // apply, one for the browser to paint without the overlay. Only
+      // then does captureVisibleTab see a clean viewport.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          chrome.runtime.sendMessage(
+            { target: "background", action: "captureForCrop" },
+            (resp) => {
+              showAgain();
+              if (chrome.runtime.lastError) {
+                showError(`Screenshot failed: ${chrome.runtime.lastError.message}`);
+                return;
+              }
+              if (resp?.ok && resp.dataUrl) setScreenshotDataUrl(resp.dataUrl);
+              else showError(resp?.error ?? "Screenshot capture failed");
+            },
+          );
+        });
+      });
       return;
     }
     chrome.tabs.captureVisibleTab(

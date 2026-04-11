@@ -23,6 +23,22 @@ const HOST_NAME = "com.localarena.clipper";
 const POPUP_DEFAULT_WIDTH = 360;
 const POPUP_DEFAULT_HEIGHT = 700;
 
+// chrome.storage.session defaults to TRUSTED_CONTEXTS only — the clipper
+// overlay runs inside a content-script isolated world which is untrusted,
+// so without this the overlay's init() would throw "Access to storage is
+// not allowed from this context" the first time it touches session storage.
+// Wrapped in synchronous try/catch: on browser forks (DIA/Arc/Brave) the
+// API may be missing entirely and throw on property access, which would
+// kill the whole service worker and silently disable action.onClicked.
+try {
+  const p = chrome.storage.session?.setAccessLevel?.({
+    accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS",
+  });
+  if (p && typeof p.catch === "function") p.catch(() => {});
+} catch (e) {
+  console.warn("[Mine] setAccessLevel unsupported:", e);
+}
+
 function isContentScriptCompatible(url) {
   if (!url) return false;
   return url.startsWith("http://") || url.startsWith("https://") || url.startsWith("file://");
@@ -64,7 +80,21 @@ async function openClipperUi(tab) {
 // commands manifest) automatically triggers this listener when
 // default_popup is absent, no separate handler needed.
 chrome.action.onClicked.addListener((tab) => {
-  openClipperUi(tab);
+  // Diagnostic: badge "•" confirms the listener fired. If you see the
+  // badge but no overlay, openClipperUi threw. If you don't see the
+  // badge, the service worker is dead or default_popup is still set.
+  try {
+    chrome.action.setBadgeText({ text: "•" });
+    chrome.action.setBadgeBackgroundColor({ color: "#22c55e" });
+    setTimeout(() => chrome.action.setBadgeText({ text: "" }), 1500);
+  } catch {}
+  openClipperUi(tab).catch((e) => {
+    console.error("[Mine] openClipperUi threw:", e);
+    try {
+      chrome.action.setBadgeText({ text: "ERR" });
+      chrome.action.setBadgeBackgroundColor({ color: "#dc2626" });
+    } catch {}
+  });
 });
 
 // ── Popup window bounds persistence ───────────────────────────────────────
@@ -292,13 +322,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // Crop mode: popup asks background to trigger overlay in the target tab.
-  // Must wait for the content script to acknowledge before resolving, so the
-  // popup only closes after the overlay is actually visible on the page.
+  // Crop mode: popup asks background to trigger the crop overlay on
+  // the page. Target tab is taken from the sender, not from msg.tabId —
+  // in content-script (overlay) context the caller passes a sentinel
+  // value (-1) because it doesn't know its own tabId, and background
+  // is the only place that can resolve it via sender.tab.id.
   if (msg.action === "startCropMode") {
-    const tabId = msg.tabId;
-    if (typeof tabId !== "number") {
-      sendResponse({ ok: false, error: "Missing tabId" });
+    const tabId = sender.tab?.id ?? (typeof msg.tabId === "number" && msg.tabId >= 0 ? msg.tabId : null);
+    if (tabId == null) {
+      sendResponse({ ok: false, error: "No target tab" });
       return true;
     }
     chrome.tabs.sendMessage(tabId, { action: "startCropOverlay" }, (resp) => {
