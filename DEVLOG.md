@@ -83,7 +83,7 @@ const closeClipper = useCallback(() => {
 Не обнаружено. Всё по списку правок пользователя.
 
 ### Push
-— (будет обновлено после push)
+`57ba2f9` Clipper overlay: tab-close fix, always-visible Crop/Retake, save progress bar
 
 ### Decisions and lessons learned
 - **`window.close()` в content-script context = close tab**, не close overlay. Isolated world shares `window` с main world — только JS global scope изолирован, DOM и windowProxy общие. Context-aware `closeClipper` теперь стандартный паттерн для overlay+window dual-context code.
