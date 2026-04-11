@@ -7,13 +7,15 @@
     "contextMenus",
     "activeTab",
     "nativeMessaging",
-    "storage"
+    "storage",
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
     "http://127.0.0.1/*"
   ],
   "action": {
-    "default_popup": "dist/index.html",
+    "default_title": "Mine Clipper",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
@@ -44,5 +46,14 @@
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "dist/fonts/Geist-Variable.woff2",
+        "dist/fonts/GeistMono-Variable.woff2"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

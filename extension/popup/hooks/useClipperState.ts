@@ -40,12 +40,18 @@ import {
   extractArticle,
   extractArticleAsync,
   getImageInfo,
+  CONTENT_SCRIPT_CONTEXT,
   type NativeRequest,
   type ChannelInfo,
   type PageMetadata,
   type ArticleData,
   type ContextMenuData,
 } from "../lib/messaging";
+
+// Detection: when PopupApp runs as a content-script overlay, chrome.tabs /
+// chrome.action are not exposed to that execution context. The window-entry
+// fallback (detached popup window) still has them.
+const IS_CONTENT_SCRIPT_CONTEXT = typeof chrome.tabs === "undefined";
 
 export type ClipType = "content" | "link" | "image" | "video" | "screenshot";
 export type PopupState = "loading" | "error" | "main";
@@ -88,6 +94,22 @@ export function useClipperState() {
   const vaultRef = useRef<string | null>(null);
 
   const captureScreenshot = useCallback(() => {
+    if (IS_CONTENT_SCRIPT_CONTEXT) {
+      // chrome.tabs is not exposed to content scripts — ask background
+      // to capture the viewport on our behalf.
+      chrome.runtime.sendMessage(
+        { target: "background", action: "captureForCrop" },
+        (resp) => {
+          if (chrome.runtime.lastError) {
+            showError(`Screenshot failed: ${chrome.runtime.lastError.message}`);
+            return;
+          }
+          if (resp?.ok && resp.dataUrl) setScreenshotDataUrl(resp.dataUrl);
+          else showError(resp?.error ?? "Screenshot capture failed");
+        },
+      );
+      return;
+    }
     chrome.tabs.captureVisibleTab(
       null as unknown as number,
       { format: "jpeg", quality: 85 },
@@ -115,7 +137,22 @@ export function useClipperState() {
   const startCropMode = useCallback(async () => {
     if (!cropSupported || tabIdRef.current === null) return;
 
-    // Persist entire popup state so we can rehydrate after the popup reopens
+    if (IS_CONTENT_SCRIPT_CONTEXT) {
+      // Overlay context: hide the clipper overlay, trigger the crop
+      // overlay in the same content script. React state stays alive in
+      // memory — no persist, no rehydrate, no toast. When crop completes,
+      // content.js calls window.__mineOverlay.show() which reveals us
+      // again, and dispatches a mine-crop-result event we listen to.
+      const overlay = (globalThis as unknown as { __mineOverlay?: { hide: () => void } }).__mineOverlay;
+      overlay?.hide();
+      chrome.runtime.sendMessage(
+        { target: "background", action: "startCropMode", tabId: tabIdRef.current },
+        () => void chrome.runtime.lastError,
+      );
+      return;
+    }
+
+    // Window-entry fallback: persist state + close popup + rehydrate on return.
     await chrome.storage.session.set({
       cropPendingState: {
         tabId: tabIdRef.current,
@@ -130,10 +167,6 @@ export function useClipperState() {
       },
     });
 
-    // Wait for background to confirm the overlay was successfully mounted in the
-    // content script before closing the popup. If we close too early, the
-    // chrome.tabs.sendMessage roundtrip inside background loses its sender
-    // context and the overlay never appears.
     const response = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
       chrome.runtime.sendMessage(
         {
@@ -152,8 +185,6 @@ export function useClipperState() {
     });
 
     if (!response.ok) {
-      // Overlay didn't start — common causes: stale content script after
-      // extension reload, or chrome:// page slipping past cropSupported check.
       await chrome.storage.session.remove("cropPendingState");
       showError(response.error ?? "Failed to start crop mode. Try reloading the tab.");
       return;
@@ -171,6 +202,17 @@ export function useClipperState() {
     screenshotDataUrl,
   ]);
 
+  // Overlay context: listen for crop result event dispatched by content.js
+  useEffect(() => {
+    if (!IS_CONTENT_SCRIPT_CONTEXT) return;
+    function onCropResult(e: Event) {
+      const { detail } = e as CustomEvent<{ dataUrl?: string }>;
+      if (detail?.dataUrl) setScreenshotDataUrl(detail.dataUrl);
+    }
+    window.addEventListener("mine-crop-result", onCropResult);
+    return () => window.removeEventListener("mine-crop-result", onCropResult);
+  }, []);
+
   // --- Init ---
 
   useEffect(() => {
@@ -179,7 +221,11 @@ export function useClipperState() {
 
   async function init() {
     try {
-      chrome.action.setBadgeText({ text: "" });
+      // chrome.action is a service-worker API and is not exposed to the
+      // content-script isolated world where the overlay runs.
+      if (chrome.action?.setBadgeText) {
+        chrome.action.setBadgeText({ text: "" });
+      }
 
       const stored = await chrome.storage.local.get("recentChannels");
       const recent = (stored.recentChannels as string[]) ?? [];
@@ -255,10 +301,13 @@ export function useClipperState() {
           setScreenshotDataUrl(pending.screenshotDataUrl);
         }
 
-        // Re-check crop capability for the same tab
-        const tabUrl = pending.tabId !== null
-          ? (await chrome.tabs.get(pending.tabId).catch(() => null))?.url ?? null
-          : null;
+        // Re-check crop capability for the same tab (window-entry only —
+        // content-script overlay doesn't use this rehydrate path at all)
+        let tabUrl: string | null = null;
+        if (!IS_CONTENT_SCRIPT_CONTEXT && pending.tabId !== null && chrome.tabs?.get) {
+          const t = await chrome.tabs.get(pending.tabId).catch(() => null);
+          tabUrl = t?.url ?? null;
+        }
         applyCropCapability(tabUrl);
 
         setState("main");
@@ -267,26 +316,42 @@ export function useClipperState() {
 
       const ctxData = await getContextMenuData();
 
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id) {
-        showError("Cannot access current tab");
-        return;
+      // Resolve the target tab: in content-script context we ARE the tab,
+      // so we use the sentinel tabId and read URL/title from window+document.
+      // In window-entry (detached popup) context we query Chrome for the
+      // currently active tab.
+      let tabId: number;
+      let tabUrl: string | undefined;
+      let tabTitle: string | undefined;
+      if (IS_CONTENT_SCRIPT_CONTEXT) {
+        tabId = CONTENT_SCRIPT_CONTEXT;
+        tabUrl = window.location.href;
+        tabTitle = document.title;
+      } else {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) {
+          showError("Cannot access current tab");
+          return;
+        }
+        tabId = tab.id;
+        tabUrl = tab.url;
+        tabTitle = tab.title;
       }
-      tabIdRef.current = tab.id;
-      applyCropCapability(tab.url ?? null);
+      tabIdRef.current = tabId;
+      applyCropCapability(tabUrl ?? null);
 
       const [meta, article] = await Promise.all([
-        extractMetadata(tab.id),
-        extractArticle(tab.id),
+        extractMetadata(tabId),
+        extractArticle(tabId),
       ]);
 
       // Apply tab fallbacks
-      if (!meta.url && tab.url) meta.url = tab.url;
-      if (!meta.title && tab.title) meta.title = tab.title;
+      if (!meta.url && tabUrl) meta.url = tabUrl;
+      if (!meta.title && tabTitle) meta.title = tabTitle;
 
       // Apply context menu overrides
       if (ctxData) {
-        await applyContextMenu(ctxData, meta, tab.id);
+        await applyContextMenu(ctxData, meta, tabId);
       }
 
       // Deduplicate images with identical alt text (e.g. OG hero + same image in body)
@@ -315,9 +380,9 @@ export function useClipperState() {
       // Background: fetch async article for video (YouTube transcript) and Twitter (syndication API)
       const needsAsync = meta.detectedType === "video"
         || (meta.detectedType === "article" && !article.content);
-      if (needsAsync && tab.id) {
+      if (needsAsync) {
         setArticleLoading(true);
-        extractArticleAsync(tab.id).then((asyncArticle) => {
+        extractArticleAsync(tabId).then((asyncArticle) => {
           if (asyncArticle.content) {
             setArticleData(asyncArticle);
             // Update title from async data (Twitter/Instagram return better titles than og:title)

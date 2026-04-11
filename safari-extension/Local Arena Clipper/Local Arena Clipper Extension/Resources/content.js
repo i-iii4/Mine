@@ -519,10 +519,15 @@
           },
         };
 
-        chrome.runtime.sendMessage({
+        // Write preloaded data to session storage, then show the overlay.
+        // useClipperState will pick this up in init() via preloadedClipData.
+        await chrome.storage.session.set({ preloadedClipData: preloadData });
+        // Ask background to inject the overlay bundle and show it.
+        // Background will call executeScript({files: ["dist/overlay.js"]})
+        // which defines window.__mineOverlay, then we receive the show message.
+        await chrome.runtime.sendMessage({
           target: "background",
-          action: "openClipperWithData",
-          data: preloadData,
+          action: "showOverlayInThisTab",
         });
 
         btn.style.opacity = "1";
@@ -724,9 +729,23 @@
   }
 
   function sendCropResult(payload) {
-    // Show on-page toast immediately on success — chrome.action.openPopup() is
-    // unreliable in MV3, so we always ask the user to click the extension icon.
-    // The popup rehydrates full state (tags, title, vault) from chrome.storage.session.
+    // Restore clipper overlay (hidden on crop start). In the overlay
+    // architecture the React state is still live — we just toggle the
+    // host's display:none, no rehydrate needed, no toast needed.
+    if (window.__mineOverlay) {
+      window.__mineOverlay.show();
+      // Tell the overlay to accept the new cropped screenshot via a
+      // custom event dispatched on its isolated-world window.
+      if (payload.status === "done" && payload.dataUrl) {
+        window.dispatchEvent(new CustomEvent("mine-crop-result", {
+          detail: { dataUrl: payload.dataUrl },
+        }));
+      }
+      return;
+    }
+    // Fallback path (detached window): persist result + show toast so
+    // user can reopen detached popup manually (used when overlay isn't
+    // available, e.g. after chrome:// navigation that killed content script).
     if (payload.status === "done") {
       showCropToast("Screenshot ready — click the Mine icon to save");
     }
@@ -993,24 +1012,46 @@
     }
 
     if (msg.action === "getImageInfo") {
-      // Find the image element at the given src
-      const imgs = document.querySelectorAll("img");
-      for (const img of imgs) {
-        if (img.src === msg.src || img.currentSrc === msg.src) {
-          sendResponse({
-            src: img.src,
-            alt: img.alt || null,
-            title: img.title || null,
-            width: img.naturalWidth || null,
-            height: img.naturalHeight || null,
-          });
-          return true;
-        }
-      }
-      sendResponse({ src: msg.src, alt: null, title: null, width: null, height: null });
+      sendResponse(getImageInfoBySrc(msg.src));
       return true;
     }
 
     return false;
   });
+
+  function getImageInfoBySrc(src) {
+    const imgs = document.querySelectorAll("img");
+    for (const img of imgs) {
+      if (img.src === src || img.currentSrc === src) {
+        return {
+          src: img.src,
+          alt: img.alt || null,
+          title: img.title || null,
+          width: img.naturalWidth || null,
+          height: img.naturalHeight || null,
+        };
+      }
+    }
+    return { src, alt: null, title: null, width: null, height: null };
+  }
+
+  // Expose extractors to other scripts running in the same content-script
+  // isolated world (e.g., the overlay entry injected via
+  // chrome.scripting.executeScript). They can call these directly without
+  // round-tripping through chrome.runtime.sendMessage → background → tabs.
+  //
+  // The isolated world `window` is shared between all scripts injected
+  // into the same frame by this extension, so this assignment is visible
+  // from overlay.js as `window.__mineClipper`.
+  window.__mineClipper = {
+    extractMetadata: () => {
+      const meta = extractMetadata();
+      meta.detectedType = detectType(meta);
+      meta.isArticle = isArticlePage(meta);
+      return meta;
+    },
+    extractArticle,
+    extractArticleAsync,
+    getImageInfo: getImageInfoBySrc,
+  };
 })();

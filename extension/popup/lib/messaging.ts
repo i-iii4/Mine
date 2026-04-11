@@ -98,38 +98,58 @@ export interface ArticleData {
   excerpt: string;
 }
 
-export async function extractMetadata(tabId: number): Promise<PageMetadata> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      resolve({
-        url: "",
-        title: "",
-        description: "",
-        image: null,
-        author: null,
-        ogType: null,
-        favicon: null,
-        selection: "",
-        detectedType: "link",
-        isArticle: false,
-      });
-    }, 5_000);
+// Extractors work in two contexts:
+//
+//   - Window context (detached popup fallback, tabId known): dispatch via
+//     chrome.tabs.sendMessage(tabId, ...) → content.js message handler.
+//
+//   - Content-script context (overlay entry injected into the active tab):
+//     call window.__mineClipper.extractMetadata(document) directly. No
+//     round-trip, no messaging, since overlay-entry and content.js share
+//     the same isolated-world `window`.
+//
+// The TAB_ID sentinel -1 means "we're running inside the content script".
 
+export const CONTENT_SCRIPT_CONTEXT = -1;
+
+const EMPTY_METADATA: PageMetadata = {
+  url: "",
+  title: "",
+  description: "",
+  image: null,
+  author: null,
+  ogType: null,
+  favicon: null,
+  selection: "",
+  detectedType: "link",
+  isArticle: false,
+};
+
+const EMPTY_ARTICLE: ArticleData = { title: "", content: "", byline: null, excerpt: "" };
+
+interface MineContentHelpers {
+  extractMetadata: () => PageMetadata;
+  extractArticle: () => ArticleData;
+  extractArticleAsync: () => Promise<ArticleData>;
+  getImageInfo: (src: string) => { src: string; alt: string | null; title: string | null; width: number | null; height: number | null };
+}
+
+function contentHelpers(): MineContentHelpers | null {
+  const w = globalThis as unknown as { __mineClipper?: MineContentHelpers };
+  return w.__mineClipper ?? null;
+}
+
+export async function extractMetadata(tabId: number): Promise<PageMetadata> {
+  if (tabId === CONTENT_SCRIPT_CONTEXT) {
+    const helpers = contentHelpers();
+    return helpers ? helpers.extractMetadata() : EMPTY_METADATA;
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ ...EMPTY_METADATA }), 5_000);
     chrome.tabs.sendMessage(tabId, { action: "extractMetadata" }, (resp) => {
       clearTimeout(timer);
       if (chrome.runtime.lastError || !resp) {
-        resolve({
-          url: "",
-          title: "",
-          description: "",
-          image: null,
-          author: null,
-          ogType: null,
-          favicon: null,
-          selection: "",
-          detectedType: "link",
-          isArticle: false,
-        });
+        resolve({ ...EMPTY_METADATA });
       } else {
         resolve(resp as PageMetadata);
       }
@@ -138,27 +158,29 @@ export async function extractMetadata(tabId: number): Promise<PageMetadata> {
 }
 
 export async function extractArticle(tabId: number): Promise<ArticleData> {
+  if (tabId === CONTENT_SCRIPT_CONTEXT) {
+    const helpers = contentHelpers();
+    return helpers ? helpers.extractArticle() : { ...EMPTY_ARTICLE };
+  }
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      resolve({ title: "", content: "", byline: null, excerpt: "" });
-    }, 10_000);
-
+    const timer = setTimeout(() => resolve({ ...EMPTY_ARTICLE }), 10_000);
     chrome.tabs.sendMessage(tabId, { action: "extractArticle" }, (resp) => {
       clearTimeout(timer);
-      resolve((resp as ArticleData) ?? { title: "", content: "", byline: null, excerpt: "" });
+      resolve((resp as ArticleData) ?? { ...EMPTY_ARTICLE });
     });
   });
 }
 
 export async function extractArticleAsync(tabId: number): Promise<ArticleData> {
+  if (tabId === CONTENT_SCRIPT_CONTEXT) {
+    const helpers = contentHelpers();
+    return helpers ? await helpers.extractArticleAsync() : { ...EMPTY_ARTICLE };
+  }
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      resolve({ title: "", content: "", byline: null, excerpt: "" });
-    }, 30_000);
-
+    const timer = setTimeout(() => resolve({ ...EMPTY_ARTICLE }), 30_000);
     chrome.tabs.sendMessage(tabId, { action: "extractArticleAsync" }, (resp) => {
       clearTimeout(timer);
-      resolve((resp as ArticleData) ?? { title: "", content: "", byline: null, excerpt: "" });
+      resolve((resp as ArticleData) ?? { ...EMPTY_ARTICLE });
     });
   });
 }
@@ -193,9 +215,18 @@ export async function getImageInfo(
   tabId: number,
   src: string,
 ): Promise<{ alt?: string; width?: number; height?: number }> {
+  if (tabId === CONTENT_SCRIPT_CONTEXT) {
+    const helpers = contentHelpers();
+    if (!helpers) return {};
+    const info = helpers.getImageInfo(src);
+    return {
+      alt: info.alt ?? undefined,
+      width: info.width ?? undefined,
+      height: info.height ?? undefined,
+    };
+  }
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve({}), 3_000);
-
     chrome.tabs.sendMessage(tabId, { action: "getImageInfo", src }, (resp) => {
       clearTimeout(timer);
       resolve((resp as { alt?: string; width?: number; height?: number }) ?? {});

@@ -1,11 +1,71 @@
-// Background service worker: context menus, native messaging bridge.
-// Connects popup/content scripts to the native host via stdio.
+// Background service worker: context menus, native messaging bridge,
+// and routing for the clipper UI between two contexts:
+//
+//   - Overlay (primary): injected content script bundle (overlay.js)
+//     mounts React <PopupApp /> inside a closed Shadow DOM on the active
+//     tab. No window chrome, no detached window — like Are.na/mymind.
+//
+//   - Detached window (fallback): chrome.windows.create with
+//     dist/index.html, used when the active tab is a service page
+//     (chrome://, chrome-extension://, view-source:, new tab) where
+//     content scripts cannot run, or when overlay injection fails
+//     (restrictive CSP, sandboxed frame).
+//
+// Routing happens in openClipperUi(tab): tries overlay first, falls
+// back to detached window. Called from:
+//   - chrome.action.onClicked (click extension icon)
+//   - chrome.contextMenus.onClicked (right-click → Save ... to Mine)
+//   - chrome.commands.onCommand (Alt+A shortcut)
 
 const HOST_NAME = "com.localarena.clipper";
 // Must match extension/popup/popup-layout.css body { width: 360px }
 // so detached window has no horizontal gap next to the content.
 const POPUP_DEFAULT_WIDTH = 360;
 const POPUP_DEFAULT_HEIGHT = 700;
+
+function isContentScriptCompatible(url) {
+  if (!url) return false;
+  return url.startsWith("http://") || url.startsWith("https://") || url.startsWith("file://");
+}
+
+async function openClipperUi(tab) {
+  const tabId = tab?.id;
+  const tabUrl = tab?.url;
+
+  if (tabId && isContentScriptCompatible(tabUrl)) {
+    try {
+      // Inject the overlay bundle into the tab's isolated world.
+      // Re-executing is safe — overlay-entry has a single-instance guard
+      // that re-focuses the existing overlay instead of re-mounting.
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["dist/overlay.js"],
+      });
+      await chrome.tabs.sendMessage(tabId, { action: "showClipperOverlay" });
+      return;
+    } catch (err) {
+      console.warn("[Mine] overlay injection failed, falling back to window", err);
+      // fallthrough to detached window
+    }
+  }
+
+  // Fallback: detached popup window (service pages, CSP-restricted)
+  const popupUrl = chrome.runtime.getURL("dist/index.html");
+  const bounds = await resolvePopupBounds();
+  const win = await chrome.windows.create({
+    url: popupUrl,
+    type: "popup",
+    ...bounds,
+  });
+  if (win?.id) rememberPopupWindow(win.id);
+}
+
+// Icon click → open clipper UI. Alt+A shortcut (_execute_action in
+// commands manifest) automatically triggers this listener when
+// default_popup is absent, no separate handler needed.
+chrome.action.onClicked.addListener((tab) => {
+  openClipperUi(tab);
+});
 
 // ── Popup window bounds persistence ───────────────────────────────────────
 //
@@ -106,7 +166,8 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  // Store context info for the popup to retrieve
+  // Store context info — useClipperState will read it via getContextMenuData()
+  // on mount and apply it to metadata (type=image from srcUrl, etc.)
   const context = {
     menuItemId: info.menuItemId,
     srcUrl: info.srcUrl || null,
@@ -116,31 +177,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   };
   await chrome.storage.session.set({ contextMenuData: context });
 
-  // contextMenus.onClicked is one of the privileged contexts where
-  // chrome.action.openPopup() accepts the user gesture (Chrome 127+),
-  // so we try it first — this opens the native dropdown popup under the
-  // extension icon. In DIA/Safari or older Chrome this falls back to
-  // windows.create with a standalone window.
-  let opened = false;
-  if (chrome.action?.openPopup) {
-    try {
-      await chrome.action.openPopup();
-      opened = true;
-    } catch {
-      opened = false;
-    }
-  }
-
-  if (!opened) {
-    const popupUrl = chrome.runtime.getURL("dist/index.html");
-    const bounds = await resolvePopupBounds();
-    const win = await chrome.windows.create({
-      url: popupUrl,
-      type: "popup",
-      ...bounds,
-    });
-    if (win?.id) rememberPopupWindow(win.id);
-  }
+  openClipperUi(tab);
 });
 
 // ── Native messaging ──────────────────────────────────────────────────────
@@ -230,18 +267,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true; // async response
   }
 
-  if (msg.action === "openClipperWithData") {
-    chrome.storage.session.set({ preloadedClipData: msg.data }).then(async () => {
-      const popupUrl = chrome.runtime.getURL("dist/index.html");
-      const bounds = await resolvePopupBounds();
-      const win = await chrome.windows.create({
-        url: popupUrl,
-        type: "popup",
-        ...bounds,
-      });
-      if (win?.id) rememberPopupWindow(win.id);
-    });
-    sendResponse({ ok: true });
+  // Content script asks background to inject the overlay bundle into its
+  // own tab and show it. Used by Instagram feed clip button where
+  // content script already has preloadedClipData in storage.session.
+  if (msg.action === "showOverlayInThisTab") {
+    const tab = sender.tab;
+    if (!tab) {
+      sendResponse({ ok: false, error: "No sender tab" });
+      return true;
+    }
+    openClipperUi(tab).then(
+      () => sendResponse({ ok: true }),
+      (err) => sendResponse({ ok: false, error: String(err) }),
+    );
     return true;
   }
 
