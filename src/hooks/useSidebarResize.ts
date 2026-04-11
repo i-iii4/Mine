@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, startTransition } from "react";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -7,6 +7,7 @@ const DEFAULT_WIDTH = 300;
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 600;
 const COLLAPSE_THRESHOLD = 100;
+const CSS_VAR = "--sidebar-width";
 
 // ─── Persistence ────────────────────────────────────────────────────────────
 
@@ -40,10 +41,14 @@ function persist(width: number, collapsed: boolean): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ width, collapsed }));
 }
 
+function writeCssVar(width: number): void {
+  document.documentElement.style.setProperty(CSS_VAR, `${width}px`);
+}
+
 // ─── Hook ───────────────────────────────────────────────────────────────────
 
 export interface UseSidebarResizeReturn {
-  /** Current sidebar width in px. 0 when collapsed. */
+  /** Width used for layout logic (compact mode, Grid reflow). RAF-throttled during drag. */
   width: number;
   /** Whether the sidebar is collapsed */
   collapsed: boolean;
@@ -63,20 +68,34 @@ export function useSidebarResize(): UseSidebarResizeReturn {
   const [storedWidth, setStoredWidth] = useState(() => loadPersisted().width);
   const [collapsed, setCollapsed] = useState(() => loadPersisted().collapsed);
   const [isResizing, setIsResizing] = useState(false);
-  // Live width during drag — can go below MIN_WIDTH (down to 0)
-  const [dragWidth, setDragWidth] = useState(0);
+  const [dragWidth, setDragWidth] = useState(() => {
+    const { width, collapsed: c } = loadPersisted();
+    return c ? 0 : width;
+  });
 
   const startRef = useRef({ startX: 0, startWidth: 0 });
+  const rafIdRef = useRef<number | null>(null);
+  const pendingWidthRef = useRef(0);
 
   // Keep a ref in sync for toggleCollapsed to read fresh width
   const storedWidthRef = useRef(storedWidth);
   useEffect(() => { storedWidthRef.current = storedWidth; }, [storedWidth]);
 
-  // During resize: show live dragWidth. Otherwise: storedWidth or 0 (collapsed).
-  const width = isResizing ? Math.max(0, dragWidth) : collapsed ? 0 : storedWidth;
+  // Display width drives React-side consumers (compact flag, Grid reflow).
+  // The actual sidebar/handle layout uses var(--sidebar-width), updated synchronously
+  // in updateResize so the divider follows the cursor at full refresh rate.
+  const width = isResizing ? dragWidth : collapsed ? 0 : storedWidth;
+
+  // Mount + sync: seed / update CSS variable before paint.
+  // useLayoutEffect runs after commit but before browser paint, so first frame
+  // always shows the correct sidebar width with no flicker.
+  useLayoutEffect(() => {
+    if (!isResizing) writeCssVar(width);
+  }, [width, isResizing]);
 
   const startResize = useCallback((startX: number, startWidth: number) => {
     startRef.current = { startX, startWidth };
+    pendingWidthRef.current = startWidth;
     setDragWidth(startWidth);
     setIsResizing(true);
     document.body.classList.add("sidebar-resizing");
@@ -85,28 +104,47 @@ export function useSidebarResize(): UseSidebarResizeReturn {
   const updateResize = useCallback((clientX: number) => {
     const { startX, startWidth } = startRef.current;
     const raw = startWidth + (clientX - startX);
-    // Allow width to go to 0 during drag — collapse decision is deferred to endResize
-    setDragWidth(clamp(raw, 0, MAX_WIDTH));
+    const next = clamp(raw, 0, MAX_WIDTH);
+
+    // Synchronous DOM write: divider line follows cursor at 120fps,
+    // bypassing React reconciliation entirely.
+    writeCssVar(next);
+    pendingWidthRef.current = next;
+
+    // Async React-state commit: RAF-throttled + startTransition so Grid
+    // reflow happens lazily without blocking pointer events.
+    if (rafIdRef.current === null) {
+      rafIdRef.current = requestAnimationFrame(() => {
+        rafIdRef.current = null;
+        const pending = pendingWidthRef.current;
+        startTransition(() => {
+          setDragWidth(pending);
+        });
+      });
+    }
   }, []);
 
   const endResize = useCallback(() => {
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
     setIsResizing(false);
     document.body.classList.remove("sidebar-resizing");
 
-    // Read the latest dragWidth via functional setState pattern
-    setDragWidth((finalWidth) => {
-      if (finalWidth < COLLAPSE_THRESHOLD) {
-        // Collapse — keep storedWidth unchanged for re-expand
-        setCollapsed(true);
-        persist(storedWidthRef.current, true);
-      } else {
-        const clamped = clamp(finalWidth, MIN_WIDTH, MAX_WIDTH);
-        setCollapsed(false);
-        setStoredWidth(clamped);
-        persist(clamped, false);
-      }
-      return finalWidth;
-    });
+    const finalWidth = pendingWidthRef.current;
+    if (finalWidth < COLLAPSE_THRESHOLD) {
+      // Collapse — keep storedWidth unchanged for re-expand.
+      setCollapsed(true);
+      setDragWidth(storedWidthRef.current);
+      persist(storedWidthRef.current, true);
+    } else {
+      const clamped = clamp(finalWidth, MIN_WIDTH, MAX_WIDTH);
+      setCollapsed(false);
+      setStoredWidth(clamped);
+      setDragWidth(clamped);
+      persist(clamped, false);
+    }
   }, []);
 
   const toggleCollapsed = useCallback(() => {
@@ -115,6 +153,15 @@ export function useSidebarResize(): UseSidebarResizeReturn {
       persist(storedWidthRef.current, next);
       return next;
     });
+  }, []);
+
+  // Cleanup pending RAF on unmount
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+    };
   }, []);
 
   return { width, collapsed, isResizing, startResize, updateResize, endResize, toggleCollapsed };

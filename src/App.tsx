@@ -732,7 +732,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       />
 
       <SidebarResizeHandle
-        sidebarWidth={sidebarWidth}
         isResizing={sidebarResizing}
         disabled={activeDragBlock !== null || activeDragTag !== null}
         onResizeStart={startResize}

@@ -102,7 +102,7 @@ export function Sidebar({
         collapsed && "overflow-hidden",
       )}
       style={{
-        width,
+        width: "var(--sidebar-width)",
         transition: isResizing ? "none" : "width 200ms ease",
       }}
     >

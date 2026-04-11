@@ -5,7 +5,6 @@ const DRAG_THRESHOLD = 4;
 const TITLEBAR_HEIGHT = 32;
 
 interface SidebarResizeHandleProps {
-  sidebarWidth: number;
   isResizing: boolean;
   disabled: boolean;
   onResizeStart: (startX: number, startWidth: number) => void;
@@ -14,8 +13,13 @@ interface SidebarResizeHandleProps {
   onToggleCollapsed: () => void;
 }
 
+function readSidebarWidth(): number {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue("--sidebar-width");
+  const parsed = parseFloat(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export function SidebarResizeHandle({
-  sidebarWidth,
   isResizing,
   disabled,
   onResizeStart,
@@ -25,6 +29,7 @@ export function SidebarResizeHandle({
 }: SidebarResizeHandleProps) {
   const [hovered, setHovered] = useState(false);
   const startXRef = useRef(0);
+  const startWidthRef = useRef(0);
   const didDragRef = useRef(false);
 
   const handlePointerDown = useCallback(
@@ -32,6 +37,7 @@ export function SidebarResizeHandle({
       if (disabled) return;
       e.currentTarget.setPointerCapture(e.pointerId);
       startXRef.current = e.clientX;
+      startWidthRef.current = readSidebarWidth();
       didDragRef.current = false;
     },
     [disabled],
@@ -44,13 +50,13 @@ export function SidebarResizeHandle({
 
       if (!didDragRef.current && Math.abs(delta) > DRAG_THRESHOLD) {
         didDragRef.current = true;
-        onResizeStart(startXRef.current, sidebarWidth);
+        onResizeStart(startXRef.current, startWidthRef.current);
       }
       if (didDragRef.current) {
         onResizeUpdate(e.clientX);
       }
     },
-    [onResizeStart, onResizeUpdate, sidebarWidth],
+    [onResizeStart, onResizeUpdate],
   );
 
   const handlePointerUp = useCallback(
@@ -78,7 +84,7 @@ export function SidebarResizeHandle({
       style={{
         top: TITLEBAR_HEIGHT,
         bottom: 0,
-        left: sidebarWidth,
+        left: "var(--sidebar-width)",
         width: 14,
       }}
       onPointerEnter={() => setHovered(true)}
