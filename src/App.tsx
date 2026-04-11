@@ -701,8 +701,6 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       onDragCancel={handleDndCancel}
     >
     <div className="flex h-screen w-screen flex-col bg-background text-foreground">
-      {/* HMR test marker — TEMPORARY, remove after sync verification */}
-      <div className="fixed right-4 top-10 z-50 h-16 w-16 bg-red-500" />
       {/* Top toolbar */}
       <header
         data-tauri-drag-region
