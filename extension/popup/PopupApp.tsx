@@ -16,6 +16,31 @@ export function PopupApp() {
     null,
   );
 
+  // Context-aware close: in the overlay (content-script isolated world)
+  // `window.close()` would try to close the whole tab because `window`
+  // refers to the page's own windowProxy. The overlay entry exposes
+  // __mineOverlay.close() which just unmounts the overlay host.
+  // In window-entry fallback (detached popup window) __mineOverlay is
+  // undefined and window.close() correctly closes the popup window.
+  const closeClipper = useCallback(() => {
+    const overlay = (globalThis as unknown as {
+      __mineOverlay?: { close: () => void };
+    }).__mineOverlay;
+    if (overlay) overlay.close();
+    else window.close();
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    const result = await clipper.save();
+    if (!result) return;
+    if (result.ok) {
+      setStatus({ message: "Saved!", type: "success" });
+      setTimeout(closeClipper, 1200);
+    } else {
+      setStatus({ message: result.error ?? "Failed to save", type: "error" });
+    }
+  }, [clipper.save, closeClipper]);
+
   // Cmd+Enter to save, Esc to close
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -24,23 +49,12 @@ export function PopupApp() {
         handleSave();
       }
       if (e.key === "Escape") {
-        window.close();
+        closeClipper();
       }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  });
-
-  const handleSave = useCallback(async () => {
-    const result = await clipper.save();
-    if (!result) return;
-    if (result.ok) {
-      setStatus({ message: "Saved!", type: "success" });
-      setTimeout(() => window.close(), 1200);
-    } else {
-      setStatus({ message: result.error ?? "Failed to save", type: "error" });
-    }
-  }, [clipper.save]);
+  }, [handleSave, closeClipper]);
 
   if (clipper.state === "loading") {
     return <LoadingState />;

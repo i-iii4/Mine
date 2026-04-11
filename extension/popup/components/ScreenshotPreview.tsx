@@ -15,36 +15,38 @@ export function ScreenshotPreview({
   cropSupported,
 }: ScreenshotPreviewProps) {
   return (
-    <div className="group relative rounded-1 border border-border bg-accent">
-      {/* Overlay — затенение при hover (токен из дизайн-системы) */}
-      <div className="pointer-events-none absolute inset-0 z-[4] bg-[var(--card-hover-overlay)] opacity-0 transition-opacity group-hover:opacity-100" />
-
-      <img
-        src={dataUrl}
-        alt=""
-        className="mx-auto block max-h-[220px] w-auto max-w-full rounded-1 object-contain"
-      />
-
-      {/* Нижний ряд: Crop Area (лево) + Retake (право) — паттерн CardHoverMenu */}
-      <div className="absolute bottom-2 left-2 right-2 z-[5] flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+    <div className="space-y-2">
+      <div className="rounded-1 border border-border bg-accent">
+        <img
+          src={dataUrl}
+          alt=""
+          className="mx-auto block max-h-[220px] w-auto max-w-full rounded-1 object-contain"
+        />
+      </div>
+      {/* Always visible (unlike main app CardHoverMenu which reveals on
+          hover) because the screenshot preview is the whole point of
+          this clip type — the user must always be able to retake or
+          crop without discovery. Standard Button variant="default"
+          size="xs" with built-in hover (outline inset). */}
+      <div className="flex gap-2">
         <Button
           variant="default"
-          size="default"
+          size="xs"
           className="flex-1"
           onClick={onCrop}
           disabled={!cropSupported}
         >
           Crop Area
-          <Crop className="size-3" />
+          <Crop />
         </Button>
         <Button
           variant="default"
-          size="default"
+          size="xs"
           className="flex-1"
           onClick={onRetake}
         >
           Retake
-          <Camera className="size-3" />
+          <Camera />
         </Button>
       </div>
     </div>

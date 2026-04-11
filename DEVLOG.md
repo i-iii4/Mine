@@ -7,6 +7,13 @@
 - If a push was made — include commit hash
 - Each entry must be self-contained and understandable
   without additional context by someone reading it for the first time
+- **Multi-agent sync**: when multiple Claude Code agents work in parallel
+  worktrees, this file is the shared synchronization point. Each agent
+  appends its own entries at the top. Before starting a session, read
+  the top 2-3 entries to see what other agents have done. Before making
+  structural changes, check DEVLOG for reservations on files/areas.
+  When claiming a scope, add a "**Claimed:**" line at the top of a
+  running entry so the other agent sees what's in flight.
 
 ## Entry template
 
@@ -25,6 +32,64 @@ what was verified, what works
 commit hash + title
 ### Decisions and lessons learned
 if any
+
+---
+
+## 11.04.2026 (late) — Tab-close фикс, always-visible кнопки, progress bar, parallel worktree
+
+### Goal
+Довести overlay clipper до production-ready состояния: устранить крэш («вкладка закрывается после save»), сделать кнопки Crop/Retake всегда видимыми в дизайн-системе, заменить spinner на progress bar во время сохранения, настроить инфраструктуру для параллельной работы двух агентов.
+
+### Actually completed
+
+**1. Context-aware close (PopupApp.tsx)**
+`window.close()` в handleSave и Esc handler в content-script context **закрывает всю вкладку**, потому что `window` в isolated world — это тот же windowProxy что у страницы. Добавлен helper `closeClipper`:
+```ts
+const closeClipper = useCallback(() => {
+  const overlay = (globalThis as unknown as {
+    __mineOverlay?: { close: () => void };
+  }).__mineOverlay;
+  if (overlay) overlay.close();
+  else window.close();
+}, []);
+```
+В overlay context → `__mineOverlay.close()` (unmount shadow host), в window-entry fallback — старое `window.close()` (закрыть detached popup). Используется в handleSave (успешный save), Esc keyboard handler.
+
+**2. Crop/Retake кнопки — always-visible, size xs (ScreenshotPreview.tsx)**
+Убран `group-hover:opacity-100` + absolute positioning из bottom bar. Кнопки переехали под картинку в отдельный `flex gap-2` ряд, всегда видимы. Размер `xs` (24px) вместо `default` (32px). Стандартный Button variant="default" — hover работает через `--tw-outline-style: solid` override из предыдущей записи.
+
+Контраст с main app: в `CardHoverMenu` кнопки через hover reveal (минимально инвазивно для масштабной карточной сетки). В popup clipper'e превью — ключевой элемент UI, пользователь всегда должен видеть контролы без discovery.
+
+**3. Indeterminate progress bar (SaveButton.tsx + popup-layout.css)**
+При `saving === true` кнопка Save заменяется на анимированный progress bar — h-8 (тот же размер что кнопка), rounded-1, `bg-component-fill` фон, слайдящийся индикатор `bg-component-fill-hover` шириной 1/3 контейнера. Keyframe `mine-indeterminate-progress` в popup-layout.css:
+```css
+@keyframes mine-indeterminate-progress {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.mine-progress-indicator {
+  animation: mine-indeterminate-progress 1.4s ease-in-out infinite;
+}
+```
+Заменяет бывший spinner. Indeterminate (без value), потому что native host не сообщает прогресс. Токены дизайн-системы.
+
+**4. Параллельный worktree для двух агентов**
+Создан `/Users/i_iii/Проекты/local-arena-b/` через `git worktree add -b parallel/b origin/main`. Shared `.git` объекты, независимые `node_modules`/`target`/`dist`. Ветка `parallel/b` запушена на origin, tracked. Второй агент стартует через `cd /Users/i_iii/Проекты/local-arena-b && claude` — изолированный контекст, но доступ ко всему shared repo.
+
+**5. DEVLOG как multi-agent sync point**
+Добавлено правило в начале файла: DEVLOG — shared synchronization point между параллельными агентами. Каждый агент читает топ записи перед стартом сессии, добавляет свои сверху, объявляет scope через `**Claimed:**` строку в running entry. Это предотвращает коллизии когда два агента трогают одни файлы.
+
+### Deviations from plan
+Не обнаружено. Всё по списку правок пользователя.
+
+### Push
+— (будет обновлено после push)
+
+### Decisions and lessons learned
+- **`window.close()` в content-script context = close tab**, не close overlay. Isolated world shares `window` с main world — только JS global scope изолирован, DOM и windowProxy общие. Context-aware `closeClipper` теперь стандартный паттерн для overlay+window dual-context code.
+- **Indeterminate progress через CSS keyframe** проще и честнее чем fake advancement через useState+setInterval. Один `transform: translateX()` animation, 3 строки кода, никакой симуляции прогресса которая вводит пользователя в заблуждение.
+- **Кнопки в overlay попапе ≠ кнопки на карточках в main app.** Hover-reveal pattern хорош для масштабных сеток (CardHoverMenu), где элементов много и нужна чистота при scroll. В compact popup UI контролы должны быть всегда видимы — не тратить внимание пользователя на discovery.
+- **Git worktree + shared `.git` = zero-cost параллелизация.** Один `git worktree add` создаёт полноценную рабочую директорию за секунду. Дорого только `bun install` и первый `cargo build` в новом worktree (per-worktree артефакты). Но эти команды запускаются один раз при setup.
 
 ---
 
