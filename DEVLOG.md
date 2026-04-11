@@ -35,6 +35,83 @@ if any
 
 ---
 
+## 11.04.2026 (late+1) [agent B, parallel/b] — Sidebar resize: линия на 120fps через CSS-переменную
+
+### Goal
+Исправить заметный лаг и рывки разделительной линии сайдбара во время drag-ресайза. Линия — это контрол, он обязан реагировать на pointer input с частотой устройства (120Hz на Retina). Перестройка сетки справа может происходить с задержкой (это допустимо), но сама линия не должна отставать от курсора.
+
+### Root cause
+Позиция линии вычислялась в React рендере: `<SidebarResizeHandle sidebarWidth={sidebarWidth}>` использовал prop в inline `left: sidebarWidth`, где `sidebarWidth` — React state, обновляемый на каждом `pointermove` через `setDragWidth`. Каждое движение мыши запускало полный React commit: `AppWithVault` → `Sidebar` → `SidebarResizeHandle` → `Grid` → `VirtuosoMasonry`. Commit-фаза ждала реконсиляции тяжёлого Grid'а с ~80 видимыми карточками, и только после этого линия получала новое значение `left`. Итоговая частота движения линии упиралась в commit rate (~30-60Hz при нагрузке), не в pointermove rate (120Hz).
+
+Ресайз окна за правый край Tauri работал плавно, потому что там движется **нативная рамка окна** через системный API — React вообще не вовлечён. Внутренний drag-ресайз был медленнее именно потому что он гоняется через React.
+
+### Fix — два канала обновления ширины
+
+**Быстрый канал (синхронный, 120fps):** ширина пишется в CSS-переменную `--sidebar-width` на `:root` прямо в callback'е `pointermove`, через `document.documentElement.style.setProperty`. `<aside>` и `<div>` хэндла используют `style={{ width: "var(--sidebar-width)" }}` и `style={{ left: "var(--sidebar-width)" }}`. CSS custom properties применяются браузером синхронно ко всем descendant'ам, минуя React reconciliation полностью. Линия теперь движется на частоте pointer-событий.
+
+**Медленный канал (асинхронный, лениво):** React state (`dragWidth`) обновляется через `requestAnimationFrame` throttle + `React.startTransition`. Это нужно для двух consumer'ов, которым ширина нужна в React дереве: `compact = width < 320` флаг в Sidebar (переключает разметку в узком режиме) и `parentWidth` в Grid через ResizeObserver на физическом DOM-элементе. Оба обновляются максимум раз в кадр, `startTransition` маркирует их как низкоприоритетные — React может прерывать их ради pointer-событий.
+
+### Actually completed
+
+1. **`src/hooks/useSidebarResize.ts`** — полная переработка:
+   - `writeCssVar(w)` helper мутирует `--sidebar-width` на `:root`
+   - `updateResize` синхронно пишет CSS-переменную, потом планирует `setDragWidth` через `requestAnimationFrame` + `startTransition`, дедуплицируя множественные pointermove в пределах одного кадра через `rafIdRef`
+   - `pendingWidthRef` хранит последнее целевое значение между pointermove и RAF колбэком, чтобы `endResize` мог прочитать финальную ширину синхронно
+   - `useLayoutEffect` синхронизирует CSS-переменную с React state при non-drag изменениях (mount из localStorage, collapse/expand toggle, endResize commit). `useLayoutEffect` обязателен вместо `useEffect`, чтобы первый видимый кадр после mount'а имел правильную ширину без flicker'а
+   - Cleanup на unmount cancel'ит pending RAF
+   - `endResize` cancel'ит pending RAF перед коммитом финального значения
+
+2. **`src/components/Sidebar.tsx`** — `<aside>` style width: `width` → `"var(--sidebar-width)"`. Prop `width` оставлен для `compact = width > 0 && width < 320` — React state-based, обновляется асинхронно через RAF, переключает compact с задержкой максимум ~16ms, визуально незаметно.
+
+3. **`src/components/SidebarResizeHandle.tsx`** — `left` inline style: `sidebarWidth` → `"var(--sidebar-width)"`. Prop `sidebarWidth` удалён полностью. Вместо чтения стартовой ширины из prop, handle теперь читает её через `getComputedStyle(document.documentElement).getPropertyValue("--sidebar-width")` в `handlePointerDown`. Это гарантирует что starting width — актуальная, не стейл-значение React state.
+
+4. **`src/App.tsx`** — удалена передача `sidebarWidth={sidebarWidth}` в `<SidebarResizeHandle>`. Остальное без изменений, `sidebarWidth` всё ещё передаётся в `<Sidebar width={sidebarWidth}>` для compact логики.
+
+### Deviations from plan
+Не было. Исходный план пользователя после нескольких итераций обсуждения: разделить input-канал (линия) и content-канал (сетка) на две разные частоты обновления, линию вывести из React полностью через CSS-переменную. Реализовано ровно это.
+
+### Checks
+- `bun run lint` в B — 5 существующих ошибок на baseline, 5 после правок, delta = 0. Новых ошибок не внесено
+- `bun x tsc --noEmit` — 6 существующих ошибок на baseline (Sidebar unused imports + extension/popup/hooks/useClipperState.ts), те же после правок, delta = 0
+- Визуальная проверка в браузере не делалась (Tauri dev требует cargo build, в worktree B не инициализирован target/)
+- Инварианты, которые проверены чтением кода:
+  - Collapse/expand через короткий клик — идёт через `toggleCollapsed` → React state → useLayoutEffect → writeCssVar. Transition `width 200ms ease` применяется при `!isResizing`. Анимация работает
+  - Персистенция в localStorage — `persist` вызывается в `endResize` и `toggleCollapsed`. Не затронуто
+  - body.sidebar-resizing CSS-класс — ставится в `startResize`, снимается в `endResize`. Не затронуто
+  - DRAG_THRESHOLD 4px для защиты клика от drag — логика в handle, handlePointerMove ждёт delta > 4 до вызова onResizeStart. Не затронуто
+  - Clamp [MIN_WIDTH, MAX_WIDTH] при commit в endResize. Не затронуто
+  - COLLAPSE_THRESHOLD при drag < 100 → auto-collapse. Не затронуто
+
+### Requires visual testing
+Пользователю необходимо перезапустить `cargo tauri dev` в main worktree (где таргет собран) либо pull'нуть PR в main и перезапустить, затем проверить:
+1. Drag-ресайз линии сайдбара — линия должна идеально следовать за курсором, без лагов и рывков
+2. Сетка справа — может перестраиваться с небольшой задержкой (1-2 кадра), это ожидаемо
+3. Collapse через короткий клик — должна работать с анимацией 200ms
+4. Expand collapsed сайдбара через клик — та же анимация
+5. Auto-collapse при drag линии левее COLLAPSE_THRESHOLD — должно работать
+6. Перезапуск приложения — сохранённая ширина должна восстановиться без flicker'а на первом кадре
+
+### Push
+TBD — будет добавлен после коммита
+
+### Decisions and lessons learned
+
+- **CSS custom properties — единственный DOM API, который можно синхронно мутировать без рассинхронизации с React.** React не управляет CSS-переменными (в отличие от inline style-ов на конкретных элементах, которые React писал бы при реконсиляции). Браузер применяет новое значение переменной ко всем descendant'ам синхронно, через propagation механизм CSS. Это делает их идеальным «быстрым каналом» для высокочастотных UI-обновлений: drag-ресайз, slider'ы, scroll-bound анимации, zoom.
+
+- **Разделение «input surface» и «content surface» на две частоты обновления — общий архитектурный паттерн для drag-интерфейсов.** Контрол (линия, ручка слайдера, курсор драга) должен реагировать с частотой устройства ввода (120Hz). Контент (то что визуально перестраивается в ответ) может обновляться с частотой когнитивного восприятия (30-60Hz). Связывать их в одну React-цепочку — форсировать весь контент работать на частоте контрола, чего контент часто не тянет (дорогие реконсиляции, ResizeObserver каскады).
+
+- **`requestAnimationFrame` + `startTransition` — правильная комбинация для «низкоприоритетного» async канала.** RAF гарантирует что setState вызывается максимум раз в кадр (дедупликация множественных pointermove в одно обновление). `startTransition` говорит React, что это обновление non-urgent — React может прервать его и отложить в пользу более важных событий (pointer events, клавиатура). Без `startTransition` React отрабатывает каждое state-обновление сразу, даже если они приходят пачкой, что может блокировать рендер UI-критичных путей.
+
+- **`useLayoutEffect` vs `useEffect` для DOM-synchronization.** `useLayoutEffect` запускается синхронно после commit'а, но **до** браузерного paint'а. Это важно для первого кадра после mount'а: если использовать `useEffect`, первый paint покажет DOM без примененной CSS-переменной (initial render без synchronized side effect), и только следующий кадр подхватит правильное значение. Результат — flicker на старте. `useLayoutEffect` блокирует paint до завершения effect'а, гарантируя отсутствие flicker'а. Стоимость — немного медленнее mount, но для seed-операции (один раз на mount + один раз на collapse toggle) это незаметно.
+
+- **Проп `sidebarWidth` в Handle можно было удалить полностью.** Handle получал его для двух целей: позиционирование через `left: sidebarWidth` и передача стартовой ширины при вызове `onResizeStart`. После переноса позиционирования на CSS-переменную, обе цели можно покрыть чтением из `getComputedStyle(document.documentElement)` в момент pointerdown. Это делает Handle более самодостаточным — он знает как запросить актуальную ширину у DOM, не зависит от React state прокидывания. Чуть лучший decoupling компонента.
+
+- **`sidebarWidth` в React state всё ещё нужен для compact mode flag в Sidebar**, потому что `compact = width > 0 && width < 320` — это logic decision, которая должна влиять на React дерево (разная разметка в compact vs normal mode). В CSS-переменной хранится float значение, а compact это boolean — их невозможно вывести только из CSS без container queries (CSS container queries могли бы решить это целиком на уровне CSS, но это был бы другой, больший refactor). Текущий подход — React state остаётся для логических решений, CSS-переменная для визуальных позиций.
+
+- **Virtuoso не трогали вообще.** Пользователь явно сказал что флик карточек при перестройке сетки его устраивает — это нормальное поведение при смене columnCount. Основная жалоба была на линию. Поэтому Grid и Virtuoso остались как есть, без заморозки columnCount, без заморозки parentWidth. После фикса Grid продолжает live-обновляться через свой ResizeObserver → setParentWidth, просто с задержкой 1-2 кадра от линии, что допустимо.
+
+---
+
 ## 11.04.2026 (late) — Tab-close фикс, always-visible кнопки, progress bar, parallel worktree
 
 ### Goal
