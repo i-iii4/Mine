@@ -2,7 +2,9 @@
 // Connects popup/content scripts to the native host via stdio.
 
 const HOST_NAME = "com.localarena.clipper";
-const POPUP_DEFAULT_WIDTH = 388;
+// Must match extension/popup/popup-layout.css body { width: 360px }
+// so detached window has no horizontal gap next to the content.
+const POPUP_DEFAULT_WIDTH = 360;
 const POPUP_DEFAULT_HEIGHT = 700;
 
 // ── Popup window bounds persistence ───────────────────────────────────────
@@ -18,8 +20,10 @@ const POPUP_WINDOW_IDS_KEY = "popupWindowIds";
 async function resolvePopupBounds() {
   const stored = await chrome.storage.local.get("popupBounds");
   if (stored.popupBounds && typeof stored.popupBounds.left === "number") {
+    // Always force width to match the body CSS — user may only customize
+    // position and height. Height stays user-defined so they can resize.
     return {
-      width: stored.popupBounds.width ?? POPUP_DEFAULT_WIDTH,
+      width: POPUP_DEFAULT_WIDTH,
       height: stored.popupBounds.height ?? POPUP_DEFAULT_HEIGHT,
       left: stored.popupBounds.left,
       top: stored.popupBounds.top,
@@ -110,20 +114,33 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     selectionText: info.selectionText || null,
     pageUrl: info.pageUrl || tab?.url || null,
   };
-
-  // Store data, then open popup as a standalone window.
-  // chrome.action.openPopup() doesn't work from context menu handlers
-  // (requires user gesture on the extension icon), so we use windows.create().
   await chrome.storage.session.set({ contextMenuData: context });
 
-  const popupUrl = chrome.runtime.getURL("dist/index.html");
-  const bounds = await resolvePopupBounds();
-  const win = await chrome.windows.create({
-    url: popupUrl,
-    type: "popup",
-    ...bounds,
-  });
-  if (win?.id) rememberPopupWindow(win.id);
+  // contextMenus.onClicked is one of the privileged contexts where
+  // chrome.action.openPopup() accepts the user gesture (Chrome 127+),
+  // so we try it first — this opens the native dropdown popup under the
+  // extension icon. In DIA/Safari or older Chrome this falls back to
+  // windows.create with a standalone window.
+  let opened = false;
+  if (chrome.action?.openPopup) {
+    try {
+      await chrome.action.openPopup();
+      opened = true;
+    } catch {
+      opened = false;
+    }
+  }
+
+  if (!opened) {
+    const popupUrl = chrome.runtime.getURL("dist/index.html");
+    const bounds = await resolvePopupBounds();
+    const win = await chrome.windows.create({
+      url: popupUrl,
+      type: "popup",
+      ...bounds,
+    });
+    if (win?.id) rememberPopupWindow(win.id);
+  }
 });
 
 // ── Native messaging ──────────────────────────────────────────────────────

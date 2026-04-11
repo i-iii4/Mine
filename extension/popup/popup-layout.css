@@ -12,9 +12,11 @@
 @source "../../src/components";
 @source "../../src/lib";
 
-/* Content-based sizing — DIA/Arc detach popups that declare large fixed
-   dimensions upfront. Width stays fixed so the popup has a predictable
-   layout, but height grows with content up to the browser-imposed cap. */
+/* Width is fixed (Chrome sizes inline dropdown popup by body width),
+   height grows with content up to viewport. In a detached popup window,
+   min-height: 100vh fills the entire window (no empty gap at bottom).
+   In an inline dropdown, 100vh resolves to 0 and body collapses to
+   content height, which is what Chrome wants for dropdown sizing. */
 html, body {
   margin: 0;
   padding: 0;
@@ -22,6 +24,12 @@ html, body {
 
 body {
   width: 360px;
+  min-height: 100vh;
+  background: var(--background);
+}
+
+#root {
+  min-height: 100vh;
 }
 
 /* Show thin scrollbar in popup (override global hiding) */

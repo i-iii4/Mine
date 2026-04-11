@@ -80,8 +80,12 @@ export function PopupApp() {
         {clipper.currentType === "link" && (
           <div className="space-y-1.5 rounded-1 border border-border p-2">
             {ogImage && (
-              <div className="max-h-[120px] overflow-hidden rounded-1">
-                <img src={ogImage} alt="" className="block max-h-[120px] w-full object-cover" />
+              <div className="rounded-1 bg-accent">
+                <img
+                  src={ogImage}
+                  alt=""
+                  className="mx-auto block max-h-[120px] w-auto max-w-full rounded-1 object-contain"
+                />
               </div>
             )}
             <p className="truncate text-sm font-semibold">{clipper.title}</p>
@@ -95,8 +99,12 @@ export function PopupApp() {
         {clipper.currentType === "content" && (
           <div className="max-h-[280px] overflow-y-auto rounded-1 border border-border p-2">
             {metadata?.detectedType === "video" && ogImage && (
-              <div className="max-h-[120px] overflow-hidden rounded-1">
-                <img src={ogImage} alt="" className="block max-h-[120px] w-full object-cover" />
+              <div className="rounded-1 bg-accent">
+                <img
+                  src={ogImage}
+                  alt=""
+                  className="mx-auto block max-h-[120px] w-auto max-w-full rounded-1 object-contain"
+                />
               </div>
             )}
             <p className="mt-1.5 truncate text-sm font-semibold">{clipper.title}</p>
@@ -130,8 +138,12 @@ export function PopupApp() {
         )}
 
         {clipper.currentType === "image" && ogImage && (
-          <div className="max-h-[160px] overflow-hidden rounded-1">
-            <img src={ogImage} alt="" className="block max-h-[160px] w-full object-cover" />
+          <div className="rounded-1 border border-border bg-accent">
+            <img
+              src={ogImage}
+              alt=""
+              className="mx-auto block max-h-[220px] w-auto max-w-full rounded-1 object-contain"
+            />
           </div>
         )}
 
