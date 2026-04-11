@@ -92,7 +92,7 @@ if any
 6. Перезапуск приложения — сохранённая ширина должна восстановиться без flicker'а на первом кадре
 
 ### Push
-TBD — будет добавлен после коммита
+`3c85b7b` Sidebar resize: 120fps divider line via CSS variable (on parallel/b, PR pending merge into main)
 
 ### Decisions and lessons learned
 
