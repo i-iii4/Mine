@@ -145,7 +145,8 @@ requestAnimationFrame(() => {
 - **Native host binary** — обнаружен несвязанный баг с устаревшим installed binary, пофикшен попутно.
 
 ### Push
-— (будет обновлено после push)
+- `b29ec7b` Clipper: migrate primary UI from detached window to in-page overlay
+- `e34c73e` Overlay clipper: shared CSS bundle, Shadow DOM open mode, crop fixes
 
 ### Decisions and lessons learned
 - **Tailwind v4 + Shadow DOM — системная несовместимость.** `@property` не регистрируется в shadow tree → `border`, `outline`, `divide` утилиты не работают без ручного override. Это не наш баг, это архитектура Tailwind v4 и CSS Houdini. Workaround через `* { --tw-*: value }` — стандартная community рекомендация.
