@@ -385,11 +385,20 @@ const ArticleCard = memo(function ArticleCard({ block, vaultPath }: { block: Lig
 
   return (
     <div className="p-4">
-      <p className="line-clamp-2 text-sm font-semibold text-foreground">
+      <p
+        className="line-clamp-2 text-sm font-semibold text-foreground"
+        style={{ lineHeight: "16px" }}
+      >
         {block.title ?? block.slug}
       </p>
       {preview && (
-        <p className={cn("mt-1.5 text-sm leading-relaxed text-muted-foreground", hasImage ? "line-clamp-3" : "line-clamp-8")}>
+        <p
+          className={cn(
+            "mt-1.5 text-sm text-muted-foreground",
+            hasImage ? "line-clamp-3" : "line-clamp-8",
+          )}
+          style={{ lineHeight: "20px" }}
+        >
           {preview}
         </p>
       )}
@@ -406,7 +415,12 @@ const ArticleCard = memo(function ArticleCard({ block, vaultPath }: { block: Lig
         </div>
       )}
       {block.author && (
-        <p className="mt-2 text-sm text-muted-foreground">{block.author}</p>
+        <p
+          className="mt-2 text-sm text-muted-foreground"
+          style={{ lineHeight: "16px" }}
+        >
+          {block.author}
+        </p>
       )}
     </div>
   );

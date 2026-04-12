@@ -5,7 +5,6 @@ import {
   useMemo,
   useCallback,
   memo,
-  useLayoutEffect,
 } from "react";
 import {
   ContextMenu,
@@ -133,11 +132,15 @@ export function Grid({
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
 
   // Word widths map. Populated asynchronously once the worker finishes.
-  // Before it arrives, computeCardHeight uses the conservative lower-bound
-  // fallback — totalHeight grows (never shrinks) when widths arrive.
+  // Until `wordWidthsReady` flips to true we do not render the grid — the
+  // conservative fallback height is mathematically safe for totalHeight
+  // (only grows on correction, never shrinks, so scroll position stays
+  // valid) but VISUALLY wrong: the rendered card content is far taller
+  // than the fallback height, so cards would overlap.
   const [wordWidthsMap, setWordWidthsMap] = useState<Map<number, WordWidths>>(
     () => new Map(),
   );
+  const [wordWidthsReady, setWordWidthsReady] = useState(false);
 
   // Scroll to top on explicit signal or channel change.
   useEffect(() => {
@@ -163,20 +166,30 @@ export function Grid({
   }, []);
 
   // Fetch word widths for the current block set. Cached in IndexedDB and
-  // in-memory — repeat visits to the same channel resolve instantly.
+  // in-memory — repeat visits to the same channel resolve instantly (<10ms).
+  // First visit to a fresh channel takes ~500-1500ms while the worker
+  // computes. During that window we render a loader, not the grid.
   useEffect(() => {
     if (blocks.length === 0) {
       setWordWidthsMap(new Map());
+      setWordWidthsReady(true);
       return;
     }
+    setWordWidthsReady(false);
     let cancelled = false;
     fetchWordWidths(blocks)
       .then((map) => {
-        if (!cancelled) setWordWidthsMap(map);
+        if (!cancelled) {
+          setWordWidthsMap(map);
+          setWordWidthsReady(true);
+        }
       })
       .catch((err) => {
-        console.warn("[Grid] fontMetrics fetch failed, using fallback heights", err);
-        if (!cancelled) setWordWidthsMap(new Map());
+        console.warn("[Grid] fontMetrics fetch failed, rendering with fallback", err);
+        if (!cancelled) {
+          setWordWidthsMap(new Map());
+          setWordWidthsReady(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -184,10 +197,27 @@ export function Grid({
   }, [blocks]);
 
   // Compute (or retrieve from cache) the masonry layout for the current
-  // blocks + parentWidth combination. When word widths arrive later, the
-  // memo invalidates and recomputes with precise heights.
+  // blocks + parentWidth combination.
+  //
+  // layoutCache key is (blocks identity hash, parentWidth bucket). We only
+  // consult the cache when word widths are ready — otherwise we'd cache a
+  // layout built from the fallback-only heights and have to invalidate it
+  // on the next render (the previous approach via useLayoutEffect caused
+  // stale reads because useMemo runs before useLayoutEffect fires). Caching
+  // only stable (wordWidths-loaded) layouts avoids that class of bug.
   const layout = useMemo((): MasonryLayout => {
     if (parentWidth <= 0 || blocks.length === 0) {
+      return {
+        columnCount: 1,
+        columnWidth: 0,
+        totalHeight: 0,
+        positions: [],
+      };
+    }
+
+    if (!wordWidthsReady) {
+      // Still loading. Return an empty layout — the grid waits via
+      // wordWidthsReady flag before rendering anything.
       return {
         columnCount: 1,
         columnWidth: 0,
@@ -202,23 +232,7 @@ export function Grid({
     const fresh = buildLayout(blocks, parentWidth, wordWidthsMap);
     layoutCache.set(blocks, parentWidth, fresh);
     return fresh;
-  }, [blocks, parentWidth, wordWidthsMap]);
-
-  // When word widths arrive for a layout we already computed with partial
-  // data, the cached entry is stale. Invalidate it so the next render
-  // recomputes with precise heights.
-  const wordWidthsVersion = wordWidthsMap.size;
-  useLayoutEffect(() => {
-    // On wordWidths change, replace the cached entry for this (blocks,
-    // parentWidth) with a freshly-computed one. Other channel entries stay
-    // warm. The deps list intentionally only includes wordWidthsVersion —
-    // the other values are read at call time and would otherwise trigger
-    // redundant recomputes on every change.
-    if (parentWidth > 0 && blocks.length > 0) {
-      const fresh = buildLayout(blocks, parentWidth, wordWidthsMap);
-      layoutCache.set(blocks, parentWidth, fresh);
-    }
-  }, [wordWidthsVersion, blocks, parentWidth, wordWidthsMap]);
+  }, [blocks, parentWidth, wordWidthsMap, wordWidthsReady]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);
@@ -320,7 +334,7 @@ export function Grid({
           }}
           data-grid-scroll
         >
-          {parentWidth > 0 && blocks.length > 0 && (
+          {parentWidth > 0 && blocks.length > 0 && wordWidthsReady && (
             supportsGridLanes ? (
               <GridLanesLayout
                 key={currentTag ?? "__all__"}
@@ -339,6 +353,11 @@ export function Grid({
                 context={gridContext}
               />
             )
+          )}
+          {parentWidth > 0 && blocks.length > 0 && !wordWidthsReady && (
+            <div className="flex h-full items-center justify-center">
+              <p className="text-sm text-muted-foreground">Computing layout…</p>
+            </div>
           )}
         </div>
       </ContextMenuTrigger>
@@ -431,7 +450,7 @@ const GridItem = memo(function GridItem({
 }) {
   return (
     <div
-      className="will-change-transform"
+      className="will-change-transform overflow-hidden"
       style={{
         position: "absolute",
         width: item.width,

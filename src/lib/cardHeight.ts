@@ -27,6 +27,23 @@ import { countLines } from "./wordWrap";
 /** Fallback height when a block has no useful size signal. */
 export const DEFAULT_CARD_HEIGHT = 240;
 
+/**
+ * Card root wrapper border: `border` class = 1px all sides. In border-box
+ * sizing (Tailwind default) this adds 2px to the outer height. The border
+ * consumes space on both the top and bottom edges of the card, so every
+ * type's final height includes this adjustment.
+ */
+const CARD_BORDER_HEIGHT = 2;
+
+/**
+ * Width inside the border. Card body (article padding, image element, etc.)
+ * renders in this width, so any height derived from aspect ratio must use
+ * this and not the raw columnWidth.
+ */
+function innerWidth(columnWidth: number): number {
+  return Math.max(1, columnWidth - CARD_BORDER_HEIGHT);
+}
+
 // ─── Image/video/link card constants ────────────────────────────────────────
 
 /** Minimum enforced height for image cards even on extremely tall ratios. */
@@ -94,17 +111,16 @@ const ARTICLE_IMAGE_ASPECT = 9 / 16;
 // ─── Image-card fallback when no width/height metadata ──────────────────────
 
 function computeImageHeight(block: LightBlock, columnWidth: number): number {
+  const iw = innerWidth(columnWidth);
   if (block.width && block.height && block.width > 0) {
-    return Math.max(
-      IMAGE_MIN_HEIGHT,
-      Math.round(columnWidth * (block.height / block.width)),
+    return (
+      Math.max(IMAGE_MIN_HEIGHT, Math.round(iw * (block.height / block.width))) +
+      CARD_BORDER_HEIGHT
     );
   }
-  // No metadata. Conservative lower-bound: a square is typically the median
-  // of mixed portrait/landscape collections. When actual dimensions become
-  // known later, measurement-free pipeline never re-triggers, so this height
-  // stays fixed. A one-time backend task extracts width/height at indexing
-  // time and fills the metadata; see SPEC_GRID out-of-scope section.
+  // No metadata. Conservative fallback — a stable default. A one-time backend
+  // task extracts width/height at indexing time and fills the metadata; see
+  // SPEC_GRID out-of-scope section.
   return DEFAULT_CARD_HEIGHT;
 }
 
@@ -115,7 +131,9 @@ function computeArticleHeight(
   columnWidth: number,
   wordWidths: WordWidths | null,
 ): number {
-  const contentWidth = Math.max(1, columnWidth - ARTICLE_PADDING_X * 2);
+  // Width inside the card border. Article padding is applied inside this.
+  const iw = innerWidth(columnWidth);
+  const contentWidth = Math.max(1, iw - ARTICLE_PADDING_X * 2);
 
   if (wordWidths) {
     // Precise path: known word widths, exact line count.
@@ -133,7 +151,11 @@ function computeArticleHeight(
 
     const titleH = titleLines * ARTICLE_TITLE_LINE_HEIGHT;
     const previewH = previewLines * ARTICLE_PREVIEW_LINE_HEIGHT;
-    const imageH = block.first_image ? Math.round(columnWidth * ARTICLE_IMAGE_ASPECT) : 0;
+    // Image width = card inner width - article padding on both sides.
+    // Height = that width × aspect-video ratio (9/16).
+    const imageH = block.first_image
+      ? Math.round(contentWidth * ARTICLE_IMAGE_ASPECT)
+      : 0;
     const authorH = block.author ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
 
     // Gap structure mirroring Card.tsx mt-* classes:
@@ -146,6 +168,7 @@ function computeArticleHeight(
       (authorH > 0 ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
 
     return (
+      CARD_BORDER_HEIGHT +
       ARTICLE_PADDING_TOP +
       titleH +
       previewH +
@@ -170,7 +193,12 @@ function computeArticleHeight(
   //   - imageH = 0 (no image is valid)
   //   - authorH = 0 (no author is valid)
   //   - gaps = 0 (only title → no gaps)
-  return ARTICLE_PADDING_TOP + ARTICLE_TITLE_LINE_HEIGHT + ARTICLE_PADDING_BOTTOM;
+  return (
+    CARD_BORDER_HEIGHT +
+    ARTICLE_PADDING_TOP +
+    ARTICLE_TITLE_LINE_HEIGHT +
+    ARTICLE_PADDING_BOTTOM
+  );
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -202,13 +230,19 @@ export function computeCardHeight(
       return computeImageHeight(block, columnWidth);
 
     case "video":
-      return Math.round(columnWidth * THUMBNAIL_ASPECT);
+      return (
+        Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) + CARD_BORDER_HEIGHT
+      );
 
     case "link":
-      return Math.round(columnWidth * THUMBNAIL_ASPECT) + LINK_FOOTER_HEIGHT;
+      return (
+        Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) +
+        LINK_FOOTER_HEIGHT +
+        CARD_BORDER_HEIGHT
+      );
 
     case "file":
-      return FILE_CARD_HEIGHT;
+      return FILE_CARD_HEIGHT + CARD_BORDER_HEIGHT;
 
     case "article":
       return computeArticleHeight(block, columnWidth, wordWidths);
