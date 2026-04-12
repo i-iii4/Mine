@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
 
 ## Context
 
@@ -452,6 +452,18 @@ Rationale: файлы — источник правды (решение 001), и
 | Собственный windowed masonry renderer (chosen) | Сложнее реализация: нужен layout engine, cache высот и absolute positioning |
 
 Rationale: на больших коллекциях bottleneck смещается с IPC на main-thread layout. Когда в DOM находятся только видимые карточки, resize и route switch перестают зависеть от общего числа блоков в разделе.
+
+### 012: Zero-jank masonry через Canvas measureText precomputation
+
+| Approach | Problem |
+|---|---|
+| Estimate heights → render → measure → correct (классический virtualized masonry, предыдущая реализация) | Корректировки высот меняют `totalHeight` → браузер клампит `scrollTop` → видимый прыжок. Scroll anchoring в masonry не работает из-за non-uniform column shifts. Первое посещение канала с 10000 блоков всегда порождает прыжки |
+| Rust cosmic-text precompute в SQLite | Font metrics не совпадают pixel-perfect с браузерным рендером (1-3px drift per line), не портируется на web-деплой без дублирования логики |
+| **Canvas `measureText` в Web Worker + IndexedDB cache word_widths** (chosen) | Каждый браузер считает своим text engine → гарантированная pixel-perfect точность. Один code path для Tauri desktop и будущего web-деплоя. `useSyncExternalStore` избегает React ре-рендеров во время scroll |
+
+Rationale: корневая причина прыжков — цикл measurement → correction. Устраняем цикл через precomputation word widths в Worker'е до первого layout pass. Высоты становятся чистой функцией `(block, columnWidth, wordWidths)` → корректировки физически не могут возникнуть. Cross-platform корректность бесплатно как побочный эффект архитектуры.
+
+Детальная спецификация: [SPEC_GRID.md](SPEC_GRID.md).
 
 ## Dependencies
 

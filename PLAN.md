@@ -516,7 +516,27 @@ Goal: настоящая виртуализация для 10000+ блоков. 
 | 10.3 | Feature detection `CSS.supports("display", "grid-lanes")` | [x] |
 | 10.4 | Собственный `VirtualMasonryGrid`: absolute positioning + visible window + overscan | [x] |
 | 10.5 | Layout engine + cache высот карточек для быстрого resize и больших разделов | [x] |
-| 10.6 | Scroll anchoring при ресайзе окна и сайдбара | [ ] |
+| 10.6 | Scroll anchoring при ресайзе окна и сайдбара | [REVERTED] См. DEVLOG 11.04.2026 (late+3): anchoring не работает в masonry с non-uniform shifts, feedback loop через программный scrollTop |
+
+### Phase 11 — Zero-Jank Masonry [SPEC]
+
+Goal: полная переработка grid-архитектуры под четыре продуктовых требования (120fps scroll без прыжков, мгновенный resize, 1000 ≈ 10000, мгновенный channel switch) без компромиссов. Работает одинаково на desktop Tauri и на будущем web-деплое.
+
+SPEC: [SPEC_GRID.md](SPEC_GRID.md) — детальное описание архитектуры, модулей, API контрактов, performance targets, migration plan.
+
+Корневой принцип: **все высоты карточек известны до вставки в layout через Canvas `measureText` в Web Worker'е**. Никакого DOM measurement на hot path, никаких корректировок, никакого scroll anchoring. Прыжков не может существовать, потому что нет причины для их генерации.
+
+| # | Task | Status |
+|---|------|--------|
+| 11.1 | SPEC_GRID.md — полная спецификация архитектуры | [x] |
+| 11.2 | `src/workers/fontMetrics.worker.ts` + `src/lib/fontMetrics.ts` — OffscreenCanvas measureText в Worker, IndexedDB cache word_widths | [ ] |
+| 11.3 | `src/lib/wordWrap.ts` + `src/lib/cardHeight.ts` — pure функции для детерминистической высоты | [ ] |
+| 11.4 | `src/lib/masonryLayout.ts` — bucket-based visibility index (расширение существующего модуля) | [ ] |
+| 11.5 | `src/lib/layoutCache.ts` — LRU cache для layouts каналов | [ ] |
+| 11.6 | `src/hooks/useGridScroll.ts` — `useSyncExternalStore` scroll state без React ре-рендеров | [ ] |
+| 11.7 | `src/components/Grid.tsx` — rewrite: dual-path (native grid-lanes + virtualized JS), удаление measurement infrastructure | [ ] |
+| 11.8 | `src/components/Card.tsx` — `will-change: transform`, `translate3d`, фиксация line-height | [ ] |
+| 11.9 | Визуальная проверка на реальном vault'е + замеры FPS через DevTools | [ ] |
 
 ### Backlog
 

@@ -35,6 +35,87 @@ if any
 
 ---
 
+## 12.04.2026 [agent B, parallel/b] — SPEC_GRID.md: Zero-Jank Masonry architecture
+
+**Claimed:** `src/components/Grid.tsx`, `src/components/Card.tsx`, `src/lib/masonryLayout.ts`, new files `src/workers/fontMetrics.worker.ts`, `src/lib/fontMetrics.ts`, `src/lib/wordWrap.ts`, `src/lib/cardHeight.ts`, `src/lib/layoutCache.ts`, `src/hooks/useGridScroll.ts`, `src/types/fontMetrics.ts`
+
+### Goal
+Разработать полную спецификацию новой grid-архитектуры, удовлетворяющей четыре продуктовых требования без компромиссов:
+1. 120 fps scroll, без прыжков, без визуальных перестроек во время прокрутки
+2. Мгновенный reflow при изменении ширины viewport
+3. Равная производительность на 1000 и 10000 блоков
+4. Мгновенное переключение между каналами
+
+Архитектура должна работать одинаково на desktop Tauri (WebKit) и на будущем web-деплое (Chrome, Firefox, Safari, mobile).
+
+### Context
+Предыдущие попытки:
+
+- **Custom virtualized masonry (Phase 10)** — работает на средних нагрузках, но имеет фундаментальную проблему: estimate heights → measure → correct цикл порождает прыжки scroll position при докрутке до конца ленты (когда cards впервые замеряются и `totalHeight` меняется).
+- **Scroll anchoring + running average + conservative fallback (PR #4, `b49bebe`)** — попытка решить прыжки через React-level anchoring. Провалилась по трём причинам: (1) anchoring архитектурно не подходит для masonry с non-uniform column shifts; (2) программный `scrollTop` в `useLayoutEffect` создаёт feedback loop через scroll events; (3) накладные расходы всех трёх слоёв суммировались и замедляли прокрутку. Откатана в PR #5 (`2b7fdc6`).
+
+После двух итераций стало ясно, что любая архитектура основанная на **измерении высот после mount'а** будет страдать от прыжков. Единственный путь к гарантии отсутствия прыжков — **знать высоты до вставки в layout**.
+
+### Architecture decision
+После исследования (WebSearch: Pinterest Gestalt, react-photo-album, masonic, CSS Grid Lanes в Safari 26.4, Canvas measureText + Knuth-Plass) принято решение:
+
+**Canvas `measureText` в Web Worker + IndexedDB cache word_widths + pure JS word-wrap + dual-path через feature detection native `display: grid-lanes`.**
+
+Альтернатива Rust `cosmic-text` precomputation в SQLite была отвергнута из-за:
+- Font metrics mismatch между Rust text shaper и браузерным рендером (1-3px drift per line)
+- Не портируется на web-деплой без дублирования backend-логики на server-side
+- Не даёт cross-platform консистентности (user на desktop и web видел бы subtly разные layouts)
+
+Canvas measureText в worker'е гарантирует **pixel-perfect соответствие рендеру**, потому что один и тот же browser text engine вычисляет word widths и рендерит финальный текст. Единый code path для всех платформ.
+
+### Actually completed
+
+1. **`SPEC_GRID.md`** — полная спецификация на ~600 строк:
+   - Корневой принцип и dual-path стратегия
+   - Структура модулей (8 новых файлов + 2 обновляемых)
+   - Типы и API контракты для всех модулей
+   - Data flow (mount, scroll, resize, channel switch)
+   - Инварианты (7 обязательных свойств реализации)
+   - Performance targets (таблица с целевыми числами для 1k и 10k блоков)
+   - Migration plan (7 шагов)
+   - Edge cases (10 сценариев с mitigation)
+   - Unit + integration + visual regression тесты
+   - Decision records 001-006 с rationale
+   - Out of scope
+   - Definition of done
+
+2. **`PLAN.md`** — добавлена Phase 11 «Zero-Jank Masonry» с 9 задачами (11.1-11.9). Phase 10, task 10.6 (scroll anchoring) помечен как REVERTED с ссылкой на DEVLOG entry.
+
+3. **`ARCHITECTURE.md`** — добавлено decision record 012 «Zero-jank masonry через Canvas measureText precomputation». `SPEC_GRID.md` добавлена в Related documents.
+
+4. **`CLAUDE.md`** — `SPEC_GRID.md` добавлена в Required reading section.
+
+### Deviations from plan
+Не было. Документация написана строго по структуре существующих SPEC-файлов.
+
+### Checks
+- `bun run lint` — не затронут (нет кода, только документация)
+- SPEC_GRID.md содержит 6 decision records с явным rationale для каждого архитектурного выбора
+- Все 4 продуктовых требования explicitly адресованы в Performance targets таблице
+- Migration plan описывает 7 incremental commits; каждый шаг тестируется изолированно
+
+### Push
+TBD — будет добавлен после коммита
+
+### Decisions and lessons learned
+
+- **Два провалившихся подхода сходились к одной истине**: нельзя исправить прыжки, если источником прыжков является сам цикл measurement → correction. Единственное решение — устранить цикл целиком через precomputation. Это ключевой урок после scroll anchoring эксперимента: оптимизации симптомов не работают против фундаментальных архитектурных проблем.
+
+- **Cross-platform гарантия точности как побочный эффект**: выбор Canvas measureText в Worker'е произошёл **не** из-за cross-platform требования, а из-за гарантии font metrics совпадения с рендером. То что это автоматически делает архитектуру portable на web — это бесплатный бонус, который невозможно было бы получить через Rust precomputation без дублирования инфраструктуры.
+
+- **Feature detection для native grid-lanes — обязательная часть плана**: Safari 26.4 шипит native CSS masonry прямо сейчас. К концу 2026 Chrome и Firefox тоже обещают. Правильная архитектура обеспечивает автоматический upgrade path — JS virtualized path становится dead code, когда native path активируется во всех браузерах. Без feature detection пришлось бы переписывать Grid.tsx ещё раз через год.
+
+- **`useSyncExternalStore` — недоиспользованный React 18 API**: канонический способ подключить React к внешнему store (scroll position, RAF loop, worker state) без лишних ре-рендеров. Использование `useState(scrollTop)` + `onScroll` handler в классическом React-стиле гарантирует проигрыш в производительности. Для high-frequency updates `useSyncExternalStore` должен быть default, а не optimization.
+
+- **SPEC перед CODE — экономия сессий**: предыдущие две попытки (custom virtualized masonry и scroll anchoring) были реализованы без SPEC'а и дали неверные архитектурные решения. Этот SPEC — гарантия что следующая реализация будет делать правильно, потому что все компромиссы осознаны и документированы до написания кода. Если после review SPEC'а обнаружится проблема, её цена — правка markdown, не откат двух недель кода.
+
+---
+
 ## 12.04.2026 (night) [agent A] — Thumbnail cascade: shared dispatch, fallback chain, magic-bytes freshness
 
 ### Goal
