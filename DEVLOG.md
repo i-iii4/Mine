@@ -35,6 +35,66 @@ if any
 
 ---
 
+## 12.04.2026 (night) [agent A] — Thumbnail cascade: shared dispatch, fallback chain, magic-bytes freshness
+
+### Goal
+Устранить архитектурный долг в thumbnail pipeline, вскрывшийся через серию hotfix'ов: дублирование cascade logic между native host и watcher handler, тихий silent-fail для video decode errors, дыра в `is_thumb_fresh` которая считала corrupt/wrong-format thumbs свежими навсегда.
+
+### Root cause накопленных проблем
+
+**1. Две параллельные реализации cascade.** Native host в `save_block` делал свой упрощённый dispatch (`if downloaded_path { generate_thumbnail } else if article { generate_text_thumbnail }`) — без проверки body на embedded media. Watcher handler имел полноценный cascade в `index_md_file_inner` через `try_thumbnail_field → try_first_image → try_first_video → Text fallback`. Две независимые реализации одной задачи drift'или: hotfix в одной не попадал в другую. Ранее я уже патчил native host (коммит `32d452e`) добавив `extract_first_media_filename` — это был третий независимый парсер markdown body в том же файле.
+
+**2. Silent fail при video decode error.** Если `generate_video_thumbnail` возвращала `Err` (например openh264 не парсит HEVC / fragmented MP4 / corrupt stream), handler логировал warning и thumb не создавался **вообще**. Блок пропадал из sidebar превью — `list_channel_previews` фильтрует `has_thumb`.
+
+**3. `is_thumb_fresh` проверял только mtime.** Файл с правильной датой но неверным content считался свежим forever. 16 legacy text PNG файлов с `.jpg` расширением застряли на диске и никогда не regenerate'ились. Два раза уже делали hotfix через «удалить PNG thumbs + restart».
+
+### Actually completed
+
+**1. `storage::thumbnails::generate_for_block(block, vault) -> ThumbSource`** — единая точка dispatch для thumbnail generation. Содержит полный cascade (5 уровней): `frontmatter.file → frontmatter.thumbnail → first body image → first body video → text fallback`. На каждом уровне failure fall-through'ит на следующий, с log::warn. Video frame extraction падает на text fallback вместо silent-fail — блок **всегда** имеет thumbnail.
+
+Функция возвращает `ThumbSource` enum (`Image | Video | Text | None`) для telemetry и тестов. Вспомогательная `find_first_local_media(body, predicate)` — один parser markdown body, шарится между image и video поиском через `fn(&str) -> bool` predicate.
+
+**2. Magic-bytes check в `is_thumb_fresh`.** После mtime-compare добавлена `thumb_has_valid_magic(path)` — peek первые 3 байта файла и проверка на JPEG magic (`FF D8 FF`) или PNG magic (`89 50 4E`). Если ни то ни другое — return false, pipeline regenerates. Legitimate text PNG thumbs не ломаются (PNG magic валидна). Corrupt файлы, non-image content под `.jpg` расширением, обрезанные записи — все теперь ловятся.
+
+**3. `native_host.rs:443` упрощён до одного вызова.** Удалены 26 строк local thumbnail dispatch плюс дубликат `extract_first_media_filename` (19 строк). Заменено на:
+```rust
+let _ = thumbnails::generate_for_block(&block, vault);
+```
+
+**4. `watcher/handler.rs` упрощён.** Удалены `ThumbKind` enum (Image/Video/Text variants), `try_thumbnail_field`, `try_first_image`, `try_first_video`, `extract_first_image_filename`, `extract_first_video_filename`, локальные `is_image_ext`/`is_video_ext`. `ThumbJob` теперь содержит только `{block: Block, source_path: PathBuf}`. Background thread делает `is_thumb_fresh` check + `generate_for_block` — всё остальное в shared функции.
+
+`is_image_ext`/`is_video_ext` экспортированы из `storage::thumbnails` как `pub` — handler использует их в `handle_event::VaultEvent::MediaChanged` для проверки расширения media-файлов.
+
+**5. Tests.**
+- `generate_for_block_article_with_first_image` — article с inline JPG → ThumbSource::Image, thumb magic == JPEG
+- `generate_for_block_article_pure_text_falls_back_to_text_png` — pure text article → ThumbSource::Text, magic == PNG
+- `generate_for_block_article_with_missing_image_falls_back_to_text` — body ссылается на несуществующий файл, cascade пропускает, text fallback отрабатывает без панические
+- `is_thumb_fresh_rejects_non_image_content` — thumb с arbitrary bytes не считается fresh; после записи реального JPEG fresh=true
+
+Также починил pre-existing bug в `text_thumbnail_generates_valid_jpeg` — test использовал `image::open()` который trust'ит file extension (`.jpg`), но content фактически PNG, декодер падал на `Illegal start bytes:8950`. Заменено на `ImageReader::with_guessed_format()` для content-based detection.
+
+### Deviations from plan
+- Не менял формат text thumbnails (оставил PNG для dark-mode invert transparency). Magic bytes check принимает обе magic — JPEG и PNG — чтобы не trigger'ить лишнюю regeneration для legitimate PNG thumbs.
+- Не удалял `@virtuoso.dev/masonry` из package.json (dead dependency от прежнего grid, not blocking).
+
+### Checks
+- `cargo build --bin native-host` passed (4 pre-existing warnings outside scope)
+- `cargo test --lib` — **217 passed, 0 failed**
+- Runtime: `cargo tauri dev` → thumbnails `0 generated, 89 skipped (fresh), 89 total` — все thumbs проходят новый magic check включая 8 legitimate text PNG
+- Manual regression: previously-stale PNG-as-JPG state больше невозможно — либо pipeline generates right format, либо `is_thumb_fresh` обнаруживает mismatch и regenerates
+
+### Push
+— (будет обновлено после push)
+
+### Decisions and lessons learned
+- **Duplicated cascade logic — индикатор отсутствия архитектурной абстракции.** Три независимых markdown parser'а (`extract_first_image_filename`, `extract_first_video_filename`, `extract_first_media_filename`) в двух файлах — это не «просто скопировано», это сигнал что нужна shared утилита. Теперь есть одна `find_first_local_media(body, predicate)`.
+- **Fallback chain — не маскировка, а defense-in-depth.** Video decode failure не должен пропадать блок из UI. Text fallback даёт worst-case preview, но UX continuity важнее идеального video frame. Если пользователь захочет исправить — это отдельная задача (возможно fallback на FFmpeg command-line, или обновление openh264).
+- **`is_thumb_fresh` через один mtime check — слишком доверчиво.** Любая инвариант файла на диске (формат, размер, содержимое) может тихо протечь. Minimal content validation (3-byte magic check) стоит почти нулевой CPU и закрывает целый класс bugs. Обычно такой check not needed, потому что writer и reader — один pipeline. Здесь writer был фрагментирован (native host ≠ watcher), поэтому reader нуждался в дополнительной защите.
+- **Единый entry point позволяет добавлять сложные правила в одном месте.** Fallback chain `Video → Text` живёт в `generate_for_block`, не в двух местах. Если завтра появится `OG image fetch from URL` fallback — добавляется в shared функцию, оба caller сайта автоматом получают.
+- **Tests обнаружили pre-existing bug.** Запуск `cargo test --lib` на storage::thumbnails показал что `text_thumbnail_generates_valid_jpeg` был сломан — никто не запускал эти тесты после того как text thumb стал PNG. Unit tests — дёшевы, надо запускать их при любом рефакторинге пайплайна даже если свои тесты проходят. Это ловит orphaned assumptions.
+
+---
+
 ## 11.04.2026 (late+3) [agent B, parallel/b] — Revert: scroll anchoring + running avg + conservative fallback
 
 ### Goal

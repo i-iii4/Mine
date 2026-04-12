@@ -13,6 +13,9 @@ use imageproc::drawing::draw_text_mut;
 use std::path::Path;
 use std::sync::LazyLock;
 
+use crate::domain::block::{Block, BlockType};
+use crate::domain::vault::VaultLayout;
+
 /// Default max side for thumbnails: 480px covers 240px CSS columns at 2x Retina.
 pub const DEFAULT_MAX_SIZE: u32 = 480;
 
@@ -20,8 +23,19 @@ const JPEG_QUALITY: u8 = 85;
 
 // ─── Freshness check ────────────────────────────────────────────────────────
 
-/// Returns `true` if the thumbnail at `thumb_path` exists and is at least as
-/// new as `source_path`. Used to skip redundant regeneration during full_scan.
+/// JPEG magic bytes: `FF D8 FF`.
+const JPEG_MAGIC: [u8; 3] = [0xFF, 0xD8, 0xFF];
+/// PNG magic bytes: `89 50 4E` (89 P N) — first 3 bytes of `89 50 4E 47`.
+const PNG_MAGIC: [u8; 3] = [0x89, 0x50, 0x4E];
+
+/// Returns `true` if the thumbnail at `thumb_path` exists, is at least as
+/// new as `source_path`, AND its content is a recognized image format
+/// (JPEG or PNG). Used to skip redundant regeneration during full_scan.
+///
+/// The content-type check catches a failure mode where a legacy pipeline
+/// wrote a non-image file under `.jpg` extension (e.g. corrupt bytes or
+/// wrong format). Pure mtime comparison would mark such files as fresh
+/// forever, leaving broken thumbs in the cache indefinitely.
 pub fn is_thumb_fresh(thumb_path: &Path, source_path: &Path) -> bool {
     let Ok(thumb_meta) = std::fs::metadata(thumb_path) else {
         return false;
@@ -35,7 +49,24 @@ pub fn is_thumb_fresh(thumb_path: &Path, source_path: &Path) -> bool {
     let Ok(source_mtime) = source_meta.modified() else {
         return false;
     };
-    thumb_mtime >= source_mtime
+    if thumb_mtime < source_mtime {
+        return false;
+    }
+    thumb_has_valid_magic(thumb_path)
+}
+
+/// Peek first 3 bytes of the thumb file and check if it's a recognized
+/// image format (JPEG or PNG). Returns false on I/O error or unknown magic.
+fn thumb_has_valid_magic(thumb_path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(thumb_path) else {
+        return false;
+    };
+    let mut buf = [0u8; 3];
+    if file.read_exact(&mut buf).is_err() {
+        return false;
+    }
+    buf == JPEG_MAGIC || buf == PNG_MAGIC
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -427,6 +458,159 @@ fn strip_links(text: &str) -> String {
     result
 }
 
+// ─── Unified dispatch ───────────────────────────────────────────────────────
+
+/// Extensions recognized as still images that `generate_thumbnail` can process.
+const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif"];
+/// Extensions recognized as video containers that `generate_video_thumbnail` can process.
+const VIDEO_EXTS: &[&str] = &["mp4", "webm", "mov"];
+
+fn ext_lower(path_str: &str) -> String {
+    Path::new(path_str)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase()
+}
+
+pub fn is_image_ext(ext: &str) -> bool {
+    IMAGE_EXTS.contains(&ext)
+}
+
+pub fn is_video_ext(ext: &str) -> bool {
+    VIDEO_EXTS.contains(&ext)
+}
+
+/// Outcome of `generate_for_block` — which source pipeline produced the thumb.
+/// Returned for telemetry and tests; callers can ignore it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ThumbSource {
+    /// Resized from a raster image file (JPEG/PNG/GIF/etc).
+    Image,
+    /// Extracted first visible frame from an H.264 MP4.
+    Video,
+    /// Baked from article title + body when no usable media was found,
+    /// or when video frame extraction failed and we fell back.
+    Text,
+    /// No thumbnail was produced (not an article, no media) — valid for
+    /// non-article blocks that have no visible preview.
+    None,
+}
+
+/// Generate a thumbnail for a block following the full cascade:
+///
+/// 1. `frontmatter.file` points to an existing image or video
+/// 2. `frontmatter.thumbnail` points to an existing image
+/// 3. First `![](...)` in body is an existing local image
+/// 4. First `![](...)` in body is an existing local video (frame extraction)
+/// 5. Article → text-only baked PNG from title + body
+///
+/// At each step a failure falls through to the next source. Video frame
+/// extraction specifically falls through to text fallback on failure,
+/// because openh264 can fail on exotic profiles (HEVC, fragmented MP4)
+/// and we don't want the block to disappear from sidebar previews.
+///
+/// This is the SINGLE source of truth for thumbnail generation — both
+/// the native host (at clip time) and the watcher handler (at full_scan
+/// and on file change) call this function. Previously each had its own
+/// copy of the dispatch logic and they drifted.
+pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
+    let slug = &block.slug;
+    let thumb_path = vault.thumb_path(slug);
+
+    // 1. Block has an explicit media file
+    if let Some(ref file_name) = block.frontmatter.file {
+        let ext = ext_lower(file_name);
+        let media_path = vault.media_path(slug, &ext);
+        if media_path.exists() {
+            if is_image_ext(&ext) {
+                match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
+                    Ok(_) => return ThumbSource::Image,
+                    Err(e) => log::warn!("image thumb failed for {}: {}", slug, e),
+                }
+            } else if is_video_ext(&ext) {
+                match generate_video_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
+                    Ok(_) => return ThumbSource::Video,
+                    Err(e) => log::warn!("video thumb failed for {}: {}", slug, e),
+                }
+            }
+        }
+    }
+
+    // 2. Frontmatter thumbnail field (video poster, OG image)
+    if let Some(thumb_file) = block.frontmatter.thumbnail.as_ref() {
+        let ext = ext_lower(thumb_file);
+        if is_image_ext(&ext) {
+            let media_path = vault.root().join(thumb_file);
+            if media_path.exists() {
+                match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
+                    Ok(_) => return ThumbSource::Image,
+                    Err(e) => log::warn!("thumbnail-field thumb failed for {}: {}", slug, e),
+                }
+            }
+        }
+    }
+
+    // 3-4. Scan body for first embedded image/video (articles)
+    if block.frontmatter.block_type == BlockType::Article {
+        if let Some(first_image) = find_first_local_media(&block.body, is_image_ext) {
+            let media_path = vault.root().join(&first_image);
+            if media_path.exists() {
+                match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
+                    Ok(_) => return ThumbSource::Image,
+                    Err(e) => log::warn!("first-image thumb failed for {}: {}", slug, e),
+                }
+            }
+        }
+        if let Some(first_video) = find_first_local_media(&block.body, is_video_ext) {
+            let media_path = vault.root().join(&first_video);
+            if media_path.exists() {
+                match generate_video_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
+                    Ok(_) => return ThumbSource::Video,
+                    Err(e) => log::warn!(
+                        "first-video thumb failed for {}, falling back to text: {}",
+                        slug, e
+                    ),
+                }
+            }
+        }
+
+        // 5. Text fallback
+        let title = block.frontmatter.title.as_deref();
+        match generate_text_thumbnail(title, &block.body, &thumb_path) {
+            Ok(_) => return ThumbSource::Text,
+            Err(e) => log::warn!("text thumb failed for {}: {}", slug, e),
+        }
+    }
+
+    ThumbSource::None
+}
+
+/// Scan a markdown body for the first `![](filename)` where `filename` is
+/// a local path (not http(s)://) and matches the given extension predicate.
+/// Returns the filename string if found.
+fn find_first_local_media(body: &str, ext_predicate: fn(&str) -> bool) -> Option<String> {
+    let mut search_from = 0;
+    while let Some(start) = body[search_from..].find("![") {
+        let abs_start = search_from + start;
+        let rest = &body[abs_start + 2..];
+        let bracket = rest.find("](")?;
+        let url_start = abs_start + 2 + bracket + 2;
+        let paren_end = body[url_start..].find(')')?;
+        let url = &body[url_start..url_start + paren_end];
+        search_from = url_start + paren_end + 1;
+
+        if url.is_empty() || url.starts_with("http://") || url.starts_with("https://") {
+            continue;
+        }
+        let ext = ext_lower(url);
+        if ext_predicate(&ext) {
+            return Some(url.to_string());
+        }
+    }
+    None
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -509,8 +693,16 @@ mod tests {
         assert_eq!(w, 480);
         assert_eq!(h, 480);
 
-        // Verify it's a valid image
-        let img = image::open(&dest).unwrap();
+        // Verify it's a valid image. Text thumbnails are encoded as PNG
+        // (even when the destination path has a .jpg extension) to preserve
+        // transparency for the dark-mode invert CSS effect. Use a format
+        // detector instead of image::open which trusts the file extension.
+        let img = image::ImageReader::open(&dest)
+            .unwrap()
+            .with_guessed_format()
+            .unwrap()
+            .decode()
+            .unwrap();
         let (iw, ih) = img.dimensions();
         assert_eq!(iw, 480);
         assert_eq!(ih, 480);
@@ -541,5 +733,129 @@ mod tests {
         let (w, h) = img.dimensions();
         assert_eq!(w, 240);
         assert_eq!(h, 144); // 500x300 → 240x144
+    }
+
+    // ─── Tests for generate_for_block cascade ──────────────────────────────
+
+    fn make_vault(root: &Path) -> VaultLayout {
+        std::fs::create_dir_all(root.join(".arena/cache/thumbs")).unwrap();
+        VaultLayout::new(root.to_path_buf())
+    }
+
+    fn make_article(slug: &str, body: &str) -> Block {
+        use crate::domain::block::{DateTime, Frontmatter};
+        Block {
+            slug: slug.to_string(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Article,
+                title: Some(format!("Title of {}", slug)),
+                description: None,
+                url: None,
+                file: None,
+                thumbnail: None,
+                tags: vec![],
+                saved_at: DateTime::new("2026-01-15T12:00:00Z").unwrap(),
+                source: None,
+                width: None,
+                height: None,
+                author: None,
+                position: None,
+                color: None,
+                icon: None,
+            },
+            body: body.to_string(),
+        }
+    }
+
+    #[test]
+    fn generate_for_block_article_with_first_image() {
+        // Article with an inline image that actually exists on disk
+        // should produce a JPEG image thumbnail, not a text fallback.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+
+        let img_path = dir.path().join("my-article-img0.jpg");
+        create_test_image(&img_path, 800, 600);
+
+        let block = make_article(
+            "my-article",
+            "Hello world\n\n![](my-article-img0.jpg)\n\nMore text.",
+        );
+
+        let source = generate_for_block(&block, &vault);
+        assert_eq!(source, ThumbSource::Image);
+
+        let thumb_path = vault.thumb_path("my-article");
+        assert!(thumb_path.exists());
+
+        // Verify thumb content is JPEG (not text PNG fallback)
+        let mut header = [0u8; 3];
+        use std::io::Read;
+        let mut f = std::fs::File::open(&thumb_path).unwrap();
+        f.read_exact(&mut header).unwrap();
+        assert_eq!(header, JPEG_MAGIC);
+    }
+
+    #[test]
+    fn generate_for_block_article_pure_text_falls_back_to_text_png() {
+        // Article with no media — falls through the whole cascade to
+        // text thumbnail (which is PNG with transparency for dark-mode
+        // invert effect).
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+
+        let block = make_article("pure-text", "Just some plain text, no images or videos.");
+
+        let source = generate_for_block(&block, &vault);
+        assert_eq!(source, ThumbSource::Text);
+
+        let thumb_path = vault.thumb_path("pure-text");
+        assert!(thumb_path.exists());
+
+        // Text thumb is PNG — first 3 bytes are PNG magic
+        let mut header = [0u8; 3];
+        use std::io::Read;
+        let mut f = std::fs::File::open(&thumb_path).unwrap();
+        f.read_exact(&mut header).unwrap();
+        assert_eq!(header, PNG_MAGIC);
+    }
+
+    #[test]
+    fn generate_for_block_article_with_missing_image_falls_back_to_text() {
+        // Body references an image that doesn't exist on disk — cascade
+        // should skip it and land on text fallback without panicking.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+
+        let block = make_article(
+            "ghost-image",
+            "See this image:\n\n![](does-not-exist.jpg)\n\nEnd.",
+        );
+
+        let source = generate_for_block(&block, &vault);
+        assert_eq!(source, ThumbSource::Text);
+        assert!(vault.thumb_path("ghost-image").exists());
+    }
+
+    #[test]
+    fn is_thumb_fresh_rejects_non_image_content() {
+        // Thumb file with a newer mtime but wrong content (plain text,
+        // not JPEG or PNG) must NOT be considered fresh — forces the
+        // pipeline to regenerate it. Catches the legacy bug where corrupt
+        // or wrong-format thumbs stayed in cache forever.
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.md");
+        let thumb = dir.path().join("thumb.jpg");
+
+        std::fs::write(&source, "# Source\n").unwrap();
+        // Write arbitrary bytes that are neither JPEG nor PNG magic
+        std::fs::write(&thumb, b"\x00\x01\x02garbage content not an image").unwrap();
+
+        assert!(!is_thumb_fresh(&thumb, &source));
+
+        // Now write a real JPEG and the freshness check should pass
+        create_test_image(&dir.path().join("real.png"), 100, 100);
+        generate_thumbnail(&dir.path().join("real.png"), &thumb, 240).unwrap();
+        assert!(is_thumb_fresh(&thumb, &source));
     }
 }

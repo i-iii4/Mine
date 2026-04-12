@@ -440,39 +440,12 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         return send_error(&format!("failed to write block file: {e}"));
     }
 
-    // Generate thumbnail.
-    // For articles, inline images/videos are already downloaded by
-    // localize_body_images above — try to use the first one as the
-    // thumbnail source before falling back to text-only PNG.
-    let thumb_path = vault.thumb_path(&slug);
-    if let Some(ref src_path) = downloaded_path {
-        let _ = thumbnails::generate_thumbnail(src_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE);
-    } else if bt == BlockType::Article {
-        let mut thumb_done = false;
-        // Try first embedded media from body
-        if let Some(first_file) = extract_first_media_filename(&block.body) {
-            let media_path = vault.root().join(&first_file);
-            if media_path.exists() {
-                let ext = PathBuf::from(&first_file)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_lowercase();
-                let result = if ext == "mp4" || ext == "webm" || ext == "mov" {
-                    thumbnails::generate_video_thumbnail(&media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
-                } else {
-                    thumbnails::generate_thumbnail(&media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
-                };
-                if result.is_ok() {
-                    thumb_done = true;
-                }
-            }
-        }
-        if !thumb_done {
-            let title = block.frontmatter.title.as_deref();
-            let _ = thumbnails::generate_text_thumbnail(title, &block.body, &thumb_path);
-        }
-    }
+    // Thumbnail generation is delegated to the shared cascade in
+    // storage::thumbnails::generate_for_block. Single source of truth —
+    // watcher handler calls the same function at full_scan and on file
+    // change. Covers: explicit media file, frontmatter thumbnail field,
+    // first embedded image/video in article body, and text fallback.
+    let _ = thumbnails::generate_for_block(&block, vault);
 
     // Index the block
     if let Err(e) = index::upsert_block(&conn, &block) {
@@ -658,26 +631,6 @@ fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Re
 /// Download inline images from Markdown body, replacing external URLs with local filenames.
 /// Images that fail to download keep their original URL.
 const MAX_INLINE_IMAGES: u32 = 30;
-
-/// Extract the first `![](filename)` from markdown body that looks like a
-/// local media file (not a URL). Used by thumbnail generation to find the
-/// first embedded image or video after `localize_body_images` has already
-/// downloaded them.
-fn extract_first_media_filename(body: &str) -> Option<String> {
-    let mut search_from = 0;
-    while let Some(offset) = body[search_from..].find("![") {
-        let img_start = search_from + offset;
-        let paren_open = body[img_start..].find('(').map(|i| img_start + i)?;
-        let paren_close = body[paren_open..].find(')').map(|i| paren_open + i)?;
-        let url = body[paren_open + 1..paren_close].trim();
-        // Skip external URLs — we only want local files
-        if !url.starts_with("http://") && !url.starts_with("https://") && !url.is_empty() {
-            return Some(url.to_string());
-        }
-        search_from = paren_close + 1;
-    }
-    None
-}
 
 fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &str) -> String {
     let mut result = body.to_string();
