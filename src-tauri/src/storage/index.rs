@@ -5,6 +5,8 @@
 //
 // Contract: SPEC_STORAGE.md#storage/index
 
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 use serde::Serialize;
@@ -12,6 +14,7 @@ use serde::Serialize;
 use crate::domain::block::{extract_wikilinks, Block, BlockType, DateTime};
 use crate::domain::channel::Channel;
 use crate::domain::search::{SearchFilter, SearchQuery};
+use crate::storage::media_dimensions::build_media_dimensions_json;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -32,6 +35,7 @@ pub struct IndexedBlock {
     pub height: Option<u32>,
     pub author: Option<String>,
     pub body: String,
+    pub media_dimensions: Option<String>,
     pub tags: Vec<String>,
 }
 
@@ -53,6 +57,7 @@ pub struct LightBlock {
     pub body: String,
     pub first_image: Option<String>,
     pub media_urls: Option<String>,
+    pub media_dimensions: Option<String>,
     pub tags: Vec<String>,
 }
 
@@ -105,13 +110,23 @@ fn extract_media_urls(body: &str) -> Option<String> {
 ///
 /// On conflict (same slug): updates all fields, replaces tags and wikilinks.
 /// FTS5 is updated automatically through triggers.
-pub fn upsert_block(conn: &Connection, block: &Block) -> Result<i64> {
+///
+/// `vault_root` is used to resolve media filenames when extracting image
+/// dimensions for the `media_dimensions` JSON column. Callers that don't
+/// have a vault path context (tests, migration tools) can pass `None`,
+/// in which case the dimensions column is left NULL and the frontend
+/// falls back to a fixed aspect ratio.
+pub fn upsert_block(
+    conn: &Connection,
+    block: &Block,
+    vault_root: Option<&Path>,
+) -> Result<i64> {
     // Use SAVEPOINT via raw SQL for nestability — this works both standalone
     // and inside an outer transaction (e.g. full_scan).
     conn.execute_batch("SAVEPOINT upsert_block")
         .context("failed to begin savepoint for upsert_block")?;
 
-    let result = upsert_block_inner(conn, block);
+    let result = upsert_block_inner(conn, block, vault_root);
 
     match &result {
         Ok(_) => {
@@ -127,14 +142,26 @@ pub fn upsert_block(conn: &Connection, block: &Block) -> Result<i64> {
     result
 }
 
-fn upsert_block_inner(conn: &Connection, block: &Block) -> Result<i64> {
+fn upsert_block_inner(
+    conn: &Connection,
+    block: &Block,
+    vault_root: Option<&Path>,
+) -> Result<i64> {
     let first_image = extract_first_image(&block.body);
     let media_urls = extract_media_urls(&block.body);
+    let media_dimensions = vault_root.and_then(|root| {
+        build_media_dimensions_json(
+            root,
+            block.frontmatter.file.as_deref(),
+            &block.body,
+        )
+    });
 
     conn.execute(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
-            thumbnail, saved_at, source, width, height, author, body, first_image, media_urls)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            thumbnail, saved_at, source, width, height, author, body, first_image,
+            media_urls, media_dimensions)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
             title = excluded.title,
@@ -150,6 +177,7 @@ fn upsert_block_inner(conn: &Connection, block: &Block) -> Result<i64> {
             body = excluded.body,
             first_image = excluded.first_image,
             media_urls = excluded.media_urls,
+            media_dimensions = excluded.media_dimensions,
             indexed_at = datetime('now')",
         params![
             block.slug,
@@ -167,6 +195,7 @@ fn upsert_block_inner(conn: &Connection, block: &Block) -> Result<i64> {
             block.body,
             first_image,
             media_urls,
+            media_dimensions,
         ],
     )
     .context("failed to upsert block")?;
@@ -246,7 +275,7 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, url, media_file,
                 thumbnail, saved_at, width, height, author,
-                SUBSTR(body, 1, 500), first_image, media_urls
+                SUBSTR(body, 1, 500), first_image, media_urls, media_dimensions
          FROM blocks ORDER BY saved_at DESC",
     )?;
 
@@ -276,6 +305,7 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
                 body: row.get(11)?,
                 first_image: row.get(12)?,
                 media_urls: row.get(13)?,
+                media_dimensions: row.get(14)?,
                 tags: Vec::new(),
             })
         })?
@@ -318,7 +348,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
     let mut stmt = conn
         .prepare(
             "SELECT id, slug, block_type, title, description, url, media_file,
-                    thumbnail, saved_at, source, width, height, author, body
+                    thumbnail, saved_at, source, width, height, author, body, media_dimensions
              FROM blocks WHERE slug = ?1",
         )
         .context("failed to prepare get_block")?;
@@ -337,7 +367,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
 pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, description, url, media_file,
-                thumbnail, saved_at, source, width, height, author, body
+                thumbnail, saved_at, source, width, height, author, body, media_dimensions
          FROM blocks ORDER BY saved_at DESC",
     )?;
     collect_blocks(conn, &mut stmt, &[] as &[&dyn rusqlite::types::ToSql])
@@ -348,7 +378,7 @@ pub fn list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlo
     let mut stmt = conn.prepare(
         "SELECT b.id, b.slug, b.block_type, b.title, b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body
+                b.height, b.author, b.body, b.media_dimensions
          FROM blocks b
          JOIN block_tags bt ON bt.block_id = b.id
          WHERE bt.tag = ?1
@@ -421,7 +451,7 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
     let mut sql = String::from(
         "SELECT DISTINCT b.id, b.slug, b.block_type, b.title, b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body
+                b.height, b.author, b.body, b.media_dimensions
          FROM blocks b",
     );
 
@@ -583,6 +613,7 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
         height: row.get::<_, Option<i64>>(11)?.map(|v| v as u32),
         author: row.get(12)?,
         body: row.get(13)?,
+        media_dimensions: row.get(14)?,
         tags: Vec::new(), // filled by caller
     })
 }
@@ -690,7 +721,7 @@ mod tests {
     fn upsert_insert_new_block() {
         let conn = test_conn();
         let block = make_block("sunset", &["photography"]);
-        let id = upsert_block(&conn, &block).unwrap();
+        let id = upsert_block(&conn, &block, None).unwrap();
         assert!(id > 0);
 
         let got = get_block(&conn, "sunset").unwrap().unwrap();
@@ -703,10 +734,10 @@ mod tests {
     fn upsert_update_existing_block() {
         let conn = test_conn();
         let block1 = make_block_full("sunset", "image", Some("Old"), "2026-01-01T00:00:00Z", &["old-tag"], "");
-        upsert_block(&conn, &block1).unwrap();
+        upsert_block(&conn, &block1, None).unwrap();
 
         let block2 = make_block_full("sunset", "link", Some("New"), "2026-02-01T00:00:00Z", &["new-tag"], "body");
-        upsert_block(&conn, &block2).unwrap();
+        upsert_block(&conn, &block2, None).unwrap();
 
         let got = get_block(&conn, "sunset").unwrap().unwrap();
         assert_eq!(got.block_type, BlockType::Link);
@@ -719,10 +750,10 @@ mod tests {
     fn upsert_replaces_tags() {
         let conn = test_conn();
         let block = make_block("test", &["a", "b", "c"]);
-        upsert_block(&conn, &block).unwrap();
+        upsert_block(&conn, &block, None).unwrap();
 
         let block2 = make_block("test", &["x", "y"]);
-        upsert_block(&conn, &block2).unwrap();
+        upsert_block(&conn, &block2, None).unwrap();
 
         let got = get_block(&conn, "test").unwrap().unwrap();
         assert_eq!(got.tags, vec!["x", "y"]);
@@ -732,7 +763,7 @@ mod tests {
     fn upsert_replaces_wikilinks() {
         let conn = test_conn();
         let block = make_block_full("src", "article", None, "2026-01-01T00:00:00Z", &[], "See [[target-a]]");
-        upsert_block(&conn, &block).unwrap();
+        upsert_block(&conn, &block, None).unwrap();
 
         let count1: i64 = conn
             .query_row("SELECT count(*) FROM wikilinks", [], |row| row.get(0))
@@ -740,7 +771,7 @@ mod tests {
         assert_eq!(count1, 1);
 
         let block2 = make_block_full("src", "article", None, "2026-01-01T00:00:00Z", &[], "See [[target-b]] and [[target-c]]");
-        upsert_block(&conn, &block2).unwrap();
+        upsert_block(&conn, &block2, None).unwrap();
 
         let count2: i64 = conn
             .query_row("SELECT count(*) FROM wikilinks", [], |row| row.get(0))
@@ -753,7 +784,7 @@ mod tests {
     #[test]
     fn remove_existing_block() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block("test", &["tag"])).unwrap();
+        upsert_block(&conn, &make_block("test", &["tag"]), None).unwrap();
         assert!(remove_block(&conn, "test").unwrap());
         assert!(get_block(&conn, "test").unwrap().is_none());
     }
@@ -791,7 +822,7 @@ mod tests {
         block.frontmatter.width = Some(1920);
         block.frontmatter.height = Some(1080);
         block.frontmatter.author = Some("Author".to_string());
-        upsert_block(&conn, &block).unwrap();
+        upsert_block(&conn, &block, None).unwrap();
 
         let got = get_block(&conn, "full").unwrap().unwrap();
         assert_eq!(got.title.as_deref(), Some("Title"));
@@ -819,9 +850,9 @@ mod tests {
     #[test]
     fn list_blocks_ordered_by_saved_at() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block_full("old", "image", None, "2026-01-01T00:00:00Z", &[], "")).unwrap();
-        upsert_block(&conn, &make_block_full("new", "image", None, "2026-03-01T00:00:00Z", &[], "")).unwrap();
-        upsert_block(&conn, &make_block_full("mid", "image", None, "2026-02-01T00:00:00Z", &[], "")).unwrap();
+        upsert_block(&conn, &make_block_full("old", "image", None, "2026-01-01T00:00:00Z", &[], ""), None).unwrap();
+        upsert_block(&conn, &make_block_full("new", "image", None, "2026-03-01T00:00:00Z", &[], ""), None).unwrap();
+        upsert_block(&conn, &make_block_full("mid", "image", None, "2026-02-01T00:00:00Z", &[], ""), None).unwrap();
 
         let blocks = list_blocks(&conn).unwrap();
         let slugs: Vec<&str> = blocks.iter().map(|b| b.slug.as_str()).collect();
@@ -833,9 +864,9 @@ mod tests {
     #[test]
     fn list_by_tag_filters_correctly() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block("a", &["design"])).unwrap();
-        upsert_block(&conn, &make_block("b", &["design", "web"])).unwrap();
-        upsert_block(&conn, &make_block("c", &["web"])).unwrap();
+        upsert_block(&conn, &make_block("a", &["design"]), None).unwrap();
+        upsert_block(&conn, &make_block("b", &["design", "web"]), None).unwrap();
+        upsert_block(&conn, &make_block("c", &["web"]), None).unwrap();
 
         let design = list_blocks_by_tag(&conn, "design").unwrap();
         let slugs: Vec<&str> = design.iter().map(|b| b.slug.as_str()).collect();
@@ -847,7 +878,7 @@ mod tests {
     #[test]
     fn list_by_tag_empty_result() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block("a", &["design"])).unwrap();
+        upsert_block(&conn, &make_block("a", &["design"]), None).unwrap();
         let result = list_blocks_by_tag(&conn, "nonexistent").unwrap();
         assert!(result.is_empty());
     }
@@ -857,9 +888,9 @@ mod tests {
     #[test]
     fn get_all_tags_with_counts() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block("a", &["design", "web"])).unwrap();
-        upsert_block(&conn, &make_block("b", &["design"])).unwrap();
-        upsert_block(&conn, &make_block("c", &["photo"])).unwrap();
+        upsert_block(&conn, &make_block("a", &["design", "web"]), None).unwrap();
+        upsert_block(&conn, &make_block("b", &["design"]), None).unwrap();
+        upsert_block(&conn, &make_block("c", &["photo"]), None).unwrap();
 
         let tags = get_all_tags(&conn).unwrap();
         assert_eq!(tags[0], TagCount { tag: "design".to_string(), count: 2 });
@@ -878,8 +909,8 @@ mod tests {
     #[test]
     fn search_empty_returns_all() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block("a", &[])).unwrap();
-        upsert_block(&conn, &make_block("b", &[])).unwrap();
+        upsert_block(&conn, &make_block("a", &[]), None).unwrap();
+        upsert_block(&conn, &make_block("b", &[]), None).unwrap();
 
         let query = SearchQuery {
             text: String::new(),
@@ -894,12 +925,12 @@ mod tests {
         let conn = test_conn();
         upsert_block(
             &conn,
-            &make_block_full("sunset", "image", Some("Sunset in Tokyo"), "2026-01-01T00:00:00Z", &[], ""),
+            &make_block_full("sunset", "image", Some("Sunset in Tokyo"), "2026-01-01T00:00:00Z", &[], ""), None,
         )
         .unwrap();
         upsert_block(
             &conn,
-            &make_block_full("coffee", "image", Some("Morning Coffee"), "2026-01-02T00:00:00Z", &[], ""),
+            &make_block_full("coffee", "image", Some("Morning Coffee"), "2026-01-02T00:00:00Z", &[], ""), None,
         )
         .unwrap();
 
@@ -915,8 +946,8 @@ mod tests {
     #[test]
     fn search_by_type_filter() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block_full("img", "image", None, "2026-01-01T00:00:00Z", &[], "")).unwrap();
-        upsert_block(&conn, &make_block_full("art", "article", None, "2026-01-01T00:00:00Z", &[], "")).unwrap();
+        upsert_block(&conn, &make_block_full("img", "image", None, "2026-01-01T00:00:00Z", &[], ""), None).unwrap();
+        upsert_block(&conn, &make_block_full("art", "article", None, "2026-01-01T00:00:00Z", &[], ""), None).unwrap();
 
         let query = SearchQuery {
             text: String::new(),
@@ -930,8 +961,8 @@ mod tests {
     #[test]
     fn search_by_tag_filter() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block("a", &["design"])).unwrap();
-        upsert_block(&conn, &make_block("b", &["web"])).unwrap();
+        upsert_block(&conn, &make_block("a", &["design"]), None).unwrap();
+        upsert_block(&conn, &make_block("b", &["web"]), None).unwrap();
 
         let query = SearchQuery {
             text: String::new(),
@@ -947,17 +978,17 @@ mod tests {
         let conn = test_conn();
         upsert_block(
             &conn,
-            &make_block_full("match", "image", Some("Beautiful sunset"), "2026-01-01T00:00:00Z", &["photo"], ""),
+            &make_block_full("match", "image", Some("Beautiful sunset"), "2026-01-01T00:00:00Z", &["photo"], ""), None,
         )
         .unwrap();
         upsert_block(
             &conn,
-            &make_block_full("no-tag", "image", Some("Another sunset"), "2026-01-01T00:00:00Z", &[], ""),
+            &make_block_full("no-tag", "image", Some("Another sunset"), "2026-01-01T00:00:00Z", &[], ""), None,
         )
         .unwrap();
         upsert_block(
             &conn,
-            &make_block_full("no-text", "image", Some("Morning coffee"), "2026-01-01T00:00:00Z", &["photo"], ""),
+            &make_block_full("no-text", "image", Some("Morning coffee"), "2026-01-01T00:00:00Z", &["photo"], ""), None,
         )
         .unwrap();
 
@@ -973,8 +1004,8 @@ mod tests {
     #[test]
     fn search_multiple_tag_filters_is_and() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block("both", &["design", "web"])).unwrap();
-        upsert_block(&conn, &make_block("one", &["design"])).unwrap();
+        upsert_block(&conn, &make_block("both", &["design", "web"]), None).unwrap();
+        upsert_block(&conn, &make_block("one", &["design"]), None).unwrap();
 
         let query = SearchQuery {
             text: String::new(),
@@ -996,7 +1027,7 @@ mod tests {
         let long_body = "x".repeat(1000);
         upsert_block(
             &conn,
-            &make_block_full("article", "article", Some("Test"), "2026-01-01T00:00:00Z", &[], &long_body),
+            &make_block_full("article", "article", Some("Test"), "2026-01-01T00:00:00Z", &[], &long_body), None,
         ).unwrap();
 
         let light = list_blocks_light(&conn).unwrap();
@@ -1007,7 +1038,7 @@ mod tests {
     #[test]
     fn list_blocks_light_includes_tags() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block("tagged", &["design", "web"])).unwrap();
+        upsert_block(&conn, &make_block("tagged", &["design", "web"]), None).unwrap();
 
         let light = list_blocks_light(&conn).unwrap();
         assert_eq!(light[0].tags, vec!["design", "web"]);
@@ -1025,7 +1056,7 @@ mod tests {
     #[test]
     fn resolve_unique_slug_with_conflict() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block("taken", &[])).unwrap();
+        upsert_block(&conn, &make_block("taken", &[]), None).unwrap();
         let slug = resolve_unique_slug(&conn, "taken").unwrap();
         assert_eq!(slug, "taken-2");
     }
@@ -1033,9 +1064,9 @@ mod tests {
     #[test]
     fn resolve_unique_slug_multiple_conflicts() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block("doc", &[])).unwrap();
-        upsert_block(&conn, &make_block("doc-2", &[])).unwrap();
-        upsert_block(&conn, &make_block("doc-3", &[])).unwrap();
+        upsert_block(&conn, &make_block("doc", &[]), None).unwrap();
+        upsert_block(&conn, &make_block("doc-2", &[]), None).unwrap();
+        upsert_block(&conn, &make_block("doc-3", &[]), None).unwrap();
         let slug = resolve_unique_slug(&conn, "doc").unwrap();
         assert_eq!(slug, "doc-4");
     }
@@ -1047,7 +1078,7 @@ mod tests {
         let conn = test_conn();
         upsert_block(
             &conn,
-            &make_block_full("test", "article", Some("Hello World"), "2026-01-01T00:00:00Z", &[], "body"),
+            &make_block_full("test", "article", Some("Hello World"), "2026-01-01T00:00:00Z", &[], "body"), None,
         ).unwrap();
 
         // These would cause FTS5 syntax errors without escaping

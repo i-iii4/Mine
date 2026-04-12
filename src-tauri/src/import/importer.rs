@@ -189,7 +189,7 @@ fn import_single_block(
     files::write_block_file(vault, &block)?;
 
     // Index
-    index::upsert_block(conn, &block)?;
+    index::upsert_block(conn, &block, Some(vault.root()))?;
 
     Ok(())
 }

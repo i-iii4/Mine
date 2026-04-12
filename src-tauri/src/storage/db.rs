@@ -126,6 +126,13 @@ fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN first_image TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_urls TEXT");
 
+    // Migration: add media_dimensions column.
+    // JSON object mapping each referenced media filename → [width, height] in
+    // pixels. Populated at index time by reading the image header (fast, no
+    // decoding). Enables the frontend to render embedded images at their
+    // exact aspect ratio without runtime measurement.
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_dimensions TEXT");
+
     Ok(())
 }
 

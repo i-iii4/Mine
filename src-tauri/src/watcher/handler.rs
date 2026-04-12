@@ -172,7 +172,7 @@ struct ThumbJob {
 /// should be (re-)generated.
 fn index_md_file_inner(
     conn: &Connection,
-    _vault: &VaultLayout,
+    vault: &VaultLayout,
     path: &Path,
 ) -> Result<Option<ThumbJob>> {
     let (slug, content) = files::read_block_file(path)
@@ -188,7 +188,7 @@ fn index_md_file_inner(
         return Ok(None);
     }
 
-    index::upsert_block(conn, &block)
+    index::upsert_block(conn, &block, Some(vault.root()))
         .with_context(|| format!("indexing {}", path.display()))?;
 
     Ok(Some(ThumbJob {
