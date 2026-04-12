@@ -1,0 +1,32 @@
+// Measurement-only card component.
+//
+// Renders the exact same DOM structure as <Card>, minus the interactive
+// wrappers (useDraggable, event handlers, CardHoverMenu). The DOM is visually
+// identical to the real card, so its getBoundingClientRect height matches
+// what the real card will render at the same column width.
+//
+// Used by the DOM measurement pass in Grid.tsx during channel load / new
+// columnWidth bucket. Not used in the visible render path.
+
+import { memo } from "react";
+import type { LightBlock } from "@/types";
+import { CardContent } from "./Card";
+
+interface MeasureCardProps {
+  block: LightBlock;
+  vaultPath: string;
+}
+
+export const MeasureCard = memo(function MeasureCard({
+  block,
+  vaultPath,
+}: MeasureCardProps) {
+  // Mirror the class list from Card.tsx (the outer wrapper) EXCEPT the
+  // interactive state classes (opacity-30 while dragging, ring-2 when
+  // focused). Those never apply during measurement.
+  return (
+    <div className="group overflow-hidden border border-border relative rounded-[var(--radius-card)]">
+      <CardContent block={block} vaultPath={vaultPath} priority={false} />
+    </div>
+  );
+});

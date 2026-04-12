@@ -21,8 +21,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { LightBlock, TagCount } from "@/types";
-import type { WordWidths } from "@/types/fontMetrics";
 import { Card } from "./Card";
+import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
 import {
   computeMasonryLayout,
@@ -33,7 +33,13 @@ import {
 } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
 import { LayoutCache } from "@/lib/layoutCache";
-import { fetchWordWidths } from "@/lib/fontMetrics";
+import {
+  bucketize,
+  setCachedHeight,
+  partitionByCache,
+  persistHeights,
+  warmFromIndexedDb,
+} from "@/lib/heightCache";
 import { useGridScroll } from "@/hooks/useGridScroll";
 
 // ─── Layout constants ───────────────────────────────────────────────────────
@@ -44,11 +50,6 @@ const OVERSCAN_BACKWARD_PX = 600;
 const OVERSCAN_FORWARD_PX = 2200;
 const PRIORITY_BACKWARD_PX = 200;
 const PRIORITY_FORWARD_PX = 1400;
-
-// ─── Feature detection ─────────────────────────────────────────────────────
-
-const supportsGridLanes =
-  typeof CSS !== "undefined" && CSS.supports("display", "grid-lanes");
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -82,29 +83,44 @@ interface GridContext {
 
 const layoutCache = new LayoutCache(10);
 
+/** One-time promise for warming in-memory cache from IndexedDB on first mount. */
+let warmedUp: Promise<void> | null = null;
+function ensureWarmed(): Promise<void> {
+  if (!warmedUp) {
+    warmedUp = warmFromIndexedDb();
+  }
+  return warmedUp;
+}
+
 // ─── Deterministic layout computation ──────────────────────────────────────
 
-function buildLayout(
-  blocks: LightBlock[],
-  parentWidth: number,
-  wordWidthsMap: Map<number, WordWidths>,
-): MasonryLayout {
-  // Derive the column width the same way computeMasonryLayout does internally.
-  // We need this value up front so we can compute per-card heights with the
-  // correct column width before handing the height array to the layout engine.
+function deriveColumnWidth(parentWidth: number): number {
   const provisionalColumnCount = Math.max(
     1,
     Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
   );
-  const columnWidth = Math.max(
+  return Math.max(
     1,
     (Math.max(0, parentWidth - GAP * (provisionalColumnCount - 1))) /
       provisionalColumnCount,
   );
+}
 
-  const heights = blocks.map((block) =>
-    computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null),
-  );
+function buildLayout(
+  blocks: LightBlock[],
+  parentWidth: number,
+  heightsMap: Map<number, number>,
+): MasonryLayout {
+  const columnWidth = deriveColumnWidth(parentWidth);
+
+  const heights = blocks.map((block) => {
+    const measured = heightsMap.get(block.id);
+    if (measured !== undefined) return measured;
+    // Fallback: computeCardHeight without word widths gives the conservative
+    // lower bound. Used only if a measurement somehow fails. In practice the
+    // measurement pass always populates every block before layout runs.
+    return computeCardHeight(block, columnWidth, null);
+  });
 
   return computeMasonryLayout(heights, parentWidth, COLUMN_MIN_WIDTH, GAP);
 }
@@ -131,16 +147,13 @@ export function Grid({
   const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
 
-  // Word widths map. Populated asynchronously once the worker finishes.
-  // Until `wordWidthsReady` flips to true we do not render the grid — the
-  // conservative fallback height is mathematically safe for totalHeight
-  // (only grows on correction, never shrinks, so scroll position stays
-  // valid) but VISUALLY wrong: the rendered card content is far taller
-  // than the fallback height, so cards would overlap.
-  const [wordWidthsMap, setWordWidthsMap] = useState<Map<number, WordWidths>>(
-    () => new Map(),
-  );
-  const [wordWidthsReady, setWordWidthsReady] = useState(false);
+  // Measured pixel heights for blocks at the current columnWidth bucket.
+  // Populated by the DOM measurement pass (see MeasurementPass component
+  // below). Until `heightsReady` flips to true, the grid renders a loader
+  // and a hidden measurement container alongside.
+  const [heightsMap, setHeightsMap] = useState<Map<number, number>>(() => new Map());
+  const [heightsReady, setHeightsReady] = useState(false);
+  const [warmedUp, setWarmedUp] = useState(false);
 
   // Scroll to top on explicit signal or channel change.
   useEffect(() => {
@@ -165,59 +178,86 @@ export function Grid({
     return () => observer.disconnect();
   }, []);
 
-  // Fetch word widths for the current block set. Cached in IndexedDB and
-  // in-memory — repeat visits to the same channel resolve instantly (<10ms).
-  // First visit to a fresh channel takes ~500-1500ms while the worker
-  // computes. During that window we render a loader, not the grid.
+  // Warm the in-memory height cache from IndexedDB on first mount.
+  // After this resolves we can trust the memoryCache in subsequent renders.
   useEffect(() => {
-    if (blocks.length === 0) {
-      setWordWidthsMap(new Map());
-      setWordWidthsReady(true);
-      return;
-    }
-    setWordWidthsReady(false);
     let cancelled = false;
-    fetchWordWidths(blocks)
-      .then((map) => {
-        if (!cancelled) {
-          setWordWidthsMap(map);
-          setWordWidthsReady(true);
-        }
-      })
-      .catch((err) => {
-        console.warn("[Grid] fontMetrics fetch failed, rendering with fallback", err);
-        if (!cancelled) {
-          setWordWidthsMap(new Map());
-          setWordWidthsReady(true);
-        }
-      });
+    void ensureWarmed().then(() => {
+      if (!cancelled) setWarmedUp(true);
+    });
     return () => {
       cancelled = true;
     };
-  }, [blocks]);
+  }, []);
+
+  // Current column width bucket. Changes when parentWidth crosses a 40px
+  // boundary — at that point we may need to measure blocks again at the
+  // new column width, since text wraps differently.
+  const bucket = useMemo(() => bucketize(deriveColumnWidth(parentWidth)), [parentWidth]);
+
+  // Check which blocks already have cached heights at the current bucket.
+  // Split into (cached, missing). If nothing is missing, heightsReady flips
+  // true immediately and the grid renders without any measurement pass.
+  const { cachedMap, missingBlocks } = useMemo(() => {
+    if (!warmedUp || blocks.length === 0 || parentWidth <= 0) {
+      return { cachedMap: new Map<number, number>(), missingBlocks: [] as LightBlock[] };
+    }
+    const ids = blocks.map((b) => b.id);
+    const { cached, missing } = partitionByCache(ids, bucket);
+    const missingSet = new Set(missing);
+    const missingList = blocks.filter((b) => missingSet.has(b.id));
+    return { cachedMap: cached, missingBlocks: missingList };
+  }, [blocks, bucket, warmedUp, parentWidth]);
+
+  // Reset heights state when blocks or bucket change. If everything is
+  // already cached we can flip heightsReady synchronously; otherwise we
+  // trigger the measurement pass and wait.
+  useEffect(() => {
+    if (!warmedUp) {
+      setHeightsReady(false);
+      return;
+    }
+    if (blocks.length === 0) {
+      setHeightsMap(new Map());
+      setHeightsReady(true);
+      return;
+    }
+    if (missingBlocks.length === 0) {
+      // All cached — instant.
+      setHeightsMap(new Map(cachedMap));
+      setHeightsReady(true);
+    } else {
+      // Need a measurement pass. MeasurementPass component will render,
+      // useLayoutEffect will fire, and it calls back through onMeasured
+      // below to populate state.
+      setHeightsMap(new Map(cachedMap));
+      setHeightsReady(false);
+    }
+  }, [blocks, bucket, cachedMap, missingBlocks.length, warmedUp]);
+
+  const handleMeasured = useCallback(
+    (results: Array<{ id: number; height: number }>) => {
+      const newEntries: Array<{ blockId: number; bucket: number; height: number }> = [];
+      for (const r of results) {
+        setCachedHeight(r.id, bucket, r.height);
+        newEntries.push({ blockId: r.id, bucket, height: r.height });
+      }
+      persistHeights(newEntries);
+      setHeightsMap((prev) => {
+        const next = new Map(prev);
+        for (const r of results) next.set(r.id, r.height);
+        return next;
+      });
+      setHeightsReady(true);
+    },
+    [bucket],
+  );
 
   // Compute (or retrieve from cache) the masonry layout for the current
-  // blocks + parentWidth combination.
-  //
-  // layoutCache key is (blocks identity hash, parentWidth bucket). We only
-  // consult the cache when word widths are ready — otherwise we'd cache a
-  // layout built from the fallback-only heights and have to invalidate it
-  // on the next render (the previous approach via useLayoutEffect caused
-  // stale reads because useMemo runs before useLayoutEffect fires). Caching
-  // only stable (wordWidths-loaded) layouts avoids that class of bug.
+  // blocks + parentWidth combination. Only consults layoutCache when
+  // heights are ready — otherwise we would cache an incomplete layout.
   const layout = useMemo((): MasonryLayout => {
-    if (parentWidth <= 0 || blocks.length === 0) {
-      return {
-        columnCount: 1,
-        columnWidth: 0,
-        totalHeight: 0,
-        positions: [],
-      };
-    }
-
-    if (!wordWidthsReady) {
-      // Still loading. Return an empty layout — the grid waits via
-      // wordWidthsReady flag before rendering anything.
+    if (parentWidth <= 0 || blocks.length === 0 || !heightsReady) {
       return {
         columnCount: 1,
         columnWidth: 0,
@@ -229,10 +269,10 @@ export function Grid({
     const cached = layoutCache.get(blocks, parentWidth);
     if (cached) return cached;
 
-    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap);
+    const fresh = buildLayout(blocks, parentWidth, heightsMap);
     layoutCache.set(blocks, parentWidth, fresh);
     return fresh;
-  }, [blocks, parentWidth, wordWidthsMap, wordWidthsReady]);
+  }, [blocks, parentWidth, heightsMap, heightsReady]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);
@@ -334,30 +374,30 @@ export function Grid({
           }}
           data-grid-scroll
         >
-          {parentWidth > 0 && blocks.length > 0 && wordWidthsReady && (
-            supportsGridLanes ? (
-              <GridLanesLayout
-                key={currentTag ?? "__all__"}
-                blocks={blocks}
-                wordWidthsMap={wordWidthsMap}
-                parentWidth={parentWidth}
-                context={gridContext}
-              />
-            ) : (
-              <VirtualMasonryLayout
-                key={currentTag ?? "__all__"}
-                blocks={blocks}
-                visibleItems={visibleItems}
-                totalHeight={layout.totalHeight}
-                priorityBounds={priorityBounds}
-                context={gridContext}
-              />
-            )
+          {parentWidth > 0 && blocks.length > 0 && heightsReady && (
+            <VirtualMasonryLayout
+              key={currentTag ?? "__all__"}
+              blocks={blocks}
+              visibleItems={visibleItems}
+              totalHeight={layout.totalHeight}
+              priorityBounds={priorityBounds}
+              context={gridContext}
+            />
           )}
-          {parentWidth > 0 && blocks.length > 0 && !wordWidthsReady && (
-            <div className="flex h-full items-center justify-center">
-              <p className="text-sm text-muted-foreground">Computing layout…</p>
-            </div>
+          {parentWidth > 0 && blocks.length > 0 && !heightsReady && (
+            <>
+              <div className="flex h-full items-center justify-center">
+                <p className="text-sm text-muted-foreground">Computing layout…</p>
+              </div>
+              {missingBlocks.length > 0 && (
+                <MeasurementPass
+                  blocks={missingBlocks}
+                  columnWidth={deriveColumnWidth(parentWidth)}
+                  vaultPath={vaultPath}
+                  onMeasured={handleMeasured}
+                />
+              )}
+            </>
           )}
         </div>
       </ContextMenuTrigger>
@@ -474,67 +514,102 @@ const GridItem = memo(function GridItem({
   );
 });
 
-// ─── Native grid-lanes path (Safari 26.4+) ─────────────────────────────────
+// ─── DOM measurement pass ──────────────────────────────────────────────────
+//
+// Renders MeasureCards into a hidden off-screen container, reads each
+// card's actual pixel height via getBoundingClientRect, and reports the
+// results through `onMeasured`. The container is positioned off-screen
+// (left: -99999px) so the browser still computes layout but the cards
+// are never visible to the user.
+//
+// This runs during the "Computing layout…" phase, before the visible grid
+// renders. After measurement completes, the parent stores heights in
+// memoryCache + IndexedDB and flips heightsReady=true, triggering the
+// normal visible render with pixel-perfect positions.
+//
+// useLayoutEffect fires after React commit but before browser paint, so
+// by the time the parent re-renders with the new heights, nothing has
+// flickered on screen.
 
-function GridLanesLayout({
-  blocks,
-  wordWidthsMap,
-  parentWidth,
-  context,
-}: {
+interface MeasurementPassProps {
   blocks: LightBlock[];
-  wordWidthsMap: Map<number, WordWidths>;
-  parentWidth: number;
-  context: GridContext;
-}) {
-  // Derive column width the same way buildLayout does, for contain-intrinsic-size
-  const provisionalColumnCount = Math.max(
-    1,
-    Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
-  );
-  const columnWidth = Math.max(
-    1,
-    (Math.max(0, parentWidth - GAP * (provisionalColumnCount - 1))) /
-      provisionalColumnCount,
-  );
+  columnWidth: number;
+  vaultPath: string;
+  onMeasured: (results: Array<{ id: number; height: number }>) => void;
+}
+
+function MeasurementPass({
+  blocks,
+  columnWidth,
+  vaultPath,
+  onMeasured,
+}: MeasurementPassProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    // Wait for fonts to be ready before measuring, otherwise line counts
+    // and therefore heights will be computed against the fallback system
+    // font instead of Geist.
+    let cancelled = false;
+    const run = async () => {
+      if (typeof document !== "undefined" && document.fonts?.ready) {
+        try {
+          await document.fonts.ready;
+        } catch {
+          // fonts API failed — proceed anyway
+        }
+      }
+      if (cancelled) return;
+
+      // Force a synchronous layout and walk children to read heights.
+      const results: Array<{ id: number; height: number }> = [];
+      const children = container.children;
+      for (let i = 0; i < children.length; i += 1) {
+        const child = children[i] as HTMLElement | undefined;
+        if (!child) continue;
+        const idAttr = child.getAttribute("data-measure-id");
+        if (idAttr === null) continue;
+        const id = Number(idAttr);
+        if (!Number.isFinite(id)) continue;
+        const rect = child.getBoundingClientRect();
+        results.push({ id, height: rect.height });
+      }
+      if (!cancelled) onMeasured(results);
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+    // Deps intentionally covers the full measurement input: a new block
+    // list or new columnWidth means we need to re-measure.
+  }, [blocks, columnWidth, onMeasured]);
 
   return (
     <div
+      ref={containerRef}
+      aria-hidden="true"
       style={{
-        display: "grid-lanes" as unknown as string,
-        gridTemplateColumns: `repeat(auto-fill, minmax(${COLUMN_MIN_WIDTH}px, 1fr))`,
-        gap: GAP,
+        position: "fixed",
+        left: "-99999px",
+        top: 0,
+        width: Math.max(1, Math.round(columnWidth)),
+        visibility: "hidden",
+        pointerEvents: "none",
       }}
     >
-      {blocks.map((block, idx) => {
-        const height = computeCardHeight(
-          block,
-          columnWidth,
-          wordWidthsMap.get(block.id) ?? null,
-        );
-        return (
-          <div
-            key={block.id}
-            style={{
-              contentVisibility: "auto",
-              containIntrinsicSize: `auto ${height}px`,
-            }}
-          >
-            <Card
-              block={block}
-              vaultPath={context.vaultPath}
-              isFocused={block.id === context.focusedBlockId}
-              priority={idx < 12}
-              onClick={context.onBlockClick}
-              tags={context.tags}
-              currentTag={context.currentTag}
-              onToggleTag={context.onToggleTag}
-              onCreateAndAssign={context.onCreateAndAssign}
-              onRequestDelete={context.onRequestDelete}
-            />
-          </div>
-        );
-      })}
+      {blocks.map((block) => (
+        <div
+          key={block.id}
+          data-measure-id={block.id}
+          style={{ width: Math.max(1, Math.round(columnWidth)) }}
+        >
+          <MeasureCard block={block} vaultPath={vaultPath} />
+        </div>
+      ))}
     </div>
   );
 }
