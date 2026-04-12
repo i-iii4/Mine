@@ -15,6 +15,17 @@
 /** Pixel granularity for columnWidth bucketing. */
 export const BUCKET_PX = 40;
 
+/**
+ * Cache content version. Bump whenever Card.tsx visual templates change in
+ * a way that affects rendered heights — old measurements become invalid and
+ * entries with a different version suffix are silently ignored. Bumping here
+ * forces a fresh DOM measurement pass on every block at next load.
+ *
+ * v1: initial DOM measurement implementation
+ * v2: fixed ImageCard/SocialCard aspect-ratio wrappers, added img-load wait
+ */
+const CACHE_VERSION = 2;
+
 const DB_NAME = "arena-card-heights";
 const DB_VERSION = 1;
 const STORE_NAME = "heights";
@@ -24,7 +35,7 @@ export function bucketize(columnWidth: number): number {
 }
 
 function cacheKey(blockId: number, bucket: number): string {
-  return `${blockId}:${bucket}`;
+  return `${blockId}:${bucket}:v${CACHE_VERSION}`;
 }
 
 // ─── In-memory layer ────────────────────────────────────────────────────────
@@ -116,7 +127,13 @@ export async function warmFromIndexedDb(): Promise<void> {
     const req = store.getAll();
     req.onsuccess = () => {
       const records = (req.result ?? []) as HeightRecord[];
+      const versionSuffix = `:v${CACHE_VERSION}`;
       for (const record of records) {
+        // Skip entries from older cache versions — they were measured against
+        // a Card.tsx template that has since changed, so the heights are
+        // stale. They linger in IndexedDB (harmless, cleaned lazily) but do
+        // not populate the hot in-memory cache.
+        if (!record.key.endsWith(versionSuffix)) continue;
         memoryCache.set(record.key, record.height);
       }
       resolve();
