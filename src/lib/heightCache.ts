@@ -23,8 +23,10 @@ export const BUCKET_PX = 40;
  *
  * v1: initial DOM measurement implementation
  * v2: fixed ImageCard/SocialCard aspect-ratio wrappers, added img-load wait
+ * v3: ArticleCard first_image and SocialCard media use exact aspect ratios
+ *     from media_dimensions metadata with object-contain (no crop)
  */
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 const DB_NAME = "arena-card-heights";
 const DB_VERSION = 1;
