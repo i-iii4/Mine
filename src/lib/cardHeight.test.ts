@@ -23,17 +23,22 @@ function makeBlock(overrides: Partial<LightBlock> & { block_type: LightBlock["bl
   };
 }
 
+// Card outer wrapper has `border` class = 1px top + 1px bottom = 2px added
+// to the outer height. All block types include this in their returned height.
+const CARD_BORDER = 2;
+
 describe("computeCardHeight — image", () => {
   it("uses exact aspect ratio when width/height metadata present", () => {
     const block = makeBlock({ block_type: "image", width: 1600, height: 900 });
     const h = computeCardHeight(block, 280, null);
-    expect(h).toBe(Math.round(280 * (900 / 1600))); // 158
+    // inner width = 280 - 2 = 278; image h = round(278 * 9/16) = 156; + border
+    expect(h).toBe(Math.round(278 * (900 / 1600)) + CARD_BORDER);
   });
 
   it("enforces minimum height for ultra-wide images", () => {
     const block = makeBlock({ block_type: "image", width: 2000, height: 100 });
     const h = computeCardHeight(block, 280, null);
-    // raw = 280 * 100/2000 = 14, clamped to 120
+    // raw = 278 * 100/2000 = 13.9, clamped to IMAGE_MIN_HEIGHT 120; + border
     expect(h).toBeGreaterThanOrEqual(120);
   });
 
@@ -47,19 +52,22 @@ describe("computeCardHeight — image", () => {
 describe("computeCardHeight — video / link / file", () => {
   it("video uses 16:9 aspect", () => {
     const block = makeBlock({ block_type: "video" });
-    expect(computeCardHeight(block, 320, null)).toBe(Math.round(320 * 9 / 16));
+    // inner width 320 - 2 = 318; height = round(318 * 9/16) + border
+    expect(computeCardHeight(block, 320, null)).toBe(
+      Math.round(318 * 9 / 16) + CARD_BORDER,
+    );
   });
 
   it("link adds footer height to thumbnail", () => {
     const block = makeBlock({ block_type: "link" });
-    const expected = Math.round(320 * 9 / 16) + 76;
+    const expected = Math.round(318 * 9 / 16) + 76 + CARD_BORDER;
     expect(computeCardHeight(block, 320, null)).toBe(expected);
   });
 
-  it("file always returns fixed 88px", () => {
+  it("file always returns fixed height + border", () => {
     const block = makeBlock({ block_type: "file" });
-    expect(computeCardHeight(block, 280, null)).toBe(88);
-    expect(computeCardHeight(block, 500, null)).toBe(88);
+    expect(computeCardHeight(block, 280, null)).toBe(88 + CARD_BORDER);
+    expect(computeCardHeight(block, 500, null)).toBe(88 + CARD_BORDER);
   });
 });
 
