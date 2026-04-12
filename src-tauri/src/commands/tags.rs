@@ -51,7 +51,7 @@ pub fn add_tag(
     let content = serialize_block(&block);
     std::fs::write(&path, content)
         .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
-    index::upsert_block(&vs.conn, &block)?;
+    index::upsert_block(&vs.conn, &block, Some(vs.vault.root()))?;
 
     Ok(())
 }
@@ -78,7 +78,7 @@ pub fn remove_tag(
     let content = serialize_block(&block);
     std::fs::write(&path, content)
         .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
-    index::upsert_block(&vs.conn, &block)?;
+    index::upsert_block(&vs.conn, &block, Some(vs.vault.root()))?;
 
     Ok(())
 }
@@ -120,7 +120,7 @@ pub fn rename_tag(
         let serialized = serialize_block(&block);
         std::fs::write(&path, serialized)
             .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
-        index::upsert_block(&vs.conn, &block)?;
+        index::upsert_block(&vs.conn, &block, Some(vs.vault.root()))?;
     }
 
     Ok(())
@@ -154,7 +154,7 @@ pub fn delete_tag_from_all(
         let serialized = serialize_block(&block);
         std::fs::write(&path, serialized)
             .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
-        index::upsert_block(&vs.conn, &block)?;
+        index::upsert_block(&vs.conn, &block, Some(vs.vault.root()))?;
     }
 
     Ok(())

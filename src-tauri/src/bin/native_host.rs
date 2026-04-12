@@ -448,7 +448,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     let _ = thumbnails::generate_for_block(&block, vault);
 
     // Index the block
-    if let Err(e) = index::upsert_block(&conn, &block) {
+    if let Err(e) = index::upsert_block(&conn, &block, Some(vault.root())) {
         return send_error(&format!("failed to index block: {e}"));
     }
 

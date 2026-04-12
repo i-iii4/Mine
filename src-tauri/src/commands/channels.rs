@@ -244,7 +244,7 @@ pub fn rename_channel(
             vs.conn.execute("ROLLBACK", []).ok();
             return Err(CommandError::Internal(format!("failed to write: {}", e)));
         }
-        index::upsert_block(&vs.conn, &block)?;
+        index::upsert_block(&vs.conn, &block, Some(vs.vault.root()))?;
     }
 
     // Create new channel with same metadata
