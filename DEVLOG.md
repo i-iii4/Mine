@@ -111,7 +111,7 @@ if any
 5. Быстрый momentum scroll до конца ленты — стабильно
 
 ### Push
-TBD — будет добавлен после коммита
+`a5196c4` (parallel/b) → merged into main as `b49bebe` via PR #4
 
 ### Decisions and lessons learned
 
