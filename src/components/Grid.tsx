@@ -490,11 +490,16 @@ const GridItem = memo(function GridItem({
 }) {
   return (
     <div
-      className="will-change-transform overflow-hidden"
+      className="will-change-transform"
       style={{
         position: "absolute",
         width: item.width,
-        height: item.height,
+        // height is intentionally NOT set — when measurement is the source
+        // of truth, the child Card sizes itself to its natural content and
+        // we rely on computeMasonryLayout placing neighbors based on the
+        // same measured heights. Setting an explicit height here would
+        // create an opportunity for fractional-pixel mismatches (getBCR
+        // returns floats; CSS rounds them when applying inline styles).
         transform: `translate3d(${item.left}px, ${item.top}px, 0)`,
       }}
     >
@@ -608,8 +613,11 @@ function MeasurementPass({
         if (idAttr === null) continue;
         const id = Number(idAttr);
         if (!Number.isFinite(id)) continue;
+        // Ceil to the nearest integer pixel so the visible wrapper never
+        // has a fractional height that the browser rounds down, which would
+        // otherwise clip the last row of pixels of the rendered card.
         const rect = child.getBoundingClientRect();
-        results.push({ id, height: rect.height });
+        results.push({ id, height: Math.ceil(rect.height) });
       }
       if (!cancelled) onMeasured(results);
     };
@@ -630,7 +638,11 @@ function MeasurementPass({
         position: "fixed",
         left: "-99999px",
         top: 0,
-        width: Math.max(1, Math.round(columnWidth)),
+        // Use the exact fractional columnWidth — same value the layout
+        // engine uses for item.width in the visible grid. Rounding here
+        // would create a width mismatch between measurement and render,
+        // causing text to wrap slightly differently and heights to drift.
+        width: Math.max(1, columnWidth),
         visibility: "hidden",
         pointerEvents: "none",
       }}
@@ -639,7 +651,7 @@ function MeasurementPass({
         <div
           key={block.id}
           data-measure-id={block.id}
-          style={{ width: Math.max(1, Math.round(columnWidth)) }}
+          style={{ width: Math.max(1, columnWidth) }}
         >
           <MeasureCard block={block} vaultPath={vaultPath} />
         </div>
