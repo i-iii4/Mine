@@ -21,14 +21,24 @@ import type {
 /** Path to the Geist font file served by Vite from /public. */
 const FONT_URL = "/fonts/Geist-Variable.woff2";
 const FONT_FAMILY = "Geist";
-const FONT_SPEC = "14px 'Geist', system-ui, sans-serif";
+
+/**
+ * Font specs used to measure text widths. MUST match the actual fonts
+ * used in Card.tsx for title and preview, otherwise computed line counts
+ * will not match rendered line counts.
+ *
+ * Title: text-sm font-semibold → 12px / 600 weight
+ * Preview: text-sm → 12px / 400 weight
+ */
+const TITLE_FONT_SPEC = "600 12px 'Geist', system-ui, sans-serif";
+const PREVIEW_FONT_SPEC = "400 12px 'Geist', system-ui, sans-serif";
 
 /**
  * Static font hash. Bumped manually when the font file, size, or spec
  * changes in a way that affects measureText output. All cached entries
  * with a different hash are treated as stale and re-computed.
  */
-const FONT_HASH: FontHash = "geist-variable-14px-v1";
+const FONT_HASH: FontHash = "geist-variable-12px-semibold-regular-v2";
 
 const DB_NAME = "arena-font-metrics";
 const DB_VERSION = 1;
@@ -160,7 +170,8 @@ function computeInWorker(blocks: WorkerBlockInput[]): Promise<WorkerBlockResult[
     requestId,
     blocks,
     fontHash: FONT_HASH,
-    fontSpec: FONT_SPEC,
+    titleFontSpec: TITLE_FONT_SPEC,
+    previewFontSpec: PREVIEW_FONT_SPEC,
   };
   worker.postMessage(message);
   return promise;

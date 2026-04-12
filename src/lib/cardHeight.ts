@@ -16,6 +16,13 @@ import type { WordWidths } from "@/types/fontMetrics";
 import { countLines } from "./wordWrap";
 
 // ─── Layout constants (must match Card.tsx) ─────────────────────────────────
+//
+// All values are derived from the project theme in src/styles/global.css:
+//   --text-sm: 12px
+//   --text-sm--line-height: 16px
+//
+// Tailwind spacing scale: 1 unit = 4px. p-4 = 16px, mt-1.5 = 6px, mt-2 = 8px,
+// mt-3 = 12px. leading-relaxed = line-height: 1.625 (relative).
 
 /** Fallback height when a block has no useful size signal. */
 export const DEFAULT_CARD_HEIGHT = 240;
@@ -36,26 +43,38 @@ const FILE_CARD_HEIGHT = 88;
 
 // ─── Article card constants (must match Card.tsx ArticleCard template) ─────
 
-/** Horizontal padding on each side of the article card. */
+/** Horizontal padding on each side of the article card (p-4). */
 const ARTICLE_PADDING_X = 16;
 
-/** Vertical padding at top of article card. */
+/** Vertical padding at top of article card (p-4). */
 const ARTICLE_PADDING_TOP = 16;
 
-/** Vertical padding at bottom of article card. */
+/** Vertical padding at bottom of article card (p-4). */
 const ARTICLE_PADDING_BOTTOM = 16;
 
-/** Gap between title and preview / preview and image / image and author. */
-const ARTICLE_BLOCK_GAP = 6;
+/**
+ * Line height of the title paragraph. text-sm in our theme has 16px line
+ * height — font-semibold doesn't change that.
+ */
+const ARTICLE_TITLE_LINE_HEIGHT = 16;
 
-/** Line height of the title. text-sm line-height is 20px in our design system. */
-const ARTICLE_TITLE_LINE_HEIGHT = 20;
-
-/** Line height of the preview text. leading-relaxed at text-sm is 20px. */
+/**
+ * Line height of the preview text. `leading-relaxed` forces line-height:
+ * 1.625 relative. At 12px font-size: ceil(12 * 1.625) = 20px.
+ */
 const ARTICLE_PREVIEW_LINE_HEIGHT = 20;
 
-/** Author line height. */
-const ARTICLE_AUTHOR_HEIGHT = 20;
+/** Height of the author line (text-sm plain, 16px line-height). */
+const ARTICLE_AUTHOR_LINE_HEIGHT = 16;
+
+/** Margin between title and preview (mt-1.5 = 6px). */
+const ARTICLE_GAP_TITLE_TO_PREVIEW = 6;
+
+/** Margin from previous block to first_image (mt-3 = 12px). */
+const ARTICLE_GAP_BEFORE_IMAGE = 12;
+
+/** Margin from previous block to author (mt-2 = 8px). */
+const ARTICLE_GAP_BEFORE_AUTHOR = 8;
 
 /** Maximum title lines (clamped via line-clamp-2 in CSS). */
 const ARTICLE_TITLE_MAX_LINES = 2;
@@ -66,8 +85,11 @@ const ARTICLE_PREVIEW_MAX_LINES_WITH_IMAGE = 3;
 /** Maximum preview lines without image (line-clamp-8). */
 const ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE = 8;
 
-/** Aspect ratio coefficient for first_image area in article card (0.5 = 2:1). */
-const ARTICLE_IMAGE_ASPECT = 0.5;
+/**
+ * Fixed aspect ratio for article first_image. Card.tsx forces aspect-video
+ * (16:9) on the image so height is deterministic without metadata.
+ */
+const ARTICLE_IMAGE_ASPECT = 9 / 16;
 
 // ─── Image-card fallback when no width/height metadata ──────────────────────
 
@@ -95,33 +117,33 @@ function computeArticleHeight(
 ): number {
   const contentWidth = Math.max(1, columnWidth - ARTICLE_PADDING_X * 2);
 
-  let titleLines: number;
-  let previewLines: number;
-
   if (wordWidths) {
     // Precise path: known word widths, exact line count.
-    titleLines = Math.min(
+    const titleLines = Math.min(
       ARTICLE_TITLE_MAX_LINES,
-      Math.max(1, countLines(wordWidths.title, wordWidths.space, contentWidth)),
+      Math.max(1, countLines(wordWidths.title, wordWidths.titleSpace, contentWidth)),
     );
     const previewMax = block.first_image
       ? ARTICLE_PREVIEW_MAX_LINES_WITH_IMAGE
       : ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE;
-    previewLines = Math.min(
+    const previewLines = Math.min(
       previewMax,
-      Math.max(0, countLines(wordWidths.preview, wordWidths.space, contentWidth)),
+      Math.max(0, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth)),
     );
 
     const titleH = titleLines * ARTICLE_TITLE_LINE_HEIGHT;
     const previewH = previewLines * ARTICLE_PREVIEW_LINE_HEIGHT;
     const imageH = block.first_image ? Math.round(columnWidth * ARTICLE_IMAGE_ASPECT) : 0;
-    const authorH = block.author ? ARTICLE_AUTHOR_HEIGHT : 0;
+    const authorH = block.author ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
 
-    // Gap structure: title → (gap if preview) → preview → (gap if image) → image → (gap if author) → author
+    // Gap structure mirroring Card.tsx mt-* classes:
+    //   title → preview: mt-1.5 (6px), only when preview exists
+    //   (previous) → image: mt-3 (12px), only when image exists
+    //   (previous) → author: mt-2 (8px), only when author exists
     const gaps =
-      (previewLines > 0 ? ARTICLE_BLOCK_GAP : 0) +
-      (imageH > 0 ? ARTICLE_BLOCK_GAP : 0) +
-      (authorH > 0 ? ARTICLE_BLOCK_GAP : 0);
+      (previewLines > 0 ? ARTICLE_GAP_TITLE_TO_PREVIEW : 0) +
+      (imageH > 0 ? ARTICLE_GAP_BEFORE_IMAGE : 0) +
+      (authorH > 0 ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
 
     return (
       ARTICLE_PADDING_TOP +
@@ -148,8 +170,6 @@ function computeArticleHeight(
   //   - imageH = 0 (no image is valid)
   //   - authorH = 0 (no author is valid)
   //   - gaps = 0 (only title → no gaps)
-  //
-  // Fallback height = ARTICLE_PADDING_TOP + 1*lineHeight + ARTICLE_PADDING_BOTTOM
   return ARTICLE_PADDING_TOP + ARTICLE_TITLE_LINE_HEIGHT + ARTICLE_PADDING_BOTTOM;
 }
 

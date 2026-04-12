@@ -67,7 +67,8 @@ describe("computeCardHeight — article", () => {
   const wordWidths: WordWidths = {
     title: [40, 30, 50, 25, 35],
     preview: [20, 30, 25, 40, 35, 20, 45, 30, 25, 35, 50, 20, 30],
-    space: 4,
+    titleSpace: 4,
+    previewSpace: 4,
   };
 
   it("returns positive height with word widths", () => {

@@ -22,7 +22,6 @@ const PREVIEW_MAX_CHARS = 400;
 
 let canvas: OffscreenCanvas | null = null;
 let ctx: OffscreenCanvasRenderingContext2D | null = null;
-let fontSpec = "14px 'Geist', system-ui, sans-serif";
 let fontReady = false;
 
 function ensureContext(): OffscreenCanvasRenderingContext2D {
@@ -99,7 +98,8 @@ function measureWords(ctxLocal: OffscreenCanvasRenderingContext2D, words: string
 function computeWordWidthsForBlock(
   ctxLocal: OffscreenCanvasRenderingContext2D,
   block: WorkerBlockInput,
-  spaceWidth: number,
+  titleFontSpec: string,
+  previewFontSpec: string,
 ): WordWidths {
   const titleWords = splitWords(block.title);
   const previewText = block.body.length > PREVIEW_MAX_CHARS
@@ -107,10 +107,21 @@ function computeWordWidthsForBlock(
     : block.body;
   const previewWords = splitWords(previewText);
 
+  // Title measurement pass (semibold)
+  ctxLocal.font = titleFontSpec;
+  const titleWidths = measureWords(ctxLocal, titleWords);
+  const titleSpace = ctxLocal.measureText(" ").width;
+
+  // Preview measurement pass (regular)
+  ctxLocal.font = previewFontSpec;
+  const previewWidths = measureWords(ctxLocal, previewWords);
+  const previewSpace = ctxLocal.measureText(" ").width;
+
   return {
-    title: measureWords(ctxLocal, titleWords),
-    preview: measureWords(ctxLocal, previewWords),
-    space: spaceWidth,
+    title: titleWidths,
+    preview: previewWidths,
+    titleSpace,
+    previewSpace,
   };
 }
 
@@ -140,7 +151,8 @@ function handleCompute(
   requestId: number,
   blocks: WorkerBlockInput[],
   fontHash: string,
-  spec: string,
+  titleFontSpec: string,
+  previewFontSpec: string,
 ): void {
   try {
     const ctxLocal = ensureContext();
@@ -148,17 +160,17 @@ function handleCompute(
       postError(requestId, "Font not yet loaded — send init first");
       return;
     }
-    if (spec !== fontSpec) {
-      fontSpec = spec;
-    }
-    ctxLocal.font = fontSpec;
-    const spaceWidth = ctxLocal.measureText(" ").width;
 
     const results: WorkerBlockResult[] = new Array(blocks.length);
     for (let i = 0; i < blocks.length; i += 1) {
       results[i] = {
         id: blocks[i]!.id,
-        widths: computeWordWidthsForBlock(ctxLocal, blocks[i]!, spaceWidth),
+        widths: computeWordWidthsForBlock(
+          ctxLocal,
+          blocks[i]!,
+          titleFontSpec,
+          previewFontSpec,
+        ),
       };
       if ((i + 1) % PROGRESS_CHUNK === 0) {
         postResult({ type: "progress", requestId, done: i + 1, total: blocks.length });
@@ -178,7 +190,13 @@ self.addEventListener("message", (event: MessageEvent<WorkerInMessage>) => {
       void handleInit(msg.requestId, msg.fontBuffer, msg.fontFamily);
       break;
     case "compute":
-      handleCompute(msg.requestId, msg.blocks, msg.fontHash, msg.fontSpec);
+      handleCompute(
+        msg.requestId,
+        msg.blocks,
+        msg.fontHash,
+        msg.titleFontSpec,
+        msg.previewFontSpec,
+      );
       break;
     default: {
       // Exhaustiveness check
