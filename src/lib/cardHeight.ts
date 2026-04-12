@@ -1,0 +1,199 @@
+// Deterministic card height computation.
+//
+// This module contains the single source of truth for how tall a card
+// will render at a given column width. It is a pure function of the block
+// data and pre-computed font metrics — no DOM access, no measurement.
+//
+// Every branch must agree with what Card.tsx actually renders. If the
+// visual template changes (padding, line-height, font-size, aspect ratio),
+// the constants below must change to match, otherwise computed heights
+// will drift from rendered heights.
+//
+// See SPEC_GRID.md for the architectural rationale.
+
+import type { LightBlock } from "@/types";
+import type { WordWidths } from "@/types/fontMetrics";
+import { countLines } from "./wordWrap";
+
+// ─── Layout constants (must match Card.tsx) ─────────────────────────────────
+
+/** Fallback height when a block has no useful size signal. */
+export const DEFAULT_CARD_HEIGHT = 240;
+
+// ─── Image/video/link card constants ────────────────────────────────────────
+
+/** Minimum enforced height for image cards even on extremely tall ratios. */
+const IMAGE_MIN_HEIGHT = 120;
+
+/** Aspect for video/link thumbnail area (16:9). */
+const THUMBNAIL_ASPECT = 9 / 16;
+
+/** Height of the text footer below link thumbnails (padding + title + domain). */
+const LINK_FOOTER_HEIGHT = 76;
+
+/** Fixed file card height. */
+const FILE_CARD_HEIGHT = 88;
+
+// ─── Article card constants (must match Card.tsx ArticleCard template) ─────
+
+/** Horizontal padding on each side of the article card. */
+const ARTICLE_PADDING_X = 16;
+
+/** Vertical padding at top of article card. */
+const ARTICLE_PADDING_TOP = 16;
+
+/** Vertical padding at bottom of article card. */
+const ARTICLE_PADDING_BOTTOM = 16;
+
+/** Gap between title and preview / preview and image / image and author. */
+const ARTICLE_BLOCK_GAP = 6;
+
+/** Line height of the title. text-sm line-height is 20px in our design system. */
+const ARTICLE_TITLE_LINE_HEIGHT = 20;
+
+/** Line height of the preview text. leading-relaxed at text-sm is 20px. */
+const ARTICLE_PREVIEW_LINE_HEIGHT = 20;
+
+/** Author line height. */
+const ARTICLE_AUTHOR_HEIGHT = 20;
+
+/** Maximum title lines (clamped via line-clamp-2 in CSS). */
+const ARTICLE_TITLE_MAX_LINES = 2;
+
+/** Maximum preview lines when an image is present (line-clamp-3). */
+const ARTICLE_PREVIEW_MAX_LINES_WITH_IMAGE = 3;
+
+/** Maximum preview lines without image (line-clamp-8). */
+const ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE = 8;
+
+/** Aspect ratio coefficient for first_image area in article card (0.5 = 2:1). */
+const ARTICLE_IMAGE_ASPECT = 0.5;
+
+// ─── Image-card fallback when no width/height metadata ──────────────────────
+
+function computeImageHeight(block: LightBlock, columnWidth: number): number {
+  if (block.width && block.height && block.width > 0) {
+    return Math.max(
+      IMAGE_MIN_HEIGHT,
+      Math.round(columnWidth * (block.height / block.width)),
+    );
+  }
+  // No metadata. Conservative lower-bound: a square is typically the median
+  // of mixed portrait/landscape collections. When actual dimensions become
+  // known later, measurement-free pipeline never re-triggers, so this height
+  // stays fixed. A one-time backend task extracts width/height at indexing
+  // time and fills the metadata; see SPEC_GRID out-of-scope section.
+  return DEFAULT_CARD_HEIGHT;
+}
+
+// ─── Article-card computation ───────────────────────────────────────────────
+
+function computeArticleHeight(
+  block: LightBlock,
+  columnWidth: number,
+  wordWidths: WordWidths | null,
+): number {
+  const contentWidth = Math.max(1, columnWidth - ARTICLE_PADDING_X * 2);
+
+  let titleLines: number;
+  let previewLines: number;
+
+  if (wordWidths) {
+    // Precise path: known word widths, exact line count.
+    titleLines = Math.min(
+      ARTICLE_TITLE_MAX_LINES,
+      Math.max(1, countLines(wordWidths.title, wordWidths.space, contentWidth)),
+    );
+    const previewMax = block.first_image
+      ? ARTICLE_PREVIEW_MAX_LINES_WITH_IMAGE
+      : ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE;
+    previewLines = Math.min(
+      previewMax,
+      Math.max(0, countLines(wordWidths.preview, wordWidths.space, contentWidth)),
+    );
+
+    const titleH = titleLines * ARTICLE_TITLE_LINE_HEIGHT;
+    const previewH = previewLines * ARTICLE_PREVIEW_LINE_HEIGHT;
+    const imageH = block.first_image ? Math.round(columnWidth * ARTICLE_IMAGE_ASPECT) : 0;
+    const authorH = block.author ? ARTICLE_AUTHOR_HEIGHT : 0;
+
+    // Gap structure: title → (gap if preview) → preview → (gap if image) → image → (gap if author) → author
+    const gaps =
+      (previewLines > 0 ? ARTICLE_BLOCK_GAP : 0) +
+      (imageH > 0 ? ARTICLE_BLOCK_GAP : 0) +
+      (authorH > 0 ? ARTICLE_BLOCK_GAP : 0);
+
+    return (
+      ARTICLE_PADDING_TOP +
+      titleH +
+      previewH +
+      imageH +
+      authorH +
+      gaps +
+      ARTICLE_PADDING_BOTTOM
+    );
+  }
+
+  // Fallback path: word widths not yet available (worker still running).
+  //
+  // Conservative strict lower bound: fallback MUST be ≤ any possible measured
+  // height, so that corrections from fallback → measured always GROW totalHeight.
+  // A growing totalHeight never causes scroll jumps — scrollTop remains valid,
+  // content simply extends below the viewport. Shrinking would cause the browser
+  // to clamp scrollTop and produce a visible jump.
+  //
+  // Minimum possible measured height for an article card:
+  //   - titleLines = 1 (clamped minimum in precise path)
+  //   - previewLines = 0 (empty preview is valid)
+  //   - imageH = 0 (no image is valid)
+  //   - authorH = 0 (no author is valid)
+  //   - gaps = 0 (only title → no gaps)
+  //
+  // Fallback height = ARTICLE_PADDING_TOP + 1*lineHeight + ARTICLE_PADDING_BOTTOM
+  return ARTICLE_PADDING_TOP + ARTICLE_TITLE_LINE_HEIGHT + ARTICLE_PADDING_BOTTOM;
+}
+
+// ─── Public API ─────────────────────────────────────────────────────────────
+
+/**
+ * Compute the exact rendered height of a card at a given column width.
+ *
+ * Pure function: same inputs always produce the same output. No DOM
+ * access, no side effects. Suitable for use in useMemo, in workers,
+ * and in unit tests without jsdom.
+ *
+ * @param block       Block metadata from LightBlock.
+ * @param columnWidth Column width in pixels (derived from layout engine).
+ * @param wordWidths  Pre-computed word widths for this block, or null if
+ *                    not yet computed. When null, uses a conservative
+ *                    lower-bound fallback; real height (once word widths
+ *                    arrive) is guaranteed to be >= fallback, so later
+ *                    corrections only grow totalHeight — never shrink it,
+ *                    never cause scroll jumps.
+ * @returns Integer pixel height, always positive.
+ */
+export function computeCardHeight(
+  block: LightBlock,
+  columnWidth: number,
+  wordWidths: WordWidths | null,
+): number {
+  switch (block.block_type) {
+    case "image":
+      return computeImageHeight(block, columnWidth);
+
+    case "video":
+      return Math.round(columnWidth * THUMBNAIL_ASPECT);
+
+    case "link":
+      return Math.round(columnWidth * THUMBNAIL_ASPECT) + LINK_FOOTER_HEIGHT;
+
+    case "file":
+      return FILE_CARD_HEIGHT;
+
+    case "article":
+      return computeArticleHeight(block, columnWidth, wordWidths);
+
+    default:
+      return DEFAULT_CARD_HEIGHT;
+  }
+}
