@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useLayoutEffect, useMemo, useCallback, memo } from "react";
+import { useRef, useState, useEffect, useMemo, useCallback, memo } from "react";
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -57,27 +57,17 @@ interface GridContext {
   onRequestDelete: (slug: string) => void;
 }
 
-// Estimates used only as a last-resort fallback, before any per-type running
-// average is available. Bias toward UNDERestimation: when measurements later
-// correct the height upward, `totalHeight` grows — scroll position remains
-// valid (content extends below). Overestimation causes `totalHeight` to shrink
-// on correction, which forces the browser to clamp scrollTop and produces a
-// visible "jump".
 function estimateCardHeight(block: LightBlock, columnWidth: number): number {
   switch (block.block_type) {
     case "image":
       if (block.width && block.height && block.width > 0) {
         return Math.max(120, Math.round(columnWidth * (block.height / block.width)));
       }
-      // No metadata — assume a conservative default, not a square (which
-      // inflates totalHeight for landscape/wide photos).
-      return DEFAULT_CARD_HEIGHT;
+      return columnWidth;
     case "video":
       return Math.round(columnWidth * 9 / 16);
     case "link":
-      // Text-only height. If a thumbnail loads later, onMeasure corrects
-      // upward and totalHeight grows — no scroll jump.
-      return 76;
+      return Math.round(columnWidth * 9 / 16) + 76;
     case "file":
       return 88;
     case "article": {
@@ -89,9 +79,7 @@ function estimateCardHeight(block: LightBlock, columnWidth: number): number {
         block.first_image ? 3 : 8,
         Math.max(2, Math.ceil(previewChars / charsPerLine)),
       );
-      // Smaller image coefficient — if actual image is larger, measurement
-      // corrects upward (safe); if image fails to load, we haven't inflated.
-      const imageHeight = block.first_image ? Math.round(columnWidth * 0.4) + 12 : 0;
+      const imageHeight = block.first_image ? Math.round(columnWidth * 0.62) + 12 : 0;
       return 32 + titleLines * 20 + previewLines * 18 + imageHeight + (block.author ? 24 : 0) + 28;
     }
     default:
@@ -118,8 +106,6 @@ export function Grid({
   const scrollIdleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastScrollTopRef = useRef(0);
   const pendingHeightsRef = useRef<Record<string, number>>({});
-  const prevLayoutRef = useRef<ReturnType<typeof computeMasonryLayout> | null>(null);
-  const prevParentWidthRef = useRef(0);
   const [parentWidth, setParentWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
@@ -164,29 +150,6 @@ export function Grid({
     };
   }, []);
 
-  // Running average of actual measured heights grouped by block_type.
-  // As the user scrolls and more cards get measured, this average converges
-  // to reality, and any remaining unmeasured card of the same type gets a
-  // nearly-accurate height estimate. This eliminates most of the totalHeight
-  // correction when reaching previously unseen cards at the end of the feed.
-  const avgHeightByType = useMemo(() => {
-    const acc: Record<string, { sum: number; count: number }> = {};
-    for (const block of blocks) {
-      const h = measuredHeights[block.slug];
-      if (h == null) continue;
-      const entry = acc[block.block_type] ?? { sum: 0, count: 0 };
-      entry.sum += h;
-      entry.count += 1;
-      acc[block.block_type] = entry;
-    }
-    const result: Record<string, number> = {};
-    for (const type of Object.keys(acc)) {
-      const entry = acc[type]!;
-      result[type] = entry.sum / entry.count;
-    }
-    return result;
-  }, [blocks, measuredHeights]);
-
   const estimatedHeights = useMemo(() => {
     const provisionalColumnCount = Math.max(
       1,
@@ -196,62 +159,13 @@ export function Grid({
       1,
       (Math.max(0, parentWidth - GAP * (provisionalColumnCount - 1))) / provisionalColumnCount,
     );
-    // Priority order for each block's height:
-    //   1. Exact measured height — ground truth.
-    //   2. Running average of same block_type — accurate once a few cards
-    //      of that type are on screen.
-    //   3. Static estimateCardHeight fallback — used only for the very first
-    //      cards before any average is available.
-    return blocks.map((block) =>
-      measuredHeights[block.slug]
-        ?? avgHeightByType[block.block_type]
-        ?? estimateCardHeight(block, columnWidth),
-    );
-  }, [blocks, measuredHeights, avgHeightByType, parentWidth]);
+    return blocks.map((block) => measuredHeights[block.slug] ?? estimateCardHeight(block, columnWidth));
+  }, [blocks, measuredHeights, parentWidth]);
 
   const layout = useMemo(
     () => computeMasonryLayout(estimatedHeights, parentWidth, COLUMN_MIN_WIDTH, GAP),
     [estimatedHeights, parentWidth],
   );
-
-  // Scroll anchoring: when layout changes due to height corrections (not
-  // container resize), preserve the visual position of the card currently at
-  // the top of the viewport. Without this, totalHeight changes from measurement
-  // corrections would cause visible scroll jumps, especially when reaching
-  // previously unmeasured cards at the end of the feed.
-  //
-  // useLayoutEffect runs after React commit but before browser paint — any
-  // scrollTop adjustment we make here is invisible to the user.
-  useLayoutEffect(() => {
-    const prev = prevLayoutRef.current;
-    const el = parentRef.current;
-    const widthChanged = parentWidth !== prevParentWidthRef.current;
-
-    // Only anchor on pure height corrections. During container resize, the
-    // grid legitimately reflows (different column count/width) and the user
-    // expects that — anchoring would fight the resize animation.
-    if (prev && el && !widthChanged) {
-      const currentScroll = el.scrollTop;
-
-      // Anchor card: first position that straddles (or is just below) the
-      // top edge of the viewport. Slight forward bias (+100) ensures we pick
-      // a card the user is actively looking at, not one just out of view.
-      const anchorIndex = prev.positions.findIndex(
-        (p) => p.top <= currentScroll + 100 && p.bottom > currentScroll,
-      );
-
-      if (anchorIndex >= 0) {
-        const oldTop = prev.positions[anchorIndex]!.top;
-        const newPos = layout.positions[anchorIndex];
-        if (newPos && newPos.top !== oldTop) {
-          el.scrollTop = currentScroll + (newPos.top - oldTop);
-        }
-      }
-    }
-
-    prevLayoutRef.current = layout;
-    prevParentWidthRef.current = parentWidth;
-  }, [layout, parentWidth]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);

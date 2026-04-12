@@ -35,7 +35,45 @@ if any
 
 ---
 
-## 11.04.2026 (late+2) [agent B, parallel/b] — Grid: scroll anchoring + running avg by type + conservative fallback
+## 11.04.2026 (late+3) [agent B, parallel/b] — Revert: scroll anchoring + running avg + conservative fallback
+
+### Goal
+Откатить PR #4 (`b49bebe`). Фикс не решил проблему «прыжка» при докрутке до конца ленты и при этом сильно ухудшил performance прокрутки (стутер, рывки).
+
+### Why it failed
+Три причины, по которым трёхслойный подход не заработал:
+
+1. **Scroll anchoring архитектурно не подходит для masonry.** Anchoring работает в линейных списках (react-virtualized, TanStack Virtual), где все элементы ниже якоря смещаются на одну и ту же дельту при коррекции высот выше. В masonry колонки независимы — коррекция высоты одной карточки смещает только её колонку, остальные колонки двигаются по-другому или не двигаются совсем. Фиксация одного якоря не фиксирует viewport целиком. Пользователь всё равно видит, как прыгают карточки в других колонках.
+
+2. **Feedback loop через программный scrollTop.** `useLayoutEffect` ставил `el.scrollTop = newScrollTop` → браузер диспатчил scroll event → `handleScroll` → `setIsScrolling(true)` → `setScrollTop` → перерендер `visibleItems` → новые MeasuredGridItem маунтятся → `getBoundingClientRect` + `onMeasure` → измерения в `pendingHeightsRef` → следующий `SCROLL_IDLE_MS` таймер → flush → layout пересчёт → anchoring → scrollTop → цикл. Период ~120ms, сетка периодически пересобиралась без действия пользователя.
+
+3. **Накладные расходы всех трёх слоёв суммировались.** `avgHeightByType` O(N), пересчитанный `estimatedHeights` O(N), `computeMasonryLayout` O(N), `useLayoutEffect` с findIndex O(N) — всё на каждое изменение `measuredHeights`. Плюс feedback loop умножал количество таких изменений. На 1000 блоков ≈ 5-10ms лишней работы на итерацию цикла, 8% main thread занят впустую.
+
+### Lessons learned
+- **Anchoring — не универсальное решение для virtual scrollers.** Он детерминистичен только в линейных списках с uniform shifts. Masonry с non-uniform column shifts ломает предпосылку anchoring'а. Я ошибся, когда утверждал в плане что anchoring «устраняет прыжок гарантированно».
+- **`useLayoutEffect` + программный scrollTop = feedback loop.** Не учёл что программная установка scrollTop триггерит scroll event. Это фундаментальное свойство DOM API, не баг реализации. Любое будущее использование anchoring'а должно либо флагом отключать реакцию на следующий scroll event, либо использовать другой механизм коррекции (transform вместо scrollTop).
+- **Слои «работают независимо» — опасное утверждение в плане.** В моём плане я сказал «anchoring гарантирует, running avg оптимизирует». На практике они создавали совместный feedback loop, хуже чем любой из них по отдельности. Композиция оптимизаций — не такая же сумма, как их изолированное поведение.
+
+### Next steps (not in this revert)
+Реальный фикс прыжка требует другого архитектурного подхода:
+- **Pin layout during scroll** — не пересчитывать layout пока пользователь активно скроллит, принять неточные позиции до полной остановки, пересчитать один раз в конце.
+- **Pre-measure cards off-screen** — при загрузке канала разово пройти все блоки, получить реальные высоты (через off-screen рендер или серверные метаданные).
+- **Cumulative correction budget** — ограничить, на сколько пикселей `totalHeight` может измениться за одну коррекцию, размазать большие коррекции на несколько фреймов.
+
+Это отдельная задача. Сейчас возвращаемся в состояние до PR #4.
+
+### Actually completed
+`git revert b49bebe` в `parallel/b`, PR #5 в main.
+
+### Push
+TBD после merge
+
+---
+
+## 11.04.2026 (late+2) [agent B, parallel/b] — [REVERTED] Grid: scroll anchoring + running avg by type + conservative fallback
+
+**Статус:** ОТКАТАН в `11.04.2026 (late+3)`. См. выше причины. Запись оставлена как исторический материал.
+
 
 ### Goal
 Устранить «прыжок» сетки при докрутке до конца ленты. Симптом: когда последние карточки впервые появляются во viewport, происходит видимая перестройка всей ленты. Коррекция высот при первом замере меняет `totalHeight` → браузер клампит scrollTop → пользователь видит прыжок и визуальный «пересборщик».
