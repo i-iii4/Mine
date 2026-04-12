@@ -146,15 +146,23 @@ const ImageCard = memo(function ImageCard({
     );
   }
 
+  // Aspect ratio is ALWAYS set — either from metadata (accurate) or a square
+  // fallback (neutral default when metadata is missing). This makes the card
+  // layout deterministic before the image loads, which is required for the
+  // hidden DOM measurement pass in Grid.tsx to read a stable height.
+  const aspectRatio = hasDimensions
+    ? `${block.width} / ${block.height}`
+    : "1 / 1";
+
   return (
     <div
       className="relative overflow-hidden bg-accent"
-      style={hasDimensions ? { aspectRatio: `${block.width} / ${block.height}` } : undefined}
+      style={{ aspectRatio }}
     >
       <img
         src={src}
         alt={block.title ?? block.slug}
-        className={cn("w-full", hasDimensions && "absolute inset-0 h-full object-cover")}
+        className="absolute inset-0 h-full w-full object-cover"
         loading={imgLoading}
         onError={() => setError(true)}
       />
@@ -355,11 +363,49 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
         <p className="line-clamp-3 text-sm text-muted-foreground">{text}</p>
       )}
 
-      {media.length === 1 && (
-        <div className="mt-3">
-          {renderMedia(media[0]!, "w-full object-cover")}
-        </div>
-      )}
+      {media.length === 1 && (() => {
+        // Single-media wrapper has deterministic aspect-square so the layout
+        // height is known before the image loads. Required by the hidden DOM
+        // measurement pass in Grid.tsx — without this the measured height
+        // would be zero until the image arrives.
+        //
+        // We inline the rendering here (rather than calling renderMedia)
+        // because the video-poster path in renderMedia returns a nested
+        // `<div className="relative">` which would have zero intrinsic
+        // height inside our absolute-children aspect-ratio wrapper.
+        const m = media[0]!;
+        const resolved = resolveSrc(m.src);
+        const absClass = "absolute inset-0 h-full w-full object-cover";
+        return (
+          <div className="mt-3 relative aspect-square w-full overflow-hidden">
+            {isVideoFile(m.src) ? (
+              <VideoFromBlob
+                src={resolved}
+                className={absClass}
+                autoPlay
+                loop
+                muted
+              />
+            ) : (
+              <img
+                src={resolved}
+                alt=""
+                className={absClass}
+                loading={imgLoading}
+              />
+            )}
+            {m.isVideoPoster && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="flex size-8 items-center justify-center rounded-full bg-black/50 text-white">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M4 2.5v11l10-5.5L4 2.5z" />
+                  </svg>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {media.length >= 2 && (
         <div className="mt-3 grid grid-cols-2 gap-0.5">
           {media.slice(0, 4).map((m) => renderMedia(m, "aspect-square w-full object-cover"))}
