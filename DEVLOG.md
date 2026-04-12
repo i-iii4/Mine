@@ -84,7 +84,7 @@ let _ = thumbnails::generate_for_block(&block, vault);
 - Manual regression: previously-stale PNG-as-JPG state больше невозможно — либо pipeline generates right format, либо `is_thumb_fresh` обнаруживает mismatch и regenerates
 
 ### Push
-— (будет обновлено после push)
+`f726854` Thumbnails: unified cascade in storage::thumbnails, magic-bytes freshness check
 
 ### Decisions and lessons learned
 - **Duplicated cascade logic — индикатор отсутствия архитектурной абстракции.** Три независимых markdown parser'а (`extract_first_image_filename`, `extract_first_video_filename`, `extract_first_media_filename`) в двух файлах — это не «просто скопировано», это сигнал что нужна shared утилита. Теперь есть одна `find_first_local_media(body, predicate)`.
