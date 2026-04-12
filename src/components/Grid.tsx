@@ -1,4 +1,12 @@
-import { useRef, useState, useEffect, useMemo, useCallback, memo } from "react";
+import {
+  useRef,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  memo,
+  useLayoutEffect,
+} from "react";
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -14,13 +22,22 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { LightBlock, TagCount } from "@/types";
+import type { WordWidths } from "@/types/fontMetrics";
 import { Card } from "./Card";
 import { CardTagMenu } from "./CardContextMenu";
 import {
   computeMasonryLayout,
-  getVisibleMasonryItems,
+  createVisibilityIndex,
+  getVisibleItemsFromIndex,
   type MasonryPosition,
+  type MasonryLayout,
 } from "@/lib/masonryLayout";
+import { computeCardHeight } from "@/lib/cardHeight";
+import { LayoutCache } from "@/lib/layoutCache";
+import { fetchWordWidths } from "@/lib/fontMetrics";
+import { useGridScroll } from "@/hooks/useGridScroll";
+
+// ─── Layout constants ───────────────────────────────────────────────────────
 
 const COLUMN_MIN_WIDTH = 240;
 const GAP = 32;
@@ -28,8 +45,13 @@ const OVERSCAN_BACKWARD_PX = 600;
 const OVERSCAN_FORWARD_PX = 2200;
 const PRIORITY_BACKWARD_PX = 200;
 const PRIORITY_FORWARD_PX = 1400;
-const DEFAULT_CARD_HEIGHT = 240;
-const SCROLL_IDLE_MS = 120;
+
+// ─── Feature detection ─────────────────────────────────────────────────────
+
+const supportsGridLanes =
+  typeof CSS !== "undefined" && CSS.supports("display", "grid-lanes");
+
+// ─── Types ─────────────────────────────────────────────────────────────────
 
 interface GridProps {
   blocks: LightBlock[];
@@ -57,35 +79,38 @@ interface GridContext {
   onRequestDelete: (slug: string) => void;
 }
 
-function estimateCardHeight(block: LightBlock, columnWidth: number): number {
-  switch (block.block_type) {
-    case "image":
-      if (block.width && block.height && block.width > 0) {
-        return Math.max(120, Math.round(columnWidth * (block.height / block.width)));
-      }
-      return columnWidth;
-    case "video":
-      return Math.round(columnWidth * 9 / 16);
-    case "link":
-      return Math.round(columnWidth * 9 / 16) + 76;
-    case "file":
-      return 88;
-    case "article": {
-      const titleLength = block.title?.length ?? block.slug.length;
-      const titleLines = Math.min(2, Math.max(1, Math.ceil(titleLength / 26)));
-      const previewChars = Math.min(400, block.body.length);
-      const charsPerLine = Math.max(18, Math.floor(columnWidth / 7));
-      const previewLines = Math.min(
-        block.first_image ? 3 : 8,
-        Math.max(2, Math.ceil(previewChars / charsPerLine)),
-      );
-      const imageHeight = block.first_image ? Math.round(columnWidth * 0.62) + 12 : 0;
-      return 32 + titleLines * 20 + previewLines * 18 + imageHeight + (block.author ? 24 : 0) + 28;
-    }
-    default:
-      return DEFAULT_CARD_HEIGHT;
-  }
+// ─── Layout cache (module-level, persists across channel switches) ─────────
+
+const layoutCache = new LayoutCache(10);
+
+// ─── Deterministic layout computation ──────────────────────────────────────
+
+function buildLayout(
+  blocks: LightBlock[],
+  parentWidth: number,
+  wordWidthsMap: Map<number, WordWidths>,
+): MasonryLayout {
+  // Derive the column width the same way computeMasonryLayout does internally.
+  // We need this value up front so we can compute per-card heights with the
+  // correct column width before handing the height array to the layout engine.
+  const provisionalColumnCount = Math.max(
+    1,
+    Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
+  );
+  const columnWidth = Math.max(
+    1,
+    (Math.max(0, parentWidth - GAP * (provisionalColumnCount - 1))) /
+      provisionalColumnCount,
+  );
+
+  const heights = blocks.map((block) =>
+    computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null),
+  );
+
+  return computeMasonryLayout(heights, parentWidth, COLUMN_MIN_WIDTH, GAP);
 }
+
+// ─── Grid component ────────────────────────────────────────────────────────
 
 export function Grid({
   blocks,
@@ -102,26 +127,24 @@ export function Grid({
   onColumnCountChange,
 }: GridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const scrollRafRef = useRef<number | null>(null);
-  const scrollIdleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastScrollTopRef = useRef(0);
-  const pendingHeightsRef = useRef<Record<string, number>>({});
   const [parentWidth, setParentWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [scrollDirection, setScrollDirection] = useState<"up" | "down">("down");
-  const [isScrolling, setIsScrolling] = useState(false);
   const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
-  const [measuredHeights, setMeasuredHeights] = useState<Record<string, number>>({});
 
+  // Word widths map. Populated asynchronously once the worker finishes.
+  // Before it arrives, computeCardHeight uses the conservative lower-bound
+  // fallback — totalHeight grows (never shrinks) when widths arrive.
+  const [wordWidthsMap, setWordWidthsMap] = useState<Map<number, WordWidths>>(
+    () => new Map(),
+  );
+
+  // Scroll to top on explicit signal or channel change.
   useEffect(() => {
     parentRef.current?.scrollTo(0, 0);
-    setScrollTop(0);
-    setMeasuredHeights({});
-    pendingHeightsRef.current = {};
   }, [scrollToTop, currentTag]);
 
+  // Measure parent dimensions.
   useEffect(() => {
     const el = parentRef.current;
     if (!el) return;
@@ -139,55 +162,99 @@ export function Grid({
     return () => observer.disconnect();
   }, []);
 
+  // Fetch word widths for the current block set. Cached in IndexedDB and
+  // in-memory — repeat visits to the same channel resolve instantly.
   useEffect(() => {
+    if (blocks.length === 0) {
+      setWordWidthsMap(new Map());
+      return;
+    }
+    let cancelled = false;
+    fetchWordWidths(blocks)
+      .then((map) => {
+        if (!cancelled) setWordWidthsMap(map);
+      })
+      .catch((err) => {
+        console.warn("[Grid] fontMetrics fetch failed, using fallback heights", err);
+        if (!cancelled) setWordWidthsMap(new Map());
+      });
     return () => {
-      if (scrollRafRef.current !== null) {
-        cancelAnimationFrame(scrollRafRef.current);
-      }
-      if (scrollIdleTimeoutRef.current !== null) {
-        clearTimeout(scrollIdleTimeoutRef.current);
-      }
+      cancelled = true;
     };
-  }, []);
+  }, [blocks]);
 
-  const estimatedHeights = useMemo(() => {
-    const provisionalColumnCount = Math.max(
-      1,
-      Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
-    );
-    const columnWidth = Math.max(
-      1,
-      (Math.max(0, parentWidth - GAP * (provisionalColumnCount - 1))) / provisionalColumnCount,
-    );
-    return blocks.map((block) => measuredHeights[block.slug] ?? estimateCardHeight(block, columnWidth));
-  }, [blocks, measuredHeights, parentWidth]);
+  // Compute (or retrieve from cache) the masonry layout for the current
+  // blocks + parentWidth combination. When word widths arrive later, the
+  // memo invalidates and recomputes with precise heights.
+  const layout = useMemo((): MasonryLayout => {
+    if (parentWidth <= 0 || blocks.length === 0) {
+      return {
+        columnCount: 1,
+        columnWidth: 0,
+        totalHeight: 0,
+        positions: [],
+      };
+    }
 
-  const layout = useMemo(
-    () => computeMasonryLayout(estimatedHeights, parentWidth, COLUMN_MIN_WIDTH, GAP),
-    [estimatedHeights, parentWidth],
-  );
+    const cached = layoutCache.get(blocks, parentWidth);
+    if (cached) return cached;
+
+    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap);
+    layoutCache.set(blocks, parentWidth, fresh);
+    return fresh;
+  }, [blocks, parentWidth, wordWidthsMap]);
+
+  // When word widths arrive for a layout we already computed with partial
+  // data, the cached entry is stale. Invalidate it so the next render
+  // recomputes with precise heights.
+  const wordWidthsVersion = wordWidthsMap.size;
+  useLayoutEffect(() => {
+    // On wordWidths change, replace the cached entry for this (blocks,
+    // parentWidth) with a freshly-computed one. Other channel entries stay
+    // warm. The deps list intentionally only includes wordWidthsVersion —
+    // the other values are read at call time and would otherwise trigger
+    // redundant recomputes on every change.
+    if (parentWidth > 0 && blocks.length > 0) {
+      const fresh = buildLayout(blocks, parentWidth, wordWidthsMap);
+      layoutCache.set(blocks, parentWidth, fresh);
+    }
+  }, [wordWidthsVersion, blocks, parentWidth, wordWidthsMap]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);
   }, [layout.columnCount, onColumnCountChange]);
 
-  const visibleItems = useMemo(
-    () => {
-      const overscanBefore = scrollDirection === "down" ? OVERSCAN_BACKWARD_PX : OVERSCAN_FORWARD_PX;
-      const overscanAfter = scrollDirection === "down" ? OVERSCAN_FORWARD_PX : OVERSCAN_BACKWARD_PX;
-      return getVisibleMasonryItems(layout.positions, scrollTop, viewportHeight, overscanBefore, overscanAfter);
-    },
-    [layout.positions, scrollDirection, scrollTop, viewportHeight],
+  const visibilityIndex = useMemo(
+    () => createVisibilityIndex(layout),
+    [layout],
   );
 
+  // Visible-items computation callback for useGridScroll. Closes over the
+  // current visibility index. When layout changes, identity of the callback
+  // changes, triggering an immediate recompute in useGridScroll.
+  const getVisibleItems = useCallback(
+    (scrollTop: number): MasonryPosition[] => {
+      if (viewportHeight <= 0) return [];
+      return getVisibleItemsFromIndex(
+        visibilityIndex,
+        scrollTop,
+        viewportHeight,
+        OVERSCAN_BACKWARD_PX,
+        OVERSCAN_FORWARD_PX,
+      );
+    },
+    [visibilityIndex, viewportHeight],
+  );
+
+  const visibleItems = useGridScroll(parentRef, { getVisibleItems });
+
+  // Priority zone — cards in this range get eager image loading.
   const priorityBounds = useMemo(() => {
-    const before = scrollDirection === "down" ? PRIORITY_BACKWARD_PX : PRIORITY_FORWARD_PX;
-    const after = scrollDirection === "down" ? PRIORITY_FORWARD_PX : PRIORITY_BACKWARD_PX;
     return {
-      start: Math.max(0, scrollTop - before),
-      end: scrollTop + viewportHeight + after,
+      start: PRIORITY_BACKWARD_PX,
+      end: PRIORITY_FORWARD_PX,
     };
-  }, [scrollDirection, scrollTop, viewportHeight]);
+  }, []);
 
   const blocksBySlug = useMemo(
     () => new Map(blocks.map((block) => [block.slug, block])),
@@ -216,62 +283,6 @@ export function Grid({
     setBlockToDelete(slug);
   }, []);
 
-  const flushPendingHeights = useCallback(() => {
-    const entries = Object.entries(pendingHeightsRef.current);
-    if (entries.length === 0) return;
-
-    setMeasuredHeights((prev) => {
-      let changed = false;
-      const next = { ...prev };
-
-      for (const [slug, height] of entries) {
-        if (Math.abs((next[slug] ?? 0) - height) >= 1) {
-          next[slug] = height;
-          changed = true;
-        }
-      }
-
-      return changed ? next : prev;
-    });
-
-    pendingHeightsRef.current = {};
-  }, []);
-
-  const handleMeasure = useCallback((slug: string, height: number) => {
-    if (isScrolling) {
-      pendingHeightsRef.current[slug] = height;
-      return;
-    }
-
-    setMeasuredHeights((prev) => {
-      if (Math.abs((prev[slug] ?? 0) - height) < 1) return prev;
-      return { ...prev, [slug]: height };
-    });
-  }, [isScrolling]);
-
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const nextScrollTop = e.currentTarget.scrollTop;
-    setIsScrolling(true);
-
-    if (scrollIdleTimeoutRef.current !== null) {
-      clearTimeout(scrollIdleTimeoutRef.current);
-    }
-    scrollIdleTimeoutRef.current = setTimeout(() => {
-      scrollIdleTimeoutRef.current = null;
-      setIsScrolling(false);
-      flushPendingHeights();
-    }, SCROLL_IDLE_MS);
-
-    if (scrollRafRef.current !== null) return;
-    scrollRafRef.current = requestAnimationFrame(() => {
-      scrollRafRef.current = null;
-      const nextDirection = nextScrollTop < lastScrollTopRef.current ? "up" : "down";
-      lastScrollTopRef.current = nextScrollTop;
-      setScrollDirection(nextDirection);
-      setScrollTop(nextScrollTop);
-    });
-  }, [flushPendingHeights]);
-
   const gridContext: GridContext = useMemo(
     () => ({
       vaultPath,
@@ -283,7 +294,16 @@ export function Grid({
       onCreateAndAssign,
       onRequestDelete: handleRequestDelete,
     }),
-    [vaultPath, focusedBlockId, onBlockClick, tags, currentTag, onToggleTag, onCreateAndAssign, handleRequestDelete],
+    [
+      vaultPath,
+      focusedBlockId,
+      onBlockClick,
+      tags,
+      currentTag,
+      onToggleTag,
+      onCreateAndAssign,
+      handleRequestDelete,
+    ],
   );
 
   return (
@@ -291,7 +311,6 @@ export function Grid({
       <ContextMenuTrigger asChild>
         <div
           ref={parentRef}
-          onScroll={handleScroll}
           onContextMenu={handleContextMenu}
           className="h-full overflow-x-hidden overflow-y-auto pb-8 pt-16"
           style={{
@@ -302,15 +321,24 @@ export function Grid({
           data-grid-scroll
         >
           {parentWidth > 0 && blocks.length > 0 && (
-            <VirtualMasonryLayout
-              key={currentTag ?? "__all__"}
-              blocks={blocks}
-              visibleItems={visibleItems}
-              totalHeight={layout.totalHeight}
-              priorityBounds={priorityBounds}
-              context={gridContext}
-              onMeasure={handleMeasure}
-            />
+            supportsGridLanes ? (
+              <GridLanesLayout
+                key={currentTag ?? "__all__"}
+                blocks={blocks}
+                wordWidthsMap={wordWidthsMap}
+                parentWidth={parentWidth}
+                context={gridContext}
+              />
+            ) : (
+              <VirtualMasonryLayout
+                key={currentTag ?? "__all__"}
+                blocks={blocks}
+                visibleItems={visibleItems}
+                totalHeight={layout.totalHeight}
+                priorityBounds={priorityBounds}
+                context={gridContext}
+              />
+            )
           )}
         </div>
       </ContextMenuTrigger>
@@ -354,20 +382,20 @@ export function Grid({
   );
 }
 
+// ─── JS virtualized path (fallback for browsers without grid-lanes) ────────
+
 function VirtualMasonryLayout({
   blocks,
   visibleItems,
   totalHeight,
   priorityBounds,
   context,
-  onMeasure,
 }: {
   blocks: LightBlock[];
   visibleItems: MasonryPosition[];
   totalHeight: number;
   priorityBounds: { start: number; end: number };
   context: GridContext;
-  onMeasure: (slug: string, height: number) => void;
 }) {
   return (
     <div className="relative" style={{ height: totalHeight || 1 }}>
@@ -375,13 +403,14 @@ function VirtualMasonryLayout({
         const block = blocks[item.index];
         if (!block) return null;
         return (
-          <MeasuredGridItem
+          <GridItem
             key={block.id}
             block={block}
             item={item}
-            priority={item.bottom >= priorityBounds.start && item.top <= priorityBounds.end}
+            priority={
+              item.top <= priorityBounds.end && item.bottom >= priorityBounds.start
+            }
             context={context}
-            onMeasure={onMeasure}
           />
         );
       })}
@@ -389,64 +418,104 @@ function VirtualMasonryLayout({
   );
 }
 
-const MeasuredGridItem = memo(function MeasuredGridItem({
+const GridItem = memo(function GridItem({
   block,
   item,
   priority,
   context,
-  onMeasure,
 }: {
   block: LightBlock;
   item: MasonryPosition;
   priority: boolean;
   context: GridContext;
-  onMeasure: (slug: string, height: number) => void;
 }) {
-  const observerRef = useRef<ResizeObserver | null>(null);
+  return (
+    <div
+      className="will-change-transform"
+      style={{
+        position: "absolute",
+        width: item.width,
+        height: item.height,
+        transform: `translate3d(${item.left}px, ${item.top}px, 0)`,
+      }}
+    >
+      <Card
+        block={block}
+        vaultPath={context.vaultPath}
+        isFocused={block.id === context.focusedBlockId}
+        priority={priority}
+        onClick={context.onBlockClick}
+        tags={context.tags}
+        currentTag={context.currentTag}
+        onToggleTag={context.onToggleTag}
+        onCreateAndAssign={context.onCreateAndAssign}
+        onRequestDelete={context.onRequestDelete}
+      />
+    </div>
+  );
+});
 
-  const handleNode = useCallback((node: HTMLDivElement | null) => {
-    observerRef.current?.disconnect();
-    observerRef.current = null;
+// ─── Native grid-lanes path (Safari 26.4+) ─────────────────────────────────
 
-    if (!node) return;
-
-    onMeasure(block.slug, node.getBoundingClientRect().height);
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (entry) {
-        onMeasure(block.slug, entry.contentRect.height);
-      }
-    });
-    observer.observe(node);
-    observerRef.current = observer;
-  }, [block.slug, onMeasure]);
-
-  useEffect(() => {
-    return () => observerRef.current?.disconnect();
-  }, []);
+function GridLanesLayout({
+  blocks,
+  wordWidthsMap,
+  parentWidth,
+  context,
+}: {
+  blocks: LightBlock[];
+  wordWidthsMap: Map<number, WordWidths>;
+  parentWidth: number;
+  context: GridContext;
+}) {
+  // Derive column width the same way buildLayout does, for contain-intrinsic-size
+  const provisionalColumnCount = Math.max(
+    1,
+    Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
+  );
+  const columnWidth = Math.max(
+    1,
+    (Math.max(0, parentWidth - GAP * (provisionalColumnCount - 1))) /
+      provisionalColumnCount,
+  );
 
   return (
     <div
       style={{
-        position: "absolute",
-        width: item.width,
-        transform: `translate(${item.left}px, ${item.top}px)`,
+        display: "grid-lanes" as unknown as string,
+        gridTemplateColumns: `repeat(auto-fill, minmax(${COLUMN_MIN_WIDTH}px, 1fr))`,
+        gap: GAP,
       }}
     >
-      <div ref={handleNode}>
-        <Card
-          block={block}
-          vaultPath={context.vaultPath}
-          isFocused={block.id === context.focusedBlockId}
-          priority={priority}
-          onClick={context.onBlockClick}
-          tags={context.tags}
-          currentTag={context.currentTag}
-          onToggleTag={context.onToggleTag}
-          onCreateAndAssign={context.onCreateAndAssign}
-          onRequestDelete={context.onRequestDelete}
-        />
-      </div>
+      {blocks.map((block, idx) => {
+        const height = computeCardHeight(
+          block,
+          columnWidth,
+          wordWidthsMap.get(block.id) ?? null,
+        );
+        return (
+          <div
+            key={block.id}
+            style={{
+              contentVisibility: "auto",
+              containIntrinsicSize: `auto ${height}px`,
+            }}
+          >
+            <Card
+              block={block}
+              vaultPath={context.vaultPath}
+              isFocused={block.id === context.focusedBlockId}
+              priority={idx < 12}
+              onClick={context.onBlockClick}
+              tags={context.tags}
+              currentTag={context.currentTag}
+              onToggleTag={context.onToggleTag}
+              onCreateAndAssign={context.onCreateAndAssign}
+              onRequestDelete={context.onRequestDelete}
+            />
+          </div>
+        );
+      })}
     </div>
   );
-});
+}
