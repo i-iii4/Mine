@@ -78,7 +78,7 @@ function isInstagramUrl(url: string): boolean {
   return lc.includes("instagram.com/p/") || lc.includes("instagram.com/reel/") || lc.includes("instagram.com/stories/");
 }
 
-function CardContent({
+export function CardContent({
   block,
   vaultPath,
   priority,

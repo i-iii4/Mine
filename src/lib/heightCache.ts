@@ -1,0 +1,172 @@
+// In-memory + IndexedDB cache for card heights.
+//
+// The DOM measurement pass in Grid.tsx renders cards hidden, reads their
+// exact pixel heights via getBoundingClientRect, and stores the result
+// here keyed by (blockId, columnWidth bucket). Subsequent visits to the
+// same channel at the same bucket are instant.
+//
+// Heights depend on columnWidth because text wraps differently at different
+// widths. We bucket columnWidth to 40-pixel granularity so small resize
+// variations don't force re-measurement.
+//
+// IndexedDB persistence survives app restart. On font version change the
+// caller should call `clearAll()` to invalidate stale entries.
+
+/** Pixel granularity for columnWidth bucketing. */
+export const BUCKET_PX = 40;
+
+const DB_NAME = "arena-card-heights";
+const DB_VERSION = 1;
+const STORE_NAME = "heights";
+
+export function bucketize(columnWidth: number): number {
+  return Math.max(0, Math.round(columnWidth / BUCKET_PX));
+}
+
+function cacheKey(blockId: number, bucket: number): string {
+  return `${blockId}:${bucket}`;
+}
+
+// ─── In-memory layer ────────────────────────────────────────────────────────
+
+/**
+ * Hot in-memory cache backed by IndexedDB on write.
+ * Reads are synchronous (no async IndexedDB roundtrip on hot paths).
+ */
+const memoryCache = new Map<string, number>();
+
+export function getCachedHeight(blockId: number, bucket: number): number | undefined {
+  return memoryCache.get(cacheKey(blockId, bucket));
+}
+
+export function setCachedHeight(
+  blockId: number,
+  bucket: number,
+  height: number,
+): void {
+  memoryCache.set(cacheKey(blockId, bucket), height);
+}
+
+/**
+ * Partition a block list into cached and missing at the given bucket.
+ * Returns the in-memory results plus a list of blockIds that need measuring.
+ */
+export function partitionByCache(
+  blockIds: readonly number[],
+  bucket: number,
+): { cached: Map<number, number>; missing: number[] } {
+  const cached = new Map<number, number>();
+  const missing: number[] = [];
+  for (const id of blockIds) {
+    const h = memoryCache.get(cacheKey(id, bucket));
+    if (h !== undefined) {
+      cached.set(id, h);
+    } else {
+      missing.push(id);
+    }
+  }
+  return { cached, missing };
+}
+
+// ─── IndexedDB persistence ──────────────────────────────────────────────────
+
+interface HeightRecord {
+  key: string;
+  blockId: number;
+  bucket: number;
+  height: number;
+}
+
+let dbPromise: Promise<IDBDatabase> | null = null;
+
+function openDb(): Promise<IDBDatabase> {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "key" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => {
+      dbPromise = null;
+      reject(request.error ?? new Error("IndexedDB open failed"));
+    };
+  });
+  return dbPromise;
+}
+
+/**
+ * Warm the in-memory cache from IndexedDB. Call once at Grid mount.
+ * Loads ALL stored records — typical vault has <100k entries which is fine
+ * for IndexedDB bulk getAll.
+ */
+export async function warmFromIndexedDb(): Promise<void> {
+  let db: IDBDatabase;
+  try {
+    db = await openDb();
+  } catch {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.getAll();
+    req.onsuccess = () => {
+      const records = (req.result ?? []) as HeightRecord[];
+      for (const record of records) {
+        memoryCache.set(record.key, record.height);
+      }
+      resolve();
+    };
+    req.onerror = () => resolve();
+  });
+}
+
+/**
+ * Persist a batch of measured heights to IndexedDB. Fire-and-forget — does
+ * not block the caller. On write failure, entries remain only in memory
+ * for the current session.
+ */
+export function persistHeights(
+  entries: ReadonlyArray<{ blockId: number; bucket: number; height: number }>,
+): void {
+  if (entries.length === 0) return;
+  void (async () => {
+    let db: IDBDatabase;
+    try {
+      db = await openDb();
+    } catch {
+      return;
+    }
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    for (const e of entries) {
+      const record: HeightRecord = {
+        key: cacheKey(e.blockId, e.bucket),
+        blockId: e.blockId,
+        bucket: e.bucket,
+        height: e.height,
+      };
+      store.put(record);
+    }
+  })();
+}
+
+/** Clear all cached entries (memory + IndexedDB). */
+export async function clearAll(): Promise<void> {
+  memoryCache.clear();
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      tx.objectStore(STORE_NAME).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch {
+    // ignore
+  }
+}
