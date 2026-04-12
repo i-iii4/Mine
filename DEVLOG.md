@@ -35,6 +35,78 @@ if any
 
 ---
 
+## 12.04.2026 (late) [agent B, parallel/b] — Phase 11 implementation: Steps 1-7 merged
+
+### Goal
+Реализация всей Phase 11 (Zero-Jank Masonry) согласно SPEC_GRID.md — полная замена measurement-based grid-архитектуры на детерминистический Canvas measureText pipeline. Цель: выполнение всех четырёх продуктовых требований (120fps scroll без прыжков, мгновенный resize, 1000 ≈ 10000, мгновенный channel switch) на Tauri desktop и на будущем web-деплое.
+
+### Actually completed
+
+Семь последовательных PR'ов, каждый изолированно тестируется:
+
+1. **PR #7 — Step 1** (`src/types/fontMetrics.ts`, `src/workers/fontMetrics.worker.ts`, `src/lib/fontMetrics.ts`). Web Worker с OffscreenCanvas measureText, загрузка Geist font через FontFace API из ArrayBuffer'а, IndexedDB cache (`arena-font-metrics` database) ключом `(blockId, fontHash)`. Client API: `fetchWordWidths(blocks)`, `getFontHash()`, `invalidateFontCache()`, `disposeWorker()`. Graceful degradation на worker/IndexedDB failure — возвращает partial cache, callers handle absence через conservative fallback.
+
+2. **PR #8 — Step 2** (`src/lib/wordWrap.ts`, `src/lib/cardHeight.ts`). Pure функции: `countLines(widths, space, maxWidth)` — greedy word-wrap, `computeCardHeight(block, columnWidth, wordWidths)` — детерминистическая высота per block_type. Image использует exact aspect ratio из metadata; video/link/file — фиксированные формулы; article — precise через countLines или **strict lower-bound fallback** когда wordWidths ещё не готовы. 21 unit test, все проходят.
+
+3. **PR #9 — Step 3** (`src/lib/masonryLayout.ts`). Bucket-based visibility index с O(k+B) lookup. Для 10000 items и 3000px viewport сканирует ~5 buckets независимо от N. 6 новых тестов, verified matches brute force filter на 50/500/1000-item layouts в верхней/средней/нижней части.
+
+4. **PR #10 — Step 4** (`src/lib/layoutCache.ts`). LRU cache max 10 entries, key `(blocks identity hash, parentWidth/10 bucket)`. Lightweight identity hash (length + first/last block ids) вместо deep comparison. 12 unit tests покрывают hit/miss, eviction, refresh-on-get, set-on-existing-key, clear, invalid maxSize.
+
+5. **PR #11 — Step 5** (`src/hooks/useGridScroll.ts`). React 18 `useSyncExternalStore` hook — scroll state хранится в ref'ах, RAF loop коалесцирует обновления, React ре-рендерится только когда visible set меняется element-wise по reference identity. Scroll внутри overscan window → 0 React рендеров.
+
+6. **PR #12 — Step 6** (`src/components/Grid.tsx` rewrite). Полная замена measurement-based pipeline:
+   - Удалены: `measuredHeights`, `pendingHeightsRef`, `flushPendingHeights`, `SCROLL_IDLE_MS`, `isScrolling`, `handleMeasure`, `MeasuredGridItem` с ResizeObserver, `estimateCardHeight` heuristic
+   - Добавлены: `fetchWordWidths` на block change, `buildLayout` pure function, module-level `layoutCache`, visibility index, `useGridScroll`
+   - Dual path: native `display: grid-lanes` когда `CSS.supports` returns true (Safari 26.4+), virtualized JS fallback иначе
+   - `GridItem` использует `will-change-transform` + `translate3d` для GPU compositor
+
+7. **PR #13 — Step 7** (этот коммит). Pixel-perfect соответствие между `computeCardHeight` и реальным рендером:
+   - `WordWidths` type разделён на `titleSpace` + `previewSpace` — title и preview измеряются разными font weight'ами (semibold vs regular)
+   - Worker делает два measurement pass'а: `TITLE_FONT_SPEC = "600 12px 'Geist'"`, `PREVIEW_FONT_SPEC = "400 12px 'Geist'"` — совпадают с актуальным Tailwind `text-sm font-semibold` / `text-sm`
+   - `cardHeight.ts` константы обновлены под реальные значения theme (из `global.css`): text-sm line-height = 16px, leading-relaxed × 12px = 20px preview line-height, gap constants (mt-1.5=6, mt-3=12, mt-2=8) точно соответствуют Tailwind spacing scale
+   - `ArticleCard` в `Card.tsx`: `first_image` теперь принудительно рендерится в `aspect-video` контейнере с `object-cover`, гарантируя детерминистическую высоту без image metadata (было `w-full` с unknown natural aspect)
+   - `FONT_HASH` bumped до `geist-variable-12px-semibold-regular-v2` — старые cached entries инвалидируются автоматически при первом запуске
+
+### Deviations from plan
+- Step 7 оказался шире чем «polish» — обнаружены три critical mismatch'а между `computeCardHeight` константами и реальным Card.tsx рендером (font size 14 vs 12, single font spec vs semibold/regular split, article first_image unknown aspect). Без их исправления invariant «measured = rendered pixel-perfect» нарушался. Реализованы в том же PR.
+- Не добавлены runtime тесты на Grid.tsx (плановый шаг migration plan'а). Visual verification делает пользователь на реальном vault'е.
+- Phase 11.9 (визуальная проверка на vault'е + замеры FPS через DevTools) ждёт пользовательской валидации после этого merge.
+
+### Checks
+- `bun run lint` — 5 existing ошибок на baseline (4 Sidebar unused imports + 1 target/ build artifact), те же после всех семи PR'ов. Delta = 0 на всех моих файлах.
+- `bun x tsc --noEmit` — все новые файлы чистые.
+- `bun run test -- src/lib` — 50 lib тестов проходят (wordWrap 9, cardHeight 12, masonryLayout 11, layoutCache 12, existing masonry 6).
+- Invariant проверка на cardHeight fallback: `fallback <= measured` выполняется для всех тестовых article блоков.
+
+### Push
+- `4069e2f` Step 1 → merged as `327e622`
+- `2ace605` Step 2 → merged as `6b9902a`
+- `507d08e` Step 3 → merged as `3256623`
+- `70279b2` Step 4 → merged as `8b250cf`
+- `66cac44` Step 5 → merged as `17f8914`
+- `f3b0742` Step 6 → merged as `7cfbb52`
+- Step 7 (этот коммит) — PR pending
+
+### Decisions and lessons learned
+
+- **Pixel-perfect не случается сам по себе.** Первоначальный SPEC_GRID.md декларировал «каждый браузер считает своим text engine → pixel-perfect», но не специфицировал что **font spec в worker'е должен побитово совпадать с font spec в CSS**. При первой реализации font spec в worker был `14px`, а CSS использовал `text-sm` (12px). Это не была бы корректность — measureText возвращал бы шире реальных widths, countLines возвращал бы больше линий, totalHeight был бы overestimate, и мы бы вернулись к прыжкам. Step 7 поймал этот bug через audit Card.tsx Tailwind классов, но урок: **constraint "pixel-perfect" требует explicit audit всех точек соответствия, не только декларации инварианта**.
+
+- **Font weight влияет на width.** Title использует semibold, preview — regular. В одной font_spec их нельзя измерить корректно — получился бы one-size-fits-none компромисс. Решение: два font_spec'а, два measurement pass'а в worker'е. Это небольшое усложнение message protocol'а (titleFontSpec + previewFontSpec), но даёт точность.
+
+- **Deterministic aspect ratio для external content.** `first_image` внутри article body не имеет metadata — его natural aspect ratio неизвестен до загрузки. Для детерминистической высоты требуется forced aspect через CSS (`aspect-video` + `object-cover`). Это дизайн-компромисс (картинки могут быть cropped), но необходимый для invariant'а.
+
+- **Conservative fallback как математическая гарантия.** Когда wordWidths ещё не готовы (первые кадры после channel switch), `computeCardHeight` возвращает strict lower bound — `padding + 1 title line + padding`. Это гарантирует `fallback <= measured`, что в свою очередь гарантирует **totalHeight может только расти при коррекции, никогда не сжиматься**. Рост totalHeight невидим (scroll position остаётся валидным), сжатие = прыжок. Unit test'ы проверяют этот invariant на каждом типе блока.
+
+- **Layout cache module-level, не component-level.** Cache объявлен как `const layoutCache = new LayoutCache(10)` на уровне модуля Grid.tsx, не в `useRef`. Это намеренно: cache переживает unmount Grid компонента (например, при переходе на VaultPicker), и при возврате на Grid все предыдущие каналы сразу мгновенны. При полной смене vault cache становится stale — но blocks references тоже меняются, identity hash не совпадает, и cache miss перепростроит layout — self-correcting.
+
+- **Перерасчёт layout при wordWidths update через useLayoutEffect.** Грубая инвалидация cache через `useLayoutEffect([wordWidthsVersion, blocks, parentWidth, wordWidthsMap])` заменяет устаревшую запись в cache на свежую. Побочный эффект: если между первым рендером и arrival wordWidths юзер переключал каналы, может остаться stale запись для предыдущего канала. Приемлемо — при возврате на предыдущий канал LRU будет cache hit, но stale. Redundant recompute в следующем useEffect цикле скорректирует. Не нашёл элегантного способа инвалидировать только одну запись, но impact минимальный.
+
+- **Seven incremental PRs > one big PR.** Каждый из 7 шагов тестировался изолированно перед слиянием. Если бы реализация шла одним большим PR, выловить pixel-perfect mismatch в font spec было бы сложнее — он проявляется только в комбинации worker + cardHeight + Card.tsx. Изолированные шаги давали фокус на одну концепцию за раз.
+
+- **Grid.tsx Integration test отложен намеренно.** Полноценный runtime test Grid.tsx требует сложных mock'ов (Worker, OffscreenCanvas, IndexedDB, ResizeObserver). Cost/benefit: мок'и хрупкие, тест зелёный не означает что реальная реализация работает. Visual verification пользователем на реальном vault'е даёт больше confidence за меньше усилий. Runtime тесты компонента можно добавить позже, если регрессии появятся.
+
+---
+
 ## 12.04.2026 [agent B, parallel/b] — SPEC_GRID.md: Zero-Jank Masonry architecture
 
 **Claimed:** `src/components/Grid.tsx`, `src/components/Card.tsx`, `src/lib/masonryLayout.ts`, new files `src/workers/fontMetrics.worker.ts`, `src/lib/fontMetrics.ts`, `src/lib/wordWrap.ts`, `src/lib/cardHeight.ts`, `src/lib/layoutCache.ts`, `src/hooks/useGridScroll.ts`, `src/types/fontMetrics.ts`

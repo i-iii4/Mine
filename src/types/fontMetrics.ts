@@ -12,14 +12,20 @@ export type FontHash = string;
  * Per-block word widths, in pixels, computed via Canvas measureText.
  * These are pure font metrics — they don't depend on columnWidth.
  * Word-wrap at any columnWidth is a pure function of these widths.
+ *
+ * Title and preview are measured with different font weights (title is
+ * semibold, preview is regular in our card template), so each has its own
+ * space width to support word-wrap correctly.
  */
 export interface WordWidths {
-  /** Pixel widths of each word in the block's title */
+  /** Pixel widths of each word in the block's title (measured with title font) */
   title: number[];
-  /** Pixel widths of each word in the preview (first 400 chars of body) */
+  /** Pixel widths of each word in the preview (measured with preview font) */
   preview: number[];
-  /** Pixel width of a single space character — used by word-wrap */
-  space: number;
+  /** Pixel width of a space character in the title font */
+  titleSpace: number;
+  /** Pixel width of a space character in the preview font */
+  previewSpace: number;
 }
 
 /**
@@ -62,7 +68,10 @@ export type WorkerInMessage =
       requestId: number;
       blocks: WorkerBlockInput[];
       fontHash: FontHash;
-      fontSpec: string; // e.g., "14px 'Geist', system-ui, sans-serif"
+      /** Font spec used to measure titles (e.g., "600 12px 'Geist', ..."). */
+      titleFontSpec: string;
+      /** Font spec used to measure preview (e.g., "400 12px 'Geist', ..."). */
+      previewFontSpec: string;
     };
 
 /** Worker → main */

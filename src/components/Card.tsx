@@ -394,12 +394,16 @@ const ArticleCard = memo(function ArticleCard({ block, vaultPath }: { block: Lig
         </p>
       )}
       {firstImage && (
-        <img
-          src={mediaUrl(vaultPath, firstImage)}
-          alt=""
-          className="mt-3 w-full"
-          loading={imgLoading}
-        />
+        // aspect-video forces deterministic height regardless of image natural
+        // dimensions — the computed card height (cardHeight.ts) assumes this.
+        <div className="relative mt-3 aspect-video w-full overflow-hidden bg-accent">
+          <img
+            src={mediaUrl(vaultPath, firstImage)}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+            loading={imgLoading}
+          />
+        </div>
       )}
       {block.author && (
         <p className="mt-2 text-sm text-muted-foreground">{block.author}</p>
