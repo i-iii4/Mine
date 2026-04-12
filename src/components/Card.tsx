@@ -3,6 +3,7 @@ import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
 import type { LightBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
+import { getMediaAspectRatio, getMediaDimensionsMap } from "@/lib/mediaDimensions";
 import { VideoFromBlob } from "./VideoFromBlob";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
@@ -307,6 +308,7 @@ function isVideoFile(src: string): boolean {
 const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const { text, media } = useMemo(() => extractTweetData(block.body), [block.body]);
+  const dimsMap = useMemo(() => getMediaDimensionsMap(block), [block]);
 
   // If body was truncated and lost media references, use media_urls from index
   if (media.length === 0 && block.media_urls) {
@@ -321,40 +323,12 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
   const resolveSrc = (src: string) =>
     src.startsWith("http://") || src.startsWith("https://") ? src : mediaUrl(vaultPath, src);
 
-  const renderMedia = (m: TweetMedia, className: string) => {
-    const resolved = resolveSrc(m.src);
-    if (isVideoFile(m.src)) {
-      // GIF (downloaded MP4) — autoplay loop. Uses VideoFromBlob because
-      // Tauri asset protocol doesn't return Accept-Ranges header which
-      // macOS 26 WKWebView requires for direct <video src="asset://..."> play.
-      return (
-        <VideoFromBlob
-          key={m.src}
-          src={resolved}
-          className={className}
-          autoPlay
-          loop
-          muted
-        />
-      );
-    }
-    if (m.isVideoPoster) {
-      // Video poster — static image + play overlay
-      return (
-        <div key={m.src} className="relative">
-          <img src={resolved} alt="" className={className} loading={imgLoading} />
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="flex size-8 items-center justify-center rounded-full bg-black/50 text-white">
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M4 2.5v11l10-5.5L4 2.5z" />
-              </svg>
-            </div>
-          </div>
-        </div>
-      );
-    }
-    // Static image
-    return <img key={m.src} src={resolved} alt="" className={className} loading={imgLoading} />;
+  /** Aspect ratio for a single media item, indexed by its filename. */
+  const aspectFor = (src: string, fallback: string): string => {
+    if (!dimsMap) return fallback;
+    const entry = dimsMap[src];
+    if (!entry) return fallback;
+    return `${entry[0]} / ${entry[1]}`;
   };
 
   return (
@@ -364,20 +338,17 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
       )}
 
       {media.length === 1 && (() => {
-        // Single-media wrapper has deterministic aspect-square so the layout
-        // height is known before the image loads. Required by the hidden DOM
-        // measurement pass in Grid.tsx — without this the measured height
-        // would be zero until the image arrives.
-        //
-        // We inline the rendering here (rather than calling renderMedia)
-        // because the video-poster path in renderMedia returns a nested
-        // `<div className="relative">` which would have zero intrinsic
-        // height inside our absolute-children aspect-ratio wrapper.
+        // Exact aspect-ratio from the indexer when available, aspect-square
+        // fallback otherwise. object-contain renders the full image without
+        // cropping, sitting inside the exact-ratio wrapper.
         const m = media[0]!;
         const resolved = resolveSrc(m.src);
-        const absClass = "absolute inset-0 h-full w-full object-cover";
+        const absClass = "absolute inset-0 h-full w-full object-contain";
         return (
-          <div className="mt-3 relative aspect-square w-full overflow-hidden">
+          <div
+            className="mt-3 relative w-full overflow-hidden bg-accent"
+            style={{ aspectRatio: aspectFor(m.src, "1 / 1") }}
+          >
             {isVideoFile(m.src) ? (
               <VideoFromBlob
                 src={resolved}
@@ -408,7 +379,43 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
       })()}
       {media.length >= 2 && (
         <div className="mt-3 grid grid-cols-2 gap-0.5">
-          {media.slice(0, 4).map((m) => renderMedia(m, "aspect-square w-full object-cover"))}
+          {media.slice(0, 4).map((m) => {
+            const resolved = resolveSrc(m.src);
+            const absClass = "absolute inset-0 h-full w-full object-contain";
+            return (
+              <div
+                key={m.src}
+                className="relative overflow-hidden bg-accent"
+                style={{ aspectRatio: aspectFor(m.src, "1 / 1") }}
+              >
+                {isVideoFile(m.src) ? (
+                  <VideoFromBlob
+                    src={resolved}
+                    className={absClass}
+                    autoPlay
+                    loop
+                    muted
+                  />
+                ) : (
+                  <img
+                    src={resolved}
+                    alt=""
+                    className={absClass}
+                    loading={imgLoading}
+                  />
+                )}
+                {m.isVideoPoster && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="flex size-8 items-center justify-center rounded-full bg-black/50 text-white">
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M4 2.5v11l10-5.5L4 2.5z" />
+                      </svg>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -449,13 +456,19 @@ const ArticleCard = memo(function ArticleCard({ block, vaultPath }: { block: Lig
         </p>
       )}
       {firstImage && (
-        // aspect-video forces deterministic height regardless of image natural
-        // dimensions — the computed card height (cardHeight.ts) assumes this.
-        <div className="relative mt-3 aspect-video w-full overflow-hidden bg-accent">
+        // Exact aspect-ratio from the indexer's media_dimensions when
+        // available (images extracted from body at index time), or
+        // aspect-video fallback for older/unreindexed blocks. object-contain
+        // renders the image at its natural shape inside the exact-ratio
+        // wrapper, so nothing is cropped.
+        <div
+          className="relative mt-3 w-full overflow-hidden bg-accent"
+          style={{ aspectRatio: getMediaAspectRatio(block, firstImage, "16 / 9") }}
+        >
           <img
             src={mediaUrl(vaultPath, firstImage)}
             alt=""
-            className="absolute inset-0 h-full w-full object-cover"
+            className="absolute inset-0 h-full w-full object-contain"
             loading={imgLoading}
           />
         </div>

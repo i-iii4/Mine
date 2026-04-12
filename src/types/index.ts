@@ -18,6 +18,14 @@ export interface IndexedBlock {
   height: number | null;
   author: string | null;
   body: string;
+  /**
+   * Per-image pixel dimensions as a JSON string. Populated by the Rust
+   * indexer at index time: keys are media filenames referenced by the
+   * block, values are `[width, height]` arrays. Null for blocks indexed
+   * before the `media_dimensions` column existed — the frontend falls
+   * back to a fixed aspect ratio in that case.
+   */
+  media_dimensions: string | null;
   tags: string[];
 }
 
@@ -37,6 +45,7 @@ export interface LightBlock {
   body: string;
   first_image: string | null;
   media_urls: string | null;
+  media_dimensions: string | null;
   tags: string[];
 }
 
