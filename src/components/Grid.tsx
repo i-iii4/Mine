@@ -565,22 +565,32 @@ function MeasurementPass({
       if (cancelled) return;
 
       // 2. Wait for all <img> elements inside the hidden container to
-      //    finish loading (or fail). Even though every card template now
-      //    uses explicit aspect-ratio wrappers (so their outer height is
-      //    deterministic), waiting for images is a cheap belt-and-suspenders
-      //    guarantee that getBoundingClientRect reads the final layout.
+      //    finish loading (success or failure). Every card template uses
+      //    explicit aspect-ratio wrappers so layout is deterministic even
+      //    without this, but waiting eliminates the last 1% of timing
+      //    races. A per-image 2-second timeout protects against images
+      //    that never fire any event (network dead, broken asset://).
+      const IMAGE_TIMEOUT_MS = 2000;
       const imgs = Array.from(container.querySelectorAll("img"));
       await Promise.all(
         imgs.map((img) => {
-          if (img.complete && img.naturalWidth !== 0) return Promise.resolve();
+          // img.complete is true once loading has finished — whether
+          // successfully (naturalWidth > 0) or with error. Either way
+          // the layout size won't change any further, so we can skip
+          // the wait.
+          if (img.complete) return Promise.resolve();
           return new Promise<void>((resolve) => {
-            const done = () => {
-              img.removeEventListener("load", done);
-              img.removeEventListener("error", done);
+            let done = false;
+            const finish = () => {
+              if (done) return;
+              done = true;
+              img.removeEventListener("load", finish);
+              img.removeEventListener("error", finish);
               resolve();
             };
-            img.addEventListener("load", done, { once: true });
-            img.addEventListener("error", done, { once: true });
+            img.addEventListener("load", finish, { once: true });
+            img.addEventListener("error", finish, { once: true });
+            setTimeout(finish, IMAGE_TIMEOUT_MS);
           });
         }),
       );
