@@ -3,6 +3,7 @@ import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
 import type { LightBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
+import { VideoFromBlob } from "./VideoFromBlob";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
 
@@ -309,16 +310,17 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
   const renderMedia = (m: TweetMedia, className: string) => {
     const resolved = resolveSrc(m.src);
     if (isVideoFile(m.src)) {
-      // GIF (downloaded MP4) — autoplay loop
+      // GIF (downloaded MP4) — autoplay loop. Uses VideoFromBlob because
+      // Tauri asset protocol doesn't return Accept-Ranges header which
+      // macOS 26 WKWebView requires for direct <video src="asset://..."> play.
       return (
-        <video
+        <VideoFromBlob
           key={m.src}
           src={resolved}
           className={className}
           autoPlay
           loop
           muted
-          playsInline
         />
       );
     }

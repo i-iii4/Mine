@@ -10,6 +10,7 @@ import type { IndexedBlock, LightBlock } from "@/types";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { thumbnailUrl, mediaUrl, domainFromUrl, isSafeUrl } from "@/lib/assets";
 import { addTag, removeTag, getBlock } from "@/lib/commands";
+import { VideoFromBlob } from "./VideoFromBlob";
 
 // Layout constants — shared between scroll layer and metadata layer
 const LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-16";
@@ -407,14 +408,7 @@ function ArticleBody({
         const resolved = resolveImageSrc(src ?? "", vaultPath);
         // Video/GIF (downloaded MP4) — render as inline video with controls
         if (/\.mp4(\?|$)|\.webm(\?|$)/i.test(src ?? "")) {
-          return (
-            <video
-              src={resolved}
-              controls
-              playsInline
-              className="rounded-0"
-            />
-          );
+          return <VideoFromBlob src={resolved} controls className="rounded-0" />;
         }
         return (
           <img
@@ -459,3 +453,4 @@ function resolveImageSrc(src: string, vaultPath: string): string {
   }
   return mediaUrl(vaultPath, src);
 }
+

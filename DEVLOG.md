@@ -35,6 +35,79 @@ if any
 
 ---
 
+## 11.04.2026 (night) [agent A] — Video playback + video thumbnails: corrupt WebKit state + stale text-PNG thumbs
+
+### Goal
+Разобраться с двумя последовательными регрессами: (1) все MP4/GIF видео перестали воспроизводиться в Detail и карточках — плеер застревал на `loadstart` forever без error event, (2) после починки #1 миниатюры для video-блоков в sidebar отсутствовали.
+
+### Actually completed
+
+**1. Video playback: corrupt WebKit persistent storage**
+
+Симптом: `<video>` элемент получает src, фаерит `loadstart`, и застревает навсегда. `networkState=LOADING ready=NOTHING err=none`. Ни `loadedmetadata`, ни `error`, ни `stalled`.
+
+Диагностика через временный `VideoDiagnostic` компонент который инструментировал video element:
+- `fetch(asset://...)` возвращал 200 + полный blob корректно → asset protocol живой
+- `<video src="asset://...">` зависал на loadstart → media pipeline сломан
+- `<img src="asset://...">` работал нормально → разрыв **только** в `<video>`/`<audio>` path
+
+Ключ: image идёт через ImageIO, video/audio — через AVFoundation. Разная сигнатура поломки указывала на AVFoundation layer.
+
+Мои две первые гипотезы были неверны:
+- **Quarantine attribute** на downloaded файлах. Проверил через `xattr` — quarantine был, но был всегда, видео раньше работали. Исключил.
+- **Missing `Accept-Ranges: bytes` в Tauri asset protocol**. Сделал `VideoFromBlob` workaround который fetch'ит asset URL, оборачивает в `URL.createObjectURL(blob)` и кормит `<video>` через blob URL — полностью обходит asset protocol pipeline. Не помогло. Оба пути (asset:// и blob:) давали identical симптом `net=LOADING ready=NOTHING err=none`. Симметрия двух независимых путей → проблема downstream обоих, в AVFoundation.
+
+Real root cause: **corrupted persistent WebKit storage** в `~/Library/WebKit/com.mine.app/WebsiteData/`. Эта директория содержит MediaKeys, MediaKeysHashSalts, DeviceIdHashSalts, IndexedDB, и per-origin storage. AVFoundation consult'ирует эти salts для media validation даже при unencrypted content — если они в несогласованном состоянии, media loading застревает в initial validation phase, без error.
+
+Fix:
+```bash
+pkill -f "target/debug/mine"
+pkill -f "cargo-tauri tauri dev"
+rm -rf ~/Library/WebKit/com.mine.app ~/Library/Caches/com.mine.app
+cargo tauri dev
+```
+
+После wipe WebKit создал fresh state, AVFoundation media pipeline заработал. Видео заиграли.
+
+**Что повредило storage** — точно не знаю. Корреляция по времени с моей активностью (HMR storm от множественных file edits в overlay-migration session, 34-часовой uptime Tauri process, filewatcher + iCloud sync events на vault). Accumulative race в WebKit storage writes. Не прямая поломка кода, побочный эффект долгой dev-сессии с активными правками.
+
+**VideoFromBlob оставлен в коде** как defensive workaround. Lightweight (~60 строк), прозрачен для потребителей, и если Tauri asset protocol когда-нибудь сломается по другой причине (например, реальная Accept-Ranges ошибка) — этот путь обходит проблему. Trade-off: video файл полностью в памяти перед play, но clipper видео ≤ 20MB, acceptable.
+
+**2. Video thumbnails: stale text-PNG thumbs masquerading as JPEG**
+
+После fix'а video playback миниатюры к video-блокам в sidebar по-прежнему отсутствовали (`dark:invert` прозрачные PNG в dark mode = почти невидимые пустые квадраты).
+
+Диагностика: `file .arena/cache/thumbs/*.jpg` показал что **17 файлов с расширением `.jpg`** на самом деле были **PNG 480×480 RGBA**. Это `generate_text_thumbnail` output — fallback когда video frame extraction failed. Остальные 37 — нормальные JPEG video frames / image thumbs.
+
+Root cause — **дыра в `is_thumb_fresh`**: проверяет только mtime, не тип содержимого. Легаси text PNG, созданные когда `generate_video_thumbnail` фейлила в прошлых версиях (возможно старые mp4 crate / openh264 bugs, или ранние Twitter API video profiles которые crate не парсил), застряли на диске. mtime thumb ≥ mtime source → pipeline считает их fresh → никогда не regenerate → pipeline не перепроверяет что thumb-файл валиден и содержит video frame.
+
+Fix:
+```bash
+# Удалить text-PNG thumbs (сохранить legitimate JPEG)
+for f in *.jpg; do
+  file "$f" | grep -q "PNG image" && rm "$f"
+done
+# Restart Mine app — full_scan regenerates missing thumbs
+```
+
+После этого Rust watcher log показал `thumbnails: 17 generated, 37 skipped (fresh)`. Regenerated файлы — валидные JPEG нужных размеров (480x360, 480x480, 480x429 — aspect ratio'ы реальных video фреймов). Pipeline работает корректно, просто нужно было заставить его перепройти.
+
+### Deviations from plan
+- Первая гипотеза (Accept-Ranges) отняла ~45 минут в попытке blob URL workaround. Фундаментальная ошибка в методологии: нужно было сразу разделить симптом на слои (image vs video) и искать **общий** downstream. Симметрия «asset и blob ломаются одинаково» это ранний сигнал «проблема ниже обоих» — я на него не отреагировал.
+
+### Push
+— (будет обновлено после push)
+
+### Decisions and lessons learned
+- **Правило debugging**: если симптом одинаковый на двух независимых путях → искать ОБЩИЙ downstream, не фиксить источники. Я потратил время на quarantine и blob URL, оба не относились к делу. Правильная цепочка: «image работает, video нет → разрыв в AVFoundation → persistent state WebKit». 
+- **WebKit storage может commit'ить corrupt state во время long-running dev sessions**. В любом Tauri/Electron проекте с активным HMR + file watcher — если что-то необъяснимое в WebView ломается, первая попытка фикса: удалить `~/Library/WebKit/<bundle-id>` + `~/Library/Caches/<bundle-id>` и перезапустить. Это дешево (<1MB), безопасно (только WebView state, vault data не трогается), и часто решает runtime weirdness.
+- **`is_thumb_fresh` проверяет **когда** а не **что***. Если историческая ошибка создала thumb со старым content, mtime-check его считает fresh навсегда. Защита: handler должен либо (a) валидировать что content соответствует ожидаемому типу (JPEG vs PNG), либо (b) добавить fallback chain `generate_video_thumbnail.or_else(generate_text_thumbnail)` на уровне dispatch, чтобы video failures не просачивались в stale text thumbs. Оставляю как followup.
+- **Долгий uptime dev-сессии накапливает runtime debt**. 34 часа continuous running process с активным HMR — рецепт для накопления corrupted runtime state (WebKit storage, cached modules, hot reload state). Периодически (раз в день) полный restart cargo tauri dev снижает риск.
+- **VideoFromBlob как defensive pattern**. Оставлен в коде не потому что asset protocol broken, а потому что fetch→blob→video — более robust pipeline для small video файлов в content-addressable vault, и работает idempotent независимо от Accept-Ranges / WebKit internal state. Удалим, только если появится клип >20MB и memory footprint станет проблемой.
+- **Multi-agent DEVLOG sync работает**. Второй агент (parallel/b) успел закоммитить sidebar resize fix в main пока я работал над video. Перед моим коммитом я увидел его изменения в `git log origin/main`, rebase не потребовался — ветки разные файлы, чистый append.
+
+---
+
 ## 11.04.2026 (late+1) [agent B, parallel/b] — Sidebar resize: линия на 120fps через CSS-переменную
 
 ### Goal
