@@ -85,10 +85,11 @@ export function getVisibleMasonryItems(
   positions: MasonryPosition[],
   scrollTop: number,
   viewportHeight: number,
-  overscan: number,
+  overscanBefore: number,
+  overscanAfter: number,
 ): MasonryPosition[] {
-  const start = Math.max(0, scrollTop - overscan);
-  const end = Math.max(start, scrollTop + viewportHeight + overscan);
+  const start = Math.max(0, scrollTop - overscanBefore);
+  const end = Math.max(start, scrollTop + viewportHeight + overscanAfter);
 
   return positions.filter((position) => position.bottom >= start && position.top <= end);
 }

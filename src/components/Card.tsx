@@ -120,6 +120,7 @@ const ImageCard = memo(function ImageCard({
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const [error, setError] = useState(false);
+  const hasDimensions = !!(block.width && block.height && block.width > 0 && block.height > 0);
   const src = block.media_file
     ? mediaUrl(vaultPath, block.media_file)
     : thumbnailUrl(vaultPath, block.slug);
@@ -146,11 +147,14 @@ const ImageCard = memo(function ImageCard({
   }
 
   return (
-    <div className="relative">
+    <div
+      className="relative overflow-hidden bg-accent"
+      style={hasDimensions ? { aspectRatio: `${block.width} / ${block.height}` } : undefined}
+    >
       <img
         src={src}
         alt={block.title ?? block.slug}
-        className="w-full"
+        className={cn("w-full", hasDimensions && "absolute inset-0 h-full object-cover")}
         loading={imgLoading}
         onError={() => setError(true)}
       />
@@ -170,6 +174,7 @@ const LinkCard = memo(function LinkCard({
   block: LightBlock;
   vaultPath: string;
 }) {
+  const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const [thumbLoaded, setThumbLoaded] = useState(false);
   const [thumbError, setThumbError] = useState(false);
   const thumb = thumbnailUrl(vaultPath, block.slug);
@@ -222,6 +227,7 @@ const LinkCard = memo(function LinkCard({
             "absolute inset-0 h-full w-full object-cover transition-opacity",
             thumbLoaded ? "opacity-100" : "opacity-0",
           )}
+          loading={imgLoading}
           onLoad={() => setThumbLoaded(true)}
           onError={() => setThumbError(true)}
         />
@@ -372,6 +378,7 @@ function isImageFile(name: string): boolean {
 }
 
 const ArticleCard = memo(function ArticleCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {
+  const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const preview = useMemo(() => stripMarkdown(block.body).slice(0, 400).trim(), [block.body]);
   const firstImage = block.first_image && isImageFile(block.first_image) ? block.first_image : null;
   const hasImage = !!firstImage;
@@ -391,7 +398,7 @@ const ArticleCard = memo(function ArticleCard({ block, vaultPath }: { block: Lig
           src={mediaUrl(vaultPath, firstImage)}
           alt=""
           className="mt-3 w-full"
-          loading="lazy"
+          loading={imgLoading}
         />
       )}
       {block.author && (
@@ -457,4 +464,3 @@ const FileCard = memo(function FileCard({ block }: { block: LightBlock }) {
     </div>
   );
 });
-

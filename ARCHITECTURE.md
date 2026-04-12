@@ -238,6 +238,9 @@ saved_at: 2026-02-26T14:30:00Z
 - `App.tsx` хранит в памяти все `LightBlock` и строит `blocksByTag` один раз на загрузку или мутацию. Переключение канала использует уже готовый массив блоков, без нового IPC и без повторного `filter()` по всей коллекции на каждом рендере.
 - `Grid.tsx` использует собственный windowed masonry renderer: карточки позиционируются абсолютно, контейнер получает вычисленную `totalHeight`, в DOM остаются только видимые элементы плюс overscan.
 - Layout вычисляется чистой функцией (`src/lib/masonryLayout.ts`): `containerWidth + estimatedHeights -> columnCount + positions + totalHeight`. Это снимает зависимость от browser masonry/layout для тысяч карточек и ускоряет resize.
+- **Direction-aware overscan**: при скролле вниз forward-overscan 2200px, backward 600px. При скролле вверх — зеркально. Это предзагружает больше карточек по направлению scroll'а, уменьшая «пустые зоны» при быстром скролле.
+- **Priority bounds**: зона ±1400px по направлению scroll'а, внутри которой карточки получают `priority=true`. ImageCard/LinkCard/ArticleCard используют `loading="eager"` вместо `"lazy"` — картинки начинают fetch до того как пользователь до них доскроллит.
+- **CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`, картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки картинки — нет layout shift.
 - Высоты карточек сначала оцениваются эвристикой по типу блока, затем уточняются через `ResizeObserver` и кэшируются по `slug`.
 
 ## Data flow

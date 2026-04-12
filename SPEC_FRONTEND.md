@@ -136,14 +136,17 @@ Vault-пикер — не маршрут, а состояние: если `vault
 - Количество столбцов: адаптивное, на основе ширины контейнера (`ResizeObserver`, минимум 240px на столбец)
 - Layout считается чистой функцией: `containerWidth + estimatedHeights -> positions[]`
 - Карточки позиционируются абсолютно (`translate(x, y)`), контейнер имеет вычисленную `totalHeight`
-- В DOM находятся только видимые карточки + overscan по вертикали
+- В DOM находятся только видимые карточки + direction-aware overscan: forward 2200px / backward 600px (зависит от направления scroll'а). Предзагружает больше карточек по направлению движения.
+- **Priority bounds**: зона ±1400px по направлению scroll'а. Карточки внутри зоны получают `priority=true` → `<img loading="eager">` для image/link/article карточек. Карточки вне зоны — `loading="lazy"`.
 - Порядок: по `saved_at` descending (новые вверху)
 
 Оценка высоты:
-- `image` — по aspect ratio из `width/height`
+- `image` — по aspect ratio из `width/height` (если frontmatter содержит размеры)
 - `video` / `link` / `file` — по фиксированным эвристикам
 - `article` — по длине заголовка, body preview и наличию `first_image`
 - После первого paint реальная высота уточняется через `ResizeObserver` и кешируется по `slug`
+
+**CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`. Картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки — нет layout shift.
 
 Это даёт быстрый resize и мгновенное переключение между разделами при тысячах блоков, потому что browser layout работает только с окном видимых карточек, а не со всей коллекцией.
 

@@ -24,8 +24,12 @@ import {
 
 const COLUMN_MIN_WIDTH = 240;
 const GAP = 32;
-const OVERSCAN_PX = 1200;
+const OVERSCAN_BACKWARD_PX = 600;
+const OVERSCAN_FORWARD_PX = 2200;
+const PRIORITY_BACKWARD_PX = 200;
+const PRIORITY_FORWARD_PX = 1400;
 const DEFAULT_CARD_HEIGHT = 240;
+const SCROLL_IDLE_MS = 120;
 
 interface GridProps {
   blocks: LightBlock[];
@@ -99,9 +103,14 @@ export function Grid({
 }: GridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number | null>(null);
+  const scrollIdleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastScrollTopRef = useRef(0);
+  const pendingHeightsRef = useRef<Record<string, number>>({});
   const [parentWidth, setParentWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
+  const [scrollDirection, setScrollDirection] = useState<"up" | "down">("down");
+  const [isScrolling, setIsScrolling] = useState(false);
   const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
   const [measuredHeights, setMeasuredHeights] = useState<Record<string, number>>({});
@@ -110,6 +119,7 @@ export function Grid({
     parentRef.current?.scrollTo(0, 0);
     setScrollTop(0);
     setMeasuredHeights({});
+    pendingHeightsRef.current = {};
   }, [scrollToTop, currentTag]);
 
   useEffect(() => {
@@ -133,6 +143,9 @@ export function Grid({
     return () => {
       if (scrollRafRef.current !== null) {
         cancelAnimationFrame(scrollRafRef.current);
+      }
+      if (scrollIdleTimeoutRef.current !== null) {
+        clearTimeout(scrollIdleTimeoutRef.current);
       }
     };
   }, []);
@@ -159,9 +172,22 @@ export function Grid({
   }, [layout.columnCount, onColumnCountChange]);
 
   const visibleItems = useMemo(
-    () => getVisibleMasonryItems(layout.positions, scrollTop, viewportHeight, OVERSCAN_PX),
-    [layout.positions, scrollTop, viewportHeight],
+    () => {
+      const overscanBefore = scrollDirection === "down" ? OVERSCAN_BACKWARD_PX : OVERSCAN_FORWARD_PX;
+      const overscanAfter = scrollDirection === "down" ? OVERSCAN_FORWARD_PX : OVERSCAN_BACKWARD_PX;
+      return getVisibleMasonryItems(layout.positions, scrollTop, viewportHeight, overscanBefore, overscanAfter);
+    },
+    [layout.positions, scrollDirection, scrollTop, viewportHeight],
   );
+
+  const priorityBounds = useMemo(() => {
+    const before = scrollDirection === "down" ? PRIORITY_BACKWARD_PX : PRIORITY_FORWARD_PX;
+    const after = scrollDirection === "down" ? PRIORITY_FORWARD_PX : PRIORITY_BACKWARD_PX;
+    return {
+      start: Math.max(0, scrollTop - before),
+      end: scrollTop + viewportHeight + after,
+    };
+  }, [scrollDirection, scrollTop, viewportHeight]);
 
   const blocksBySlug = useMemo(
     () => new Map(blocks.map((block) => [block.slug, block])),
@@ -190,21 +216,61 @@ export function Grid({
     setBlockToDelete(slug);
   }, []);
 
+  const flushPendingHeights = useCallback(() => {
+    const entries = Object.entries(pendingHeightsRef.current);
+    if (entries.length === 0) return;
+
+    setMeasuredHeights((prev) => {
+      let changed = false;
+      const next = { ...prev };
+
+      for (const [slug, height] of entries) {
+        if (Math.abs((next[slug] ?? 0) - height) >= 1) {
+          next[slug] = height;
+          changed = true;
+        }
+      }
+
+      return changed ? next : prev;
+    });
+
+    pendingHeightsRef.current = {};
+  }, []);
+
   const handleMeasure = useCallback((slug: string, height: number) => {
+    if (isScrolling) {
+      pendingHeightsRef.current[slug] = height;
+      return;
+    }
+
     setMeasuredHeights((prev) => {
       if (Math.abs((prev[slug] ?? 0) - height) < 1) return prev;
       return { ...prev, [slug]: height };
     });
-  }, []);
+  }, [isScrolling]);
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const nextScrollTop = e.currentTarget.scrollTop;
+    setIsScrolling(true);
+
+    if (scrollIdleTimeoutRef.current !== null) {
+      clearTimeout(scrollIdleTimeoutRef.current);
+    }
+    scrollIdleTimeoutRef.current = setTimeout(() => {
+      scrollIdleTimeoutRef.current = null;
+      setIsScrolling(false);
+      flushPendingHeights();
+    }, SCROLL_IDLE_MS);
+
     if (scrollRafRef.current !== null) return;
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null;
+      const nextDirection = nextScrollTop < lastScrollTopRef.current ? "up" : "down";
+      lastScrollTopRef.current = nextScrollTop;
+      setScrollDirection(nextDirection);
       setScrollTop(nextScrollTop);
     });
-  }, []);
+  }, [flushPendingHeights]);
 
   const gridContext: GridContext = useMemo(
     () => ({
@@ -241,6 +307,7 @@ export function Grid({
               blocks={blocks}
               visibleItems={visibleItems}
               totalHeight={layout.totalHeight}
+              priorityBounds={priorityBounds}
               context={gridContext}
               onMeasure={handleMeasure}
             />
@@ -291,12 +358,14 @@ function VirtualMasonryLayout({
   blocks,
   visibleItems,
   totalHeight,
+  priorityBounds,
   context,
   onMeasure,
 }: {
   blocks: LightBlock[];
   visibleItems: MasonryPosition[];
   totalHeight: number;
+  priorityBounds: { start: number; end: number };
   context: GridContext;
   onMeasure: (slug: string, height: number) => void;
 }) {
@@ -310,6 +379,7 @@ function VirtualMasonryLayout({
             key={block.id}
             block={block}
             item={item}
+            priority={item.bottom >= priorityBounds.start && item.top <= priorityBounds.end}
             context={context}
             onMeasure={onMeasure}
           />
@@ -322,11 +392,13 @@ function VirtualMasonryLayout({
 const MeasuredGridItem = memo(function MeasuredGridItem({
   block,
   item,
+  priority,
   context,
   onMeasure,
 }: {
   block: LightBlock;
   item: MasonryPosition;
+  priority: boolean;
   context: GridContext;
   onMeasure: (slug: string, height: number) => void;
 }) {
@@ -366,7 +438,7 @@ const MeasuredGridItem = memo(function MeasuredGridItem({
           block={block}
           vaultPath={context.vaultPath}
           isFocused={block.id === context.focusedBlockId}
-          priority={item.index < 12}
+          priority={priority}
           onClick={context.onBlockClick}
           tags={context.tags}
           currentTag={context.currentTag}

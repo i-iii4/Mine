@@ -26,7 +26,7 @@ describe("masonryLayout", () => {
 
   it("returns only items inside the viewport plus overscan", () => {
     const layout = computeMasonryLayout([100, 100, 100, 100, 100], 600, 240, 32);
-    const visible = getVisibleMasonryItems(layout.positions, 90, 120, 20);
+    const visible = getVisibleMasonryItems(layout.positions, 90, 120, 20, 20);
 
     expect(visible.map((item) => item.index)).toEqual([0, 1, 2, 3]);
   });

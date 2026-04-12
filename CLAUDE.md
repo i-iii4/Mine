@@ -45,7 +45,7 @@
 | react-markdown + remark-gfm | Рендеринг markdown в Detail.tsx и popup расширения |
 | @tailwindcss/typography | Стилизация prose-контента (статьи) |
 | Defuddle | Извлечение статей + Markdown-конвертация + YouTube-транскрипты (content script) |
-| @virtuoso.dev/masonry | Виртуализированная masonry-сетка (Chrome/Firefox fallback) |
+| src/lib/masonryLayout.ts | Кастомный virtualized masonry layout engine (заменил @virtuoso.dev/masonry) |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 | SwiftUI | iOS UI-фреймворк (нативный, без WebView) |
 | UniFFI (Mozilla) | FFI-генератор: Rust → Swift bindings |
@@ -97,7 +97,7 @@ local-arena/
 │   ├── main.tsx                # Точка входа React
 │   ├── App.tsx                 # Корневой компонент + роутинг
 │   ├── components/
-│   │   ├── Grid.tsx            # Masonry-сетка с чанковым рендерингом (IntersectionObserver)
+│   │   ├── Grid.tsx            # Virtualized masonry grid — scroll-based windowing, direction-aware overscan, priority loading
 │   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
 │   │   ├── Detail.tsx          # Lightbox: просмотр, теги, навигация стрелками
