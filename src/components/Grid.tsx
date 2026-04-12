@@ -550,11 +550,11 @@ function MeasurementPass({
     const container = containerRef.current;
     if (!container) return;
 
-    // Wait for fonts to be ready before measuring, otherwise line counts
-    // and therefore heights will be computed against the fallback system
-    // font instead of Geist.
     let cancelled = false;
+
     const run = async () => {
+      // 1. Wait for fonts to be ready — text widths depend on the actual
+      //    Geist font being loaded, not the fallback system font.
       if (typeof document !== "undefined" && document.fonts?.ready) {
         try {
           await document.fonts.ready;
@@ -564,7 +564,31 @@ function MeasurementPass({
       }
       if (cancelled) return;
 
-      // Force a synchronous layout and walk children to read heights.
+      // 2. Wait for all <img> elements inside the hidden container to
+      //    finish loading (or fail). Even though every card template now
+      //    uses explicit aspect-ratio wrappers (so their outer height is
+      //    deterministic), waiting for images is a cheap belt-and-suspenders
+      //    guarantee that getBoundingClientRect reads the final layout.
+      const imgs = Array.from(container.querySelectorAll("img"));
+      await Promise.all(
+        imgs.map((img) => {
+          if (img.complete && img.naturalWidth !== 0) return Promise.resolve();
+          return new Promise<void>((resolve) => {
+            const done = () => {
+              img.removeEventListener("load", done);
+              img.removeEventListener("error", done);
+              resolve();
+            };
+            img.addEventListener("load", done, { once: true });
+            img.addEventListener("error", done, { once: true });
+          });
+        }),
+      );
+      if (cancelled) return;
+
+      // 3. Force a synchronous layout read. By now fonts are loaded and
+      //    images have finalized their intrinsic dimensions — the heights
+      //    we read here match what the real visible Cards will render.
       const results: Array<{ id: number; height: number }> = [];
       const children = container.children;
       for (let i = 0; i < children.length; i += 1) {
