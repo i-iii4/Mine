@@ -514,7 +514,9 @@ Goal: настоящая виртуализация для 10000+ блоков. 
 | 10.1 | CSS Grid Lanes + content-visibility: auto (WebKit path) | [x] |
 | 10.2 | `@virtuoso.dev/masonry` fallback (Chrome/Firefox) | [x] |
 | 10.3 | Feature detection `CSS.supports("display", "grid-lanes")` | [x] |
-| 10.4 | Scroll anchoring при ресайзе окна и сайдбара | [ ] |
+| 10.4 | Собственный `VirtualMasonryGrid`: absolute positioning + visible window + overscan | [x] |
+| 10.5 | Layout engine + cache высот карточек для быстрого resize и больших разделов | [x] |
+| 10.6 | Scroll anchoring при ресайзе окна и сайдбара | [ ] |
 
 ### Backlog
 

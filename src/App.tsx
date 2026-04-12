@@ -231,12 +231,33 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     }
   }, [currentTag, tags, channels, navigate]);
 
+  const nonChannelBlocks = useMemo(
+    () => blocks.filter((block) => block.block_type !== "channel"),
+    [blocks],
+  );
+
+  const blocksByTag = useMemo(() => {
+    const map = new Map<string, LightBlock[]>();
+
+    for (const block of nonChannelBlocks) {
+      for (const tag of block.tags) {
+        const list = map.get(tag);
+        if (list) {
+          list.push(block);
+        } else {
+          map.set(tag, [block]);
+        }
+      }
+    }
+
+    return map;
+  }, [nonChannelBlocks]);
+
   // Blocks filtered by current route (channel or all)
   const activeBlocks = useMemo(() => {
-    const visible = blocks.filter((b) => b.block_type !== "channel");
-    if (!currentTag) return visible;
-    return visible.filter((b) => b.tags.includes(currentTag));
-  }, [blocks, currentTag]);
+    if (!currentTag) return nonChannelBlocks;
+    return blocksByTag.get(currentTag) ?? [];
+  }, [blocksByTag, currentTag, nonChannelBlocks]);
 
   const handleColumnCountChange = useCallback((n: number) => {
     gridColumnCountRef.current = n;
@@ -354,7 +375,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       const [b, t, ch] = await Promise.all([listBlocks(), listTags(), listChannels()]);
       console.log("[LOAD] data received:", b.length, "blocks,", t.length, "tags,", ch.length, "channels");
       // Check for problematic blocks
-      const emptySlugBlocks = b.filter((x: any) => !x.slug);
+      const emptySlugBlocks = b.filter((block) => !block.slug);
       if (emptySlugBlocks.length > 0) {
         console.error("[LOAD] BLOCKS WITH EMPTY SLUG:", emptySlugBlocks);
       }

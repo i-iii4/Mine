@@ -9,6 +9,7 @@
 | 3 | memo(Card) ineffective | PARTIALLY FIXED (SocialCard, ArticleCard — done; ImageCard, LinkCard, VideoCard, FileCard — open) |
 | 4 | Synchronous thumbnail generation | FIXED (background threads) |
 | 5 | resolve_unique_slug N queries | OPEN |
+| 6 | Grid virtualization absent on desktop path | FIXED (custom windowed masonry) |
 
 ## Render Cycle Analysis
 
@@ -84,9 +85,9 @@ Rust IPC returns new array reference every time → `setBlocks(new_array)` alway
 - `Card.tsx:96-101,152-160`: each ImageCard/LinkCard registers listener
 - Fix: single app-level listener
 
-**L2. No Grid virtualization**
-- `Grid.tsx`: all rendered cards stay in DOM
-- Fix: react-window (when vault exceeds 500+ blocks)
+**L2. Grid virtualization**
+- Status: FIXED
+- `Grid.tsx` now renders only visible cards + overscan via a custom masonry layout engine and absolute positioning
 
 **L3. Missing index on channels(position, title)**
 - `db.rs`: `list_channels()` does full scan
@@ -122,4 +123,4 @@ Rust IPC returns new array reference every time → `setBlocks(new_array)` alway
 ### Phase 3 — Architecture (later)
 - [ ] M3: tag operations without .md rewrite
 - [ ] M5: async rebuild_index
-- [ ] L2: Grid virtualization
+- [x] L2: Grid virtualization

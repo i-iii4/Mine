@@ -233,6 +233,13 @@ saved_at: 2026-02-26T14:30:00Z
 | Native Host | Мост между расширением и vault (stdin/stdout JSON + локальный HTTP upload) | Rust (bin/native_host.rs), ureq, tiny_http |
 | Vault | Пользовательские файлы на диске | Файловая система |
 
+### Frontend rendering model
+
+- `App.tsx` хранит в памяти все `LightBlock` и строит `blocksByTag` один раз на загрузку или мутацию. Переключение канала использует уже готовый массив блоков, без нового IPC и без повторного `filter()` по всей коллекции на каждом рендере.
+- `Grid.tsx` использует собственный windowed masonry renderer: карточки позиционируются абсолютно, контейнер получает вычисленную `totalHeight`, в DOM остаются только видимые элементы плюс overscan.
+- Layout вычисляется чистой функцией (`src/lib/masonryLayout.ts`): `containerWidth + estimatedHeights -> columnCount + positions + totalHeight`. Это снимает зависимость от browser masonry/layout для тысяч карточек и ускоряет resize.
+- Высоты карточек сначала оцениваются эвристикой по типу блока, затем уточняются через `ResizeObserver` и кэшируются по `slug`.
+
 ## Data flow
 
 ### Добавление блока (drag-and-drop)
@@ -433,6 +440,15 @@ Rationale: расширение — проекция основного прил
 | Нормализация при чтении из YAML (`parse_tags`) + при записи (chosen) | Двойной барьер: любой тег в любом файле нормализуется при индексации. Файл на диске может содержать `"Япония"` — в индексе будет `"япония"`. Rename сравнивает нормализованные значения. |
 
 Rationale: файлы — источник правды (решение 001), и пользователь может редактировать их вручную. `parse_tags()` — единственная точка входа тегов из файлов в систему. Нормализация здесь гарантирует согласованность `block_tags ↔ channels` в SQLite.
+
+### 011: Собственный virtualized masonry renderer вместо browser layout для больших коллекций
+
+| Approach | Problem |
+|---|---|
+| CSS masonry / `grid-lanes` с тысячами DOM-узлов | Resize и переключение каналов упираются в relayout всего дерева. `content-visibility` помогает paint, но не убирает стоимость layout |
+| Собственный windowed masonry renderer (chosen) | Сложнее реализация: нужен layout engine, cache высот и absolute positioning |
+
+Rationale: на больших коллекциях bottleneck смещается с IPC на main-thread layout. Когда в DOM находятся только видимые карточки, resize и route switch перестают зависеть от общего числа блоков в разделе.
 
 ## Dependencies
 

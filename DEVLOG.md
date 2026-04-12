@@ -35,6 +35,37 @@ if any
 
 ---
 
+## 11.04.2026 22:05 — Custom virtualized masonry grid
+### Goal
+Ускорить resize и переключение разделов с тысячами карточек, убрав bottleneck browser masonry/layout и сократив число DOM-узлов в Grid до видимого окна.
+### Planned
+1. Вынести layout в чистый модуль с тестами
+2. Заменить browser masonry/grid-lanes на собственный windowed renderer
+3. Ускорить переключение разделов через предрасчёт `blocksByTag`
+4. Обновить документацию и подготовить push
+### Actually completed
+Пункты 1—4 выполнены.
+
+- `src/lib/masonryLayout.ts` — новый layout engine: `containerWidth + itemHeights -> columnCount + positions + totalHeight`
+- `src/lib/masonryLayout.test.ts` — тесты на расчёт колонок, shortest-column placement и visible window
+- `src/components/Grid.tsx` — переписан на собственный `VirtualMasonryLayout`: absolute positioning, `scrollTop + viewportHeight + overscan`, cache высот по `slug`
+- `src/App.tsx` — добавлен `blocksByTag` memo; переключение канала больше не фильтрует весь массив блоков на каждый рендер
+- `ARCHITECTURE.md`, `SPEC_FRONTEND.md`, `PLAN.md`, `AUDIT_PERFORMANCE.md` — обновлены под новое состояние
+### Deviations from plan
+- Полный `bun run build` остаётся заблокирован старым TypeScript-шумом вне задачи: `extension/popup/hooks/useClipperState.ts` и неиспользуемые импорты в `Sidebar.tsx`
+- `Card.test.tsx` уже ожидал устаревший UI image/video карточек (заголовки в сетке), поэтому не использовался как критерий регрессии для этой задачи
+### Checks
+- `bun run test src/lib/masonryLayout.test.ts` — passed
+- `bun x eslint src/App.tsx src/components/Grid.tsx src/lib/masonryLayout.ts src/lib/masonryLayout.test.ts` — passed
+- `bun run test src/components/Card.test.tsx src/lib/masonryLayout.test.ts` — `masonryLayout.test.ts` passed, `Card.test.tsx` has 2 pre-existing expectation failures unrelated to the new grid engine
+- `bun run build` — blocked by pre-existing TypeScript errors outside the grid changes
+### Push
+- `940c73a` — Implement virtualized masonry grid
+### Decisions and lessons learned
+1. **Windowing beats browser masonry for huge collections.** `content-visibility` помогает paint, но не убирает стоимость relayout тысяч DOM-узлов при resize
+2. **Layout должен быть данными, а не побочным эффектом CSS.** Чистая функция проще тестируется, кэшируется и даёт предсказуемый performance ceiling
+3. **Переключение канала и resize — одна проблема, если всё лежит в одном DOM-дереве.** `blocksByTag` и virtual window вместе убирают лишнюю работу и при route switch, и при drag-resize
+
 ## 11.04.2026 (night) [agent A] — Video playback + video thumbnails: corrupt WebKit state + stale text-PNG thumbs
 
 ### Goal

@@ -13,15 +13,19 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { VirtuosoMasonry } from "@virtuoso.dev/masonry";
 import type { LightBlock, TagCount } from "@/types";
 import { Card } from "./Card";
 import { CardTagMenu } from "./CardContextMenu";
+import {
+  computeMasonryLayout,
+  getVisibleMasonryItems,
+  type MasonryPosition,
+} from "@/lib/masonryLayout";
 
 const COLUMN_MIN_WIDTH = 240;
 const GAP = 32;
-
-const supportsGridLanes = typeof CSS !== "undefined" && CSS.supports("display", "grid-lanes");
+const OVERSCAN_PX = 1200;
+const DEFAULT_CARD_HEIGHT = 240;
 
 interface GridProps {
   blocks: LightBlock[];
@@ -49,6 +53,36 @@ interface GridContext {
   onRequestDelete: (slug: string) => void;
 }
 
+function estimateCardHeight(block: LightBlock, columnWidth: number): number {
+  switch (block.block_type) {
+    case "image":
+      if (block.width && block.height && block.width > 0) {
+        return Math.max(120, Math.round(columnWidth * (block.height / block.width)));
+      }
+      return columnWidth;
+    case "video":
+      return Math.round(columnWidth * 9 / 16);
+    case "link":
+      return Math.round(columnWidth * 9 / 16) + 76;
+    case "file":
+      return 88;
+    case "article": {
+      const titleLength = block.title?.length ?? block.slug.length;
+      const titleLines = Math.min(2, Math.max(1, Math.ceil(titleLength / 26)));
+      const previewChars = Math.min(400, block.body.length);
+      const charsPerLine = Math.max(18, Math.floor(columnWidth / 7));
+      const previewLines = Math.min(
+        block.first_image ? 3 : 8,
+        Math.max(2, Math.ceil(previewChars / charsPerLine)),
+      );
+      const imageHeight = block.first_image ? Math.round(columnWidth * 0.62) + 12 : 0;
+      return 32 + titleLines * 20 + previewLines * 18 + imageHeight + (block.author ? 24 : 0) + 28;
+    }
+    default:
+      return DEFAULT_CARD_HEIGHT;
+  }
+}
+
 export function Grid({
   blocks,
   vaultPath,
@@ -64,43 +98,73 @@ export function Grid({
   onColumnCountChange,
 }: GridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const scrollRafRef = useRef<number | null>(null);
   const [parentWidth, setParentWidth] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
   const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
+  const [measuredHeights, setMeasuredHeights] = useState<Record<string, number>>({});
 
-  // Scroll to top only on explicit signal (same-channel click)
-  // Scroll to top on explicit signal OR channel change
   useEffect(() => {
     parentRef.current?.scrollTo(0, 0);
+    setScrollTop(0);
+    setMeasuredHeights({});
   }, [scrollToTop, currentTag]);
 
-  // Measure parent width (needed for column count in Virtuoso mode)
   useEffect(() => {
     const el = parentRef.current;
     if (!el) return;
 
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (entry && entry.contentRect.width > 0) setParentWidth(entry.contentRect.width);
+      if (!entry) return;
+      if (entry.contentRect.width > 0) setParentWidth(entry.contentRect.width);
+      if (entry.contentRect.height > 0) setViewportHeight(entry.contentRect.height);
     });
 
     setParentWidth(el.clientWidth);
+    setViewportHeight(el.clientHeight);
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
 
-  const columnCount = Math.max(
-    1,
-    Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current);
+      }
+    };
+  }, []);
+
+  const estimatedHeights = useMemo(() => {
+    const provisionalColumnCount = Math.max(
+      1,
+      Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
+    );
+    const columnWidth = Math.max(
+      1,
+      (Math.max(0, parentWidth - GAP * (provisionalColumnCount - 1))) / provisionalColumnCount,
+    );
+    return blocks.map((block) => measuredHeights[block.slug] ?? estimateCardHeight(block, columnWidth));
+  }, [blocks, measuredHeights, parentWidth]);
+
+  const layout = useMemo(
+    () => computeMasonryLayout(estimatedHeights, parentWidth, COLUMN_MIN_WIDTH, GAP),
+    [estimatedHeights, parentWidth],
   );
 
   useEffect(() => {
-    onColumnCountChange?.(columnCount);
-  }, [columnCount, onColumnCountChange]);
+    onColumnCountChange?.(layout.columnCount);
+  }, [layout.columnCount, onColumnCountChange]);
 
-  // O(1) block lookup for context menu event delegation
+  const visibleItems = useMemo(
+    () => getVisibleMasonryItems(layout.positions, scrollTop, viewportHeight, OVERSCAN_PX),
+    [layout.positions, scrollTop, viewportHeight],
+  );
+
   const blocksBySlug = useMemo(
-    () => new Map(blocks.map((b) => [b.slug, b])),
+    () => new Map(blocks.map((block) => [block.slug, block])),
     [blocks],
   );
 
@@ -126,8 +190,33 @@ export function Grid({
     setBlockToDelete(slug);
   }, []);
 
+  const handleMeasure = useCallback((slug: string, height: number) => {
+    setMeasuredHeights((prev) => {
+      if (Math.abs((prev[slug] ?? 0) - height) < 1) return prev;
+      return { ...prev, [slug]: height };
+    });
+  }, []);
+
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const nextScrollTop = e.currentTarget.scrollTop;
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      setScrollTop(nextScrollTop);
+    });
+  }, []);
+
   const gridContext: GridContext = useMemo(
-    () => ({ vaultPath, focusedBlockId, onBlockClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestDelete: handleRequestDelete }),
+    () => ({
+      vaultPath,
+      focusedBlockId,
+      onBlockClick,
+      tags,
+      currentTag,
+      onToggleTag,
+      onCreateAndAssign,
+      onRequestDelete: handleRequestDelete,
+    }),
     [vaultPath, focusedBlockId, onBlockClick, tags, currentTag, onToggleTag, onCreateAndAssign, handleRequestDelete],
   );
 
@@ -136,6 +225,7 @@ export function Grid({
       <ContextMenuTrigger asChild>
         <div
           ref={parentRef}
+          onScroll={handleScroll}
           onContextMenu={handleContextMenu}
           className="h-full overflow-x-hidden overflow-y-auto pb-8 pt-16"
           style={{
@@ -145,17 +235,15 @@ export function Grid({
           }}
           data-grid-scroll
         >
-          {supportsGridLanes ? (
-            <GridLanesLayout key={currentTag ?? "__all__"} blocks={blocks} context={gridContext} />
-          ) : (
-            parentWidth > 0 && blocks.length > 0 && (
-              <VirtuosoMasonryLayout
-                key={currentTag ?? "__all__"}
-                blocks={blocks}
-                columnCount={columnCount}
-                context={gridContext}
-              />
-            )
+          {parentWidth > 0 && blocks.length > 0 && (
+            <VirtualMasonryLayout
+              key={currentTag ?? "__all__"}
+              blocks={blocks}
+              visibleItems={visibleItems}
+              totalHeight={layout.totalHeight}
+              context={gridContext}
+              onMeasure={handleMeasure}
+            />
           )}
         </div>
       </ContextMenuTrigger>
@@ -186,10 +274,8 @@ export function Grid({
             <AlertDialogAction
               variant="destructive"
               onClick={() => {
-                console.log("[GRID] AlertDialog confirm delete:", blockToDelete);
                 if (blockToDelete) onDeleteBlock(blockToDelete);
                 setBlockToDelete(null);
-                console.log("[GRID] blockToDelete cleared");
               }}
             >
               Delete
@@ -201,92 +287,94 @@ export function Grid({
   );
 }
 
-// ── CSS Grid Lanes (WebKit/Safari 26.4+) ────────────────────────────────────
-
-function GridLanesLayout({
+function VirtualMasonryLayout({
   blocks,
+  visibleItems,
+  totalHeight,
   context,
+  onMeasure,
 }: {
   blocks: LightBlock[];
+  visibleItems: MasonryPosition[];
+  totalHeight: number;
   context: GridContext;
+  onMeasure: (slug: string, height: number) => void;
 }) {
   return (
-    <div
-      style={{
-        display: "grid-lanes" as string,
-        gridTemplateColumns: `repeat(auto-fill, minmax(${COLUMN_MIN_WIDTH}px, 1fr))`,
-        gap: GAP,
-      }}
-    >
-      {blocks.map((block, idx) => (
-        <div
-          key={block.id}
-          style={{
-            contentVisibility: "auto",
-            containIntrinsicSize: "auto 200px",
-          }}
-        >
-          <Card
+    <div className="relative" style={{ height: totalHeight || 1 }}>
+      {visibleItems.map((item) => {
+        const block = blocks[item.index];
+        if (!block) return null;
+        return (
+          <MeasuredGridItem
+            key={block.id}
             block={block}
-            vaultPath={context.vaultPath}
-            isFocused={block.id === context.focusedBlockId}
-            priority={idx < 12}
-            onClick={context.onBlockClick}
-            tags={context.tags}
-            currentTag={context.currentTag}
-            onToggleTag={context.onToggleTag}
-            onCreateAndAssign={context.onCreateAndAssign}
-            onRequestDelete={context.onRequestDelete}
+            item={item}
+            context={context}
+            onMeasure={onMeasure}
           />
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
-// ── VirtuosoMasonry (Chrome/Firefox fallback) ───────────────────────────────
-
-function VirtuosoMasonryLayout({
-  blocks,
-  columnCount,
+const MeasuredGridItem = memo(function MeasuredGridItem({
+  block,
+  item,
   context,
+  onMeasure,
 }: {
-  blocks: LightBlock[];
-  columnCount: number;
+  block: LightBlock;
+  item: MasonryPosition;
   context: GridContext;
+  onMeasure: (slug: string, height: number) => void;
 }) {
-  return (
-    <VirtuosoMasonry
-      data={blocks}
-      columnCount={columnCount}
-      ItemContent={VirtuosoCardItem}
-      context={context}
-      style={{ gap: GAP }}
-    />
-  );
-}
+  const observerRef = useRef<ResizeObserver | null>(null);
 
-const VirtuosoCardItem = memo(function VirtuosoCardItem({
-  data,
-  context,
-}: {
-  data: LightBlock;
-  context: GridContext;
-}) {
-  if (!data) return null;
+  const handleNode = useCallback((node: HTMLDivElement | null) => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+
+    if (!node) return;
+
+    onMeasure(block.slug, node.getBoundingClientRect().height);
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        onMeasure(block.slug, entry.contentRect.height);
+      }
+    });
+    observer.observe(node);
+    observerRef.current = observer;
+  }, [block.slug, onMeasure]);
+
+  useEffect(() => {
+    return () => observerRef.current?.disconnect();
+  }, []);
+
   return (
-    <div style={{ paddingBottom: GAP }}>
-      <Card
-        block={data}
-        vaultPath={context.vaultPath}
-        isFocused={data.id === context.focusedBlockId}
-        onClick={context.onBlockClick}
-        tags={context.tags}
-        currentTag={context.currentTag}
-        onToggleTag={context.onToggleTag}
-        onCreateAndAssign={context.onCreateAndAssign}
-        onRequestDelete={context.onRequestDelete}
-      />
+    <div
+      style={{
+        position: "absolute",
+        width: item.width,
+        transform: `translate(${item.left}px, ${item.top}px)`,
+      }}
+    >
+      <div ref={handleNode}>
+        <Card
+          block={block}
+          vaultPath={context.vaultPath}
+          isFocused={block.id === context.focusedBlockId}
+          priority={item.index < 12}
+          onClick={context.onBlockClick}
+          tags={context.tags}
+          currentTag={context.currentTag}
+          onToggleTag={context.onToggleTag}
+          onCreateAndAssign={context.onCreateAndAssign}
+          onRequestDelete={context.onRequestDelete}
+        />
+      </div>
     </div>
   );
 });
