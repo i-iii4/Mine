@@ -70,6 +70,7 @@ export interface ChannelDto {
 export interface PreviewItem {
   slug: string;
   text: boolean;
+  mtime: number;
 }
 
 export interface PreviewCard {

@@ -62,8 +62,6 @@ export function useThumbnailUpgrade(enabled: boolean): void {
         const msg = event.data;
         pendingRef.current.delete(msg.id);
         if (!msg.ok) {
-          // Non-fatal: keep the placeholder, log for diagnostic. Retried
-          // automatically on the next startup via list_pending_thumb_upgrades.
           console.warn(`[thumb upgrade] ${msg.slug} failed: ${msg.error}`);
           return;
         }
@@ -78,10 +76,6 @@ export function useThumbnailUpgrade(enabled: boolean): void {
         console.error("[thumb upgrade] worker error:", e.message);
       };
 
-      // Drain startup backlog. Fire-and-forget: if it fails (vault not
-      // open yet, race with another init path) the watcher events will
-      // continue producing new upgrade requests and backlog retries
-      // happen on next app start.
       try {
         const pending = await listPendingThumbUpgrades();
         for (const req of pending) {

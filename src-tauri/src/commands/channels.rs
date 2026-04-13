@@ -288,6 +288,21 @@ pub struct PreviewItem {
     pub slug: String,
     /// True for text-only articles (baked text thumbnail needs CSS invert in dark mode).
     pub text: bool,
+    /// Unix timestamp (seconds) of the thumb file's last modification.
+    /// Frontend uses this as a cache-buster (`?m=<mtime>`) so the browser
+    /// refetches when the file changes on disk (e.g. Phase 2 worker
+    /// overwrites a PNG placeholder with a decoded JPEG).
+    pub mtime: u64,
+}
+
+/// Read the mtime of a thumb file as unix seconds. Returns 0 on any error.
+fn thumb_mtime(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Return preview items per channel for sidebar thumbnails.
@@ -322,7 +337,8 @@ pub fn list_channel_previews(
     }).collect();
 
     let to_item = |&(b, is_text): &(&index::LightBlock, bool)| -> PreviewItem {
-        PreviewItem { slug: b.slug.clone(), text: is_text }
+        let mtime = thumb_mtime(&vs.vault.thumb_path(&b.slug));
+        PreviewItem { slug: b.slug.clone(), text: is_text, mtime }
     };
 
     let mut result = HashMap::new();

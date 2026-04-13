@@ -15,6 +15,31 @@
   When claiming a scope, add a "**Claimed:**" line at the top of a
   running entry so the other agent sees what's in flight.
 
+## 13.04.2026 19:10 [primary] — Sidebar cache-bust fix: mtime вместо Date.now()
+
+### Goal
+Sidebar показывал устаревшие PNG-заглушки после перезапуска, хотя Phase 2 worker корректно записал JPEG на диск в предыдущей сессии. Браузерный HTTP-кэш отдавал старый PNG, потому что URL не менялся.
+
+### Диагностика
+1. Файл `.arena/cache/thumbs/sem-altman-...ochen.jpg` на диске — валидный JPEG (фото Альтмана). Phase 2 отработал.
+2. После перезапуска sidebar показывал обновлённое изображение — значит проблема в кэше, а не в pipeline.
+3. Debug overlay в `useThumbnailUpgrade` подтвердил: в текущей сессии pending — только видео (worker stub), изображения уже обработаны.
+4. Первый фикс (`?t=Date.now()` на все URL при `refresh()`) решил проблему, но перекачивал ВСЕ файлы при каждой загрузке. Откатили как костыль.
+
+### Actually completed
+- `commands/channels.rs`: `PreviewItem` получил поле `mtime: u64` (unix timestamp thumb-файла). Новая функция `thumb_mtime()` делает `stat()` на thumb path, возвращает 0 при ошибке.
+- `src/types/index.ts`: `PreviewItem.mtime: number`
+- `hooks/useChannelPreviewsEvents.ts`: `refresh()` использует `?m=${item.mtime}` вместо `?t=Date.now()`. Только изменённые файлы перекачиваются. Incremental updates через `thumb:updated` event продолжают использовать `?v=N`.
+- `hooks/useThumbnailUpgrade.ts`: убран debug overlay
+- `components/Sidebar.tsx`: убран debug блок
+- `PLAN.md`: Phase 12 задачи 12.2-12.8, 12.10 отмечены как выполненные
+- `SPEC_THUMBNAILS.md`: обновлена секция Q3 (cache-buster strategy) — описаны оба механизма (`?m=` и `?v=`) и почему нужны оба
+
+### Commits
+- [текущий] cache-bust mtime + cleanup debug + документация
+
+---
+
 ## 13.04.2026 13:40 [primary] — Phase 12 Thumbnails: two-phase pipeline landed (A → B.1-5 → C)
 
 ### Goal

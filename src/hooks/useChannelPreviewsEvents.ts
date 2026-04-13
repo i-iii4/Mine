@@ -86,6 +86,11 @@ export function useChannelPreviewsEvents({ vaultPath, limit }: Options): {
   // Forced full reload. Used for the initial mount and from callers
   // that change state the event stream can't describe (vault switch,
   // import finished, manual rebuild_index, …).
+  //
+  // Each URL gets `?m=<mtime>` where mtime is the thumb file's last
+  // modification time (unix seconds, from Rust stat()). The browser
+  // treats a new mtime as a new URL and refetches from disk. Files
+  // that haven't changed keep the same URL and are served from cache.
   const refresh = useCallback(async () => {
     const vp = vaultPathRef.current;
     if (!vp) {
@@ -98,8 +103,9 @@ export function useChannelPreviewsEvents({ vaultPath, limit }: Options): {
       next.set(
         key,
         items.map((item) => {
-          const card = buildCard(item.slug, item.text);
-          return card ?? { url: "", text: item.text };
+          const baseUrl = thumbnailUrl(vp, item.slug);
+          const url = item.mtime > 0 ? `${baseUrl}?m=${item.mtime}` : baseUrl;
+          return { url, text: item.text };
         }),
       );
     }

@@ -831,11 +831,13 @@ WKWebView on macOS decodes HEIC natively via system codec. On Windows WebView2 (
 
 ### Q3: Cache-buster strategy
 
-Two options:
-- **URL param** `?v=<timestamp>`: browser treats as new URL, refetches
-- **Blob URL**: React state holds `URL.createObjectURL(blob)`, unique per update
+Two strategies, used in complementary roles:
 
-**Decision:** URL param. Simpler, no memory management for blob URLs, works with asset protocol caching. Minimal cost: one extra HTTP fetch from browser cache (asset protocol reads from disk, ~1ms).
+- **`?m=<mtime>`** on `refresh()` (initial load, vault switch): Rust `list_channel_previews` returns each thumb file's `mtime` (unix seconds from `stat()`). Frontend appends it as a query param. Files that haven't changed keep the same URL → browser serves from HTTP cache. Files that changed between sessions (e.g. Phase 2 worker overwrote PNG → JPEG) get a new URL → browser refetches from disk. Cost: one `stat()` per thumb per refresh — negligible.
+
+- **`?v=<counter>`** on `thumb:updated` event (real-time, same session): per-slug version counter in `useChannelPreviewsEvents`. Incremented on each `thumb:updated` event. No disk I/O, instant.
+
+**Decision:** both. `?m=` covers cross-session changes (the primary failure mode — Phase 2 writes JPEG, user restarts, browser has stale PNG cached). `?v=` covers in-session updates (live clipper save → worker upgrade → sidebar refresh). Neither alone is sufficient: `?v=` starts at 0 every session (loses cross-session state), `?m=` requires IPC round-trip (too slow for real-time events).
 
 ### Q4: How to handle clipper saving block while main app is closed
 
