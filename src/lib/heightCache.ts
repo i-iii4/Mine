@@ -62,27 +62,6 @@ export function setCachedHeight(
   memoryCache.set(cacheKey(blockId, bucket), height);
 }
 
-/**
- * Partition a block list into cached and missing at the given bucket.
- * Returns the in-memory results plus a list of blockIds that need measuring.
- */
-export function partitionByCache(
-  blockIds: readonly number[],
-  bucket: number,
-): { cached: Map<number, number>; missing: number[] } {
-  const cached = new Map<number, number>();
-  const missing: number[] = [];
-  for (const id of blockIds) {
-    const h = memoryCache.get(cacheKey(id, bucket));
-    if (h !== undefined) {
-      cached.set(id, h);
-    } else {
-      missing.push(id);
-    }
-  }
-  return { cached, missing };
-}
-
 // ─── IndexedDB persistence ──────────────────────────────────────────────────
 
 interface HeightRecord {
