@@ -35,8 +35,8 @@ import { computeCardHeight } from "@/lib/cardHeight";
 import { LayoutCache } from "@/lib/layoutCache";
 import {
   bucketize,
+  getCachedHeight,
   setCachedHeight,
-  partitionByCache,
   persistHeights,
   warmFromIndexedDb,
 } from "@/lib/heightCache";
@@ -147,13 +147,25 @@ export function Grid({
   const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
 
-  // Measured pixel heights for blocks at the current columnWidth bucket.
-  // Populated by the DOM measurement pass (see MeasurementPass component
-  // below). Until `heightsReady` flips to true, the grid renders a loader
-  // and a hidden measurement container alongside.
-  const [heightsMap, setHeightsMap] = useState<Map<number, number>>(() => new Map());
-  const [heightsReady, setHeightsReady] = useState(false);
+  // Grid has exactly three pieces of genuine state:
+  //
+  //   1. warmedUp — flips true after the IndexedDB warm completes. Gates
+  //      all reads from memoryCache, since memoryCache is empty before
+  //      warm finishes.
+  //
+  //   2. measurementTick — bumped by handleMeasured every time new
+  //      measurements land in memoryCache. memoryCache is a mutable
+  //      singleton outside React's view; the tick is how we signal the
+  //      derived `heightsMap` useMemo to recompute.
+  //
+  //   3. parentWidth / viewportHeight — set by ResizeObserver below.
+  //
+  // heightsMap, missingBlocks, and allHeightsPresent are all derived
+  // synchronously from (blocks, bucket, warmedUp, measurementTick). No
+  // setState-in-effect reconciliation. When `blocks` changes, the next
+  // render already sees a fresh heightsMap — no stale-state window.
   const [warmedUp, setWarmedUp] = useState(false);
+  const [measurementTick, setMeasurementTick] = useState(0);
 
   // Scroll to top on explicit signal or channel change.
   useEffect(() => {
@@ -195,45 +207,40 @@ export function Grid({
   // new column width, since text wraps differently.
   const bucket = useMemo(() => bucketize(deriveColumnWidth(parentWidth)), [parentWidth]);
 
-  // Check which blocks already have cached heights at the current bucket.
-  // Split into (cached, missing). If nothing is missing, heightsReady flips
-  // true immediately and the grid renders without any measurement pass.
-  const { cachedMap, missingBlocks } = useMemo(() => {
-    if (!warmedUp || blocks.length === 0 || parentWidth <= 0) {
-      return { cachedMap: new Map<number, number>(), missingBlocks: [] as LightBlock[] };
+  // Measured pixel heights for the current (blocks, bucket). Purely derived
+  // from the module-level memoryCache — no setState, no reconciliation
+  // effect, no stale-state window.
+  //
+  // `measurementTick` appears in the dep list and is `void`'d in the body
+  // purely as a re-run trigger: memoryCache is a mutable singleton that
+  // React cannot observe on its own, so after handleMeasured writes new
+  // entries we bump the tick to force this useMemo to recompute.
+  const heightsMap = useMemo(() => {
+    void measurementTick;
+    const map = new Map<number, number>();
+    if (!warmedUp) return map;
+    for (const b of blocks) {
+      const h = getCachedHeight(b.id, bucket);
+      if (h !== undefined) map.set(b.id, h);
     }
-    const ids = blocks.map((b) => b.id);
-    const { cached, missing } = partitionByCache(ids, bucket);
-    const missingSet = new Set(missing);
-    const missingList = blocks.filter((b) => missingSet.has(b.id));
-    return { cachedMap: cached, missingBlocks: missingList };
-  }, [blocks, bucket, warmedUp, parentWidth]);
+    return map;
+  }, [blocks, bucket, warmedUp, measurementTick]);
 
-  // Reset heights state when blocks or bucket change. If everything is
-  // already cached we can flip heightsReady synchronously; otherwise we
-  // trigger the measurement pass and wait.
-  useEffect(() => {
-    if (!warmedUp) {
-      setHeightsReady(false);
-      return;
-    }
-    if (blocks.length === 0) {
-      setHeightsMap(new Map());
-      setHeightsReady(true);
-      return;
-    }
-    if (missingBlocks.length === 0) {
-      // All cached — instant.
-      setHeightsMap(new Map(cachedMap));
-      setHeightsReady(true);
-    } else {
-      // Need a measurement pass. MeasurementPass component will render,
-      // useLayoutEffect will fire, and it calls back through onMeasured
-      // below to populate state.
-      setHeightsMap(new Map(cachedMap));
-      setHeightsReady(false);
-    }
-  }, [blocks, bucket, cachedMap, missingBlocks.length, warmedUp]);
+  // Blocks that are NOT yet in heightsMap at the current bucket. Feeds the
+  // MeasurementPass. Synchronously derived from heightsMap — no lag.
+  const missingBlocks = useMemo(
+    () => blocks.filter((b) => !heightsMap.has(b.id)),
+    [blocks, heightsMap],
+  );
+
+  // Can we render the real grid? True iff every current block has a
+  // measured height. Synchronous, single source of truth, no separate
+  // `heightsReady` flag that can drift.
+  const allHeightsPresent =
+    warmedUp &&
+    parentWidth > 0 &&
+    blocks.length > 0 &&
+    missingBlocks.length === 0;
 
   const handleMeasured = useCallback(
     (results: Array<{ id: number; height: number }>) => {
@@ -243,21 +250,17 @@ export function Grid({
         newEntries.push({ blockId: r.id, bucket, height: r.height });
       }
       persistHeights(newEntries);
-      setHeightsMap((prev) => {
-        const next = new Map(prev);
-        for (const r of results) next.set(r.id, r.height);
-        return next;
-      });
-      setHeightsReady(true);
+      // Force the derived heightsMap useMemo to recompute by observing
+      // the new entries just written into memoryCache.
+      setMeasurementTick((t) => t + 1);
     },
     [bucket],
   );
 
-  // Compute (or retrieve from cache) the masonry layout for the current
-  // blocks + parentWidth combination. Only consults layoutCache when
-  // heights are ready — otherwise we would cache an incomplete layout.
+  // Compute (or retrieve from cache) the masonry layout. Only runs when
+  // allHeightsPresent is true — the cache never sees partial/broken layouts.
   const layout = useMemo((): MasonryLayout => {
-    if (parentWidth <= 0 || blocks.length === 0 || !heightsReady) {
+    if (!allHeightsPresent) {
       return {
         columnCount: 1,
         columnWidth: 0,
@@ -272,7 +275,7 @@ export function Grid({
     const fresh = buildLayout(blocks, parentWidth, heightsMap);
     layoutCache.set(blocks, parentWidth, fresh);
     return fresh;
-  }, [blocks, parentWidth, heightsMap, heightsReady]);
+  }, [blocks, parentWidth, heightsMap, allHeightsPresent]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);
@@ -374,7 +377,7 @@ export function Grid({
           }}
           data-grid-scroll
         >
-          {parentWidth > 0 && blocks.length > 0 && heightsReady && (
+          {parentWidth > 0 && blocks.length > 0 && allHeightsPresent && (
             <VirtualMasonryLayout
               key={currentTag ?? "__all__"}
               blocks={blocks}
@@ -384,7 +387,7 @@ export function Grid({
               context={gridContext}
             />
           )}
-          {parentWidth > 0 && blocks.length > 0 && !heightsReady && (
+          {parentWidth > 0 && blocks.length > 0 && !allHeightsPresent && (
             <>
               <div className="flex h-full items-center justify-center">
                 <p className="text-sm text-muted-foreground">Computing layout…</p>
