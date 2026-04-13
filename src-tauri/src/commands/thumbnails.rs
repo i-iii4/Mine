@@ -151,6 +151,12 @@ pub fn list_pending_thumb_upgrades(
 
     let mut out: Vec<ThumbUpgradeRequest> = Vec::new();
     for b in &blocks {
+        // Skip blocks without a valid slug (corrupt index rows) and
+        // channel rows (they don't render thumbs in the sidebar).
+        // `vault.thumb_path("")` panics, so filtering here is load-bearing.
+        if b.slug.is_empty() || b.block_type == crate::domain::block::BlockType::Channel {
+            continue;
+        }
         let thumb_path = vs.vault.thumb_path(&b.slug);
         if !is_png_placeholder(&thumb_path) {
             continue;
