@@ -481,6 +481,47 @@ pub fn is_video_ext(ext: &str) -> bool {
     VIDEO_EXTS.contains(&ext)
 }
 
+/// Sniff the first bytes of a file and check whether it is a raster image
+/// format that Rust's `image` crate (version 0.25, default features) can
+/// actually decode in production: **JPEG**, **PNG**, or **GIF**. All other
+/// formats (VP8 / VP8L / VP8X WebP, HEIC/HEIF, AVIF, BMP variants, TIFF,
+/// etc.) should go through the WebView upgrade path instead — Rust decode
+/// attempts will either fail outright (VP8X WebP) or produce wrong results.
+///
+/// This is the critical gate for Phase 1 of the two-phase pipeline (see
+/// SPEC_THUMBNAILS.md): if the media file is not one of these three
+/// formats, `generate_for_block` must NOT call `generate_thumbnail` on it
+/// — instead it falls through the cascade to the text placeholder and the
+/// block gets queued for WebView upgrade in Phase 2.
+///
+/// We deliberately check content bytes rather than file extension because
+/// the clipper can save files with misleading extensions (e.g. a PNG
+/// served as `.jpg`), and because `is_image_ext` accepts formats our
+/// decoder cannot handle.
+pub fn is_rust_decodable(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; 6];
+    if file.read_exact(&mut buf).is_err() {
+        return false;
+    }
+    // JPEG: FF D8 FF
+    if buf[0] == 0xFF && buf[1] == 0xD8 && buf[2] == 0xFF {
+        return true;
+    }
+    // PNG: 89 50 4E 47 0D 0A (89 P N G \r \n), first 6 bytes are enough
+    if buf[0] == 0x89 && buf[1] == 0x50 && buf[2] == 0x4E && buf[3] == 0x47 {
+        return true;
+    }
+    // GIF: 47 49 46 38 (GIF8) — covers GIF87a and GIF89a
+    if buf[0] == 0x47 && buf[1] == 0x49 && buf[2] == 0x46 && buf[3] == 0x38 {
+        return true;
+    }
+    false
+}
+
 /// Outcome of `generate_for_block` — which source pipeline produced the thumb.
 /// Returned for telemetry and tests; callers can ignore it.
 #[derive(Debug, PartialEq, Eq)]
@@ -518,12 +559,16 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
     let slug = &block.slug;
     let thumb_path = vault.thumb_path(slug);
 
-    // 1. Block has an explicit media file
+    // 1. Block has an explicit media file. We only try Rust decode if the
+    //    file bytes start with one of the formats image crate can actually
+    //    handle (JPEG/PNG/GIF). Everything else — VP8X WebP, HEIC, AVIF,
+    //    TIFF — goes through the cascade so text placeholder can be written
+    //    and the block gets queued for WebView upgrade in Phase 2.
     if let Some(ref file_name) = block.frontmatter.file {
         let ext = ext_lower(file_name);
         let media_path = vault.media_path(slug, &ext);
         if media_path.exists() {
-            if is_image_ext(&ext) {
+            if is_image_ext(&ext) && is_rust_decodable(&media_path) {
                 match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
                     Ok(_) => return ThumbSource::Image,
                     Err(e) => log::warn!("image thumb failed for {}: {}", slug, e),
@@ -537,12 +582,13 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
         }
     }
 
-    // 2. Frontmatter thumbnail field (video poster, OG image)
+    // 2. Frontmatter thumbnail field (video poster, OG image). Same
+    //    content-sniff gate as above.
     if let Some(thumb_file) = block.frontmatter.thumbnail.as_ref() {
         let ext = ext_lower(thumb_file);
         if is_image_ext(&ext) {
             let media_path = vault.root().join(thumb_file);
-            if media_path.exists() {
+            if media_path.exists() && is_rust_decodable(&media_path) {
                 match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
                     Ok(_) => return ThumbSource::Image,
                     Err(e) => log::warn!("thumbnail-field thumb failed for {}: {}", slug, e),
@@ -551,11 +597,12 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
         }
     }
 
-    // 3-4. Scan body for first embedded image/video (articles)
+    // 3-4. Scan body for first embedded image/video (articles). Again,
+    //      Rust decode only runs on sniffed JPEG/PNG/GIF content.
     if block.frontmatter.block_type == BlockType::Article {
         if let Some(first_image) = find_first_local_media(&block.body, is_image_ext) {
             let media_path = vault.root().join(&first_image);
-            if media_path.exists() {
+            if media_path.exists() && is_rust_decodable(&media_path) {
                 match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
                     Ok(_) => return ThumbSource::Image,
                     Err(e) => log::warn!("first-image thumb failed for {}: {}", slug, e),
@@ -575,7 +622,10 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
             }
         }
 
-        // 5. Text fallback
+        // 5. Text fallback — runs for pure-text articles AND for articles
+        //    whose embedded media isn't Rust-decodable. In the latter case
+        //    the placeholder is temporary: Phase 2 will overwrite it with
+        //    a WebView-decoded JPEG.
         let title = block.frontmatter.title.as_deref();
         match generate_text_thumbnail(title, &block.body, &thumb_path) {
             Ok(_) => return ThumbSource::Text,
@@ -857,5 +907,94 @@ mod tests {
         create_test_image(&dir.path().join("real.png"), 100, 100);
         generate_thumbnail(&dir.path().join("real.png"), &thumb, 240).unwrap();
         assert!(is_thumb_fresh(&thumb, &source));
+    }
+
+    // ─── Tests for is_rust_decodable content sniff ─────────────────────────
+
+    #[test]
+    fn is_rust_decodable_accepts_jpeg_png_gif() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Real JPEG — produce via generate_thumbnail from a synthetic PNG
+        let src_png = dir.path().join("src.png");
+        create_test_image(&src_png, 20, 20);
+        let jpeg = dir.path().join("real.jpg");
+        generate_thumbnail(&src_png, &jpeg, 240).unwrap();
+        assert!(is_rust_decodable(&jpeg));
+
+        // Synthetic PNG from create_test_image
+        assert!(is_rust_decodable(&src_png));
+
+        // GIF — write minimal GIF89a header (we only sniff first 4 bytes)
+        let gif = dir.path().join("anim.gif");
+        std::fs::write(&gif, b"GIF89a\x01\x00\x01\x00").unwrap();
+        assert!(is_rust_decodable(&gif));
+    }
+
+    #[test]
+    fn is_rust_decodable_rejects_webp_heic_avif_and_garbage() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // VP8X WebP: RIFF....WEBP
+        let webp = dir.path().join("anim.webp");
+        std::fs::write(&webp, b"RIFF\x00\x00\x00\x00WEBPVP8X").unwrap();
+        assert!(!is_rust_decodable(&webp));
+
+        // HEIC: starts with `\x00\x00\x00\x20ftypheic`
+        let heic = dir.path().join("pic.heic");
+        std::fs::write(&heic, b"\x00\x00\x00\x20ftypheic").unwrap();
+        assert!(!is_rust_decodable(&heic));
+
+        // AVIF: `\x00\x00\x00\x1cftypavif`
+        let avif = dir.path().join("pic.avif");
+        std::fs::write(&avif, b"\x00\x00\x00\x1cftypavif").unwrap();
+        assert!(!is_rust_decodable(&avif));
+
+        // Arbitrary garbage
+        let junk = dir.path().join("junk.bin");
+        std::fs::write(&junk, b"hello world, not an image").unwrap();
+        assert!(!is_rust_decodable(&junk));
+
+        // Missing file
+        assert!(!is_rust_decodable(&dir.path().join("does-not-exist")));
+
+        // Too-short file (<6 bytes)
+        let tiny = dir.path().join("tiny.bin");
+        std::fs::write(&tiny, b"abc").unwrap();
+        assert!(!is_rust_decodable(&tiny));
+    }
+
+    #[test]
+    fn generate_for_block_article_with_non_decodable_webp_falls_back_to_text() {
+        // Article embeds a WebP file that Rust's image crate cannot decode
+        // (VP8X with alpha, animation, etc). The cascade must NOT attempt
+        // Rust decode — instead it should fall through to the text
+        // placeholder. Phase 2 (WebView upgrade) will overwrite the
+        // placeholder with a real decoded JPEG later.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+
+        // Write a file with WebP magic bytes (RIFF....WEBP) — is_rust_decodable
+        // must reject it on content sniff, regardless of extension.
+        let webp_path = dir.path().join("webp-article-img0.webp");
+        std::fs::write(&webp_path, b"RIFF\x00\x00\x00\x00WEBPVP8X\x00\x00").unwrap();
+
+        let block = make_article(
+            "webp-article",
+            "Article with unsupported image:\n\n![](webp-article-img0.webp)\n\nEnd.",
+        );
+
+        let source = generate_for_block(&block, &vault);
+        assert_eq!(source, ThumbSource::Text);
+
+        let thumb_path = vault.thumb_path("webp-article");
+        assert!(thumb_path.exists());
+
+        // Text placeholder is PNG (transparent background for dark-mode invert)
+        let mut header = [0u8; 3];
+        use std::io::Read;
+        let mut f = std::fs::File::open(&thumb_path).unwrap();
+        f.read_exact(&mut header).unwrap();
+        assert_eq!(header, PNG_MAGIC);
     }
 }
