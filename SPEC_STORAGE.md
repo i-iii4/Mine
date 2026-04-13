@@ -193,7 +193,9 @@ persist_new_block(conn: &Connection, vault: &VaultLayout, block: &Block, source_
 
 ## storage/thumbnails
 
-Генерация превью: resize для изображений, text-to-image для статей.
+Генерация превью: resize для изображений, text-to-image для статей, unified cascade через `generate_for_block`.
+
+> **Note**: Этот раздел описывает Rust-side API модуля `storage/thumbnails`. Полная архитектура thumbnail pipeline (включая WebView upgrade path, event flow, Phase 1/Phase 2 разделение) — в [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md). Следующие функции — это building blocks, вызываемые из shared dispatch `generate_for_block`.
 
 ### Функции
 
@@ -201,6 +203,9 @@ persist_new_block(conn: &Connection, vault: &VaultLayout, block: &Block, source_
 generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<(u32, u32)>
 generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> Result<(u32, u32)>
 is_thumb_fresh(thumb_path: &Path, source_path: &Path) -> bool
+generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource
+is_image_ext(ext: &str) -> bool
+is_video_ext(ext: &str) -> bool
 ```
 
 ### Поведение — generate_thumbnail (изображения)
@@ -222,8 +227,30 @@ is_thumb_fresh(thumb_path: &Path, source_path: &Path) -> bool
 ### Поведение — is_thumb_fresh (проверка свежести)
 
 - Сравнивает mtime миниатюры и исходного файла
-- Возвращает `true` если миниатюра существует и не старше источника
+- **Дополнительно валидирует magic bytes** thumb-файла: первые 3 байта должны матчить `FF D8 FF` (JPEG) или `89 50 4E` (PNG). Файлы с другим content считаются не fresh и force regenerate — защита от legacy state, где text PNG оставались под `.jpg` расширением forever
+- Возвращает `true` если миниатюра существует, свежая по mtime, и имеет валидное image content
 - Используется в `full_scan` и `index_md_file` для пропуска избыточной генерации
+
+### Поведение — generate_for_block (unified cascade)
+
+Единая точка входа для thumbnail generation. Вызывается и из native host (Phase 1 at save time), и из watcher handler (full_scan, index_md_file). Cascade из 5 уровней с graceful fallback chain:
+
+1. `frontmatter.file` указывает на existing image → `generate_thumbnail`
+2. `frontmatter.file` указывает на existing video → `generate_video_thumbnail` (с fallback к text при ошибке)
+3. `frontmatter.thumbnail` field указывает на existing image → `generate_thumbnail`
+4. First `![](local_file)` в body — image → `generate_thumbnail`
+5. First `![](local_file)` в body — video → `generate_video_thumbnail` (с fallback к text при ошибке)
+6. Block is Article → `generate_text_thumbnail` (всегда успешно)
+
+Возвращает `ThumbSource` enum (`Image | Video | Text | None`) для telemetry и определения необходимости WebView upgrade (см. SPEC_THUMBNAILS.md Phase 2).
+
+### Поведение — is_image_ext / is_video_ext
+
+Предикаты расширений для dispatching. Признаки `storage::thumbnails` как single source of truth:
+- `is_image_ext`: `jpg | jpeg | png | gif | webp | bmp | tiff | tif`
+- `is_video_ext`: `mp4 | webm | mov`
+
+Note: эти предикаты описывают **что pipeline пытается decode**, не что на 100% работает. WebP и некоторые video форматы могут фейлить в Rust decode и fall back в text placeholder или WebView upgrade.
 
 ### Оптимизации
 

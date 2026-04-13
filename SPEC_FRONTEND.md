@@ -123,11 +123,17 @@ Vault-пикер — не маршрут, а состояние: если `vault
 1. Заголовок «Mine»
 2. Пункт «All» — навигация на `/`
 3. Список каналов (из `listChannels()`) — навигация на `/channel/:tag`
-4. Каждый канал: название + счётчик блоков
+4. Каждый канал: название + счётчик блоков + до 10 превью-карточек (thumbnails)
 5. Разделитель
 6. Кнопка «Cmd+K» — открытие поиска
 
 Активный пункт подсвечивается. Каналы отсортированы по `position`.
+
+**Виртуализация.** При сотнях каналов sidebar использует scroll-based windowing — рендерятся только видимые channel rows + overscan. Использует `useGridScroll` hook из Phase 11 Grid архитектуры (React 18 `useSyncExternalStore` без лишних ре-рендеров) поверх single-column layout с фиксированной высотой channel row. Драг-энд-дроп через `@dnd-kit` работает: `SortableContext` получает полный список channels IDs, не только видимые, items mount/unmount при scroll.
+
+**Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`), а не через polling `listChannelPreviews`. Initial state грузится один раз при mount через `listChannelPreviews(20)`, потом инкрементально патчится `useChannelPreviewsEvents` hook'ом. Latency add block → visible in sidebar: ~110ms (native host write + watcher debounce + IPC event + React update).
+
+**Thumbnail upgrade.** Для блоков с inline media которое Rust не умеет декодировать (WebP VP8X, HEIC, AVIF, HEVC), Rust Phase 1 пишет text placeholder на диск. Main app через `useThumbnailUpgrade` hook подписан на `thumb:upgrade-requested` event и отправляет работу в Web Worker (`src/workers/thumbWorker.ts`). Worker декодирует через `createImageBitmap` (native browser decoder, поддерживает все форматы которые WebView рендерит) → `OffscreenCanvas.convertToBlob('image/jpeg', 0.85)` → IPC `save_thumb` → Rust пишет поверх placeholder. После `thumb:updated` event sidebar cache-bust'ит `<img>` URL. Полная архитектура: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md).
 
 ### Grid
 

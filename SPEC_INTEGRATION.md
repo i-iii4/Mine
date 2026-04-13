@@ -62,23 +62,37 @@ handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) -> Resu
 ### Поведение full_scan
 
 - Вызывает `storage::files::scan_md_files` для получения всех `.md`
-- Для каждого файла: `read_block_file` → `parse_block` → `upsert_block`
-- Если у блока есть `file` — генерирует thumbnail (если медиафайл существует)
+- Для каждого файла: `read_block_file` → `parse_block` → `upsert_block` + collect `ThumbJob`
+- Thumbnails генерируются в фоновом потоке через `storage::thumbnails::generate_for_block` (unified cascade)
 - Ошибки парсинга отдельных файлов логируются, не прерывают сканирование
 - Возвращает `ScanResult { indexed, errors }`
+- После completion background thumb gen вызывает `on_thumbs_done` callback (notify frontend to refresh previews)
 
 ### Поведение index_md_file
 
 - Читает файл, парсит блок, индексирует
-- Генерирует thumbnail при наличии медиафайла
+- Генерирует thumbnail через `generate_for_block` в фоновом потоке
 - Ошибки пробрасываются (не логируются)
+- Эмитит Tauri event `block:added { slug, tags, is_text }` после успешного `upsert_block`
+- Если `generate_for_block` вернул `ThumbSource::Text` но block имеет embedded media → эмитит `thumb:upgrade-requested { slug, media_path, kind }` для Phase 2 WebView upgrade (см. [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md))
 
 ### Поведение handle_event
 
 - `BlockChanged` → `index_md_file`
-- `BlockDeleted` → `storage::index::remove_block` (slug из имени файла)
-- `MediaChanged` → генерация thumbnail
+- `BlockDeleted` → `storage::index::remove_block` (slug из имени файла) + Tauri event `block:removed { slug, tags }`
+- `MediaChanged` → `storage::thumbnails::generate_thumbnail` для image media, эмитит `thumb:updated { slug }` по завершении. **Note:** текущий handler использует `path_to_slug(media_file)` который некорректен для articles с multiple inline images (slug ≠ media filename). См. SPEC_THUMBNAILS.md для правильного routing через block-aware lookup.
 - `MediaDeleted` → удаление thumbnail
+
+### Tauri events (frontend subscribers)
+
+Все события эмитятся через `tauri::Manager::emit`. Frontend subscribers в `src/hooks/useChannelPreviewsEvents.ts` и `src/hooks/useThumbnailUpgrade.ts`.
+
+| Event | Payload | Emitted by |
+|---|---|---|
+| `block:added` | `{ slug: string, tags: string[], is_text: boolean }` | `index_md_file` после `upsert_block` |
+| `block:removed` | `{ slug: string, tags: string[] }` | `handle_event::BlockDeleted` |
+| `thumb:updated` | `{ slug: string }` | `save_thumb` command и фоновая генерация |
+| `thumb:upgrade-requested` | `{ slug: string, media_path: string, kind: "image" \| "video" }` | `index_md_file` когда Rust cascade дал text placeholder для block с embedded media |
 
 ---
 

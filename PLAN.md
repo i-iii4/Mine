@@ -538,6 +538,27 @@ SPEC: [SPEC_GRID.md](SPEC_GRID.md) — детальное описание ар�
 | 11.8 | `src/components/Card.tsx` — `will-change: transform`, `translate3d`, фиксация line-height | [ ] |
 | 11.9 | Визуальная проверка на реальном vault'е + замеры FPS через DevTools | [ ] |
 
+### Phase 12 — Thumbnail pipeline: two-phase through WebView decoder [SPEC]
+
+Goal: удовлетворить четыре продуктовых инварианта для sidebar thumbs (мгновенное появление, корректность для всех форматов клиппера, baked text для pure-text / real image для articles с media, плавный скролл 100+ каналов × 10 thumbs) без компромиссов. Устранить зависимость от Rust crate stack для decode экзотических форматов (VP8X WebP, HEIC, AVIF, HEVC, fragmented MP4).
+
+SPEC: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) — полная архитектура, протоколы событий, worker contract, failure modes, testing plan.
+
+Корневое решение: two-phase pipeline. **Phase 1** — Rust синхронно пишет thumb при save (JPEG/PNG через content sniff → real thumb; всё остальное → text placeholder, всегда успешно, <150ms latency). **Phase 2** — main app в фоне upgradeит placeholders через Web Worker (`createImageBitmap` + `OffscreenCanvas.convertToBlob`), WebView native decoder покрывает весь набор форматов которые клиппер может сохранить. Sidebar обновляется через Tauri events (block:added, thumb:updated) вместо polling.
+
+| # | Task | Status |
+|---|------|--------|
+| 12.1 | SPEC_THUMBNAILS.md — полная спецификация архитектуры | [x] |
+| 12.2 | Phase A: content sniff в `generate_for_block` (first 3 bytes → JPEG/PNG/GIF direct, else text placeholder). Rebuild + install native host | [ ] |
+| 12.3 | Phase B.1: `src-tauri/src/commands/thumbnails.rs` — `save_thumb`, `list_pending_thumb_upgrades` | [ ] |
+| 12.4 | Phase B.2: Tauri events в `watcher::handler::index_md_file` — `block:added`, `thumb:upgrade-requested` | [ ] |
+| 12.5 | Phase B.3: `src/workers/thumbWorker.ts` — image через `createImageBitmap` + `OffscreenCanvas.convertToBlob`, video fallback через main-thread `<video>` + `drawImage` | [ ] |
+| 12.6 | Phase B.4: `src/hooks/useThumbnailUpgrade.ts` + `src/hooks/useChannelPreviewsEvents.ts` — event subscribers, worker queue coordination | [ ] |
+| 12.7 | Phase B.5: wire up в `App.tsx`, startup call `list_pending_thumb_upgrades` | [ ] |
+| 12.8 | Phase C: виртуализация Sidebar — scroll-based windowing через `masonryLayout` (1-колонка) или reuse pattern из `Grid.tsx`. Совместимость с `@dnd-kit` SortableContext | [ ] |
+| 12.9 | Phase D (optional): удаление `openh264`, `mp4` crates, упрощение `generate_video_thumbnail` (video теперь через WebView) | [ ] |
+| 12.10 | Manual QA: visual regression на representative vault, performance replay с 100+ каналами | [ ] |
+
 ### Backlog
 
 | Task | Description |
