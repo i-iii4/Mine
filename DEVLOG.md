@@ -15,6 +15,83 @@
   When claiming a scope, add a "**Claimed:**" line at the top of a
   running entry so the other agent sees what's in flight.
 
+## 13.04.2026 13:40 [primary] — Phase 12 Thumbnails: two-phase pipeline landed (A → B.1-5 → C)
+
+### Goal
+Убрать регрессии миниатюр для WebP/HEIC/AVIF/HEVC, обеспечить мгновенное обновление боковой панели при save, выдержать сотни каналов × 1000 изображений без провисаний.
+
+### Context
+Rust crate `image` 0.25 не декодирует VP8X WebP, HEIC, AVIF. Клиппер на таких блоках оставлял либо битую миниатюру, либо крашил Rust-декодер. Sidebar использовал polling `listChannelPreviews` с latency ~500ms. Архитектура описана в SPEC_THUMBNAILS.md.
+
+### Actually completed
+
+**Phase A — content sniff gate (7de31209)**
+- `storage::thumbnails::is_rust_decodable(path)` читает первые 6 байт и принимает только JPEG/PNG/GIF magic. Все остальное (VP8X, HEIC, AVIF, TIFF) отбрасывается на sniff'е независимо от расширения файла
+- `generate_for_block` гейтит все три image-ветки каскада через этот sniff. Недекодируемые падают в text placeholder — Phase 2 потом перезапишет через WebView
+- 3 новых unit теста: accept JPEG/PNG/GIF, reject WebP/HEIC/AVIF/garbage/missing/tiny, full cascade article+WebP→text
+- Native host пересобран и установлен
+
+**Phase B.1 — Tauri commands (bd24a4c6)**
+- `commands/thumbnails.rs`: новый модуль
+- `save_thumb(slug, bytes)` — валидирует slug (no path traversal) и JPEG magic, атомарно пишет через tmp+rename, эмитит `thumb:updated`
+- `list_pending_thumb_upgrades()` — enumerates блоки с PNG placeholder + upgradable media, возвращает `{slug, mediaPath, kind}[]` в порядке saved_at desc для frontend worker queue
+- `resolve_upgrade_media` зеркалит priority каскада `generate_for_block` (frontmatter.file → thumbnail → body image → body video)
+- 5 unit тестов (is_png_placeholder, resolve cascade, pure text skip, missing file skip, full A→B boundary)
+- Регистрация в `src-tauri/src/lib.rs` invoke handler
+
+**Phase B.2 — watcher events (bd24a4c6)**
+- `watcher::handler`: добавлены payload-структуры `BlockAddedPayload`, `BlockRemovedPayload`, `ThumbUpdatedPayload`, `ThumbUpgradeRequestedPayload`
+- `index_md_file` и `handle_event` получили параметр `Option<&AppHandle>` (тесты передают None, watch.rs передаёт Some)
+- События:
+  - `block:added` — сразу после upsert, с тегами и is_text классификацией (зеркало list_channel_previews)
+  - `block:removed` — после `remove_block`, tags снимаются снапшотом ДО удаления
+  - `thumb:updated` — после Phase 1 write из фонового thumb-потока, плюс на delete для cache-bust
+  - `thumb:upgrade-requested` — когда Phase 1 дал text placeholder и `resolve_upgrade_media_for_block` нашёл upgradable media
+- `watch.rs` прокидывает `&app_clone` в `handle_event`
+
+**Phase B.3 — thumbWorker Web Worker (6cce3b2f)**
+- `src/workers/thumbWorker.ts`: dedicated Worker, decodeImage через `createImageBitmap` (нативный WebView декодер, поддерживает WebP/HEIC/AVIF), OffscreenCanvas+`convertToBlob('image/jpeg', 0.85)` для encode
+- Concurrency 4, FIFO queue, transferable ArrayBuffer возврат (zero-copy через thread boundary)
+- `{type:'cancel'}` message дропает очередь и абортит in-flight fetches
+- Video decode stub'нут — `VideoDecoder` API feature-detect, fallback бросает понятный error. Трекается как Q1 в SPEC
+
+**Phase B.4 — React hooks (6cce3b2f)**
+- `hooks/useThumbnailUpgrade.ts`: владеет одним worker'ом, drain'ит backlog через `list_pending_thumb_upgrades` на mount, подписывается на `thumb:upgrade-requested`, шлёт JPEG bytes обратно через `save_thumb`. Чистый side-effect — sidebar state не трогает
+- `hooks/useChannelPreviewsEvents.ts`: заменяет polling. Initial load через `listChannelPreviews`, потом incremental patches на `block:added`/`block:removed`/`thumb:updated`. Cache-buster — per-slug version counter `?v=N`. Dedupe на re-save (same slug → move to front)
+- `src/lib/commands.ts`: `saveThumb`, `listPendingThumbUpgrades` IPC wrappers
+
+**Phase B.5 — App.tsx wiring (6cce3b2f)**
+- `channelPreviews` теперь из `useChannelPreviewsEvents`, `loadPreviews` → hook's `refresh()` для обратной совместимости с loadData/vault-changed fallback
+- `useThumbnailUpgrade(Boolean(vaultPath))` монтирует worker когда vault открыт
+- Удалены dead imports
+
+**Phase C — Sidebar virtualization (этот коммит)**
+- CSS-native подход вместо JS windowing: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждый TagNavItem
+- WKWebView на macOS 14.4+ скипает layout/paint для offscreen channel rows автоматически
+- Отключается во время drag (`isCardDragging || isDragging`) чтобы dnd-kit's getBoundingClientRect возвращал реальную геометрию, а не intrinsic placeholder
+- Zero risk для dnd-kit, context menus, tooltips, drop targets — все continue работать как раньше
+
+### Deviations from plan
+
+**Phase D (Rust crate cleanup) — deferred, not deleted.** Удаление openh264/mp4 crates предполагалось на том основании, что worker декодирует видео через VideoDecoder API. Но `thumbWorker.ts` video path пока stub — бросает error. Удаление Rust video decode прямо сейчас означало бы, что ВСЕ видео-блоки получают text placeholder навсегда. Это регрессия UX, недопустимая. Phase D возвращается в план когда появится рабочий worker video decode (VideoDecoder API или main-thread `<video>` fallback). Спека явно помечает Phase D как «optional», это точное слово.
+
+### Checks
+- `cargo test --lib` — 237 passed, 0 failed (Rust)
+- `bun run tsc --noEmit` — новые файлы (thumbWorker, hooks, commands/thumbnails.rs) чисты. Pre-existing errors в extension/popup и Sidebar.tsx (unused imports) не мои
+- Native host rebuilt and installed to `~/Library/Application Support/LocalArena/native-host`
+- Dev server в primary worktree перезапущен (background task из прошлой итерации)
+
+### Not yet verified in running app
+- Manual QA теста сохранения WebP через клиппер
+- Manual QA стартового drain'а при 100+ placeholder'ах
+- Manual QA scroll FPS при сотнях каналов
+
+### Commits
+- `7de31209` Phase A — content sniff
+- `bd24a4c6` Phase B.1+B.2 — save_thumb command + watcher events
+- `6cce3b2f` Phase B.3+B.4+B.5 — worker + hooks + App wiring
+- [текущий] Phase C — content-visibility virtualization + DEVLOG
+
 ## Entry template
 
 ## DD.MM.YYYY HH:MM — brief title

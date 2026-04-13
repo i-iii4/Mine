@@ -269,9 +269,30 @@ const TagNavItem = memo(function TagNavItem({
     isOver,
   } = useSortable({ id: `tag:${tag}` });
 
+  // Phase C virtualization (SPEC_THUMBNAILS.md §Virtualized Sidebar).
+  // `content-visibility: auto` lets WKWebView skip layout + paint for
+  // channel rows that aren't in the viewport. `contain-intrinsic-size`
+  // gives the browser a height hint so the scrollbar stays stable and
+  // scroll-to-anchor navigation (Opt+Cmd+Arrow) still lands on the
+  // correct row before the item is materialized.
+  //
+  // Intrinsic size: ~42px for non-compact rows (py-1 + 32px thumbs +
+  // border), ~36px for compact. Use the larger value as a safe
+  // over-estimate — slight scrollbar drift is preferable to the browser
+  // shrinking the row and jumping scroll position after materialization.
+  //
+  // Disabled while dragging (`isCardDragging`) so dnd-kit's
+  // getBoundingClientRect calls on drop targets always return real
+  // geometry instead of the intrinsic placeholder.
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
+    ...(!isCardDragging && !isDragging
+      ? {
+          contentVisibility: "auto" as const,
+          containIntrinsicSize: "auto 42px",
+        }
+      : {}),
   };
 
   if (isEditing) {
