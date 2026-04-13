@@ -82,3 +82,16 @@ export const listArenaChannels = (username: string) =>
 
 export const importArenaChannels = (channels: ImportChannelRequest[]) =>
   invoke<ImportChannelResult[]>("import_arena_channels", { channels });
+
+// Thumbnails (Phase 2 pipeline — see SPEC_THUMBNAILS.md)
+export interface ThumbUpgradeRequest {
+  slug: string;
+  mediaPath: string;
+  kind: "image" | "video";
+}
+
+export const saveThumb = (slug: string, bytes: Uint8Array) =>
+  invoke<void>("save_thumb", { slug, bytes: Array.from(bytes) });
+
+export const listPendingThumbUpgrades = () =>
+  invoke<ThumbUpgradeRequest[]>("list_pending_thumb_upgrades");
