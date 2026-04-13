@@ -51,7 +51,7 @@ pub fn start_watching(
         }
 
         for ve in &vault_events {
-            if let Err(e) = handler::handle_event(&conn, &vault_clone, ve) {
+            if let Err(e) = handler::handle_event(&conn, &vault_clone, ve, Some(&app_clone)) {
                 log::warn!("watcher handle_event: {e:#}");
             }
         }

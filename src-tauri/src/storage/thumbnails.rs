@@ -639,7 +639,7 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
 /// Scan a markdown body for the first `![](filename)` where `filename` is
 /// a local path (not http(s)://) and matches the given extension predicate.
 /// Returns the filename string if found.
-fn find_first_local_media(body: &str, ext_predicate: fn(&str) -> bool) -> Option<String> {
+pub fn find_first_local_media(body: &str, ext_predicate: fn(&str) -> bool) -> Option<String> {
     let mut search_from = 0;
     while let Some(start) = body[search_from..].find("![") {
         let abs_start = search_from + start;

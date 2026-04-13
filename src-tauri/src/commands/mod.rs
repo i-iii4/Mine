@@ -6,4 +6,5 @@ pub mod import;
 pub mod search;
 pub mod state;
 pub mod tags;
+pub mod thumbnails;
 pub mod vault;

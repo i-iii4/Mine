@@ -9,11 +9,52 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Emitter};
 
 use crate::domain::block::{parse_block, Block, BlockType};
 use crate::domain::vault::VaultLayout;
 use crate::storage::{files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
+
+// ─── Event payloads (Rust → Frontend) ───────────────────────────────────────
+
+/// Emitted after `index_md_file` upserts a block into the index. Carries
+/// just enough for `useChannelPreviewsEvents` to add a `PreviewCard` to
+/// every affected channel without refetching anything.
+#[derive(Debug, Clone, Serialize)]
+struct BlockAddedPayload {
+    slug: String,
+    tags: Vec<String>,
+    is_text: bool,
+}
+
+/// Emitted after `handle_event(BlockDeleted)` strips a block from the
+/// index. Carries the tags the block HAD at delete time so the sidebar
+/// can drop the preview card from each matching channel.
+#[derive(Debug, Clone, Serialize)]
+struct BlockRemovedPayload {
+    slug: String,
+    tags: Vec<String>,
+}
+
+/// Emitted after a Phase 1 thumbnail write (Rust cascade). Frontend
+/// cache-busts `<img>` elements pointing at `<slug>.jpg`.
+#[derive(Debug, Clone, Serialize)]
+struct ThumbUpdatedPayload {
+    slug: String,
+}
+
+/// Emitted when Phase 1 produced a text placeholder for a block whose
+/// embedded media could, in principle, be rendered by the WebView
+/// decoder. Frontend worker picks it up and produces a real JPEG via
+/// `createImageBitmap` / `<video>` → `save_thumb`.
+#[derive(Debug, Clone, Serialize)]
+struct ThumbUpgradeRequestedPayload {
+    slug: String,
+    #[serde(rename = "mediaPath")]
+    media_path: String,
+    kind: String,
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -132,28 +173,167 @@ pub fn full_scan(
 ///
 /// Used by handle_event for individual file changes. Thumbnail is generated
 /// in a background thread to avoid blocking the file watcher.
-pub fn index_md_file(conn: &Connection, vault: &VaultLayout, path: &Path) -> Result<()> {
+///
+/// When `app` is `Some`, emits `block:added` immediately after upsert and
+/// `thumb:updated` / `thumb:upgrade-requested` from the background thumb
+/// thread. These events drive the event-driven sidebar (SPEC_THUMBNAILS.md
+/// Phase 3). `None` is used by unit tests that don't need emit plumbing.
+pub fn index_md_file(
+    conn: &Connection,
+    vault: &VaultLayout,
+    path: &Path,
+    app: Option<&AppHandle>,
+) -> Result<()> {
     let job = index_md_file_inner(conn, vault, path)?;
 
     if let Some(job) = job {
+        // Emit block:added synchronously — frontend wants this latency to
+        // be as low as possible so newly-clipped blocks appear in the
+        // sidebar before the background thumb thread even wakes up. The
+        // text-ness classification mirrors list_channel_previews so
+        // incremental updates and the initial bulk load agree.
+        if let Some(app) = app {
+            let is_text = job.block.frontmatter.block_type == BlockType::Article
+                && job.block.frontmatter.file.is_none()
+                && job.block.frontmatter.thumbnail.is_none()
+                && thumbnails::find_first_local_media(&job.block.body, thumbnails::is_image_ext)
+                    .is_none();
+            let _ = app.emit(
+                "block:added",
+                BlockAddedPayload {
+                    slug: job.block.slug.clone(),
+                    tags: job.block.frontmatter.tags.clone(),
+                    is_text,
+                },
+            );
+        }
+
         let thumb_path = vault.thumb_path(&job.block.slug);
 
         if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path) {
             return Ok(());
         }
 
-        // Generate thumbnail in background thread to avoid blocking file watcher
+        // Generate thumbnail in background thread to avoid blocking file
+        // watcher. After the cascade runs, inspect the result and fire
+        // follow-up events (thumb:updated always, upgrade-requested if
+        // the thumb is a text placeholder and the block has upgradable
+        // media).
         let vault = vault.clone();
         let slug = job.block.slug.clone();
+        let app_clone = app.cloned();
         std::thread::Builder::new()
             .name(format!("thumb-{}", &slug))
             .spawn(move || {
-                thumbnails::generate_for_block(&job.block, &vault);
+                let source = thumbnails::generate_for_block(&job.block, &vault);
+                if let Some(app) = app_clone {
+                    emit_thumb_events(&app, &vault, &job.block, source);
+                }
             })
             .ok();
     }
 
     Ok(())
+}
+
+/// Emit `thumb:updated` and (when applicable) `thumb:upgrade-requested`
+/// after a Phase 1 cascade run. Lives as a free function so tests can
+/// call `generate_for_block` directly without an AppHandle.
+fn emit_thumb_events(
+    app: &AppHandle,
+    vault: &VaultLayout,
+    block: &Block,
+    source: thumbnails::ThumbSource,
+) {
+    // `None` means the cascade decided not to write any thumb (non-article
+    // block with no resolvable media). Nothing for the sidebar to refresh.
+    if source == thumbnails::ThumbSource::None {
+        return;
+    }
+    let _ = app.emit(
+        "thumb:updated",
+        ThumbUpdatedPayload {
+            slug: block.slug.clone(),
+        },
+    );
+
+    // Only text placeholders trigger upgrade requests. Real JPEG thumbs
+    // from Rust decode are already the final result.
+    if source != thumbnails::ThumbSource::Text {
+        return;
+    }
+    if let Some((media_path, kind)) = resolve_upgrade_media_for_block(vault, block) {
+        let _ = app.emit(
+            "thumb:upgrade-requested",
+            ThumbUpgradeRequestedPayload {
+                slug: block.slug.clone(),
+                media_path: media_path.to_string_lossy().into_owned(),
+                kind: kind.into(),
+            },
+        );
+    }
+}
+
+/// Mirror of `commands::thumbnails::resolve_upgrade_media` but working
+/// off a full `Block` (the version we have after parse). Priority matches
+/// `generate_for_block`'s cascade so the Phase 2 upgrade replaces the
+/// placeholder with the same media Rust would have used.
+fn resolve_upgrade_media_for_block(
+    vault: &VaultLayout,
+    block: &Block,
+) -> Option<(PathBuf, &'static str)> {
+    // 1. frontmatter.file
+    if let Some(ref file_name) = block.frontmatter.file {
+        let ext = file_name
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+        let media_path = vault.media_path(&block.slug, &ext);
+        if media_path.exists() {
+            if thumbnails::is_image_ext(&ext) {
+                return Some((media_path, "image"));
+            }
+            if thumbnails::is_video_ext(&ext) {
+                return Some((media_path, "video"));
+            }
+        }
+    }
+
+    // 2. frontmatter.thumbnail
+    if let Some(ref thumb_file) = block.frontmatter.thumbnail {
+        let ext = thumb_file
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+        if thumbnails::is_image_ext(&ext) {
+            let media_path = vault.root().join(thumb_file);
+            if media_path.exists() {
+                return Some((media_path, "image"));
+            }
+        }
+    }
+
+    // 3. First body image / 4. first body video
+    if let Some(first_image) =
+        thumbnails::find_first_local_media(&block.body, thumbnails::is_image_ext)
+    {
+        let media_path = vault.root().join(&first_image);
+        if media_path.exists() {
+            return Some((media_path, "image"));
+        }
+    }
+    if let Some(first_video) =
+        thumbnails::find_first_local_media(&block.body, thumbnails::is_video_ext)
+    {
+        let media_path = vault.root().join(&first_video);
+        if media_path.exists() {
+            return Some((media_path, "video"));
+        }
+    }
+
+    None
 }
 
 // ─── Internal ───────────────────────────────────────────────────────────────
@@ -198,14 +378,44 @@ fn index_md_file_inner(
 }
 
 /// Handle a single vault event: dispatch to the appropriate storage operation.
-pub fn handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) -> Result<()> {
+///
+/// When `app` is `Some`, emits Tauri events (`block:added`, `block:removed`,
+/// `thumb:updated`, `thumb:upgrade-requested`) to drive the event-driven
+/// sidebar in the frontend. Tests pass `None` to exercise the pure logic.
+pub fn handle_event(
+    conn: &Connection,
+    vault: &VaultLayout,
+    event: &VaultEvent,
+    app: Option<&AppHandle>,
+) -> Result<()> {
     match event {
         VaultEvent::BlockChanged(path) => {
-            index_md_file(conn, vault, path)?;
+            index_md_file(conn, vault, path, app)?;
         }
         VaultEvent::BlockDeleted(path) => {
             if let Some(slug) = path_to_slug(path) {
+                // Snapshot the block's tag list BEFORE removing it so the
+                // frontend can drop the preview from each affected channel.
+                // After remove_block the tags are gone from the index.
+                let tags = index::get_block(conn, &slug)
+                    .ok()
+                    .flatten()
+                    .map(|b| b.tags)
+                    .unwrap_or_default();
                 index::remove_block(conn, &slug)?;
+                if let Some(app) = app {
+                    let _ = app.emit(
+                        "block:removed",
+                        BlockRemovedPayload {
+                            slug: slug.clone(),
+                            tags,
+                        },
+                    );
+                    // Also fire thumb:updated so sidebars currently
+                    // displaying this slug's thumb re-render (the cache
+                    // bust will turn into a 404 → placeholder state).
+                    let _ = app.emit("thumb:updated", ThumbUpdatedPayload { slug });
+                }
             }
         }
         VaultEvent::MediaChanged(path) => {
@@ -340,7 +550,7 @@ mod tests {
 
         write_md_file(&vault, "note", "article", &["design"]);
         let path = vault.block_path("note");
-        index_md_file(&conn, &vault, &path).unwrap();
+        index_md_file(&conn, &vault, &path, None).unwrap();
 
         let block = index::get_block(&conn, "note").unwrap().unwrap();
         assert_eq!(block.block_type, BlockType::Article);
@@ -355,7 +565,7 @@ mod tests {
 
         std::fs::write(vault.block_path("bad"), "garbage").unwrap();
         let path = vault.block_path("bad");
-        assert!(index_md_file(&conn, &vault, &path).is_err());
+        assert!(index_md_file(&conn, &vault, &path, None).is_err());
     }
 
     // ── handle_event ─────────────────────────────────────────────────────
@@ -368,7 +578,7 @@ mod tests {
 
         write_md_file(&vault, "note", "link", &[]);
         let path = vault.block_path("note");
-        handle_event(&conn, &vault, &VaultEvent::BlockChanged(path)).unwrap();
+        handle_event(&conn, &vault, &VaultEvent::BlockChanged(path), None).unwrap();
 
         assert!(index::get_block(&conn, "note").unwrap().is_some());
     }
@@ -382,10 +592,10 @@ mod tests {
         // First index a block
         write_md_file(&vault, "note", "link", &[]);
         let path = vault.block_path("note");
-        index_md_file(&conn, &vault, &path).unwrap();
+        index_md_file(&conn, &vault, &path, None).unwrap();
 
         // Then delete it
-        handle_event(&conn, &vault, &VaultEvent::BlockDeleted(path)).unwrap();
+        handle_event(&conn, &vault, &VaultEvent::BlockDeleted(path), None).unwrap();
         assert!(index::get_block(&conn, "note").unwrap().is_none());
     }
 
@@ -403,7 +613,7 @@ mod tests {
 
         // Media deleted event should remove thumbnail
         let media_path = vault.media_path("photo", "jpg");
-        handle_event(&conn, &vault, &VaultEvent::MediaDeleted(media_path)).unwrap();
+        handle_event(&conn, &vault, &VaultEvent::MediaDeleted(media_path), None).unwrap();
         assert!(!thumb.exists());
     }
 
