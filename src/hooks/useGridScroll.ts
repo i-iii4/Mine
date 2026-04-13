@@ -1,27 +1,25 @@
 // Grid scroll state hook.
 //
-// Connects React to a high-frequency scroll source (native scroll events)
-// without triggering a re-render on every pixel of movement.
+// Returns the currently-visible masonry items for a scroll container, with
+// two performance properties:
 //
-// Strategy:
-//   1. The scroll element's current scrollTop lives in a ref. Scroll events
-//      update this ref synchronously.
-//   2. A requestAnimationFrame loop coalesces updates — at most one per
-//      frame — and computes the current set of visible items via a pure
-//      getVisibleItems callback.
-//   3. The visible set is exposed to React via useSyncExternalStore. React
-//      re-renders ONLY when the snapshot (a stable object reference that
-//      represents the current visible items) changes. Between changes,
-//      React is completely idle during scroll.
+//  1. Layout changes are reflected SYNCHRONOUSLY during render. When the
+//     caller-provided `getVisibleItems` callback changes identity (e.g.
+//     because the masonry layout changed — new channel, resize, re-measure)
+//     the returned visible items are freshly computed in the same render,
+//     not a frame later. This fixes stale-snapshot bugs where the old
+//     channel's positions would paint briefly on top of the new channel's
+//     block list.
 //
-// The snapshot comparison is reference-identity: the hook caches the last
-// visible array and reuses it as long as the new computation yields an
-// identical set of MasonryPosition references in the same order. This means
-// scrolling within the current overscan window triggers zero React renders.
+//  2. Scroll events don't trigger React re-renders unless the visible set
+//     actually changes. scrollTop lives in a ref. A requestAnimationFrame
+//     loop checks whether the visible set has changed by element-wise
+//     reference comparison, and only bumps a tick state when it has. Within
+//     the overscan window, scrolling is completely free of React work.
 //
-// See SPEC_GRID.md §002 for the rationale.
+// See SPEC_GRID.md §002 for the design rationale.
 
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MasonryPosition } from "@/lib/masonryLayout";
 
 export interface UseGridScrollOptions {
@@ -29,113 +27,99 @@ export interface UseGridScrollOptions {
   getVisibleItems: (scrollTop: number) => MasonryPosition[];
 }
 
-type Listener = () => void;
-
-interface ScrollStore {
-  snapshot: MasonryPosition[];
+/** Element-wise reference equality for two arrays of positions. */
+function samePositions(
+  a: readonly MasonryPosition[],
+  b: readonly MasonryPosition[],
+): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 /**
  * Attach to a scrollable element and return the currently-visible items.
  *
- * The returned array is a stable reference between scroll events — it only
- * changes when the visible set changes. Consumers can safely use it as a
- * dependency for useMemo / JSX.map without worrying about re-render storms.
+ * Synchronous in two directions:
+ *  - When `getVisibleItems` changes (layout change), the returned items
+ *    are recomputed during the same render. No stale paint.
+ *  - When the scroll position changes within the overscan window, no
+ *    re-render — the RAF loop detects the no-op and does not bump state.
  */
 export function useGridScroll(
   scrollElementRef: React.RefObject<HTMLElement | null>,
   { getVisibleItems }: UseGridScrollOptions,
 ): MasonryPosition[] {
-  // Mutable store outside React's render tree. Listeners notify subscribers
-  // (currently just React's useSyncExternalStore) when the snapshot changes.
-  const storeRef = useRef<ScrollStore>({ snapshot: [] });
-  const listenersRef = useRef<Set<Listener>>(new Set());
   const scrollTopRef = useRef(0);
-  const rafIdRef = useRef<number | null>(null);
+  // Opaque tick state: bumped by the scroll handler when the visible set
+  // changes. The only purpose is to force useMemo to recompute visibleItems
+  // with the latest scrollTopRef.current value.
+  const [scrollTick, setScrollTick] = useState(0);
+  // Cache of the last computed visible array. Used by the scroll handler
+  // to detect no-op updates (scroll stayed within overscan window).
+  const lastVisibleRef = useRef<MasonryPosition[]>([]);
+  // getVisibleItems identity changes on layout change. Mirror into a ref
+  // so the scroll handler always sees the latest version without needing
+  // to re-bind the native event listener.
   const getVisibleItemsRef = useRef(getVisibleItems);
 
-  // Keep the callback reference fresh without recreating subscriptions
-  // (which would tear down and rebuild the scroll listener).
   useEffect(() => {
     getVisibleItemsRef.current = getVisibleItems;
   }, [getVisibleItems]);
 
-  const snapshotEqual = useCallback(
-    (a: MasonryPosition[], b: MasonryPosition[]): boolean => {
-      if (a === b) return true;
-      if (a.length !== b.length) return false;
-      for (let i = 0; i < a.length; i += 1) {
-        if (a[i] !== b[i]) return false;
-      }
-      return true;
-    },
-    [],
-  );
+  // Synchronous compute during render. Recomputes when:
+  //   - getVisibleItems identity changes (layout / visibility function changed)
+  //   - scrollTick increments (scroll handler detected a crossed boundary)
+  //
+  // scrollTopRef is read inside the memo function. React does not track
+  // ref reads, so it's not in the deps list — that's intentional. Scroll-
+  // driven changes reach the memo via scrollTick.
+  const visibleItems = useMemo(() => {
+    // scrollTopRef is intentionally NOT in the deps — refs aren't tracked
+    // by useMemo. Scroll-driven updates come in via scrollTick which is
+    // bumped by the scroll handler when the visible set changes.
+    void scrollTick;
+    const items = getVisibleItems(scrollTopRef.current);
+    lastVisibleRef.current = items;
+    return items;
+  }, [getVisibleItems, scrollTick]);
 
-  const computeAndMaybeNotify = useCallback((): void => {
-    const next = getVisibleItemsRef.current(scrollTopRef.current);
-    const current = storeRef.current.snapshot;
-    if (!snapshotEqual(current, next)) {
-      storeRef.current = { snapshot: next };
-      for (const listener of listenersRef.current) {
-        listener();
-      }
-    }
-  }, [snapshotEqual]);
-
-  const scheduleUpdate = useCallback((): void => {
-    if (rafIdRef.current !== null) return;
-    rafIdRef.current = requestAnimationFrame(() => {
-      rafIdRef.current = null;
-      computeAndMaybeNotify();
-    });
-  }, [computeAndMaybeNotify]);
-
-  const subscribe = useCallback(
-    (onStoreChange: Listener): (() => void) => {
-      listenersRef.current.add(onStoreChange);
-      return () => {
-        listenersRef.current.delete(onStoreChange);
-      };
-    },
-    [],
-  );
-
-  const getSnapshot = useCallback(
-    (): MasonryPosition[] => storeRef.current.snapshot,
-    [],
-  );
-
-  // Attach native scroll listener. Passive listener — we only read scrollTop.
+  // Scroll listener: updates scrollTop ref on every scroll event, then
+  // schedules a RAF check. The check compares the new visible set with
+  // the last one; if they differ by element-wise reference, bumps
+  // scrollTick to force a re-render.
   useEffect(() => {
     const el = scrollElementRef.current;
     if (!el) return;
 
+    let rafId: number | null = null;
+
     const handleScroll = (): void => {
       scrollTopRef.current = el.scrollTop;
-      scheduleUpdate();
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const next = getVisibleItemsRef.current(scrollTopRef.current);
+        if (!samePositions(next, lastVisibleRef.current)) {
+          // Bump tick — useMemo will recompute and update lastVisibleRef.
+          setScrollTick((t) => t + 1);
+        }
+      });
     };
 
-    // Initialize the snapshot based on the current scroll position.
+    // Prime: record the current scroll position so the first useMemo run
+    // sees the right value. No notification needed — useMemo already ran.
     scrollTopRef.current = el.scrollTop;
-    computeAndMaybeNotify();
 
     el.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
       el.removeEventListener("scroll", handleScroll);
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
-      }
+      if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [scrollElementRef, scheduleUpdate, computeAndMaybeNotify]);
+  }, [scrollElementRef]);
 
-  // Recompute whenever the caller-provided getVisibleItems changes identity,
-  // even if scroll hasn't moved. This catches layout changes (resize, channel
-  // switch) where the visibility function itself was replaced.
-  useEffect(() => {
-    computeAndMaybeNotify();
-  }, [getVisibleItems, computeAndMaybeNotify]);
-
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return visibleItems;
 }
