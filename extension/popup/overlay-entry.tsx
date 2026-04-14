@@ -139,9 +139,11 @@ async function mount(): Promise<OverlayHandle> {
 }
 
 export async function showClipperOverlay(): Promise<void> {
+  // Always remount on show so PopupApp's init() runs fresh and consumes
+  // the latest contextMenuData. Preserving state across right-click
+  // invocations means new contextMenuData sits unread in session storage.
   if (current) {
-    current.host.style.display = "";
-    return;
+    closeClipperOverlay();
   }
   current = await mount();
 }

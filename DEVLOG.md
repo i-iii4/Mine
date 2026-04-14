@@ -15,6 +15,31 @@
   When claiming a scope, add a "**Claimed:**" line at the top of a
   running entry so the other agent sees what's in flight.
 
+## 14.04.2026 19:00 [primary] — Clipper: overlay re-init + native host DB write removal
+
+### Goal
+Две независимые проблемы клиппера:
+1. «failed to index block: failed to upsert block» при сохранении — race между native host и watcher за DB lock
+2. Правый клик → Save to Mine на картинке в Twitter не работал, если overlay уже был смонтирован ранее на той же вкладке
+
+### Actually completed
+
+**Native host больше не пишет в SQLite** (`src-tauri/src/bin/native_host.rs`)
+- Убран вызов `index::upsert_block` в `handle_save_block`. Native host теперь пишет только `.md` файл + thumb.
+- Watcher — единственный писатель в DB (filesystem → DB mirroring). Устранён dual-writer race, «failed to upsert block» больше не возникает.
+- Offline кейс (main app закрыт при клипе) покрывается `full_scan` при следующем запуске.
+
+**Overlay всегда remount** (`extension/popup/overlay-entry.tsx`)
+- `showClipperOverlay` раньше переиспользовал существующий инстанс — `init()` не перезапускался → новые данные контекстного меню не читались из session storage.
+- Теперь: `if (current) closeClipperOverlay()` перед `mount()`. Каждый правый клик → «Save to Mine» получает свежий init с актуальным `contextMenuData`.
+- Почему работало для других страниц: каждый новый таб = свежая injection overlay.js. Для Twitter (клик по картинке в ленте открывает лайтбокс без навигации) overlay.js оставался тот же.
+
+### Commits
+- `3ab4a5c2` (предыдущий) save-link removal + sidebar realtime
+- [текущий] native host DB write removal + overlay re-init
+
+---
+
 ## 14.04.2026 08:30 [primary] — Clipper: Twitter lightbox + save-link removal + sidebar realtime fixes
 
 ### Goal

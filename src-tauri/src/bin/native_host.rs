@@ -447,10 +447,12 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     // first embedded image/video in article body, and text fallback.
     let _ = thumbnails::generate_for_block(&block, vault);
 
-    // Index the block
-    if let Err(e) = index::upsert_block(&conn, &block, Some(vault.root())) {
-        return send_error(&format!("failed to index block: {e}"));
-    }
+    // Do NOT upsert into the index here. The filesystem is the source
+    // of truth; the watcher (when the main app is running) mirrors
+    // file changes into SQLite, and full_scan covers the offline case.
+    // Writing to the DB from both the native host and the watcher
+    // caused write-lock contention — the user would see "failed to
+    // upsert block" even though the file was written correctly.
 
     send_response(&SaveResponse {
         ok: true,
