@@ -284,7 +284,6 @@ Background service worker регистрирует 4 пункта:
 | `save-page` | Save page to Mine | `page` | Всегда |
 | `save-image` | Save image to Mine | `image` | Правый клик по `<img>` |
 | `save-selection` | Save selection to Mine | `selection` | Есть выделенный текст |
-| `save-link` | Save link to Mine | `link` | Правый клик по `<a>` |
 
 При выборе пункта открывается popup с предвыбранным типом и заполненными полями.
 

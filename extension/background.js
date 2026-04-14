@@ -188,11 +188,6 @@ chrome.runtime.onInstalled.addListener(() => {
     contexts: ["selection"],
   });
 
-  chrome.contextMenus.create({
-    id: "save-link",
-    title: "Save link to Mine",
-    contexts: ["link"],
-  });
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {

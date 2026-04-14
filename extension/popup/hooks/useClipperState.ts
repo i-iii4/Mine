@@ -93,6 +93,7 @@ export function useClipperState() {
 
   const tabIdRef = useRef<number | null>(null);
   const vaultRef = useRef<string | null>(null);
+  const deferredArticleRef = useRef<ArticleData | null>(null);
 
   const captureScreenshot = useCallback(() => {
     // Hide the overlay before capture so the clipper UI doesn't appear
@@ -364,7 +365,7 @@ export function useClipperState() {
       tabIdRef.current = tabId;
       applyCropCapability(tabUrl ?? null);
 
-      const [meta, article] = await Promise.all([
+      let [meta, article] = await Promise.all([
         extractMetadata(tabId),
         extractArticle(tabId),
       ]);
@@ -384,6 +385,12 @@ export function useClipperState() {
       }
 
       setMetadata(meta);
+      // If save-link fetched tweet data via syndication API, use it
+      if (deferredArticleRef.current) {
+        article = deferredArticleRef.current;
+        if (article.title) meta.title = article.title;
+        deferredArticleRef.current = null;
+      }
       setArticleData(article);
       setTitle(meta.title ?? "");
 
@@ -466,8 +473,27 @@ export function useClipperState() {
         meta.selection = ctx.selectionText ?? meta.selection;
         break;
       case "save-link":
-        meta.detectedType = "link";
         if (ctx.linkUrl) meta.url = ctx.linkUrl;
+        // Twitter/X tweet links: fetch full tweet (text + images) via
+        // syndication API directly from popup — no content script needed,
+        // works even when current page is the feed, not the tweet page.
+        if (ctx.linkUrl && /(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/i.test(ctx.linkUrl)) {
+          meta.detectedType = "article";
+          const tweetMatch = ctx.linkUrl.match(/(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/i);
+          if (tweetMatch) {
+            const [, handle, tweetId] = tweetMatch;
+            try {
+              const tweet = await fetchTweetBySyndicationApi(tweetId!, `@${handle}`);
+              if (tweet) {
+                deferredArticleRef.current = tweet;
+              }
+            } catch {
+              // Fall through — save as article without media
+            }
+          }
+        } else {
+          meta.detectedType = "link";
+        }
         break;
       case "save-page": {
         // Twitter lightbox: user right-clicked on the overlay image but
@@ -650,5 +676,54 @@ export function useClipperState() {
     knownVaults,
     selectedVault,
     switchVault,
+  };
+}
+
+// ─── Twitter syndication API (direct fetch, no content script) ──────────
+
+interface SyndicationMedia {
+  type: string;
+  media_url_https?: string;
+  video_info?: { variants?: { content_type: string; bitrate?: number; url: string }[] };
+}
+
+async function fetchTweetBySyndicationApi(
+  tweetId: string,
+  authorHandle: string,
+): Promise<ArticleData | null> {
+  const resp = await fetch(
+    `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&token=0`,
+  );
+  if (!resp.ok) return null;
+  const data = await resp.json();
+
+  const text: string = data.text ?? "";
+  const media: string[] = [];
+
+  for (const m of (data.mediaDetails ?? []) as SyndicationMedia[]) {
+    if (m.type === "photo" && m.media_url_https) {
+      media.push(m.media_url_https + "?name=large");
+    } else if ((m.type === "video" || m.type === "animated_gif") && m.video_info?.variants) {
+      const best = m.video_info.variants
+        .filter((v) => v.content_type === "video/mp4" && v.bitrate != null)
+        .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
+      if (best[0]) media.push(best[0].url);
+    }
+  }
+
+  const parts: string[] = [];
+  if (text) parts.push(text);
+  for (const src of media) {
+    parts.push(`![](${src})`);
+  }
+
+  if (parts.length === 0) return null;
+
+  const title = text.replace(/\n/g, " ").trim().slice(0, 80) || authorHandle;
+  return {
+    title,
+    content: parts.join("\n\n"),
+    byline: authorHandle,
+    excerpt: text.slice(0, 200),
   };
 }

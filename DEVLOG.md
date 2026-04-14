@@ -15,6 +15,30 @@
   When claiming a scope, add a "**Claimed:**" line at the top of a
   running entry so the other agent sees what's in flight.
 
+## 14.04.2026 08:30 [primary] — Clipper: Twitter lightbox + save-link removal + sidebar realtime fixes
+
+### Goal
+Три проблемы клиппера и sidebar'а: (1) правый клик по картинке в Twitter lightbox не распознавался как image, (2) «Save link to Mine» на Twitter сохранял твит без картинок, (3) sidebar не обновлял миниатюры в реальном времени после Phase 2 upgrade.
+
+### Actually completed
+- `content.js`: `detectTwitterLightboxImage()` — ищет `<img>` в Twitter `[role="dialog"]` или по URL `/photo/`, фильтрует аватары
+- `useClipperState.ts`: `save-page` на Twitter проверяет lightbox → переключает на image mode
+- `messaging.ts`: `detectTwitterLightbox()` IPC wrapper
+- `background.js`: удалён пункт контекстного меню `save-link` (contexts: `["link"]`). Создавал путаницу на Twitter, где правый клик по картинке в ленте предлагал и «Save image» и «Save link», но link-режим терял медиа
+- `useClipperState.ts`: `fetchTweetBySyndicationApi()` — прямой вызов syndication API из popup по tweet ID из linkUrl (не используется после удаления save-link, оставлен для будущего использования)
+- `commands/channels.rs`: `is_text` теперь определяется по magic bytes thumb-файла (`thumb_is_png`), а не по метаданным блока. JPEG thumb → `is_text=false`, PNG → `is_text=true`
+- `commands/thumbnails.rs`, `watcher/handler.rs`: `thumb:updated` event несёт `is_text: bool`
+- `useChannelPreviewsEvents.ts`: обработчик `thumb:updated` обновляет `card.text` вместе с URL
+- `useThumbnailUpgrade.ts`: video frame extraction на main thread (`<video>` + canvas), пропуск чёрных кадров (brightness < 40, до 4 позиций), callback `onUpgraded` → `refresh()` после save_thumb
+- `Sidebar.tsx`: убран `onError → display:none` — карточки не исчезают при временном 404
+- `SPEC_CLIPPER.md`: удалён save-link из таблицы контекстного меню
+
+### Commits
+- `0a80366a` Twitter lightbox detection
+- [текущий] save-link removal + sidebar realtime + video frame extraction
+
+---
+
 ## 13.04.2026 19:10 [primary] — Sidebar cache-bust fix: mtime вместо Date.now()
 
 ### Goal
