@@ -127,11 +127,19 @@ const EMPTY_METADATA: PageMetadata = {
 
 const EMPTY_ARTICLE: ArticleData = { title: "", content: "", byline: null, excerpt: "" };
 
+export interface TwitterLightboxResult {
+  src: string;
+  alt: string | null;
+  width: number | null;
+  height: number | null;
+}
+
 interface MineContentHelpers {
   extractMetadata: () => PageMetadata;
   extractArticle: () => ArticleData;
   extractArticleAsync: () => Promise<ArticleData>;
   getImageInfo: (src: string) => { src: string; alt: string | null; title: string | null; width: number | null; height: number | null };
+  detectTwitterLightboxImage: () => TwitterLightboxResult | null;
 }
 
 function contentHelpers(): MineContentHelpers | null {
@@ -230,6 +238,22 @@ export async function getImageInfo(
     chrome.tabs.sendMessage(tabId, { action: "getImageInfo", src }, (resp) => {
       clearTimeout(timer);
       resolve((resp as { alt?: string; width?: number; height?: number }) ?? {});
+    });
+  });
+}
+
+export async function detectTwitterLightbox(
+  tabId: number,
+): Promise<TwitterLightboxResult | null> {
+  if (tabId === CONTENT_SCRIPT_CONTEXT) {
+    const helpers = contentHelpers();
+    return helpers?.detectTwitterLightboxImage() ?? null;
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), 3_000);
+    chrome.tabs.sendMessage(tabId, { action: "detectTwitterLightboxImage" }, (resp) => {
+      clearTimeout(timer);
+      resolve((resp as TwitterLightboxResult) ?? null);
     });
   });
 }

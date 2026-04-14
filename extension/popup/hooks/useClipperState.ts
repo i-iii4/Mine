@@ -40,6 +40,7 @@ import {
   extractArticle,
   extractArticleAsync,
   getImageInfo,
+  detectTwitterLightbox,
   CONTENT_SCRIPT_CONTEXT,
   type NativeRequest,
   type ChannelInfo,
@@ -468,8 +469,27 @@ export function useClipperState() {
         meta.detectedType = "link";
         if (ctx.linkUrl) meta.url = ctx.linkUrl;
         break;
-      case "save-page":
+      case "save-page": {
+        // Twitter lightbox: user right-clicked on the overlay image but
+        // Chrome didn't detect an <img> context (transparent element on
+        // top). Check if a lightbox is open and extract the image URL.
+        const pageUrl = meta.url || "";
+        if (pageUrl.includes("x.com/") || pageUrl.includes("twitter.com/")) {
+          try {
+            const lightbox = await detectTwitterLightbox(tabId);
+            if (lightbox?.src) {
+              meta.detectedType = "image";
+              meta.imageToSave = lightbox.src;
+              if (lightbox.alt) meta.imageAlt = lightbox.alt;
+              if (lightbox.width) meta.imageWidth = lightbox.width;
+              if (lightbox.height) meta.imageHeight = lightbox.height;
+            }
+          } catch {
+            // Fall through to default page save
+          }
+        }
         break;
+      }
     }
   }
 

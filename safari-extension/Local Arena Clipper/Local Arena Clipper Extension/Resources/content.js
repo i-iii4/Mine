@@ -1016,8 +1016,75 @@
       return true;
     }
 
+    if (msg.action === "detectTwitterLightboxImage") {
+      sendResponse(detectTwitterLightboxImage());
+      return true;
+    }
+
     return false;
   });
+
+  // Detect Twitter/X lightbox overlay and extract the image URL.
+  // Twitter renders the lightbox as a modal with role="dialog" (or a
+  // layer with [data-testid="swipe-to-dismiss"]). Inside it, the main
+  // image is either an <img> tag or a <div> with background-image.
+  // Returns { src, width, height } or null if no lightbox is open.
+  function detectTwitterLightboxImage() {
+    if (!isTwitterUrl(window.location.href)) return null;
+
+    // Strategy 1: look for <img> inside the lightbox dialog/layer
+    const dialog = document.querySelector('[role="dialog"], [data-testid="swipe-to-dismiss"]');
+    if (dialog) {
+      // Find the largest <img> inside the dialog — that's the main image
+      let best = null;
+      let bestArea = 0;
+      for (const img of dialog.querySelectorAll("img")) {
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        const area = w * h;
+        if (area > bestArea && img.src && !img.src.includes("profile_images")) {
+          bestArea = area;
+          best = img;
+        }
+      }
+      if (best) {
+        return {
+          src: best.src,
+          alt: best.alt || null,
+          width: best.naturalWidth || null,
+          height: best.naturalHeight || null,
+        };
+      }
+    }
+
+    // Strategy 2: URL-based — Twitter photo URLs have /photo/ path
+    const photoMatch = window.location.href.match(/\/status\/\d+\/photo\//);
+    if (photoMatch) {
+      // Find the largest visible <img> on the page (excluding avatars/icons)
+      let best = null;
+      let bestArea = 0;
+      for (const img of document.querySelectorAll("img")) {
+        if (!img.src || img.src.includes("profile_images") || img.src.includes("emoji")) continue;
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        const area = w * h;
+        if (area > bestArea) {
+          bestArea = area;
+          best = img;
+        }
+      }
+      if (best && bestArea > 10000) {
+        return {
+          src: best.src,
+          alt: best.alt || null,
+          width: best.naturalWidth || null,
+          height: best.naturalHeight || null,
+        };
+      }
+    }
+
+    return null;
+  }
 
   function getImageInfoBySrc(src) {
     const imgs = document.querySelectorAll("img");
@@ -1053,5 +1120,6 @@
     extractArticle,
     extractArticleAsync,
     getImageInfo: getImageInfoBySrc,
+    detectTwitterLightboxImage,
   };
 })();
