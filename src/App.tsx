@@ -369,7 +369,7 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   // Phase 2 thumbnail upgrade pipeline: Web Worker decodes webp/heic/
   // video media via the browser's native decoder and writes real JPEG
   // bytes back through save_thumb. Mounts once vault is open.
-  useThumbnailUpgrade(Boolean(vaultPath));
+  useThumbnailUpgrade(Boolean(vaultPath), loadPreviews);
 
   const [loadError, setLoadError] = useState<string | null>(null);
 

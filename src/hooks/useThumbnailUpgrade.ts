@@ -31,6 +31,110 @@ interface ThumbUpgradeRequestedEvent {
   kind: "image" | "video";
 }
 
+// ─── Video frame extraction (main thread) ───────────────────────────────────
+//
+// Creates a hidden <video>, seeks to 0.1s (skip black intro frames),
+// draws the frame onto a <canvas>, encodes as JPEG. Runs on the main
+// thread because Dedicated Workers have no DOM access for <video>.
+// Concurrency is naturally limited by the browser's media decoder pool.
+
+const JPEG_QUALITY = 0.85;
+const VIDEO_TIMEOUT_MS = 10_000;
+const BRIGHTNESS_THRESHOLD = 40;
+// Seek positions to try — skip black fade-in frames.
+// Relative to duration when > 1, absolute seconds otherwise.
+const SEEK_CANDIDATES = [0.1, 0.5, 1, 2];
+
+function extractVideoFrame(url: string, maxSize: number): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.preload = "auto";
+    video.playsInline = true;
+    let done = false;
+    let candidateIdx = 0;
+    let lastBlob: ArrayBuffer | null = null;
+
+    const timer = setTimeout(() => finish(new Error("video decode timeout")), VIDEO_TIMEOUT_MS);
+
+    function finish(err: Error): void;
+    function finish(err: null, buf: ArrayBuffer): void;
+    function finish(err: Error | null, buf?: ArrayBuffer) {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      video.removeAttribute("src");
+      video.load();
+      if (err) reject(err); else resolve(buf!);
+    }
+
+    function seekNext() {
+      if (candidateIdx >= SEEK_CANDIDATES.length) {
+        // All candidates tried — use last captured frame (even if dark)
+        if (lastBlob) { finish(null, lastBlob); return; }
+        // Fallback: try 25% of duration
+        video.currentTime = video.duration * 0.25;
+        return;
+      }
+      const t = SEEK_CANDIDATES[candidateIdx]!;
+      video.currentTime = Math.min(t, video.duration * 0.9);
+      candidateIdx++;
+    }
+
+    video.onloadedmetadata = () => seekNext();
+
+    video.onseeked = () => {
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      if (vw === 0 || vh === 0) { finish(new Error("video has zero dimensions")); return; }
+
+      const scale = Math.min(1, maxSize / Math.max(vw, vh));
+      const w = Math.max(1, Math.round(vw * scale));
+      const h = Math.max(1, Math.round(vh * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d", { alpha: false });
+      if (!ctx) { finish(new Error("canvas 2d unavailable")); return; }
+
+      ctx.drawImage(video, 0, 0, w, h);
+
+      // Check average brightness — skip near-black frames
+      const sample = ctx.getImageData(0, 0, w, h).data;
+      let sum = 0;
+      const step = 40; // sample every 10th pixel (4 channels × 10)
+      let count = 0;
+      for (let i = 0; i < sample.length; i += step) {
+        sum += sample[i]! + sample[i + 1]! + sample[i + 2]!;
+        count += 3;
+      }
+      const avgBrightness = count > 0 ? sum / count : 0;
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) { finish(new Error("toBlob returned null")); return; }
+          blob.arrayBuffer().then(
+            (buf) => {
+              lastBlob = buf;
+              if (avgBrightness >= BRIGHTNESS_THRESHOLD) {
+                finish(null, buf);
+              } else {
+                seekNext();
+              }
+            },
+            (e) => finish(e instanceof Error ? e : new Error(String(e))),
+          );
+        },
+        "image/jpeg",
+        JPEG_QUALITY,
+      );
+    };
+
+    video.onerror = () => finish(new Error(`video load failed: ${url.split("/").pop()}`));
+    video.src = url;
+  });
+}
+
 /**
  * Mount once at the top of the app (inside `App.tsx`) after the vault is
  * open. Keeps a worker alive for the lifetime of the component.
@@ -39,7 +143,7 @@ interface ThumbUpgradeRequestedEvent {
  * `false` while the vault is still being resolved to avoid spurious
  * calls to `list_pending_thumb_upgrades` against a stale state.
  */
-export function useThumbnailUpgrade(enabled: boolean): void {
+export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): void {
   const workerRef = useRef<Worker | null>(null);
   const pendingRef = useRef<Map<string, { slug: string }>>(new Map());
   const nextIdRef = useRef(0);
@@ -67,6 +171,7 @@ export function useThumbnailUpgrade(enabled: boolean): void {
         }
         try {
           await saveThumb(msg.slug, new Uint8Array(msg.bytes));
+          onUpgraded?.();
         } catch (err) {
           console.warn(`[thumb upgrade] save_thumb ${msg.slug} failed:`, err);
         }
@@ -96,11 +201,20 @@ export function useThumbnailUpgrade(enabled: boolean): void {
     );
 
     function enqueue(slug: string, mediaPath: string, kind: "image" | "video") {
+      const assetUrl = convertFileSrc(mediaPath);
+
+      // Video: decode on main thread via <video> + <canvas>.
+      // Dedicated Workers have no DOM, so <video> is unavailable there.
+      if (kind === "video") {
+        decodeVideoOnMainThread(slug, assetUrl);
+        return;
+      }
+
+      // Image: send to worker (createImageBitmap, off-main-thread).
       const w = workerRef.current;
       if (!w) return;
       const id = `${nextIdRef.current++}`;
       pendingRef.current.set(id, { slug });
-      const assetUrl = convertFileSrc(mediaPath);
       const req: ThumbWorkerRequest = {
         id,
         slug,
@@ -109,6 +223,16 @@ export function useThumbnailUpgrade(enabled: boolean): void {
         targetSize: 480,
       };
       w.postMessage(req);
+    }
+
+    async function decodeVideoOnMainThread(slug: string, url: string) {
+      try {
+        const bytes = await extractVideoFrame(url, 480);
+        await saveThumb(slug, new Uint8Array(bytes));
+        onUpgraded?.();
+      } catch (err) {
+        console.warn(`[thumb upgrade] video ${slug} failed:`, err);
+      }
     }
 
     return () => {

@@ -102,13 +102,15 @@ pub fn save_thumb(
     std::fs::rename(&tmp_path, &thumb_path)
         .map_err(|e| CommandError::Internal(format!("rename tmp thumb: {}", e)))?;
 
-    let _ = app.emit("thumb:updated", ThumbUpdatedPayload { slug });
+    // save_thumb always writes JPEG — never a text placeholder.
+    let _ = app.emit("thumb:updated", ThumbUpdatedPayload { slug, is_text: false });
     Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct ThumbUpdatedPayload {
     slug: String,
+    is_text: bool,
 }
 
 /// Enumerate every indexed block whose on-disk thumb is a text placeholder

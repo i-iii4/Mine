@@ -212,10 +212,10 @@ const NavItem = memo(function NavItem({
         <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
           {cards.map((card, i) => card.text ? (
             <div key={i} className="size-8 shrink-0 bg-accent">
-              <img src={card.url} className="size-8 object-cover dark:invert" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              <img src={card.url} className="size-8 object-cover dark:invert" />
             </div>
           ) : (
-            <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+            <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" />
           ))}
         </div>
       )}
@@ -361,10 +361,10 @@ const TagNavItem = memo(function TagNavItem({
               <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
                 {cards.map((card, i) => card.text ? (
                   <div key={i} className="size-8 shrink-0 bg-accent">
-                    <img src={card.url} className="size-8 object-cover dark:invert" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                    <img src={card.url} className="size-8 object-cover dark:invert" loading="lazy" />
                   </div>
                 ) : (
-                  <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                  <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" loading="lazy" />
                 ))}
               </div>
             </>

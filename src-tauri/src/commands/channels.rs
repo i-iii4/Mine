@@ -295,6 +295,17 @@ pub struct PreviewItem {
     pub mtime: u64,
 }
 
+/// Check if a thumb file is a PNG (text placeholder that needs dark:invert).
+/// Returns false for JPEG, missing files, or any I/O error — those render
+/// as-is without inversion.
+fn thumb_is_png(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let mut buf = [0u8; 3];
+    if f.read_exact(&mut buf).is_err() { return false }
+    buf == [0x89, 0x50, 0x4E] // PNG magic
+}
+
 /// Read the mtime of a thumb file as unix seconds. Returns 0 on any error.
 fn thumb_mtime(path: &std::path::Path) -> u64 {
     std::fs::metadata(path)
@@ -325,11 +336,10 @@ pub fn list_channel_previews(
             return None;
         }
         if b.thumbnail.is_some() || vs.vault.thumb_path(&b.slug).exists() {
-            // text-only = article without media file, thumbnail, or first_image that's an image
-            let is_text = b.block_type == BlockType::Article
-                && b.media_file.is_none()
-                && b.thumbnail.is_none()
-                && b.first_image.is_none();
+            // Determine from the actual thumb file content whether dark:invert
+            // is needed. PNG = text placeholder (needs invert), JPEG = real
+            // decoded image or video frame (must NOT be inverted).
+            let is_text = thumb_is_png(&vs.vault.thumb_path(&b.slug));
             Some((b, is_text))
         } else {
             None

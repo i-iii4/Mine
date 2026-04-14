@@ -42,6 +42,7 @@ struct BlockRemovedPayload {
 #[derive(Debug, Clone, Serialize)]
 struct ThumbUpdatedPayload {
     slug: String,
+    is_text: bool,
 }
 
 /// Emitted when Phase 1 produced a text placeholder for a block whose
@@ -254,6 +255,7 @@ fn emit_thumb_events(
         "thumb:updated",
         ThumbUpdatedPayload {
             slug: block.slug.clone(),
+            is_text: source == thumbnails::ThumbSource::Text,
         },
     );
 
@@ -414,7 +416,7 @@ pub fn handle_event(
                     // Also fire thumb:updated so sidebars currently
                     // displaying this slug's thumb re-render (the cache
                     // bust will turn into a 404 → placeholder state).
-                    let _ = app.emit("thumb:updated", ThumbUpdatedPayload { slug });
+                    let _ = app.emit("thumb:updated", ThumbUpdatedPayload { slug, is_text: false });
                 }
             }
         }

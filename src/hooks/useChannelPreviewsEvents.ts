@@ -39,6 +39,7 @@ interface BlockRemovedEvent {
 
 interface ThumbUpdatedEvent {
   slug: string;
+  is_text: boolean;
 }
 
 const ALL_KEY = "__all__";
@@ -165,10 +166,11 @@ export function useChannelPreviewsEvents({ vaultPath, limit }: Options): {
     }).then((fn) => unlistenFns.push(fn));
 
     listen<ThumbUpdatedEvent>("thumb:updated", (event) => {
-      const { slug } = event.payload;
-      // Bump cache-buster for this slug and rewrite every matching
-      // PreviewCard.url in-place. We keep the `text` flag as-is — only
-      // the URL version changes.
+      const { slug, is_text } = event.payload;
+      // Bump cache-buster and update the text flag. When Phase 2
+      // upgrades a PNG placeholder to a decoded JPEG, is_text flips
+      // from true to false so dark:invert is removed in the same
+      // render pass as the URL update.
       const version = (versionsRef.current.get(slug) ?? 0) + 1;
       versionsRef.current.set(slug, version);
       const vp = vaultPathRef.current;
@@ -183,7 +185,7 @@ export function useChannelPreviewsEvents({ vaultPath, limit }: Options): {
           const updated = items.map((c) => {
             if (c.url.includes(`/${slug}.jpg`)) {
               hit = true;
-              return { url: fresh, text: c.text };
+              return { url: fresh, text: is_text };
             }
             return c;
           });
