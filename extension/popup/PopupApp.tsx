@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useClipperState } from "./hooks/useClipperState";
+import { resolveContentBody } from "./lib/resolveContentBody";
 import { TypeSwitcher } from "./components/TypeSwitcher";
 import { ChannelList } from "./components/ChannelList";
 import { SaveButton } from "./components/SaveButton";
@@ -64,8 +65,8 @@ export function PopupApp() {
     return <ErrorState message={clipper.error ?? "Unknown error"} />;
   }
 
-  const { metadata } = clipper;
-  const previewText = getPreviewText(clipper);
+  const { metadata, articleData } = clipper;
+  const resolvedBody = resolveContentBody(metadata, articleData);
   const ogImage = clipper.currentType === "image"
     ? metadata?.imageToSave ?? metadata?.image ?? null
     : metadata?.image ?? null;
@@ -116,12 +117,21 @@ export function PopupApp() {
               </div>
             )}
             <p className="mt-1.5 truncate text-sm font-semibold">{clipper.title}</p>
-            {clipper.articleLoading ? (
+            {resolvedBody.source === "selection" ? (
+              <div className="mt-1.5">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  Selected text · {resolvedBody.text.length} characters
+                </p>
+                <blockquote className="mt-1 border-l-2 border-border pl-2 text-sm italic text-foreground whitespace-pre-wrap">
+                  {resolvedBody.text}
+                </blockquote>
+              </div>
+            ) : clipper.articleLoading ? (
               <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
                 <div className="size-3 animate-spin rounded-round border-[1.5px] border-border border-t-foreground" />
                 Loading transcript...
               </div>
-            ) : clipper.articleData?.content ? (
+            ) : resolvedBody.text ? (
               <div className="prose prose-sm mt-1.5 max-w-none">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
@@ -134,12 +144,12 @@ export function PopupApp() {
                     },
                   }}
                 >
-                  {clipper.articleData.content}
+                  {resolvedBody.text}
                 </ReactMarkdown>
               </div>
             ) : (
               <p className="mt-1.5 text-sm text-muted-foreground">
-                {previewText || metadata?.description || "No content extracted"}
+                {metadata?.description || "No content extracted"}
               </p>
             )}
           </div>
@@ -207,14 +217,3 @@ function ErrorState({ message }: { message: string }) {
   );
 }
 
-function getPreviewText(clipper: ReturnType<typeof useClipperState>): string | null {
-  if (clipper.currentType !== "content") return null;
-  const { metadata, articleData } = clipper;
-  if (!metadata) return null;
-
-  if (metadata.selection?.length > 0) return metadata.selection;
-  if (articleData?.content) return articleData.content.slice(0, 1000);
-  if (metadata.description) return metadata.description;
-  if (metadata.bodyText) return metadata.bodyText.slice(0, 1000);
-  return null;
-}

@@ -54,6 +54,8 @@ import {
 // fallback (detached popup window) still has them.
 const IS_CONTENT_SCRIPT_CONTEXT = typeof chrome.tabs === "undefined";
 
+import { resolveContentBody } from "../lib/resolveContentBody";
+
 export type ClipType = "content" | "link" | "image" | "video" | "screenshot";
 export type PopupState = "loading" | "error" | "main";
 
@@ -577,13 +579,10 @@ export function useClipperState() {
     };
 
     if (currentType === "content") {
-      if (metadata.detectedType === "video") {
-        payload.body = articleData?.content || "";
-      } else if (metadata.selection?.length > 0) {
-        payload.body = metadata.selection;
-      } else if (articleData?.content) {
-        payload.body = articleData.content;
-        if (articleData.byline) payload.author = articleData.byline;
+      const resolved = resolveContentBody(metadata, articleData);
+      payload.body = resolved.text;
+      if (resolved.source === "article" && resolved.byline) {
+        payload.author = resolved.byline;
       }
     }
 
