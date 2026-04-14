@@ -427,7 +427,7 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
 });
 
 function isImageFile(name: string): boolean {
-  return /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(name);
+  return /\.(jpg|jpeg|png|gif|webp|bmp|tiff|tif|heic|heif|avif)$/i.test(name);
 }
 
 const ArticleCard = memo(function ArticleCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {

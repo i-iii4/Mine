@@ -52,6 +52,26 @@
   When claiming a scope, add a "**Claimed:**" line at the top of a
   running entry so the other agent sees what's in flight.
 
+## 14.04.2026 22:55 [primary] — Thumb invariant + HEIC/AVIF support
+
+### Goal
+Image-блоки с HEIC/AVIF media (из Instagram, iOS Photos) показывались в sidebar как битая иконка «?» — `generate_for_block` не писал thumb вообще, а `list_pending_thumb_upgrades` не мог их подхватить для Phase 2.
+
+### Actually completed
+
+**Инвариант «Phase 1 всегда оставляет thumb-файл на диске»** (`storage/thumbnails.rs`)
+- Добавлена универсальная ветка 6 в `generate_for_block`: если ни одна из веток 1-5 не записала thumb и у блока есть title или body, пишется text placeholder. Покрывает image/link/video/file блоки с недекодируемым media, пропавшим файлом, без frontmatter.file. Phase 2 (`list_pending_thumb_upgrades`) теперь гарантированно подхватывает такие блоки.
+
+**HEIC/HEIF/AVIF в `IMAGE_EXTS`** (`storage/thumbnails.rs`, `components/Card.tsx`)
+- Список распознанных image-форматов был неполным: WebP и TIFF были, HEIC/AVIF (современные форматы iOS/Instagram) — нет. Добавлены в оба списка (Rust const и frontend regex).
+- Последствия: `is_image_ext("heic")` → true → `resolve_upgrade_media` возвращает HEIC файлы как upgradable → Phase 2 worker декодирует через `createImageBitmap` (WKWebView на macOS поддерживает HEIC нативно) → пишет JPEG через `save_thumb`.
+- В `generate_for_block` ветке 1 для HEIC `is_rust_decodable` продолжает блокировать Rust decode (HEIC не поддерживается `image` crate 0.25), регрессии нет.
+
+### Push
+- [текущий]
+
+---
+
 ## 14.04.2026 19:00 [primary] — Clipper: overlay re-init + native host DB write removal
 
 ### Goal

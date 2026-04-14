@@ -461,7 +461,10 @@ fn strip_links(text: &str) -> String {
 // ─── Unified dispatch ───────────────────────────────────────────────────────
 
 /// Extensions recognized as still images that `generate_thumbnail` can process.
-const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif"];
+const IMAGE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif",
+    "heic", "heif", "avif",
+];
 /// Extensions recognized as video containers that `generate_video_thumbnail` can process.
 const VIDEO_EXTS: &[&str] = &["mp4", "webm", "mov"];
 
@@ -630,6 +633,22 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
         match generate_text_thumbnail(title, &block.body, &thumb_path) {
             Ok(_) => return ThumbSource::Text,
             Err(e) => log::warn!("text thumb failed for {}: {}", slug, e),
+        }
+    }
+
+    // 6. Universal fallback for image/link/video/file blocks with
+    //    non-Rust-decodable media (HEIC, VP8X WebP, AVIF, HEVC video,
+    //    missing file, etc.): write a text placeholder with just the
+    //    title. Maintains the invariant "Phase 1 always leaves a thumb
+    //    file on disk" so Phase 2 (list_pending_thumb_upgrades) can
+    //    pick it up and upgrade to a real decoded JPEG via the WebView.
+    //    Without this, image blocks with HEIC media were left with no
+    //    thumb at all → broken-image icon in the sidebar forever.
+    let title = block.frontmatter.title.as_deref();
+    if title.is_some() || !block.body.is_empty() {
+        match generate_text_thumbnail(title, &block.body, &thumb_path) {
+            Ok(_) => return ThumbSource::Text,
+            Err(e) => log::warn!("fallback text thumb failed for {}: {}", slug, e),
         }
     }
 
