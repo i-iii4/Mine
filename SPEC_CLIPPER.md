@@ -88,7 +88,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 
 ### 3. Selection (выделенный текст)
 
-Сохраняет выделенный фрагмент текста.
+Сохраняет выделенный фрагмент текста. **Selection — не отдельный UI-тип**, а вариант внутри `Content`: если на момент открытия popup есть непустое выделение, Content-превью и save() приоритизируют его над полной статьёй.
 
 | Field | Source |
 |---|---|
@@ -99,6 +99,21 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 | source | `web-clipper` |
 
 Результат: `.md` (type: article, body = выделенный текст).
+
+Визуально в popup: блок Content рендерит выделение как `<blockquote>` с подписью `Selected text · N characters` — пользователь видит ровно то, что попадёт в body. См. раздел «Content body resolution» ниже.
+
+### 3a. Content body resolution
+
+Popup и save() используют одну чистую функцию — `resolveContentBody(metadata, articleData)` (`extension/popup/lib/resolveContentBody.ts`) — которая возвращает `{ text, source, byline }`. Одна функция, один приоритет, невозможна рассинхронизация превью и сохранения.
+
+Правила (в порядке проверки):
+
+1. **`detectedType === "video"`** → `articleData.content`, source=`"video"`. Selection игнорируется: video-клип представляет транскрипт YouTube / длинные субтитры, и выделение на странице видео почти всегда не то, что нужно.
+2. **`metadata.selection` непусто** (и не video) → `metadata.selection`, source=`"selection"`.
+3. **`articleData.content` присутствует** (и нет selection) → `articleData.content`, source=`"article"`, `byline` пропагируется как `author` блока.
+4. **Иначе** → `text=""`, source=`"empty"`.
+
+Контракт этой функции зафиксирован unit-тестом `extension/popup/lib/resolveContentBody.test.ts` (7 кейсов). Любое изменение приоритетов обязано обновить тест в том же коммите.
 
 ### 4. Image (изображение)
 
