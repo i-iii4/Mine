@@ -1,5 +1,42 @@
 # Devlog
 
+## 14.04.2026 19:30 [agent B, parallel/b] — clipper: resolveContentBody, fix preview/save divergence on selection
+
+### Goal
+Пользовательский сценарий «выделил текст → кликнул Clipper → ожидаю увидеть именно этот фрагмент в popup» фактически не работал: save писал выделение в body (логика приоритета была правильной), но preview показывал полную статью через `ReactMarkdown(articleData.content)`. Пользователь не имел возможности визуально подтвердить, что именно сохранится.
+
+### Actually completed
+- **`extension/popup/lib/resolveContentBody.ts`** — новая чистая функция `resolveContentBody(metadata, articleData): { text, source, byline }`. Приоритет: video → `articleData.content` (selection игнорируется), non-video + selection → selection, non-video + article → article с byline, иначе empty. Это единственный источник истины для «тело content-клипа», используется и `save()`, и content-ветка preview в `PopupApp.tsx`.
+- **`extension/popup/lib/resolveContentBody.test.ts`** — 7 contract-тестов, фиксирующих каждый из четырёх случаев + null metadata + article без byline. Эти тесты заморожены как регресс-гард: любое изменение приоритета обязано обновить тест в том же коммите.
+- **`extension/popup/hooks/useClipperState.ts:533-542`** — старый inline-приоритет в save заменён на вызов `resolveContentBody`. Поведение save байт-в-байт совпадает с pre-refactor (проверено тем же тестом).
+- **`extension/popup/PopupApp.tsx`** — content-ветка preview рендерит результат `resolveContentBody`: при `source === "selection"` показывает `<blockquote>` с подписью `Selected text · N characters`. Для video/article/empty — сохраняет старое поведение (ReactMarkdown или fallback-параграф). Loading state для async extraction не трогал.
+- **`extension/popup/PopupApp.tsx`** — удалена функция `getPreviewText` (её работу теперь делает `resolveContentBody`).
+- **`vite.config.ts`** — `test.include` расширен на `extension/**/*.test.{ts,tsx}`, чтобы contract-тест подхватывался vitest.
+- **`SPEC_CLIPPER.md`** — обновлена секция «3. Selection», добавлена секция «3a. Content body resolution» с описанием правил функции и ссылкой на contract-тест.
+
+### Push
+- `b31482a9 clipper: resolveContentBody as single source of truth for content body`
+- merge: PR #27 → `af9aec06`
+- docs/DEVLOG commit: [текущий]
+
+### Checks
+- `bun run test extension/popup/lib/resolveContentBody.test.ts` — 7/7
+- `bun run test src/components/Grid.test.tsx` — 6/6 (Grid рефакторинг не задет)
+- `bunx tsc --noEmit` — без новых ошибок в моих файлах (pre-existing ошибки в `deduplicateImages` не трогал)
+- visual verification пользователем: выделение → Clipper → blockquote с подписью → save → в блоке именно выделение
+
+### Decisions and lessons learned
+- **Архитектурный принцип**: когда две ветки кода принимают одинаковое решение (save и preview оба определяют «что считать body»), единственный способ гарантировать их согласованность — общая чистая функция. Любое inline-дублирование рано или поздно разъезжается.
+- **Не трогал**: `ClipType`, маппинг `detectedType → currentType`, `TypeSwitcher`, `link`/`image`/`screenshot`-ветки preview, content+video preview, content+loading, re-query selection в save (`useClipperState.ts:501-510`). Каждый из этих пунктов был явно исключён из scope до начала работ, потому что пользователь сформулировал «регресс других юзкейсов неприемлем». Contract-тест даёт формальную гарантию против регресса save.
+
+### Notes for the other agent (primary)
+1. `extension/popup/lib/resolveContentBody.ts` — если будешь трогать content body logic, **читай этот модуль и его тест прежде чем менять приоритет**. Тест сломается громко и немедленно, но лучше сначала обновить SPEC_CLIPPER секцию 3a и перекомпилировать правила.
+2. `PopupApp.tsx` content-ветка теперь смотрит на `resolvedBody.source`, не на `clipper.articleLoading` первым приоритетом. Если добавляешь новый loading state — проверь, что он не затирает selection preview.
+3. `vite.config.ts` — `test.include` расширен, extension тесты попадают в общий прогон `bun run test`. Если будешь добавлять свои тесты на popup — клади рядом с модулем как `*.test.ts`, они подхватятся автоматически.
+4. `SPEC_CLIPPER.md` секция «3. Selection» теперь содержит явное указание, что Selection — не отдельный UI-тип, а вариант внутри Content. Если будешь добавлять отдельную кнопку в TypeSwitcher — это потребует пересмотра секции 3a и обновления ClipType, и об этом стоит договориться с пользователем заранее.
+
+---
+
 ## Rules
 
 - Timestamp format: DD.MM.YYYY HH:MM
