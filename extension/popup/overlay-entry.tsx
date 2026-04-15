@@ -138,12 +138,28 @@ async function mount(): Promise<OverlayHandle> {
   return { host, root: reactRoot, onDocClick };
 }
 
+/// Fresh invocation: context menu / toolbar icon / extension icon.
+/// Always remounts so PopupApp.init() runs fresh and consumes the
+/// latest contextMenuData. Any previous overlay state (currentType,
+/// metadata, title) is DESTROYED. Use this when the intent is
+/// "user opened the clipper with new input."
 export async function showClipperOverlay(): Promise<void> {
-  // Always remount on show so PopupApp's init() runs fresh and consumes
-  // the latest contextMenuData. Preserving state across right-click
-  // invocations means new contextMenuData sits unread in session storage.
   if (current) {
     closeClipperOverlay();
+  }
+  current = await mount();
+}
+
+/// Resume after a transient hide: screenshot capture, crop flow.
+/// PRESERVES React state — user's in-progress editing (title,
+/// selected tags, currentType) survives. Use this when the intent
+/// is "the overlay was temporarily hidden and now should reappear
+/// with the same content." If the overlay was closed (not just
+/// hidden) or never mounted, falls back to a fresh mount.
+export async function resumeClipperOverlay(): Promise<void> {
+  if (current) {
+    current.host.style.display = "";
+    return;
   }
   current = await mount();
 }
@@ -160,14 +176,19 @@ export function closeClipperOverlay(): void {
   current = null;
 }
 
-// Expose on isolated-world window so content.js can call these directly.
+// Expose on isolated-world window so content.js and in-world code
+// (useClipperState captureScreenshot) can call these directly.
+// `show` is RESUME semantics — in-world callers always want to
+// preserve state. Fresh-invocation callers go through the
+// `showClipperOverlay` runtime message which routes to the remount
+// path below.
 interface MineOverlayApi {
   show: () => void;
   hide: () => void;
   close: () => void;
 }
 const api: MineOverlayApi = {
-  show: () => void showClipperOverlay(),
+  show: () => void resumeClipperOverlay(),
   hide: hideClipperOverlay,
   close: closeClipperOverlay,
 };

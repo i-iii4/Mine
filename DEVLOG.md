@@ -37,6 +37,38 @@
 
 ---
 
+## 15.04.2026 09:30 [primary] — Clipper overlay: split show into fresh vs resume
+
+### Goal
+Мой предыдущий фикс «always remount on showClipperOverlay» для проблемы с контекстным меню сломал screenshot flow: `captureScreenshot` вызывает `overlay.hide()` → captureVisibleTab → `overlay.show()`, и вместо восстановления состояния overlay перемонтировался заново, стирая currentType/metadata/title. Результат: миганием переключения на «Screenshot» вкладку.
+
+### Причина
+Один entry point (`showClipperOverlay`) обслуживал две семантически разные операции:
+- Fresh invocation (context menu, toolbar icon) — нужен remount для свежего `init()` с новым contextMenuData
+- Resume after transient hide (screenshot, crop) — нужно восстановить display, сохранить state
+
+Предыдущий «хак» с детекцией через `display === "none"` использовал CSS-свойство как state machine flag — хрупко.
+
+### Actually completed
+**`extension/popup/overlay-entry.tsx`** — split на две функции с явным интентом:
+- `showClipperOverlay()` — всегда remount. Entry point для chrome.runtime.onMessage `showClipperOverlay` (context menu / toolbar)
+- `resumeClipperOverlay()` — восстанавливает display:"" если overlay был просто скрыт, fallback на mount() если был closed. Entry point для in-world callers через `__mineOverlay.show()`
+
+`__mineOverlay.show` теперь зовёт `resumeClipperOverlay` — это правильная семантика для всех in-world callers (captureScreenshot, sendCropResult), которые всегда вызывают `hide()` перед `show()`.
+
+Background's `chrome.tabs.sendMessage({action: "showClipperOverlay"})` продолжает вызывать `showClipperOverlay` → remount. Без изменений на вызывающей стороне.
+
+### Принцип
+Если функция делает A или B в зависимости от implicit state — это две разные функции с неявным интентом. Разделение даёт:
+- Явный контракт в названии: caller видит, что он получит
+- Нет детекции через side-channel (display flag)
+- Новый caller не ломает существующие flows — он явно выбирает show или resume
+
+### Push
+- [текущий]
+
+---
+
 ## 15.04.2026 00:15 [primary] — Sidebar previews: derived state вместо patched state
 
 ### Goal
