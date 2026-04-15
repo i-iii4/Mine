@@ -37,6 +37,53 @@
 
 ---
 
+## 15.04.2026 00:15 [primary] — Sidebar previews: derived state вместо patched state
+
+### Goal
+После 2+ дней точечных фиксов sidebar preview продолжал давать регрессии: блок сохранён, JPEG на диске, но в sidebar пустое место. Корневая причина — три независимых писателя `channelPreviews` (initial snapshot из `list_channel_previews`, `block:added`, `thumb:updated`) с расходящимися предикатами insert/patch/dedup. Каждый точечный фикс добавлял четвёртого, пятого писателя — класс багов не устранялся.
+
+### Actually completed
+
+Архитектурный переход на **derived state**: `channelPreviews` — чистая функция server state. События стали сигналами cache-invalidation, а не мутациями.
+
+**Rust** (`src-tauri/src/commands/channels.rs`)
+- `PreviewItem` получил поле `has_thumb: bool`
+- `list_channel_previews` больше не фильтрует по наличию thumb-файла — возвращает **все** non-channel блоки с валидным slug. Наличие thumb теперь per-item флаг
+- `to_item` читает `thumb_path.exists()` и заполняет `has_thumb`
+
+**Frontend** (`src/hooks/useChannelPreviewsEvents.ts`) — переписан
+- Удалена вся мутационная логика из `block:added`/`block:removed`/`thumb:updated` обработчиков
+- Все три события вызывают `scheduleRefresh()` — coalesced через `requestAnimationFrame` (один refresh на animation frame, даже если 3 события за 16ms)
+- `setChannelPreviews` теперь вызывается **только из `refresh()`** — единственный writer
+- `versionsRef` (per-slug counter) сохранён: `thumb:updated` бампит counter перед `scheduleRefresh`, `refresh()` использует `?v=N` с приоритетом над `?m=<mtime>`
+
+**Sidebar** (`src/components/Sidebar.tsx`) — NavItem и TagNavItem
+- Добавлен case `!card.hasThumb` → серый placeholder `<div bg-accent>` 32×32
+- Для `hasThumb && text` (PNG placeholder) — wrapper с `dark:invert` (существующее)
+- Для `hasThumb && !text` (real JPEG) — голый `<img>` (существующее)
+- Sidebar больше **никогда** не рендерит пустое место для блока
+
+**Types** (`src/types/index.ts`)
+- `PreviewItem.has_thumb: boolean`
+- `PreviewCard.hasThumb: boolean`
+
+### Тестируемые инварианты
+1. Каждый non-channel блок с валидным slug **всегда** имеет tile в sidebar (placeholder при `has_thumb=false`)
+2. `setChannelPreviews` вызывается только из `refresh()` — подтверждено grep'ом (2 вызова, оба внутри функции)
+3. `versionsRef[slug]` монотонно растёт при `thumb:updated`
+
+### Что не меняется
+- Rust Phase 1 каскад (все 6 веток, включая универсальный fallback)
+- Phase 2 Web Worker, video main-thread decode, `save_thumb` команда
+- HEIC/WebP/AVIF поддержка через Phase 2
+- `thumb_is_png` magic bytes → `text` флаг
+- mtime cache-bust
+
+### Push
+- [текущий]
+
+---
+
 ## Rules
 
 - Timestamp format: DD.MM.YYYY HH:MM

@@ -210,7 +210,11 @@ const NavItem = memo(function NavItem({
       <span className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 truncate"}>{label}</span>
       {!compact && (
         <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
-          {cards.map((card, i) => card.text ? (
+          {cards.map((card, i) => !card.hasThumb ? (
+            // Placeholder — thumb not yet on disk (just-saved block
+            // before Phase 1/2 ran). Never empty space.
+            <div key={i} className="size-8 shrink-0 bg-accent" />
+          ) : card.text ? (
             <div key={i} className="size-8 shrink-0 bg-accent">
               <img src={card.url} className="size-8 object-cover dark:invert" />
             </div>
@@ -359,7 +363,9 @@ const TagNavItem = memo(function TagNavItem({
           {!compact && (
             <>
               <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
-                {cards.map((card, i) => card.text ? (
+                {cards.map((card, i) => !card.hasThumb ? (
+                  <div key={i} className="size-8 shrink-0 bg-accent" />
+                ) : card.text ? (
                   <div key={i} className="size-8 shrink-0 bg-accent">
                     <img src={card.url} className="size-8 object-cover dark:invert" loading="lazy" />
                   </div>

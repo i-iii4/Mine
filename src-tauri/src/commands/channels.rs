@@ -293,6 +293,12 @@ pub struct PreviewItem {
     /// refetches when the file changes on disk (e.g. Phase 2 worker
     /// overwrites a PNG placeholder with a decoded JPEG).
     pub mtime: u64,
+    /// True if the thumb file exists on disk. False means the block was
+    /// just saved and Phase 1/2 hasn't produced a thumb yet. Frontend
+    /// renders a neutral placeholder tile for `has_thumb=false` so the
+    /// card never collapses to empty space. Renamed from camelCase at
+    /// the serde boundary via the struct default (snake_case in JSON).
+    pub has_thumb: bool,
 }
 
 /// Check if a thumb file is a PNG (text placeholder that needs dark:invert).
@@ -331,34 +337,35 @@ pub fn list_channel_previews(
     let all_blocks = index::list_blocks_light(&vs.conn)?;
     let tags = index::get_all_tags(&vs.conn)?;
 
-    let has_thumb: Vec<(&index::LightBlock, bool)> = all_blocks.iter().filter_map(|b| {
-        if b.slug.is_empty() || b.block_type == BlockType::Channel {
-            return None;
-        }
-        if b.thumbnail.is_some() || vs.vault.thumb_path(&b.slug).exists() {
-            // Determine from the actual thumb file content whether dark:invert
-            // is needed. PNG = text placeholder (needs invert), JPEG = real
-            // decoded image or video frame (must NOT be inverted).
-            let is_text = thumb_is_png(&vs.vault.thumb_path(&b.slug));
-            Some((b, is_text))
-        } else {
-            None
-        }
+    // Include every non-channel block with a valid slug. Whether a thumb
+    // file exists is a per-item flag (`has_thumb`), not a filter — the
+    // frontend renders a placeholder tile when has_thumb=false so the
+    // sidebar never shows empty space for a newly-saved block.
+    let eligible: Vec<&index::LightBlock> = all_blocks.iter().filter(|b| {
+        !b.slug.is_empty() && b.block_type != BlockType::Channel
     }).collect();
 
-    let to_item = |&(b, is_text): &(&index::LightBlock, bool)| -> PreviewItem {
-        let mtime = thumb_mtime(&vs.vault.thumb_path(&b.slug));
-        PreviewItem { slug: b.slug.clone(), text: is_text, mtime }
+    let to_item = |b: &&index::LightBlock| -> PreviewItem {
+        let thumb_path = vs.vault.thumb_path(&b.slug);
+        let has_thumb = thumb_path.exists();
+        let is_text = has_thumb && thumb_is_png(&thumb_path);
+        let mtime = thumb_mtime(&thumb_path);
+        PreviewItem {
+            slug: b.slug.clone(),
+            text: is_text,
+            mtime,
+            has_thumb,
+        }
     };
 
     let mut result = HashMap::new();
 
-    let all_items: Vec<PreviewItem> = has_thumb.iter().take(limit).map(to_item).collect();
+    let all_items: Vec<PreviewItem> = eligible.iter().take(limit).map(to_item).collect();
     result.insert("__all__".to_string(), all_items);
 
     for tc in &tags {
-        let items: Vec<PreviewItem> = has_thumb.iter()
-            .filter(|(b, _)| b.tags.contains(&tc.tag))
+        let items: Vec<PreviewItem> = eligible.iter()
+            .filter(|b| b.tags.contains(&tc.tag))
             .take(limit)
             .map(to_item)
             .collect();

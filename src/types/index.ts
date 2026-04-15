@@ -71,11 +71,13 @@ export interface PreviewItem {
   slug: string;
   text: boolean;
   mtime: number;
+  has_thumb: boolean;
 }
 
 export interface PreviewCard {
   url: string;
   text: boolean;
+  hasThumb: boolean;
 }
 
 export interface ScanResult {
