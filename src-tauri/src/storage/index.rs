@@ -157,6 +157,24 @@ fn upsert_block_inner(
         )
     });
 
+    // Read width/height from the actual media file on disk instead of
+    // relying on frontmatter. Markdown File First: the file is the
+    // source of truth, frontmatter may be missing or stale.
+    let (width, height) = vault_root
+        .and_then(|root| {
+            let file_name = block.frontmatter.file.as_deref()?;
+            let path = root.join(file_name);
+            use crate::storage::media_dimensions::{extract_image_dimensions, extract_video_dimensions};
+            let ext = path.extension()?.to_str()?.to_lowercase();
+            if matches!(ext.as_str(), "mp4" | "m4v") {
+                extract_video_dimensions(&path)
+            } else {
+                extract_image_dimensions(&path)
+            }
+        })
+        .map(|(w, h)| (Some(w), Some(h)))
+        .unwrap_or((block.frontmatter.width, block.frontmatter.height));
+
     conn.execute(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body, first_image,
@@ -189,8 +207,8 @@ fn upsert_block_inner(
             block.frontmatter.thumbnail,
             block.frontmatter.saved_at.as_str(),
             block.frontmatter.source,
-            block.frontmatter.width.map(|w| w as i64),
-            block.frontmatter.height.map(|h| h as i64),
+            width.map(|w| w as i64),
+            height.map(|h| h as i64),
             block.frontmatter.author,
             block.body,
             first_image,

@@ -37,6 +37,26 @@
 
 ---
 
+## 16.04.2026 11:30 [primary] — Image dimensions from file + height cache bump
+
+### Goal
+Image-карточки с отсутствующими width/height в frontmatter отображались как квадраты (1:1 fallback), хотя медиафайл на диске — горизонтальный скриншот.
+
+### Actually completed
+
+**Width/height из медиафайла, не из frontmatter** (`storage/index.rs`)
+- `upsert_block_inner`: если `frontmatter.file` указывает на существующий файл, читает размеры из заголовка (JPEG EXIF, PNG IHDR) через `extract_image_dimensions` / `extract_video_dimensions` (уже существовали в `media_dimensions.rs`)
+- Frontmatter width/height — fallback, если файл не найден
+- Принцип: файл на диске = источник правды, frontmatter может отсутствовать
+
+**Height cache version bump** (`lib/heightCache.ts`)
+- CACHE_VERSION 4 → 5. Старые кэшированные высоты (от квадратных карточек) были невалидны после того как карточки получили реальные пропорции. Без bump'а masonry оставлял пропуски под карточками
+
+### Push
+- [текущий]
+
+---
+
 ## 16.04.2026 11:00 [primary] — Markdown File First: media path from frontmatter + data migration + orphan cleanup + tag coercion
 
 ### Goal

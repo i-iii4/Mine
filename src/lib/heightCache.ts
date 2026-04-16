@@ -27,8 +27,11 @@ export const BUCKET_PX = 40;
  *     from media_dimensions metadata with object-contain (no crop)
  * v4: Math.ceil on measured heights (fix 1px bottom clip), fractional
  *     columnWidth passed to measurement (matches visible grid render)
+ * v5: width/height now read from media file on disk (Markdown File First),
+ *     not from frontmatter. Cards that were 1:1 fallback now have real
+ *     aspect ratios — old cached heights are invalid.
  */
-const CACHE_VERSION = 4;
+const CACHE_VERSION = 5;
 
 const DB_NAME = "arena-card-heights";
 const DB_VERSION = 1;
