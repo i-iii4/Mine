@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   IndexedBlock,
+  GridSnapshot,
   LightBlock,
   TagCount,
   ChannelDto,
@@ -30,6 +31,9 @@ export const startVaultSync = () =>
 // Blocks
 export const listBlocks = () =>
   invoke<LightBlock[]>("list_blocks");
+
+export const listGridBlocks = (current_tag?: string) =>
+  invoke<GridSnapshot>("list_grid_blocks", { current_tag: current_tag ?? null });
 
 export const getBlock = (slug: string) =>
   invoke<IndexedBlock | null>("get_block", { slug });

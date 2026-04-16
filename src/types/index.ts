@@ -29,7 +29,7 @@ export interface IndexedBlock {
   tags: string[];
 }
 
-/** Lightweight block for grid/list views (short body preview, no description/source). */
+/** Lightweight block for grid/list views (short body preview, no tag array). */
 export interface LightBlock {
   id: number;
   slug: string;
@@ -46,7 +46,11 @@ export interface LightBlock {
   first_image: string | null;
   media_urls: string | null;
   media_dimensions: string | null;
-  tags: string[];
+}
+
+export interface GridSnapshot {
+  blocks: LightBlock[];
+  total_blocks: number;
 }
 
 export interface TagCount {

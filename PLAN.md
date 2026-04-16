@@ -204,7 +204,7 @@ Goal: довести проект до продакшен-качества по 
 | 9.3.2 | Откат медиафайлов при ошибке записи .md в native_host | CRIT-8 | [ ] |
 | 9.3.3 | `lock().unwrap()` → `map_err` в watcher/watch.rs:60 | CRIT-9 | [ ] |
 | 9.3.4 | Валидатор slug на IPC-границе: `^[a-z0-9-]+$` | CRIT-10 | [ ] |
-| 9.3.5 | `list_blocks` без `body` — лёгкая версия для Grid | CRIT-11 | [ ] |
+| 9.3.5 | Route-scoped `list_grid_blocks(current_tag)` без per-block tags; следующая цель — ещё более лёгкий first-screen DTO | CRIT-11 | [x] |
 | 9.3.6 | SQL-проверка slug вместо загрузки всех блоков в create_block | CRIT-12 | [ ] |
 | 9.3.7 | `has_thumbnail` в SQLite вместо N syscall-ов в list_channel_previews | CRIT-13 | [ ] |
 | 9.3.8 | `catch_unwind` в потоке thumb-gen | CRIT-14 | [x] |

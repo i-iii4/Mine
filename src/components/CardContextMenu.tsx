@@ -1,11 +1,13 @@
 import {
   ContextMenuContent,
 } from "@/components/ui/context-menu";
-import type { LightBlock, TagCount } from "@/types";
+import { useEffect, useState } from "react";
+import type { TagCount } from "@/types";
+import { getBlock } from "@/lib/commands";
 import { CollectionPicker } from "./CollectionPicker";
 
 interface CardTagMenuProps {
-  block: LightBlock;
+  blockSlug: string;
   tags: TagCount[];
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
@@ -17,16 +19,31 @@ interface CardTagMenuProps {
  * Must be used inside a <ContextMenu> wrapper.
  */
 export function CardTagMenu({
-  block,
+  blockSlug,
   tags,
   currentTag,
   onToggleTag,
   onCreateAndAssign,
 }: CardTagMenuProps) {
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getBlock(blockSlug).then((block) => {
+      if (!cancelled) {
+        setSelectedTags(block?.tags ?? []);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [blockSlug]);
+
   return (
     <ContextMenuContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
       <CollectionPicker
-        block={block}
+        blockSlug={blockSlug}
+        selectedTags={selectedTags}
         tags={tags}
         currentTag={currentTag}
         onToggleTag={onToggleTag}

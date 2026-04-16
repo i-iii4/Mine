@@ -25,6 +25,7 @@ pub fn run() {
             commands::vault::start_vault_sync,
             commands::vault::rebuild_index,
             commands::blocks::list_blocks,
+            commands::blocks::list_grid_blocks,
             commands::blocks::get_block,
             commands::blocks::create_block,
             commands::blocks::delete_block,

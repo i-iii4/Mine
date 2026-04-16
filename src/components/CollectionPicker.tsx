@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { LightBlock, TagCount } from "@/types";
+import type { TagCount } from "@/types";
 import { getRecentTags } from "@/lib/recentTags";
 
 /** Convert a normalized tag slug to a display title: `web-design` -> `Web Design` */
@@ -14,7 +14,8 @@ export function titleFromTag(tag: string): string {
 }
 
 interface CollectionPickerProps {
-  block: LightBlock;
+  blockSlug: string;
+  selectedTags: string[];
   tags: TagCount[];
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
@@ -28,7 +29,8 @@ interface CollectionPickerProps {
  * Used in both ContextMenu and DropdownMenu.
  */
 export function CollectionPicker({
-  block,
+  blockSlug,
+  selectedTags,
   tags,
   currentTag,
   onToggleTag,
@@ -47,8 +49,8 @@ export function CollectionPicker({
       if (aCur !== bCur) return aCur ? -1 : 1;
     }
 
-    const aHas = block.tags.includes(a.tag);
-    const bHas = block.tags.includes(b.tag);
+    const aHas = selectedTags.includes(a.tag);
+    const bHas = selectedTags.includes(b.tag);
     if (aHas !== bHas) return aHas ? -1 : 1;
 
     const aRecent = recentSet.has(a.tag);
@@ -90,11 +92,11 @@ export function CollectionPicker({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-1 py-0.5">
           {filtered.map((tc) => {
-            const hasTag = block.tags.includes(tc.tag);
+            const hasTag = selectedTags.includes(tc.tag);
             return (
               <button
                 key={tc.tag}
-                onClick={() => onToggleTag(block.slug, tc.tag, hasTag)}
+                onClick={() => onToggleTag(blockSlug, tc.tag, hasTag)}
                 className="flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base hover:bg-accent"
               >
                 <Checkbox
@@ -115,7 +117,7 @@ export function CollectionPicker({
           {canCreate && (
             <button
               onClick={() => {
-                onCreateAndAssign(trimmed, block.slug);
+                onCreateAndAssign(trimmed, blockSlug);
                 setSearch("");
               }}
               className="flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base font-semibold text-foreground hover:bg-accent"

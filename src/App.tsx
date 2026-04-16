@@ -48,7 +48,7 @@ import {
   getVaultPath,
   selectVault,
   startVaultSync,
-  listBlocks,
+  listGridBlocks,
   listTags,
   listChannels,
   createChannel,
@@ -231,6 +231,7 @@ function AppWithVault({
     : undefined;
 
   const [blocks, setBlocks] = useState<LightBlock[]>([]);
+  const [totalBlocks, setTotalBlocks] = useState(0);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [channels, setChannels] = useState<ChannelDto[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -261,33 +262,7 @@ function AppWithVault({
     }
   }, [currentTag, tags, channels, navigate]);
 
-  const nonChannelBlocks = useMemo(
-    () => blocks.filter((block) => block.block_type !== "channel"),
-    [blocks],
-  );
-
-  const blocksByTag = useMemo(() => {
-    const map = new Map<string, LightBlock[]>();
-
-    for (const block of nonChannelBlocks) {
-      for (const tag of block.tags) {
-        const list = map.get(tag);
-        if (list) {
-          list.push(block);
-        } else {
-          map.set(tag, [block]);
-        }
-      }
-    }
-
-    return map;
-  }, [nonChannelBlocks]);
-
-  // Blocks filtered by current route (channel or all)
-  const activeBlocks = useMemo(() => {
-    if (!currentTag) return nonChannelBlocks;
-    return blocksByTag.get(currentTag) ?? [];
-  }, [blocksByTag, currentTag, nonChannelBlocks]);
+  const activeBlocks = blocks;
 
   const handleColumnCountChange = useCallback((n: number) => {
     gridColumnCountRef.current = n;
@@ -406,15 +381,22 @@ function AppWithVault({
   const loadData = useCallback(async ({ includePreviews = true }: { includePreviews?: boolean } = {}) => {
     const requestId = ++loadRequestIdRef.current;
     const pathAtStart = vaultPathRef.current;
+    const tagAtStart = currentTag;
     try {
-      const [b, t, ch] = await Promise.all([listBlocks(), listTags(), listChannels()]);
+      const [grid, t, ch] = await Promise.all([
+        listGridBlocks(currentTag),
+        listTags(),
+        listChannels(),
+      ]);
       if (
         loadRequestIdRef.current !== requestId
         || vaultPathRef.current !== pathAtStart
+        || currentTag !== tagAtStart
       ) {
         return;
       }
-      setBlocks(b);
+      setBlocks(grid.blocks);
+      setTotalBlocks(grid.total_blocks);
       setTags(t);
       setChannels(ch);
       setLoadError(null);
@@ -427,21 +409,28 @@ function AppWithVault({
       if (
         loadRequestIdRef.current === requestId
         && vaultPathRef.current === pathAtStart
+        && currentTag === tagAtStart
       ) {
         console.error("[LOAD] FAILED:", msg, err);
         setLoadError(msg);
       }
     }
-  }, [loadPreviews]);
+  }, [currentTag, loadPreviews]);
+
+  const loadDataRef = useRef(loadData);
+  loadDataRef.current = loadData;
+  const initialRouteLoadDoneRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     let syncTimer: number | null = null;
 
     setIsSyncing(true);
+    initialRouteLoadDoneRef.current = false;
     void (async () => {
-      await loadData({ includePreviews: false });
+      await loadDataRef.current({ includePreviews: false });
       if (cancelled) return;
+      initialRouteLoadDoneRef.current = true;
       syncTimer = window.setTimeout(() => {
         void startVaultSync()
           .then((started) => {
@@ -466,7 +455,14 @@ function AppWithVault({
         window.clearTimeout(syncTimer);
       }
     };
-  }, [vaultPath, loadData]);
+  }, [vaultPath]);
+
+  useEffect(() => {
+    if (!initialRouteLoadDoneRef.current) {
+      return;
+    }
+    void loadData({ includePreviews: false });
+  }, [currentTag, loadData]);
 
   // Listen for vault-changed events from file watcher (with debounce)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -845,7 +841,7 @@ function AppWithVault({
         isResizing={sidebarResizing}
         orderedTags={orderedTags}
         channelPreviews={channelPreviews}
-        totalBlocks={blocks.length}
+        totalBlocks={totalBlocks}
         isCardDragging={activeDragBlock !== null}
         isCreatingChannel={isCreatingChannel}
         onSetCreatingChannel={setIsCreatingChannel}

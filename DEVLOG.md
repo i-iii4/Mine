@@ -1,5 +1,54 @@
 # Devlog
 
+## 16.04.2026 20:58 [primary] — Restart hotfix + route-scoped grid snapshot
+
+### Goal
+Убрать зависание после рестарта и продолжить разгрузку первого экрана: больше не блокировать UI measurement-барьером и не таскать в grid payload лишние per-block tags / весь corpus при переходе по каналам.
+
+### Actually completed
+
+**Restart hotfix: sync после первого экрана** (`src-tauri/src/commands/state.rs`, `src-tauri/src/commands/vault.rs`, `src-tauri/src/lib.rs`, `src/lib/commands.ts`, `src/App.tsx`)
+- `initialize_vault` больше не стартует sync-поток внутри restore-path
+- добавлена отдельная команда `start_vault_sync`
+- `App.tsx` сначала загружает snapshot, потом через отдельный tick запускает sync
+- `AppState` теперь хранит `syncing_vaults`, чтобы не поднимать дубликаты background sync для одного и того же vault
+
+**Grid больше не ждёт measurement всех карточек** (`src/components/Grid.tsx`)
+- layout рендерится сразу по fallback heights
+- hidden measurement идёт батчами по `48` карточек вместо полного off-screen DOM storm
+- blocking-placeholder заменён на маленький overlay `Refining layout…`
+- это сняло black-screen/rainbow сценарий при открытии большого vault после перезапуска
+
+**Route-scoped grid snapshot** (`src-tauri/src/storage/index.rs`, `src-tauri/src/commands/blocks.rs`, `src/lib/commands.ts`, `src/App.tsx`)
+- добавлен `list_grid_blocks(current_tag)` с серверной фильтрацией по активному каналу и `total_blocks` для sidebar
+- grid snapshot больше не включает per-block tag arrays
+- `list_grid_blocks` также не включает channel-документы и не тащит article body для не-article блоков
+- `App.tsx` больше не строит `blocksByTag` из всего корпуса; текущий маршрут получает уже готовый набор карточек от backend
+
+**Lazy tag hydration для карточечных меню и Detail** (`src/components/CardHoverMenu.tsx`, `src/components/CardContextMenu.tsx`, `src/components/CollectionPicker.tsx`, `src/components/Detail.tsx`)
+- теги блока подгружаются через `get_block(slug)` только когда реально открыт menu/detail
+- контекстные меню больше не требуют `tags` в grid DTO
+- Detail научился поднимать полный `IndexedBlock` поверх `LightBlock`, если открыт из grid snapshot
+
+**Payload cleanup** (`src-tauri/src/storage/index.rs`, `src/components/Card.tsx`, `src/components/Detail.tsx`, `src/workers/fontMetrics.worker.ts`, `src/types/index.ts`)
+- preview `body` для `LightBlock` сокращён до `220` символов
+- `resolve_unique_slug()` переведён с серии `EXISTS`-запросов на один `SELECT slug WHERE slug = ? OR slug LIKE ?`
+- добавлен тест на заполнение первой дырки в последовательности suffix-ов
+
+### Checks
+- `cargo check -p mine --quiet`
+- `cargo test -p mine --lib --quiet` — 241/241
+- `bun run build`
+- `bun run test src/components/Grid.test.tsx src/lib/layoutCache.test.ts src/lib/cardHeight.test.ts` — 30/30
+
+### Push
+- [текущий]
+
+### Decisions and lessons learned
+- **Grid snapshot не должен быть универсальным DTO.** Если в нём живут и route filtering, и detail tags, и текст для карточек, он неизбежно раздувается до ненужного первого payload.
+- **Теги карточки — это demand-loaded metadata.** Для большинства экранов они не нужны вообще; грузить их на каждую карточку только ради редких menu-open — неверный tradeoff.
+- **Первый paint важнее точной masonry-сетки.** Пользователь терпит уточнение layout поверх уже видимого контента, но не терпит чёрный экран с spinning rainbow.
+
 ## 16.04.2026 18:52 [primary] — Snapshot-first vault open + switch without reload + SQL previews
 
 ### Goal

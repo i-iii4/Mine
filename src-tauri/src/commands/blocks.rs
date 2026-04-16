@@ -4,12 +4,19 @@
 
 use std::path::PathBuf;
 use tauri::State;
+use serde::Serialize;
 
 use crate::commands::state::{AppState, CommandError};
 use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::validate_slug;
 use crate::storage::{files, index};
 use crate::storage::index::IndexedBlock;
+
+#[derive(Debug, Serialize)]
+pub struct GridSnapshot {
+    pub blocks: Vec<index::LightBlock>,
+    pub total_blocks: usize,
+}
 
 // ─── Commands ───────────────────────────────────────────────────────────────
 
@@ -20,6 +27,23 @@ pub fn list_blocks(state: State<'_, AppState>) -> Result<Vec<index::LightBlock>,
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     Ok(index::list_blocks_light(&vs.conn)?)
+}
+
+/// List only the blocks required by the current grid route, plus the total
+/// non-channel block count for the sidebar "Everything" row.
+#[tauri::command(rename_all = "snake_case")]
+pub fn list_grid_blocks(
+    state: State<'_, AppState>,
+    current_tag: Option<String>,
+) -> Result<GridSnapshot, CommandError> {
+    let vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+
+    Ok(GridSnapshot {
+        blocks: index::list_grid_blocks(&vs.conn, current_tag.as_deref())?,
+        total_blocks: index::count_grid_blocks(&vs.conn)?,
+    })
 }
 
 /// Get a single block by slug.
@@ -128,4 +152,3 @@ pub fn delete_block(
 
     Ok(removed)
 }
-

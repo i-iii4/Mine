@@ -433,7 +433,7 @@ export function Grid({
 
       {menuBlock && (
         <CardTagMenu
-          block={menuBlock}
+          blockSlug={menuBlock.slug}
           tags={tags}
           currentTag={currentTag}
           onToggleTag={onToggleTag}

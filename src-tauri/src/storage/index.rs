@@ -58,7 +58,6 @@ pub struct LightBlock {
     pub first_image: Option<String>,
     pub media_urls: Option<String>,
     pub media_dimensions: Option<String>,
-    pub tags: Vec<String>,
 }
 
 const LIGHT_BLOCK_BODY_PREVIEW_CHARS: i64 = 220;
@@ -350,7 +349,7 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
          FROM blocks ORDER BY saved_at DESC",
     )?;
 
-    let mut blocks: Vec<LightBlock> = stmt
+    let blocks: Vec<LightBlock> = stmt
         .query_map([LIGHT_BLOCK_BODY_PREVIEW_CHARS], |row| {
             Ok(LightBlock {
                 id: row.get(0)?,
@@ -377,41 +376,89 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
                 first_image: row.get(12)?,
                 media_urls: row.get(13)?,
                 media_dimensions: row.get(14)?,
-                tags: Vec::new(),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    if blocks.is_empty() {
-        return Ok(blocks);
-    }
+    Ok(blocks)
+}
 
-    // Batch-fetch tags
-    let ids: Vec<i64> = blocks.iter().map(|b| b.id).collect();
-    let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let sql = format!(
-        "SELECT block_id, tag FROM block_tags WHERE block_id IN ({}) ORDER BY tag",
-        placeholders
-    );
-    let mut tag_stmt = conn.prepare(&sql)?;
-    let id_params: Vec<&dyn rusqlite::types::ToSql> =
-        ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
-    let rows = tag_stmt.query_map(&*id_params, |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-    })?;
+/// List only the blocks needed by the visible grid, optionally filtered by tag.
+/// Excludes channel documents and omits per-block tag arrays to keep the
+/// startup/switch payload small; tag membership is fetched lazily for menus/detail.
+pub fn list_grid_blocks(conn: &Connection, tag: Option<&str>) -> Result<Vec<LightBlock>> {
+    let sql = match tag {
+        Some(_) => {
+            "SELECT b.id, b.slug, b.block_type, b.title, b.url, b.media_file,
+                    b.thumbnail, b.saved_at, b.width, b.height, b.author,
+                    CASE WHEN b.block_type = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
+                    b.first_image, b.media_urls, b.media_dimensions
+             FROM blocks b
+             INNER JOIN block_tags bt ON bt.block_id = b.id
+             WHERE b.block_type != 'channel' AND bt.tag = ?2
+             ORDER BY b.saved_at DESC"
+        }
+        None => {
+            "SELECT id, slug, block_type, title, url, media_file,
+                    thumbnail, saved_at, width, height, author,
+                    CASE WHEN block_type = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
+                    first_image, media_urls, media_dimensions
+             FROM blocks
+             WHERE block_type != 'channel'
+             ORDER BY saved_at DESC"
+        }
+    };
 
-    let mut tag_map: std::collections::HashMap<i64, Vec<String>> =
-        std::collections::HashMap::new();
-    for row in rows {
-        let (block_id, tag) = row?;
-        tag_map.entry(block_id).or_default().push(tag);
-    }
+    let mut stmt = conn.prepare(sql)?;
+    let map_row = |row: &rusqlite::Row<'_>| {
+            Ok(LightBlock {
+                id: row.get(0)?,
+                slug: row.get(1)?,
+                block_type: {
+                    let raw: String = row.get(2)?;
+                    BlockType::from_str(&raw).map_err(|_| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            format!("unknown block_type: {}", raw).into(),
+                        )
+                    })?
+                },
+                title: row.get(3)?,
+                url: row.get(4)?,
+                media_file: row.get(5)?,
+                thumbnail: row.get(6)?,
+                saved_at: row.get(7)?,
+                width: row.get::<_, Option<i64>>(8)?.map(|v| v as u32),
+                height: row.get::<_, Option<i64>>(9)?.map(|v| v as u32),
+                author: row.get(10)?,
+                body: row.get(11)?,
+                first_image: row.get(12)?,
+                media_urls: row.get(13)?,
+                media_dimensions: row.get(14)?,
+            })
+    };
 
-    for block in &mut blocks {
-        block.tags = tag_map.remove(&block.id).unwrap_or_default();
-    }
+    let blocks = match tag {
+        Some(tag) => stmt
+            .query_map(params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, tag], map_row)?
+            .collect::<Result<Vec<_>, _>>()?,
+        None => stmt
+            .query_map(params![LIGHT_BLOCK_BODY_PREVIEW_CHARS], map_row)?
+            .collect::<Result<Vec<_>, _>>()?,
+    };
 
     Ok(blocks)
+}
+
+/// Count non-channel blocks for the "Everything" sidebar row.
+pub fn count_grid_blocks(conn: &Connection) -> Result<usize> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM blocks WHERE block_type != 'channel'",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(count as usize)
 }
 
 /// Return the newest previewable block slugs across the whole vault.
@@ -1167,12 +1214,24 @@ mod tests {
     }
 
     #[test]
-    fn list_blocks_light_includes_tags() {
+    fn list_grid_blocks_filters_channels_and_tag() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block("tagged", &["design", "web"]), None).unwrap();
+        upsert_block(&conn, &make_block("design-a", &["design"]), None).unwrap();
+        upsert_block(&conn, &make_block("design-b", &["design", "web"]), None).unwrap();
+        upsert_block(&conn, &make_block("web-only", &["web"]), None).unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full("channel", "channel", Some("Design"), "2026-01-01T00:00:00Z", &[], ""),
+            None,
+        ).unwrap();
 
-        let light = list_blocks_light(&conn).unwrap();
-        assert_eq!(light[0].tags, vec!["design", "web"]);
+        let all = list_grid_blocks(&conn, None).unwrap();
+        assert_eq!(all.len(), 3);
+        assert!(all.iter().all(|block| block.block_type != BlockType::Channel));
+
+        let design = list_grid_blocks(&conn, Some("design")).unwrap();
+        assert_eq!(design.len(), 2);
+        assert!(design.iter().all(|block| block.slug.starts_with("design")));
     }
 
     // ── resolve_unique_slug ─────────────────────────────────────────────

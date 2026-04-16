@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { MoreHorizontal, Trash2, Plus, ExternalLink, FolderOpen, Copy } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { LightBlock, TagCount } from "@/types";
+import { getBlock } from "@/lib/commands";
 import { CollectionPicker, titleFromTag } from "./CollectionPicker";
 
 interface CardHoverMenuProps {
@@ -43,7 +44,23 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   const filePath = `${vaultPath}/${block.slug}.md`;
   const [menuOpen, setMenuOpen] = useState(false);
   const [channelOpen, setChannelOpen] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const anyOpen = menuOpen || channelOpen;
+
+  const shouldLoadTags = menuOpen || channelOpen;
+
+  useEffect(() => {
+    if (!shouldLoadTags) return;
+    let cancelled = false;
+    void getBlock(block.slug).then((full) => {
+      if (!cancelled) {
+        setSelectedTags(full?.tags ?? []);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [block.slug, shouldLoadTags]);
 
   return (
     <>
@@ -70,7 +87,8 @@ export const CardHoverMenu = memo(function CardHoverMenu({
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
                 <CollectionPicker
-                  block={block}
+                  blockSlug={block.slug}
+                  selectedTags={selectedTags}
                   tags={tags}
                   currentTag={currentTag}
                   onToggleTag={onToggleTag}
@@ -101,7 +119,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
 
             <DropdownMenuSeparator />
 
-            {currentTag && block.tags.includes(currentTag) && (
+            {currentTag && selectedTags.includes(currentTag) && (
               <DropdownMenuItem
                 onSelect={() => onToggleTag(block.slug, currentTag, true)}
               >
@@ -149,7 +167,8 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           </DropdownMenuTrigger>
           <DropdownMenuContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0" align="end">
             <CollectionPicker
-              block={block}
+              blockSlug={block.slug}
+              selectedTags={selectedTags}
               tags={tags}
               currentTag={currentTag}
               onToggleTag={onToggleTag}

@@ -23,6 +23,10 @@ interface DetailProps {
   onTagsChanged: () => void;
 }
 
+function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock {
+  return "tags" in block;
+}
+
 export function Detail({
   block,
   vaultPath,
@@ -30,12 +34,31 @@ export function Detail({
   onNavigate,
   onTagsChanged,
 }: DetailProps) {
-  const [tags, setTags] = useState(block.tags);
+  const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
+    isIndexedBlock(block) ? block : null,
+  );
+  const displayBlock = fullBlock ?? block;
+  const [tags, setTags] = useState<string[]>(fullBlock?.tags ?? []);
   const [tagInput, setTagInput] = useState("");
 
   useEffect(() => {
-    setTags(block.tags);
+    setFullBlock(isIndexedBlock(block) ? block : null);
+    setTags(isIndexedBlock(block) ? block.tags : []);
     setTagInput("");
+  }, [block]);
+
+  useEffect(() => {
+    if (isIndexedBlock(block)) return;
+    let cancelled = false;
+    void getBlock(block.slug).then((full) => {
+      if (!cancelled && full) {
+        setFullBlock(full);
+        setTags(full.tags);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [block]);
 
   const handleAddTag = useCallback(async () => {
@@ -88,8 +111,8 @@ export function Detail({
     panelRef.current?.focus({ preventScroll: true });
   }, [block]);
 
-  const filename = block.media_file ?? `${block.slug}.md`;
-  const formattedDate = new Date(block.saved_at).toLocaleDateString("ru-RU", {
+  const filename = displayBlock.media_file ?? `${displayBlock.slug}.md`;
+  const formattedDate = new Date(displayBlock.saved_at).toLocaleDateString("ru-RU", {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -115,7 +138,7 @@ export function Detail({
       <div ref={panelRef} tabIndex={-1} className="h-full w-full overflow-y-auto outline-none">
         <div className={LAYOUT_CLASSES}>
           <div className="min-w-0 flex-1">
-            <BlockContent block={block} vaultPath={vaultPath} />
+            <BlockContent block={block} fullBlock={fullBlock} vaultPath={vaultPath} />
           </div>
           <div className="w-56 shrink-0" aria-hidden="true" />
         </div>
@@ -128,6 +151,7 @@ export function Detail({
           <div className="pointer-events-auto w-56 shrink-0 overflow-y-auto">
             <MetadataPanel
               block={block}
+              fullBlock={fullBlock}
               filename={filename}
               formattedDate={formattedDate}
               tags={tags}
@@ -147,6 +171,7 @@ export function Detail({
 
 interface MetadataPanelProps {
   block: LightBlock | IndexedBlock;
+  fullBlock: IndexedBlock | null;
   filename: string;
   formattedDate: string;
   tags: string[];
@@ -158,6 +183,7 @@ interface MetadataPanelProps {
 
 function MetadataPanel({
   block,
+  fullBlock,
   filename,
   formattedDate,
   tags,
@@ -166,34 +192,35 @@ function MetadataPanel({
   onAddTag,
   onRemoveTag,
 }: MetadataPanelProps) {
+  const displayBlock = fullBlock ?? block;
   return (
     <div className="flex flex-col gap-5 font-mono">
-      {block.width != null && block.height != null && (
-        <MetadataField label="RESOLUTION" value={`${block.width} \u00d7 ${block.height}`} />
+      {displayBlock.width != null && displayBlock.height != null && (
+        <MetadataField label="RESOLUTION" value={`${displayBlock.width} \u00d7 ${displayBlock.height}`} />
       )}
 
       <MetadataField label="FILENAME" value={filename} />
 
       <MetadataField label="DATE" value={formattedDate} />
 
-      <MetadataField label="TYPE" value={block.block_type.toUpperCase()} />
+      <MetadataField label="TYPE" value={displayBlock.block_type.toUpperCase()} />
 
-      {block.url && isSafeUrl(block.url) && (
+      {displayBlock.url && isSafeUrl(displayBlock.url) && (
         <div>
           <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
             SOURCE
           </div>
           <button
-            onClick={() => openUrl(block.url!)}
+            onClick={() => openUrl(displayBlock.url!)}
             className="mt-1 block text-sm text-foreground hover:underline text-left"
           >
-            {domainFromUrl(block.url)}
+            {domainFromUrl(displayBlock.url)}
           </button>
         </div>
       )}
 
-      {block.author && (
-        <MetadataField label="AUTHOR" value={block.author} />
+      {displayBlock.author && (
+        <MetadataField label="AUTHOR" value={displayBlock.author} />
       )}
 
       {/* Tags */}
@@ -262,21 +289,26 @@ function isTwitterUrl(url: string): boolean {
 
 function BlockContent({
   block,
+  fullBlock,
   vaultPath,
 }: {
   block: LightBlock | IndexedBlock;
+  fullBlock: IndexedBlock | null;
   vaultPath: string;
 }) {
   // Lazy-load full body if truncated (LightBlock carries only a short preview).
-  const [fullBody, setFullBody] = useState<string | null>(null);
+  const [fullBody, setFullBody] = useState<string | null>(fullBlock?.body ?? null);
   useEffect(() => {
-    setFullBody(null);
+    setFullBody(fullBlock?.body ?? null);
+    if (fullBlock) {
+      return;
+    }
     if (block.body.length >= 218) {
       getBlock(block.slug).then((full) => {
         if (full) setFullBody(full.body);
       });
     }
-  }, [block.slug, block.body.length]);
+  }, [block.slug, block.body.length, fullBlock]);
 
   const body = fullBody ?? block.body;
   const description = "description" in block ? (block as IndexedBlock).description : null;
