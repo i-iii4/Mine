@@ -236,12 +236,20 @@ saved_at: 2026-02-26T14:30:00Z
 ### Frontend rendering model
 
 - `App.tsx` хранит в памяти все `LightBlock` и строит `blocksByTag` один раз на загрузку или мутацию. Переключение канала использует уже готовый массив блоков, без нового IPC и без повторного `filter()` по всей коллекции на каждом рендере.
+- Открытие vault двухфазное: `select_vault` / `get_vault_path` поднимают SQLite, watcher и последний индексированный snapshot сразу, а `full_scan()` уходит в фоновый поток. Фронтенд слушает `vault-sync-started` / `vault-sync-finished` и обновляет snapshot после завершения синхронизации, не блокируя первый usable paint.
+- Переключение vault не делает `window.location.reload()`. `App.tsx` remount'ит `AppWithVault` по `key={vaultPath}`, сбрасывает локальное состояние и игнорирует stale async-ответы через `vaultPathRef + requestId`.
 - `Grid.tsx` использует собственный windowed masonry renderer: карточки позиционируются абсолютно, контейнер получает вычисленную `totalHeight`, в DOM остаются только видимые элементы плюс overscan.
 - Layout вычисляется чистой функцией (`src/lib/masonryLayout.ts`): `containerWidth + estimatedHeights -> columnCount + positions + totalHeight`. Это снимает зависимость от browser masonry/layout для тысяч карточек и ускоряет resize.
 - **Direction-aware overscan**: при скролле вниз forward-overscan 2200px, backward 600px. При скролле вверх — зеркально. Это предзагружает больше карточек по направлению scroll'а, уменьшая «пустые зоны» при быстром скролле.
 - **Priority bounds**: зона ±1400px по направлению scroll'а, внутри которой карточки получают `priority=true`. ImageCard/LinkCard/ArticleCard используют `loading="eager"` вместо `"lazy"` — картинки начинают fetch до того как пользователь до них доскроллит.
 - **CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`, картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки картинки — нет layout shift.
 - Высоты карточек сначала оцениваются эвристикой по типу блока, затем уточняются через `ResizeObserver` и кэшируются по `slug`.
+
+### Sidebar preview pipeline
+
+- Sidebar previews больше не строятся через полный `list_blocks_light()` с фильтрацией по всем тегам в памяти. Бэкенд отдаёт top-N slug'и отдельными SQL-запросами: один для `__all__`, один window-function запрос для `top N per tag`.
+- Frontend считает previews производным состоянием сервера: `useChannelPreviewsEvents` делает initial refresh и затем коалесцирует `block:added`, `block:removed`, `thumb:updated`, `vault-changed` в повторный `list_channel_previews`, вместо локального patch-state.
+- Формирование preview item всё ещё читает thumb-файл с диска (`exists`, PNG magic, mtime) на горячем пути. Следующий шаг оптимизации — перенести `has_thumb` / `thumb_mtime` в SQLite, чтобы убрать filesystem syscalls из sidebar path.
 
 ## Data flow
 

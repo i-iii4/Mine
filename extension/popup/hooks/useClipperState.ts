@@ -10,18 +10,28 @@ function deduplicateImages(markdown: string): string {
   const seen = new Set<string>();
   let result = markdown;
   for (const match of matches) {
-    const alt = match[1].trim();
+    const imageMarkdown = match[0];
+    const altText = match[1];
+    if (!imageMarkdown || altText === undefined) continue;
+    const alt = altText.trim();
     if (!alt) continue;
     if (seen.has(alt)) {
       // Remove this duplicate line and its caption
       const lines = result.split("\n");
-      const idx = lines.findIndex((l) => l.includes(match[0]));
+      const idx = lines.findIndex((l) => l.includes(imageMarkdown));
       if (idx >= 0) {
         lines.splice(idx, 1);
-        if (idx < lines.length && lines[idx].trim() === "") lines.splice(idx, 1);
-        if (idx < lines.length && lines[idx].trim() === alt) {
+        const lineAfterImage = lines[idx];
+        if (lineAfterImage !== undefined && lineAfterImage.trim() === "") {
           lines.splice(idx, 1);
-          if (idx < lines.length && lines[idx].trim() === "") lines.splice(idx, 1);
+        }
+        const captionLine = lines[idx];
+        if (captionLine !== undefined && captionLine.trim() === alt) {
+          lines.splice(idx, 1);
+          const spacerLine = lines[idx];
+          if (spacerLine !== undefined && spacerLine.trim() === "") {
+            lines.splice(idx, 1);
+          }
         }
         result = lines.join("\n");
       }

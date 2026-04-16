@@ -6,6 +6,7 @@
 
 use anyhow::Result;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use serde::Serialize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -16,6 +17,11 @@ use crate::storage::db;
 use crate::watcher::{events, handler};
 
 const DEBOUNCE_MS: u64 = 300;
+
+#[derive(Debug, Clone, Serialize)]
+struct VaultChangedPayload {
+    path: String,
+}
 
 /// Start watching a vault directory for changes.
 ///
@@ -61,7 +67,12 @@ pub fn start_watching(
         let now = Instant::now();
         if now.duration_since(*last) >= Duration::from_millis(DEBOUNCE_MS) {
             *last = now;
-            let _ = app_clone.emit("vault-changed", ());
+            let _ = app_clone.emit(
+                "vault-changed",
+                VaultChangedPayload {
+                    path: vault_clone.root().to_string_lossy().into_owned(),
+                },
+            );
         }
     })?;
 

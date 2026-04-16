@@ -22,6 +22,11 @@ pub struct ArenaChannelInfo {
     pub status: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct VaultChangedPayload {
+    path: String,
+}
+
 // ─── Commands ────────────────────────────────────────────────────────────────
 
 /// Fetch public channels for an Are.na user.
@@ -85,7 +90,12 @@ pub fn import_arena_channels(
     }
 
     // Emit vault-changed so the frontend refreshes
-    let _ = app.emit("vault-changed", ());
+    let _ = app.emit(
+        "vault-changed",
+        VaultChangedPayload {
+            path: vs.vault.root().to_string_lossy().into_owned(),
+        },
+    );
 
     Ok(results)
 }

@@ -113,6 +113,21 @@ import {
 } from "@/components/ui/tooltip";
 import { Plus, Trash2, Info, ExternalLink } from "lucide-react";
 
+interface VaultChangedEvent {
+  path: string;
+}
+
+interface VaultSyncStartedEvent {
+  path: string;
+}
+
+interface VaultSyncFinishedEvent {
+  path: string;
+  indexed: number;
+  errors: number;
+  error: string | null;
+}
+
 // ─── Visual grid navigation ────────────────────────────────────────────────
 
 /** Find the nearest card in a given arrow direction based on screen coordinates. */
@@ -189,14 +204,24 @@ export function App() {
 
   return (
     <BrowserRouter>
-      <AppWithVault vaultPath={vaultPath} />
+      <AppWithVault
+        key={vaultPath}
+        vaultPath={vaultPath}
+        onVaultSelected={setVaultPath}
+      />
     </BrowserRouter>
   );
 }
 
 // ─── Main app (vault selected) ─────────────────────────────────────────────
 
-function AppWithVault({ vaultPath }: { vaultPath: string }) {
+function AppWithVault({
+  vaultPath,
+  onVaultSelected,
+}: {
+  vaultPath: string;
+  onVaultSelected: (path: string) => void;
+}) {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -220,6 +245,10 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   const themeMenuRef = useRef<ThemeMenuHandle>(null);
   const gridColumnCountRef = useRef(1);
   const suppressRedirectRef = useRef(false);
+  const vaultPathRef = useRef(vaultPath);
+  vaultPathRef.current = vaultPath;
+  const loadRequestIdRef = useRef(0);
+  const [isSyncing, setIsSyncing] = useState(true);
 
   // Redirect if navigated to a channel that doesn't exist (check both tags and channels)
   useEffect(() => {
@@ -369,49 +398,85 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   // Phase 2 thumbnail upgrade pipeline: Web Worker decodes webp/heic/
   // video media via the browser's native decoder and writes real JPEG
   // bytes back through save_thumb. Mounts once vault is open.
-  useThumbnailUpgrade(Boolean(vaultPath), loadPreviews);
+  useThumbnailUpgrade(Boolean(vaultPath));
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async ({ includePreviews = true }: { includePreviews?: boolean } = {}) => {
+    const requestId = ++loadRequestIdRef.current;
+    const pathAtStart = vaultPathRef.current;
     try {
-      console.log("[LOAD] starting loadData...");
       const [b, t, ch] = await Promise.all([listBlocks(), listTags(), listChannels()]);
-      console.log("[LOAD] data received:", b.length, "blocks,", t.length, "tags,", ch.length, "channels");
-      // Check for problematic blocks
-      const emptySlugBlocks = b.filter((block) => !block.slug);
-      if (emptySlugBlocks.length > 0) {
-        console.error("[LOAD] BLOCKS WITH EMPTY SLUG:", emptySlugBlocks);
+      if (
+        loadRequestIdRef.current !== requestId
+        || vaultPathRef.current !== pathAtStart
+      ) {
+        return;
       }
       setBlocks(b);
       setTags(t);
       setChannels(ch);
       setLoadError(null);
       window.dispatchEvent(new Event("vault-refreshed"));
-      console.log("[LOAD] calling loadPreviews...");
-      await loadPreviews();
-      console.log("[LOAD] loadData complete");
+      if (includePreviews) {
+        await loadPreviews();
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("[LOAD] FAILED:", msg, err);
-      setLoadError(msg);
+      if (
+        loadRequestIdRef.current === requestId
+        && vaultPathRef.current === pathAtStart
+      ) {
+        console.error("[LOAD] FAILED:", msg, err);
+        setLoadError(msg);
+      }
     }
   }, [loadPreviews]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    setIsSyncing(true);
+    void loadData({ includePreviews: false });
+  }, [vaultPath, loadData]);
 
   // Listen for vault-changed events from file watcher (with debounce)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
-    const unlisten = listen("vault-changed", () => {
+    const unlisten = listen<VaultChangedEvent>("vault-changed", (event) => {
+      if (event.payload.path !== vaultPathRef.current) {
+        return;
+      }
       clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(loadData, 500);
+      debounceRef.current = setTimeout(() => {
+        void loadData({ includePreviews: false });
+      }, 250);
     });
     return () => {
       unlisten.then((fn) => fn());
       clearTimeout(debounceRef.current);
+    };
+  }, [loadData]);
+
+  useEffect(() => {
+    const unlistenStarted = listen<VaultSyncStartedEvent>("vault-sync-started", (event) => {
+      if (event.payload.path === vaultPathRef.current) {
+        setIsSyncing(true);
+      }
+    });
+    const unlistenFinished = listen<VaultSyncFinishedEvent>("vault-sync-finished", (event) => {
+      if (event.payload.path !== vaultPathRef.current) {
+        return;
+      }
+      setIsSyncing(false);
+      if (event.payload.error) {
+        setLoadError(event.payload.error);
+        return;
+      }
+      void loadData();
+    });
+
+    return () => {
+      unlistenStarted.then((fn) => fn());
+      unlistenFinished.then((fn) => fn());
     };
   }, [loadData]);
 
@@ -421,8 +486,9 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
     const selected = await openDialog({ directory: true, multiple: false });
     if (!selected) return;
     await selectVault(selected);
-    window.location.reload();
-  }, []);
+    navigate("/", { replace: true });
+    onVaultSelected(selected);
+  }, [navigate, onVaultSelected]);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -459,8 +525,12 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
   }, [selectedBlock]);
 
   const handleScrollToTop = useCallback(() => {
+    if (selectedBlock) {
+      setFocusedBlockId(selectedBlock.id);
+      setSelectedBlock(null);
+    }
     setScrollToTopSignal((n) => n + 1);
-  }, []);
+  }, [selectedBlock]);
 
   const handleDetailNavigate = useCallback(
     async (direction: "prev" | "next" | "up" | "down") => {
@@ -807,7 +877,9 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
             vaultPath={vaultPath}
             onClose={handleDetailClose}
             onNavigate={handleDetailNavigate}
-            onTagsChanged={loadData}
+            onTagsChanged={() => {
+              void loadData();
+            }}
           />
         )}
       </main>
@@ -824,13 +896,22 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
       <ImportDialog
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onImportComplete={loadData}
+        onImportComplete={() => {
+          void loadData();
+        }}
       />
     </div>{/* end body */}
 
       {/* Bottom action bar */}
       <div className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-8">
-        <VaultSwitcher currentPath={vaultPath} hotkey="⌘⇧O" />
+        <VaultSwitcher
+          currentPath={vaultPath}
+          onVaultSelected={(path) => {
+            navigate("/", { replace: true });
+            onVaultSelected(path);
+          }}
+          hotkey="⌘⇧O"
+        />
         <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>
           New Channel
         </ActionButton>
@@ -842,12 +923,20 @@ function AppWithVault({ vaultPath }: { vaultPath: string }) {
           Design
         </ActionButton>
         <div className="flex-1" />
+        {isSyncing && (
+          <span className="text-sm text-muted-foreground">Syncing…</span>
+        )}
         <ActionButton hotkey="⌘K" onClick={() => setSearchOpen(true)}>
           Search
         </ActionButton>
       </div>
 
-      <DropZone currentTag={currentTag} onBlocksCreated={loadData} />
+      <DropZone
+        currentTag={currentTag}
+        onBlocksCreated={() => {
+          void loadData();
+        }}
+      />
     </div>{/* end flex-col */}
 
     <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>

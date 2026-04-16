@@ -85,6 +85,12 @@ export interface ScanResult {
   errors: number;
 }
 
+export interface VaultOpenResult {
+  indexed: number;
+  errors: number;
+  sync_in_progress: boolean;
+}
+
 export interface CreateBlockParams {
   block_type: string;
   title?: string;

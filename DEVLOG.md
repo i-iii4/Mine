@@ -1,5 +1,54 @@
 # Devlog
 
+## 16.04.2026 18:52 [primary] — Snapshot-first vault open + switch without reload + SQL previews
+
+### Goal
+Убрать три самых дорогих path'а для больших vault: блокирующий `full_scan()` на старте, `window.location.reload()` при switch vault и полный проход по всем блокам ради sidebar previews.
+
+### Actually completed
+
+**Snapshot-first open и фоновая синхронизация vault** (`src-tauri/src/commands/vault.rs`, `src/App.tsx`, `src/types/index.ts`, `src/lib/commands.ts`)
+- `select_vault` больше не возвращает результат полного скана. Новый контракт — `VaultOpenResult { indexed, errors, sync_in_progress }`
+- `initialize_vault` теперь делает только: открыть SQLite, мигрировать thumb cache, поднять watcher, сохранить `VaultState`, посчитать уже индексированные блоки
+- `full_scan()` вынесен в `start_background_sync()`, который шлёт `vault-sync-started` / `vault-sync-finished`
+- `App.tsx` слушает эти события, показывает `Syncing…` и обновляет данные после завершения, не блокируя первый usable экран
+
+**Switch vault без `window.location.reload()`** (`src/App.tsx`, `src/components/VaultPicker.tsx`, `src/components/VaultSwitcher.tsx`)
+- `App` remount'ит `AppWithVault` по `key={vaultPath}`
+- `VaultPicker` и `VaultSwitcher` переводят приложение на новый vault через `onVaultSelected(path)` вместо reload
+- Добавлен guard против stale async-ответов: `vaultPathRef + loadRequestIdRef`. Старый `loadData()` больше не может записать snapshot предыдущего vault в новый state
+
+**Path-aware vault events** (`src-tauri/src/watcher/watch.rs`, `src-tauri/src/commands/import.rs`, `src-tauri/src/commands/vault.rs`)
+- `vault-changed` теперь несёт `{ path }`
+- frontend игнорирует события не от текущего vault, что закрывает race при переключении между двумя vault'ами
+- `thumbs_done_cb` также шлёт path-aware событие, чтобы refresh был scoped на нужный vault
+
+**SQL previews вместо полного `list_blocks_light()`** (`src-tauri/src/storage/index.rs`, `src-tauri/src/commands/channels.rs`)
+- Добавлены `list_preview_slugs(limit)` и `list_preview_slugs_by_tag(limit)` с window function `ROW_NUMBER() OVER (PARTITION BY tag ORDER BY saved_at DESC)`
+- `list_channel_previews` больше не тянет весь `list_blocks_light()` и не фильтрует его по каждому тегу
+- `list_channels` также переведён с линейного `find()` по всем tags на `HashMap<tag, count>`
+
+**Frontend cleanup и build blockers** (`extension/popup/hooks/useClipperState.ts`, `src/components/Sidebar.tsx`)
+- Исправлен strict TypeScript в `deduplicateImages`
+- Убраны неиспользуемые импорты из `Sidebar.tsx`, чтобы вернуть проект к зелёной сборке
+
+### Checks
+- `cargo check -p mine --quiet`
+- `cargo test -p mine --lib --quiet` — 240/240
+- `bun run build`
+- `bun run test` — без новых падений; остаются старые 7 UI-тестов (`Card.test.tsx`, `Sidebar.test.tsx`), не совпадающие с текущими контрактами компонентов
+
+### Push
+- [текущий]
+
+### Decisions and lessons learned
+- **Startup должен открывать snapshot, а не процесс синхронизации.** Если UI ждёт `full_scan()`, производительность уже проиграна архитектурно.
+- **Vault switch — это state transition, не reload.** Reload стирает кэши и прячет гонки, но не решает их.
+- **Sidebar previews должны считаться выборочно на сервере.** Даже при виртуализированном grid полный проход по всем блокам ради 20 иконок канала — структурная ошибка.
+
+### Next
+- Следующий bottleneck — `list_blocks_light()`: он всё ещё отдаёт `body`, tags и media metadata на весь corpus. Нужен отдельный `GridBlock` snapshot и lazy hydration detail/body.
+
 ## 14.04.2026 19:30 [agent B, parallel/b] — clipper: resolveContentBody, fix preview/save divergence on selection
 
 ### Goal

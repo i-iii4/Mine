@@ -157,23 +157,45 @@ fn upsert_block_inner(
         )
     });
 
-    // Read width/height from the actual media file on disk instead of
-    // relying on frontmatter. Markdown File First: the file is the
-    // source of truth, frontmatter may be missing or stale.
-    let (width, height) = vault_root
-        .and_then(|root| {
-            let file_name = block.frontmatter.file.as_deref()?;
-            let path = root.join(file_name);
-            use crate::storage::media_dimensions::{extract_image_dimensions, extract_video_dimensions};
-            let ext = path.extension()?.to_str()?.to_lowercase();
-            if matches!(ext.as_str(), "mp4" | "m4v") {
-                extract_video_dimensions(&path)
-            } else {
-                extract_image_dimensions(&path)
-            }
-        })
-        .map(|(w, h)| (Some(w), Some(h)))
-        .unwrap_or((block.frontmatter.width, block.frontmatter.height));
+    // Width/height priority: (1) existing DB row if present, (2) frontmatter,
+    // (3) extract from file as last resort. Reading dimensions from image
+    // files is expensive on main thread (image crate 0.25 reads whole JPEG,
+    // not just header), so we avoid re-reading on every full_scan. File
+    // extraction runs only for blocks that truly lack dimensions.
+    let existing_dims: Option<(u32, u32)> = conn
+        .query_row(
+            "SELECT width, height FROM blocks WHERE slug = ?1",
+            [&block.slug],
+            |row| {
+                let w: Option<i64> = row.get(0)?;
+                let h: Option<i64> = row.get(1)?;
+                Ok(w.zip(h).map(|(w, h)| (w as u32, h as u32)))
+            },
+        )
+        .ok()
+        .flatten();
+
+    let (width, height) = if let Some((w, h)) = existing_dims {
+        (Some(w), Some(h))
+    } else if let (Some(w), Some(h)) = (block.frontmatter.width, block.frontmatter.height) {
+        (Some(w), Some(h))
+    } else {
+        // Last resort: read from file. One-time cost per block, cached in DB.
+        vault_root
+            .and_then(|root| {
+                let file_name = block.frontmatter.file.as_deref()?;
+                let path = root.join(file_name);
+                use crate::storage::media_dimensions::{extract_image_dimensions, extract_video_dimensions};
+                let ext = path.extension()?.to_str()?.to_lowercase();
+                if matches!(ext.as_str(), "mp4" | "m4v") {
+                    extract_video_dimensions(&path)
+                } else {
+                    extract_image_dimensions(&path)
+                }
+            })
+            .map(|(w, h)| (Some(w), Some(h)))
+            .unwrap_or((None, None))
+    };
 
     conn.execute(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
@@ -359,6 +381,66 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
     }
 
     Ok(blocks)
+}
+
+/// Return the newest previewable block slugs across the whole vault.
+pub fn list_preview_slugs(conn: &Connection, limit: usize) -> Result<Vec<String>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let limit = i64::try_from(limit).context("preview limit does not fit i64")?;
+    let mut stmt = conn.prepare(
+        "SELECT slug
+         FROM blocks
+         WHERE slug != '' AND block_type != 'channel'
+         ORDER BY saved_at DESC
+         LIMIT ?1",
+    )?;
+
+    let rows = stmt.query_map([limit], |row| row.get::<_, String>(0))?;
+    let slugs = rows.collect::<Result<Vec<_>, _>>()?;
+    Ok(slugs)
+}
+
+/// Return the newest previewable block slugs per tag.
+pub fn list_preview_slugs_by_tag(
+    conn: &Connection,
+    limit: usize,
+) -> Result<std::collections::HashMap<String, Vec<String>>> {
+    if limit == 0 {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let limit = i64::try_from(limit).context("preview limit does not fit i64")?;
+    let mut stmt = conn.prepare(
+        "SELECT tag, slug
+         FROM (
+             SELECT bt.tag AS tag,
+                    b.slug AS slug,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY bt.tag
+                        ORDER BY b.saved_at DESC
+                    ) AS row_num
+             FROM block_tags bt
+             JOIN blocks b ON b.id = bt.block_id
+             WHERE b.slug != '' AND b.block_type != 'channel'
+         )
+         WHERE row_num <= ?1
+         ORDER BY tag, row_num",
+    )?;
+
+    let rows = stmt.query_map([limit], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    let mut grouped = std::collections::HashMap::<String, Vec<String>>::new();
+    for row in rows {
+        let (tag, slug) = row?;
+        grouped.entry(tag).or_default().push(slug);
+    }
+
+    Ok(grouped)
 }
 
 /// Get a single block by slug. Returns None if not found.

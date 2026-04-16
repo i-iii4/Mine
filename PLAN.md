@@ -207,16 +207,19 @@ Goal: довести проект до продакшен-качества по 
 | 9.3.5 | `list_blocks` без `body` — лёгкая версия для Grid | CRIT-11 | [ ] |
 | 9.3.6 | SQL-проверка slug вместо загрузки всех блоков в create_block | CRIT-12 | [ ] |
 | 9.3.7 | `has_thumbnail` в SQLite вместо N syscall-ов в list_channel_previews | CRIT-13 | [ ] |
-| 9.3.8 | `catch_unwind` в потоке thumb-gen | CRIT-14 | [ ] |
+| 9.3.8 | `catch_unwind` в потоке thumb-gen | CRIT-14 | [x] |
+| 9.3.9 | `list_channel_previews` без полного `list_blocks_light()`: SQL top-N slugs для `__all__` и per-tag | PERF-1 | [x] |
 
 #### 9.4 — App.tsx: надёжность и производительность [PENDING]
 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
-| 9.4.1 | try/catch на все 9 async-функций (loadData, handleRenameTag, handleDeleteTagFromAll, handleCreateChannel, handleReorderTag, handleCardDrop, handleToggleTag, handleCreateTagFromMenu, handleDeleteBlock) | HIGH-11 | [ ] |
-| 9.4.2 | `useMemo` на channelPreviews — убрать двойной O(N) цикл | HIGH-12 | [ ] |
+| 9.4.1 | try/catch на все 9 async-функций (loadData, handleRenameTag, handleDeleteTagFromAll, handleCreateChannel, handleReorderTag, handleCardDrop, handleToggleTag, handleCreateTagFromMenu, handleDeleteBlock) | HIGH-11 | [~] частично — `loadData` и vault sync path закрыты |
+| 9.4.2 | `useMemo` на channelPreviews — убрать двойной O(N) цикл | HIGH-12 | [x] решено сменой архитектуры: server-derived previews + SQL top-N |
 | 9.4.3 | `useMemo` на фильтрацию ChannelPage | HIGH-13 | [ ] |
 | 9.4.4 | `instanceof PointerEvent` вместо `as` cast | MED-12 | [ ] |
+| 9.4.5 | Открытие vault по snapshot без блокирующего `full_scan()`, фоновые `vault-sync-*` events, switch без `window.location.reload()` | PERF-2 | [x] |
+| 9.4.6 | Guard против stale async-ответов при switch vault (`vaultPathRef` + request id) | PERF-3 | [x] |
 
 #### 9.5 — Безопасность: валидация URL [PENDING]
 
@@ -242,7 +245,7 @@ Goal: довести проект до продакшен-качества по 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
 | 9.7.1 | SQL-запрос для проверки slug вместо загрузки всех блоков | HIGH-14, CRIT-12 | [ ] |
-| 9.7.2 | HashMap вместо линейного поиска в list_channels | HIGH-15 | [ ] |
+| 9.7.2 | HashMap вместо линейного поиска в list_channels | HIGH-15 | [x] |
 | 9.7.3 | Убрать дублирующие вызовы get_all_tags в channels.rs | HIGH-15 | [ ] |
 | 9.7.4 | FTS5: `tokenize='unicode61 remove_diacritics 0'` для кириллицы | MED-2 | [ ] |
 | 9.7.5 | TOCTOU в `delete_block_files()`: ловить `ErrorKind::NotFound` | MED-4 | [ ] |

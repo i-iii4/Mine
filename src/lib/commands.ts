@@ -7,7 +7,7 @@ import type {
   LightBlock,
   TagCount,
   ChannelDto,
-  ScanResult,
+  VaultOpenResult,
   CreateBlockParams,
   ArenaChannelInfo,
   ImportChannelRequest,
@@ -16,7 +16,7 @@ import type {
 
 // Vault
 export const selectVault = (path: string) =>
-  invoke<ScanResult>("select_vault", { path });
+  invoke<VaultOpenResult>("select_vault", { path });
 
 export const getVaultPath = () =>
   invoke<string | null>("get_vault_path");

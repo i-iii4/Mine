@@ -54,15 +54,15 @@ pub fn list_channels(state: State<'_, AppState>) -> Result<Vec<ChannelDto>, Comm
 
     let channels = index::list_channels(&vs.conn)?;
     let tags = index::get_all_tags(&vs.conn)?;
+    let tag_counts: HashMap<String, usize> = tags
+        .into_iter()
+        .map(|tag| (tag.tag, tag.count))
+        .collect();
 
     let dtos = channels
         .iter()
         .map(|ch| {
-            let count = tags
-                .iter()
-                .find(|t| t.tag == ch.tag)
-                .map(|t| t.count)
-                .unwrap_or(0);
+            let count = tag_counts.get(&ch.tag).copied().unwrap_or(0);
             ChannelDto::from_channel(ch, count)
         })
         .collect();
@@ -334,24 +334,17 @@ pub fn list_channel_previews(
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
-    let all_blocks = index::list_blocks_light(&vs.conn)?;
     let tags = index::get_all_tags(&vs.conn)?;
+    let all_slugs = index::list_preview_slugs(&vs.conn, limit)?;
+    let per_tag_slugs = index::list_preview_slugs_by_tag(&vs.conn, limit)?;
 
-    // Include every non-channel block with a valid slug. Whether a thumb
-    // file exists is a per-item flag (`has_thumb`), not a filter — the
-    // frontend renders a placeholder tile when has_thumb=false so the
-    // sidebar never shows empty space for a newly-saved block.
-    let eligible: Vec<&index::LightBlock> = all_blocks.iter().filter(|b| {
-        !b.slug.is_empty() && b.block_type != BlockType::Channel
-    }).collect();
-
-    let to_item = |b: &&index::LightBlock| -> PreviewItem {
-        let thumb_path = vs.vault.thumb_path(&b.slug);
+    let to_item = |slug: &str| -> PreviewItem {
+        let thumb_path = vs.vault.thumb_path(slug);
         let has_thumb = thumb_path.exists();
         let is_text = has_thumb && thumb_is_png(&thumb_path);
         let mtime = thumb_mtime(&thumb_path);
         PreviewItem {
-            slug: b.slug.clone(),
+            slug: slug.to_string(),
             text: is_text,
             mtime,
             has_thumb,
@@ -360,31 +353,19 @@ pub fn list_channel_previews(
 
     let mut result = HashMap::new();
 
-    let all_items: Vec<PreviewItem> = eligible.iter().take(limit).map(to_item).collect();
+    let all_items: Vec<PreviewItem> = all_slugs.iter().map(|slug| to_item(slug)).collect();
     result.insert("__all__".to_string(), all_items);
 
-    for tc in &tags {
-        let items: Vec<PreviewItem> = eligible.iter()
-            .filter(|b| b.tags.contains(&tc.tag))
-            .take(limit)
-            .map(to_item)
-            .collect();
-        result.insert(tc.tag.clone(), items);
+    for (tag, slugs) in per_tag_slugs {
+        let items: Vec<PreviewItem> = slugs.iter().map(|slug| to_item(slug)).collect();
+        result.insert(tag, items);
+    }
+
+    for tag in &tags {
+        result.entry(tag.tag.clone()).or_insert_with(Vec::new);
     }
 
     Ok(result)
-}
-
-fn has_image_first_image(b: &index::LightBlock) -> bool {
-    if let Some(ref fi) = b.first_image {
-        let ext = std::path::Path::new(fi.as_str())
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        matches!(ext.to_lowercase().as_str(), "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp")
-    } else {
-        false
-    }
 }
 
 /// Delete a channel: remove .md file and index entry.

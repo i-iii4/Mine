@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 
 interface VaultSwitcherProps {
   currentPath: string;
+  onVaultSelected: (path: string) => void;
   hotkey?: string;
 }
 
@@ -20,7 +21,7 @@ function vaultName(path: string): string {
   return path.split("/").pop() ?? path;
 }
 
-export function VaultSwitcher({ currentPath, hotkey }: VaultSwitcherProps) {
+export function VaultSwitcher({ currentPath, onVaultSelected, hotkey }: VaultSwitcherProps) {
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
 
   useEffect(() => {
@@ -30,14 +31,14 @@ export function VaultSwitcher({ currentPath, hotkey }: VaultSwitcherProps) {
   const handleSwitch = async (path: string) => {
     if (path === currentPath) return;
     await selectVault(path);
-    window.location.reload();
+    onVaultSelected(path);
   };
 
   const handleAddSpace = async () => {
     const selected = await openDialog({ directory: true, multiple: false });
     if (!selected) return;
     await selectVault(selected);
-    window.location.reload();
+    onVaultSelected(selected);
   };
 
   // Sort: current first, then alphabetical

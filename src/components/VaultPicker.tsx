@@ -2,7 +2,7 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { selectVault } from "@/lib/commands";
 import { Button } from "@/components/ui/button";
-import type { ScanResult } from "@/types";
+import type { VaultOpenResult } from "@/types";
 
 interface VaultPickerProps {
   onVaultSelected: (path: string) => void;
@@ -11,7 +11,7 @@ interface VaultPickerProps {
 export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ScanResult | null>(null);
+  const [result, setResult] = useState<VaultOpenResult | null>(null);
 
   const handleSelect = async () => {
     setError(null);
@@ -20,10 +20,9 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
 
     setLoading(true);
     try {
-      const scanResult = await selectVault(selected);
-      setResult(scanResult);
-      // Brief delay to show scan results before transitioning
-      setTimeout(() => onVaultSelected(selected), 600);
+      const openResult = await selectVault(selected);
+      setResult(openResult);
+      onVaultSelected(selected);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -45,22 +44,19 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
         {result ? (
           <div className="rounded-1 bg-accent px-6 py-4">
             <p className="text-base text-muted-foreground">
-              Indexed{" "}
+              Loaded{" "}
               <span className="font-semibold text-foreground">
                 {result.indexed}
               </span>{" "}
-              blocks
-              {result.errors > 0 && (
-                <span className="text-amber-600">
-                  {" "}
-                  ({result.errors} errors)
-                </span>
+              indexed blocks
+              {result.sync_in_progress && (
+                <span className="text-muted-foreground">, syncing in background…</span>
               )}
             </p>
           </div>
         ) : (
           <Button onClick={handleSelect} disabled={loading}>
-            {loading ? "Scanning..." : "Select Vault"}
+            {loading ? "Opening..." : "Select Vault"}
           </Button>
         )}
 

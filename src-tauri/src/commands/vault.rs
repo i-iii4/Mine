@@ -9,12 +9,38 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use rusqlite::Connection;
+use serde::Serialize;
 
 use crate::commands::state::{AppState, CommandError, VaultState};
 use crate::domain::vault::VaultLayout;
 use crate::storage::db;
 use crate::watcher::handler::{self, ScanResult};
 use crate::watcher::watch;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultOpenResult {
+    pub indexed: usize,
+    pub errors: usize,
+    pub sync_in_progress: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct VaultChangedPayload {
+    path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct VaultSyncStartedPayload {
+    path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct VaultSyncFinishedPayload {
+    path: String,
+    indexed: usize,
+    errors: usize,
+    error: Option<String>,
+}
 
 // ─── Commands ───────────────────────────────────────────────────────────────
 
@@ -31,7 +57,7 @@ pub fn select_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     path: String,
-) -> Result<ScanResult, CommandError> {
+) -> Result<VaultOpenResult, CommandError> {
     let result = initialize_vault(&app, &state, &path)?;
     save_vault_path(&app, &path);
     Ok(result)
@@ -98,7 +124,15 @@ pub fn rebuild_index(
         .map_err(|e| CommandError::Internal(format!("failed to clear index: {e}")))?;
 
     // Re-scan vault files
-    let result = handler::full_scan(&vs.conn, &vs.vault, Some(thumbs_done_cb(app.clone())), Some(app.clone()))?;
+    let result = handler::full_scan(
+        &vs.conn,
+        &vs.vault,
+        Some(thumbs_done_cb(
+            app.clone(),
+            vs.vault.root().to_string_lossy().into_owned(),
+        )),
+        Some(app.clone()),
+    )?;
 
     log::info!(
         "index rebuilt: {} indexed, {} errors",
@@ -116,7 +150,7 @@ fn initialize_vault(
     app: &AppHandle,
     state: &AppState,
     path: &str,
-) -> Result<ScanResult, CommandError> {
+) -> Result<VaultOpenResult, CommandError> {
     let vault = VaultLayout::new(PathBuf::from(path));
 
     // Expand asset protocol scope so the WebView can load images from vault
@@ -130,6 +164,7 @@ fn initialize_vault(
 
     // Open or create database
     let conn = db::open_or_create(&vault.index_db_path())?;
+    let indexed = count_indexed_blocks(&conn)?;
 
     // One-time thumb cache migration: when the format version marker is
     // absent or outdated, wipe all cached thumbnails so full_scan
@@ -138,12 +173,6 @@ fn initialize_vault(
     // and any other stale cache state. The marker is written after the
     // wipe so subsequent starts skip this step.
     migrate_thumb_cache(&vault);
-
-    // Full scan (thumbnails generated in background thread)
-    let result = handler::full_scan(&conn, &vault, Some(thumbs_done_cb(app.clone())), Some(app.clone()))?;
-
-    // Migrate channels from SQLite to .md files (one-time)
-    migrate_channels_to_files(&conn, &vault);
 
     // Start file watcher
     let db_path = vault.index_db_path();
@@ -163,7 +192,13 @@ fn initialize_vault(
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     *vault_state = Some(VaultState { conn, vault });
 
-    Ok(result)
+    start_background_sync(app.clone(), path.to_string());
+
+    Ok(VaultOpenResult {
+        indexed,
+        errors: 0,
+        sync_in_progress: true,
+    })
 }
 
 /// Current thumb cache format version. Bump this when the thumbnail
@@ -203,11 +238,87 @@ fn migrate_thumb_cache(vault: &VaultLayout) {
 }
 
 /// Create a callback that emits "vault-changed" when background thumbnails finish.
-fn thumbs_done_cb(app: AppHandle) -> Box<dyn FnOnce() + Send> {
+fn thumbs_done_cb(app: AppHandle, path: String) -> Box<dyn FnOnce() + Send> {
     Box::new(move || {
         log::info!("background thumbnails done, notifying frontend");
-        let _ = app.emit("vault-changed", ());
+        let _ = app.emit("vault-changed", VaultChangedPayload { path });
     })
+}
+
+fn start_background_sync(app: AppHandle, path: String) {
+    let sync_path = path.clone();
+    std::thread::Builder::new()
+        .name(format!("vault-sync-{}", sync_path))
+        .spawn(move || {
+            let vault = VaultLayout::new(PathBuf::from(&path));
+            let _ = app.emit(
+                "vault-sync-started",
+                VaultSyncStartedPayload {
+                    path: path.clone(),
+                },
+            );
+
+            let conn = match db::open_or_create(&vault.index_db_path()) {
+                Ok(conn) => conn,
+                Err(err) => {
+                    log::error!("failed to open db for sync {}: {:#}", path, err);
+                    let _ = app.emit(
+                        "vault-sync-finished",
+                        VaultSyncFinishedPayload {
+                            path,
+                            indexed: 0,
+                            errors: 0,
+                            error: Some(format!("{:#}", err)),
+                        },
+                    );
+                    return;
+                }
+            };
+
+            let result = handler::full_scan(
+                &conn,
+                &vault,
+                Some(thumbs_done_cb(app.clone(), path.clone())),
+                Some(app.clone()),
+            );
+
+            match result {
+                Ok(scan) => {
+                    migrate_channels_to_files(&conn, &vault);
+                    let _ = app.emit(
+                        "vault-sync-finished",
+                        VaultSyncFinishedPayload {
+                            path: path.clone(),
+                            indexed: scan.indexed,
+                            errors: scan.errors,
+                            error: None,
+                        },
+                    );
+                }
+                Err(err) => {
+                    log::error!("background vault sync failed for {}: {:#}", path, err);
+                    let _ = app.emit(
+                        "vault-sync-finished",
+                        VaultSyncFinishedPayload {
+                            path,
+                            indexed: 0,
+                            errors: 0,
+                            error: Some(format!("{:#}", err)),
+                        },
+                    );
+                }
+            }
+        })
+        .map(|_| ())
+        .map_err(|err| CommandError::Internal(format!("failed to spawn vault sync thread: {err}")))
+        .ok();
+}
+
+fn count_indexed_blocks(conn: &Connection) -> Result<usize, CommandError> {
+    let count: i64 = conn
+        .query_row("SELECT count(*) FROM blocks", [], |row| row.get(0))
+        .map_err(|e| CommandError::Internal(format!("failed to count indexed blocks: {e}")))?;
+    Ok(count as usize)
 }
 
 // ─── Channel migration ──────────────────────────────────────────────────────

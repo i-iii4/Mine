@@ -3,7 +3,6 @@ import { NavLink, useLocation } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -21,11 +20,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-} from "@/components/ui/tooltip";
 import type { TagCount, PreviewCard } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -473,5 +467,4 @@ function InlineInput({
     />
   );
 }
-
 
