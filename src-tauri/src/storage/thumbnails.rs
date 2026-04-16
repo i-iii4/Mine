@@ -28,15 +28,108 @@ const JPEG_MAGIC: [u8; 3] = [0xFF, 0xD8, 0xFF];
 /// PNG magic bytes: `89 50 4E` (89 P N) — first 3 bytes of `89 50 4E 47`.
 const PNG_MAGIC: [u8; 3] = [0x89, 0x50, 0x4E];
 
-/// Returns `true` if the thumbnail at `thumb_path` exists, is at least as
-/// new as `source_path`, AND its content is a recognized image format
-/// (JPEG or PNG). Used to skip redundant regeneration during full_scan.
+/// What thumb file format a block is expected to have on disk. Used
+/// by `is_thumb_fresh` to detect stale thumbs that were written by
+/// an older version of the pipeline in a format the current code
+/// wouldn't produce (e.g. pure-text articles that have a JPEG thumb
+/// from pre-PNG-switch days).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedThumb {
+    /// Rust can definitively produce a JPEG from the block's media
+    /// (source is sniffed JPEG/PNG/GIF, or H.264 MP4 via openh264).
+    /// Only a JPEG thumb is considered fresh.
+    OnlyJpeg,
+    /// Block has no usable media — only a text placeholder PNG makes
+    /// sense. Only a PNG thumb is considered fresh.
+    OnlyPng,
+    /// Block has media the WebView can decode but Rust can't
+    /// (HEIC / VP8X WebP / AVIF / HEVC video). Phase 1 writes PNG
+    /// placeholder, Phase 2 may overwrite with JPEG. Both valid.
+    Either,
+}
+
+/// Classify what thumb format is expected for `block`. Mirrors the
+/// cascade logic in `generate_for_block` but returns the CLASSIFICATION
+/// of the final result rather than producing a thumb.
+pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
+    // 1. Block has an explicit media file. Use the filename from
+    //    frontmatter directly — it IS the source of truth per
+    //    Markdown File First principle. Do not construct from slug.
+    if let Some(ref file_name) = block.frontmatter.file {
+        let ext = ext_lower(file_name);
+        let media_path = vault.root().join(file_name);
+        if media_path.exists() {
+            if is_image_ext(&ext) {
+                if is_rust_decodable(&media_path) {
+                    return ExpectedThumb::OnlyJpeg;
+                }
+                // Non-decodable image (HEIC/WebP/AVIF) — Phase 2 may upgrade
+                return ExpectedThumb::Either;
+            }
+            if is_video_ext(&ext) {
+                // Video: Rust may or may not handle it. Accept either.
+                return ExpectedThumb::Either;
+            }
+        }
+    }
+
+    // 2. Frontmatter thumbnail field (OG image for link, video poster).
+    if let Some(ref thumb_file) = block.frontmatter.thumbnail {
+        let ext = ext_lower(thumb_file);
+        if is_image_ext(&ext) {
+            let media_path = vault.root().join(thumb_file);
+            if media_path.exists() {
+                if is_rust_decodable(&media_path) {
+                    return ExpectedThumb::OnlyJpeg;
+                }
+                return ExpectedThumb::Either;
+            }
+        }
+    }
+
+    // 3. Article body: first image.
+    if block.frontmatter.block_type == BlockType::Article {
+        if let Some(first_image) = find_first_local_media(&block.body, is_image_ext) {
+            let media_path = vault.root().join(&first_image);
+            if media_path.exists() {
+                if is_rust_decodable(&media_path) {
+                    return ExpectedThumb::OnlyJpeg;
+                }
+                return ExpectedThumb::Either;
+            }
+        }
+        // 4. Article body: first video.
+        if let Some(first_video) = find_first_local_media(&block.body, is_video_ext) {
+            let media_path = vault.root().join(&first_video);
+            if media_path.exists() {
+                // Video: Rust may succeed or fall through. Accept either.
+                return ExpectedThumb::Either;
+            }
+        }
+    }
+
+    // 5. No usable media — text placeholder PNG is the only valid state.
+    ExpectedThumb::OnlyPng
+}
+
+/// Returns `true` if the thumbnail at `thumb_path` is still usable for
+/// `block`. False means the thumb must be regenerated.
 ///
-/// The content-type check catches a failure mode where a legacy pipeline
-/// wrote a non-image file under `.jpg` extension (e.g. corrupt bytes or
-/// wrong format). Pure mtime comparison would mark such files as fresh
-/// forever, leaving broken thumbs in the cache indefinitely.
-pub fn is_thumb_fresh(thumb_path: &Path, source_path: &Path) -> bool {
+/// Freshness checks, in order:
+/// 1. File exists on disk.
+/// 2. Thumb mtime is not older than source .md mtime.
+/// 3. Magic bytes match a recognized image format (JPEG or PNG).
+/// 4. The on-disk format matches what the current pipeline would
+///    produce for this block. Catches legacy thumbs written by earlier
+///    code — e.g. JPEG text placeholders from before the switch to PNG
+///    — so they auto-regenerate on the next full_scan without any
+///    manual migration step.
+pub fn is_thumb_fresh(
+    thumb_path: &Path,
+    source_path: &Path,
+    block: &Block,
+    vault: &VaultLayout,
+) -> bool {
     let Ok(thumb_meta) = std::fs::metadata(thumb_path) else {
         return false;
     };
@@ -52,21 +145,30 @@ pub fn is_thumb_fresh(thumb_path: &Path, source_path: &Path) -> bool {
     if thumb_mtime < source_mtime {
         return false;
     }
-    thumb_has_valid_magic(thumb_path)
-}
 
-/// Peek first 3 bytes of the thumb file and check if it's a recognized
-/// image format (JPEG or PNG). Returns false on I/O error or unknown magic.
-fn thumb_has_valid_magic(thumb_path: &Path) -> bool {
-    use std::io::Read;
-    let Ok(mut file) = std::fs::File::open(thumb_path) else {
-        return false;
-    };
-    let mut buf = [0u8; 3];
-    if file.read_exact(&mut buf).is_err() {
+    let magic = read_thumb_magic(thumb_path);
+    let is_jpeg = magic == Some(JPEG_MAGIC);
+    let is_png = magic == Some(PNG_MAGIC);
+
+    if !is_jpeg && !is_png {
         return false;
     }
-    buf == JPEG_MAGIC || buf == PNG_MAGIC
+
+    match expected_thumb(block, vault) {
+        ExpectedThumb::OnlyJpeg => is_jpeg,
+        ExpectedThumb::OnlyPng => is_png,
+        ExpectedThumb::Either => true,
+    }
+}
+
+/// Peek first 3 bytes of the thumb file and return them. Returns None
+/// on I/O error or too-short file.
+fn read_thumb_magic(thumb_path: &Path) -> Option<[u8; 3]> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(thumb_path).ok()?;
+    let mut buf = [0u8; 3];
+    file.read_exact(&mut buf).ok()?;
+    Some(buf)
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -569,7 +671,7 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
     //    and the block gets queued for WebView upgrade in Phase 2.
     if let Some(ref file_name) = block.frontmatter.file {
         let ext = ext_lower(file_name);
-        let media_path = vault.media_path(slug, &ext);
+        let media_path = vault.root().join(file_name);
         if media_path.exists() {
             if is_image_ext(&ext) && is_rust_decodable(&media_path) {
                 match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
@@ -910,22 +1012,94 @@ mod tests {
     fn is_thumb_fresh_rejects_non_image_content() {
         // Thumb file with a newer mtime but wrong content (plain text,
         // not JPEG or PNG) must NOT be considered fresh — forces the
-        // pipeline to regenerate it. Catches the legacy bug where corrupt
-        // or wrong-format thumbs stayed in cache forever.
+        // pipeline to regenerate it.
         let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
         let source = dir.path().join("source.md");
-        let thumb = dir.path().join("thumb.jpg");
-
         std::fs::write(&source, "# Source\n").unwrap();
-        // Write arbitrary bytes that are neither JPEG nor PNG magic
-        std::fs::write(&thumb, b"\x00\x01\x02garbage content not an image").unwrap();
 
-        assert!(!is_thumb_fresh(&thumb, &source));
+        // Article with an embedded WebP (non-Rust-decodable) — expected_thumb
+        // returns Either, so any valid magic (JPEG or PNG) passes the format
+        // check. This isolates the test to the magic-bytes branch.
+        let webp = dir.path().join("source-img0.webp");
+        std::fs::write(&webp, b"RIFF\x00\x00\x00\x00WEBPVP8X").unwrap();
+        let block = make_article("source", "![](source-img0.webp)");
 
-        // Now write a real JPEG and the freshness check should pass
+        let thumb = vault.thumb_path("source");
+        std::fs::create_dir_all(thumb.parent().unwrap()).unwrap();
+        std::fs::write(&thumb, b"\x00\x01\x02garbage").unwrap();
+        assert!(!is_thumb_fresh(&thumb, &source, &block, &vault));
+
+        // Write a real JPEG — freshness check passes (Either category
+        // accepts both JPEG and PNG).
         create_test_image(&dir.path().join("real.png"), 100, 100);
         generate_thumbnail(&dir.path().join("real.png"), &thumb, 240).unwrap();
-        assert!(is_thumb_fresh(&thumb, &source));
+        assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
+    }
+
+    #[test]
+    fn is_thumb_fresh_pure_text_article_rejects_legacy_jpeg() {
+        // Regression: old versions of the pipeline wrote text thumbs as
+        // JPEG. New code writes PNG with transparent bg for CSS invert.
+        // Pure-text article must have PNG thumb — a stale JPEG triggers
+        // auto-regeneration on next full_scan.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let source = dir.path().join("pure.md");
+        std::fs::write(&source, "# Source\n").unwrap();
+
+        let block = make_article("pure", "Just plain text, no images.");
+
+        // Legacy JPEG thumb: mtime fresh, magic valid, but wrong format
+        // for a pure-text article.
+        let thumb = vault.thumb_path("pure");
+        create_test_image(&dir.path().join("real.png"), 100, 100);
+        generate_thumbnail(&dir.path().join("real.png"), &thumb, 240).unwrap();
+        assert!(!is_thumb_fresh(&thumb, &source, &block, &vault));
+
+        // PNG thumb — correct format, considered fresh.
+        generate_text_thumbnail(Some("pure"), "body", &thumb).unwrap();
+        assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
+    }
+
+    #[test]
+    fn is_thumb_fresh_decodable_image_rejects_legacy_png() {
+        // Mirror: image block with JPEG media must have JPEG thumb.
+        // Legacy PNG thumb (from old code that wrote placeholders for
+        // everything) triggers auto-regeneration.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let source = dir.path().join("photo.md");
+        std::fs::write(&source, "# Source\n").unwrap();
+
+        // Real JPEG media file on disk
+        let media = vault.media_path("photo", "jpg");
+        create_test_image(&dir.path().join("src.png"), 80, 80);
+        generate_thumbnail(&dir.path().join("src.png"), &media, 240).unwrap();
+
+        use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
+        let block = Block {
+            slug: "photo".into(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Image,
+                title: None, description: None, url: None,
+                file: Some("photo.jpg".into()), thumbnail: None,
+                tags: vec![],
+                saved_at: DateTime::new("2026-01-15T12:00:00Z").unwrap(),
+                source: None, width: None, height: None, author: None,
+                position: None, color: None, icon: None,
+            },
+            body: String::new(),
+        };
+
+        let thumb = vault.thumb_path("photo");
+        // Stale PNG thumb for a block that should have JPEG
+        generate_text_thumbnail(Some("photo"), "x", &thumb).unwrap();
+        assert!(!is_thumb_fresh(&thumb, &source, &block, &vault));
+
+        // Real JPEG thumb — considered fresh
+        generate_thumbnail(&dir.path().join("src.png"), &thumb, 240).unwrap();
+        assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
     }
 
     // ─── Tests for is_rust_decodable content sniff ─────────────────────────

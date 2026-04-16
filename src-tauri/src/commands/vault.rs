@@ -98,7 +98,7 @@ pub fn rebuild_index(
         .map_err(|e| CommandError::Internal(format!("failed to clear index: {e}")))?;
 
     // Re-scan vault files
-    let result = handler::full_scan(&vs.conn, &vs.vault, Some(thumbs_done_cb(app)))?;
+    let result = handler::full_scan(&vs.conn, &vs.vault, Some(thumbs_done_cb(app.clone())), Some(app.clone()))?;
 
     log::info!(
         "index rebuilt: {} indexed, {} errors",
@@ -131,8 +131,16 @@ fn initialize_vault(
     // Open or create database
     let conn = db::open_or_create(&vault.index_db_path())?;
 
+    // One-time thumb cache migration: when the format version marker is
+    // absent or outdated, wipe all cached thumbnails so full_scan
+    // regenerates them from scratch with the current pipeline. Covers
+    // legacy JPEG text placeholders, wrong-format thumbs from old code,
+    // and any other stale cache state. The marker is written after the
+    // wipe so subsequent starts skip this step.
+    migrate_thumb_cache(&vault);
+
     // Full scan (thumbnails generated in background thread)
-    let result = handler::full_scan(&conn, &vault, Some(thumbs_done_cb(app.clone())))?;
+    let result = handler::full_scan(&conn, &vault, Some(thumbs_done_cb(app.clone())), Some(app.clone()))?;
 
     // Migrate channels from SQLite to .md files (one-time)
     migrate_channels_to_files(&conn, &vault);
@@ -156,6 +164,42 @@ fn initialize_vault(
     *vault_state = Some(VaultState { conn, vault });
 
     Ok(result)
+}
+
+/// Current thumb cache format version. Bump this when the thumbnail
+/// pipeline changes in a way that makes old cached files incompatible
+/// (e.g. text placeholders switched from JPEG to PNG, or new font).
+const THUMB_FORMAT_VERSION: &str = "3";
+
+/// If the thumb cache was written by an older format version, delete
+/// all cached thumbnails and let full_scan regenerate them fresh.
+fn migrate_thumb_cache(vault: &VaultLayout) {
+    let marker = vault.thumbs_dir().join(".format-version");
+    let current = std::fs::read_to_string(&marker).unwrap_or_default();
+    if current.trim() == THUMB_FORMAT_VERSION {
+        return;
+    }
+
+    log::info!(
+        "thumb cache migration: version {:?} → {}, clearing all thumbnails",
+        current.trim(),
+        THUMB_FORMAT_VERSION,
+    );
+
+    // Delete all .jpg files in thumbs dir. Keep the directory itself
+    // and any non-.jpg files (like the marker we're about to write).
+    if let Ok(entries) = std::fs::read_dir(vault.thumbs_dir()) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("jpg") {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+
+    // Write the new version marker. If this fails, next startup will
+    // re-run the migration — safe, just slightly wasteful.
+    let _ = std::fs::write(&marker, THUMB_FORMAT_VERSION);
 }
 
 /// Create a callback that emits "vault-changed" when background thumbnails finish.

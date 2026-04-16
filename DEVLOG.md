@@ -37,6 +37,38 @@
 
 ---
 
+## 16.04.2026 11:00 [primary] — Markdown File First: media path from frontmatter + data migration + orphan cleanup + tag coercion
+
+### Goal
+Три категории data bugs в Test vault, корневая причина которых — нарушение принципа «Markdown File First»: код конструировал пути из slug вместо использования frontmatter как источника правды.
+
+### Actually completed
+
+**Принцип «Markdown File First» зафиксирован** (`PRINCIPLES.md`)
+- Новый принцип №10: `.md` файл — единственный источник правды. Кэши производные и восстановимые. Если frontmatter говорит `file: X.jpg` — используй X.jpg, не конструируй из slug. Проверка: «если открою в Obsidian — увижу то же самое?»
+
+**Media path из frontmatter, не из slug** (`storage/thumbnails.rs`, `commands/thumbnails.rs`, `watcher/handler.rs`)
+- Четыре места использовали `vault.media_path(slug, ext)` = `{slug}.{ext}` вместо `vault.root().join(file_name)` из frontmatter. При slug dedup (batzdu → batzdu-2) media путь указывал на несуществующий файл `batzdu-2.jpg`, хотя `batzdu.jpg` существовал
+- Исправлено в: `generate_for_block` ветка 1, `expected_thumb` ветка 1, `resolve_upgrade_media`, `resolve_upgrade_media_for_block`
+
+**Версионированная миграция thumb-кэша** (`commands/vault.rs`)
+- `migrate_thumb_cache`: маркер `.arena/cache/thumbs/.format-version`. При несовпадении — wipe всех .jpg + регенерация через full_scan. Текущая версия: 3
+- Per-thumb `thumb:updated` events из full_scan background thread для инкрементального обновления sidebar во время миграции
+
+**Format-aware is_thumb_fresh** (`storage/thumbnails.rs`)
+- `expected_thumb(block, vault)` → `OnlyJpeg | OnlyPng | Either`. При несовпадении формата на диске с ожидаемым — thumb считается stale, регенерируется автоматически
+
+**Orphan cleanup в full_scan** (`watcher/handler.rs`)
+- После индексации: собирает slugs из .md файлов на диске, сравнивает с DB, удаляет записи без .md файла + их thumb'ы. Устраняет призраки от переименованных/удалённых блоков
+
+**Tag coercion: числа → строки** (`domain/block.rs`)
+- YAML `tags: [design, 1, 42]` — числовые значения приводятся к строкам вместо ошибки `invalid tag value`. Блоки с числовыми тегами теперь индексируются
+
+### Commits
+- [текущий]
+
+---
+
 ## 15.04.2026 09:30 [primary] — Clipper overlay: split show into fresh vs resume
 
 ### Goal

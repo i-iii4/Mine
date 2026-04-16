@@ -82,6 +82,7 @@ pub fn full_scan(
     conn: &Connection,
     vault: &VaultLayout,
     on_thumbs_done: Option<Box<dyn FnOnce() + Send>>,
+    app: Option<AppHandle>,
 ) -> Result<ScanResult> {
     let paths = files::scan_md_files(vault)?;
     let mut indexed = 0;
@@ -112,11 +113,36 @@ pub fn full_scan(
         }
     }
 
+    // Remove orphan index entries whose .md file no longer exists on
+    // disk. Covers renamed/deleted blocks that left stale DB rows.
+    let live_slugs: std::collections::HashSet<String> = paths
+        .iter()
+        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(String::from))
+        .collect();
+    let all_indexed = index::list_blocks_light(&tx)
+        .unwrap_or_default();
+    let mut orphans_removed = 0;
+    for block in &all_indexed {
+        if !live_slugs.contains(&block.slug) {
+            let _ = index::remove_block(&tx, &block.slug);
+            // Also remove orphan thumbnail
+            let thumb = vault.thumb_path(&block.slug);
+            if thumb.exists() {
+                let _ = std::fs::remove_file(&thumb);
+            }
+            orphans_removed += 1;
+        }
+    }
+    if orphans_removed > 0 {
+        log::info!("full_scan: removed {} orphan index entries", orphans_removed);
+    }
+
     tx.commit().context("failed to commit full_scan transaction")?;
 
     // Spawn background thread for thumbnail generation
     if !thumb_jobs.is_empty() {
         let vault_clone = vault.clone();
+        let app_clone = app.clone();
         match std::thread::Builder::new()
             .name("thumb-gen".into())
             .spawn(move || {
@@ -127,18 +153,23 @@ pub fn full_scan(
                     for job in &thumb_jobs {
                         let thumb_path = vault_clone.thumb_path(&job.block.slug);
 
-                        // O1: skip if thumbnail is fresh AND has valid image magic bytes
-                        if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path) {
+                        // O1: skip if thumbnail is fresh (exists, newer than
+                        // source, valid magic, and format matches what the
+                        // current pipeline would produce for this block).
+                        if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, &vault_clone) {
                             skipped += 1;
                             continue;
                         }
 
-                        match thumbnails::generate_for_block(&job.block, &vault_clone) {
-                            thumbnails::ThumbSource::None => {
-                                // Non-article block without resolvable media — silent skip
-                            }
-                            _ => {
-                                generated += 1;
+                        let source = thumbnails::generate_for_block(&job.block, &vault_clone);
+                        if source != thumbnails::ThumbSource::None {
+                            generated += 1;
+                            // Notify frontend per-thumb so the sidebar
+                            // updates URLs incrementally as legacy thumbs
+                            // get migrated, rather than waiting for the
+                            // whole batch to finish.
+                            if let Some(ref app) = app_clone {
+                                emit_thumb_events(app, &vault_clone, &job.block, source);
                             }
                         }
                     }
@@ -211,7 +242,7 @@ pub fn index_md_file(
 
         let thumb_path = vault.thumb_path(&job.block.slug);
 
-        if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path) {
+        if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, vault) {
             return Ok(());
         }
 
@@ -284,14 +315,14 @@ fn resolve_upgrade_media_for_block(
     vault: &VaultLayout,
     block: &Block,
 ) -> Option<(PathBuf, &'static str)> {
-    // 1. frontmatter.file
+    // 1. frontmatter.file — use filename from frontmatter directly
     if let Some(ref file_name) = block.frontmatter.file {
         let ext = file_name
             .rsplit('.')
             .next()
             .unwrap_or("")
             .to_lowercase();
-        let media_path = vault.media_path(&block.slug, &ext);
+        let media_path = vault.root().join(file_name);
         if media_path.exists() {
             if thumbnails::is_image_ext(&ext) {
                 return Some((media_path, "image"));
@@ -506,7 +537,7 @@ mod tests {
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
 
-        let result = full_scan(&conn, &vault, None).unwrap();
+        let result = full_scan(&conn, &vault, None, None).unwrap();
         assert_eq!(result, ScanResult { indexed: 0, errors: 0 });
     }
 
@@ -520,7 +551,7 @@ mod tests {
         write_md_file(&vault, "beta", "link", &["web"]);
         write_md_file(&vault, "gamma", "article", &[]);
 
-        let result = full_scan(&conn, &vault, None).unwrap();
+        let result = full_scan(&conn, &vault, None, None).unwrap();
         assert_eq!(result, ScanResult { indexed: 3, errors: 0 });
 
         let blocks = index::list_blocks(&conn).unwrap();
@@ -537,7 +568,7 @@ mod tests {
         // Write an invalid .md file (no frontmatter)
         std::fs::write(vault.block_path("bad"), "not a valid block").unwrap();
 
-        let result = full_scan(&conn, &vault, None).unwrap();
+        let result = full_scan(&conn, &vault, None, None).unwrap();
         assert_eq!(result.indexed, 1);
         assert_eq!(result.errors, 1);
     }

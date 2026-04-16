@@ -211,7 +211,7 @@ fn resolve_upgrade_media(
             .next()
             .unwrap_or("")
             .to_lowercase();
-        let media_path = vault.media_path(&block.slug, &ext);
+        let media_path = vault.root().join(file_name);
         if media_path.exists() {
             if thumbnails::is_image_ext(&ext) {
                 return Some((media_path, "image"));

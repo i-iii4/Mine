@@ -493,8 +493,16 @@ fn parse_tags(parent: &Value) -> Result<Vec<String>, BlockError> {
 
     let mut tags = Vec::with_capacity(seq.len());
     for item in seq {
-        let s = item.as_str().ok_or(BlockError::InvalidTagValue)?;
-        let normalized = crate::domain::tag::normalize_tag(s);
+        // YAML may parse bare values like `1` as integers, not strings.
+        // Coerce to string so tags like "1" don't break block indexing.
+        let s = match item.as_str() {
+            Some(s) => s.to_string(),
+            None => item.as_i64().map(|n| n.to_string())
+                .or_else(|| item.as_f64().map(|n| n.to_string()))
+                .or_else(|| item.as_bool().map(|b| b.to_string()))
+                .ok_or(BlockError::InvalidTagValue)?,
+        };
+        let normalized = crate::domain::tag::normalize_tag(&s);
         if !normalized.is_empty() && !tags.contains(&normalized) {
             tags.push(normalized);
         }
@@ -866,6 +874,14 @@ mod tests {
         let yaml = "type: image\nsaved_at: 2026-02-26T14:30:00Z\ntags: single-string";
         let err = parse_frontmatter(yaml).unwrap_err();
         assert!(matches!(err, BlockError::InvalidTagValue));
+    }
+
+    #[test]
+    fn parse_frontmatter_tags_numeric_coerced_to_string() {
+        // YAML parses bare `1` as integer. Tag parser must coerce to "1".
+        let yaml = "type: link\nsaved_at: 2026-02-26T14:30:00Z\ntags:\n  - design\n  - 1\n  - 42";
+        let fm = parse_frontmatter(yaml).unwrap();
+        assert_eq!(fm.tags, vec!["design", "1", "42"]);
     }
 
     #[test]
