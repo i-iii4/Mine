@@ -8,6 +8,7 @@
 use notify::RecommendedWatcher;
 use rusqlite::Connection;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::sync::Mutex;
 use thiserror::Error;
 
@@ -26,6 +27,8 @@ pub struct AppState {
     pub vault_state: Mutex<Option<VaultState>>,
     /// File watcher handle. Dropping it stops watching.
     pub watcher: Mutex<Option<RecommendedWatcher>>,
+    /// Paths currently undergoing background sync.
+    pub syncing_vaults: Mutex<HashSet<String>>,
 }
 
 impl AppState {
@@ -33,6 +36,7 @@ impl AppState {
         Self {
             vault_state: Mutex::new(None),
             watcher: Mutex::new(None),
+            syncing_vaults: Mutex::new(HashSet::new()),
         }
     }
 }

@@ -18,7 +18,7 @@ import type {
 declare const self: DedicatedWorkerGlobalScope;
 
 const PROGRESS_CHUNK = 500;
-const PREVIEW_MAX_CHARS = 400;
+const PREVIEW_MAX_CHARS = 220;
 
 let canvas: OffscreenCanvas | null = null;
 let ctx: OffscreenCanvasRenderingContext2D | null = null;

@@ -267,11 +267,11 @@ function BlockContent({
   block: LightBlock | IndexedBlock;
   vaultPath: string;
 }) {
-  // Lazy-load full body if truncated (LightBlock has SUBSTR(body, 1, 500))
+  // Lazy-load full body if truncated (LightBlock carries only a short preview).
   const [fullBody, setFullBody] = useState<string | null>(null);
   useEffect(() => {
     setFullBody(null);
-    if (block.body.length >= 498) {
+    if (block.body.length >= 218) {
       getBlock(block.slug).then((full) => {
         if (full) setFullBody(full.body);
       });
@@ -453,4 +453,3 @@ function resolveImageSrc(src: string, vaultPath: string): string {
   }
   return mediaUrl(vaultPath, src);
 }
-

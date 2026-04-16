@@ -47,6 +47,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   getVaultPath,
   selectVault,
+  startVaultSync,
   listBlocks,
   listTags,
   listChannels,
@@ -434,8 +435,37 @@ function AppWithVault({
   }, [loadPreviews]);
 
   useEffect(() => {
+    let cancelled = false;
+    let syncTimer: number | null = null;
+
     setIsSyncing(true);
-    void loadData({ includePreviews: false });
+    void (async () => {
+      await loadData({ includePreviews: false });
+      if (cancelled) return;
+      syncTimer = window.setTimeout(() => {
+        void startVaultSync()
+          .then((started) => {
+            if (!started && !cancelled) {
+              setIsSyncing(false);
+            }
+          })
+          .catch((err) => {
+            if (!cancelled) {
+              const msg = err instanceof Error ? err.message : String(err);
+              console.error("[SYNC] FAILED TO START:", msg, err);
+              setLoadError(msg);
+              setIsSyncing(false);
+            }
+          });
+      }, 0);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (syncTimer !== null) {
+        window.clearTimeout(syncTimer);
+      }
+    };
   }, [vaultPath, loadData]);
 
   // Listen for vault-changed events from file watcher (with debounce)

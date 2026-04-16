@@ -61,6 +61,8 @@ pub struct LightBlock {
     pub tags: Vec<String>,
 }
 
+const LIGHT_BLOCK_BODY_PREVIEW_CHARS: i64 = 220;
+
 /// A tag with its usage count across blocks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TagCount {
@@ -297,30 +299,59 @@ pub fn slug_exists(conn: &Connection, slug: &str) -> Result<bool> {
 /// Given a raw slug, return a unique variant that does not collide with existing slugs.
 /// Tries `raw_slug` first, then `raw_slug-2`, `raw_slug-3`, ..., up to `raw_slug-1000`.
 pub fn resolve_unique_slug(conn: &Connection, raw_slug: &str) -> Result<String> {
-    if !slug_exists(conn, raw_slug)? {
-        return Ok(raw_slug.to_string());
-    }
-    for n in 2..=1000u32 {
-        let candidate = format!("{}-{}", raw_slug, n);
-        if !slug_exists(conn, &candidate)? {
-            return Ok(candidate);
+    let pattern = format!("{raw_slug}-%");
+    let mut stmt = conn.prepare(
+        "SELECT slug
+         FROM blocks
+         WHERE slug = ?1 OR slug LIKE ?2",
+    )?;
+
+    let rows = stmt.query_map(params![raw_slug, pattern], |row| row.get::<_, String>(0))?;
+
+    let mut exact_exists = false;
+    let mut used_suffixes = std::collections::HashSet::<u32>::new();
+    for row in rows {
+        let slug = row?;
+        if slug == raw_slug {
+            exact_exists = true;
+            continue;
+        }
+        let Some(suffix) = slug
+            .strip_prefix(raw_slug)
+            .and_then(|rest| rest.strip_prefix('-'))
+        else {
+            continue;
+        };
+        if let Ok(n) = suffix.parse::<u32>() {
+            used_suffixes.insert(n);
         }
     }
+
+    if !exact_exists {
+        return Ok(raw_slug.to_string());
+    }
+
+    for n in 2..=1000u32 {
+        if !used_suffixes.contains(&n) {
+            return Ok(format!("{}-{}", raw_slug, n));
+        }
+    }
+
     anyhow::bail!("could not resolve slug conflict for '{}' after 1000 attempts", raw_slug);
 }
 
 /// List all blocks without description/source (lightweight for grid views).
-/// Body is truncated to 500 chars to reduce IPC payload for large articles.
+/// Body is truncated to a short preview to reduce IPC payload for large vaults.
 pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, url, media_file,
                 thumbnail, saved_at, width, height, author,
-                SUBSTR(body, 1, 500), first_image, media_urls, media_dimensions
+                SUBSTR(body, 1, ?1), first_image, media_urls, media_dimensions
          FROM blocks ORDER BY saved_at DESC",
     )?;
 
     let mut blocks: Vec<LightBlock> = stmt
-        .query_map([], |row| {
+        .query_map([LIGHT_BLOCK_BODY_PREVIEW_CHARS], |row| {
             Ok(LightBlock {
                 id: row.get(0)?,
                 slug: row.get(1)?,
@@ -1132,7 +1163,7 @@ mod tests {
 
         let light = list_blocks_light(&conn).unwrap();
         assert_eq!(light.len(), 1);
-        assert!(light[0].body.len() <= 500);
+        assert!(light[0].body.len() <= LIGHT_BLOCK_BODY_PREVIEW_CHARS as usize);
     }
 
     #[test]
@@ -1169,6 +1200,18 @@ mod tests {
         upsert_block(&conn, &make_block("doc-3", &[]), None).unwrap();
         let slug = resolve_unique_slug(&conn, "doc").unwrap();
         assert_eq!(slug, "doc-4");
+    }
+
+    #[test]
+    fn resolve_unique_slug_fills_first_gap() {
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("note", &[]), None).unwrap();
+        upsert_block(&conn, &make_block("note-2", &[]), None).unwrap();
+        upsert_block(&conn, &make_block("note-4", &[]), None).unwrap();
+        upsert_block(&conn, &make_block("note-archive", &[]), None).unwrap();
+
+        let slug = resolve_unique_slug(&conn, "note").unwrap();
+        assert_eq!(slug, "note-3");
     }
 
     // ── FTS5 escaping ───────────────────────────────────────────────────

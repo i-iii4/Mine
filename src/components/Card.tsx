@@ -310,12 +310,18 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
   const { text, media } = useMemo(() => extractTweetData(block.body), [block.body]);
   const dimsMap = useMemo(() => getMediaDimensionsMap(block), [block]);
 
-  // If body was truncated and lost media references, use media_urls from index
-  if (media.length === 0 && block.media_urls) {
+  // If body preview was truncated and
+  // lost some media references, fall back to the full media_urls list
+  // from the index. Covers Instagram carousels with 10+ images where
+  // the first ![](…) barely fits in the preview payload.
+  if (block.media_urls) {
     try {
       const urls: string[] = JSON.parse(block.media_urls);
-      for (const src of urls) {
-        media.push({ src, isVideo: isVideoFile(src), isVideoPoster: false });
+      if (urls.length > media.length) {
+        media.length = 0;
+        for (const src of urls) {
+          media.push({ src, isVideo: isVideoFile(src), isVideoPoster: false });
+        }
       }
     } catch { /* invalid JSON — skip */ }
   }
@@ -381,12 +387,11 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
         <div className="mt-3 grid grid-cols-2 gap-0.5">
           {media.slice(0, 4).map((m) => {
             const resolved = resolveSrc(m.src);
-            const absClass = "absolute inset-0 h-full w-full object-contain";
+            const absClass = "absolute inset-0 h-full w-full object-cover";
             return (
               <div
                 key={m.src}
-                className="relative overflow-hidden bg-accent"
-                style={{ aspectRatio: aspectFor(m.src, "1 / 1") }}
+                className="relative aspect-square overflow-hidden bg-accent"
               >
                 {isVideoFile(m.src) ? (
                   <VideoFromBlob

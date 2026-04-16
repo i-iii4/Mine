@@ -123,6 +123,9 @@ pub fn full_scan(
         .unwrap_or_default();
     let mut orphans_removed = 0;
     for block in &all_indexed {
+        if block.slug.is_empty() || block.block_type == BlockType::Channel {
+            continue;
+        }
         if !live_slugs.contains(&block.slug) {
             let _ = index::remove_block(&tx, &block.slug);
             // Also remove orphan thumbnail

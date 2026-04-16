@@ -102,6 +102,23 @@ pub fn get_vault_path(
     Ok(None)
 }
 
+/// Start a background sync for the currently opened vault.
+/// Returns true if a new sync was started, false if one is already running.
+#[tauri::command]
+pub fn start_vault_sync(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<bool, CommandError> {
+    let path = {
+        let vault_state = state.vault_state.lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+        vs.vault.root().to_string_lossy().into_owned()
+    };
+
+    start_background_sync(app, path)
+}
+
 /// Rebuild the index from scratch: drop all indexed data, re-scan vault files.
 /// Use when the index is corrupted or out of sync with the filesystem.
 #[tauri::command]
@@ -145,7 +162,7 @@ pub fn rebuild_index(
 
 // ─── Shared initialization ──────────────────────────────────────────────────
 
-/// Initialize a vault: expand asset scope, create dirs, open DB, full scan.
+/// Initialize a vault: expand asset scope, create dirs, open DB and restore snapshot.
 fn initialize_vault(
     app: &AppHandle,
     state: &AppState,
@@ -192,12 +209,10 @@ fn initialize_vault(
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     *vault_state = Some(VaultState { conn, vault });
 
-    start_background_sync(app.clone(), path.to_string());
-
     Ok(VaultOpenResult {
         indexed,
         errors: 0,
-        sync_in_progress: true,
+        sync_in_progress: false,
     })
 }
 
@@ -245,32 +260,46 @@ fn thumbs_done_cb(app: AppHandle, path: String) -> Box<dyn FnOnce() + Send> {
     })
 }
 
-fn start_background_sync(app: AppHandle, path: String) {
+fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandError> {
+    {
+        let app_state = app.state::<AppState>();
+        let mut syncing = app_state.syncing_vaults.lock()
+            .map_err(|_| CommandError::Internal("syncing_vaults mutex poisoned".into()))?;
+        if !syncing.insert(path.clone()) {
+            return Ok(false);
+        }
+    }
+
     let sync_path = path.clone();
-    std::thread::Builder::new()
+    let app_for_thread = app.clone();
+    let path_for_thread = path.clone();
+    match std::thread::Builder::new()
         .name(format!("vault-sync-{}", sync_path))
         .spawn(move || {
-            let vault = VaultLayout::new(PathBuf::from(&path));
-            let _ = app.emit(
+            let vault = VaultLayout::new(PathBuf::from(&path_for_thread));
+            let _ = app_for_thread.emit(
                 "vault-sync-started",
                 VaultSyncStartedPayload {
-                    path: path.clone(),
+                    path: path_for_thread.clone(),
                 },
             );
 
             let conn = match db::open_or_create(&vault.index_db_path()) {
                 Ok(conn) => conn,
                 Err(err) => {
-                    log::error!("failed to open db for sync {}: {:#}", path, err);
-                    let _ = app.emit(
+                    log::error!("failed to open db for sync {}: {:#}", path_for_thread, err);
+                    let _ = app_for_thread.emit(
                         "vault-sync-finished",
                         VaultSyncFinishedPayload {
-                            path,
+                            path: path_for_thread.clone(),
                             indexed: 0,
                             errors: 0,
                             error: Some(format!("{:#}", err)),
                         },
                     );
+                    if let Ok(mut syncing) = app_for_thread.state::<AppState>().syncing_vaults.lock() {
+                        syncing.remove(&path_for_thread);
+                    }
                     return;
                 }
             };
@@ -278,17 +307,17 @@ fn start_background_sync(app: AppHandle, path: String) {
             let result = handler::full_scan(
                 &conn,
                 &vault,
-                Some(thumbs_done_cb(app.clone(), path.clone())),
-                Some(app.clone()),
+                Some(thumbs_done_cb(app_for_thread.clone(), path_for_thread.clone())),
+                Some(app_for_thread.clone()),
             );
 
             match result {
                 Ok(scan) => {
                     migrate_channels_to_files(&conn, &vault);
-                    let _ = app.emit(
+                    let _ = app_for_thread.emit(
                         "vault-sync-finished",
                         VaultSyncFinishedPayload {
-                            path: path.clone(),
+                            path: path_for_thread.clone(),
                             indexed: scan.indexed,
                             errors: scan.errors,
                             error: None,
@@ -296,11 +325,11 @@ fn start_background_sync(app: AppHandle, path: String) {
                     );
                 }
                 Err(err) => {
-                    log::error!("background vault sync failed for {}: {:#}", path, err);
-                    let _ = app.emit(
+                    log::error!("background vault sync failed for {}: {:#}", path_for_thread, err);
+                    let _ = app_for_thread.emit(
                         "vault-sync-finished",
                         VaultSyncFinishedPayload {
-                            path,
+                            path: path_for_thread.clone(),
                             indexed: 0,
                             errors: 0,
                             error: Some(format!("{:#}", err)),
@@ -308,10 +337,20 @@ fn start_background_sync(app: AppHandle, path: String) {
                     );
                 }
             }
+
+            if let Ok(mut syncing) = app_for_thread.state::<AppState>().syncing_vaults.lock() {
+                syncing.remove(&path_for_thread);
+            }
         })
-        .map(|_| ())
-        .map_err(|err| CommandError::Internal(format!("failed to spawn vault sync thread: {err}")))
-        .ok();
+    {
+        Ok(_handle) => Ok(true),
+        Err(err) => {
+            if let Ok(mut syncing) = app.state::<AppState>().syncing_vaults.lock() {
+                syncing.remove(&path);
+            }
+            Err(CommandError::Internal(format!("failed to spawn vault sync thread: {err}")))
+        }
+    }
 }
 
 fn count_indexed_blocks(conn: &Connection) -> Result<usize, CommandError> {

@@ -29,7 +29,7 @@ export interface IndexedBlock {
   tags: string[];
 }
 
-/** Lightweight block for grid/list views (body truncated, no description/source). */
+/** Lightweight block for grid/list views (short body preview, no description/source). */
 export interface LightBlock {
   id: number;
   slug: string;

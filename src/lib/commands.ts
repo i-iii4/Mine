@@ -24,6 +24,9 @@ export const getVaultPath = () =>
 export const listKnownVaults = () =>
   invoke<string[]>("list_known_vaults");
 
+export const startVaultSync = () =>
+  invoke<boolean>("start_vault_sync");
+
 // Blocks
 export const listBlocks = () =>
   invoke<LightBlock[]>("list_blocks");

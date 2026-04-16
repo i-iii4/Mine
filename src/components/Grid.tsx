@@ -50,6 +50,7 @@ const OVERSCAN_BACKWARD_PX = 600;
 const OVERSCAN_FORWARD_PX = 2200;
 const PRIORITY_BACKWARD_PX = 200;
 const PRIORITY_FORWARD_PX = 1400;
+const MEASUREMENT_BATCH_SIZE = 48;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -233,9 +234,6 @@ export function Grid({
     [blocks, heightsMap],
   );
 
-  // Can we render the real grid? True iff every current block has a
-  // measured height. Synchronous, single source of truth, no separate
-  // `heightsReady` flag that can drift.
   const allHeightsPresent =
     warmedUp &&
     parentWidth > 0 &&
@@ -260,13 +258,17 @@ export function Grid({
   // Compute (or retrieve from cache) the masonry layout. Only runs when
   // allHeightsPresent is true — the cache never sees partial/broken layouts.
   const layout = useMemo((): MasonryLayout => {
-    if (!allHeightsPresent) {
+    if (parentWidth <= 0 || blocks.length === 0) {
       return {
         columnCount: 1,
         columnWidth: 0,
         totalHeight: 0,
         positions: [],
       };
+    }
+
+    if (!allHeightsPresent) {
+      return buildLayout(blocks, parentWidth, heightsMap);
     }
 
     const cached = layoutCache.get(blocks, parentWidth);
@@ -317,6 +319,28 @@ export function Grid({
     () => new Map(blocks.map((block) => [block.slug, block])),
     [blocks],
   );
+
+  const measurementBatch = useMemo(() => {
+    if (missingBlocks.length === 0) return [];
+
+    const prioritized = new Map<number, LightBlock>();
+    for (const item of visibleItems) {
+      const block = blocks[item.index];
+      if (!block || heightsMap.has(block.id)) continue;
+      prioritized.set(block.id, block);
+      if (prioritized.size >= MEASUREMENT_BATCH_SIZE) {
+        return Array.from(prioritized.values());
+      }
+    }
+
+    for (const block of missingBlocks) {
+      if (prioritized.has(block.id)) continue;
+      prioritized.set(block.id, block);
+      if (prioritized.size >= MEASUREMENT_BATCH_SIZE) break;
+    }
+
+    return Array.from(prioritized.values());
+  }, [blocks, heightsMap, missingBlocks, visibleItems]);
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
@@ -377,7 +401,7 @@ export function Grid({
           }}
           data-grid-scroll
         >
-          {parentWidth > 0 && blocks.length > 0 && allHeightsPresent && (
+          {parentWidth > 0 && blocks.length > 0 && (
             <VirtualMasonryLayout
               key={currentTag ?? "__all__"}
               blocks={blocks}
@@ -389,12 +413,14 @@ export function Grid({
           )}
           {parentWidth > 0 && blocks.length > 0 && !allHeightsPresent && (
             <>
-              <div className="flex h-full items-center justify-center">
-                <p className="text-sm text-muted-foreground">Computing layout…</p>
+              <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex justify-center">
+                <p className="rounded-1 border border-border bg-background/90 px-3 py-1 text-sm text-muted-foreground backdrop-blur">
+                  Refining layout…
+                </p>
               </div>
-              {missingBlocks.length > 0 && (
+              {measurementBatch.length > 0 && (
                 <MeasurementPass
-                  blocks={missingBlocks}
+                  blocks={measurementBatch}
                   columnWidth={deriveColumnWidth(parentWidth)}
                   vaultPath={vaultPath}
                   onMeasured={handleMeasured}
