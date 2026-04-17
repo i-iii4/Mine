@@ -17,6 +17,130 @@ SPEC → TEST (красные) → CODE (зелёные) → VERIFY → COMMIT
 
 Фаза 1 создаёт **эталонный модуль** (`domain/block`) — образец качества для всех остальных. Уроки из каждого модуля влияют на спецификацию следующего.
 
+## Current Top Priority — Critical Path Reset v1 [PLANNED]
+
+Goal: устранить две подтверждённые архитектурные причины текущей неработоспособности:
+1. derived state (`index.db`, thumbs, preview cache) живёт внутри iCloud vault;
+2. feed рендерит оригинальные assets и real media вместо локальных preview-артефактов.
+
+Это **не rewrite проекта**, а **частичный reset двух корневых контрактов**:
+- derived state больше не хранится в iCloud vault;
+- feed больше не рендерит оригинальные assets и real media.
+
+До завершения `Critical Path Reset v1` локальные perf-оптимизации считаются вторичными. Исключение — явные correctness/security блокеры.
+
+### Summary
+
+- Вводится sync'ed идентификатор vault: `.arena/vault-id`.
+- Все derived данные переезжают в per-device app data store, keyed by `vault-id`.
+- Feed, sidebar и measurement-path используют только preview assets из local derived store.
+- `Detail` остаётся full-fidelity path и может открывать оригиналы.
+- Legacy `.arena/index.db` и legacy thumbs в vault игнорируются runtime и не удаляются автоматически в v1.
+
+### Architecture Changes To Record
+
+#### 1. Vault identity + derived store
+
+- `vault-id` хранится в `.arena/vault-id` и синхронизируется через iCloud вместе с vault.
+- `index.db`, preview cache, thumbnail cache, manifests и migration markers живут только в app data.
+- Перемещение vault не ломает identity.
+- Второй Mac открывает тот же vault через локальный rebuild derived store по тому же `vault-id`.
+- Multi-device sync derived state больше не является feature; синхронизируются только пользовательские файлы и `vault-id`.
+
+#### 2. Migration semantics
+
+- При первом открытии legacy vault без `vault-id` файл создаётся автоматически.
+- Если локальный derived store уже существует, UI открывается из snapshot, а sync идёт в фоне.
+- Если локальный derived store отсутствует, создаётся пустой local store и запускается rebuild в фоне.
+- Legacy `.arena/index.db` и `.arena/cache/thumbs` не участвуют в runtime path.
+- Legacy данные не удаляются автоматически в v1; это отдельный follow-up.
+
+#### 3. UX первой миграции
+
+- Shell рисуется сразу.
+- Если snapshot уже есть — UI открывается из него и показывает фоновый статус синхронизации.
+- Если snapshot отсутствует — показывается `Preparing library…` с прогрессом и счётчиками.
+- Этапы прогресса:
+  - `Creating local index`
+  - `Scanning markdown`
+  - `Generating previews`
+- UI становится usable после первого committed snapshot, не после полного rebuild.
+- Если rebuild прерван, partial local store сохраняется и следующий запуск продолжает incremental pass, а не начинает с нуля.
+
+#### 4. Feed preview-only contract
+
+- Feed, grid и sidebar используют только preview assets из local derived store.
+- Оригинальные `mediaUrl(...)` и real media запрещены в feed path.
+- `FeedPreviewManifest` — новый internal контракт для feed:
+  - `primary_preview_path`
+  - `kind`
+  - `tiles[]` до 4
+  - `overflow_count`
+  - `source_stamp`
+- Feed всегда рендерит только `primary_preview_path`.
+- Multi-image/social/article-with-many-images не собираются на клиенте.
+- Composite preview в v1 генерируется в Rust как один local JPEG.
+- Для 4+ изображений feed использует composite preview + `overflow_count`, а не дополнительные asset reads.
+- Autoplay video в feed не входит в `Critical Path Reset v1`; feed использует только preview/poster path. Возврат autoplay — отдельная фаза после стабилизации feed contract.
+
+#### 5. Preview invalidation
+
+- `source_stamp = markdown(mtime_ns + size) + media deps(mtime_ns + size)`.
+- Content hashing в v1 не используется.
+- Это расширение текущего `is_thumb_fresh` pattern, а не новая независимая invalidation-система.
+- Изменение `.md`, embedded image или любого media dependency инвалидирует preview для соответствующего slug.
+
+#### 6. Measurement/layout contract
+
+- `MeasureCard` не монтирует real media.
+- Hidden measurement не делает file reads.
+- Layout живёт от descriptor + preview geometry.
+- Width-bucket change и route switch должны работать поверх media-free measurement path.
+
+#### 7. Safety net
+
+- После preview-only migration обязателен `sample` на scroll `Everything`.
+- Если `tauri::protocol::asset::get_response` остаётся main-thread hotspot в feed scenario, async/custom asset handling автоматически становится **release blocker этой же фазы**, а не Phase 2 convenience optimization.
+
+### Critical Path Reset v1 Phases
+
+| # | Phase | Status | Deliverables |
+|---|-------|--------|--------------|
+| C1 | Derived Store Migration | [ ] | `vault-id`, local app-data store, startup/open against local index, first-run migration UX |
+| C2 | Feed Preview Pipeline | [ ] | `FeedPreviewManifest`, composite previews, feed/detail split, removal of originals from grid path |
+| C3 | Measurement + Invalidation Hardening | [ ] | media-free measurement, `source_stamp` invalidation, acceptance profiling |
+| C4 | Residual Risks / Follow-up | [ ] | watcher hardening beyond current catch-up, remaining frontend boot optimization, optional async/custom asset path for Detail/original flows, remaining windowing bugs |
+
+### Acceptance Criteria
+
+- `db_open` на старте больше не зависит от SQLite внутри iCloud vault.
+- `Everything` и channel feed не читают оригинальные assets из vault.
+- `sample` на scroll feed не показывает `asset::get_response` как dominant hotspot.
+- Первая миграция не выглядит как “пустое сломанное приложение”.
+- Move vault сохраняет continuity через `vault-id`.
+- Второй Mac открывает тот же vault через rebuild local derived store.
+- Feed не использует real media в measurement path.
+- `Detail` продолжает открывать оригиналы.
+
+### Known Residuals
+
+- Этот план **не обещает** мгновенно убрать вообще все лаги.
+- После него осознанно могут остаться:
+  - watcher correctness improvements beyond current catch-up;
+  - frontend boot / per-first-paint optimization;
+  - отдельная оптимизация Detail/original asset path;
+  - отдельные windowing bugs, если они сохранятся после перевода feed на previews.
+- Эти пункты считаются ожидаемым остатком, а не неожиданным новым регрессом.
+
+### Assumptions
+
+- `vault-id` — sync'ed файл внутри vault.
+- Derived store — всегда per-device local.
+- Legacy `.arena/*` в v1 не удаляется автоматически.
+- Composite preview в v1 генерируется серверно в Rust.
+- Preview invalidation в v1 основан на `mtime_ns + size`.
+- Autoplay video в feed не входит в `Critical Path Reset v1` и возвращается только после стабилизации feed contract.
+
 ## Phases
 
 ### Phase 0 — Архитектура и документация [COMPLETED]

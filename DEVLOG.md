@@ -1,5 +1,38 @@
 # Devlog
 
+## 17.04.2026 18:36 [primary] — Critical Path Reset v1 recorded in PLAN
+
+### Goal
+Перестать ходить по кругу вокруг локальных perf-фиксов и зафиксировать новый основной архитектурный курс проекта по фактам из trace/sample, чтобы следующие сессии не возвращались к старой стратегии.
+
+### Actually completed
+
+**Подтверждены два корневых bottleneck'а текущей архитектуры**
+- startup trace показал, что `db_open` для vault в iCloud сам по себе занимает секунды и не может считаться приемлемым runtime contract'ом
+- `sample` зависшего `mine` показал main thread внутри `tauri::protocol::asset::get_response`, то есть feed-path вязнет на синхронной раздаче локальных `asset://` файлов
+- quick experiment с отключением feed-video не изменил поведение, что подтвердило: корень шире autoplay-видео и сидит в общем feed asset path
+
+**В `PLAN.md` зафиксирован новый верхнеприоритетный блок `Critical Path Reset v1`** (`PLAN.md`)
+- новый приоритет поставлен выше исторических фаз как основной курс проекта
+- зафиксированы два корневых архитектурных изменения:
+  - `vault-id` + per-device derived store в app data вместо `index.db`/cache внутри iCloud vault
+  - preview-only feed contract без originals / real media в grid path
+- зафиксированы migration semantics, UX первой миграции, `FeedPreviewManifest`, composite preview default, preview invalidation, measurement contract и safety net по `sample`
+
+**Явно отмечен остаток, который эта фаза не обещает закрыть**
+- watcher hardening beyond current catch-up
+- frontend boot / first-paint optimization
+- optional async/custom asset path для Detail/original flows
+- отдельные windowing bugs после перевода feed на previews
+
+### Checks
+- ручная проверка `startup-trace.log`
+- `sample` зависшего процесса `mine`
+- документальная консолидация архитектурного курса в `PLAN.md`
+
+### Push
+- [текущий]
+
 ## 17.04.2026 13:44 [primary] — Watcher/sync contention fix + route snapshot cache
 
 ### Goal
