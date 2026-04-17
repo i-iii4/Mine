@@ -14,6 +14,7 @@ use serde::Serialize;
 use crate::domain::block::{extract_wikilinks, Block, BlockType, DateTime};
 use crate::domain::channel::Channel;
 use crate::domain::search::{SearchFilter, SearchQuery};
+use crate::domain::vault::VaultLayout;
 use crate::storage::media_dimensions::build_media_dimensions_json;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -58,6 +59,18 @@ pub struct LightBlock {
     pub first_image: Option<String>,
     pub media_urls: Option<String>,
     pub media_dimensions: Option<String>,
+}
+
+/// Minimal block projection for Phase 2 thumbnail upgrades.
+/// Keeps only the fields needed to resolve the original media source
+/// without touching thumbnail files or article bodies on the UI thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingThumbUpgradeBlock {
+    pub slug: String,
+    pub media_file: Option<String>,
+    pub thumbnail: Option<String>,
+    pub first_image: Option<String>,
+    pub media_urls: Option<String>,
 }
 
 const LIGHT_BLOCK_BODY_PREVIEW_CHARS: i64 = 220;
@@ -394,6 +407,32 @@ pub fn clear_thumb_metadata(conn: &Connection, slug: &str) -> Result<bool> {
     Ok(changed > 0)
 }
 
+/// Backfill thumbnail metadata for legacy vaults that already have thumb files
+/// on disk but predate the `thumb_format` / `thumb_mtime` columns.
+/// Returns the number of rows updated.
+pub fn backfill_missing_thumb_metadata(conn: &Connection, vault: &VaultLayout) -> Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT slug
+         FROM blocks
+         WHERE slug != ''
+           AND block_type != 'channel'
+           AND (thumb_format IS NULL OR thumb_mtime IS NULL)",
+    )?;
+
+    let slugs = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut updated = 0usize;
+    for slug in slugs {
+        if sync_thumb_metadata(conn, &slug, &vault.thumb_path(&slug))? {
+            updated += 1;
+        }
+    }
+
+    Ok(updated)
+}
+
 /// Check if a slug already exists in the index.
 pub fn slug_exists(conn: &Connection, slug: &str) -> Result<bool> {
     let exists: bool = conn
@@ -645,6 +684,33 @@ pub fn list_preview_blocks_by_tag(
     }
 
     Ok(grouped)
+}
+
+/// List only blocks whose thumbnail metadata says the on-disk thumb is still
+/// a PNG text placeholder and may need a Phase 2 browser-decoded upgrade.
+pub fn list_pending_thumb_upgrade_blocks(conn: &Connection) -> Result<Vec<PendingThumbUpgradeBlock>> {
+    let mut stmt = conn.prepare(
+        "SELECT slug, media_file, thumbnail, first_image, media_urls
+         FROM blocks
+         WHERE slug != ''
+           AND block_type != 'channel'
+           AND thumb_format = 'png'
+         ORDER BY saved_at DESC",
+    )?;
+
+    let blocks = stmt
+        .query_map([], |row| {
+            Ok(PendingThumbUpgradeBlock {
+                slug: row.get(0)?,
+                media_file: row.get(1)?,
+                thumbnail: row.get(2)?,
+                first_image: row.get(3)?,
+                media_urls: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(blocks)
 }
 
 /// Get a single block by slug. Returns None if not found.
@@ -1418,6 +1484,31 @@ mod tests {
         let cleared_a = cleared.iter().find(|item| item.slug == "design-a").unwrap();
         assert_eq!(cleared_a.thumb_format, None);
         assert_eq!(cleared_a.thumb_mtime, 0);
+    }
+
+    #[test]
+    fn backfill_missing_thumb_metadata_restores_legacy_preview_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
+
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("legacy-thumb", &["design"]), None).unwrap();
+
+        let before = list_preview_blocks(&conn, 10).unwrap();
+        let legacy_before = before.iter().find(|item| item.slug == "legacy-thumb").unwrap();
+        assert_eq!(legacy_before.thumb_format, None);
+        assert_eq!(legacy_before.thumb_mtime, 0);
+
+        std::fs::write(vault.thumb_path("legacy-thumb"), [0xFF, 0xD8, 0xFF, 0x00]).unwrap();
+
+        let updated = backfill_missing_thumb_metadata(&conn, &vault).unwrap();
+        assert_eq!(updated, 1);
+
+        let after = list_preview_blocks(&conn, 10).unwrap();
+        let legacy_after = after.iter().find(|item| item.slug == "legacy-thumb").unwrap();
+        assert_eq!(legacy_after.thumb_format, Some(ThumbFormat::Jpeg));
+        assert!(legacy_after.thumb_mtime > 0);
     }
 
     // ── resolve_unique_slug ─────────────────────────────────────────────

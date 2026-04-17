@@ -11,6 +11,7 @@
 | 5 | `resolve_unique_slug` N queries | OPEN |
 | 6 | Grid virtualization absent on desktop path | FIXED (custom windowed masonry) |
 | 7 | Стартовый grid payload слишком тяжёлый (`body`, tags, media metadata на весь corpus) | PARTIALLY FIXED (route-scoped `list_grid_blocks`, no per-block tags) |
+| 8 | `list_pending_thumb_upgrades()` делал file peek'и из IPC на UI thread | FIXED (SQLite planner + `spawn_blocking`) |
 
 ## Latest wins
 
@@ -25,12 +26,18 @@
 - `cardLayout.ts` + `Card.tsx` + `cardHeight.ts`: начат переход на единый geometry contract. Variant карточки, preview text и media aspect ratio теперь вычисляются через общий descriptor и используются одновременно рендером и height calculation.
 - `list_grid_blocks` стал paged: первый экран получает page window, а следующие блоки дозагружаются по мере приближения к хвосту visible range. Это снимает линейный payload на `Everything`.
 
+### 17.04.2026 — startup thumb planner + legacy thumb metadata
+
+- `commands/thumbnails.rs` + `storage/index.rs`: `list_pending_thumb_upgrades()` больше не читает thumbs с диска из IPC. Phase 2 planner переведён на `spawn_blocking`, открывает отдельный SQLite connection и выбирает только `thumb_format = 'png'` через `PendingThumbUpgradeBlock`.
+- `commands/vault.rs` + `storage/index.rs`: при `open_vault()` запускается фоновый backfill `thumb_format/thumb_mtime` для legacy vault'ов, где `.jpg` уже есть в `.arena/cache/thumbs`, но metadata в БД ещё пустые. После backfill отправляется `vault-changed`, чтобы sidebar previews перечитались автоматически.
+- Практический эффект на реальном vault `Mine`: beachball исчез, а левое меню начало подтягивать уже существующие preview cards без полного rebuild index.
+
 Эти изменения устранили два самых тяжёлых path'а первого экрана:
 - полный reindex перед открытием UI;
 - полный проход по всем блокам ради sidebar previews.
 
 Не устранено:
-- `list_pending_thumb_upgrades()` всё ещё смотрит в on-disk placeholder state при построении startup upgrade queue; это отдельный следующий path.
+- duplicate window problem при повторном `cargo tauri dev`: в desktop app пока нет single-instance guard, поэтому повторный запуск может открыть второе окно вместо фокуса существующего
 
 ## Render Cycle Analysis
 
@@ -102,10 +109,6 @@ Rust IPC returns new array reference every time → `setBlocks(new_array)` alway
 - `index.rs:231-237`: up to 999 `slug_exists()` calls
 - Fix: `SELECT slug FROM blocks WHERE slug LIKE ?` + compute next in Rust
 
-**M5. `list_pending_thumb_upgrades` всё ещё использует filesystem reads**
-- Sidebar path уже переведён на SQLite thumb metadata, но startup upgrade queue пока ещё читает placeholder state с диска
-- Fix: переиспользовать `thumb_format` из SQLite и убрать лишние file peek'и из upgrade planner
-
 ### LOW — Optimization
 
 **L1. 300+ vault-refreshed listeners**
@@ -154,4 +157,5 @@ Rust IPC returns new array reference every time → `setBlocks(new_array)` alway
 - [x] SQL top-N previews
 - [~] H5: split GridBlock / BlockDetail payload
 - [x] M5: thumb metadata in SQLite
+- [x] Startup planner на SQLite + `spawn_blocking`
 - [x] L2: Grid virtualization

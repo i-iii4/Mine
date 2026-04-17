@@ -15,6 +15,7 @@ use serde::Serialize;
 use crate::commands::state::{AppState, CommandError, VaultState};
 use crate::domain::vault::VaultLayout;
 use crate::storage::db;
+use crate::storage::index;
 use crate::util::{append_startup_trace, reset_startup_trace};
 use crate::watcher::handler::{self, ScanResult};
 use crate::watcher::watch;
@@ -271,6 +272,8 @@ fn initialize_vault(
     *vault_state = Some(VaultState { conn, vault });
     append_startup_trace(app, "initialize_vault", &format!("done path={} indexed={} total_elapsed_ms={}", path, indexed, total.elapsed().as_millis()));
 
+    start_thumb_metadata_backfill(app.clone(), path.to_string());
+
     Ok(VaultOpenResult {
         indexed,
         errors: 0,
@@ -312,6 +315,44 @@ fn migrate_thumb_cache(vault: &VaultLayout) {
     // Write the new version marker. If this fails, next startup will
     // re-run the migration — safe, just slightly wasteful.
     let _ = std::fs::write(&marker, THUMB_FORMAT_VERSION);
+}
+
+/// Legacy vaults may have thumbnail files on disk but no DB metadata yet.
+/// Backfill `thumb_format` / `thumb_mtime` in the background so sidebar
+/// previews start working again without blocking startup.
+fn start_thumb_metadata_backfill(app: AppHandle, path: String) {
+    let app_for_thread = app.clone();
+    let path_for_thread = path.clone();
+    let _ = std::thread::Builder::new()
+        .name(format!("thumb-meta-backfill-{}", path))
+        .spawn(move || {
+            let vault = VaultLayout::new(PathBuf::from(&path_for_thread));
+            let conn = match db::open_or_create(&vault.index_db_path()) {
+                Ok(conn) => conn,
+                Err(err) => {
+                    log::warn!("thumb metadata backfill db open failed for {}: {:#}", path_for_thread, err);
+                    append_startup_trace(&app_for_thread, "thumb_metadata_backfill", &format!("db_open_failed path={} err={:#}", path_for_thread, err));
+                    return;
+                }
+            };
+
+            match index::backfill_missing_thumb_metadata(&conn, &vault) {
+                Ok(0) => {
+                    append_startup_trace(&app_for_thread, "thumb_metadata_backfill", &format!("noop path={}", path_for_thread));
+                }
+                Ok(updated) => {
+                    log::info!("thumb metadata backfill: {} row(s) updated for {}", updated, path_for_thread);
+                    append_startup_trace(&app_for_thread, "thumb_metadata_backfill", &format!("updated path={} rows={}", path_for_thread, updated));
+                    let _ = app_for_thread.emit("vault-changed", VaultChangedPayload {
+                        path: path_for_thread.clone(),
+                    });
+                }
+                Err(err) => {
+                    log::warn!("thumb metadata backfill failed for {}: {:#}", path_for_thread, err);
+                    append_startup_trace(&app_for_thread, "thumb_metadata_backfill", &format!("failed path={} err={:#}", path_for_thread, err));
+                }
+            }
+        });
 }
 
 /// Create a callback that emits "vault-changed" when background thumbnails finish.

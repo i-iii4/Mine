@@ -251,6 +251,8 @@ saved_at: 2026-02-26T14:30:00Z
 - Sidebar previews больше не строятся через полный `list_blocks_light()` с фильтрацией по всем тегам в памяти. Бэкенд отдаёт top-N preview rows отдельными SQL-запросами: один для `__all__`, один window-function запрос для `top N per tag`.
 - Frontend считает previews производным состоянием сервера: `useChannelPreviewsEvents` делает initial refresh и затем коалесцирует `block:added`, `block:removed`, `thumb:updated`, `vault-changed` в повторный `list_channel_previews`, вместо локального patch-state.
 - Таблица `blocks` хранит `thumb_format` (`jpeg` / `png`) и `thumb_mtime`. Эти поля синхронизируются в точках записи thumb (`generate_for_block`, `save_thumb`, direct create path) и позволяют `list_channel_previews` отвечать без filesystem syscall-ов на горячем пути.
+- Legacy vault compatibility: если в `.arena/cache/thumbs/` уже лежат `.jpg`, а `thumb_format/thumb_mtime` в SQLite ещё не заполнены, `open_vault()` запускает фоновый backfill metadata и после него шлёт `vault-changed`. Это восстанавливает sidebar previews без полного rebuild index.
+- Startup backlog planner для Phase 2 (`list_pending_thumb_upgrades`) тоже больше не читает thumb-файлы на main thread. Он работает через отдельный SQLite connection в `spawn_blocking`, выбирает только `thumb_format = 'png'` и восстанавливает media source из индексированных `media_file / thumbnail / first_image / media_urls`.
 
 ## Data flow
 

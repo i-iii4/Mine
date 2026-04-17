@@ -118,88 +118,61 @@ struct ThumbUpdatedPayload {
     is_text: bool,
 }
 
-/// Enumerate every indexed block whose on-disk thumb is a text placeholder
-/// (PNG magic bytes) but which references an embedded media file the
+/// Enumerate every indexed block whose thumbnail metadata says the on-disk
+/// thumb is still a PNG text placeholder and which references media the
 /// browser can decode. Returned list is what the frontend feeds into the
 /// worker queue at startup — each entry is a pending Phase 2 upgrade.
 ///
-/// Detection strategy:
-///   1. Walk `list_blocks_light` (already ordered by saved_at desc — the
-///      newest blocks upgrade first, which matches visual priority in
-///      the sidebar).
-///   2. For each block, peek the first 3 bytes of its thumb file. Skip
-///      if no thumb (nothing to upgrade), skip if JPEG (already a real
-///      image), proceed only on PNG (= text placeholder written by
-///      `generate_text_thumbnail`).
-///   3. Resolve which media file the upgrade should render. Priority:
-///      `frontmatter.file` (image blocks) → `frontmatter.thumbnail` (link
-///      OG image, video poster) → first local `![](...)` in body (article
-///      branch). Same priority order as `generate_for_block`'s cascade,
-///      so the upgrade replaces the placeholder with the same media that
-///      Rust would have used if it could decode it.
-///   4. Classify as image or video by file extension, using the single
-///      source of truth (`is_image_ext` / `is_video_ext`).
+/// Runs in `spawn_blocking` and re-opens SQLite from disk, so the startup
+/// backlog scan never blocks the WebView/main thread.
 ///
 /// Blocks without embedded media (pure-text articles) are skipped —
 /// the text placeholder IS the final thumb for them, there's nothing
 /// better we could produce.
 #[tauri::command]
-pub fn list_pending_thumb_upgrades(
+pub async fn list_pending_thumb_upgrades(
     state: State<'_, AppState>,
 ) -> Result<Vec<ThumbUpgradeRequest>, CommandError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    let vault = {
+        let vault_state = state
+            .vault_state
+            .lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        vault_state
+            .as_ref()
+            .ok_or(CommandError::NoVault)?
+            .vault
+            .clone()
+    };
 
-    let blocks = index::list_blocks_light(&vs.conn)
-        .map_err(|e| CommandError::Internal(format!("list_blocks_light: {}", e)))?;
+    let db_path = vault.index_db_path();
+    let requests = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<ThumbUpgradeRequest>, CommandError> {
+        let conn = db::open_or_create(&db_path)
+            .map_err(|e| CommandError::Internal(format!("open thumb upgrade db: {e:#}")))?;
+        let blocks = index::list_pending_thumb_upgrade_blocks(&conn)
+            .map_err(|e| CommandError::Internal(format!("list_pending_thumb_upgrade_blocks: {e:#}")))?;
 
-    let mut out: Vec<ThumbUpgradeRequest> = Vec::new();
-    for b in &blocks {
-        // Skip blocks without a valid slug (corrupt index rows) and
-        // channel rows (they don't render thumbs in the sidebar).
-        // `vault.thumb_path("")` panics, so filtering here is load-bearing.
-        if b.slug.is_empty() || b.block_type == crate::domain::block::BlockType::Channel {
-            continue;
+        let mut out: Vec<ThumbUpgradeRequest> = Vec::new();
+        for block in &blocks {
+            if let Some((media_path, kind)) = resolve_upgrade_media(&vault, block) {
+                out.push(ThumbUpgradeRequest {
+                    slug: block.slug.clone(),
+                    media_path: media_path.to_string_lossy().into_owned(),
+                    kind: kind.into(),
+                });
+            }
         }
-        let thumb_path = vs.vault.thumb_path(&b.slug);
-        if !is_png_placeholder(&thumb_path) {
-            continue;
-        }
-        if let Some((media_path, kind)) = resolve_upgrade_media(&vs.vault, b) {
-            out.push(ThumbUpgradeRequest {
-                slug: b.slug.clone(),
-                media_path: media_path.to_string_lossy().into_owned(),
-                kind: kind.into(),
-            });
-        }
-    }
 
-    log::info!("list_pending_thumb_upgrades: {} block(s) queued", out.len());
-    Ok(out)
+        log::info!("list_pending_thumb_upgrades: {} block(s) queued", out.len());
+        Ok(out)
+    })
+    .await
+    .map_err(|e| CommandError::Internal(format!("list_pending_thumb_upgrades join: {e}")))??;
+
+    Ok(requests)
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-/// Peek the first three bytes of a file and check whether it is PNG.
-/// Returns `false` on any I/O error (missing, unreadable, too short) —
-/// caller treats those as "no placeholder here, skip".
-fn is_png_placeholder(path: &std::path::Path) -> bool {
-    use std::io::Read;
-    let Ok(mut f) = std::fs::File::open(path) else {
-        return false;
-    };
-    let mut buf = [0u8; 3];
-    if f.read_exact(&mut buf).is_err() {
-        return false;
-    }
-    // PNG magic: 89 50 4E (\x89 P N). JPEG would be FF D8 FF, which
-    // `generate_for_block` writes when Rust decode succeeded — we
-    // deliberately skip those.
-    buf == [0x89, 0x50, 0x4E]
-}
 
 /// Resolve which media file should replace a text placeholder for `block`.
 /// Mirrors the cascade priority in `storage::thumbnails::generate_for_block`,
@@ -207,7 +180,7 @@ fn is_png_placeholder(path: &std::path::Path) -> bool {
 /// capable decoder. Returns `None` for pure-text blocks (nothing to upgrade).
 fn resolve_upgrade_media(
     vault: &crate::domain::vault::VaultLayout,
-    block: &index::LightBlock,
+    block: &index::PendingThumbUpgradeBlock,
 ) -> Option<(PathBuf, &'static str)> {
     // 1. frontmatter.file — explicit media for image/video blocks
     if let Some(ref file_name) = block.media_file {
@@ -257,12 +230,18 @@ fn resolve_upgrade_media(
         }
     }
 
-    // 4. First local video in body — article branch. `first_image` is
-    //    image-only; we need a fresh scan of the body for video.
-    if let Some(first_video) = thumbnails::find_first_local_media(&block.body, thumbnails::is_video_ext) {
-        let media_path = vault.root().join(&first_video);
-        if media_path.exists() {
-            return Some((media_path, "video"));
+    // 4. First local video from indexed media_urls — article branch.
+    if let Some(ref media_urls) = block.media_urls {
+        if let Ok(urls) = serde_json::from_str::<Vec<String>>(media_urls) {
+            for url in urls {
+                let ext = url.rsplit('.').next().unwrap_or("").to_lowercase();
+                if thumbnails::is_video_ext(&ext) {
+                    let media_path = vault.root().join(&url);
+                    if media_path.exists() {
+                        return Some((media_path, "video"));
+                    }
+                }
+            }
         }
     }
 
@@ -312,41 +291,25 @@ mod tests {
         }
     }
 
-    // ── is_png_placeholder ───────────────────────────────────────────────
-
-    #[test]
-    fn is_png_placeholder_true_for_png_false_for_jpeg_and_missing() {
-        let dir = tempfile::tempdir().unwrap();
-        let png = dir.path().join("a.jpg");
-        std::fs::write(&png, b"\x89PNG\r\n\x1a\n").unwrap();
-        assert!(is_png_placeholder(&png));
-
-        let jpg = dir.path().join("b.jpg");
-        std::fs::write(&jpg, b"\xFF\xD8\xFFsome jpeg").unwrap();
-        assert!(!is_png_placeholder(&jpg));
-
-        assert!(!is_png_placeholder(&dir.path().join("does-not-exist")));
-    }
-
     // ── resolve_upgrade_media ────────────────────────────────────────────
 
     #[test]
     fn resolve_upgrade_media_picks_body_image_for_article() {
         let dir = tempfile::tempdir().unwrap();
         let vault = make_vault(dir.path());
-        let conn = db::open_memory().unwrap();
 
         // Write a WebP body-image next to the article
         let webp = dir.path().join("artx-img0.webp");
         std::fs::write(&webp, b"RIFF\x00\x00\x00\x00WEBPVP8X").unwrap();
 
-        let block = make_article("artx", "text\n\n![](artx-img0.webp)\n\nmore");
-        write_block(&vault, &conn, block);
-
-        let light = index::list_blocks_light(&conn).unwrap();
-        let target = light.iter().find(|b| b.slug == "artx").unwrap();
-
-        let resolved = resolve_upgrade_media(&vault, target);
+        let target = index::PendingThumbUpgradeBlock {
+            slug: "artx".into(),
+            media_file: None,
+            thumbnail: None,
+            first_image: Some("artx-img0.webp".into()),
+            media_urls: Some(r#"["artx-img0.webp"]"#.into()),
+        };
+        let resolved = resolve_upgrade_media(&vault, &target);
         let (path, kind) = resolved.expect("must resolve");
         assert_eq!(kind, "image");
         assert_eq!(path, webp);
@@ -356,41 +319,40 @@ mod tests {
     fn resolve_upgrade_media_none_for_pure_text() {
         let dir = tempfile::tempdir().unwrap();
         let vault = make_vault(dir.path());
-        let conn = db::open_memory().unwrap();
+        let target = index::PendingThumbUpgradeBlock {
+            slug: "pure".into(),
+            media_file: None,
+            thumbnail: None,
+            first_image: None,
+            media_urls: None,
+        };
 
-        let block = make_article("pure", "just text, no media at all.");
-        write_block(&vault, &conn, block);
-
-        let light = index::list_blocks_light(&conn).unwrap();
-        let target = light.iter().find(|b| b.slug == "pure").unwrap();
-
-        assert!(resolve_upgrade_media(&vault, target).is_none());
+        assert!(resolve_upgrade_media(&vault, &target).is_none());
     }
 
     #[test]
     fn resolve_upgrade_media_skips_missing_file() {
         let dir = tempfile::tempdir().unwrap();
         let vault = make_vault(dir.path());
-        let conn = db::open_memory().unwrap();
+        let target = index::PendingThumbUpgradeBlock {
+            slug: "ghost".into(),
+            media_file: None,
+            thumbnail: None,
+            first_image: Some("ghost-img0.heic".into()),
+            media_urls: Some(r#"["ghost-img0.heic"]"#.into()),
+        };
 
-        // Article references a file that doesn't exist on disk
-        let block = make_article("ghost", "![](ghost-img0.heic)");
-        write_block(&vault, &conn, block);
-
-        let light = index::list_blocks_light(&conn).unwrap();
-        let target = light.iter().find(|b| b.slug == "ghost").unwrap();
-
-        assert!(resolve_upgrade_media(&vault, target).is_none());
+        assert!(resolve_upgrade_media(&vault, &target).is_none());
     }
 
-    // ── integration: full cascade + placeholder detection ───────────────
+    // ── integration: full cascade + DB-backed pending detection ─────────
 
     #[test]
     fn full_pipeline_article_with_webp_lands_in_upgrade_queue() {
         // Simulate the real Phase A → Phase B boundary:
         //   1. Article with WebP body image gets indexed
         //   2. generate_for_block falls through to text placeholder (PNG)
-        //   3. is_png_placeholder detects it
+        //   3. sync_thumb_metadata marks it as PNG in SQLite
         //   4. resolve_upgrade_media finds the WebP
         let dir = tempfile::tempdir().unwrap();
         let vault = make_vault(dir.path());
@@ -407,13 +369,35 @@ mod tests {
         assert_eq!(src, thumbnails::ThumbSource::Text);
 
         let thumb = vault.thumb_path("art");
-        assert!(is_png_placeholder(&thumb));
+        index::sync_thumb_metadata(&conn, "art", &thumb).unwrap();
 
         // Phase B startup enumeration must pick it up
-        let light = index::list_blocks_light(&conn).unwrap();
+        let light = index::list_pending_thumb_upgrade_blocks(&conn).unwrap();
         let target = light.iter().find(|b| b.slug == "art").unwrap();
         let (path, kind) = resolve_upgrade_media(&vault, target).unwrap();
         assert_eq!(kind, "image");
         assert_eq!(path, webp);
+    }
+
+    #[test]
+    fn resolve_upgrade_media_picks_video_from_indexed_media_urls() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let conn = db::open_memory().unwrap();
+
+        let video = dir.path().join("clip.mp4");
+        std::fs::write(&video, b"fake mp4").unwrap();
+
+        let block = make_article("clip", "text\n\n![](clip.mp4)\n\nmore");
+        write_block(&vault, &conn, block.clone());
+        let _ = thumbnails::generate_for_block(&block, &vault);
+        index::sync_thumb_metadata(&conn, "clip", &vault.thumb_path("clip")).unwrap();
+
+        let light = index::list_pending_thumb_upgrade_blocks(&conn).unwrap();
+        let target = light.iter().find(|b| b.slug == "clip").unwrap();
+
+        let (path, kind) = resolve_upgrade_media(&vault, target).unwrap();
+        assert_eq!(kind, "video");
+        assert_eq!(path, video);
     }
 }

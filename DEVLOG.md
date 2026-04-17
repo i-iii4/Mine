@@ -1,5 +1,42 @@
 # Devlog
 
+## 17.04.2026 11:41 [primary] — Thumb planner off main thread + legacy thumb metadata backfill
+
+### Goal
+Добить реальную причину beachball на старте и восстановить sidebar previews для старых vault'ов, у которых thumbs на диске уже есть, а `thumb_format/thumb_mtime` в SQLite ещё пустые.
+
+### Actually completed
+
+**Фактическая диагностика startup hang** (`src-tauri/src/commands/thumbnails.rs`, `src-tauri/src/commands/vault.rs`)
+- `startup-trace.log` + `sample` показали, что beachball происходил не в `open_vault`, а в `list_pending_thumb_upgrades()`
+- main thread синхронно читал thumbnail-файлы на диске прямо из IPC-обработчика WebView
+- planner Phase 2 переведён на `spawn_blocking` с отдельным SQLite connection, поэтому backlog scan больше не блокирует UI thread
+
+**DB-backed pending upgrade planner** (`src-tauri/src/storage/index.rs`, `src-tauri/src/commands/thumbnails.rs`)
+- добавлен `PendingThumbUpgradeBlock` — минимальная SQL-проекция для pending Phase 2 upgrades
+- `list_pending_thumb_upgrades()` больше не использует `list_blocks_light()` и не peek'ает thumb-файлы по одному
+- кандидаты теперь выбираются SQL-запросом `thumb_format = 'png'`, а media source восстанавливается из уже индексированных `media_file / thumbnail / first_image / media_urls`
+- добавлен тест на video resolution через `media_urls`
+
+**Legacy thumb metadata backfill** (`src-tauri/src/storage/index.rs`, `src-tauri/src/commands/vault.rs`)
+- добавлен `backfill_missing_thumb_metadata(conn, vault)`
+- при `open_vault()` запускается фоновый backfill для legacy vault'ов, где `.jpg` уже лежат в `.arena/cache/thumbs`, но metadata в БД ещё пустые
+- после успешного backfill шлётся `vault-changed`, и sidebar previews автоматически перечитываются
+- это восстановило иконки в левом меню для `Mine`, не требуя полного rebuild index
+
+**Новый discovered issue** (`src-tauri/src/lib.rs`)
+- у desktop app пока нет single-instance guard
+- повторный `cargo tauri dev`, пока старая инстанция ещё не умерла, может открыть второе окно `Mine`
+- задача добавлена в `PLAN.md`, но не входила в текущий фикс
+
+### Checks
+- `cargo test -p mine --lib --quiet` — 244/244
+- `cargo check -p mine --quiet`
+- локальный smoke-test на реальном vault `Mine`: startup без beachball, sidebar previews восстановлены
+
+### Push
+- [текущий]
+
 ## 17.04.2026 00:08 [primary] — Startup trace instrumentation
 
 ### Goal

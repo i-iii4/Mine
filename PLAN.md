@@ -146,6 +146,7 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.22 | Визуальная стилизация: overlay titlebar + drag region, Geist Sans (UI) + Geist Mono (карточки, метаданные), острые карточки без заливки, GAP 32px, sidebar без заголовка с градиентным fade | [x] |
 | 7.23 | Иконки каналов в sidebar: стопка из 1–3 мини-карточек с реальными превью, веерная анимация при ховере | [x] |
 | 7.24 | Fullscreen Detail: двухслойный layout (scroll + fixed metadata), Geist Mono, drag region | [x] |
+| 7.25 | Single-instance guard для desktop app: повторный запуск должен фокусировать существующее окно, а не создавать вторую инстанцию | [ ] |
 
 ### Phase 8 — Веб-клиппер (браузерное расширение) [COMPLETED]
 
@@ -562,6 +563,8 @@ SPEC: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) — полная архитект
 | 12.9 | Phase D (deferred): удаление `openh264`, `mp4` crates — заблокировано, worker video decode stub'нут | [-] |
 | 12.10 | Cache-bust fix: `list_channel_previews` возвращает `mtime` per thumb, frontend использует `?m=<mtime>` вместо raw URL | [x] |
 | 12.11 | Manual QA: visual regression на representative vault | [ ] |
+| 12.12 | Startup safety: `list_pending_thumb_upgrades` через SQLite + `spawn_blocking`, без file peek'ов на UI thread | [x] |
+| 12.13 | Legacy vault compatibility: backfill `thumb_format/thumb_mtime` из существующих `.jpg` при `open_vault()` | [x] |
 
 ### Backlog
 
