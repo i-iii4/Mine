@@ -51,6 +51,7 @@ export interface LightBlock {
 export interface GridSnapshot {
   blocks: LightBlock[];
   total_blocks: number;
+  has_more: boolean;
 }
 
 export interface TagCount {

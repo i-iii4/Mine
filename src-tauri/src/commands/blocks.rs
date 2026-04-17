@@ -16,6 +16,7 @@ use crate::storage::index::IndexedBlock;
 pub struct GridSnapshot {
     pub blocks: Vec<index::LightBlock>,
     pub total_blocks: usize,
+    pub has_more: bool,
 }
 
 // ─── Commands ───────────────────────────────────────────────────────────────
@@ -35,14 +36,20 @@ pub fn list_blocks(state: State<'_, AppState>) -> Result<Vec<index::LightBlock>,
 pub fn list_grid_blocks(
     state: State<'_, AppState>,
     current_tag: Option<String>,
+    offset: Option<usize>,
+    limit: Option<usize>,
 ) -> Result<GridSnapshot, CommandError> {
     let vault_state = state.vault_state.lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    let page_offset = offset.unwrap_or(0);
+    let page_limit = limit.unwrap_or(200).max(1);
+    let (blocks, has_more) = index::list_grid_blocks(&vs.conn, current_tag.as_deref(), page_offset, page_limit)?;
 
     Ok(GridSnapshot {
-        blocks: index::list_grid_blocks(&vs.conn, current_tag.as_deref())?,
+        blocks,
         total_blocks: index::count_grid_blocks(&vs.conn)?,
+        has_more,
     })
 }
 

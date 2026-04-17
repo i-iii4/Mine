@@ -386,7 +386,13 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
 /// List only the blocks needed by the visible grid, optionally filtered by tag.
 /// Excludes channel documents and omits per-block tag arrays to keep the
 /// startup/switch payload small; tag membership is fetched lazily for menus/detail.
-pub fn list_grid_blocks(conn: &Connection, tag: Option<&str>) -> Result<Vec<LightBlock>> {
+pub fn list_grid_blocks(
+    conn: &Connection,
+    tag: Option<&str>,
+    offset: usize,
+    limit: usize,
+) -> Result<(Vec<LightBlock>, bool)> {
+    let fetch_limit = limit.saturating_add(1);
     let sql = match tag {
         Some(_) => {
             "SELECT b.id, b.slug, b.block_type, b.title, b.url, b.media_file,
@@ -396,7 +402,8 @@ pub fn list_grid_blocks(conn: &Connection, tag: Option<&str>) -> Result<Vec<Ligh
              FROM blocks b
              INNER JOIN block_tags bt ON bt.block_id = b.id
              WHERE b.block_type != 'channel' AND bt.tag = ?2
-             ORDER BY b.saved_at DESC"
+             ORDER BY b.saved_at DESC
+             LIMIT ?3 OFFSET ?4"
         }
         None => {
             "SELECT id, slug, block_type, title, url, media_file,
@@ -405,7 +412,8 @@ pub fn list_grid_blocks(conn: &Connection, tag: Option<&str>) -> Result<Vec<Ligh
                     first_image, media_urls, media_dimensions
              FROM blocks
              WHERE block_type != 'channel'
-             ORDER BY saved_at DESC"
+             ORDER BY saved_at DESC
+             LIMIT ?2 OFFSET ?3"
         }
     };
 
@@ -439,16 +447,21 @@ pub fn list_grid_blocks(conn: &Connection, tag: Option<&str>) -> Result<Vec<Ligh
             })
     };
 
-    let blocks = match tag {
+    let mut blocks = match tag {
         Some(tag) => stmt
-            .query_map(params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, tag], map_row)?
+            .query_map(params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, tag, fetch_limit, offset], map_row)?
             .collect::<Result<Vec<_>, _>>()?,
         None => stmt
-            .query_map(params![LIGHT_BLOCK_BODY_PREVIEW_CHARS], map_row)?
+            .query_map(params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, fetch_limit, offset], map_row)?
             .collect::<Result<Vec<_>, _>>()?,
     };
 
-    Ok(blocks)
+    let has_more = blocks.len() > limit;
+    if has_more {
+        blocks.truncate(limit);
+    }
+
+    Ok((blocks, has_more))
 }
 
 /// Count non-channel blocks for the "Everything" sidebar row.
@@ -1225,13 +1238,31 @@ mod tests {
             None,
         ).unwrap();
 
-        let all = list_grid_blocks(&conn, None).unwrap();
+        let (all, has_more_all) = list_grid_blocks(&conn, None, 0, 50).unwrap();
         assert_eq!(all.len(), 3);
+        assert!(!has_more_all);
         assert!(all.iter().all(|block| block.block_type != BlockType::Channel));
 
-        let design = list_grid_blocks(&conn, Some("design")).unwrap();
+        let (design, has_more_design) = list_grid_blocks(&conn, Some("design"), 0, 50).unwrap();
         assert_eq!(design.len(), 2);
+        assert!(!has_more_design);
         assert!(design.iter().all(|block| block.slug.starts_with("design")));
+    }
+
+    #[test]
+    fn list_grid_blocks_paginates() {
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("one", &[]), None).unwrap();
+        upsert_block(&conn, &make_block("two", &[]), None).unwrap();
+        upsert_block(&conn, &make_block("three", &[]), None).unwrap();
+
+        let (page1, has_more1) = list_grid_blocks(&conn, None, 0, 2).unwrap();
+        let (page2, has_more2) = list_grid_blocks(&conn, None, 2, 2).unwrap();
+
+        assert_eq!(page1.len(), 2);
+        assert!(has_more1);
+        assert_eq!(page2.len(), 1);
+        assert!(!has_more2);
     }
 
     // ── resolve_unique_slug ─────────────────────────────────────────────

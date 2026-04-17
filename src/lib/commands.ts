@@ -32,8 +32,12 @@ export const startVaultSync = () =>
 export const listBlocks = () =>
   invoke<LightBlock[]>("list_blocks");
 
-export const listGridBlocks = (current_tag?: string) =>
-  invoke<GridSnapshot>("list_grid_blocks", { current_tag: current_tag ?? null });
+export const listGridBlocks = (current_tag?: string, offset?: number, limit?: number) =>
+  invoke<GridSnapshot>("list_grid_blocks", {
+    current_tag: current_tag ?? null,
+    offset: offset ?? null,
+    limit: limit ?? null,
+  });
 
 export const getBlock = (slug: string) =>
   invoke<IndexedBlock | null>("get_block", { slug });

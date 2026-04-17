@@ -22,13 +22,13 @@
 - `commands/blocks.rs` + `storage/index.rs` + `App.tsx`: grid перешёл на `list_grid_blocks(current_tag)` — backend сразу отдаёт только текущий маршрут, убирает channel-документы из snapshot и больше не тащит per-block `tags`.
 - `Grid.tsx`: первый paint больше не ждёт measurement всех карточек; hidden measurement идёт батчами, а layout уточняется поверх уже видимого контента.
 - `cardLayout.ts` + `Card.tsx` + `cardHeight.ts`: начат переход на единый geometry contract. Variant карточки, preview text и media aspect ratio теперь вычисляются через общий descriptor и используются одновременно рендером и height calculation.
+- `list_grid_blocks` стал paged: первый экран получает page window, а следующие блоки дозагружаются по мере приближения к хвосту visible range. Это снимает линейный payload на `Everything`.
 
 Эти изменения устранили два самых тяжёлых path'а первого экрана:
 - полный reindex перед открытием UI;
 - полный проход по всем блокам ради sidebar previews.
 
 Не устранено:
-- маршрут `Everything` всё ещё тащит весь corpus на первый экран;
 - `list_channel_previews` всё ещё делает `thumb_path.exists()`, PNG magic check и `metadata().modified()` на каждый preview.
 
 ## Render Cycle Analysis

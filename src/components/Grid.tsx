@@ -69,6 +69,9 @@ interface GridProps {
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onDeleteBlock: (slug: string) => void;
   onColumnCountChange?: (count: number) => void;
+  hasMoreBlocks?: boolean;
+  loadingMoreBlocks?: boolean;
+  onLoadMoreBlocks?: () => void;
 }
 
 interface GridContext {
@@ -141,6 +144,9 @@ export function Grid({
   onCreateAndAssign,
   onDeleteBlock,
   onColumnCountChange,
+  hasMoreBlocks = false,
+  loadingMoreBlocks = false,
+  onLoadMoreBlocks,
 }: GridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [parentWidth, setParentWidth] = useState(0);
@@ -355,6 +361,16 @@ export function Grid({
 
     return Array.from(prioritized.values());
   }, [blocks, heightsMap, missingBlocks, visibleItems]);
+
+  useEffect(() => {
+    if (!hasMoreBlocks || loadingMoreBlocks || !onLoadMoreBlocks) {
+      return;
+    }
+    const lastVisibleIndex = visibleItems.reduce((max, item) => Math.max(max, item.index), -1);
+    if (lastVisibleIndex >= blocks.length - 24) {
+      onLoadMoreBlocks();
+    }
+  }, [blocks.length, hasMoreBlocks, loadingMoreBlocks, onLoadMoreBlocks, visibleItems]);
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {

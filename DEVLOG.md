@@ -1,5 +1,31 @@
 # Devlog
 
+## 16.04.2026 21:27 [primary] — Paged grid snapshot for large vaults
+
+### Goal
+Снять следующий bottleneck после geometry-fix: маршрут `Everything` всё ещё грузил весь corpus одним `list_grid_blocks(all)` snapshot.
+
+### Actually completed
+
+**Пагинация backend snapshot** (`src-tauri/src/storage/index.rs`, `src-tauri/src/commands/blocks.rs`, `src/types/index.ts`, `src/lib/commands.ts`)
+- `list_grid_blocks` теперь принимает `offset/limit`
+- backend возвращает `has_more`
+- SQL-путь перешёл на `LIMIT/OFFSET` с `limit + 1` для определения хвоста
+- добавлен unit test на pagination
+
+**Incremental append на фронте** (`src/App.tsx`, `src/components/Grid.tsx`)
+- `App.tsx` загружает первый page `GRID_PAGE_SIZE = 200`
+- появился `loadMoreBlocks()`, который дозагружает следующий page и append'ит только новые id
+- `Grid.tsx` запрашивает следующую страницу, когда видимый диапазон подходит к хвосту текущего списка
+
+### Checks
+- `cargo test -p mine --lib --quiet` — 242/242
+- `bun run build`
+- `bun run test src/components/Grid.test.tsx src/lib/layoutCache.test.ts src/lib/cardHeight.test.ts src/lib/cardLayout.test.ts`
+
+### Push
+- [текущий]
+
 ## 16.04.2026 21:15 [primary] — Descriptor-driven card geometry
 
 ### Goal

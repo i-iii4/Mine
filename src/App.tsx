@@ -114,6 +114,8 @@ import {
 } from "@/components/ui/tooltip";
 import { Plus, Trash2, Info, ExternalLink } from "lucide-react";
 
+const GRID_PAGE_SIZE = 200;
+
 interface VaultChangedEvent {
   path: string;
 }
@@ -232,6 +234,8 @@ function AppWithVault({
 
   const [blocks, setBlocks] = useState<LightBlock[]>([]);
   const [totalBlocks, setTotalBlocks] = useState(0);
+  const [hasMoreBlocks, setHasMoreBlocks] = useState(false);
+  const [loadingMoreBlocks, setLoadingMoreBlocks] = useState(false);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [channels, setChannels] = useState<ChannelDto[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -384,7 +388,7 @@ function AppWithVault({
     const tagAtStart = currentTag;
     try {
       const [grid, t, ch] = await Promise.all([
-        listGridBlocks(currentTag),
+        listGridBlocks(currentTag, 0, GRID_PAGE_SIZE),
         listTags(),
         listChannels(),
       ]);
@@ -397,6 +401,8 @@ function AppWithVault({
       }
       setBlocks(grid.blocks);
       setTotalBlocks(grid.total_blocks);
+      setHasMoreBlocks(grid.has_more);
+      setLoadingMoreBlocks(false);
       setTags(t);
       setChannels(ch);
       setLoadError(null);
@@ -420,6 +426,33 @@ function AppWithVault({
   const loadDataRef = useRef(loadData);
   loadDataRef.current = loadData;
   const initialRouteLoadDoneRef = useRef(false);
+
+  const loadMoreBlocks = useCallback(async () => {
+    if (loadingMoreBlocks || !hasMoreBlocks) return;
+    const pathAtStart = vaultPathRef.current;
+    const tagAtStart = currentTag;
+    setLoadingMoreBlocks(true);
+    try {
+      const grid = await listGridBlocks(currentTag, blocks.length, GRID_PAGE_SIZE);
+      if (vaultPathRef.current !== pathAtStart || currentTag !== tagAtStart) {
+        return;
+      }
+      setBlocks((prev) => {
+        const seen = new Set(prev.map((block) => block.id));
+        const appended = grid.blocks.filter((block) => !seen.has(block.id));
+        return appended.length > 0 ? [...prev, ...appended] : prev;
+      });
+      setHasMoreBlocks(grid.has_more);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[LOAD_MORE] FAILED:", msg, err);
+      setLoadError(msg);
+    } finally {
+      if (vaultPathRef.current === pathAtStart && currentTag === tagAtStart) {
+        setLoadingMoreBlocks(false);
+      }
+    }
+  }, [blocks.length, currentTag, hasMoreBlocks, loadingMoreBlocks]);
 
   useEffect(() => {
     let cancelled = false;
@@ -883,6 +916,9 @@ function AppWithVault({
                 onCreateAndAssign={handleCreateTagFromMenu}
                 onDeleteBlock={handleDeleteBlock}
                 onColumnCountChange={handleColumnCountChange}
+                hasMoreBlocks={hasMoreBlocks}
+                loadingMoreBlocks={loadingMoreBlocks}
+                onLoadMoreBlocks={loadMoreBlocks}
               />
             }
           >
@@ -996,6 +1032,9 @@ interface RouteContext {
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onDeleteBlock: (slug: string) => void;
   onColumnCountChange: (count: number) => void;
+  hasMoreBlocks: boolean;
+  loadingMoreBlocks: boolean;
+  onLoadMoreBlocks: () => void;
 }
 
 function PageShell(props: RouteContext) {
