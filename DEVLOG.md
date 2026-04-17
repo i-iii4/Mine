@@ -1,5 +1,30 @@
 # Devlog
 
+## 16.04.2026 22:48 [primary] — Hotfix: serialize vault open and hide UI until ready
+
+### Goal
+Убрать гонку `NoVault` и полуинициализированный экран, который появлялся, пока `open_vault()` ещё не завершился.
+
+### Actually completed
+
+**`initialize_vault()` теперь сериализует open-path через `vault_state` mutex** (`src-tauri/src/commands/vault.rs`)
+- mutex `vault_state` берётся в самом начале `initialize_vault()` и держится до конца open
+- конкурентные команды теперь ждут завершения open вместо того, чтобы видеть временное `None` и падать в `NoVault`
+- повторный open того же пути по-прежнему fast-path'ится в уже открытый snapshot
+
+**Фронтенд не монтирует боевой UI до `vaultReady`** (`src/App.tsx`)
+- пока `open_vault()` не завершён, `AppWithVault` показывает только shell + `Opening vault…`
+- `Sidebar`, `Routes`, `Search`, `DropZone`, `Detail` и другие runtime-компоненты не стартуют в промежуточном состоянии
+- это убирает частично живой экран с `Everything` + `no vault selected`
+
+### Checks
+- `cargo test -p mine --lib --quiet` — 243/243
+- `cargo check -p mine --quiet`
+- `bun run build`
+
+### Push
+- [текущий]
+
 ## 16.04.2026 22:34 [primary] — Hotfix: unblock restore-path startup
 
 ### Goal

@@ -881,6 +881,23 @@ function AppWithVault({
     [loadData, currentTag, selectedBlock, blocks.length, tags.length],
   );
 
+  if (!vaultReady && !loadError) {
+    return (
+      <div className="flex h-screen w-screen flex-col bg-background text-foreground">
+        <header
+          data-tauri-drag-region
+          className="flex h-8 shrink-0 items-center border-b border-border"
+        >
+          <div data-tauri-drag-region className="w-20 shrink-0" />
+          <div data-tauri-drag-region className="flex flex-1 items-center px-3" />
+        </header>
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          <p className="text-sm text-muted-foreground">Opening vault…</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <DndContext
       sensors={sensors}

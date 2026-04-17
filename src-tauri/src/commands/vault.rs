@@ -172,17 +172,15 @@ fn initialize_vault(
     state: &AppState,
     path: &str,
 ) -> Result<VaultOpenResult, CommandError> {
-    {
-        let vault_state = state.vault_state.lock()
-            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-        if let Some(ref vs) = *vault_state {
-            if vs.vault.root() == Path::new(path) {
-                return Ok(VaultOpenResult {
-                    indexed: count_indexed_blocks(&vs.conn)?,
-                    errors: 0,
-                    sync_in_progress: false,
-                });
-            }
+    let mut vault_state = state.vault_state.lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    if let Some(ref vs) = *vault_state {
+        if vs.vault.root() == Path::new(path) {
+            return Ok(VaultOpenResult {
+                indexed: count_indexed_blocks(&vs.conn)?,
+                errors: 0,
+                sync_in_progress: false,
+            });
         }
     }
 
@@ -227,9 +225,6 @@ fn initialize_vault(
         }
     }
 
-    // Update app state
-    let mut vault_state = state.vault_state.lock()
-            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     *vault_state = Some(VaultState { conn, vault });
 
     Ok(VaultOpenResult {
