@@ -6,7 +6,7 @@
 |---|---|---|
 | 1 | Блокирующий startup: `select_vault` / `get_vault_path` ждали `full_scan()` | FIXED (snapshot-first open + background sync) |
 | 2 | Переключение vault через `window.location.reload()` | FIXED |
-| 3 | `list_channel_previews` делал полный `list_blocks_light()` + O(tags * blocks) фильтрацию | PARTIALLY FIXED (SQL top-N slugs, но thumb metadata ещё с FS) |
+| 3 | `list_channel_previews` делал полный `list_blocks_light()` + O(tags * blocks) фильтрацию | FIXED (SQL top-N previews + thumb metadata в SQLite) |
 | 4 | Full data reload on every mutation | OPEN |
 | 5 | `resolve_unique_slug` N queries | OPEN |
 | 6 | Grid virtualization absent on desktop path | FIXED (custom windowed masonry) |
@@ -18,7 +18,8 @@
 
 - `commands/vault.rs`: открытие vault разделено на две фазы. SQLite + watcher + последний индексированный snapshot доступны сразу; `full_scan()` уходит в отдельный поток и репортит `vault-sync-started` / `vault-sync-finished`.
 - `App.tsx`: смена vault больше не делает `window.location.reload()`. Компонент remount'ится по `vaultPath`, а stale async-ответы старого vault отфильтровываются через `vaultPathRef + requestId`.
-- `commands/channels.rs` + `storage/index.rs`: sidebar previews теперь строятся через SQL top-N slugs (`__all__` + `ROW_NUMBER() OVER (PARTITION BY tag)`), без полного `list_blocks_light()` и без O(tags * blocks) фильтрации в Rust.
+- `commands/channels.rs` + `storage/index.rs`: sidebar previews теперь строятся через SQL top-N previews (`__all__` + `ROW_NUMBER() OVER (PARTITION BY tag)`), без полного `list_blocks_light()` и без O(tags * blocks) фильтрации в Rust.
+- `storage/db.rs` + `storage/index.rs` + `watcher/handler.rs` + `commands/thumbnails.rs`: `blocks` хранит `thumb_format` / `thumb_mtime`; эти поля обновляются в точках записи thumb и позволяют `list_channel_previews` отвечать без `exists/open/metadata` на каждый preview.
 - `commands/blocks.rs` + `storage/index.rs` + `App.tsx`: grid перешёл на `list_grid_blocks(current_tag)` — backend сразу отдаёт только текущий маршрут, убирает channel-документы из snapshot и больше не тащит per-block `tags`.
 - `Grid.tsx`: первый paint больше не ждёт measurement всех карточек; hidden measurement идёт батчами, а layout уточняется поверх уже видимого контента.
 - `cardLayout.ts` + `Card.tsx` + `cardHeight.ts`: начат переход на единый geometry contract. Variant карточки, preview text и media aspect ratio теперь вычисляются через общий descriptor и используются одновременно рендером и height calculation.
@@ -29,7 +30,7 @@
 - полный проход по всем блокам ради sidebar previews.
 
 Не устранено:
-- `list_channel_previews` всё ещё делает `thumb_path.exists()`, PNG magic check и `metadata().modified()` на каждый preview.
+- `list_pending_thumb_upgrades()` всё ещё смотрит в on-disk placeholder state при построении startup upgrade queue; это отдельный следующий path.
 
 ## Render Cycle Analysis
 
@@ -101,9 +102,9 @@ Rust IPC returns new array reference every time → `setBlocks(new_array)` alway
 - `index.rs:231-237`: up to 999 `slug_exists()` calls
 - Fix: `SELECT slug FROM blocks WHERE slug LIKE ?` + compute next in Rust
 
-**M5. `list_channel_previews` всё ещё использует filesystem syscalls**
-- SQL top-N уже внедрён, но каждый preview делает `exists()`, PNG magic check и mtime read
-- Fix: хранить `has_thumb`, `thumb_kind`, `thumb_mtime` в SQLite и обновлять их при `thumb:updated`
+**M5. `list_pending_thumb_upgrades` всё ещё использует filesystem reads**
+- Sidebar path уже переведён на SQLite thumb metadata, но startup upgrade queue пока ещё читает placeholder state с диска
+- Fix: переиспользовать `thumb_format` из SQLite и убрать лишние file peek'и из upgrade planner
 
 ### LOW — Optimization
 
@@ -152,5 +153,5 @@ Rust IPC returns new array reference every time → `setBlocks(new_array)` alway
 - [x] Vault switch without reload
 - [x] SQL top-N previews
 - [~] H5: split GridBlock / BlockDetail payload
-- [ ] M5: thumb metadata in SQLite
+- [x] M5: thumb metadata in SQLite
 - [x] L2: Grid virtualization

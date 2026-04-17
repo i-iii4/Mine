@@ -301,27 +301,6 @@ pub struct PreviewItem {
     pub has_thumb: bool,
 }
 
-/// Check if a thumb file is a PNG (text placeholder that needs dark:invert).
-/// Returns false for JPEG, missing files, or any I/O error — those render
-/// as-is without inversion.
-fn thumb_is_png(path: &std::path::Path) -> bool {
-    use std::io::Read;
-    let Ok(mut f) = std::fs::File::open(path) else { return false };
-    let mut buf = [0u8; 3];
-    if f.read_exact(&mut buf).is_err() { return false }
-    buf == [0x89, 0x50, 0x4E] // PNG magic
-}
-
-/// Read the mtime of a thumb file as unix seconds. Returns 0 on any error.
-fn thumb_mtime(path: &std::path::Path) -> u64 {
-    std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
 /// Return preview items per channel for sidebar thumbnails.
 /// Includes `__all__` key for all blocks regardless of channel.
 /// Max `limit` thumbnails per channel.
@@ -335,29 +314,25 @@ pub fn list_channel_previews(
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     let tags = index::get_all_tags(&vs.conn)?;
-    let all_slugs = index::list_preview_slugs(&vs.conn, limit)?;
-    let per_tag_slugs = index::list_preview_slugs_by_tag(&vs.conn, limit)?;
+    let all_previews = index::list_preview_blocks(&vs.conn, limit)?;
+    let per_tag_previews = index::list_preview_blocks_by_tag(&vs.conn, limit)?;
 
-    let to_item = |slug: &str| -> PreviewItem {
-        let thumb_path = vs.vault.thumb_path(slug);
-        let has_thumb = thumb_path.exists();
-        let is_text = has_thumb && thumb_is_png(&thumb_path);
-        let mtime = thumb_mtime(&thumb_path);
+    let to_item = |preview: &index::PreviewBlock| -> PreviewItem {
         PreviewItem {
-            slug: slug.to_string(),
-            text: is_text,
-            mtime,
-            has_thumb,
+            slug: preview.slug.clone(),
+            text: preview.thumb_format == Some(index::ThumbFormat::Png),
+            mtime: preview.thumb_mtime,
+            has_thumb: preview.thumb_format.is_some(),
         }
     };
 
     let mut result = HashMap::new();
 
-    let all_items: Vec<PreviewItem> = all_slugs.iter().map(|slug| to_item(slug)).collect();
+    let all_items: Vec<PreviewItem> = all_previews.iter().map(to_item).collect();
     result.insert("__all__".to_string(), all_items);
 
-    for (tag, slugs) in per_tag_slugs {
-        let items: Vec<PreviewItem> = slugs.iter().map(|slug| to_item(slug)).collect();
+    for (tag, previews) in per_tag_previews {
+        let items: Vec<PreviewItem> = previews.iter().map(to_item).collect();
         result.insert(tag, items);
     }
 

@@ -13,7 +13,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::domain::block::{parse_block, Block, BlockType};
 use crate::domain::vault::VaultLayout;
-use crate::storage::{files, index, thumbnails};
+use crate::storage::{db, files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
 
 // ─── Event payloads (Rust → Frontend) ───────────────────────────────────────
@@ -150,9 +150,16 @@ pub fn full_scan(
             .name("thumb-gen".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let metadata_conn = db::open_or_create(&vault_clone.index_db_path())
+                        .map_err(|e| {
+                            log::error!("thumb-gen: open metadata db failed: {e:#}");
+                            e
+                        })
+                        .ok();
                     let total = thumb_jobs.len();
                     let mut generated = 0;
                     let mut skipped = 0;
+                    let mut metadata_updates = 0;
                     for job in &thumb_jobs {
                         let thumb_path = vault_clone.thumb_path(&job.block.slug);
 
@@ -161,10 +168,30 @@ pub fn full_scan(
                         // current pipeline would produce for this block).
                         if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, &vault_clone) {
                             skipped += 1;
+                            if let Some(ref conn) = metadata_conn {
+                                match index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path) {
+                                    Ok(true) => metadata_updates += 1,
+                                    Ok(false) => {}
+                                    Err(e) => log::warn!(
+                                        "thumb-gen: sync fresh metadata failed for {}: {e:#}",
+                                        job.block.slug
+                                    ),
+                                }
+                            }
                             continue;
                         }
 
                         let source = thumbnails::generate_for_block(&job.block, &vault_clone);
+                        if let Some(ref conn) = metadata_conn {
+                            match index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path) {
+                                Ok(true) => metadata_updates += 1,
+                                Ok(false) => {}
+                                Err(e) => log::warn!(
+                                    "thumb-gen: sync generated metadata failed for {}: {e:#}",
+                                    job.block.slug
+                                ),
+                            }
+                        }
                         if source != thumbnails::ThumbSource::None {
                             generated += 1;
                             // Notify frontend per-thumb so the sidebar
@@ -177,14 +204,14 @@ pub fn full_scan(
                         }
                     }
                     log::info!(
-                        "thumbnails: {} generated, {} skipped (fresh), {} total",
-                        generated, skipped, total
+                        "thumbnails: {} generated, {} skipped (fresh), {} metadata updates, {} total",
+                        generated, skipped, metadata_updates, total
                     );
-                    generated
+                    generated + metadata_updates
                 }));
                 match result {
-                    Ok(generated) => {
-                        if generated > 0 {
+                    Ok(changed) => {
+                        if changed > 0 {
                             if let Some(cb) = on_thumbs_done {
                                 cb();
                             }
@@ -246,6 +273,7 @@ pub fn index_md_file(
         let thumb_path = vault.thumb_path(&job.block.slug);
 
         if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, vault) {
+            let _ = index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path);
             return Ok(());
         }
 
@@ -261,6 +289,14 @@ pub fn index_md_file(
             .name(format!("thumb-{}", &slug))
             .spawn(move || {
                 let source = thumbnails::generate_for_block(&job.block, &vault);
+                match db::open_or_create(&vault.index_db_path()) {
+                    Ok(conn) => {
+                        if let Err(e) = index::sync_thumb_metadata(&conn, &slug, &thumb_path) {
+                            log::warn!("thumb thread: sync metadata failed for {}: {e:#}", slug);
+                        }
+                    }
+                    Err(e) => log::warn!("thumb thread: open metadata db failed for {}: {e:#}", slug),
+                }
                 if let Some(app) = app_clone {
                     emit_thumb_events(&app, &vault, &job.block, source);
                 }

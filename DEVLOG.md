@@ -1,5 +1,36 @@
 # Devlog
 
+## 16.04.2026 22:03 [primary] — SQLite thumb metadata for sidebar previews
+
+### Goal
+Добить следующий performance bottleneck после page-window grid: `list_channel_previews` уже выбирал top-N slug'и через SQL, но всё ещё делал `exists/open/metadata` по каждому preview на горячем пути.
+
+### Actually completed
+
+**Thumb metadata в индексе** (`src-tauri/src/storage/db.rs`, `src-tauri/src/storage/index.rs`)
+- в `blocks` добавлены `thumb_format` и `thumb_mtime`
+- введён единый `sync_thumb_metadata(conn, slug, thumb_path)` и `clear_thumb_metadata(...)`
+- preview SQL теперь возвращает не просто slug, а готовый preview row с DB-backed thumb metadata
+- добавлен тест на sync + preview queries
+
+**Sidebar preview path без filesystem syscall-ов** (`src-tauri/src/commands/channels.rs`, `src/hooks/useChannelPreviewsEvents.ts`)
+- `list_channel_previews` больше не читает thumb-файлы с диска при каждом refresh
+- frontend по-прежнему считает previews производным состоянием сервера, но теперь refresh опирается на SQLite snapshot
+- hook дополнительно слушает `vault-changed`, чтобы подхватывать metadata backfill после фоновой синхронизации
+
+**Синхронизация metadata во всех точках записи thumb** (`src-tauri/src/commands/thumbnails.rs`, `src-tauri/src/storage/files.rs`, `src-tauri/src/watcher/handler.rs`)
+- Phase 2 `save_thumb` после атомарной записи обновляет thumb metadata в SQLite
+- direct create path (`persist_new_block`) синхронизирует metadata после индексации
+- background thumb threads в watcher/full_scan открывают отдельный SQLite connection и backfill'ят metadata даже для уже свежих thumb-файлов
+
+### Checks
+- `cargo test -p mine --lib --quiet` — 243/243
+- `cargo check -p mine --quiet`
+- `bun run build`
+
+### Push
+- [текущий]
+
 ## 16.04.2026 21:27 [primary] — Paged grid snapshot for large vaults
 
 ### Goal

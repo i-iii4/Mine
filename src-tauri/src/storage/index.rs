@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::domain::block::{extract_wikilinks, Block, BlockType, DateTime};
@@ -69,6 +69,36 @@ pub struct TagCount {
     pub count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThumbFormat {
+    Jpeg,
+    Png,
+}
+
+impl ThumbFormat {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Jpeg => "jpeg",
+            Self::Png => "png",
+        }
+    }
+
+    fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "jpeg" => Some(Self::Jpeg),
+            "png" => Some(Self::Png),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewBlock {
+    pub slug: String,
+    pub thumb_format: Option<ThumbFormat>,
+    pub thumb_mtime: u64,
+}
+
 /// Extract the first markdown image URL from body text.
 fn extract_first_image(body: &str) -> Option<String> {
     let start = body.find("![")?;
@@ -103,6 +133,44 @@ fn extract_media_urls(body: &str) -> Option<String> {
     } else {
         serde_json::to_string(&urls).ok()
     }
+}
+
+fn read_thumb_metadata_from_disk(path: &Path) -> Option<(ThumbFormat, u64)> {
+    use std::io::Read;
+
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut buf = [0u8; 3];
+    file.read_exact(&mut buf).ok()?;
+
+    let format = match buf {
+        [0xFF, 0xD8, 0xFF] => ThumbFormat::Jpeg,
+        [0x89, 0x50, 0x4E] => ThumbFormat::Png,
+        _ => return None,
+    };
+
+    Some((format, mtime))
+}
+
+fn row_to_preview_block(row: &rusqlite::Row<'_>, slug_index: usize) -> rusqlite::Result<PreviewBlock> {
+    let thumb_format = row
+        .get::<_, Option<String>>(slug_index + 1)?
+        .as_deref()
+        .and_then(ThumbFormat::from_db);
+    let thumb_mtime = row.get::<_, Option<i64>>(slug_index + 2)?.unwrap_or(0).max(0) as u64;
+
+    Ok(PreviewBlock {
+        slug: row.get(slug_index)?,
+        thumb_format,
+        thumb_mtime,
+    })
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -281,6 +349,49 @@ pub fn remove_block(conn: &Connection, slug: &str) -> Result<bool> {
         .execute("DELETE FROM blocks WHERE slug = ?1", [slug])
         .context("failed to delete block")?;
     Ok(count > 0)
+}
+
+/// Sync thumbnail metadata columns from the on-disk thumb file.
+/// Returns true when the row changed.
+pub fn sync_thumb_metadata(conn: &Connection, slug: &str, thumb_path: &Path) -> Result<bool> {
+    let current = conn
+        .query_row(
+            "SELECT thumb_format, thumb_mtime FROM blocks WHERE slug = ?1",
+            [slug],
+            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<i64>>(1)?)),
+        )
+        .optional()?;
+    let Some((current_format, current_mtime)) = current else {
+        return Ok(false);
+    };
+
+    let next = read_thumb_metadata_from_disk(thumb_path);
+    let next_format = next.map(|(format, _)| format.as_str().to_string());
+    let next_mtime = next.map(|(_, mtime)| mtime as i64);
+
+    if current_format == next_format && current_mtime == next_mtime {
+        return Ok(false);
+    }
+
+    conn.execute(
+        "UPDATE blocks
+         SET thumb_format = ?2, thumb_mtime = ?3
+         WHERE slug = ?1",
+        params![slug, next_format, next_mtime],
+    )?;
+    Ok(true)
+}
+
+/// Clear thumbnail metadata for an indexed block. Returns true when changed.
+pub fn clear_thumb_metadata(conn: &Connection, slug: &str) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE blocks
+         SET thumb_format = NULL, thumb_mtime = NULL
+         WHERE slug = ?1
+           AND (thumb_format IS NOT NULL OR thumb_mtime IS NOT NULL)",
+        [slug],
+    )?;
+    Ok(changed > 0)
 }
 
 /// Check if a slug already exists in the index.
@@ -474,41 +585,43 @@ pub fn count_grid_blocks(conn: &Connection) -> Result<usize> {
     Ok(count as usize)
 }
 
-/// Return the newest previewable block slugs across the whole vault.
-pub fn list_preview_slugs(conn: &Connection, limit: usize) -> Result<Vec<String>> {
+/// Return the newest previewable blocks across the whole vault.
+pub fn list_preview_blocks(conn: &Connection, limit: usize) -> Result<Vec<PreviewBlock>> {
     if limit == 0 {
         return Ok(Vec::new());
     }
 
     let limit = i64::try_from(limit).context("preview limit does not fit i64")?;
     let mut stmt = conn.prepare(
-        "SELECT slug
+        "SELECT slug, thumb_format, thumb_mtime
          FROM blocks
          WHERE slug != '' AND block_type != 'channel'
          ORDER BY saved_at DESC
          LIMIT ?1",
     )?;
 
-    let rows = stmt.query_map([limit], |row| row.get::<_, String>(0))?;
-    let slugs = rows.collect::<Result<Vec<_>, _>>()?;
-    Ok(slugs)
+    let rows = stmt.query_map([limit], |row| row_to_preview_block(row, 0))?;
+    let previews = rows.collect::<Result<Vec<_>, _>>()?;
+    Ok(previews)
 }
 
-/// Return the newest previewable block slugs per tag.
-pub fn list_preview_slugs_by_tag(
+/// Return the newest previewable blocks per tag.
+pub fn list_preview_blocks_by_tag(
     conn: &Connection,
     limit: usize,
-) -> Result<std::collections::HashMap<String, Vec<String>>> {
+) -> Result<std::collections::HashMap<String, Vec<PreviewBlock>>> {
     if limit == 0 {
         return Ok(std::collections::HashMap::new());
     }
 
     let limit = i64::try_from(limit).context("preview limit does not fit i64")?;
     let mut stmt = conn.prepare(
-        "SELECT tag, slug
+        "SELECT tag, slug, thumb_format, thumb_mtime
          FROM (
              SELECT bt.tag AS tag,
                     b.slug AS slug,
+                    b.thumb_format AS thumb_format,
+                    b.thumb_mtime AS thumb_mtime,
                     ROW_NUMBER() OVER (
                         PARTITION BY bt.tag
                         ORDER BY b.saved_at DESC
@@ -522,13 +635,13 @@ pub fn list_preview_slugs_by_tag(
     )?;
 
     let rows = stmt.query_map([limit], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        Ok((row.get::<_, String>(0)?, row_to_preview_block(row, 1)?))
     })?;
 
-    let mut grouped = std::collections::HashMap::<String, Vec<String>>::new();
+    let mut grouped = std::collections::HashMap::<String, Vec<PreviewBlock>>::new();
     for row in rows {
-        let (tag, slug) = row?;
-        grouped.entry(tag).or_default().push(slug);
+        let (tag, preview) = row?;
+        grouped.entry(tag).or_default().push(preview);
     }
 
     Ok(grouped)
@@ -1263,6 +1376,48 @@ mod tests {
         assert!(has_more1);
         assert_eq!(page2.len(), 1);
         assert!(!has_more2);
+    }
+
+    #[test]
+    fn sync_thumb_metadata_and_preview_queries_use_db_columns() {
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("design-a", &["design"]), None).unwrap();
+        upsert_block(&conn, &make_block("design-b", &["design"]), None).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let png_thumb = dir.path().join("design-a.jpg");
+        std::fs::write(&png_thumb, [0x89, 0x50, 0x4E, 0x47]).unwrap();
+        let jpeg_thumb = dir.path().join("design-b.jpg");
+        std::fs::write(&jpeg_thumb, [0xFF, 0xD8, 0xFF, 0x00]).unwrap();
+
+        assert!(sync_thumb_metadata(&conn, "design-a", &png_thumb).unwrap());
+        assert!(sync_thumb_metadata(&conn, "design-b", &jpeg_thumb).unwrap());
+
+        let all = list_preview_blocks(&conn, 10).unwrap();
+        assert_eq!(all.len(), 2);
+        let all_by_slug = all
+            .iter()
+            .map(|item| (item.slug.clone(), item.thumb_format))
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(all_by_slug["design-a"], Some(ThumbFormat::Png));
+        assert_eq!(all_by_slug["design-b"], Some(ThumbFormat::Jpeg));
+        assert!(all.iter().all(|item| item.thumb_mtime > 0));
+
+        let by_tag = list_preview_blocks_by_tag(&conn, 10).unwrap();
+        let design = by_tag.get("design").unwrap();
+        assert_eq!(design.len(), 2);
+        let design_by_slug = design
+            .iter()
+            .map(|item| (item.slug.clone(), item.thumb_format))
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(design_by_slug["design-a"], Some(ThumbFormat::Png));
+        assert_eq!(design_by_slug["design-b"], Some(ThumbFormat::Jpeg));
+
+        assert!(clear_thumb_metadata(&conn, "design-a").unwrap());
+        let cleared = list_preview_blocks(&conn, 10).unwrap();
+        let cleared_a = cleared.iter().find(|item| item.slug == "design-a").unwrap();
+        assert_eq!(cleared_a.thumb_format, None);
+        assert_eq!(cleared_a.thumb_mtime, 0);
     }
 
     // ── resolve_unique_slug ─────────────────────────────────────────────

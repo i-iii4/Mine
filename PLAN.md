@@ -206,7 +206,7 @@ Goal: довести проект до продакшен-качества по 
 | 9.3.4 | Валидатор slug на IPC-границе: `^[a-z0-9-]+$` | CRIT-10 | [ ] |
 | 9.3.5 | Route-scoped `list_grid_blocks(current_tag)` без per-block tags; следующая цель — ещё более лёгкий first-screen DTO | CRIT-11 | [x] |
 | 9.3.6 | SQL-проверка slug вместо загрузки всех блоков в create_block | CRIT-12 | [ ] |
-| 9.3.7 | `has_thumbnail` в SQLite вместо N syscall-ов в list_channel_previews | CRIT-13 | [ ] |
+| 9.3.7 | `has_thumbnail` / `thumb_format` / `thumb_mtime` в SQLite вместо N syscall-ов в `list_channel_previews` | CRIT-13 | [x] |
 | 9.3.8 | `catch_unwind` в потоке thumb-gen | CRIT-14 | [x] |
 | 9.3.9 | `list_channel_previews` без полного `list_blocks_light()`: SQL top-N slugs для `__all__` и per-tag | PERF-1 | [x] |
 

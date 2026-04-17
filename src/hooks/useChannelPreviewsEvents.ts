@@ -31,6 +31,10 @@ interface ThumbUpdatedEvent {
   is_text: boolean;
 }
 
+interface VaultChangedEvent {
+  path: string;
+}
+
 interface Options {
   vaultPath: string | null;
   limit: number;
@@ -120,6 +124,12 @@ export function useChannelPreviewsEvents({ vaultPath, limit }: Options): {
 
     listen("block:removed", () => scheduleRefresh())
       .then((fn) => unlistenFns.push(fn));
+
+    listen<VaultChangedEvent>("vault-changed", (event) => {
+      if (event.payload.path === vaultPathRef.current) {
+        scheduleRefresh();
+      }
+    }).then((fn) => unlistenFns.push(fn));
 
     listen<ThumbUpdatedEvent>("thumb:updated", (event) => {
       const { slug } = event.payload;

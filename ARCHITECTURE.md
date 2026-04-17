@@ -248,9 +248,9 @@ saved_at: 2026-02-26T14:30:00Z
 
 ### Sidebar preview pipeline
 
-- Sidebar previews больше не строятся через полный `list_blocks_light()` с фильтрацией по всем тегам в памяти. Бэкенд отдаёт top-N slug'и отдельными SQL-запросами: один для `__all__`, один window-function запрос для `top N per tag`.
+- Sidebar previews больше не строятся через полный `list_blocks_light()` с фильтрацией по всем тегам в памяти. Бэкенд отдаёт top-N preview rows отдельными SQL-запросами: один для `__all__`, один window-function запрос для `top N per tag`.
 - Frontend считает previews производным состоянием сервера: `useChannelPreviewsEvents` делает initial refresh и затем коалесцирует `block:added`, `block:removed`, `thumb:updated`, `vault-changed` в повторный `list_channel_previews`, вместо локального patch-state.
-- Формирование preview item всё ещё читает thumb-файл с диска (`exists`, PNG magic, mtime) на горячем пути. Следующий шаг оптимизации — перенести `has_thumb` / `thumb_mtime` в SQLite, чтобы убрать filesystem syscalls из sidebar path.
+- Таблица `blocks` хранит `thumb_format` (`jpeg` / `png`) и `thumb_mtime`. Эти поля синхронизируются в точках записи thumb (`generate_for_block`, `save_thumb`, direct create path) и позволяют `list_channel_previews` отвечать без filesystem syscall-ов на горячем пути.
 
 ## Data flow
 
@@ -431,9 +431,9 @@ Rationale: Tauri `data-tauri-drag-region` перехватывает событ�
 | Approach | Problem |
 |---|---|
 | Фронтенд генерирует URL из slug'а, `<img onError>` скрывает сломанные | Tauri `asset://` не всегда вызывает `onError` для несуществующих файлов. `<img>` показывает знак вопроса (macOS broken image). `display: none` блокирует `onLoad`. |
-| Rust-команда `list_channel_previews` с `Path::exists()` (chosen) | Фронтенд получает только slug'и с реальными файлами. Ноль визуальных артефактов. |
+| Rust-команда `list_channel_previews` читает `thumb_format` / `thumb_mtime` из SQLite (chosen) | Горячий path sidebar не делает `exists/open/metadata` по каждому preview, но фронтенд всё равно получает только подтверждённые preview-метаданные с бэкенда. |
 
-Rationale: бэкенд знает, какие файлы реально есть на диске. Фронтенд не должен гадать — это нарушает разделение ответственности и приводит к визуальным хакам.
+Rationale: бэкенд остаётся источником истины для preview-состояния, но хранит его в индексе рядом с блоком, а не вычисляет повторно через filesystem на каждый sidebar refresh. Это убирает линейный syscall-cost при старте и switch vault, не возвращая фронтенду угадывание состояния по `asset://`.
 
 ### 009: Расширение собирается через Vite (единая дизайн-система)
 

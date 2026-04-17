@@ -178,6 +178,7 @@ pub fn persist_new_block(
 
     // Index
     index::upsert_block(conn, block, Some(vault.root()))?;
+    let _ = index::sync_thumb_metadata(conn, &block.slug, &vault.thumb_path(&block.slug));
 
     // Return the indexed block
     index::get_block(conn, &block.slug)?
