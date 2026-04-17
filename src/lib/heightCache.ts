@@ -30,8 +30,11 @@ export const BUCKET_PX = 40;
  * v5: width/height now read from media file on disk (Markdown File First),
  *     not from frontmatter. Cards that were 1:1 fallback now have real
  *     aspect ratios — old cached heights are invalid.
+ * v6: descriptor-driven layout variants for article/social cards and
+ *     route-scoped grid snapshot. Old cached heights can mismatch the
+ *     new geometry contract and cause overlap.
  */
-const CACHE_VERSION = 5;
+const CACHE_VERSION = 6;
 
 const DB_NAME = "arena-card-heights";
 const DB_VERSION = 1;

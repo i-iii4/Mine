@@ -14,6 +14,7 @@
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 import { countLines } from "./wordWrap";
+import { deriveCardLayoutDescriptor } from "./cardLayout";
 
 // ─── Layout constants (must match Card.tsx) ─────────────────────────────────
 //
@@ -57,6 +58,17 @@ const LINK_FOOTER_HEIGHT = 76;
 
 /** Fixed file card height. */
 const FILE_CARD_HEIGHT = 88;
+
+/** Social cards use p-4 container. */
+const SOCIAL_PADDING_X = 16;
+const SOCIAL_PADDING_TOP = 16;
+const SOCIAL_PADDING_BOTTOM = 16;
+const SOCIAL_PREVIEW_LINE_HEIGHT = 16;
+const SOCIAL_AUTHOR_LINE_HEIGHT = 16;
+const SOCIAL_PREVIEW_MAX_LINES = 3;
+const SOCIAL_GAP_BEFORE_MEDIA = 12;
+const SOCIAL_GAP_BEFORE_AUTHOR = 8;
+const SOCIAL_GRID_GAP = 2;
 
 // ─── Article card constants (must match Card.tsx ArticleCard template) ─────
 
@@ -131,6 +143,7 @@ function computeArticleHeight(
   columnWidth: number,
   wordWidths: WordWidths | null,
 ): number {
+  const descriptor = deriveCardLayoutDescriptor(block);
   // Width inside the card border. Article padding is applied inside this.
   const iw = innerWidth(columnWidth);
   const contentWidth = Math.max(1, iw - ARTICLE_PADDING_X * 2);
@@ -141,7 +154,7 @@ function computeArticleHeight(
       ARTICLE_TITLE_MAX_LINES,
       Math.max(1, countLines(wordWidths.title, wordWidths.titleSpace, contentWidth)),
     );
-    const previewMax = block.first_image
+    const previewMax = descriptor.variant === "article-media"
       ? ARTICLE_PREVIEW_MAX_LINES_WITH_IMAGE
       : ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE;
     const previewLines = Math.min(
@@ -153,10 +166,10 @@ function computeArticleHeight(
     const previewH = previewLines * ARTICLE_PREVIEW_LINE_HEIGHT;
     // Image width = card inner width - article padding on both sides.
     // Height = that width × aspect-video ratio (9/16).
-    const imageH = block.first_image
-      ? Math.round(contentWidth * ARTICLE_IMAGE_ASPECT)
+    const imageH = descriptor.variant === "article-media"
+      ? Math.round(contentWidth / Math.max(descriptor.primaryAspectRatio ?? ARTICLE_IMAGE_ASPECT, 0.01))
       : 0;
-    const authorH = block.author ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
+    const authorH = descriptor.authorText ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
 
     // Gap structure mirroring Card.tsx mt-* classes:
     //   title → preview: mt-1.5 (6px), only when preview exists
@@ -179,25 +192,76 @@ function computeArticleHeight(
     );
   }
 
-  // Fallback path: word widths not yet available (worker still running).
-  //
-  // Conservative strict lower bound: fallback MUST be ≤ any possible measured
-  // height, so that corrections from fallback → measured always GROW totalHeight.
-  // A growing totalHeight never causes scroll jumps — scrollTop remains valid,
-  // content simply extends below the viewport. Shrinking would cause the browser
-  // to clamp scrollTop and produce a visible jump.
-  //
-  // Minimum possible measured height for an article card:
-  //   - titleLines = 1 (clamped minimum in precise path)
-  //   - previewLines = 0 (empty preview is valid)
-  //   - imageH = 0 (no image is valid)
-  //   - authorH = 0 (no author is valid)
-  //   - gaps = 0 (only title → no gaps)
+  // Fallback path: reserve enough space for the worst clamped text/image
+  // geometry of this template so visible cards never overlap while exact
+  // font metrics are still loading.
+  const titleLines = descriptor.titleText ? ARTICLE_TITLE_MAX_LINES : 0;
+  const previewLines = descriptor.previewText
+    ? (descriptor.variant === "article-media"
+      ? ARTICLE_PREVIEW_MAX_LINES_WITH_IMAGE
+      : ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE)
+    : 0;
+  const imageH = descriptor.variant === "article-media"
+    ? Math.round(contentWidth / Math.max(descriptor.primaryAspectRatio ?? ARTICLE_IMAGE_ASPECT, 0.01))
+    : 0;
+  const authorH = descriptor.authorText ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
+  const gaps =
+    (previewLines > 0 ? ARTICLE_GAP_TITLE_TO_PREVIEW : 0) +
+    (imageH > 0 ? ARTICLE_GAP_BEFORE_IMAGE : 0) +
+    (authorH > 0 ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
+
   return (
     CARD_BORDER_HEIGHT +
     ARTICLE_PADDING_TOP +
-    ARTICLE_TITLE_LINE_HEIGHT +
+    titleLines * ARTICLE_TITLE_LINE_HEIGHT +
+    previewLines * ARTICLE_PREVIEW_LINE_HEIGHT +
+    imageH +
+    authorH +
+    gaps +
     ARTICLE_PADDING_BOTTOM
+  );
+}
+
+function computeSocialHeight(
+  block: LightBlock,
+  columnWidth: number,
+  wordWidths: WordWidths | null,
+): number {
+  const descriptor = deriveCardLayoutDescriptor(block);
+  const iw = innerWidth(columnWidth);
+  const contentWidth = Math.max(1, iw - SOCIAL_PADDING_X * 2);
+
+  const previewLines = wordWidths
+    ? Math.min(
+        SOCIAL_PREVIEW_MAX_LINES,
+        Math.max(0, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth)),
+      )
+    : (descriptor.previewText ? SOCIAL_PREVIEW_MAX_LINES : 0);
+
+  const previewH = previewLines * SOCIAL_PREVIEW_LINE_HEIGHT;
+  const authorH = descriptor.authorText ? SOCIAL_AUTHOR_LINE_HEIGHT : 0;
+
+  let mediaH = 0;
+  if (descriptor.variant === "social-single-media") {
+    mediaH = Math.round(contentWidth / Math.max(descriptor.primaryAspectRatio ?? 1, 0.01));
+  } else if (descriptor.variant === "social-media-grid") {
+    const rows = Math.ceil(descriptor.visibleMediaCount / 2);
+    const cell = Math.max(1, Math.round((contentWidth - SOCIAL_GRID_GAP) / 2));
+    mediaH = rows * cell + Math.max(0, rows - 1) * SOCIAL_GRID_GAP;
+  }
+
+  const gaps =
+    (mediaH > 0 ? SOCIAL_GAP_BEFORE_MEDIA : 0) +
+    (authorH > 0 ? SOCIAL_GAP_BEFORE_AUTHOR : 0);
+
+  return (
+    CARD_BORDER_HEIGHT +
+    SOCIAL_PADDING_TOP +
+    previewH +
+    mediaH +
+    authorH +
+    gaps +
+    SOCIAL_PADDING_BOTTOM
   );
 }
 
@@ -225,6 +289,7 @@ export function computeCardHeight(
   columnWidth: number,
   wordWidths: WordWidths | null,
 ): number {
+  const descriptor = deriveCardLayoutDescriptor(block);
   switch (block.block_type) {
     case "image":
       return computeImageHeight(block, columnWidth);
@@ -245,6 +310,9 @@ export function computeCardHeight(
       return FILE_CARD_HEIGHT + CARD_BORDER_HEIGHT;
 
     case "article":
+      if (descriptor.variant.startsWith("social")) {
+        return computeSocialHeight(block, columnWidth, wordWidths);
+      }
       return computeArticleHeight(block, columnWidth, wordWidths);
 
     default:

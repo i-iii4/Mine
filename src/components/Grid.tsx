@@ -33,6 +33,7 @@ import {
 } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
 import { LayoutCache } from "@/lib/layoutCache";
+import { fetchWordWidths } from "@/lib/fontMetrics";
 import {
   bucketize,
   getCachedHeight,
@@ -41,6 +42,7 @@ import {
   warmFromIndexedDb,
 } from "@/lib/heightCache";
 import { useGridScroll } from "@/hooks/useGridScroll";
+import type { WordWidths } from "@/types/fontMetrics";
 
 // ─── Layout constants ───────────────────────────────────────────────────────
 
@@ -111,16 +113,14 @@ function buildLayout(
   blocks: LightBlock[],
   parentWidth: number,
   heightsMap: Map<number, number>,
+  wordWidthsMap: Map<number, WordWidths>,
 ): MasonryLayout {
   const columnWidth = deriveColumnWidth(parentWidth);
 
   const heights = blocks.map((block) => {
     const measured = heightsMap.get(block.id);
     if (measured !== undefined) return measured;
-    // Fallback: computeCardHeight without word widths gives the conservative
-    // lower bound. Used only if a measurement somehow fails. In practice the
-    // measurement pass always populates every block before layout runs.
-    return computeCardHeight(block, columnWidth, null);
+    return computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null);
   });
 
   return computeMasonryLayout(heights, parentWidth, COLUMN_MIN_WIDTH, GAP);
@@ -167,6 +167,7 @@ export function Grid({
   // render already sees a fresh heightsMap — no stale-state window.
   const [warmedUp, setWarmedUp] = useState(false);
   const [measurementTick, setMeasurementTick] = useState(0);
+  const [wordWidthsMap, setWordWidthsMap] = useState<Map<number, WordWidths>>(new Map());
 
   // Scroll to top on explicit signal or channel change.
   useEffect(() => {
@@ -202,6 +203,19 @@ export function Grid({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setWordWidthsMap(new Map());
+    void fetchWordWidths(blocks).then((map) => {
+      if (!cancelled) {
+        setWordWidthsMap(map);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [blocks]);
 
   // Current column width bucket. Changes when parentWidth crosses a 40px
   // boundary — at that point we may need to measure blocks again at the
@@ -268,16 +282,16 @@ export function Grid({
     }
 
     if (!allHeightsPresent) {
-      return buildLayout(blocks, parentWidth, heightsMap);
+      return buildLayout(blocks, parentWidth, heightsMap, wordWidthsMap);
     }
 
     const cached = layoutCache.get(blocks, parentWidth);
     if (cached) return cached;
 
-    const fresh = buildLayout(blocks, parentWidth, heightsMap);
+    const fresh = buildLayout(blocks, parentWidth, heightsMap, wordWidthsMap);
     layoutCache.set(blocks, parentWidth, fresh);
     return fresh;
-  }, [blocks, parentWidth, heightsMap, allHeightsPresent]);
+  }, [blocks, parentWidth, heightsMap, allHeightsPresent, wordWidthsMap]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);

@@ -6,6 +6,7 @@
 // See SPEC_GRID.md for the pipeline rationale.
 
 import type { LightBlock } from "@/types";
+import { deriveCardLayoutDescriptor } from "@/lib/cardLayout";
 import type {
   FontHash,
   WordWidths,
@@ -38,7 +39,7 @@ const PREVIEW_FONT_SPEC = "400 12px 'Geist', system-ui, sans-serif";
  * changes in a way that affects measureText output. All cached entries
  * with a different hash are treated as stale and re-computed.
  */
-const FONT_HASH: FontHash = "geist-variable-12px-semibold-regular-v2";
+const FONT_HASH: FontHash = "descriptor-preview-v1";
 
 const DB_NAME = "arena-font-metrics";
 const DB_VERSION = 1;
@@ -327,11 +328,14 @@ export async function fetchWordWidths(
     return cached;
   }
 
-  const workerInputs: WorkerBlockInput[] = missing.map((b) => ({
-    id: b.id,
-    title: b.title ?? "",
-    body: b.body ?? "",
-  }));
+  const workerInputs: WorkerBlockInput[] = missing.map((b) => {
+    const descriptor = deriveCardLayoutDescriptor(b);
+    return {
+      id: b.id,
+      title: descriptor.titleText,
+      body: descriptor.previewText,
+    };
+  });
 
   let computed: WorkerBlockResult[];
   try {

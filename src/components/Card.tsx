@@ -3,7 +3,7 @@ import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
 import type { LightBlock } from "@/types";
 import { thumbnailUrl, mediaUrl, domainFromUrl } from "@/lib/assets";
-import { getMediaAspectRatio, getMediaDimensionsMap } from "@/lib/mediaDimensions";
+import { deriveCardLayoutDescriptor, type CardLayoutDescriptor } from "@/lib/cardLayout";
 import { VideoFromBlob } from "./VideoFromBlob";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
@@ -69,16 +69,6 @@ export const Card = memo(function Card({ block, vaultPath, isFocused, priority, 
   );
 });
 
-function isTwitterUrl(url: string): boolean {
-  const lc = url.toLowerCase();
-  return (lc.includes("twitter.com/") || lc.includes("x.com/")) && lc.includes("/status/");
-}
-
-function isInstagramUrl(url: string): boolean {
-  const lc = url.toLowerCase();
-  return lc.includes("instagram.com/p/") || lc.includes("instagram.com/reel/") || lc.includes("instagram.com/stories/");
-}
-
 export function CardContent({
   block,
   vaultPath,
@@ -88,17 +78,20 @@ export function CardContent({
   vaultPath: string;
   priority?: boolean;
 }) {
+  const descriptor = useMemo(() => deriveCardLayoutDescriptor(block), [block]);
   const content = (() => {
-    switch (block.block_type) {
+    switch (descriptor.variant) {
       case "image":
-        return <ImageCard block={block} vaultPath={vaultPath} />;
+        return <ImageCard block={block} descriptor={descriptor} vaultPath={vaultPath} />;
       case "link":
         return <LinkCard block={block} vaultPath={vaultPath} />;
-      case "article":
-        if (block.url && (isTwitterUrl(block.url) || isInstagramUrl(block.url))) {
-          return <SocialCard block={block} vaultPath={vaultPath} />;
-        }
-        return <ArticleCard block={block} vaultPath={vaultPath} />;
+      case "article-text":
+      case "article-media":
+        return <ArticleCard block={block} descriptor={descriptor} vaultPath={vaultPath} />;
+      case "social-text":
+      case "social-single-media":
+      case "social-media-grid":
+        return <SocialCard block={block} descriptor={descriptor} vaultPath={vaultPath} />;
       case "video":
         return <VideoCard block={block} vaultPath={vaultPath} />;
       case "file":
@@ -114,14 +107,15 @@ export function CardContent({
 
 const ImageCard = memo(function ImageCard({
   block,
+  descriptor,
   vaultPath,
 }: {
   block: LightBlock;
+  descriptor: CardLayoutDescriptor;
   vaultPath: string;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const [error, setError] = useState(false);
-  const hasDimensions = !!(block.width && block.height && block.width > 0 && block.height > 0);
   const src = block.media_file
     ? mediaUrl(vaultPath, block.media_file)
     : thumbnailUrl(vaultPath, block.slug);
@@ -151,9 +145,9 @@ const ImageCard = memo(function ImageCard({
   // fallback (neutral default when metadata is missing). This makes the card
   // layout deterministic before the image loads, which is required for the
   // hidden DOM measurement pass in Grid.tsx to read a stable height.
-  const aspectRatio = hasDimensions
-    ? `${block.width} / ${block.height}`
-    : "1 / 1";
+  const aspectRatio = descriptor.primaryAspectRatio
+    ? `${descriptor.primaryAspectRatio}`
+    : "1";
 
   return (
     <div
@@ -253,89 +247,21 @@ const LinkCard = memo(function LinkCard({
   );
 });
 
-function stripMarkdown(text: string): string {
-  return text
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/\*(.+?)\*/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
-    .replace(/\[(.+?)\]\(.*?\)/g, "$1")
-    .replace(/^[-*+]\s+/gm, "")
-    .replace(/^>\s+/gm, "")
-    .replace(/^---+$/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-interface TweetMedia {
-  src: string;
-  isVideo: boolean; // true = GIF (local .mp4) or video poster with play overlay
-  isVideoPoster: boolean; // true = HLS video poster (not downloadable), show play icon
-}
-
-function extractTweetData(body: string): { text: string; media: TweetMedia[] } {
-  const firstSection = body.split(/^---+$/m)[0] ?? body;
-  const media: TweetMedia[] = [];
-  // Match both regular images and video-poster-marked images
-  const lines = firstSection.split("\n");
-  let nextIsVideoPoster = false;
-  for (const line of lines) {
-    if (line.trim() === "<!-- tweet-video -->") {
-      nextIsVideoPoster = true;
-      continue;
-    }
-    const imgMatch = line.match(/^!\[.*?\]\((.+?)\)$/);
-    if (imgMatch?.[1]) {
-      const src = imgMatch[1];
-      const isVideoFile = /\.mp4(\?|$)|\.webm(\?|$)/i.test(src);
-      media.push({
-        src,
-        isVideo: isVideoFile || nextIsVideoPoster,
-        isVideoPoster: nextIsVideoPoster,
-      });
-      nextIsVideoPoster = false;
-    }
-  }
-  const text = stripMarkdown(firstSection).trim();
-  return { text, media };
-}
-
-function isVideoFile(src: string): boolean {
-  return /\.mp4(\?|$)|\.webm(\?|$)/i.test(src);
-}
-
-const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {
+const SocialCard = memo(function SocialCard({
+  block,
+  descriptor,
+  vaultPath,
+}: {
+  block: LightBlock;
+  descriptor: CardLayoutDescriptor;
+  vaultPath: string;
+}) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
-  const { text, media } = useMemo(() => extractTweetData(block.body), [block.body]);
-  const dimsMap = useMemo(() => getMediaDimensionsMap(block), [block]);
-
-  // If body preview was truncated and
-  // lost some media references, fall back to the full media_urls list
-  // from the index. Covers Instagram carousels with 10+ images where
-  // the first ![](…) barely fits in the preview payload.
-  if (block.media_urls) {
-    try {
-      const urls: string[] = JSON.parse(block.media_urls);
-      if (urls.length > media.length) {
-        media.length = 0;
-        for (const src of urls) {
-          media.push({ src, isVideo: isVideoFile(src), isVideoPoster: false });
-        }
-      }
-    } catch { /* invalid JSON — skip */ }
-  }
+  const text = descriptor.previewText;
+  const media = descriptor.mediaItems;
 
   const resolveSrc = (src: string) =>
     src.startsWith("http://") || src.startsWith("https://") ? src : mediaUrl(vaultPath, src);
-
-  /** Aspect ratio for a single media item, indexed by its filename. */
-  const aspectFor = (src: string, fallback: string): string => {
-    if (!dimsMap) return fallback;
-    const entry = dimsMap[src];
-    if (!entry) return fallback;
-    return `${entry[0]} / ${entry[1]}`;
-  };
 
   return (
     <div className="p-4">
@@ -343,7 +269,7 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
         <p className="line-clamp-3 text-sm text-muted-foreground">{text}</p>
       )}
 
-      {media.length === 1 && (() => {
+      {descriptor.variant === "social-single-media" && media.length === 1 && (() => {
         // Exact aspect-ratio from the indexer when available, aspect-square
         // fallback otherwise. object-contain renders the full image without
         // cropping, sitting inside the exact-ratio wrapper.
@@ -353,9 +279,9 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
         return (
           <div
             className="mt-3 relative w-full overflow-hidden bg-accent"
-            style={{ aspectRatio: aspectFor(m.src, "1 / 1") }}
+            style={{ aspectRatio: `${m.aspectRatio ?? 1}` }}
           >
-            {isVideoFile(m.src) ? (
+            {m.isVideo ? (
               <VideoFromBlob
                 src={resolved}
                 className={absClass}
@@ -383,9 +309,9 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
           </div>
         );
       })()}
-      {media.length >= 2 && (
+      {descriptor.variant === "social-media-grid" && media.length >= 2 && (
         <div className="mt-3 grid grid-cols-2 gap-0.5">
-          {media.slice(0, 4).map((m) => {
+          {media.slice(0, descriptor.visibleMediaCount).map((m) => {
             const resolved = resolveSrc(m.src);
             const absClass = "absolute inset-0 h-full w-full object-cover";
             return (
@@ -393,7 +319,7 @@ const SocialCard = memo(function SocialCard({ block, vaultPath }: { block: Light
                 key={m.src}
                 className="relative aspect-square overflow-hidden bg-accent"
               >
-                {isVideoFile(m.src) ? (
+                {m.isVideo ? (
                   <VideoFromBlob
                     src={resolved}
                     className={absClass}
@@ -435,9 +361,16 @@ function isImageFile(name: string): boolean {
   return /\.(jpg|jpeg|png|gif|webp|bmp|tiff|tif|heic|heif|avif)$/i.test(name);
 }
 
-const ArticleCard = memo(function ArticleCard({ block, vaultPath }: { block: LightBlock; vaultPath: string }) {
+const ArticleCard = memo(function ArticleCard({
+  block,
+  descriptor,
+  vaultPath,
+}: {
+  block: LightBlock;
+  descriptor: CardLayoutDescriptor;
+  vaultPath: string;
+}) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
-  const preview = useMemo(() => stripMarkdown(block.body).slice(0, 400).trim(), [block.body]);
   const firstImage = block.first_image && isImageFile(block.first_image) ? block.first_image : null;
   const hasImage = !!firstImage;
 
@@ -449,7 +382,7 @@ const ArticleCard = memo(function ArticleCard({ block, vaultPath }: { block: Lig
       >
         {block.title ?? block.slug}
       </p>
-      {preview && (
+      {descriptor.previewText && (
         <p
           className={cn(
             "mt-1.5 text-sm text-muted-foreground",
@@ -457,7 +390,7 @@ const ArticleCard = memo(function ArticleCard({ block, vaultPath }: { block: Lig
           )}
           style={{ lineHeight: "20px" }}
         >
-          {preview}
+          {descriptor.previewText}
         </p>
       )}
       {firstImage && (
@@ -468,7 +401,7 @@ const ArticleCard = memo(function ArticleCard({ block, vaultPath }: { block: Lig
         // wrapper, so nothing is cropped.
         <div
           className="relative mt-3 w-full overflow-hidden bg-accent"
-          style={{ aspectRatio: getMediaAspectRatio(block, firstImage, "16 / 9") }}
+          style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? (16 / 9)}` }}
         >
           <img
             src={mediaUrl(vaultPath, firstImage)}

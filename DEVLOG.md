@@ -1,5 +1,45 @@
 # Devlog
 
+## 16.04.2026 21:15 [primary] — Descriptor-driven card geometry
+
+### Goal
+Начать архитектурный переход от “layout по параллельным эвристикам” к единому geometry contract, чтобы `Card.tsx` и `cardHeight.ts` считали одну и ту же карточку, а не две похожие.
+
+### Actually completed
+
+**Единый layout descriptor** (`src/lib/cardLayout.ts`, `src/lib/cardLayout.test.ts`)
+- введён `CardLayoutDescriptor` с variant-ами: `image`, `link`, `video`, `file`, `article-*`, `social-*`
+- descriptor централизованно вычисляет:
+  - visual variant карточки
+  - preview text
+  - author text
+  - primary media aspect ratio
+  - social media list / visible media count
+- social/article branching больше не размазано по разным местам кода
+
+**Render и height calc переведены на общий descriptor** (`src/components/Card.tsx`, `src/lib/cardHeight.ts`, `src/lib/cardHeight.test.ts`)
+- `CardContent` теперь выбирает variant по descriptor, а не по независимым URL/body эвристикам
+- `SocialCard`, `ArticleCard`, `ImageCard` берут geometry из descriptor
+- `computeCardHeight()` тоже строится от descriptor, включая новые social variants
+- fallback для text-heavy карточек больше не резервирует “минимум”, а старается резервировать безопасную высоту, чтобы не допускать overlap до measurement
+
+**Текстовые метрики снова подключены в Grid** (`src/components/Grid.tsx`, `src/lib/fontMetrics.ts`)
+- `Grid` снова подаёт `wordWidths` в `computeCardHeight`, а не только `null`
+- `fontMetrics` теперь меряет не сырой `block.body`, а descriptor-derived `titleText` / `previewText`
+- хэши кэшей bumped: `FONT_HASH`, `CACHE_VERSION`
+
+### Checks
+- `cargo test -p mine --lib --quiet` — 241/241
+- `bun run build`
+- `bun run test src/lib/cardLayout.test.ts src/lib/cardHeight.test.ts src/components/Grid.test.tsx src/lib/layoutCache.test.ts`
+
+### Push
+- [текущий]
+
+### Decisions and lessons learned
+- **Variant должен жить в одном месте.** Пока `Card.tsx` и `cardHeight.ts` самостоятельно решают “это article или social?”, overlap будет возвращаться при любом ускорении.
+- **Word metrics полезны только если меряют тот же текст, что реально рендерится.** Раньше worker смотрел в сырой `body`; теперь он получает descriptor-derived preview text.
+
 ## 16.04.2026 20:58 [primary] — Restart hotfix + route-scoped grid snapshot
 
 ### Goal

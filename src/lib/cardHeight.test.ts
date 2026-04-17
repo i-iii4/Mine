@@ -18,7 +18,6 @@ function makeBlock(overrides: Partial<LightBlock> & { block_type: LightBlock["bl
     body: "",
     first_image: null,
     media_urls: null,
-    tags: [],
     ...overrides,
   };
 }
@@ -91,13 +90,11 @@ describe("computeCardHeight — article", () => {
     expect(h).toBeGreaterThan(0);
   });
 
-  it("fallback height is never larger than measured height (conservative lower bound)", () => {
-    // Conservative fallback guarantees that actual height >= fallback.
-    // Otherwise totalHeight would shrink on correction, causing jumps.
+  it("fallback height reserves at least as much space as measured height", () => {
     const block = makeBlock({ block_type: "article", title: "Long title", body: "Long body" });
     const fallback = computeCardHeight(block, 280, null);
     const measured = computeCardHeight(block, 280, wordWidths);
-    expect(measured).toBeGreaterThanOrEqual(fallback);
+    expect(fallback).toBeGreaterThanOrEqual(measured);
   });
 
   it("article with first_image is taller than without", () => {
@@ -124,6 +121,43 @@ describe("computeCardHeight — article", () => {
     expect(
       computeCardHeight(withAuthor, 280, wordWidths),
     ).toBeGreaterThan(computeCardHeight(without, 280, wordWidths));
+  });
+});
+
+describe("computeCardHeight — social", () => {
+  const wordWidths: WordWidths = {
+    title: [],
+    preview: [30, 28, 35, 20, 40, 18, 30],
+    titleSpace: 4,
+    previewSpace: 4,
+  };
+
+  it("single-media social card uses exact media aspect ratio", () => {
+    const block = makeBlock({
+      block_type: "article",
+      url: "https://x.com/a/status/1",
+      body: "hello\n![](photo.jpg)",
+      media_dimensions: "{\"photo.jpg\":[1200,800]}",
+      media_urls: "[\"photo.jpg\"]",
+    });
+    const h = computeCardHeight(block, 280, wordWidths);
+    expect(h).toBeGreaterThan(150);
+  });
+
+  it("grid social card with 4 items is taller than with 2 items", () => {
+    const two = makeBlock({
+      block_type: "article",
+      url: "https://instagram.com/p/1",
+      body: "hello\n![](a.jpg)\n![](b.jpg)",
+      media_urls: "[\"a.jpg\",\"b.jpg\"]",
+    });
+    const four = makeBlock({
+      block_type: "article",
+      url: "https://instagram.com/p/1",
+      body: "hello\n![](a.jpg)\n![](b.jpg)\n![](c.jpg)\n![](d.jpg)",
+      media_urls: "[\"a.jpg\",\"b.jpg\",\"c.jpg\",\"d.jpg\"]",
+    });
+    expect(computeCardHeight(four, 280, wordWidths)).toBeGreaterThan(computeCardHeight(two, 280, wordWidths));
   });
 });
 
