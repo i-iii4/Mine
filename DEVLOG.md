@@ -1,5 +1,25 @@
 # Devlog
 
+## 16.04.2026 22:19 [primary] — Hotfix: unstall Phase 2 thumb upgrades
+
+### Goal
+Починить регресс после `thumb metadata in SQLite`: приложение перестало отвечать на старте и уходило в бесконечный beachball/rainbow.
+
+### Actually completed
+
+**Убран глобальный mutex из `save_thumb()` hot path** (`src-tauri/src/commands/thumbnails.rs`)
+- `save_thumb()` больше не берёт `vault_state` lock повторно ради SQLite update на каждый Phase 2 upgrade
+- путь и `index.db` path теперь читаются один раз, после чего metadata sync идёт через отдельный connection к SQLite
+- это снимает сериализацию всех IPC-команд на глобальном mutex во время массовых thumbnail upgrades на старте
+
+### Checks
+- `cargo test -p mine --lib --quiet` — 243/243
+- `cargo check -p mine --quiet`
+- `bun run build`
+
+### Push
+- [текущий]
+
 ## 16.04.2026 22:03 [primary] — SQLite thumb metadata for sidebar previews
 
 ### Goal

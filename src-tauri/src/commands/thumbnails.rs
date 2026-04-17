@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::state::{AppState, CommandError};
-use crate::storage::{index, thumbnails};
+use crate::storage::{db, index, thumbnails};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -73,13 +73,13 @@ pub fn save_thumb(
         ));
     }
 
-    let thumb_path = {
+    let (thumb_path, db_path) = {
         let vault_state = state
             .vault_state
             .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
         let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-        vs.vault.thumb_path(&slug)
+        (vs.vault.thumb_path(&slug), vs.vault.index_db_path())
     };
 
     if let Some(parent) = thumb_path.parent() {
@@ -102,15 +102,10 @@ pub fn save_thumb(
     std::fs::rename(&tmp_path, &thumb_path)
         .map_err(|e| CommandError::Internal(format!("rename tmp thumb: {}", e)))?;
 
-    {
-        let vault_state = state
-            .vault_state
-            .lock()
-            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-        let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-        index::sync_thumb_metadata(&vs.conn, &slug, &thumb_path)
-            .map_err(|e| CommandError::Internal(format!("sync_thumb_metadata: {e:#}")))?;
-    }
+    let conn = db::open_or_create(&db_path)
+        .map_err(|e| CommandError::Internal(format!("open thumb metadata db: {e:#}")))?;
+    index::sync_thumb_metadata(&conn, &slug, &thumb_path)
+        .map_err(|e| CommandError::Internal(format!("sync_thumb_metadata: {e:#}")))?;
 
     // save_thumb always writes JPEG — never a text placeholder.
     let _ = app.emit("thumb:updated", ThumbUpdatedPayload { slug, is_text: false });
