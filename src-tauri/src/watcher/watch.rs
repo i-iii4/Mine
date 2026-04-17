@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::domain::vault::VaultLayout;
 use crate::storage::db;
+use crate::util::append_startup_trace;
 use crate::watcher::{events, handler};
 
 const DEBOUNCE_MS: u64 = 300;
@@ -31,11 +32,14 @@ pub fn start_watching(
     vault: &VaultLayout,
     db_path: &Path,
 ) -> Result<RecommendedWatcher> {
+    let started = Instant::now();
+    append_startup_trace(app, "watcher", &format!("start path={}", vault.root().display()));
     let vault_clone = vault.clone();
     let app_clone = app.clone();
 
     // Separate DB connection for the watcher thread (WAL mode allows this)
     let conn = db::open_or_create(db_path)?;
+    append_startup_trace(app, "watcher", &format!("db_open elapsed_ms={}", started.elapsed().as_millis()));
 
     // Debounce: track last emit time to avoid flooding the frontend
     let last_emit: Arc<Mutex<Instant>> = Arc::new(Mutex::new(
@@ -79,6 +83,7 @@ pub fn start_watching(
     watcher.watch(vault.root(), RecursiveMode::NonRecursive)?;
 
     log::info!("file watcher started for {}", vault.root().display());
+    append_startup_trace(app, "watcher", &format!("ready elapsed_ms={}", started.elapsed().as_millis()));
 
     Ok(watcher)
 }

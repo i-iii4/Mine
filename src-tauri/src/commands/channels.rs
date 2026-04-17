@@ -4,13 +4,14 @@
 
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::commands::state::{AppState, CommandError};
 use crate::domain::block::{parse_block, serialize_block, Block, BlockType, DateTime, Frontmatter};
 use crate::domain::channel::Channel;
 use crate::domain::tag::normalize_tag;
 use crate::storage::{files, index};
+use crate::util::append_startup_trace;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -47,10 +48,14 @@ impl ChannelDto {
 
 /// List all channels with block counts.
 #[tauri::command]
-pub fn list_channels(state: State<'_, AppState>) -> Result<Vec<ChannelDto>, CommandError> {
+pub fn list_channels(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<ChannelDto>, CommandError> {
+    append_startup_trace(&app, "list_channels", "start");
     let vault_state = state.vault_state.lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    let Some(vs) = vault_state.as_ref() else {
+        append_startup_trace(&app, "list_channels", "no_vault");
+        return Err(CommandError::NoVault);
+    };
 
     let channels = index::list_channels(&vs.conn)?;
     let tags = index::get_all_tags(&vs.conn)?;
@@ -59,7 +64,7 @@ pub fn list_channels(state: State<'_, AppState>) -> Result<Vec<ChannelDto>, Comm
         .map(|tag| (tag.tag, tag.count))
         .collect();
 
-    let dtos = channels
+    let dtos: Vec<ChannelDto> = channels
         .iter()
         .map(|ch| {
             let count = tag_counts.get(&ch.tag).copied().unwrap_or(0);
@@ -67,6 +72,7 @@ pub fn list_channels(state: State<'_, AppState>) -> Result<Vec<ChannelDto>, Comm
         })
         .collect();
 
+    append_startup_trace(&app, "list_channels", &format!("done count={}", dtos.len()));
     Ok(dtos)
 }
 

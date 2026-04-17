@@ -188,9 +188,20 @@ export function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const started = performance.now();
+    console.info("[startup] getVaultPath:start");
     getVaultPath()
-      .then((path) => setVaultPath(path))
-      .catch(() => setVaultPath(null))
+      .then((path) => {
+        console.info("[startup] getVaultPath:done", {
+          path,
+          elapsedMs: Math.round(performance.now() - started),
+        });
+        setVaultPath(path);
+      })
+      .catch((err) => {
+        console.error("[startup] getVaultPath:failed", err);
+        setVaultPath(null);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -388,6 +399,12 @@ function AppWithVault({
     const requestId = ++loadRequestIdRef.current;
     const pathAtStart = vaultPathRef.current;
     const tagAtStart = currentTag;
+    const started = performance.now();
+    console.info("[startup] loadData:start", {
+      requestId,
+      tag: tagAtStart ?? "__all__",
+      includePreviews,
+    });
     try {
       const [grid, t, ch] = await Promise.all([
         listGridBlocks(currentTag, 0, GRID_PAGE_SIZE),
@@ -412,6 +429,13 @@ function AppWithVault({
       if (includePreviews) {
         await loadPreviews();
       }
+      console.info("[startup] loadData:done", {
+        requestId,
+        blocks: grid.blocks.length,
+        tags: t.length,
+        channels: ch.length,
+        elapsedMs: Math.round(performance.now() - started),
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (
@@ -422,6 +446,12 @@ function AppWithVault({
         console.error("[LOAD] FAILED:", msg, err);
         setLoadError(msg);
       }
+      console.error("[startup] loadData:failed", {
+        requestId,
+        tag: tagAtStart ?? "__all__",
+        elapsedMs: Math.round(performance.now() - started),
+        error: msg,
+      });
     }
   }, [currentTag, loadPreviews]);
 
@@ -460,9 +490,15 @@ function AppWithVault({
     let cancelled = false;
     setVaultReady(false);
     setLoadError(null);
+    const started = performance.now();
+    console.info("[startup] openVault:start", { vaultPath });
     void openVault(vaultPath)
       .then(() => {
         if (!cancelled) {
+          console.info("[startup] openVault:done", {
+            vaultPath,
+            elapsedMs: Math.round(performance.now() - started),
+          });
           setVaultReady(true);
         }
       })
@@ -470,6 +506,11 @@ function AppWithVault({
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
         console.error("[OPEN_VAULT] FAILED:", msg, err);
+        console.error("[startup] openVault:failed", {
+          vaultPath,
+          elapsedMs: Math.round(performance.now() - started),
+          error: msg,
+        });
         setLoadError(msg);
         setIsSyncing(false);
       });

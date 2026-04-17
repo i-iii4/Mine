@@ -1,5 +1,38 @@
 # Devlog
 
+## 17.04.2026 00:08 [primary] — Startup trace instrumentation
+
+### Goal
+Перейти от blind-fix цикла к фактической диагностике зависания на старте и гонок `NoVault`.
+
+### Actually completed
+
+**Файл трассировки старта** (`src-tauri/src/util.rs`, `src-tauri/src/commands/vault.rs`, `src-tauri/src/watcher/watch.rs`)
+- добавлен `startup-trace.log` в app data dir
+- в trace пишутся маркеры и тайминги для:
+  - `get_vault_path`
+  - `open_vault`
+  - `initialize_vault`
+  - `start_watching`
+  - `start_vault_sync` / `vault_sync_thread`
+- trace файл сбрасывается на новом startup-сеансе
+
+**Диагностика первых IPC-команд** (`src-tauri/src/commands/blocks.rs`, `src-tauri/src/commands/tags.rs`, `src-tauri/src/commands/channels.rs`)
+- `list_grid_blocks`, `list_tags`, `list_channels` теперь логируют `start / done / no_vault`
+- если гонка `NoVault` повторится, следующий trace покажет, какой именно IPC пришёл раньше открытия vault
+
+**Фронтенд-маркеры старта** (`src/App.tsx`)
+- добавлены `console.info/error` вокруг `getVaultPath`, `openVault`, `loadData`
+- это даёт browser-side последовательность, если зависание воспроизводится в dev-режиме
+
+### Checks
+- `cargo test -p mine --lib --quiet` — 243/243
+- `cargo check -p mine --quiet`
+- `bun run build`
+
+### Push
+- [текущий]
+
 ## 16.04.2026 22:48 [primary] — Hotfix: serialize vault open and hide UI until ready
 
 ### Goal

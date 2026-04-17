@@ -2,7 +2,7 @@
 //
 // Contract: SPEC_INTEGRATION.md#commands/tags
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::commands::state::{AppState, CommandError};
 use crate::domain::block::parse_block;
@@ -10,16 +10,23 @@ use crate::domain::block::serialize_block;
 use crate::domain::tag::normalize_tag;
 use crate::storage::{files, index};
 use crate::storage::index::TagCount;
+use crate::util::append_startup_trace;
 
 // ─── Commands ───────────────────────────────────────────────────────────────
 
 /// List all tags with their block counts.
 #[tauri::command]
-pub fn list_tags(state: State<'_, AppState>) -> Result<Vec<TagCount>, CommandError> {
+pub fn list_tags(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<TagCount>, CommandError> {
+    append_startup_trace(&app, "list_tags", "start");
     let vault_state = state.vault_state.lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    Ok(index::get_all_tags(&vs.conn)?)
+    let Some(vs) = vault_state.as_ref() else {
+        append_startup_trace(&app, "list_tags", "no_vault");
+        return Err(CommandError::NoVault);
+    };
+    let tags = index::get_all_tags(&vs.conn)?;
+    append_startup_trace(&app, "list_tags", &format!("done count={}", tags.len()));
+    Ok(tags)
 }
 
 /// Add a tag to a block: read .md, update frontmatter, write back, re-index.

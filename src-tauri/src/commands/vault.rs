@@ -6,6 +6,7 @@
 // Contract: SPEC_INTEGRATION.md#commands/vault
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use rusqlite::Connection;
@@ -14,6 +15,7 @@ use serde::Serialize;
 use crate::commands::state::{AppState, CommandError, VaultState};
 use crate::domain::vault::VaultLayout;
 use crate::storage::db;
+use crate::util::{append_startup_trace, reset_startup_trace};
 use crate::watcher::handler::{self, ScanResult};
 use crate::watcher::watch;
 
@@ -58,8 +60,14 @@ pub fn select_vault(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<VaultOpenResult, CommandError> {
+    append_startup_trace(&app, "select_vault", &format!("start path={path}"));
     let result = initialize_vault(&app, &state, &path)?;
     save_vault_path(&app, &path);
+    append_startup_trace(
+        &app,
+        "select_vault",
+        &format!("done path={} indexed={}", path, result.indexed),
+    );
     Ok(result)
 }
 
@@ -70,7 +78,22 @@ pub fn open_vault(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<VaultOpenResult, CommandError> {
-    initialize_vault(&app, &state, &path)
+    append_startup_trace(&app, "open_vault", &format!("start path={path}"));
+    let started = Instant::now();
+    let result = initialize_vault(&app, &state, &path);
+    match &result {
+        Ok(open) => append_startup_trace(
+            &app,
+            "open_vault",
+            &format!("done path={} indexed={} elapsed_ms={}", path, open.indexed, started.elapsed().as_millis()),
+        ),
+        Err(err) => append_startup_trace(
+            &app,
+            "open_vault",
+            &format!("error path={} elapsed_ms={} err={}", path, started.elapsed().as_millis(), err),
+        ),
+    }
+    result
 }
 
 /// Get the current vault path, or None if no vault is selected.
@@ -84,25 +107,32 @@ pub fn get_vault_path(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, CommandError> {
+    reset_startup_trace(&app);
+    append_startup_trace(&app, "get_vault_path", "start");
     // Check in-memory state first
     {
         let vault_state = state.vault_state.lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
         if let Some(ref vs) = *vault_state {
-            return Ok(Some(vs.vault.root().to_string_lossy().to_string()));
+            let path = vs.vault.root().to_string_lossy().to_string();
+            append_startup_trace(&app, "get_vault_path", &format!("from_memory path={path}"));
+            return Ok(Some(path));
         }
     }
 
     // Try to restore from saved config
     if let Some(saved_path) = load_saved_vault_path(&app) {
         if PathBuf::from(&saved_path).is_dir() {
+            append_startup_trace(&app, "get_vault_path", &format!("from_config path={saved_path}"));
             return Ok(Some(saved_path));
         } else {
             log::info!("saved vault no longer exists: {}", saved_path);
+            append_startup_trace(&app, "get_vault_path", &format!("stale_config path={saved_path}"));
             clear_saved_vault_path(&app);
         }
     }
 
+    append_startup_trace(&app, "get_vault_path", "none");
     Ok(None)
 }
 
@@ -172,12 +202,16 @@ fn initialize_vault(
     state: &AppState,
     path: &str,
 ) -> Result<VaultOpenResult, CommandError> {
+    let total = Instant::now();
+    append_startup_trace(app, "initialize_vault", &format!("start path={path}"));
     let mut vault_state = state.vault_state.lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     if let Some(ref vs) = *vault_state {
         if vs.vault.root() == Path::new(path) {
+            let indexed = count_indexed_blocks(&vs.conn)?;
+            append_startup_trace(app, "initialize_vault", &format!("reuse_existing path={} indexed={} elapsed_ms={}", path, indexed, total.elapsed().as_millis()));
             return Ok(VaultOpenResult {
-                indexed: count_indexed_blocks(&vs.conn)?,
+                indexed,
                 errors: 0,
                 sync_in_progress: false,
             });
@@ -185,6 +219,7 @@ fn initialize_vault(
     }
 
     let vault = VaultLayout::new(PathBuf::from(path));
+    append_startup_trace(app, "initialize_vault", &format!("mkdir thumbs={}", vault.thumbs_dir().display()));
 
     // Create .arena directories
     std::fs::create_dir_all(vault.thumbs_dir())
@@ -196,13 +231,17 @@ fn initialize_vault(
     app.asset_protocol_scope()
         .allow_directory(vault.root(), false)
         .map_err(|e| CommandError::Internal(format!("failed to allow vault root: {e}")))?;
+    append_startup_trace(app, "initialize_vault", &format!("asset_scope root elapsed_ms={}", total.elapsed().as_millis()));
     app.asset_protocol_scope()
         .allow_directory(vault.thumbs_dir(), false)
         .map_err(|e| CommandError::Internal(format!("failed to allow thumbs dir: {e}")))?;
+    append_startup_trace(app, "initialize_vault", &format!("asset_scope thumbs elapsed_ms={}", total.elapsed().as_millis()));
 
     // Open or create database
+    let db_started = Instant::now();
     let conn = db::open_or_create(&vault.index_db_path())?;
     let indexed = count_indexed_blocks(&conn)?;
+    append_startup_trace(app, "initialize_vault", &format!("db_open indexed={} elapsed_ms={}", indexed, db_started.elapsed().as_millis()));
 
     // One-time thumb cache migration: when the format version marker is
     // absent or outdated, wipe all cached thumbnails so full_scan
@@ -211,21 +250,26 @@ fn initialize_vault(
     // and any other stale cache state. The marker is written after the
     // wipe so subsequent starts skip this step.
     migrate_thumb_cache(&vault);
+    append_startup_trace(app, "initialize_vault", &format!("thumb_cache_migrated elapsed_ms={}", total.elapsed().as_millis()));
 
     // Start file watcher
     let db_path = vault.index_db_path();
+    let watcher_started = Instant::now();
     match watch::start_watching(app, &vault, &db_path) {
         Ok(w) => {
             let mut watcher = state.watcher.lock()
                 .map_err(|_| CommandError::Internal("watcher mutex poisoned".into()))?;
             *watcher = Some(w);
+            append_startup_trace(app, "initialize_vault", &format!("watcher_started elapsed_ms={}", watcher_started.elapsed().as_millis()));
         }
         Err(e) => {
             log::warn!("failed to start file watcher: {e:#}");
+            append_startup_trace(app, "initialize_vault", &format!("watcher_failed elapsed_ms={} err={:#}", watcher_started.elapsed().as_millis(), e));
         }
     }
 
     *vault_state = Some(VaultState { conn, vault });
+    append_startup_trace(app, "initialize_vault", &format!("done path={} indexed={} total_elapsed_ms={}", path, indexed, total.elapsed().as_millis()));
 
     Ok(VaultOpenResult {
         indexed,
@@ -279,11 +323,13 @@ fn thumbs_done_cb(app: AppHandle, path: String) -> Box<dyn FnOnce() + Send> {
 }
 
 fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandError> {
+    append_startup_trace(&app, "start_vault_sync", &format!("request path={path}"));
     {
         let app_state = app.state::<AppState>();
         let mut syncing = app_state.syncing_vaults.lock()
             .map_err(|_| CommandError::Internal("syncing_vaults mutex poisoned".into()))?;
         if !syncing.insert(path.clone()) {
+            append_startup_trace(&app, "start_vault_sync", &format!("already_running path={path}"));
             return Ok(false);
         }
     }
@@ -294,6 +340,7 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
     match std::thread::Builder::new()
         .name(format!("vault-sync-{}", sync_path))
         .spawn(move || {
+            let total = Instant::now();
             let vault = VaultLayout::new(PathBuf::from(&path_for_thread));
             let _ = app_for_thread.emit(
                 "vault-sync-started",
@@ -301,11 +348,13 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                     path: path_for_thread.clone(),
                 },
             );
+            append_startup_trace(&app_for_thread, "vault_sync_thread", &format!("start path={}", path_for_thread));
 
             let conn = match db::open_or_create(&vault.index_db_path()) {
                 Ok(conn) => conn,
                 Err(err) => {
                     log::error!("failed to open db for sync {}: {:#}", path_for_thread, err);
+                    append_startup_trace(&app_for_thread, "vault_sync_thread", &format!("db_open_failed path={} err={:#}", path_for_thread, err));
                     let _ = app_for_thread.emit(
                         "vault-sync-finished",
                         VaultSyncFinishedPayload {
@@ -332,6 +381,7 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
             match result {
                 Ok(scan) => {
                     migrate_channels_to_files(&conn, &vault);
+                    append_startup_trace(&app_for_thread, "vault_sync_thread", &format!("done path={} indexed={} errors={} elapsed_ms={}", path_for_thread, scan.indexed, scan.errors, total.elapsed().as_millis()));
                     let _ = app_for_thread.emit(
                         "vault-sync-finished",
                         VaultSyncFinishedPayload {
@@ -344,6 +394,7 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                 }
                 Err(err) => {
                     log::error!("background vault sync failed for {}: {:#}", path_for_thread, err);
+                    append_startup_trace(&app_for_thread, "vault_sync_thread", &format!("failed path={} elapsed_ms={} err={:#}", path_for_thread, total.elapsed().as_millis(), err));
                     let _ = app_for_thread.emit(
                         "vault-sync-finished",
                         VaultSyncFinishedPayload {

@@ -1,5 +1,13 @@
 // Shared utilities used by both the Tauri app and the native messaging host.
 
+#[cfg(feature = "desktop")]
+use std::io::Write;
+#[cfg(feature = "desktop")]
+use std::path::PathBuf;
+
+#[cfg(feature = "desktop")]
+use tauri::{AppHandle, Manager};
+
 /// Current UTC time as ISO 8601 string (without chrono dependency).
 pub fn now_iso8601() -> String {
     let now = std::time::SystemTime::now()
@@ -17,6 +25,33 @@ pub fn now_iso8601() -> String {
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
         year, month, day, hours, minutes, seconds
     )
+}
+
+#[cfg(feature = "desktop")]
+fn startup_trace_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|dir| dir.join("startup-trace.log"))
+}
+
+#[cfg(feature = "desktop")]
+pub fn reset_startup_trace(app: &AppHandle) {
+    let Some(path) = startup_trace_path(app) else { return };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, "");
+}
+
+#[cfg(feature = "desktop")]
+pub fn append_startup_trace(app: &AppHandle, scope: &str, message: &str) {
+    let Some(path) = startup_trace_path(app) else { return };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path) else { return };
+    let _ = writeln!(file, "{} [{}] {}", now_iso8601(), scope, message);
 }
 
 /// Convert days since Unix epoch to (year, month, day).
