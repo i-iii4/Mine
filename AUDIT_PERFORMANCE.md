@@ -12,6 +12,7 @@
 | 6 | Grid virtualization absent on desktop path | FIXED (custom windowed masonry) |
 | 7 | Стартовый grid payload слишком тяжёлый (`body`, tags, media metadata на весь corpus) | PARTIALLY FIXED (route-scoped `list_grid_blocks`, no per-block tags) |
 | 8 | `list_pending_thumb_upgrades()` делал file peek'и из IPC на UI thread | FIXED (SQLite planner + `spawn_blocking`) |
+| 9 | Watcher и background `full_scan()` одновременно переиндексировали vault и ловили SQLite lock storm | FIXED (watcher suppressed while sync is active) |
 
 ## Latest wins
 
@@ -31,6 +32,13 @@
 - `commands/thumbnails.rs` + `storage/index.rs`: `list_pending_thumb_upgrades()` больше не читает thumbs с диска из IPC. Phase 2 planner переведён на `spawn_blocking`, открывает отдельный SQLite connection и выбирает только `thumb_format = 'png'` через `PendingThumbUpgradeBlock`.
 - `commands/vault.rs` + `storage/index.rs`: при `open_vault()` запускается фоновый backfill `thumb_format/thumb_mtime` для legacy vault'ов, где `.jpg` уже есть в `.arena/cache/thumbs`, но metadata в БД ещё пустые. После backfill отправляется `vault-changed`, чтобы sidebar previews перечитались автоматически.
 - Практический эффект на реальном vault `Mine`: beachball исчез, а левое меню начало подтягивать уже существующие preview cards без полного rebuild index.
+
+### 17.04.2026 — watcher / sync contention + route cache polish
+
+- `watcher/watch.rs` + `commands/state.rs`: notify-watcher теперь пропускает события для vault, который уже находится в `syncing_vaults`. Это убрало реальную гонку `watcher + full_scan`, из-за которой early startup ловил пачки `database is locked` и терял отзывчивость до завершения фоновой синхронизации.
+- `watcher/handler.rs`: `handle_event` и `index_md_file` теперь возвращают `bool changed`, а `watcher` шлёт `vault-changed` только когда операция реально изменила индекс/thumbnail state. Это срезает лишние refresh циклы на пустых и служебных событиях.
+- `App.tsx`: route switch использует per-route `GridSnapshot` cache и на чистой навигации больше не рефетчит `list_tags` / `list_channels`. Дополнительно убран дублирующий стартовый `list_grid_blocks`, который раньше повторно запускался после `setTags/setChannels` из-за новой identity `loadData`.
+- Практический эффект: startup на реальном `Mine` перестал деградировать в lock storm, а повторные переходы между уже посещёнными каналами стали мгновенными без лишнего IPC.
 
 Эти изменения устранили два самых тяжёлых path'а первого экрана:
 - полный reindex перед открытием UI;
@@ -87,7 +95,7 @@ Rust IPC returns new array reference every time → `setBlocks(new_array)` alway
 
 **H5. Grid snapshot всё ещё тяжёлый для `Everything`**
 - `list_grid_blocks(current_tag)` уже убрал per-block tags, channel docs и пустой body у non-article блоков
-- Но на маршруте `Everything` frontend всё ещё получает весь corpus одним IPC snapshot
+- Но на маршруте `Everything` frontend всё ещё получает весь corpus одним IPC snapshot при cache miss
 - `first_image`, `media_urls`, `media_dimensions` всё ещё прилетают заранее для всех карточек
 - Fix: порционная догрузка grid snapshot по viewport / page window или ещё более лёгкий first-screen DTO
 

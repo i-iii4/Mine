@@ -210,6 +210,7 @@ Goal: довести проект до продакшен-качества по 
 | 9.3.7 | `has_thumbnail` / `thumb_format` / `thumb_mtime` в SQLite вместо N syscall-ов в `list_channel_previews` | CRIT-13 | [x] |
 | 9.3.8 | `catch_unwind` в потоке thumb-gen | CRIT-14 | [x] |
 | 9.3.9 | `list_channel_previews` без полного `list_blocks_light()`: SQL top-N slugs для `__all__` и per-tag | PERF-1 | [x] |
+| 9.3.10 | Подавление watcher-событий во время `start_vault_sync` для того же vault, чтобы убрать `database is locked` storm | PERF-4 | [x] |
 
 #### 9.4 — App.tsx: надёжность и производительность [PENDING]
 
@@ -221,6 +222,7 @@ Goal: довести проект до продакшен-качества по 
 | 9.4.4 | `instanceof PointerEvent` вместо `as` cast | MED-12 | [ ] |
 | 9.4.5 | Открытие vault по snapshot без блокирующего `full_scan()`, фоновые `vault-sync-*` events, switch без `window.location.reload()` | PERF-2 | [x] |
 | 9.4.6 | Guard против stale async-ответов при switch vault (`vaultPathRef` + request id) | PERF-3 | [x] |
+| 9.4.7 | Per-route `GridSnapshot` cache + skip duplicate startup fetch на route effect | PERF-5 | [x] |
 
 #### 9.5 — Безопасность: валидация URL [PENDING]
 

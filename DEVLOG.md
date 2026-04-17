@@ -1,5 +1,31 @@
 # Devlog
 
+## 17.04.2026 13:44 [primary] — Watcher/sync contention fix + route snapshot cache
+
+### Goal
+Добить два оставшихся реальных источника лагов после startup hotfix'ов: lock storm между watcher и background sync, и лишние IPC reload'ы при route switch / повторном старте.
+
+### Actually completed
+
+**Watcher больше не конкурирует с `full_scan()` за тот же vault** (`src-tauri/src/watcher/watch.rs`, `src-tauri/src/watcher/handler.rs`)
+- notify path теперь проверяет `syncing_vaults` в `AppState` и полностью пропускает watcher-события для vault, который уже синхронизируется в фоне
+- это убрало реальную гонку `watcher + full_scan`, которая на `Mine` давала пачки `database is locked` / `Cannot promote read transaction to write transaction`
+- `handle_event()` и `index_md_file()` возвращают `bool changed`, поэтому `vault-changed` больше не эмитится на no-op событиях и служебных thumbnail ветках
+
+**Route switch больше не делает лишний IPC при повторных переходах** (`src/App.tsx`)
+- добавлен per-route cache `tag -> GridSnapshot`
+- чистый переход между уже посещёнными каналами сначала применяет cached snapshot синхронно, без ожидания `list_grid_blocks`
+- route effect больше не перезапрашивает `list_tags` / `list_channels`
+- убран дублирующий стартовый `list_grid_blocks`, который раньше повторялся после `setTags/setChannels` из-за смены identity `loadData`
+- `vault-changed` и `vault-sync-finished` переведены на `loadDataRef`, чтобы listeners не пересоздавались на каждый ререндер
+
+### Checks
+- `bun run build`
+- `cargo test -p mine --lib --quiet` — 244/244
+
+### Push
+- [текущий]
+
 ## 17.04.2026 11:41 [primary] — Thumb planner off main thread + legacy thumb metadata backfill
 
 ### Goal

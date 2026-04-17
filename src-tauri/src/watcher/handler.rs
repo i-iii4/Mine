@@ -245,7 +245,7 @@ pub fn index_md_file(
     vault: &VaultLayout,
     path: &Path,
     app: Option<&AppHandle>,
-) -> Result<()> {
+) -> Result<bool> {
     let job = index_md_file_inner(conn, vault, path)?;
 
     if let Some(job) = job {
@@ -274,7 +274,7 @@ pub fn index_md_file(
 
         if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, vault) {
             let _ = index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path);
-            return Ok(());
+            return Ok(true);
         }
 
         // Generate thumbnail in background thread to avoid blocking file
@@ -304,7 +304,7 @@ pub fn index_md_file(
             .ok();
     }
 
-    Ok(())
+    Ok(true)
 }
 
 /// Emit `thumb:updated` and (when applicable) `thumb:upgrade-requested`
@@ -459,10 +459,10 @@ pub fn handle_event(
     vault: &VaultLayout,
     event: &VaultEvent,
     app: Option<&AppHandle>,
-) -> Result<()> {
+) -> Result<bool> {
     match event {
         VaultEvent::BlockChanged(path) => {
-            index_md_file(conn, vault, path, app)?;
+            return index_md_file(conn, vault, path, app);
         }
         VaultEvent::BlockDeleted(path) => {
             if let Some(slug) = path_to_slug(path) {
@@ -474,7 +474,7 @@ pub fn handle_event(
                     .flatten()
                     .map(|b| b.tags)
                     .unwrap_or_default();
-                index::remove_block(conn, &slug)?;
+                let removed = index::remove_block(conn, &slug)?;
                 if let Some(app) = app {
                     let _ = app.emit(
                         "block:removed",
@@ -488,6 +488,7 @@ pub fn handle_event(
                     // bust will turn into a 404 → placeholder state).
                     let _ = app.emit("thumb:updated", ThumbUpdatedPayload { slug, is_text: false });
                 }
+                return Ok(removed);
             }
         }
         VaultEvent::MediaChanged(path) => {
@@ -506,17 +507,20 @@ pub fn handle_event(
                         .ok();
                 }
             }
+            return Ok(false);
         }
         VaultEvent::MediaDeleted(path) => {
             if let Some(slug) = path_to_slug(path) {
                 let thumb_path = vault.thumb_path(&slug);
+                let had_thumb = thumb_path.exists();
                 if thumb_path.exists() {
                     let _ = std::fs::remove_file(&thumb_path);
                 }
+                return Ok(had_thumb);
             }
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 // ─── Private helpers ────────────────────────────────────────────────────────

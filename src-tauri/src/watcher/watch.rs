@@ -10,9 +10,10 @@ use serde::Serialize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::domain::vault::VaultLayout;
+use crate::commands::state::AppState;
 use crate::storage::db;
 use crate::util::append_startup_trace;
 use crate::watcher::{events, handler};
@@ -60,10 +61,25 @@ pub fn start_watching(
             return;
         }
 
+        let sync_in_progress = app_clone
+            .state::<AppState>()
+            .syncing_vaults
+            .lock()
+            .map(|syncing| syncing.contains(&vault_clone.root().to_string_lossy().into_owned()))
+            .unwrap_or(false);
+        if sync_in_progress {
+            return;
+        }
+
+        let mut any_changed = false;
         for ve in &vault_events {
-            if let Err(e) = handler::handle_event(&conn, &vault_clone, ve, Some(&app_clone)) {
-                log::warn!("watcher handle_event: {e:#}");
+            match handler::handle_event(&conn, &vault_clone, ve, Some(&app_clone)) {
+                Ok(changed) => any_changed |= changed,
+                Err(e) => log::warn!("watcher handle_event: {e:#}"),
             }
+        }
+        if !any_changed {
+            return;
         }
 
         // Debounce: emit at most once per DEBOUNCE_MS

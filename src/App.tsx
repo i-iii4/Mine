@@ -42,7 +42,7 @@ const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform })
   };
 };
 
-import type { IndexedBlock, LightBlock, TagCount, ChannelDto } from "@/types";
+import type { IndexedBlock, LightBlock, TagCount, ChannelDto, GridSnapshot } from "@/types";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   getVaultPath,
@@ -266,8 +266,23 @@ function AppWithVault({
   const vaultPathRef = useRef(vaultPath);
   vaultPathRef.current = vaultPath;
   const loadRequestIdRef = useRef(0);
+  const routeSnapshotCacheRef = useRef<Map<string, GridSnapshot>>(new Map());
   const [isSyncing, setIsSyncing] = useState(true);
   const [vaultReady, setVaultReady] = useState(false);
+
+  const routeKeyFor = useCallback((tag?: string) => tag ?? "__all__", []);
+
+  const applyGridSnapshot = useCallback((tag: string | undefined, grid: GridSnapshot) => {
+    routeSnapshotCacheRef.current.set(routeKeyFor(tag), grid);
+    setBlocks(grid.blocks);
+    setTotalBlocks(grid.total_blocks);
+    setHasMoreBlocks(grid.has_more);
+    setLoadingMoreBlocks(false);
+  }, [routeKeyFor]);
+
+  const invalidateRouteSnapshots = useCallback(() => {
+    routeSnapshotCacheRef.current.clear();
+  }, []);
 
   // Redirect if navigated to a channel that doesn't exist (check both tags and channels)
   useEffect(() => {
@@ -395,22 +410,50 @@ function AppWithVault({
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const loadData = useCallback(async ({ includePreviews = true }: { includePreviews?: boolean } = {}) => {
+  const loadData = useCallback(async ({
+    includePreviews = true,
+    includeTaxonomy = true,
+    preferCachedRoute = false,
+    invalidateCachedRoutes = false,
+    skipFetchIfCached = false,
+  }: {
+    includePreviews?: boolean;
+    includeTaxonomy?: boolean;
+    preferCachedRoute?: boolean;
+    invalidateCachedRoutes?: boolean;
+    skipFetchIfCached?: boolean;
+  } = {}) => {
     const requestId = ++loadRequestIdRef.current;
     const pathAtStart = vaultPathRef.current;
     const tagAtStart = currentTag;
+    const routeKey = routeKeyFor(tagAtStart);
     const started = performance.now();
+    if (invalidateCachedRoutes) {
+      routeSnapshotCacheRef.current.clear();
+    }
+    if (preferCachedRoute) {
+      const cached = routeSnapshotCacheRef.current.get(routeKey);
+      if (cached) {
+        applyGridSnapshot(tagAtStart, cached);
+        setLoadError(null);
+        if (skipFetchIfCached) {
+          return;
+        }
+      }
+    }
     console.info("[startup] loadData:start", {
       requestId,
       tag: tagAtStart ?? "__all__",
       includePreviews,
+      includeTaxonomy,
+      preferCachedRoute,
     });
     try {
-      const [grid, t, ch] = await Promise.all([
-        listGridBlocks(currentTag, 0, GRID_PAGE_SIZE),
-        listTags(),
-        listChannels(),
-      ]);
+      const gridPromise = listGridBlocks(tagAtStart, 0, GRID_PAGE_SIZE);
+      const taxonomyPromise = includeTaxonomy
+        ? Promise.all([listTags(), listChannels()] as const)
+        : Promise.resolve(null);
+      const [grid, taxonomy] = await Promise.all([gridPromise, taxonomyPromise]);
       if (
         loadRequestIdRef.current !== requestId
         || vaultPathRef.current !== pathAtStart
@@ -418,12 +461,12 @@ function AppWithVault({
       ) {
         return;
       }
-      setBlocks(grid.blocks);
-      setTotalBlocks(grid.total_blocks);
-      setHasMoreBlocks(grid.has_more);
-      setLoadingMoreBlocks(false);
-      setTags(t);
-      setChannels(ch);
+      applyGridSnapshot(tagAtStart, grid);
+      if (taxonomy) {
+        const [t, ch] = taxonomy;
+        setTags(t);
+        setChannels(ch);
+      }
       setLoadError(null);
       window.dispatchEvent(new Event("vault-refreshed"));
       if (includePreviews) {
@@ -432,8 +475,6 @@ function AppWithVault({
       console.info("[startup] loadData:done", {
         requestId,
         blocks: grid.blocks.length,
-        tags: t.length,
-        channels: ch.length,
         elapsedMs: Math.round(performance.now() - started),
       });
     } catch (err) {
@@ -453,7 +494,7 @@ function AppWithVault({
         error: msg,
       });
     }
-  }, [currentTag, loadPreviews]);
+  }, [applyGridSnapshot, currentTag, loadPreviews, routeKeyFor]);
 
   const loadDataRef = useRef(loadData);
   loadDataRef.current = loadData;
@@ -472,8 +513,15 @@ function AppWithVault({
       setBlocks((prev) => {
         const seen = new Set(prev.map((block) => block.id));
         const appended = grid.blocks.filter((block) => !seen.has(block.id));
-        return appended.length > 0 ? [...prev, ...appended] : prev;
+        const nextBlocks = appended.length > 0 ? [...prev, ...appended] : prev;
+        routeSnapshotCacheRef.current.set(routeKeyFor(tagAtStart), {
+          blocks: nextBlocks,
+          total_blocks: grid.total_blocks,
+          has_more: grid.has_more,
+        });
+        return nextBlocks;
       });
+      setTotalBlocks(grid.total_blocks);
       setHasMoreBlocks(grid.has_more);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -484,12 +532,13 @@ function AppWithVault({
         setLoadingMoreBlocks(false);
       }
     }
-  }, [blocks.length, currentTag, hasMoreBlocks, loadingMoreBlocks]);
+  }, [blocks.length, currentTag, hasMoreBlocks, loadingMoreBlocks, routeKeyFor]);
 
   useEffect(() => {
     let cancelled = false;
     setVaultReady(false);
     setLoadError(null);
+    invalidateRouteSnapshots();
     const started = performance.now();
     console.info("[startup] openVault:start", { vaultPath });
     void openVault(vaultPath)
@@ -517,7 +566,7 @@ function AppWithVault({
     return () => {
       cancelled = true;
     };
-  }, [vaultPath]);
+  }, [invalidateRouteSnapshots, vaultPath]);
 
   useEffect(() => {
     if (!vaultReady) {
@@ -565,8 +614,13 @@ function AppWithVault({
     if (!initialRouteLoadDoneRef.current) {
       return;
     }
-    void loadData({ includePreviews: false });
-  }, [currentTag, loadData, vaultReady]);
+    void loadDataRef.current({
+      includePreviews: false,
+      includeTaxonomy: false,
+      preferCachedRoute: true,
+      skipFetchIfCached: true,
+    });
+  }, [currentTag, vaultReady]);
 
   // Listen for vault-changed events from file watcher (with debounce)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -580,14 +634,14 @@ function AppWithVault({
       }
       clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
-        void loadData({ includePreviews: false });
+        void loadDataRef.current({ includePreviews: false, invalidateCachedRoutes: true });
       }, 250);
     });
     return () => {
       unlisten.then((fn) => fn());
       clearTimeout(debounceRef.current);
     };
-  }, [loadData, vaultReady]);
+  }, [vaultReady]);
 
   useEffect(() => {
     if (!vaultReady) {
@@ -607,14 +661,14 @@ function AppWithVault({
         setLoadError(event.payload.error);
         return;
       }
-      void loadData();
+      void loadDataRef.current({ invalidateCachedRoutes: true });
     });
 
     return () => {
       unlistenStarted.then((fn) => fn());
       unlistenFinished.then((fn) => fn());
     };
-  }, [loadData, vaultReady]);
+  }, [vaultReady]);
 
   // ── Vault switching ──────────────────────────────────────────────────────
 
@@ -696,7 +750,7 @@ function AppWithVault({
       suppressRedirectRef.current = true;
       try {
         const result = await renameChannel(oldTag, newTag);
-        await loadData();
+        await loadData({ invalidateCachedRoutes: true });
         if (window.location.pathname === `/channel/${encodeURIComponent(oldTag)}`) {
           navigate(`/channel/${encodeURIComponent(result.tag)}`);
         }
@@ -720,7 +774,7 @@ function AppWithVault({
       } catch (err) {
         console.error("Failed to delete tag:", err);
       }
-      await loadData();
+      await loadData({ invalidateCachedRoutes: true });
     },
     [loadData, currentTag, navigate],
   );
@@ -788,7 +842,7 @@ function AppWithVault({
       } catch (err) {
         console.error("Failed to create channel:", err);
       }
-      await loadData();
+      await loadData({ invalidateCachedRoutes: true });
     },
     [loadData],
   );
@@ -807,7 +861,7 @@ function AppWithVault({
       } catch (err) {
         console.error("Failed to reorder channels:", err);
       }
-      await loadData();
+      await loadData({ invalidateCachedRoutes: true });
     },
     [orderedTags, loadData],
   );
@@ -821,7 +875,7 @@ function AppWithVault({
       } catch (err) {
         console.error("Failed to add tag:", err);
       }
-      await loadData();
+      await loadData({ invalidateCachedRoutes: true });
     },
     [loadData],
   );
@@ -884,7 +938,7 @@ function AppWithVault({
       } catch (err) {
         console.error("Failed to toggle tag:", err);
       }
-      await loadData();
+      await loadData({ invalidateCachedRoutes: true });
     },
     [loadData],
   );
@@ -897,7 +951,7 @@ function AppWithVault({
       } catch (err) {
         console.error("Failed to create tag:", err);
       }
-      await loadData();
+      await loadData({ invalidateCachedRoutes: true });
     },
     [loadData],
   );
@@ -916,7 +970,7 @@ function AppWithVault({
         console.error("[DELETE] deleteBlock FAILED:", err);
       }
       console.log("[DELETE] calling loadData...");
-      await loadData();
+      await loadData({ invalidateCachedRoutes: true });
       console.log("[DELETE] loadData done, blocks:", blocks.length, "tags:", tags.length);
     },
     [loadData, currentTag, selectedBlock, blocks.length, tags.length],
@@ -1034,7 +1088,7 @@ function AppWithVault({
             onClose={handleDetailClose}
             onNavigate={handleDetailNavigate}
             onTagsChanged={() => {
-              void loadData();
+              void loadData({ invalidateCachedRoutes: true });
             }}
           />
         )}
@@ -1053,7 +1107,7 @@ function AppWithVault({
         open={importOpen}
         onClose={() => setImportOpen(false)}
         onImportComplete={() => {
-          void loadData();
+          void loadData({ invalidateCachedRoutes: true });
         }}
       />
     </div>{/* end body */}
@@ -1090,7 +1144,7 @@ function AppWithVault({
       <DropZone
         currentTag={currentTag}
         onBlocksCreated={() => {
-          void loadData();
+          void loadData({ invalidateCachedRoutes: true });
         }}
       />
     </div>{/* end flex-col */}
