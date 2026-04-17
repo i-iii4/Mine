@@ -20,6 +20,7 @@ pub fn run() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::vault::select_vault,
+            commands::vault::open_vault,
             commands::vault::get_vault_path,
             commands::vault::list_known_vaults,
             commands::vault::start_vault_sync,

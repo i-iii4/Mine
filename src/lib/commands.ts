@@ -19,6 +19,9 @@ import type {
 export const selectVault = (path: string) =>
   invoke<VaultOpenResult>("select_vault", { path });
 
+export const openVault = (path: string) =>
+  invoke<VaultOpenResult>("open_vault", { path });
+
 export const getVaultPath = () =>
   invoke<string | null>("get_vault_path");
 

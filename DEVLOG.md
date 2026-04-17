@@ -1,5 +1,33 @@
 # Devlog
 
+## 16.04.2026 22:34 [primary] — Hotfix: unblock restore-path startup
+
+### Goal
+Убрать зависание на чёрном экране `Loading...` при автозапуске последнего vault.
+
+### Actually completed
+
+**Restore-path больше не инициализирует vault внутри `get_vault_path()`** (`src-tauri/src/commands/vault.rs`, `src-tauri/src/lib.rs`, `src/lib/commands.ts`, `src/App.tsx`)
+- `get_vault_path()` теперь возвращает только сохранённый path, без `initialize_vault()`
+- добавлена отдельная команда `open_vault(path)` для snapshot-open после первого paint
+- `AppWithVault` сначала открывает vault явно, и только потом запускает `loadData()` / `startVaultSync()`
+- sidebar previews и Phase 2 thumb upgrades больше не стартуют до `vaultReady`
+
+**Сужен startup asset scope** (`src-tauri/src/commands/vault.rs`)
+- вместо рекурсивного `allow_directory(vault.root(), true)` startup теперь разрешает только плоский root vault и `thumbs/`
+- это соответствует реальной flat-структуре vault и убирает лишний recursive walk на старте
+
+**Guard от повторного open на тот же vault** (`src-tauri/src/commands/vault.rs`)
+- `initialize_vault()` теперь быстро возвращает текущий snapshot, если этот путь уже открыт в `AppState`
+
+### Checks
+- `cargo test -p mine --lib --quiet` — 243/243
+- `cargo check -p mine --quiet`
+- `bun run build`
+
+### Push
+- [текущий]
+
 ## 16.04.2026 22:19 [primary] — Hotfix: unstall Phase 2 thumb upgrades
 
 ### Goal

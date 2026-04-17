@@ -5,7 +5,7 @@
 //
 // Contract: SPEC_INTEGRATION.md#commands/vault
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use rusqlite::Connection;
@@ -63,11 +63,22 @@ pub fn select_vault(
     Ok(result)
 }
 
+/// Open a vault snapshot without mutating persisted config.
+#[tauri::command]
+pub fn open_vault(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<VaultOpenResult, CommandError> {
+    initialize_vault(&app, &state, &path)
+}
+
 /// Get the current vault path, or None if no vault is selected.
 ///
-/// If the in-memory state is empty (fresh launch), tries to restore
-/// from the persisted config. If the saved directory still exists,
-/// performs a full initialization (DB open + scan) transparently.
+/// If the in-memory state is empty (fresh launch), returns the persisted
+/// path if it still exists. Actual vault initialization is performed by
+/// a follow-up `open_vault` / `select_vault` call after the first paint,
+/// so app startup never blocks on restore-path side effects.
 #[tauri::command]
 pub fn get_vault_path(
     app: AppHandle,
@@ -85,14 +96,7 @@ pub fn get_vault_path(
     // Try to restore from saved config
     if let Some(saved_path) = load_saved_vault_path(&app) {
         if PathBuf::from(&saved_path).is_dir() {
-            match initialize_vault(&app, &state, &saved_path) {
-                Ok(_) => return Ok(Some(saved_path)),
-                Err(e) => {
-                    log::warn!("failed to restore vault {}: {}", saved_path, e);
-                    // Clear invalid saved path
-                    clear_saved_vault_path(&app);
-                }
-            }
+            return Ok(Some(saved_path));
         } else {
             log::info!("saved vault no longer exists: {}", saved_path);
             clear_saved_vault_path(&app);
@@ -168,16 +172,35 @@ fn initialize_vault(
     state: &AppState,
     path: &str,
 ) -> Result<VaultOpenResult, CommandError> {
-    let vault = VaultLayout::new(PathBuf::from(path));
+    {
+        let vault_state = state.vault_state.lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        if let Some(ref vs) = *vault_state {
+            if vs.vault.root() == Path::new(path) {
+                return Ok(VaultOpenResult {
+                    indexed: count_indexed_blocks(&vs.conn)?,
+                    errors: 0,
+                    sync_in_progress: false,
+                });
+            }
+        }
+    }
 
-    // Expand asset protocol scope so the WebView can load images from vault
-    app.asset_protocol_scope()
-        .allow_directory(vault.root(), true)
-        .map_err(|e| CommandError::Internal(format!("failed to expand asset scope: {e}")))?;
+    let vault = VaultLayout::new(PathBuf::from(path));
 
     // Create .arena directories
     std::fs::create_dir_all(vault.thumbs_dir())
         .map_err(|e| CommandError::Internal(format!("failed to create dirs: {e}")))?;
+
+    // Expand asset protocol scope for the flat vault root plus thumbnail cache.
+    // The vault is intentionally flat; recursive scope over the whole vault
+    // needlessly walks every file on startup and blocks restore-path UX.
+    app.asset_protocol_scope()
+        .allow_directory(vault.root(), false)
+        .map_err(|e| CommandError::Internal(format!("failed to allow vault root: {e}")))?;
+    app.asset_protocol_scope()
+        .allow_directory(vault.thumbs_dir(), false)
+        .map_err(|e| CommandError::Internal(format!("failed to allow thumbs dir: {e}")))?;
 
     // Open or create database
     let conn = db::open_or_create(&vault.index_db_path())?;

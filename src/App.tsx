@@ -46,6 +46,7 @@ import type { IndexedBlock, LightBlock, TagCount, ChannelDto } from "@/types";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   getVaultPath,
+  openVault,
   selectVault,
   startVaultSync,
   listGridBlocks,
@@ -255,6 +256,7 @@ function AppWithVault({
   vaultPathRef.current = vaultPath;
   const loadRequestIdRef = useRef(0);
   const [isSyncing, setIsSyncing] = useState(true);
+  const [vaultReady, setVaultReady] = useState(false);
 
   // Redirect if navigated to a channel that doesn't exist (check both tags and channels)
   useEffect(() => {
@@ -371,14 +373,14 @@ function AppWithVault({
   // targeted updates — sidebar latency drops from ~500ms to ~110ms.
 
   const { channelPreviews, refresh: loadPreviews } = useChannelPreviewsEvents({
-    vaultPath,
+    vaultPath: vaultReady ? vaultPath : null,
     limit: 20,
   });
 
   // Phase 2 thumbnail upgrade pipeline: Web Worker decodes webp/heic/
   // video media via the browser's native decoder and writes real JPEG
   // bytes back through save_thumb. Mounts once vault is open.
-  useThumbnailUpgrade(Boolean(vaultPath));
+  useThumbnailUpgrade(vaultReady);
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -456,6 +458,31 @@ function AppWithVault({
 
   useEffect(() => {
     let cancelled = false;
+    setVaultReady(false);
+    setLoadError(null);
+    void openVault(vaultPath)
+      .then(() => {
+        if (!cancelled) {
+          setVaultReady(true);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[OPEN_VAULT] FAILED:", msg, err);
+        setLoadError(msg);
+        setIsSyncing(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vaultPath]);
+
+  useEffect(() => {
+    if (!vaultReady) {
+      return;
+    }
+    let cancelled = false;
     let syncTimer: number | null = null;
 
     setIsSyncing(true);
@@ -488,18 +515,24 @@ function AppWithVault({
         window.clearTimeout(syncTimer);
       }
     };
-  }, [vaultPath]);
+  }, [vaultPath, vaultReady]);
 
   useEffect(() => {
+    if (!vaultReady) {
+      return;
+    }
     if (!initialRouteLoadDoneRef.current) {
       return;
     }
     void loadData({ includePreviews: false });
-  }, [currentTag, loadData]);
+  }, [currentTag, loadData, vaultReady]);
 
   // Listen for vault-changed events from file watcher (with debounce)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
+    if (!vaultReady) {
+      return;
+    }
     const unlisten = listen<VaultChangedEvent>("vault-changed", (event) => {
       if (event.payload.path !== vaultPathRef.current) {
         return;
@@ -513,9 +546,12 @@ function AppWithVault({
       unlisten.then((fn) => fn());
       clearTimeout(debounceRef.current);
     };
-  }, [loadData]);
+  }, [loadData, vaultReady]);
 
   useEffect(() => {
+    if (!vaultReady) {
+      return;
+    }
     const unlistenStarted = listen<VaultSyncStartedEvent>("vault-sync-started", (event) => {
       if (event.payload.path === vaultPathRef.current) {
         setIsSyncing(true);
@@ -537,7 +573,7 @@ function AppWithVault({
       unlistenStarted.then((fn) => fn());
       unlistenFinished.then((fn) => fn());
     };
-  }, [loadData]);
+  }, [loadData, vaultReady]);
 
   // ── Vault switching ──────────────────────────────────────────────────────
 
