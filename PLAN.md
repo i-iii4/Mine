@@ -131,7 +131,9 @@ Goal: устранить две подтверждённые архитекту�
 - `C3` выполнен частично:
   - route/layout invalidation и resize bucket handling усилены;
   - sync IPC и asset-serving main-thread hotspots из trace/sample выведены из critical path;
-  - measurement/layout path всё ещё требует финального acceptance на живом `Mine`.
+  - generation-safe masonry rewrite внедрён: `layoutGenerationKey`, generation-aware height/layout cache, `committed` prefix и skeleton-only provisional mode;
+  - на живом `Mine` подтверждено, что системная обрезка низа и white-tail underflow больше не воспроизводятся;
+  - оставшийся scope `C3` — `source_stamp` invalidation и финальный profiling gate, а не height correctness.
 - `C5` выполнен частично:
   - autoplay уже возвращён для dedicated `video` blocks;
   - autoplay уже возвращён для single-video previews (`article` / `social`);
@@ -153,6 +155,7 @@ Goal: устранить две подтверждённые архитекту�
 - Move vault сохраняет continuity через `vault-id`.
 - Второй Mac открывает тот же vault через rebuild local derived store.
 - Feed не использует real media в measurement path.
+- Initial visible window, route switch и resize не рендерят live cards внутри stale envelope; системной bottom clip / white tail underflow больше нет.
 - Multi-image article/social cards show composite previews in feed instead of a single-image fallback.
 - `Detail` продолжает открывать оригиналы.
 

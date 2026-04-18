@@ -315,15 +315,14 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
 
     // Resolve media: pre-uploaded file, data URL, or HTTP download
     let mut media_file = None;
+    let mut thumbnail_file = None;
     let mut warning = None;
-    let mut downloaded_path: Option<PathBuf> = None;
 
     if let Some(ref uploaded) = p.pre_uploaded_file {
         // File already uploaded via HTTP /upload endpoint
         let path = vault.root().join(uploaded);
         if path.exists() {
             media_file = Some(uploaded.clone());
-            downloaded_path = Some(path);
         } else {
             warning = Some(format!("pre-uploaded file not found: {uploaded}"));
         }
@@ -337,7 +336,6 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
                     match std::fs::write(&dest_path, &bytes) {
                         Ok(()) => {
                             media_file = Some(dest_name);
-                            downloaded_path = Some(dest_path);
                         }
                         Err(e) => warning = Some(format!("failed to write screenshot: {e}")),
                     }
@@ -353,8 +351,11 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             let referer = p.url.as_deref().unwrap_or(image_url);
             match download_file(image_url, &dest_path, referer) {
                 Ok(()) => {
-                    media_file = Some(dest_name);
-                    downloaded_path = Some(dest_path);
+                    if bt == BlockType::Video && thumbnails::is_image_ext(&ext) {
+                        thumbnail_file = Some(dest_name);
+                    } else {
+                        media_file = Some(dest_name);
+                    }
                 }
                 Err(e) => {
                     warning = Some(format!("failed to download media: {e}"));
@@ -362,13 +363,6 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             }
         }
     }
-
-    // Determine thumbnail name
-    let thumbnail = if downloaded_path.is_some() {
-        Some(format!("{}.jpg", slug))
-    } else {
-        None
-    };
 
     // Download inline images (and videos) for article bodies
     let body = {
@@ -418,7 +412,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             description: p.description,
             url: p.url,
             file: media_file,
-            thumbnail,
+            thumbnail: thumbnail_file,
             tags: p.tags.unwrap_or_default().iter()
                 .map(|t| mine_lib::domain::tag::normalize_tag(t))
                 .filter(|t| !t.is_empty())

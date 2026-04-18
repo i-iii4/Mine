@@ -37,6 +37,7 @@ pub struct IndexedBlock {
     pub author: Option<String>,
     pub body: String,
     pub media_dimensions: Option<String>,
+    pub preview_manifest: Option<String>,
     pub tags: Vec<String>,
 }
 
@@ -85,7 +86,8 @@ pub enum FeedPreviewKind {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FeedPreviewTile {
-    pub src: String,
+    pub source_path: String,
+    pub preview_path: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub is_video: bool,
@@ -219,19 +221,34 @@ fn parse_media_dimensions_json(
         .unwrap_or_default()
 }
 
-fn media_tile(src: &str, dims: &std::collections::HashMap<String, [u32; 2]>, is_video_poster: bool) -> FeedPreviewTile {
+fn media_tile(
+    src: &str,
+    dims: &std::collections::HashMap<String, [u32; 2]>,
+    is_video: bool,
+    is_video_poster: bool,
+) -> FeedPreviewTile {
     let dims_entry = dims.get(src).copied();
     FeedPreviewTile {
-        src: src.to_string(),
+        source_path: src.to_string(),
+        preview_path: tile_preview_path(src),
         width: dims_entry.map(|[w, _]| w),
         height: dims_entry.map(|[_, h]| h),
-        is_video: is_video_media(src) || is_video_poster,
+        is_video,
         is_video_poster,
     }
 }
 
 fn primary_preview_path(slug: &str) -> String {
     format!("{slug}.jpg")
+}
+
+fn tile_preview_path(src: &str) -> Option<String> {
+    if is_remote_media(src) {
+        return None;
+    }
+    let clean = src.split('?').next().unwrap_or(src);
+    let stem = Path::new(clean).file_stem()?.to_str()?;
+    Some(format!("{stem}.jpg"))
 }
 
 fn parse_inline_media_src(line: &str) -> Option<&str> {
@@ -259,7 +276,7 @@ fn extract_social_preview_tiles(
         let Some(src) = parse_inline_media_src(line) else {
             continue;
         };
-        tiles.push(media_tile(src, dims, next_is_video_poster));
+        tiles.push(media_tile(src, dims, is_video_media(src), next_is_video_poster));
         next_is_video_poster = false;
     }
 
@@ -322,7 +339,28 @@ fn serialize_feed_preview_manifest(
                 .frontmatter
                 .file
                 .as_deref()
-                .map(|src| vec![media_tile(src, &dims, true)])
+                .map(|src| {
+                        vec![FeedPreviewTile {
+                            source_path: src.to_string(),
+                            preview_path: Some(primary_preview_path(&block.slug)),
+                            width,
+                            height,
+                            is_video: true,
+                            is_video_poster: true,
+                        }]
+                })
+                .or_else(|| {
+                    block.frontmatter.thumbnail.as_deref().map(|src| {
+                        vec![FeedPreviewTile {
+                            source_path: src.to_string(),
+                            preview_path: Some(primary_preview_path(&block.slug)),
+                            width,
+                            height,
+                            is_video: false,
+                            is_video_poster: true,
+                        }]
+                    })
+                })
                 .unwrap_or_default(),
             overflow_count: 0,
         },
@@ -340,7 +378,7 @@ fn serialize_feed_preview_manifest(
                 if tiles.is_empty() {
                     tiles = extract_local_media_items(media_urls, |_| true)
                         .into_iter()
-                        .map(|src| media_tile(&src, &dims, false))
+                        .map(|src| media_tile(&src, &dims, false, false))
                         .collect();
                 }
                 let overflow_count = tiles.len().saturating_sub(4);
@@ -379,7 +417,7 @@ fn serialize_feed_preview_manifest(
             } else {
                 let image_tiles = extract_local_media_items(media_urls, is_image_media)
                     .into_iter()
-                    .map(|src| media_tile(&src, &dims, false))
+                    .map(|src| media_tile(&src, &dims, false, false))
                     .collect::<Vec<_>>();
                 let overflow_count = image_tiles.len().saturating_sub(4);
                 let image_tiles = image_tiles.into_iter().take(4).collect::<Vec<_>>();
@@ -408,7 +446,7 @@ fn serialize_feed_preview_manifest(
                         primary_preview_path: Some(primary_preview_path(&block.slug)),
                         width: None,
                         height: None,
-                        tiles: vec![media_tile(&video_src, &dims, true)],
+                        tiles: vec![media_tile(&video_src, &dims, true, true)],
                         overflow_count: 0,
                     }
                 } else {
@@ -1025,7 +1063,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
     let mut stmt = conn
         .prepare(
             "SELECT id, slug, block_type, title, description, url, media_file,
-                    thumbnail, saved_at, source, width, height, author, body, media_dimensions
+                    thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest
              FROM blocks WHERE slug = ?1",
         )
         .context("failed to prepare get_block")?;
@@ -1044,7 +1082,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
 pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, description, url, media_file,
-                thumbnail, saved_at, source, width, height, author, body, media_dimensions
+                thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest
          FROM blocks ORDER BY saved_at DESC",
     )?;
     collect_blocks(conn, &mut stmt, &[] as &[&dyn rusqlite::types::ToSql])
@@ -1055,7 +1093,7 @@ pub fn list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlo
     let mut stmt = conn.prepare(
         "SELECT b.id, b.slug, b.block_type, b.title, b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body, b.media_dimensions
+                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest
          FROM blocks b
          JOIN block_tags bt ON bt.block_id = b.id
          WHERE bt.tag = ?1
@@ -1128,7 +1166,7 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
     let mut sql = String::from(
         "SELECT DISTINCT b.id, b.slug, b.block_type, b.title, b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body, b.media_dimensions
+                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest
          FROM blocks b",
     );
 
@@ -1291,6 +1329,7 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
         author: row.get(12)?,
         body: row.get(13)?,
         media_dimensions: row.get(14)?,
+        preview_manifest: row.get(15)?,
         tags: Vec::new(), // filled by caller
     })
 }

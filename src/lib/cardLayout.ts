@@ -1,4 +1,8 @@
-import type { FeedPreviewManifest, FeedPreviewTile, LightBlock } from "@/types";
+import type { LightBlock } from "@/types";
+import {
+  normalizeFeedPreviewManifest,
+  type NormalizedFeedPreviewTile,
+} from "@/lib/feedPreview";
 import { parseMediaDimensions } from "@/lib/mediaDimensions";
 
 export type CardLayoutVariant =
@@ -13,7 +17,8 @@ export type CardLayoutVariant =
   | "social-media-grid";
 
 export interface CardLayoutMediaItem {
-  src: string;
+  sourcePath: string;
+  previewPath: string | null;
   aspectRatio: number | null;
   isVideo: boolean;
   isVideoPoster: boolean;
@@ -68,13 +73,8 @@ function isLocalImageFile(src: string): boolean {
   return !/^https?:\/\//i.test(src) && /\.(jpg|jpeg|png|gif|webp|bmp|tiff|tif|heic|heif|avif)(\?|$)/i.test(src);
 }
 
-function parsePreviewManifest(block: LightBlock): FeedPreviewManifest | null {
-  if (!block.preview_manifest) return null;
-  try {
-    return JSON.parse(block.preview_manifest) as FeedPreviewManifest;
-  } catch {
-    return null;
-  }
+export function parsePreviewManifest(block: Pick<LightBlock, "preview_manifest">) {
+  return normalizeFeedPreviewManifest(block.preview_manifest);
 }
 
 function aspectRatioFromDimensions(width: number | null | undefined, height: number | null | undefined): number | null {
@@ -120,7 +120,8 @@ function extractSocialMedia(block: LightBlock): CardLayoutMediaItem[] {
     if (!imgMatch?.[1]) continue;
     const src = imgMatch[1];
     media.push({
-      src,
+      sourcePath: src,
+      previewPath: null,
       aspectRatio: parseAspectRatio(dims, src),
       isVideo: isVideoFile(src) || nextIsVideoPoster,
       isVideoPoster: nextIsVideoPoster,
@@ -133,7 +134,8 @@ function extractSocialMedia(block: LightBlock): CardLayoutMediaItem[] {
       const urls: string[] = JSON.parse(block.media_urls);
       if (urls.length > media.length) {
         return urls.map((src) => ({
-          src,
+          sourcePath: src,
+          previewPath: null,
           aspectRatio: parseAspectRatio(dims, src),
           isVideo: isVideoFile(src),
           isVideoPoster: false,
@@ -147,12 +149,15 @@ function extractSocialMedia(block: LightBlock): CardLayoutMediaItem[] {
   return media;
 }
 
-function mediaItemsFromManifestTiles(tiles: FeedPreviewTile[]): CardLayoutMediaItem[] {
+function mediaItemsFromManifestTiles(
+  tiles: NormalizedFeedPreviewTile[],
+): CardLayoutMediaItem[] {
   return tiles.map((tile) => ({
-    src: tile.src,
+    sourcePath: tile.sourcePath,
+    previewPath: tile.previewPath,
     aspectRatio: aspectRatioFromDimensions(tile.width, tile.height),
-    isVideo: tile.is_video,
-    isVideoPoster: tile.is_video_poster,
+    isVideo: tile.isVideo,
+    isVideoPoster: tile.isVideoPoster,
   }));
 }
 
@@ -194,7 +199,8 @@ export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescrip
         ? mediaItemsFromManifestTiles(previewManifest.tiles)
         : (block.media_file
           ? [{
-            src: block.media_file,
+            sourcePath: block.media_file,
+            previewPath: null,
             aspectRatio: aspectRatioFromDimensions(block.width, block.height),
             isVideo: true,
             isVideoPoster: true,
@@ -255,7 +261,7 @@ export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescrip
             totalMediaCount: 1,
           };
         }
-        const totalMediaCount = mediaItems.length + (previewManifest?.overflow_count ?? 0);
+        const totalMediaCount = mediaItems.length + (previewManifest?.overflowCount ?? 0);
         return {
           variant: "social-media-grid",
           titleText: "",
@@ -270,11 +276,11 @@ export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescrip
 
       const firstImage = block.first_image ?? null;
       const imageCount = previewManifest
-        ? previewManifest.tiles.length + previewManifest.overflow_count
+        ? previewManifest.tiles.length + previewManifest.overflowCount
         : extractArticlePreviewImageCount(block);
       const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
       const totalMediaCount = previewManifest
-        ? mediaItems.length + previewManifest.overflow_count
+        ? mediaItems.length + previewManifest.overflowCount
         : imageCount;
       const hasVisualPreview = previewManifest
         ? previewManifest.kind !== "text"

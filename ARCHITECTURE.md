@@ -136,6 +136,7 @@ Source vault хранит только пользовательские файл
 - `Detail` остаётся full-fidelity path и может открывать оригиналы;
 - async asset protocol override убирает синхронный `asset://` hotspot с main thread WebView для оставшихся asset-paths;
 - multi-image article/social preview должен приходить как один composite preview asset, а не как client-side gallery.
+- grid больше не допускает mixed-generation layout: live cards рендерятся только внутри exact `committed` prefix текущего layout generation.
 
 ## Components
 
@@ -266,11 +267,17 @@ Source vault хранит только пользовательские файл
 - `App.tsx` держит per-route snapshot cache (`tag -> GridSnapshot`). Повторный переход в уже посещённый канал сначала применяет локальный snapshot синхронно, а taxonomy (`list_tags` / `list_channels`) не перезапрашивается на чистом route switch. Это убирает лишний IPC round-trip и второй `list_grid_blocks` на старте после `setTags/setChannels`.
 - `Grid.tsx` использует собственный windowed masonry renderer: карточки позиционируются абсолютно, контейнер получает вычисленную `totalHeight`, в DOM остаются только видимые элементы плюс overscan.
 - Геометрия карточки больше не должна выводиться из независимых эвристик в `Card.tsx` и `cardHeight.ts`. Введён общий descriptor-driven слой (`src/lib/cardLayout.ts`): variant карточки, preview text и media geometry вычисляются один раз и затем используются и для рендера, и для расчёта высоты.
-- Layout вычисляется чистой функцией (`src/lib/masonryLayout.ts`): `containerWidth + estimatedHeights -> columnCount + positions + totalHeight`. Это снимает зависимость от browser masonry/layout для тысяч карточек и ускоряет resize.
+- Layout generation теперь keyed by `layoutGenerationKey = route + width bucket + ordered block layout fingerprint`. Fingerprint включает layout-relevant content блока, в том числе `preview_manifest`, поэтому same-id content/preview changes не могут reuse stale heights/layout.
+- `heightCache` и `layoutCache` generation-aware: exact heights и exact layouts кэшируются только для текущего generation key, а не просто по `slug` или набору ids.
+- Layout вычисляется чистой функцией (`src/lib/masonryLayout.ts`): `containerWidth + current-generation heights -> columnCount + positions + totalHeight`. Exact heights текущего generation используются там, где они уже есть; для остальных блоков provisional path использует heuristic only for skeleton geometry.
+- Visible contract двуслойный:
+  - `committed` prefix — contiguous range `0..committedEndIndex`, для которой exact heights уже получены и разрешён live `Card`;
+  - provisional remainder — только skeleton cards в heuristic envelope текущего generation.
+- Старый `stableLayoutSnapshot` больше не участвует в visible live render path. Это устраняет системные bottom clip / white-tail баги, которые возникали, когда live card попадала внутрь stale height envelope.
 - **Direction-aware overscan**: при скролле вниз forward-overscan 2200px, backward 600px. При скролле вверх — зеркально. Это предзагружает больше карточек по направлению scroll'а, уменьшая «пустые зоны» при быстром скролле.
 - **Priority bounds**: зона ±1400px по направлению scroll'а, внутри которой карточки получают `priority=true`. ImageCard/LinkCard/ArticleCard используют `loading="eager"` вместо `"lazy"` — картинки начинают fetch до того как пользователь до них доскроллит.
 - **CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`, картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки картинки — нет layout shift.
-- Высоты карточек сначала оцениваются эвристикой по типу блока, затем уточняются через `ResizeObserver` и кэшируются по `slug`.
+- `computeCardHeight()` остаётся heuristic для scheduling / placeholder geometry, но не имеет права клампить live content. Hard clamp `height + overflow hidden` валиден только внутри exact committed prefix текущего generation.
 
 ### Sidebar preview pipeline
 
@@ -491,15 +498,15 @@ Rationale: файлы — источник правды (решение 001), и
 
 Rationale: на больших коллекциях bottleneck смещается с IPC на main-thread layout. Когда в DOM находятся только видимые карточки, resize и route switch перестают зависеть от общего числа блоков в разделе.
 
-### 012: Zero-jank masonry через Canvas measureText precomputation
+### 012: Generation-safe masonry через committed prefix
 
 | Approach | Problem |
 |---|---|
-| Estimate heights → render → measure → correct (классический virtualized masonry, предыдущая реализация) | Корректировки высот меняют `totalHeight` → браузер клампит `scrollTop` → видимый прыжок. Scroll anchoring в masonry не работает из-за non-uniform column shifts. Первое посещение канала с 10000 блоков всегда порождает прыжки |
-| Rust cosmic-text precompute в SQLite | Font metrics не совпадают pixel-perfect с браузерным рендером (1-3px drift per line), не портируется на web-деплой без дублирования логики |
-| **Canvas `measureText` в Web Worker + IndexedDB cache word_widths** (chosen) | Каждый браузер считает своим text engine → гарантированная pixel-perfect точность. Один code path для Tauri desktop и будущего web-деплоя. `useSyncExternalStore` избегает React ре-рендеров во время scroll |
+| Approximate / stale layout envelope + live card content | Live DOM может оказаться внутри height envelope другого generation → системные bottom clip и white tails |
+| Full-route atomic commit | Корректно, но слишком дорого для больших vault: долгий skeleton-only first paint до измерения всей ленты |
+| **Current-generation provisional layout + contiguous committed prefix** (chosen) | Сложнее state model: generation key, exact/provisional split, frontier management, generation-aware caches |
 
-Rationale: корневая причина прыжков — цикл measurement → correction. Устраняем цикл через precomputation word widths в Worker'е до первого layout pass. Высоты становятся чистой функцией `(block, columnWidth, wordWidths)` → корректировки физически не могут возникнуть. Cross-platform корректность бесплатно как побочный эффект архитектуры.
+Rationale: masonry-позиция блока зависит от всех предшествующих блоков, поэтому безопасная единица commit — contiguous prefix. Grid строит provisional layout только для текущего generation, exact heights и exact layouts кэшируются по `layoutGenerationKey`, а live cards разрешены только внутри `committed` prefix текущего generation. Всё вне prefix остаётся skeleton-only. Это убирает mixed-generation envelope bugs без глобального full-route commit и делает resize / route switch deterministic.
 
 Детальная спецификация: [SPEC_GRID.md](SPEC_GRID.md).
 

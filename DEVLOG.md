@@ -1,5 +1,47 @@
 # Devlog
 
+## 18.04.2026 10:15 [primary] — Generation-safe masonry height correctness accepted on Mine
+
+### Goal
+Закрыть системный height/layout correctness дефект в desktop grid: убрать mixed-generation masonry path, из-за которого карточки могли рендериться внутри stale envelope и давать bottom clip или white tail.
+
+### Actually completed
+
+**Generation-aware layout model внедрён в runtime** (`src/components/Grid.tsx`, `src/lib/layoutGeneration.ts`, `src/lib/heightCache.ts`, `src/lib/layoutCache.ts`)
+- введён `layoutGenerationKey`, который учитывает route, width bucket и layout-relevant fingerprint блока, включая `preview_manifest`
+- exact heights и exact layouts больше не кэшируются по слабому `(slug, bucket)` identity; runtime использует generation-aware keys
+- visible path больше не reuse'ит stale snapshot как envelope для live cards
+
+**Grid переведён на committed-prefix contract** (`src/components/Grid.tsx`, `src/components/MeasureCard.tsx`)
+- current generation всегда строит собственный provisional layout
+- live `Card` разрешён только внутри contiguous `committed` prefix, где exact heights уже получены
+- всё вне prefix рендерится skeleton-only до измерения текущего generation
+- `computeCardHeight()` оставлен как heuristic для scheduling / placeholder geometry, но больше не клампит live content
+
+**Regression coverage расширен под same-id content drift** (`src/components/Grid.test.tsx`, `src/lib/layoutGeneration.test.ts`, `src/lib/layoutCache.test.ts`)
+- добавлены тесты на смену `title/body/author` при тех же `block.id`
+- добавлены тесты на смену `preview_manifest` при тех же `block.id`
+- resize / generation switch теперь проверяется как skeleton-only transition, без mixed live/stale render path
+
+**Живой desktop acceptance закрыт**
+- на реальном `Mine` пользователь подтвердил, что высота карточек отображается корректно
+- системная обрезка низа и пустые белые хвосты после rewrite больше не воспроизводятся
+
+**Документация синхронизирована**
+- `PLAN.md`: `C3` обновлён под завершённый height correctness slice и live acceptance
+- `ARCHITECTURE.md`: зафиксирован generation-safe masonry contract вместо устаревшего mixed-generation narrative
+- `AUDIT_PERFORMANCE.md`: добавлен latest win по committed-prefix rewrite
+
+### Checks
+- `bun run test src/lib/layoutGeneration.test.ts src/lib/layoutCache.test.ts src/components/Grid.test.tsx`
+- `bun run test src/lib/feedPreview.test.ts src/lib/cardLayout.test.ts src/components/Card.test.tsx src/components/Grid.test.tsx src/App.test.tsx src/components/MeasureCard.test.tsx src/lib/layoutCache.test.ts src/lib/layoutGeneration.test.ts src/lib/cardHeight.test.ts`
+- `bun run build`
+- `cargo check -p mine --quiet`
+- ручная приёмка пользователем в `Mine`: “высота карточки изображается корректно”
+
+### Push
+- [текущий]
+
 ## 17.04.2026 22:44 [primary] — Critical Path Reset implementation slice: derived store, async asset path, explicit feed contract
 
 ### Goal

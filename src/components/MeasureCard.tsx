@@ -10,7 +10,7 @@
 
 import { memo } from "react";
 import type { LightBlock } from "@/types";
-import { CardContent } from "./Card";
+import { CardContent, MeasuredCardFrame } from "./Card";
 
 interface MeasureCardProps {
   block: LightBlock;
@@ -27,7 +27,7 @@ export const MeasureCard = memo(function MeasureCard({
   // interactive state classes (opacity-30 while dragging, ring-2 when
   // focused). Those never apply during measurement.
   return (
-    <div className="group overflow-hidden border border-border relative rounded-[var(--radius-card)]">
+    <MeasuredCardFrame>
       <CardContent
         block={block}
         vaultPath={vaultPath}
@@ -35,6 +35,6 @@ export const MeasureCard = memo(function MeasureCard({
         priority={false}
         measurementMode
       />
-    </div>
+    </MeasuredCardFrame>
   );
 });

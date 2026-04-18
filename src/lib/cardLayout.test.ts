@@ -73,9 +73,9 @@ describe("deriveCardLayoutDescriptor", () => {
           width: 1,
           height: 1,
           tiles: [
-            { src: "a.jpg", width: 800, height: 600, is_video: false, is_video_poster: false },
-            { src: "b.jpg", width: 600, height: 800, is_video: false, is_video_poster: false },
-            { src: "c.jpg", width: 900, height: 900, is_video: false, is_video_poster: false },
+            { source_path: "a.jpg", preview_path: "a.jpg", width: 800, height: 600, is_video: false, is_video_poster: false },
+            { source_path: "b.jpg", preview_path: "b.jpg", width: 600, height: 800, is_video: false, is_video_poster: false },
+            { source_path: "c.jpg", preview_path: "c.jpg", width: 900, height: 900, is_video: false, is_video_poster: false },
           ],
           overflow_count: 0,
         }),
@@ -126,7 +126,7 @@ describe("deriveCardLayoutDescriptor", () => {
           width: 1920,
           height: 1080,
           tiles: [
-            { src: "clip.mp4", width: 1920, height: 1080, is_video: true, is_video_poster: true },
+            { source_path: "clip.mp4", preview_path: "tweet.jpg", width: 1920, height: 1080, is_video: true, is_video_poster: true },
           ],
           overflow_count: 0,
         }),
@@ -149,7 +149,7 @@ describe("deriveCardLayoutDescriptor", () => {
           width: 1280,
           height: 720,
           tiles: [
-            { src: "clip.mp4", width: 1280, height: 720, is_video: true, is_video_poster: true },
+            { source_path: "clip.mp4", preview_path: "article-video.jpg", width: 1280, height: 720, is_video: true, is_video_poster: true },
           ],
           overflow_count: 0,
         }),
@@ -159,5 +159,26 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.mediaItems).toHaveLength(1);
     expect(descriptor.mediaItems[0]?.isVideo).toBe(true);
     expect(descriptor.primaryAspectRatio).toBeCloseTo(1280 / 720);
+  });
+
+  it("keeps poster-only video manifests non-playable", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "video",
+        preview_manifest: JSON.stringify({
+          kind: "video_poster",
+          primary_preview_path: "poster.jpg",
+          width: 1280,
+          height: 720,
+          tiles: [
+            { source_path: "poster.jpg", preview_path: "poster.jpg", width: 1280, height: 720, is_video: false, is_video_poster: true },
+          ],
+          overflow_count: 0,
+        }),
+      }),
+    );
+    expect(descriptor.variant).toBe("video");
+    expect(descriptor.mediaItems[0]?.isVideo).toBe(false);
+    expect(descriptor.mediaItems[0]?.isVideoPoster).toBe(true);
   });
 });

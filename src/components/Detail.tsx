@@ -8,8 +8,20 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import type { IndexedBlock, LightBlock } from "@/types";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { thumbnailUrl, mediaUrl, domainFromUrl, isSafeUrl, legacyThumbsRoot } from "@/lib/assets";
+import {
+  thumbnailUrl,
+  mediaUrl,
+  previewAssetUrl,
+  domainFromUrl,
+  isSafeUrl,
+  legacyThumbsRoot,
+} from "@/lib/assets";
+import { cn } from "@/lib/utils";
 import { addTag, removeTag, getBlock } from "@/lib/commands";
+import {
+  findPreviewTileForSource,
+  normalizeFeedPreviewManifest,
+} from "@/lib/feedPreview";
 import { VideoFromBlob } from "./VideoFromBlob";
 
 // Layout constants — shared between scroll layer and metadata layer
@@ -306,6 +318,10 @@ function BlockContent({
   thumbsRootPath?: string;
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
+  const previewManifest = useMemo(
+    () => normalizeFeedPreviewManifest((fullBlock ?? block).preview_manifest),
+    [block, fullBlock],
+  );
   // Lazy-load full body if truncated (LightBlock carries only a short preview).
   const [fullBody, setFullBody] = useState<string | null>(fullBlock?.body ?? null);
   useEffect(() => {
@@ -381,7 +397,12 @@ function BlockContent({
               {block.author}
             </p>
           )}
-          <ArticleBody body={body} vaultPath={vaultPath} />
+          <ArticleBody
+            body={body}
+            vaultPath={vaultPath}
+            thumbsRootPath={resolvedThumbsRoot}
+            previewManifest={previewManifest}
+          />
         </div>
       );
     }
@@ -412,7 +433,12 @@ function BlockContent({
           </div>
           {body && (
             <div className="p-6">
-              <ArticleBody body={body} vaultPath={vaultPath} />
+              <ArticleBody
+                body={body}
+                vaultPath={vaultPath}
+                thumbsRootPath={resolvedThumbsRoot}
+                previewManifest={previewManifest}
+              />
             </div>
           )}
         </div>
@@ -440,27 +466,32 @@ function BlockContent({
 function ArticleBody({
   body,
   vaultPath,
+  thumbsRootPath,
+  previewManifest,
 }: {
   body: string;
   vaultPath: string;
+  thumbsRootPath: string;
+  previewManifest: ReturnType<typeof normalizeFeedPreviewManifest>;
 }) {
   const components: Components = useMemo(
     () => ({
       img: ({ src, alt, ...props }) => {
-        const resolved = resolveImageSrc(src ?? "", vaultPath);
+        const originalSrc = resolveImageSrc(src ?? "", vaultPath);
         // Video/GIF (downloaded MP4) — render as inline video with controls
         if (/\.mp4(\?|$)|\.webm(\?|$)/i.test(src ?? "")) {
-          return <VideoFromBlob src={resolved} controls className="rounded-0" />;
+          return <VideoFromBlob src={originalSrc} controls className="rounded-0" />;
         }
+        const previewTile = findPreviewTileForSource(previewManifest, src ?? "");
+        const previewSrc = previewTile?.previewPath
+          ? previewAssetUrl(thumbsRootPath, previewTile.previewPath)
+          : null;
         return (
-          <img
-            src={resolved}
+          <DetailImage
+            src={originalSrc}
+            previewSrc={previewSrc}
             alt={alt ?? ""}
             className="rounded-0"
-            loading="lazy"
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = "none";
-            }}
             {...props}
           />
         );
@@ -476,7 +507,7 @@ function ArticleBody({
         </a>
       ),
     }),
-    [vaultPath],
+    [previewManifest, thumbsRootPath, vaultPath],
   );
 
   return (
@@ -484,6 +515,52 @@ function ArticleBody({
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {body}
       </ReactMarkdown>
+    </div>
+  );
+}
+
+function DetailImage({
+  src,
+  previewSrc,
+  alt,
+  className,
+  ...imgProps
+}: {
+  src: string;
+  previewSrc: string | null;
+  alt: string;
+} & React.ImgHTMLAttributes<HTMLImageElement>) {
+  const [originalReady, setOriginalReady] = useState(false);
+
+  useEffect(() => {
+    setOriginalReady(false);
+  }, [src]);
+
+  return (
+    <div className="relative overflow-hidden">
+      {previewSrc && !originalReady && (
+        <img
+          src={previewSrc}
+          alt=""
+          className={cn("rounded-0", className)}
+          loading="eager"
+          aria-hidden="true"
+        />
+      )}
+      <img
+        src={src}
+        alt={alt}
+        className={cn("rounded-0", className, previewSrc && !originalReady && "absolute inset-0")}
+        loading="lazy"
+        {...imgProps}
+        onLoad={() => setOriginalReady(true)}
+        onError={(e) => {
+          if (!previewSrc) {
+            (e.target as HTMLImageElement).style.display = "none";
+          }
+        }}
+        style={previewSrc && !originalReady ? { opacity: 0 } : undefined}
+      />
     </div>
   );
 }

@@ -26,6 +26,7 @@ export interface IndexedBlock {
    * back to a fixed aspect ratio in that case.
    */
   media_dimensions: string | null;
+  preview_manifest: string | null;
   tags: string[];
 }
 
@@ -52,7 +53,9 @@ export interface LightBlock {
 export type FeedPreviewKind = "text" | "image" | "video_poster" | "composite";
 
 export interface FeedPreviewTile {
-  src: string;
+  source_path?: string | null;
+  preview_path?: string | null;
+  src?: string | null;
   width: number | null;
   height: number | null;
   is_video: boolean;

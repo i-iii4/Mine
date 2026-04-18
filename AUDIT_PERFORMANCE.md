@@ -40,6 +40,13 @@
 - `App.tsx`: route switch использует per-route `GridSnapshot` cache и на чистой навигации больше не рефетчит `list_tags` / `list_channels`. Дополнительно убран дублирующий стартовый `list_grid_blocks`, который раньше повторно запускался после `setTags/setChannels` из-за новой identity `loadData`.
 - Практический эффект: startup на реальном `Mine` перестал деградировать в lock storm, а повторные переходы между уже посещёнными каналами стали мгновенными без лишнего IPC.
 
+### 18.04.2026 — generation-safe masonry height correctness rewrite
+
+- `src/lib/layoutGeneration.ts` + `src/lib/heightCache.ts` + `src/lib/layoutCache.ts`: введён `layoutGenerationKey`, который учитывает route, width bucket и layout-relevant fingerprint блока, включая `preview_manifest`. Exact heights и exact layouts теперь кэшируются generation-aware, а не по слабому `(slug, bucket)` identity.
+- `src/components/Grid.tsx`: visible render path больше не использует stale generation. Layout всегда строится только для current generation, live cards разрешены только внутри contiguous `committed` prefix, а остальная лента остаётся skeleton-only до exact measurement.
+- Measurement scheduling теперь идёт по contiguous prefix `0..targetCommittedEndIndex`, а не по разрозненным видимым блокам. Это устраняет смешивание stale envelope и current live card — корневую причину системной bottom clipping / white-tail underflow.
+- Практический эффект на реальном `Mine`: пользователь подтвердил, что высота карточек отображается корректно; системная обрезка низа и пустые хвосты больше не воспроизводятся.
+
 Эти изменения устранили два самых тяжёлых path'а первого экрана:
 - полный reindex перед открытием UI;
 - полный проход по всем блокам ради sidebar previews.

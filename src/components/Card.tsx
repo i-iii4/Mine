@@ -1,8 +1,14 @@
-import { useState, useEffect, useMemo, memo, createContext, useContext } from "react";
+import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
 import type { LightBlock } from "@/types";
-import { thumbnailUrl, mediaUrl, domainFromUrl, legacyThumbsRoot } from "@/lib/assets";
+import {
+  thumbnailUrl,
+  mediaUrl,
+  previewAssetUrl,
+  domainFromUrl,
+  legacyThumbsRoot,
+} from "@/lib/assets";
 import { deriveCardLayoutDescriptor, type CardLayoutDescriptor } from "@/lib/cardLayout";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
@@ -25,6 +31,40 @@ interface CardProps {
   onRequestDelete?: (slug: string) => void;
 }
 
+const CARD_FRAME_CLASS =
+  "group relative overflow-hidden border border-border rounded-[var(--radius-card)] bg-background";
+
+interface CardFrameProps extends React.HTMLAttributes<HTMLDivElement> {
+  children: React.ReactNode;
+}
+
+const CardFrame = forwardRef<HTMLDivElement, CardFrameProps>(function CardFrame(
+  { children, className, ...props },
+  ref,
+) {
+  return (
+    <div
+      ref={ref}
+      className={cn(CARD_FRAME_CLASS, className)}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+});
+
+export function MeasuredCardFrame({
+  children,
+  className,
+  ...props
+}: CardFrameProps) {
+  return (
+    <CardFrame className={cn("h-full", className)} {...props}>
+      {children}
+    </CardFrame>
+  );
+}
+
 export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFocused, priority, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestDelete }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
@@ -39,7 +79,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
   };
 
   return (
-    <div
+    <CardFrame
       ref={setNodeRef}
       data-block-slug={block.slug}
       {...attributes}
@@ -49,7 +89,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
-        "group cursor-pointer overflow-hidden border border-border relative rounded-[var(--radius-card)]",
+        "h-full cursor-pointer",
         isDragging && "opacity-30",
         isFocused && "ring-2 ring-ring",
       )}
@@ -66,7 +106,45 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
         />
       )}
       <CardContent block={block} vaultPath={vaultPath} thumbsRootPath={thumbsRootPath} priority={priority} />
-    </div>
+    </CardFrame>
+  );
+});
+
+export const CardSkeleton = memo(function CardSkeleton({
+  block,
+}: {
+  block: LightBlock;
+}) {
+  const descriptor = useMemo(() => deriveCardLayoutDescriptor(block), [block]);
+  const hasMedia =
+    descriptor.variant === "image" ||
+    descriptor.variant === "video" ||
+    descriptor.variant === "link" ||
+    descriptor.variant === "article-media" ||
+    descriptor.variant === "social-single-media" ||
+    descriptor.variant === "social-media-grid";
+
+  return (
+    <MeasuredCardFrame className="h-full">
+      <div className="flex h-full flex-col p-4">
+        <div className="h-4 w-2/3 rounded-[2px] bg-accent" />
+        {descriptor.previewText && (
+          <>
+            <div className="mt-2 h-3 w-full rounded-[2px] bg-accent" />
+            <div className="mt-1.5 h-3 w-5/6 rounded-[2px] bg-accent" />
+          </>
+        )}
+        {hasMedia && (
+          <div
+            className="mt-3 w-full rounded-[2px] bg-accent"
+            style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? 1}` }}
+          />
+        )}
+        {descriptor.authorText && (
+          <div className="mt-2 h-3 w-1/3 rounded-[2px] bg-accent" />
+        )}
+      </div>
+    </MeasuredCardFrame>
   );
 });
 
@@ -115,6 +193,20 @@ function resolveFeedMediaSrc(vaultPath: string, src: string): string {
   return src.startsWith("http://") || src.startsWith("https://") ? src : mediaUrl(vaultPath, src);
 }
 
+function resolveFeedPreviewSrc(
+  thumbsRootPath: string,
+  previewPath: string | null,
+  fallbackSlug: string,
+): string {
+  return previewPath
+    ? previewAssetUrl(thumbsRootPath, previewPath)
+    : thumbnailUrl(thumbsRootPath, fallbackSlug);
+}
+
+function isPlayableVideoSrc(src: string): boolean {
+  return /\.mp4(\?|$)|\.webm(\?|$)|\.m4v(\?|$)|\.mov(\?|$)/i.test(src);
+}
+
 function renderFeedVideo(vaultPath: string, src: string, className: string) {
   return (
     <VideoFromBlob
@@ -124,6 +216,81 @@ function renderFeedVideo(vaultPath: string, src: string, className: string) {
       loop
       muted
     />
+  );
+}
+
+function PlayBadge() {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center">
+      <div className="flex size-8 items-center justify-center rounded-full bg-black/50 text-white">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M4 2.5v11l10-5.5L4 2.5z" />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function GalleryTiles({
+  items,
+  vaultPath,
+  thumbsRootPath,
+  fallbackSlug,
+  measurementMode,
+}: {
+  items: CardLayoutDescriptor["mediaItems"];
+  vaultPath: string;
+  thumbsRootPath: string;
+  fallbackSlug: string;
+  measurementMode: boolean;
+}) {
+  const visibleItems = items.slice(0, 4);
+  const count = visibleItems.length;
+  const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
+
+  if (count === 0) {
+    return null;
+  }
+
+  const gridStyle =
+    count === 2
+      ? { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr" }
+      : { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr" };
+
+  return (
+    <div className="absolute inset-0 grid gap-[2px] bg-background" style={gridStyle}>
+      {visibleItems.map((item, index) => {
+        const tileStyle = count === 3 && index === 0 ? { gridRow: "1 / span 2" } : undefined;
+        const tilePreviewSrc = resolveFeedPreviewSrc(
+          thumbsRootPath,
+          item.previewPath,
+          fallbackSlug,
+        );
+
+        return (
+          <div key={`${item.sourcePath}-${index}`} className="relative overflow-hidden bg-accent" style={tileStyle}>
+            {!measurementMode && !item.isVideo && (
+              <img
+                src={tilePreviewSrc}
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover"
+                loading={imgLoading}
+              />
+            )}
+            {!measurementMode && item.isVideoPoster && !item.isVideo && <PlayBadge />}
+            {!measurementMode && item.isVideo && isPlayableVideoSrc(item.sourcePath) && (
+              <>
+                {renderFeedVideo(vaultPath, item.sourcePath, "absolute inset-0 h-full w-full object-cover")}
+                <PlayBadge />
+              </>
+            )}
+            {(measurementMode || (item.isVideo && !isPlayableVideoSrc(item.sourcePath))) && (
+              <div className="absolute inset-0 bg-accent" />
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -301,17 +468,17 @@ const SocialCard = memo(function SocialCard({
 
       {descriptor.variant === "social-single-media" && media.length === 1 && (() => {
         // Exact aspect-ratio from the indexer when available, aspect-square
-        // fallback otherwise. object-contain renders the full image without
-        // cropping, sitting inside the exact-ratio wrapper.
+        // fallback otherwise. Feed cards use object-cover here to avoid
+        // visible gray letterboxing inside the slot while scrolling.
         const m = media[0]!;
-        const absClass = "absolute inset-0 h-full w-full object-contain";
+        const absClass = "absolute inset-0 h-full w-full object-cover";
         return (
           <div
             className="mt-3 relative w-full overflow-hidden bg-accent"
             style={{ aspectRatio: `${m.aspectRatio ?? 1}` }}
           >
             {m.isVideo ? (
-              measurementMode ? <div className={cn("absolute inset-0 bg-accent", absClass)} /> : renderFeedVideo(vaultPath, m.src, absClass)
+              measurementMode ? <div className={cn("absolute inset-0 bg-accent", absClass)} /> : renderFeedVideo(vaultPath, m.sourcePath, absClass)
             ) : (
               !measurementMode && (
                 <img
@@ -322,15 +489,7 @@ const SocialCard = memo(function SocialCard({
                 />
               )
             )}
-            {m.isVideoPoster && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="flex size-8 items-center justify-center rounded-full bg-black/50 text-white">
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M4 2.5v11l10-5.5L4 2.5z" />
-                  </svg>
-                </div>
-              </div>
-            )}
+            {m.isVideoPoster && <PlayBadge />}
           </div>
         );
       })()}
@@ -339,17 +498,13 @@ const SocialCard = memo(function SocialCard({
           className="mt-3 relative w-full overflow-hidden bg-accent"
           style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? 1}` }}
         >
-          {!measurementMode && (
-            <img
-              src={previewSrc}
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover"
-              loading={imgLoading}
-            />
-          )}
-          <div className="absolute right-2 bottom-2 rounded-full bg-black/60 px-2 py-1 text-xs font-medium text-white">
-            +{Math.max(1, descriptor.totalMediaCount - 1)}
-          </div>
+          <GalleryTiles
+            items={media}
+            vaultPath={vaultPath}
+            thumbsRootPath={thumbsRootPath}
+            fallbackSlug={block.slug}
+            measurementMode={measurementMode}
+          />
         </div>
       )}
 
@@ -401,41 +556,35 @@ const ArticleCard = memo(function ArticleCard({
         // Exact aspect-ratio from the indexer's media_dimensions when
         // available (images extracted from body at index time), or
         // aspect-video fallback for older/unreindexed blocks. Multi-image
-        // article previews now reserve a square composite slot. object-contain
-        // renders the image at its natural shape inside the exact-ratio
-        // wrapper, so nothing is cropped.
+        // article previews reserve a square gallery slot; single-image
+        // previews use object-cover to avoid letterboxing in feed cards.
         <div
           className="relative mt-3 w-full overflow-hidden bg-accent"
           style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? (16 / 9)}` }}
         >
-          {rendersFeedVideo ? (
+          {descriptor.totalMediaCount > 1 ? (
+            <GalleryTiles
+              items={descriptor.mediaItems}
+              vaultPath={vaultPath}
+              thumbsRootPath={thumbsRootPath}
+              fallbackSlug={block.slug}
+              measurementMode={measurementMode}
+            />
+          ) : rendersFeedVideo ? (
             measurementMode ? (
               <div className="absolute inset-0 bg-accent" />
             ) : (
-              renderFeedVideo(vaultPath, primaryMedia.src, "absolute inset-0 h-full w-full object-cover")
+              renderFeedVideo(vaultPath, primaryMedia.sourcePath, "absolute inset-0 h-full w-full object-cover")
             )
           ) : !measurementMode && (
             <img
               src={thumbnailUrl(thumbsRootPath, block.slug)}
               alt=""
-              className="absolute inset-0 h-full w-full object-contain"
+              className="absolute inset-0 h-full w-full object-cover"
               loading={imgLoading}
             />
           )}
-          {rendersFeedVideo && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="flex size-8 items-center justify-center rounded-full bg-black/50 text-white">
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M4 2.5v11l10-5.5L4 2.5z" />
-                </svg>
-              </div>
-            </div>
-          )}
-          {descriptor.totalMediaCount > 1 && (
-            <div className="absolute right-2 bottom-2 rounded-full bg-black/60 px-2 py-1 text-xs font-medium text-white">
-              +{Math.max(1, descriptor.totalMediaCount - 1)}
-            </div>
-          )}
+          {rendersFeedVideo && <PlayBadge />}
         </div>
       )}
       {block.author && (
@@ -463,13 +612,15 @@ const VideoCard = memo(function VideoCard({
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const thumb = thumbnailUrl(thumbsRootPath, block.slug);
-  const videoSrc = block.media_file ? mediaUrl(vaultPath, block.media_file) : null;
+  const mediaSrc = block.media_file ? mediaUrl(vaultPath, block.media_file) : null;
+  const playableVideo = block.media_file ? isPlayableVideoSrc(block.media_file) : false;
+  const posterSrc = mediaSrc && !playableVideo ? mediaSrc : thumb;
 
   return (
     <div className="relative aspect-video">
-      {!measurementMode && videoSrc ? (
+      {!measurementMode && playableVideo && mediaSrc ? (
         <VideoFromBlob
-          src={videoSrc}
+          src={mediaSrc}
           className="h-full w-full object-cover"
           autoPlay
           loop
@@ -477,7 +628,7 @@ const VideoCard = memo(function VideoCard({
         />
       ) : !measurementMode ? (
         <img
-          src={thumb}
+          src={posterSrc}
           alt=""
           className="h-full w-full object-cover"
           loading={imgLoading}
@@ -488,13 +639,7 @@ const VideoCard = memo(function VideoCard({
       ) : (
         <div className="h-full w-full bg-accent" />
       )}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div className="flex h-10 w-10 items-center justify-center rounded-1 bg-black/50 text-white">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M4 2.5v11l10-5.5L4 2.5z" />
-          </svg>
-        </div>
-      </div>
+      <PlayBadge />
     </div>
   );
 });

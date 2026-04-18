@@ -170,17 +170,31 @@ describe("Card", () => {
     expect(authorP).toBeUndefined();
   });
 
-  it("renders article composite overlay for multiple embedded images", () => {
+  it("renders article multi-image preview as a tiled gallery without a counter", () => {
     const b = block({
       block_type: "article",
       title: "Gallery Article",
-      body: "One\n![](a.jpg)\n![](b.jpg)\n![](c.jpg)",
-      first_image: "a.jpg",
-      media_urls: "[\"a.jpg\",\"b.jpg\",\"c.jpg\"]",
-      media_dimensions: "{\"a.jpg\":[800,600],\"b.jpg\":[600,800],\"c.jpg\":[900,900]}",
+      body: "One",
+      preview_manifest: JSON.stringify({
+        kind: "composite",
+        primary_preview_path: "test-block.jpg",
+        width: 1,
+        height: 1,
+        tiles: [
+          { source_path: "a.webp", preview_path: "a.jpg", width: 800, height: 600, is_video: false, is_video_poster: false },
+          { source_path: "b.png", preview_path: "b.jpg", width: 600, height: 800, is_video: false, is_video_poster: false },
+          { source_path: "c.heic", preview_path: "c.jpg", width: 900, height: 900, is_video: false, is_video_poster: false },
+        ],
+        overflow_count: 2,
+      }),
     });
-    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    expect(screen.getByText("+2")).toBeInTheDocument();
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const images = Array.from(container.querySelectorAll("img"));
+    expect(images).toHaveLength(3);
+    expect(images[0]?.getAttribute("src")).toContain("/a.jpg");
+    expect(images[1]?.getAttribute("src")).toContain("/b.jpg");
+    expect(images[2]?.getAttribute("src")).toContain("/c.jpg");
+    expect(screen.queryByText("+2")).not.toBeInTheDocument();
   });
 
   // ── Video card ────────────────────────────────────────────────────────
@@ -208,6 +222,19 @@ describe("Card", () => {
     // Play button SVG
     const playIcon = container.querySelector("svg path[d]");
     expect(playIcon).toBeInTheDocument();
+  });
+
+  it("renders legacy poster-only video cards as an image with play affordance", () => {
+    const b = block({
+      block_type: "video",
+      title: "YouTube Video",
+      media_file: "poster.jpg",
+    });
+    const { container } = render(
+      <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
+    );
+    expect(container.querySelector("video")).toBeNull();
+    expect(container.querySelector("img")).toBeInTheDocument();
   });
 
   it("renders article single-video preview as autoplay video in feed", () => {

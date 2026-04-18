@@ -12,6 +12,10 @@ export function thumbnailUrl(thumbsRootPath: string, slug: string): string {
   return convertFileSrc(`${thumbsRootPath}/${slug}.jpg`);
 }
 
+export function previewAssetUrl(thumbsRootPath: string, previewPath: string): string {
+  return convertFileSrc(`${thumbsRootPath}/${previewPath}`);
+}
+
 export function mediaUrl(vaultPath: string, fileName: string): string {
   return convertFileSrc(`${vaultPath}/${fileName}`);
 }

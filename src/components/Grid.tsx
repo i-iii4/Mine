@@ -21,7 +21,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { LightBlock, TagCount } from "@/types";
-import { Card } from "./Card";
+import { Card, CardSkeleton } from "./Card";
 import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
 import {
@@ -43,6 +43,10 @@ import {
 } from "@/lib/heightCache";
 import { useGridScroll } from "@/hooks/useGridScroll";
 import type { WordWidths } from "@/types/fontMetrics";
+import {
+  buildLayoutGenerationKey,
+  type LayoutGenerationKey,
+} from "@/lib/layoutGeneration";
 
 // ─── Layout constants ───────────────────────────────────────────────────────
 
@@ -53,6 +57,8 @@ const OVERSCAN_FORWARD_PX = 2200;
 const PRIORITY_BACKWARD_PX = 200;
 const PRIORITY_FORWARD_PX = 1400;
 const MEASUREMENT_BATCH_SIZE = 48;
+const INITIAL_COMMIT_BLOCKS = 24;
+const COMMIT_LOOKAHEAD_BLOCKS = 24;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -87,11 +93,7 @@ interface GridContext {
   onRequestDelete: (slug: string) => void;
 }
 
-interface StableLayoutSnapshot {
-  contentScopeKey: string;
-  layoutScopeKey: string;
-  layout: MasonryLayout;
-}
+type GridPhase = "provisional" | "measuring" | "committed";
 
 // ─── Layout cache (module-level, persists across channel switches) ─────────
 
@@ -176,14 +178,12 @@ export function Grid({
   //
   //   3. parentWidth / viewportHeight — set by ResizeObserver below.
   //
-  // heightsMap, missingBlocks, and allHeightsPresent are all derived
-  // synchronously from (blocks, bucket, warmedUp, measurementTick). No
-  // setState-in-effect reconciliation. When `blocks` changes, the next
-  // render already sees a fresh heightsMap — no stale-state window.
+  // heightsMap, committedEndIndex, phase, and measurementBatch are all
+  // derived synchronously from the current generation key. No stale
+  // cross-generation layout state is kept in React state.
   const [warmedUp, setWarmedUp] = useState(false);
   const [measurementTick, setMeasurementTick] = useState(0);
   const [wordWidthsMap, setWordWidthsMap] = useState<Map<number, WordWidths>>(new Map());
-  const stableLayoutRef = useRef<StableLayoutSnapshot | null>(null);
 
   // Scroll to top on explicit signal or channel change.
   useEffect(() => {
@@ -237,8 +237,17 @@ export function Grid({
   // boundary — at that point we may need to measure blocks again at the
   // new column width, since text wraps differently.
   const bucket = useMemo(() => bucketize(deriveColumnWidth(parentWidth)), [parentWidth]);
+  const generationKey = useMemo<LayoutGenerationKey>(
+    () => buildLayoutGenerationKey({
+      blocks,
+      routeKey: currentTag ?? "__all__",
+      heightBucket: bucket,
+      parentWidth,
+    }),
+    [blocks, bucket, currentTag, parentWidth],
+  );
 
-  // Measured pixel heights for the current (blocks, bucket). Purely derived
+  // Measured pixel heights for the current generation. Purely derived
   // from the module-level memoryCache — no setState, no reconciliation
   // effect, no stale-state window.
   //
@@ -251,42 +260,46 @@ export function Grid({
     const map = new Map<number, number>();
     if (!warmedUp) return map;
     for (const b of blocks) {
-      const h = getCachedHeight(b.id, bucket);
+      const h = getCachedHeight(generationKey, b.id);
       if (h !== undefined) map.set(b.id, h);
     }
     return map;
-  }, [blocks, bucket, warmedUp, measurementTick]);
+  }, [blocks, generationKey, warmedUp, measurementTick]);
 
-  // Blocks that are NOT yet in heightsMap at the current bucket. Feeds the
-  // MeasurementPass. Synchronously derived from heightsMap — no lag.
-  const missingBlocks = useMemo(
-    () => blocks.filter((b) => !heightsMap.has(b.id)),
-    [blocks, heightsMap],
-  );
+  const committedEndIndex = useMemo(() => {
+    if (!warmedUp) return -1;
+    for (let index = 0; index < blocks.length; index += 1) {
+      if (!heightsMap.has(blocks[index]!.id)) {
+        return index - 1;
+      }
+    }
+    return blocks.length - 1;
+  }, [blocks, heightsMap, warmedUp]);
 
-  const allHeightsPresent =
+  const allCurrentGenerationExact =
     warmedUp &&
-    parentWidth > 0 &&
     blocks.length > 0 &&
-    missingBlocks.length === 0;
+    committedEndIndex === blocks.length - 1;
 
   const handleMeasured = useCallback(
     (results: Array<{ id: number; height: number }>) => {
-      const newEntries: Array<{ blockId: number; bucket: number; height: number }> = [];
+      const newEntries: Array<{ generationKey: LayoutGenerationKey; blockId: number; height: number }> = [];
       for (const r of results) {
-        setCachedHeight(r.id, bucket, r.height);
-        newEntries.push({ blockId: r.id, bucket, height: r.height });
+        setCachedHeight(generationKey, r.id, r.height);
+        newEntries.push({ generationKey, blockId: r.id, height: r.height });
       }
       persistHeights(newEntries);
       // Force the derived heightsMap useMemo to recompute by observing
       // the new entries just written into memoryCache.
       setMeasurementTick((t) => t + 1);
     },
-    [bucket],
+    [generationKey],
   );
 
-  // Compute (or retrieve from cache) the masonry layout. Only runs when
-  // allHeightsPresent is true — the cache never sees partial/broken layouts.
+  // The visible layout always belongs to the current generation. Exact
+  // heights are used where they exist for the current generation; remaining
+  // items stay provisional and render as skeletons until their contiguous
+  // prefix has been committed.
   const layout = useMemo((): MasonryLayout => {
     if (parentWidth <= 0 || blocks.length === 0) {
       return {
@@ -297,67 +310,25 @@ export function Grid({
       };
     }
 
-    if (!allHeightsPresent) {
+    if (!allCurrentGenerationExact) {
       return buildLayout(blocks, parentWidth, heightsMap, wordWidthsMap);
     }
 
-    const cached = layoutCache.get(blocks, parentWidth);
+    const cached = layoutCache.get(generationKey);
     if (cached) return cached;
 
     const fresh = buildLayout(blocks, parentWidth, heightsMap, wordWidthsMap);
-    layoutCache.set(blocks, parentWidth, fresh);
+    layoutCache.set(generationKey, fresh);
     return fresh;
-  }, [blocks, parentWidth, heightsMap, allHeightsPresent, wordWidthsMap]);
-
-  const contentScopeKey = useMemo(() => {
-    const sampleIds = [
-      blocks[0]?.id ?? -1,
-      blocks[1]?.id ?? -1,
-      blocks[2]?.id ?? -1,
-      blocks[blocks.length - 3]?.id ?? -1,
-      blocks[blocks.length - 2]?.id ?? -1,
-      blocks[blocks.length - 1]?.id ?? -1,
-    ].join(",");
-    const checksum = blocks.reduce((sum, block, index) => {
-      if (index >= 12) return sum;
-      return sum + block.id * (index + 1);
-    }, 0);
-    return `${currentTag ?? "__all__"}:${blocks.length}:${sampleIds}:${checksum}`;
-  }, [blocks, currentTag]);
-
-  const layoutScopeKey = useMemo(
-    () => `${contentScopeKey}:${bucket}`,
-    [contentScopeKey, bucket],
-  );
+  }, [allCurrentGenerationExact, blocks, generationKey, heightsMap, parentWidth, wordWidthsMap]);
 
   useEffect(() => {
-    if (!allHeightsPresent) return;
-    stableLayoutRef.current = {
-      contentScopeKey,
-      layoutScopeKey,
-      layout,
-    };
-  }, [allHeightsPresent, contentScopeKey, layout, layoutScopeKey]);
-
-  const stableLayoutSnapshot = !allHeightsPresent &&
-    stableLayoutRef.current?.contentScopeKey === contentScopeKey
-    ? stableLayoutRef.current
-    : null;
-
-  // Width-bucket changes invalidate measured heights. Until the new bucket is
-  // fully measured, keep rendering the last fully-measured layout for the same
-  // block set instead of a partial fallback layout whose heights can drift
-  // under real DOM content and cause card overlap.
-  const renderedLayout = stableLayoutSnapshot?.layout ?? layout;
-  const renderedLayoutScopeKey = stableLayoutSnapshot?.layoutScopeKey ?? layoutScopeKey;
-
-  useEffect(() => {
-    onColumnCountChange?.(renderedLayout.columnCount);
-  }, [renderedLayout.columnCount, onColumnCountChange]);
+    onColumnCountChange?.(layout.columnCount);
+  }, [layout.columnCount, onColumnCountChange]);
 
   const visibilityIndex = useMemo(
-    () => createVisibilityIndex(renderedLayout),
-    [renderedLayout],
+    () => createVisibilityIndex(layout),
+    [layout],
   );
 
   // Visible-items computation callback for useGridScroll. Closes over the
@@ -379,8 +350,28 @@ export function Grid({
 
   const visibleItems = useGridScroll(parentRef, {
     getVisibleItems,
-    resetKey: renderedLayoutScopeKey,
+    resetKey: generationKey,
   });
+
+  const maxVisibleIndex = useMemo(
+    () => visibleItems.reduce((max, item) => Math.max(max, item.index), -1),
+    [visibleItems],
+  );
+
+  const targetCommittedEndIndex = useMemo(() => {
+    if (blocks.length === 0) return -1;
+    const baseEnd = maxVisibleIndex >= 0
+      ? maxVisibleIndex + COMMIT_LOOKAHEAD_BLOCKS
+      : INITIAL_COMMIT_BLOCKS - 1;
+    return Math.min(blocks.length - 1, baseEnd);
+  }, [blocks.length, maxVisibleIndex]);
+
+  const phase: GridPhase = useMemo(() => {
+    if (blocks.length === 0 || parentWidth <= 0) return "committed";
+    if (committedEndIndex < 0) return "provisional";
+    if (committedEndIndex < targetCommittedEndIndex) return "measuring";
+    return "committed";
+  }, [blocks.length, committedEndIndex, parentWidth, targetCommittedEndIndex]);
 
   // Priority zone — cards in this range get eager image loading.
   const priorityBounds = useMemo(() => {
@@ -396,36 +387,28 @@ export function Grid({
   );
 
   const measurementBatch = useMemo(() => {
-    if (missingBlocks.length === 0) return [];
+    if (!warmedUp) return [];
+    if (targetCommittedEndIndex < 0) return [];
 
-    const prioritized = new Map<number, LightBlock>();
-    for (const item of visibleItems) {
-      const block = blocks[item.index];
+    const missingPrefixBlocks: LightBlock[] = [];
+    for (let index = 0; index <= targetCommittedEndIndex; index += 1) {
+      const block = blocks[index];
       if (!block || heightsMap.has(block.id)) continue;
-      prioritized.set(block.id, block);
-      if (prioritized.size >= MEASUREMENT_BATCH_SIZE) {
-        return Array.from(prioritized.values());
-      }
+      missingPrefixBlocks.push(block);
+      if (missingPrefixBlocks.length >= MEASUREMENT_BATCH_SIZE) break;
     }
 
-    for (const block of missingBlocks) {
-      if (prioritized.has(block.id)) continue;
-      prioritized.set(block.id, block);
-      if (prioritized.size >= MEASUREMENT_BATCH_SIZE) break;
-    }
-
-    return Array.from(prioritized.values());
-  }, [blocks, heightsMap, missingBlocks, visibleItems]);
+    return missingPrefixBlocks;
+  }, [blocks, heightsMap, targetCommittedEndIndex, warmedUp]);
 
   useEffect(() => {
     if (!hasMoreBlocks || loadingMoreBlocks || !onLoadMoreBlocks) {
       return;
     }
-    const lastVisibleIndex = visibleItems.reduce((max, item) => Math.max(max, item.index), -1);
-    if (lastVisibleIndex >= blocks.length - 24) {
+    if (maxVisibleIndex >= blocks.length - 24) {
       onLoadMoreBlocks();
     }
-  }, [blocks.length, hasMoreBlocks, loadingMoreBlocks, onLoadMoreBlocks, visibleItems]);
+  }, [blocks.length, hasMoreBlocks, loadingMoreBlocks, maxVisibleIndex, onLoadMoreBlocks]);
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
@@ -484,21 +467,23 @@ export function Grid({
           style={{
             paddingLeft: sidebarCollapsed ? 72 : 32,
             paddingRight: sidebarCollapsed ? 72 : 32,
+            scrollbarGutter: "stable",
             transition: "padding-left 200ms ease, padding-right 200ms ease",
           }}
           data-grid-scroll
         >
           {parentWidth > 0 && blocks.length > 0 && (
             <VirtualMasonryLayout
-              key={renderedLayoutScopeKey}
+              key={generationKey}
               blocks={blocks}
               visibleItems={visibleItems}
-              totalHeight={renderedLayout.totalHeight}
+              totalHeight={layout.totalHeight}
               priorityBounds={priorityBounds}
+              committedEndIndex={committedEndIndex}
               context={gridContext}
             />
           )}
-          {parentWidth > 0 && blocks.length > 0 && !allHeightsPresent && (
+          {parentWidth > 0 && blocks.length > 0 && phase !== "committed" && (
             <>
               <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex justify-center">
                 <p className="rounded-1 border border-border bg-background/90 px-3 py-1 text-sm text-muted-foreground backdrop-blur">
@@ -565,12 +550,14 @@ function VirtualMasonryLayout({
   visibleItems,
   totalHeight,
   priorityBounds,
+  committedEndIndex,
   context,
 }: {
   blocks: LightBlock[];
   visibleItems: MasonryPosition[];
   totalHeight: number;
   priorityBounds: { start: number; end: number };
+  committedEndIndex: number;
   context: GridContext;
 }) {
   return (
@@ -586,6 +573,7 @@ function VirtualMasonryLayout({
             priority={
               item.top <= priorityBounds.end && item.bottom >= priorityBounds.start
             }
+            isCommitted={item.index <= committedEndIndex}
             context={context}
           />
         );
@@ -598,11 +586,13 @@ const GridItem = memo(function GridItem({
   block,
   item,
   priority,
+  isCommitted,
   context,
 }: {
   block: LightBlock;
   item: MasonryPosition;
   priority: boolean;
+  isCommitted: boolean;
   context: GridContext;
 }) {
   return (
@@ -622,19 +612,23 @@ const GridItem = memo(function GridItem({
         transform: `translate3d(${item.left}px, ${item.top}px, 0)`,
       }}
     >
-      <Card
-        block={block}
-        vaultPath={context.vaultPath}
-        thumbsRootPath={context.thumbsRootPath}
-        isFocused={block.id === context.focusedBlockId}
-        priority={priority}
-        onClick={context.onBlockClick}
-        tags={context.tags}
-        currentTag={context.currentTag}
-        onToggleTag={context.onToggleTag}
-        onCreateAndAssign={context.onCreateAndAssign}
-        onRequestDelete={context.onRequestDelete}
-      />
+      {isCommitted ? (
+        <Card
+          block={block}
+          vaultPath={context.vaultPath}
+          thumbsRootPath={context.thumbsRootPath}
+          isFocused={block.id === context.focusedBlockId}
+          priority={priority}
+          onClick={context.onBlockClick}
+          tags={context.tags}
+          currentTag={context.currentTag}
+          onToggleTag={context.onToggleTag}
+          onCreateAndAssign={context.onCreateAndAssign}
+          onRequestDelete={context.onRequestDelete}
+        />
+      ) : (
+        <CardSkeleton block={block} />
+      )}
     </div>
   );
 });

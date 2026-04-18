@@ -2,15 +2,13 @@
 //
 // The DOM measurement pass in Grid.tsx renders cards hidden, reads their
 // exact pixel heights via getBoundingClientRect, and stores the result
-// here keyed by (blockId, columnWidth bucket). Subsequent visits to the
-// same channel at the same bucket are instant.
-//
-// Heights depend on columnWidth because text wraps differently at different
-// widths. We bucket columnWidth to 40-pixel granularity so small resize
-// variations don't force re-measurement.
+// here keyed by (layoutGenerationKey, blockId). Heights are only reusable
+// when the route, width, and layout-relevant block content are unchanged.
 //
 // IndexedDB persistence survives app restart. On font version change the
 // caller should call `clearAll()` to invalidate stale entries.
+
+import type { LayoutGenerationKey } from "@/lib/layoutGeneration";
 
 /** Pixel granularity for columnWidth bucketing. */
 export const BUCKET_PX = 40;
@@ -33,8 +31,11 @@ export const BUCKET_PX = 40;
  * v6: descriptor-driven layout variants for article/social cards and
  *     route-scoped grid snapshot. Old cached heights can mismatch the
  *     new geometry contract and cause overlap.
+ * v7: generation-aware height cache. Keys now include route + width +
+ *     layout-relevant content fingerprint, so same block id no longer
+ *     reuses stale heights across generations.
  */
-const CACHE_VERSION = 6;
+const CACHE_VERSION = 7;
 
 const DB_NAME = "arena-card-heights";
 const DB_VERSION = 1;
@@ -44,8 +45,8 @@ export function bucketize(columnWidth: number): number {
   return Math.max(0, Math.round(columnWidth / BUCKET_PX));
 }
 
-function cacheKey(blockId: number, bucket: number): string {
-  return `${blockId}:${bucket}:v${CACHE_VERSION}`;
+function cacheKey(generationKey: LayoutGenerationKey, blockId: number): string {
+  return `${generationKey}|block=${blockId}:v${CACHE_VERSION}`;
 }
 
 // ─── In-memory layer ────────────────────────────────────────────────────────
@@ -56,24 +57,27 @@ function cacheKey(blockId: number, bucket: number): string {
  */
 const memoryCache = new Map<string, number>();
 
-export function getCachedHeight(blockId: number, bucket: number): number | undefined {
-  return memoryCache.get(cacheKey(blockId, bucket));
+export function getCachedHeight(
+  generationKey: LayoutGenerationKey,
+  blockId: number,
+): number | undefined {
+  return memoryCache.get(cacheKey(generationKey, blockId));
 }
 
 export function setCachedHeight(
+  generationKey: LayoutGenerationKey,
   blockId: number,
-  bucket: number,
   height: number,
 ): void {
-  memoryCache.set(cacheKey(blockId, bucket), height);
+  memoryCache.set(cacheKey(generationKey, blockId), height);
 }
 
 // ─── IndexedDB persistence ──────────────────────────────────────────────────
 
 interface HeightRecord {
   key: string;
+  generationKey: string;
   blockId: number;
-  bucket: number;
   height: number;
 }
 
@@ -137,7 +141,7 @@ export async function warmFromIndexedDb(): Promise<void> {
  * for the current session.
  */
 export function persistHeights(
-  entries: ReadonlyArray<{ blockId: number; bucket: number; height: number }>,
+  entries: ReadonlyArray<{ generationKey: LayoutGenerationKey; blockId: number; height: number }>,
 ): void {
   if (entries.length === 0) return;
   void (async () => {
@@ -151,9 +155,9 @@ export function persistHeights(
     const store = tx.objectStore(STORE_NAME);
     for (const e of entries) {
       const record: HeightRecord = {
-        key: cacheKey(e.blockId, e.bucket),
+        key: cacheKey(e.generationKey, e.blockId),
+        generationKey: e.generationKey,
         blockId: e.blockId,
-        bucket: e.bucket,
         height: e.height,
       };
       store.put(record);

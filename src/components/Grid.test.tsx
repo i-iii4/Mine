@@ -314,6 +314,26 @@ describe("Grid — no collapse after add / revisit", () => {
     assertPositionsMatchFreshLayout(initialBlocks, positions, 1200);
   });
 
+  it("keeps the first paint skeleton-only until the current generation is measured", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(901), makeBlock(902), makeBlock(903), makeBlock(904)];
+    setBlockHeight(901, 200);
+    setBlockHeight(902, 300);
+    setBlockHeight(903, 250);
+    setBlockHeight(904, 180);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="fresh-skeleton" />);
+
+    expect(readRenderedPositions()).toHaveLength(0);
+
+    await flushAsync();
+
+    const positions = readRenderedPositions();
+    expect(positions).toHaveLength(4);
+    assertPositionsMatchFreshLayout(blocks, positions, 1200);
+  });
+
   it("after adding a new block, no cards collapse (the save-new-card bug)", async () => {
     vi.useFakeTimers();
 
@@ -544,7 +564,92 @@ describe("Grid — no collapse after add / revisit", () => {
     assertPositionsMatchFreshLayout(visitAAgain, positions, 1200);
   });
 
-  it("keeps rendering the last stable layout while a new resize bucket is still measuring", async () => {
+  it("re-measures when layout-relevant text changes at the same block ids", async () => {
+    vi.useFakeTimers();
+
+    const initial = [
+      makeBlock(911, { title: "One", body: "Body one" }),
+      makeBlock(912, { title: "Two", body: "Body two" }),
+      makeBlock(913, { title: "Three", body: "Body three" }),
+    ];
+    setBlockHeight(911, 180);
+    setBlockHeight(912, 220);
+    setBlockHeight(913, 260);
+
+    const { rerender } = render(
+      <Grid {...BASE_PROPS} blocks={initial} currentTag="layout-text-change" />,
+    );
+    await flushAsync();
+
+    setBlockHeight(911, 320);
+    setBlockHeight(912, 180);
+    setBlockHeight(913, 290);
+    const updated = [
+      makeBlock(911, { title: "One updated", body: "Body one updated" }),
+      makeBlock(912, { title: "Two updated", body: "Body two updated" }),
+      makeBlock(913, { title: "Three updated", body: "Body three updated" }),
+    ];
+    rerender(<Grid {...BASE_PROPS} blocks={updated} currentTag="layout-text-change" />);
+    await flushAsync();
+
+    const positions = readRenderedPositions();
+    expect(positions.length).toBe(3);
+    assertPositionsMatchFreshLayout(updated, positions, 1200);
+  });
+
+  it("re-measures when preview manifest changes at the same block ids", async () => {
+    vi.useFakeTimers();
+
+    const initial = [
+      makeBlock(921, {
+        preview_manifest: JSON.stringify({
+          kind: "image",
+          primary_preview_path: "block-1.jpg",
+          width: 480,
+          height: 320,
+          tiles: [],
+          overflow_count: 0,
+        }),
+      }),
+      makeBlock(922),
+      makeBlock(923),
+    ];
+    setBlockHeight(921, 200);
+    setBlockHeight(922, 220);
+    setBlockHeight(923, 260);
+
+    const { rerender } = render(
+      <Grid {...BASE_PROPS} blocks={initial} currentTag="layout-preview-change" />,
+    );
+    await flushAsync();
+
+    setBlockHeight(921, 360);
+    const updated = [
+      makeBlock(921, {
+        preview_manifest: JSON.stringify({
+          kind: "composite",
+          primary_preview_path: "block-1.jpg",
+          width: 480,
+          height: 480,
+          tiles: [
+            { source_path: "a.jpg", preview_path: "a.jpg", width: 480, height: 480, is_video: false, is_video_poster: false },
+            { source_path: "b.jpg", preview_path: "b.jpg", width: 480, height: 480, is_video: false, is_video_poster: false },
+          ],
+          overflow_count: 0,
+        }),
+      }),
+      makeBlock(922),
+      makeBlock(923),
+    ];
+    rerender(<Grid {...BASE_PROPS} blocks={updated} currentTag="layout-preview-change" />);
+    await flushAsync();
+
+    const positions = readRenderedPositions();
+    expect(positions.length).toBe(3);
+    assertPositionsMatchFreshLayout(updated, positions, 1200);
+  });
+
+  it("switches to skeleton-only while a new resize generation is measuring", async () => {
     vi.useFakeTimers();
 
     const blocks = [
@@ -581,13 +686,7 @@ describe("Grid — no collapse after add / revisit", () => {
       triggerResize(narrowParentWidth);
     });
 
-    const stillWidePositions = readRenderedPositions();
-    assertPositionsMatchExplicitLayout(
-      blocks,
-      stillWidePositions,
-      wideParentWidth,
-      [180, 260, 220, 300],
-    );
+    expect(readRenderedPositions()).toHaveLength(0);
 
     await flushAsync();
 
