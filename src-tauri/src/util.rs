@@ -4,9 +4,66 @@
 use std::io::Write;
 #[cfg(feature = "desktop")]
 use std::path::PathBuf;
+#[cfg(feature = "desktop")]
+use std::{
+    io,
+    net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream},
+    time::Duration,
+};
 
 #[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager};
+
+#[cfg(feature = "desktop")]
+pub enum SingleInstanceAcquire {
+    Primary(SingleInstanceGuard),
+    Secondary,
+}
+
+#[cfg(all(feature = "desktop", unix))]
+pub struct SingleInstanceGuard {
+    _listener: TcpListener,
+}
+
+#[cfg(all(feature = "desktop", not(unix)))]
+pub struct SingleInstanceGuard {
+    _listener: TcpListener,
+}
+
+pub fn acquire_single_instance(identifier: &str) -> io::Result<SingleInstanceAcquire> {
+    let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, single_instance_port(identifier));
+    acquire_single_instance_at(addr)
+}
+
+#[cfg(feature = "desktop")]
+fn single_instance_port(identifier: &str) -> u16 {
+    let hash = identifier.bytes().fold(0u16, |acc, byte| {
+        acc.wrapping_mul(31).wrapping_add(u16::from(byte))
+    });
+    43000 + (hash % 1000)
+}
+
+#[cfg(feature = "desktop")]
+fn acquire_single_instance_at(addr: SocketAddrV4) -> io::Result<SingleInstanceAcquire> {
+    match TcpListener::bind(addr) {
+        Ok(listener) => Ok(SingleInstanceAcquire::Primary(SingleInstanceGuard {
+            _listener: listener,
+        })),
+        Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
+            match TcpStream::connect_timeout(&addr.into(), Duration::from_millis(75)) {
+                Ok(_) => Ok(SingleInstanceAcquire::Secondary),
+                Err(connect_err) if connect_err.kind() == io::ErrorKind::ConnectionRefused => {
+                    Err(err)
+                }
+                Err(connect_err) if connect_err.kind() == io::ErrorKind::TimedOut => {
+                    Ok(SingleInstanceAcquire::Secondary)
+                }
+                Err(connect_err) => Err(connect_err),
+            }
+        }
+        Err(err) => Err(err),
+    }
+}
 
 /// Current UTC time as ISO 8601 string (without chrono dependency).
 pub fn now_iso8601() -> String {
@@ -68,4 +125,24 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "desktop")]
+    use super::single_instance_port;
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn single_instance_port_is_stable() {
+        assert_eq!(single_instance_port("com.mine.app"), single_instance_port("com.mine.app"));
+        assert_ne!(single_instance_port("com.mine.app"), single_instance_port("com.mine.dev"));
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn single_instance_port_stays_in_reserved_range() {
+        let port = single_instance_port("com.mine.app");
+        assert!((43000..44000).contains(&port));
+    }
 }

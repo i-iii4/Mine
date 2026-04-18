@@ -59,6 +59,7 @@ const MEASUREMENT_BATCH_SIZE = 48;
 interface GridProps {
   blocks: LightBlock[];
   vaultPath: string;
+  thumbsRootPath?: string;
   tags: TagCount[];
   currentTag?: string;
   scrollToTop: number;
@@ -76,6 +77,7 @@ interface GridProps {
 
 interface GridContext {
   vaultPath: string;
+  thumbsRootPath?: string;
   focusedBlockId?: number | null;
   onBlockClick: (block: LightBlock) => void;
   tags: TagCount[];
@@ -83,6 +85,12 @@ interface GridContext {
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onRequestDelete: (slug: string) => void;
+}
+
+interface StableLayoutSnapshot {
+  contentScopeKey: string;
+  layoutScopeKey: string;
+  layout: MasonryLayout;
 }
 
 // ─── Layout cache (module-level, persists across channel switches) ─────────
@@ -134,6 +142,7 @@ function buildLayout(
 export function Grid({
   blocks,
   vaultPath,
+  thumbsRootPath,
   tags,
   currentTag,
   scrollToTop,
@@ -174,6 +183,7 @@ export function Grid({
   const [warmedUp, setWarmedUp] = useState(false);
   const [measurementTick, setMeasurementTick] = useState(0);
   const [wordWidthsMap, setWordWidthsMap] = useState<Map<number, WordWidths>>(new Map());
+  const stableLayoutRef = useRef<StableLayoutSnapshot | null>(null);
 
   // Scroll to top on explicit signal or channel change.
   useEffect(() => {
@@ -299,13 +309,55 @@ export function Grid({
     return fresh;
   }, [blocks, parentWidth, heightsMap, allHeightsPresent, wordWidthsMap]);
 
+  const contentScopeKey = useMemo(() => {
+    const sampleIds = [
+      blocks[0]?.id ?? -1,
+      blocks[1]?.id ?? -1,
+      blocks[2]?.id ?? -1,
+      blocks[blocks.length - 3]?.id ?? -1,
+      blocks[blocks.length - 2]?.id ?? -1,
+      blocks[blocks.length - 1]?.id ?? -1,
+    ].join(",");
+    const checksum = blocks.reduce((sum, block, index) => {
+      if (index >= 12) return sum;
+      return sum + block.id * (index + 1);
+    }, 0);
+    return `${currentTag ?? "__all__"}:${blocks.length}:${sampleIds}:${checksum}`;
+  }, [blocks, currentTag]);
+
+  const layoutScopeKey = useMemo(
+    () => `${contentScopeKey}:${bucket}`,
+    [contentScopeKey, bucket],
+  );
+
   useEffect(() => {
-    onColumnCountChange?.(layout.columnCount);
-  }, [layout.columnCount, onColumnCountChange]);
+    if (!allHeightsPresent) return;
+    stableLayoutRef.current = {
+      contentScopeKey,
+      layoutScopeKey,
+      layout,
+    };
+  }, [allHeightsPresent, contentScopeKey, layout, layoutScopeKey]);
+
+  const stableLayoutSnapshot = !allHeightsPresent &&
+    stableLayoutRef.current?.contentScopeKey === contentScopeKey
+    ? stableLayoutRef.current
+    : null;
+
+  // Width-bucket changes invalidate measured heights. Until the new bucket is
+  // fully measured, keep rendering the last fully-measured layout for the same
+  // block set instead of a partial fallback layout whose heights can drift
+  // under real DOM content and cause card overlap.
+  const renderedLayout = stableLayoutSnapshot?.layout ?? layout;
+  const renderedLayoutScopeKey = stableLayoutSnapshot?.layoutScopeKey ?? layoutScopeKey;
+
+  useEffect(() => {
+    onColumnCountChange?.(renderedLayout.columnCount);
+  }, [renderedLayout.columnCount, onColumnCountChange]);
 
   const visibilityIndex = useMemo(
-    () => createVisibilityIndex(layout),
-    [layout],
+    () => createVisibilityIndex(renderedLayout),
+    [renderedLayout],
   );
 
   // Visible-items computation callback for useGridScroll. Closes over the
@@ -325,7 +377,10 @@ export function Grid({
     [visibilityIndex, viewportHeight],
   );
 
-  const visibleItems = useGridScroll(parentRef, { getVisibleItems });
+  const visibleItems = useGridScroll(parentRef, {
+    getVisibleItems,
+    resetKey: renderedLayoutScopeKey,
+  });
 
   // Priority zone — cards in this range get eager image loading.
   const priorityBounds = useMemo(() => {
@@ -397,6 +452,7 @@ export function Grid({
   const gridContext: GridContext = useMemo(
     () => ({
       vaultPath,
+      thumbsRootPath,
       focusedBlockId,
       onBlockClick,
       tags,
@@ -407,6 +463,7 @@ export function Grid({
     }),
     [
       vaultPath,
+      thumbsRootPath,
       focusedBlockId,
       onBlockClick,
       tags,
@@ -433,10 +490,10 @@ export function Grid({
         >
           {parentWidth > 0 && blocks.length > 0 && (
             <VirtualMasonryLayout
-              key={currentTag ?? "__all__"}
+              key={renderedLayoutScopeKey}
               blocks={blocks}
               visibleItems={visibleItems}
-              totalHeight={layout.totalHeight}
+              totalHeight={renderedLayout.totalHeight}
               priorityBounds={priorityBounds}
               context={gridContext}
             />
@@ -453,6 +510,7 @@ export function Grid({
                   blocks={measurementBatch}
                   columnWidth={deriveColumnWidth(parentWidth)}
                   vaultPath={vaultPath}
+                  thumbsRootPath={thumbsRootPath}
                   onMeasured={handleMeasured}
                 />
               )}
@@ -553,18 +611,21 @@ const GridItem = memo(function GridItem({
       style={{
         position: "absolute",
         width: item.width,
-        // height is intentionally NOT set — when measurement is the source
-        // of truth, the child Card sizes itself to its natural content and
-        // we rely on computeMasonryLayout placing neighbors based on the
-        // same measured heights. Setting an explicit height here would
-        // create an opportunity for fractional-pixel mismatches (getBCR
-        // returns floats; CSS rounds them when applying inline styles).
+        // Enforce the measured layout envelope in the visible render path.
+        // Without an explicit wrapper height, even a small post-measurement
+        // drift (font wrapping, media readiness, browser rounding) lets the
+        // card's natural height spill into the next masonry slot and appear
+        // as vertical overlap. Heights are already ceil()'d during hidden
+        // measurement, so clamping the wrapper here is the safer invariant.
+        height: item.height,
+        overflow: "hidden",
         transform: `translate3d(${item.left}px, ${item.top}px, 0)`,
       }}
     >
       <Card
         block={block}
         vaultPath={context.vaultPath}
+        thumbsRootPath={context.thumbsRootPath}
         isFocused={block.id === context.focusedBlockId}
         priority={priority}
         onClick={context.onBlockClick}
@@ -599,6 +660,7 @@ interface MeasurementPassProps {
   blocks: LightBlock[];
   columnWidth: number;
   vaultPath: string;
+  thumbsRootPath?: string;
   onMeasured: (results: Array<{ id: number; height: number }>) => void;
 }
 
@@ -606,6 +668,7 @@ function MeasurementPass({
   blocks,
   columnWidth,
   vaultPath,
+  thumbsRootPath,
   onMeasured,
 }: MeasurementPassProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -712,7 +775,11 @@ function MeasurementPass({
           data-measure-id={block.id}
           style={{ width: Math.max(1, columnWidth) }}
         >
-          <MeasureCard block={block} vaultPath={vaultPath} />
+          <MeasureCard
+            block={block}
+            vaultPath={vaultPath}
+            thumbsRootPath={thumbsRootPath}
+          />
         </div>
       ))}
     </div>

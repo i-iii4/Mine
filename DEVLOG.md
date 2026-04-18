@@ -1,5 +1,70 @@
 # Devlog
 
+## 17.04.2026 22:44 [primary] — Critical Path Reset implementation slice: derived store, async asset path, explicit feed contract
+
+### Goal
+Довести `Critical Path Reset v1` из чисто документированного курса до реального runtime-среза, убрать подтверждённые startup/feed bottleneck'и и зафиксировать оставшийся продуктовый blocker перед следующей итерацией.
+
+### Actually completed
+
+**Derived store migration перестала быть только планом** (`src-tauri/src/domain/vault.rs`, `src-tauri/src/commands/vault.rs`, `src/App.tsx`, `src/components/VaultPicker.tsx`)
+- введён `vault-id` в source vault и per-device local derived store в app data
+- runtime `open_vault()` и дальнейший read path работают против local `index.db`, а не против SQLite внутри iCloud vault
+- thumbs cache тоже переведён в local derived store; legacy `.arena/index.db` и legacy thumbs используются только как bootstrap source при первой миграции
+
+**Hot query paths выведены из sync WebView IPC** (`src-tauri/src/commands/blocks.rs`, `src-tauri/src/commands/channels.rs`, `src-tauri/src/commands/tags.rs`, `src-tauri/src/storage/db.rs`)
+- `list_grid_blocks`, `list_channel_previews`, `list_tags`, `list_channels` переведены на `spawn_blocking` + короткоживущие read-only SQLite connection'ы
+- добавлен `list_taxonomy_snapshot`, чтобы route switch не дёргал отдельно `tags + channels` на каждый refresh
+- `migrate_thumb_cache()` вынесен из startup hot path
+
+**Background sync перестал жить как штатный full-scan startup loop** (`src-tauri/src/watcher/handler.rs`, `src-tauri/src/commands/state.rs`, `src-tauri/src/commands/vault.rs`, `src-tauri/src/watcher/watch.rs`)
+- normal runtime path теперь incremental и работает поверх local derived store
+- `dirty_during_sync` остался как catch-up механизм, но теперь поверх incremental pass
+- watcher во время sync больше не индексирует сразу, а помечает vault dirty и даёт sync rerun pass'у добрать изменения
+
+**Feed contract стал explicit и preview-first** (`src-tauri/src/storage/index.rs`, `src/types/index.ts`, `src/lib/cardLayout.ts`, `src/components/Card.tsx`)
+- добавлен `preview_manifest` в `blocks` и его сохранение в SQLite
+- frontend перестал “угадывать” feed geometry только из markdown и сначала читает явный `FeedPreviewManifest`
+- `image` / `article` / `social` feed-path переведены на preview assets из local thumbs cache
+- для multi-image article/social добавлен contract `composite + overflow_count`, а не client-side gallery
+
+**Asset-serving bottleneck выведен из main-thread hotspot** (`src-tauri/src/asset_protocol.rs`, `src-tauri/src/lib.rs`, `src-tauri/Cargo.toml`)
+- введён custom async `asset` URI handler с range support вместо прежнего sync path
+- сначала использовался `std::thread::spawn`, затем path ужесточён до `spawn_blocking`
+- после этого `sample` перестал показывать `tauri::protocol::asset::get_response` как dominant main-thread hotspot в feed scenario
+
+**Grid/layout coherence усилена** (`src/components/Grid.tsx`, `src/hooks/useGridScroll.ts`, `src/lib/layoutCache.ts`, `src/components/Grid.test.tsx`)
+- route/layout switch держит последний fully measured layout до тех пор, пока новый bucket не станет complete
+- visible wrapper теперь фиксирует measured envelope (`height + overflow hidden`), чтобы небольшой drift больше не превращался в vertical overlap
+- добавлен resize-specific regression test на сохранение last stable layout во время bucket re-measure
+
+**Frontend boot slice облегчен** (`src/App.tsx`, `src/components/ComponentTestBench.tsx`)
+- `Detail`, `Search`, `ImportDialog`, `DropZone`, `ComponentTestBench` вынесены в lazy chunks
+- production bundle заметно уменьшен, тяжёлый detail/runtime код больше не висит в initial chunk целиком
+
+**Feed video path частично возвращён поверх нового preview contract** (`src/components/Card.tsx`, `src/components/VideoFromBlob.tsx`, `src/lib/cardLayout.ts`)
+- dedicated `video` blocks autoplay в feed
+- single-video previews (`article` / `social`) autoplay в feed
+- multi-media grids и composite cases остаются preview-only
+- `VideoFromBlob` больше не делает обязательный `fetch -> blob` на каждый mount: direct src first, blob only as fallback
+
+**Оставшийся blocker зафиксирован явно**
+- на реальном `Mine` остался продуктовый регресс в multi-image cards: вместо intended composite preview местами показывается single-image fallback с `+N`
+- это не считается “принятым компромиссом”; intended contract по плану — один composite preview, визуально summarizing первые 2-4 изображения
+- blocker внесён в `PLAN.md` как незавершённый кусок `C2`
+
+### Checks
+- `cargo test -p mine --lib --quiet` — 264/264
+- `cargo check -p mine --quiet`
+- `bun run test src/lib/cardLayout.test.ts src/components/Card.test.tsx src/components/VideoFromBlob.test.tsx src/components/Grid.test.tsx`
+- `bun run build`
+- runtime profiling:
+  - `startup-trace.log`: `db_open` больше не зависит от iCloud SQLite hot path
+  - `sample`: sync `asset::get_response` больше не dominant hotspot на main thread
+
+### Push
+- [текущий]
+
 ## 17.04.2026 18:36 [primary] — Critical Path Reset v1 recorded in PLAN
 
 ### Goal

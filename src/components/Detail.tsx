@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import type { IndexedBlock, LightBlock } from "@/types";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { thumbnailUrl, mediaUrl, domainFromUrl, isSafeUrl } from "@/lib/assets";
+import { thumbnailUrl, mediaUrl, domainFromUrl, isSafeUrl, legacyThumbsRoot } from "@/lib/assets";
 import { addTag, removeTag, getBlock } from "@/lib/commands";
 import { VideoFromBlob } from "./VideoFromBlob";
 
@@ -18,6 +18,7 @@ const LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-16";
 interface DetailProps {
   block: LightBlock | IndexedBlock;
   vaultPath: string;
+  thumbsRootPath?: string;
   onClose: () => void;
   onNavigate: (direction: "prev" | "next" | "up" | "down") => void;
   onTagsChanged: () => void;
@@ -30,6 +31,7 @@ function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock
 export function Detail({
   block,
   vaultPath,
+  thumbsRootPath,
   onClose,
   onNavigate,
   onTagsChanged,
@@ -138,7 +140,12 @@ export function Detail({
       <div ref={panelRef} tabIndex={-1} className="h-full w-full overflow-y-auto outline-none">
         <div className={LAYOUT_CLASSES}>
           <div className="min-w-0 flex-1">
-            <BlockContent block={block} fullBlock={fullBlock} vaultPath={vaultPath} />
+            <BlockContent
+              block={block}
+              fullBlock={fullBlock}
+              vaultPath={vaultPath}
+              thumbsRootPath={thumbsRootPath}
+            />
           </div>
           <div className="w-56 shrink-0" aria-hidden="true" />
         </div>
@@ -291,11 +298,14 @@ function BlockContent({
   block,
   fullBlock,
   vaultPath,
+  thumbsRootPath,
 }: {
   block: LightBlock | IndexedBlock;
   fullBlock: IndexedBlock | null;
   vaultPath: string;
+  thumbsRootPath?: string;
 }) {
+  const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
   // Lazy-load full body if truncated (LightBlock carries only a short preview).
   const [fullBody, setFullBody] = useState<string | null>(fullBlock?.body ?? null);
   useEffect(() => {
@@ -317,7 +327,7 @@ function BlockContent({
     case "image": {
       const src = block.media_file
         ? mediaUrl(vaultPath, block.media_file)
-        : thumbnailUrl(vaultPath, block.slug);
+        : thumbnailUrl(resolvedThumbsRoot, block.slug);
       return (
         <div className="flex min-h-full items-center justify-center">
           <img
@@ -331,7 +341,7 @@ function BlockContent({
     case "link": {
       const src = block.media_file
         ? mediaUrl(vaultPath, block.media_file)
-        : thumbnailUrl(vaultPath, block.slug);
+        : thumbnailUrl(resolvedThumbsRoot, block.slug);
       return (
         <div>
           <div className="aspect-video bg-accent">

@@ -32,10 +32,20 @@ const WIDTH_BUCKET_PX = 10;
  */
 export function layoutCacheKey(blocks: LightBlock[], parentWidth: number): string {
   const n = blocks.length;
-  const first = n > 0 ? blocks[0]!.id : -1;
-  const last = n > 0 ? blocks[n - 1]!.id : -1;
+  const sampleIds = [
+    blocks[0]?.id ?? -1,
+    blocks[1]?.id ?? -1,
+    blocks[2]?.id ?? -1,
+    blocks[n - 3]?.id ?? -1,
+    blocks[n - 2]?.id ?? -1,
+    blocks[n - 1]?.id ?? -1,
+  ].join(",");
+  const checksum = blocks.reduce((sum, block, index) => {
+    if (index >= 12) return sum;
+    return sum + block.id * (index + 1);
+  }, 0);
   const widthBucket = Math.round(parentWidth / WIDTH_BUCKET_PX);
-  return `${n}:${first}:${last}:${widthBucket}`;
+  return `${n}:${sampleIds}:${checksum}:${widthBucket}`;
 }
 
 /**

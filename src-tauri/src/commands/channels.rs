@@ -6,11 +6,11 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
-use crate::commands::state::{AppState, CommandError};
+use crate::commands::state::{current_vault_layout, AppState, CommandError};
 use crate::domain::block::{parse_block, serialize_block, Block, BlockType, DateTime, Frontmatter};
 use crate::domain::channel::Channel;
 use crate::domain::tag::normalize_tag;
-use crate::storage::{files, index};
+use crate::storage::{db, files, index};
 use crate::util::append_startup_trace;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -44,36 +44,60 @@ impl ChannelDto {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TaxonomySnapshot {
+    pub tags: Vec<index::TagCount>,
+    pub channels: Vec<ChannelDto>,
+    pub total_blocks: usize,
+}
+
 // ─── Commands ───────────────────────────────────────────────────────────────
 
 /// List all channels with block counts.
 #[tauri::command]
-pub fn list_channels(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<ChannelDto>, CommandError> {
+pub async fn list_channels(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<ChannelDto>, CommandError> {
     append_startup_trace(&app, "list_channels", "start");
-    let vault_state = state.vault_state.lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let Some(vs) = vault_state.as_ref() else {
-        append_startup_trace(&app, "list_channels", "no_vault");
-        return Err(CommandError::NoVault);
-    };
-
-    let channels = index::list_channels(&vs.conn)?;
-    let tags = index::get_all_tags(&vs.conn)?;
-    let tag_counts: HashMap<String, usize> = tags
-        .into_iter()
-        .map(|tag| (tag.tag, tag.count))
-        .collect();
-
-    let dtos: Vec<ChannelDto> = channels
-        .iter()
-        .map(|ch| {
-            let count = tag_counts.get(&ch.tag).copied().unwrap_or(0);
-            ChannelDto::from_channel(ch, count)
-        })
-        .collect();
+    let db_path = current_vault_layout(&state)?.index_db_path();
+    let dtos = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<ChannelDto>, CommandError> {
+        let conn = db::open_read_only(&db_path)?;
+        Ok(load_channels(&conn)?)
+    })
+    .await
+    .map_err(|e| CommandError::Internal(format!("list_channels task join failed: {e}")))??;
 
     append_startup_trace(&app, "list_channels", &format!("done count={}", dtos.len()));
     Ok(dtos)
+}
+
+#[tauri::command]
+pub async fn list_taxonomy_snapshot(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<TaxonomySnapshot, CommandError> {
+    append_startup_trace(&app, "list_taxonomy_snapshot", "start");
+    let db_path = current_vault_layout(&state)?.index_db_path();
+    let snapshot =
+        tauri::async_runtime::spawn_blocking(move || -> Result<TaxonomySnapshot, CommandError> {
+            let conn = db::open_read_only(&db_path)?;
+            Ok(TaxonomySnapshot {
+                tags: index::get_all_tags(&conn)?,
+                channels: load_channels(&conn)?,
+                total_blocks: index::count_grid_blocks(&conn)?,
+            })
+        })
+        .await
+        .map_err(|e| CommandError::Internal(format!("list_taxonomy_snapshot task join failed: {e}")))??;
+    append_startup_trace(
+        &app,
+        "list_taxonomy_snapshot",
+        &format!(
+            "done tags={} channels={} total={}",
+            snapshot.tags.len(),
+            snapshot.channels.len(),
+            snapshot.total_blocks
+        ),
+    );
+    Ok(snapshot)
 }
 
 /// Create a channel from a tag. Title is auto-generated if not provided.
@@ -254,7 +278,7 @@ pub fn rename_channel(
     }
 
     // Create new channel with same metadata
-    let mut new_channel = Channel {
+    let new_channel = Channel {
         tag: normalized_new.clone(),
         title: {
             let mut chars = normalized_new.chars();
@@ -311,42 +335,43 @@ pub struct PreviewItem {
 /// Includes `__all__` key for all blocks regardless of channel.
 /// Max `limit` thumbnails per channel.
 #[tauri::command]
-pub fn list_channel_previews(
+pub async fn list_channel_previews(
     state: State<'_, AppState>,
     limit: usize,
 ) -> Result<HashMap<String, Vec<PreviewItem>>, CommandError> {
-    let vault_state = state.vault_state.lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    let db_path = current_vault_layout(&state)?.index_db_path();
+    tauri::async_runtime::spawn_blocking(move || -> Result<HashMap<String, Vec<PreviewItem>>, CommandError> {
+        let conn = db::open_read_only(&db_path)?;
+        let tags = index::get_all_tags(&conn)?;
+        let all_previews = index::list_preview_blocks(&conn, limit)?;
+        let per_tag_previews = index::list_preview_blocks_by_tag(&conn, limit)?;
 
-    let tags = index::get_all_tags(&vs.conn)?;
-    let all_previews = index::list_preview_blocks(&vs.conn, limit)?;
-    let per_tag_previews = index::list_preview_blocks_by_tag(&vs.conn, limit)?;
+        let to_item = |preview: &index::PreviewBlock| -> PreviewItem {
+            PreviewItem {
+                slug: preview.slug.clone(),
+                text: preview.thumb_format == Some(index::ThumbFormat::Png),
+                mtime: preview.thumb_mtime,
+                has_thumb: preview.thumb_format.is_some(),
+            }
+        };
 
-    let to_item = |preview: &index::PreviewBlock| -> PreviewItem {
-        PreviewItem {
-            slug: preview.slug.clone(),
-            text: preview.thumb_format == Some(index::ThumbFormat::Png),
-            mtime: preview.thumb_mtime,
-            has_thumb: preview.thumb_format.is_some(),
+        let mut result = HashMap::new();
+        let all_items: Vec<PreviewItem> = all_previews.iter().map(to_item).collect();
+        result.insert("__all__".to_string(), all_items);
+
+        for (tag, previews) in per_tag_previews {
+            let items: Vec<PreviewItem> = previews.iter().map(to_item).collect();
+            result.insert(tag, items);
         }
-    };
 
-    let mut result = HashMap::new();
+        for tag in &tags {
+            result.entry(tag.tag.clone()).or_insert_with(Vec::new);
+        }
 
-    let all_items: Vec<PreviewItem> = all_previews.iter().map(to_item).collect();
-    result.insert("__all__".to_string(), all_items);
-
-    for (tag, previews) in per_tag_previews {
-        let items: Vec<PreviewItem> = previews.iter().map(to_item).collect();
-        result.insert(tag, items);
-    }
-
-    for tag in &tags {
-        result.entry(tag.tag.clone()).or_insert_with(Vec::new);
-    }
-
-    Ok(result)
+        Ok(result)
+    })
+    .await
+    .map_err(|e| CommandError::Internal(format!("list_channel_previews task join failed: {e}")))?
 }
 
 /// Delete a channel: remove .md file and index entry.
@@ -402,4 +427,21 @@ fn channel_to_block(channel: &Channel) -> Block {
         },
         body: String::new(),
     }
+}
+
+fn load_channels(conn: &rusqlite::Connection) -> anyhow::Result<Vec<ChannelDto>> {
+    let channels = index::list_channels(conn)?;
+    let tags = index::get_all_tags(conn)?;
+    let tag_counts: HashMap<String, usize> = tags
+        .into_iter()
+        .map(|tag| (tag.tag, tag.count))
+        .collect();
+
+    Ok(channels
+        .iter()
+        .map(|ch| {
+            let count = tag_counts.get(&ch.tag).copied().unwrap_or(0);
+            ChannelDto::from_channel(ch, count)
+        })
+        .collect())
 }

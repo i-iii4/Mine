@@ -1,4 +1,6 @@
 #[cfg(feature = "desktop")]
+mod asset_protocol;
+#[cfg(feature = "desktop")]
 mod commands;
 pub mod domain;
 #[cfg(feature = "desktop")]
@@ -12,11 +14,13 @@ mod watcher;
 use commands::state::AppState;
 #[cfg(feature = "desktop")]
 use tauri::menu::{AboutMetadata, MenuBuilder, SubmenuBuilder};
+#[cfg(feature = "desktop")]
+use tauri::Manager;
 
 #[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    crate::asset_protocol::register(tauri::Builder::default())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::vault::select_vault,
@@ -37,6 +41,7 @@ pub fn run() {
             commands::tags::delete_tag_from_all,
             commands::search::search,
             commands::channels::list_channels,
+            commands::channels::list_taxonomy_snapshot,
             commands::channels::create_channel,
             commands::channels::reorder_channels,
             commands::channels::rename_channel,
@@ -50,6 +55,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            match crate::util::acquire_single_instance("com.mine.app")? {
+                crate::util::SingleInstanceAcquire::Primary(guard) => {
+                    app.state::<AppState>().set_instance_guard(guard)?;
+                }
+                crate::util::SingleInstanceAcquire::Secondary => {
+                    log::warn!("second Mine instance suppressed");
+                    std::process::exit(0);
+                }
+            }
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

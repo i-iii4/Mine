@@ -61,13 +61,11 @@ pub fn start_watching(
             return;
         }
 
-        let sync_in_progress = app_clone
+        let path = vault_clone.root().to_string_lossy().into_owned();
+        if app_clone
             .state::<AppState>()
-            .syncing_vaults
-            .lock()
-            .map(|syncing| syncing.contains(&vault_clone.root().to_string_lossy().into_owned()))
-            .unwrap_or(false);
-        if sync_in_progress {
+            .mark_dirty_if_syncing(&path)
+        {
             return;
         }
 

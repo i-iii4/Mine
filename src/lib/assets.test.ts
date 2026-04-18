@@ -3,8 +3,8 @@ import { thumbnailUrl, mediaUrl, domainFromUrl } from "./assets";
 
 describe("thumbnailUrl", () => {
   it("builds correct path", () => {
-    const url = thumbnailUrl("/vault", "my-block");
-    expect(url).toBe("asset://localhost//vault/.arena/cache/thumbs/my-block.jpg");
+    const url = thumbnailUrl("/thumbs", "my-block");
+    expect(url).toBe("asset://localhost//thumbs/my-block.jpg");
   });
 });
 

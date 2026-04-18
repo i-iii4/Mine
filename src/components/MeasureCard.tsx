@@ -15,18 +15,26 @@ import { CardContent } from "./Card";
 interface MeasureCardProps {
   block: LightBlock;
   vaultPath: string;
+  thumbsRootPath?: string;
 }
 
 export const MeasureCard = memo(function MeasureCard({
   block,
   vaultPath,
+  thumbsRootPath,
 }: MeasureCardProps) {
   // Mirror the class list from Card.tsx (the outer wrapper) EXCEPT the
   // interactive state classes (opacity-30 while dragging, ring-2 when
   // focused). Those never apply during measurement.
   return (
     <div className="group overflow-hidden border border-border relative rounded-[var(--radius-card)]">
-      <CardContent block={block} vaultPath={vaultPath} priority={false} />
+      <CardContent
+        block={block}
+        vaultPath={vaultPath}
+        thumbsRootPath={thumbsRootPath}
+        priority={false}
+        measurementMode
+      />
     </div>
   );
 });

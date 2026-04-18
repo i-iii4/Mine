@@ -6,7 +6,7 @@
 // Contract: SPEC_STORAGE.md#storage/db
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -24,6 +24,16 @@ pub fn open_or_create(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
+/// Open an existing database in read-only mode for hot query paths.
+/// Uses a short-lived connection so WebView-triggered IPC never contends
+/// on the shared mutable `vault_state` connection.
+pub fn open_read_only(path: &Path) -> Result<Connection> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("failed to open database read-only: {}", path.display()))?;
+    init_read_only_connection(&conn)?;
+    Ok(conn)
+}
+
 /// Open an in-memory database for testing.
 pub fn open_memory() -> Result<Connection> {
     let conn = Connection::open_in_memory().context("failed to open in-memory database")?;
@@ -36,6 +46,14 @@ pub fn open_memory() -> Result<Connection> {
 fn init_connection(conn: &Connection) -> Result<()> {
     apply_pragmas(conn)?;
     create_schema(conn)?;
+    Ok(())
+}
+
+fn init_read_only_connection(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "PRAGMA busy_timeout = 5000;
+         PRAGMA query_only = ON;",
+    )?;
     Ok(())
 }
 
@@ -65,6 +83,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
             height INTEGER,
             author TEXT,
             body TEXT DEFAULT '',
+            preview_manifest TEXT,
             thumb_format TEXT,
             thumb_mtime INTEGER,
             indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -134,6 +153,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
     // decoding). Enables the frontend to render embedded images at their
     // exact aspect ratio without runtime measurement.
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_dimensions TEXT");
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_manifest TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_format TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_mtime INTEGER");
 
@@ -177,6 +197,18 @@ mod tests {
             .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
             .unwrap();
         assert_eq!(fk, 1);
+    }
+
+    #[test]
+    fn open_read_only_succeeds_for_existing_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let _rw = open_or_create(&db_path).unwrap();
+        let ro = open_read_only(&db_path).unwrap();
+        let query_only: i64 = ro
+            .query_row("PRAGMA query_only", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(query_only, 1);
     }
 
     #[test]

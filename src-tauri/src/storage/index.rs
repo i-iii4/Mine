@@ -9,7 +9,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::block::{extract_wikilinks, Block, BlockType, DateTime};
 use crate::domain::channel::Channel;
@@ -59,6 +59,7 @@ pub struct LightBlock {
     pub first_image: Option<String>,
     pub media_urls: Option<String>,
     pub media_dimensions: Option<String>,
+    pub preview_manifest: Option<String>,
 }
 
 /// Minimal block projection for Phase 2 thumbnail upgrades.
@@ -71,6 +72,34 @@ pub struct PendingThumbUpgradeBlock {
     pub thumbnail: Option<String>,
     pub first_image: Option<String>,
     pub media_urls: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedPreviewKind {
+    Text,
+    Image,
+    VideoPoster,
+    Composite,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FeedPreviewTile {
+    pub src: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub is_video: bool,
+    pub is_video_poster: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FeedPreviewManifest {
+    pub kind: FeedPreviewKind,
+    pub primary_preview_path: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub tiles: Vec<FeedPreviewTile>,
+    pub overflow_count: usize,
 }
 
 const LIGHT_BLOCK_BODY_PREVIEW_CHARS: i64 = 220;
@@ -146,6 +175,257 @@ fn extract_media_urls(body: &str) -> Option<String> {
     } else {
         serde_json::to_string(&urls).ok()
     }
+}
+
+fn is_social_url(url: Option<&str>) -> bool {
+    let Some(url) = url else {
+        return false;
+    };
+    let lc = url.to_lowercase();
+    (lc.contains("twitter.com/") || lc.contains("x.com/")) && lc.contains("/status/")
+        || lc.contains("instagram.com/p/")
+        || lc.contains("instagram.com/reel/")
+        || lc.contains("instagram.com/stories/")
+}
+
+fn is_remote_media(src: &str) -> bool {
+    src.starts_with("http://") || src.starts_with("https://")
+}
+
+fn media_ext_lower(src: &str) -> Option<String> {
+    let clean = src.split('?').next().unwrap_or(src);
+    clean.rsplit('.').next().map(str::to_lowercase)
+}
+
+fn is_image_media(src: &str) -> bool {
+    matches!(
+        media_ext_lower(src).as_deref(),
+        Some("jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "heic" | "heif" | "avif")
+    )
+}
+
+fn is_video_media(src: &str) -> bool {
+    matches!(
+        media_ext_lower(src).as_deref(),
+        Some("mp4" | "webm" | "m4v" | "mov")
+    )
+}
+
+fn parse_media_dimensions_json(
+    media_dimensions: Option<&str>,
+) -> std::collections::HashMap<String, [u32; 2]> {
+    media_dimensions
+        .and_then(|raw| serde_json::from_str::<std::collections::HashMap<String, [u32; 2]>>(raw).ok())
+        .unwrap_or_default()
+}
+
+fn media_tile(src: &str, dims: &std::collections::HashMap<String, [u32; 2]>, is_video_poster: bool) -> FeedPreviewTile {
+    let dims_entry = dims.get(src).copied();
+    FeedPreviewTile {
+        src: src.to_string(),
+        width: dims_entry.map(|[w, _]| w),
+        height: dims_entry.map(|[_, h]| h),
+        is_video: is_video_media(src) || is_video_poster,
+        is_video_poster,
+    }
+}
+
+fn primary_preview_path(slug: &str) -> String {
+    format!("{slug}.jpg")
+}
+
+fn parse_inline_media_src(line: &str) -> Option<&str> {
+    let start = line.find("![")?;
+    let bracket = line[start + 2..].find("](")?;
+    let url_start = start + 2 + bracket + 2;
+    let paren_end = line[url_start..].find(')')?;
+    let src = &line[url_start..url_start + paren_end];
+    (!src.is_empty()).then_some(src)
+}
+
+fn extract_social_preview_tiles(
+    body: &str,
+    dims: &std::collections::HashMap<String, [u32; 2]>,
+) -> Vec<FeedPreviewTile> {
+    let first_section = body.split("\n---").next().unwrap_or(body);
+    let mut tiles = Vec::new();
+    let mut next_is_video_poster = false;
+
+    for line in first_section.lines() {
+        if line.trim() == "<!-- tweet-video -->" {
+            next_is_video_poster = true;
+            continue;
+        }
+        let Some(src) = parse_inline_media_src(line) else {
+            continue;
+        };
+        tiles.push(media_tile(src, dims, next_is_video_poster));
+        next_is_video_poster = false;
+    }
+
+    tiles
+}
+
+fn extract_local_media_items(media_urls: Option<&str>, predicate: fn(&str) -> bool) -> Vec<String> {
+    let Some(media_urls) = media_urls else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<String>>(media_urls)
+        .map(|urls| {
+            urls.into_iter()
+                .filter(|src| !is_remote_media(src) && predicate(src))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn serialize_feed_preview_manifest(
+    block: &Block,
+    width: Option<u32>,
+    height: Option<u32>,
+    media_dimensions: Option<&str>,
+    media_urls: Option<&str>,
+) -> Option<String> {
+    let dims = parse_media_dimensions_json(media_dimensions);
+
+    let manifest = match block.frontmatter.block_type {
+        BlockType::Image => FeedPreviewManifest {
+            kind: FeedPreviewKind::Image,
+            primary_preview_path: Some(primary_preview_path(&block.slug)),
+            width,
+            height,
+            tiles: Vec::new(),
+            overflow_count: 0,
+        },
+        BlockType::Link => FeedPreviewManifest {
+            kind: if block.frontmatter.thumbnail.is_some() {
+                FeedPreviewKind::Image
+            } else {
+                FeedPreviewKind::Text
+            },
+            primary_preview_path: block
+                .frontmatter
+                .thumbnail
+                .as_ref()
+                .map(|_| primary_preview_path(&block.slug)),
+            width: None,
+            height: None,
+            tiles: Vec::new(),
+            overflow_count: 0,
+        },
+        BlockType::Video => FeedPreviewManifest {
+            kind: FeedPreviewKind::VideoPoster,
+            primary_preview_path: Some(primary_preview_path(&block.slug)),
+            width,
+            height,
+            tiles: block
+                .frontmatter
+                .file
+                .as_deref()
+                .map(|src| vec![media_tile(src, &dims, true)])
+                .unwrap_or_default(),
+            overflow_count: 0,
+        },
+        BlockType::File | BlockType::Channel => FeedPreviewManifest {
+            kind: FeedPreviewKind::Text,
+            primary_preview_path: None,
+            width: None,
+            height: None,
+            tiles: Vec::new(),
+            overflow_count: 0,
+        },
+        BlockType::Article => {
+            if is_social_url(block.frontmatter.url.as_deref()) {
+                let mut tiles = extract_social_preview_tiles(&block.body, &dims);
+                if tiles.is_empty() {
+                    tiles = extract_local_media_items(media_urls, |_| true)
+                        .into_iter()
+                        .map(|src| media_tile(&src, &dims, false))
+                        .collect();
+                }
+                let overflow_count = tiles.len().saturating_sub(4);
+                let tiles = tiles.into_iter().take(4).collect::<Vec<_>>();
+
+                match tiles.as_slice() {
+                    [] => FeedPreviewManifest {
+                        kind: FeedPreviewKind::Text,
+                        primary_preview_path: None,
+                        width: None,
+                        height: None,
+                        tiles,
+                        overflow_count: 0,
+                    },
+                    [single] => FeedPreviewManifest {
+                        kind: if single.is_video {
+                            FeedPreviewKind::VideoPoster
+                        } else {
+                            FeedPreviewKind::Image
+                        },
+                        primary_preview_path: Some(primary_preview_path(&block.slug)),
+                        width: single.width,
+                        height: single.height,
+                        tiles,
+                        overflow_count,
+                    },
+                    _ => FeedPreviewManifest {
+                        kind: FeedPreviewKind::Composite,
+                        primary_preview_path: Some(primary_preview_path(&block.slug)),
+                        width: Some(1),
+                        height: Some(1),
+                        tiles,
+                        overflow_count,
+                    },
+                }
+            } else {
+                let image_tiles = extract_local_media_items(media_urls, is_image_media)
+                    .into_iter()
+                    .map(|src| media_tile(&src, &dims, false))
+                    .collect::<Vec<_>>();
+                let overflow_count = image_tiles.len().saturating_sub(4);
+                let image_tiles = image_tiles.into_iter().take(4).collect::<Vec<_>>();
+
+                if image_tiles.len() >= 2 {
+                    FeedPreviewManifest {
+                        kind: FeedPreviewKind::Composite,
+                        primary_preview_path: Some(primary_preview_path(&block.slug)),
+                        width: Some(1),
+                        height: Some(1),
+                        tiles: image_tiles,
+                        overflow_count,
+                    }
+                } else if let Some(single) = image_tiles.first() {
+                    FeedPreviewManifest {
+                        kind: FeedPreviewKind::Image,
+                        primary_preview_path: Some(primary_preview_path(&block.slug)),
+                        width: single.width,
+                        height: single.height,
+                        tiles: image_tiles,
+                        overflow_count: 0,
+                    }
+                } else if let Some(video_src) = extract_local_media_items(media_urls, is_video_media).into_iter().next() {
+                    FeedPreviewManifest {
+                        kind: FeedPreviewKind::VideoPoster,
+                        primary_preview_path: Some(primary_preview_path(&block.slug)),
+                        width: None,
+                        height: None,
+                        tiles: vec![media_tile(&video_src, &dims, true)],
+                        overflow_count: 0,
+                    }
+                } else {
+                    FeedPreviewManifest {
+                        kind: FeedPreviewKind::Text,
+                        primary_preview_path: None,
+                        width: None,
+                        height: None,
+                        tiles: Vec::new(),
+                        overflow_count: 0,
+                    }
+                }
+            }
+        }
+    };
+
+    serde_json::to_string(&manifest).ok()
 }
 
 fn read_thumb_metadata_from_disk(path: &Path) -> Option<(ThumbFormat, u64)> {
@@ -278,12 +558,19 @@ fn upsert_block_inner(
             .map(|(w, h)| (Some(w), Some(h)))
             .unwrap_or((None, None))
     };
+    let preview_manifest = serialize_feed_preview_manifest(
+        block,
+        width,
+        height,
+        media_dimensions.as_deref(),
+        media_urls.as_deref(),
+    );
 
     conn.execute(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body, first_image,
-            media_urls, media_dimensions)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            media_urls, media_dimensions, preview_manifest)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
             title = excluded.title,
@@ -300,6 +587,7 @@ fn upsert_block_inner(
             first_image = excluded.first_image,
             media_urls = excluded.media_urls,
             media_dimensions = excluded.media_dimensions,
+            preview_manifest = excluded.preview_manifest,
             indexed_at = datetime('now')",
         params![
             block.slug,
@@ -318,6 +606,7 @@ fn upsert_block_inner(
             first_image,
             media_urls,
             media_dimensions,
+            preview_manifest,
         ],
     )
     .context("failed to upsert block")?;
@@ -495,7 +784,7 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, url, media_file,
                 thumbnail, saved_at, width, height, author,
-                SUBSTR(body, 1, ?1), first_image, media_urls, media_dimensions
+                SUBSTR(body, 1, ?1), first_image, media_urls, media_dimensions, preview_manifest
          FROM blocks ORDER BY saved_at DESC",
     )?;
 
@@ -526,6 +815,7 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
                 first_image: row.get(12)?,
                 media_urls: row.get(13)?,
                 media_dimensions: row.get(14)?,
+                preview_manifest: row.get(15)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -548,7 +838,7 @@ pub fn list_grid_blocks(
             "SELECT b.id, b.slug, b.block_type, b.title, b.url, b.media_file,
                     b.thumbnail, b.saved_at, b.width, b.height, b.author,
                     CASE WHEN b.block_type = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
-                    b.first_image, b.media_urls, b.media_dimensions
+                    b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest
              FROM blocks b
              INNER JOIN block_tags bt ON bt.block_id = b.id
              WHERE b.block_type != 'channel' AND bt.tag = ?2
@@ -559,7 +849,7 @@ pub fn list_grid_blocks(
             "SELECT id, slug, block_type, title, url, media_file,
                     thumbnail, saved_at, width, height, author,
                     CASE WHEN block_type = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
-                    first_image, media_urls, media_dimensions
+                    first_image, media_urls, media_dimensions, preview_manifest
              FROM blocks
              WHERE block_type != 'channel'
              ORDER BY saved_at DESC
@@ -594,6 +884,7 @@ pub fn list_grid_blocks(
                 first_image: row.get(12)?,
                 media_urls: row.get(13)?,
                 media_dimensions: row.get(14)?,
+                preview_manifest: row.get(15)?,
             })
     };
 
@@ -622,6 +913,22 @@ pub fn count_grid_blocks(conn: &Connection) -> Result<usize> {
         |row| row.get(0),
     )?;
     Ok(count as usize)
+}
+
+/// Return `slug -> indexed_at` (unix seconds) for non-channel blocks.
+pub fn get_block_indexed_at_map(conn: &Connection) -> Result<std::collections::HashMap<String, u64>> {
+    let mut stmt = conn.prepare(
+        "SELECT slug, COALESCE(CAST(strftime('%s', indexed_at) AS INTEGER), 0)
+         FROM blocks
+         WHERE slug != '' AND block_type != 'channel'",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let slug: String = row.get(0)?;
+        let indexed_at: i64 = row.get(1)?;
+        Ok((slug, indexed_at.max(0) as u64))
+    })?;
+    let entries = rows.collect::<Result<Vec<_>, _>>()?;
+    Ok(entries.into_iter().collect())
 }
 
 /// Return the newest previewable blocks across the whole vault.
@@ -1403,6 +1710,55 @@ mod tests {
         let light = list_blocks_light(&conn).unwrap();
         assert_eq!(light.len(), 1);
         assert!(light[0].body.len() <= LIGHT_BLOCK_BODY_PREVIEW_CHARS as usize);
+    }
+
+    #[test]
+    fn list_blocks_light_persists_article_preview_manifest() {
+        let conn = test_conn();
+        let block = make_block_full(
+            "gallery-article",
+            "article",
+            Some("Gallery"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "hello\n![](a.jpg)\n![](b.jpg)\n![](c.jpg)",
+        );
+        upsert_block(&conn, &block, None).unwrap();
+
+        let light = list_blocks_light(&conn).unwrap();
+        let manifest: FeedPreviewManifest = serde_json::from_str(
+            light[0].preview_manifest.as_deref().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest.kind, FeedPreviewKind::Composite);
+        assert_eq!(manifest.primary_preview_path.as_deref(), Some("gallery-article.jpg"));
+        assert_eq!(manifest.tiles.len(), 3);
+        assert_eq!(manifest.overflow_count, 0);
+    }
+
+    #[test]
+    fn list_blocks_light_persists_social_video_preview_manifest() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "tweet-video",
+            "article",
+            Some("Tweet"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "hello\n<!-- tweet-video -->\n![](clip.mp4)",
+        );
+        block.frontmatter.url = Some("https://x.com/user/status/1".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+
+        let light = list_blocks_light(&conn).unwrap();
+        let manifest: FeedPreviewManifest = serde_json::from_str(
+            light[0].preview_manifest.as_deref().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest.kind, FeedPreviewKind::VideoPoster);
+        assert_eq!(manifest.tiles.len(), 1);
+        assert!(manifest.tiles[0].is_video);
+        assert!(manifest.tiles[0].is_video_poster);
     }
 
     #[test]

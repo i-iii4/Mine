@@ -25,6 +25,8 @@ import type { MasonryPosition } from "@/lib/masonryLayout";
 export interface UseGridScrollOptions {
   /** Compute the currently-visible items given the current scrollTop. */
   getVisibleItems: (scrollTop: number) => MasonryPosition[];
+  /** Reset the scroll visibility snapshot when route/layout scope changes. */
+  resetKey?: string;
 }
 
 /** Element-wise reference equality for two arrays of positions. */
@@ -51,7 +53,7 @@ function samePositions(
  */
 export function useGridScroll(
   scrollElementRef: React.RefObject<HTMLElement | null>,
-  { getVisibleItems }: UseGridScrollOptions,
+  { getVisibleItems, resetKey }: UseGridScrollOptions,
 ): MasonryPosition[] {
   const scrollTopRef = useRef(0);
   // Opaque tick state: bumped by the scroll handler when the visible set
@@ -69,6 +71,14 @@ export function useGridScroll(
   useEffect(() => {
     getVisibleItemsRef.current = getVisibleItems;
   }, [getVisibleItems]);
+
+  useEffect(() => {
+    const el = scrollElementRef.current;
+    const scrollTop = el?.scrollTop ?? 0;
+    scrollTopRef.current = scrollTop;
+    lastVisibleRef.current = getVisibleItems(scrollTop);
+    setScrollTick((t) => t + 1);
+  }, [getVisibleItems, resetKey, scrollElementRef]);
 
   // Synchronous compute during render. Recomputes when:
   //   - getVisibleItems identity changes (layout / visibility function changed)

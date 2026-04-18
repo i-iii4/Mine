@@ -6,10 +6,10 @@ use std::path::PathBuf;
 use tauri::{AppHandle, State};
 use serde::Serialize;
 
-use crate::commands::state::{AppState, CommandError};
+use crate::commands::state::{current_vault_layout, AppState, CommandError};
 use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::validate_slug;
-use crate::storage::{files, index};
+use crate::storage::{db, files, index};
 use crate::storage::index::IndexedBlock;
 use crate::util::append_startup_trace;
 
@@ -34,7 +34,7 @@ pub fn list_blocks(state: State<'_, AppState>) -> Result<Vec<index::LightBlock>,
 /// List only the blocks required by the current grid route, plus the total
 /// non-channel block count for the sidebar "Everything" row.
 #[tauri::command(rename_all = "snake_case")]
-pub fn list_grid_blocks(
+pub async fn list_grid_blocks(
     app: AppHandle,
     state: State<'_, AppState>,
     current_tag: Option<String>,
@@ -51,20 +51,27 @@ pub fn list_grid_blocks(
             limit.unwrap_or(200)
         ),
     );
-    let vault_state = state.vault_state.lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let Some(vs) = vault_state.as_ref() else {
+    let vault = current_vault_layout(&state)?;
+    if !vault.index_db_path().exists() {
         append_startup_trace(&app, "list_grid_blocks", "no_vault");
         return Err(CommandError::NoVault);
-    };
+    }
     let page_offset = offset.unwrap_or(0);
     let page_limit = limit.unwrap_or(200).max(1);
-    let (blocks, has_more) = index::list_grid_blocks(&vs.conn, current_tag.as_deref(), page_offset, page_limit)?;
-    let snapshot = GridSnapshot {
-        blocks,
-        total_blocks: index::count_grid_blocks(&vs.conn)?,
-        has_more,
-    };
+    let db_path = vault.index_db_path();
+    let current_tag_for_task = current_tag.clone();
+    let snapshot = tauri::async_runtime::spawn_blocking(move || -> Result<GridSnapshot, CommandError> {
+        let conn = db::open_read_only(&db_path)?;
+        let (blocks, has_more) =
+            index::list_grid_blocks(&conn, current_tag_for_task.as_deref(), page_offset, page_limit)?;
+        Ok(GridSnapshot {
+            blocks,
+            total_blocks: index::count_grid_blocks(&conn)?,
+            has_more,
+        })
+    })
+    .await
+    .map_err(|e| CommandError::Internal(format!("list_grid_blocks task join failed: {e}")))??;
     append_startup_trace(
         &app,
         "list_grid_blocks",

@@ -4,8 +4,12 @@
 
 import { convertFileSrc } from "@tauri-apps/api/core";
 
-export function thumbnailUrl(vaultPath: string, slug: string): string {
-  return convertFileSrc(`${vaultPath}/.arena/cache/thumbs/${slug}.jpg`);
+export function legacyThumbsRoot(vaultPath: string): string {
+  return `${vaultPath}/.arena/cache/thumbs`;
+}
+
+export function thumbnailUrl(thumbsRootPath: string, slug: string): string {
+  return convertFileSrc(`${thumbsRootPath}/${slug}.jpg`);
 }
 
 export function mediaUrl(vaultPath: string, fileName: string): string {

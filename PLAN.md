@@ -17,7 +17,7 @@ SPEC → TEST (красные) → CODE (зелёные) → VERIFY → COMMIT
 
 Фаза 1 создаёт **эталонный модуль** (`domain/block`) — образец качества для всех остальных. Уроки из каждого модуля влияют на спецификацию следующего.
 
-## Current Top Priority — Critical Path Reset v1 [PLANNED]
+## Current Top Priority — Critical Path Reset v1 [IN PROGRESS]
 
 Goal: устранить две подтверждённые архитектурные причины текущей неработоспособности:
 1. derived state (`index.db`, thumbs, preview cache) живёт внутри iCloud vault;
@@ -81,7 +81,11 @@ Goal: устранить две подтверждённые архитекту�
 - Multi-image/social/article-with-many-images не собираются на клиенте.
 - Composite preview в v1 генерируется в Rust как один local JPEG.
 - Для 4+ изображений feed использует composite preview + `overflow_count`, а не дополнительные asset reads.
-- Autoplay video в feed не входит в `Critical Path Reset v1`; feed использует только preview/poster path. Возврат autoplay — отдельная фаза после стабилизации feed contract.
+- Autoplay video в feed не входит в `Critical Path Reset v1`; базовый feed contract остаётся preview-first.
+- Follow-up phase после стабилизации feed contract:
+  - dedicated `video` blocks autoplay в feed;
+  - single-video previews (`article` / `social` с одним видео) autoplay в feed;
+  - multi-media grids и composite/article-with-many-media остаются preview-only.
 
 #### 5. Preview invalidation
 
@@ -106,10 +110,39 @@ Goal: устранить две подтверждённые архитекту�
 
 | # | Phase | Status | Deliverables |
 |---|-------|--------|--------------|
-| C1 | Derived Store Migration | [ ] | `vault-id`, local app-data store, startup/open against local index, first-run migration UX |
-| C2 | Feed Preview Pipeline | [ ] | `FeedPreviewManifest`, composite previews, feed/detail split, removal of originals from grid path |
-| C3 | Measurement + Invalidation Hardening | [ ] | media-free measurement, `source_stamp` invalidation, acceptance profiling |
+| C1 | Derived Store Migration | [x] | `vault-id`, local app-data store, startup/open against local index, first-run migration UX |
+| C2 | Feed Preview Pipeline | [~] | `FeedPreviewManifest`, composite previews, feed/detail split, removal of originals from grid path |
+| C3 | Measurement + Invalidation Hardening | [~] | media-free measurement, `source_stamp` invalidation, acceptance profiling |
 | C4 | Residual Risks / Follow-up | [ ] | watcher hardening beyond current catch-up, remaining frontend boot optimization, optional async/custom asset path for Detail/original flows, remaining windowing bugs |
+| C5 | Feed Video Phase | [~] | autoplay for dedicated `video` blocks and single-video previews, without regressing preview-only multi-media feed paths |
+
+### Current progress snapshot
+
+- `C1` завершён:
+  - `vault-id` живёт в source vault;
+  - `index.db` и thumbs cache переехали в per-device app data store;
+  - startup/open работает против local derived store, а не против SQLite внутри iCloud vault;
+  - первый migration UX path заложен.
+- `C2` выполнен частично:
+  - введён `FeedPreviewManifest`;
+  - query/read path переведён на local preview-first contract;
+  - image/article/social feed-path больше не должен читать оригиналы как основной runtime path;
+  - multi-image preview pipeline ещё не доведён до продуктового состояния.
+- `C3` выполнен частично:
+  - route/layout invalidation и resize bucket handling усилены;
+  - sync IPC и asset-serving main-thread hotspots из trace/sample выведены из critical path;
+  - measurement/layout path всё ещё требует финального acceptance на живом `Mine`.
+- `C5` выполнен частично:
+  - autoplay уже возвращён для dedicated `video` blocks;
+  - autoplay уже возвращён для single-video previews (`article` / `social`);
+  - multi-media feed остаётся preview-only.
+
+### Current known blocker before phase completion
+
+- **Multi-image preview regression.**
+  - Intended result for multi-image article/social cards: one composite preview that visually summarizes the first 2-4 images, plus `+N` only for overflow beyond those tiles.
+  - Current observed result on `Mine`: some multi-image cards show a single image with `+N`, which means the runtime falls back below the intended composite-preview contract.
+  - This must be fixed before `C2` can be marked complete.
 
 ### Acceptance Criteria
 
@@ -120,6 +153,7 @@ Goal: устранить две подтверждённые архитекту�
 - Move vault сохраняет continuity через `vault-id`.
 - Второй Mac открывает тот же vault через rebuild local derived store.
 - Feed не использует real media в measurement path.
+- Multi-image article/social cards show composite previews in feed instead of a single-image fallback.
 - `Detail` продолжает открывать оригиналы.
 
 ### Known Residuals
@@ -139,7 +173,7 @@ Goal: устранить две подтверждённые архитекту�
 - Legacy `.arena/*` в v1 не удаляется автоматически.
 - Composite preview в v1 генерируется серверно в Rust.
 - Preview invalidation в v1 основан на `mtime_ns + size`.
-- Autoplay video в feed не входит в `Critical Path Reset v1` и возвращается только после стабилизации feed contract.
+- Autoplay video в feed не входит в `Critical Path Reset v1`; он возвращается отдельной фазой только для dedicated `video` blocks и single-video previews.
 
 ## Phases
 

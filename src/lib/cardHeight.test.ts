@@ -18,6 +18,8 @@ function makeBlock(overrides: Partial<LightBlock> & { block_type: LightBlock["bl
     body: "",
     first_image: null,
     media_urls: null,
+    media_dimensions: null,
+    preview_manifest: null,
     ...overrides,
   };
 }

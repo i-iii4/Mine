@@ -46,6 +46,26 @@ export interface LightBlock {
   first_image: string | null;
   media_urls: string | null;
   media_dimensions: string | null;
+  preview_manifest: string | null;
+}
+
+export type FeedPreviewKind = "text" | "image" | "video_poster" | "composite";
+
+export interface FeedPreviewTile {
+  src: string;
+  width: number | null;
+  height: number | null;
+  is_video: boolean;
+  is_video_poster: boolean;
+}
+
+export interface FeedPreviewManifest {
+  kind: FeedPreviewKind;
+  primary_preview_path: string | null;
+  width: number | null;
+  height: number | null;
+  tiles: FeedPreviewTile[];
+  overflow_count: number;
 }
 
 export interface GridSnapshot {
@@ -68,6 +88,12 @@ export interface ChannelDto {
   position: number;
   created_at: string;
   block_count: number;
+}
+
+export interface TaxonomySnapshot {
+  tags: TagCount[];
+  channels: ChannelDto[];
+  total_blocks: number;
 }
 
 // ─── Channel preview (sidebar icons) ────────────────────────────────────────
@@ -94,6 +120,10 @@ export interface VaultOpenResult {
   indexed: number;
   errors: number;
   sync_in_progress: boolean;
+  derived_store_ready: boolean;
+  bootstrapped_from_legacy: boolean;
+  migration_required: boolean;
+  thumbs_root: string;
 }
 
 export interface CreateBlockParams {

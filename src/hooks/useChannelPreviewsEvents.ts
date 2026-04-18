@@ -2,9 +2,9 @@
 //
 // `channelPreviews` is a pure function of server state: frontend asks
 // Rust `list_channel_previews` for the full picture, and renders what
-// Rust returned. Tauri events (block:added / block:removed /
-// thumb:updated) act as cache-invalidation SIGNALS, not mutations —
-// each event triggers a coalesced refresh() (one per animation frame).
+// Rust returned. Tauri events are handled one layer up in App.tsx by the
+// central invalidation scheduler; this hook only owns snapshot reads plus
+// per-slug cache-buster versions for refreshed thumbnails.
 //
 // Previously the hook patched `channelPreviews` from each event with
 // its own dedup logic, which produced three independent writers with
@@ -21,22 +21,12 @@
 // Contract: SPEC_THUMBNAILS.md#phase-3-sidebar-update-event-driven
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { listChannelPreviews } from "@/lib/commands";
 import { thumbnailUrl } from "@/lib/assets";
 import type { PreviewCard } from "@/types";
 
-interface ThumbUpdatedEvent {
-  slug: string;
-  is_text: boolean;
-}
-
-interface VaultChangedEvent {
-  path: string;
-}
-
 interface Options {
-  vaultPath: string | null;
+  thumbsRootPath: string | null;
   limit: number;
 }
 
@@ -45,9 +35,10 @@ interface Options {
  * and a `refresh()` function for forced reload after imports or bulk
  * operations that bypass the normal event flow.
  */
-export function useChannelPreviewsEvents({ vaultPath, limit }: Options): {
+export function useChannelPreviewsEvents({ thumbsRootPath, limit }: Options): {
   channelPreviews: Map<string, PreviewCard[]>;
   refresh: () => Promise<void>;
+  bumpThumbVersion: (slug: string) => void;
 } {
   const [channelPreviews, setChannelPreviews] = useState<Map<string, PreviewCard[]>>(
     () => new Map(),
@@ -59,14 +50,14 @@ export function useChannelPreviewsEvents({ vaultPath, limit }: Options): {
   // already-existing inode.
   const versionsRef = useRef<Map<string, number>>(new Map());
 
-  const vaultPathRef = useRef(vaultPath);
-  vaultPathRef.current = vaultPath;
+  const thumbsRootPathRef = useRef(thumbsRootPath);
+  thumbsRootPathRef.current = thumbsRootPath;
 
-  // Single source of truth for channelPreviews updates. All paths
-  // (initial load, vault switch, events) funnel through here.
+  // Single source of truth for channelPreviews updates. App-level invalidation
+  // calls `refresh()`, while this hook stays a pure reader/cache-buster.
   const refresh = useCallback(async () => {
-    const vp = vaultPathRef.current;
-    if (!vp) {
+    const root = thumbsRootPathRef.current;
+    if (!root) {
       setChannelPreviews(new Map());
       return;
     }
@@ -76,7 +67,7 @@ export function useChannelPreviewsEvents({ vaultPath, limit }: Options): {
       next.set(
         key,
         items.map((item) => {
-          const baseUrl = thumbnailUrl(vp, item.slug);
+          const baseUrl = thumbnailUrl(root, item.slug);
           const version = versionsRef.current.get(item.slug) ?? 0;
           // `?v=` wins over `?m=` within a session so events can force
           // a refetch even when the file's mtime appears unchanged.
@@ -94,60 +85,15 @@ export function useChannelPreviewsEvents({ vaultPath, limit }: Options): {
     setChannelPreviews(next);
   }, [limit]);
 
-  // Coalesce rapid event bursts into a single refresh per animation
-  // frame. A save that fires block:added + thumb:updated within 16ms
-  // triggers exactly one listChannelPreviews IPC call.
-  const rafRef = useRef<number | null>(null);
-  const scheduleRefresh = useCallback(() => {
-    if (rafRef.current !== null) return;
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null;
-      void refresh();
-    });
-  }, [refresh]);
-
   // Initial load on mount / vault switch.
   useEffect(() => {
     void refresh();
-  }, [vaultPath, refresh]);
+  }, [thumbsRootPath, refresh]);
 
-  // Event subscriptions. Each event is a signal to re-read server
-  // state. No state mutation here — scheduleRefresh() → refresh() is
-  // the only writer of channelPreviews.
-  useEffect(() => {
-    if (!vaultPath) return;
+  const bumpThumbVersion = useCallback((slug: string) => {
+    const version = (versionsRef.current.get(slug) ?? 0) + 1;
+    versionsRef.current.set(slug, version);
+  }, []);
 
-    const unlistenFns: Array<() => void> = [];
-
-    listen("block:added", () => scheduleRefresh())
-      .then((fn) => unlistenFns.push(fn));
-
-    listen("block:removed", () => scheduleRefresh())
-      .then((fn) => unlistenFns.push(fn));
-
-    listen<VaultChangedEvent>("vault-changed", (event) => {
-      if (event.payload.path === vaultPathRef.current) {
-        scheduleRefresh();
-      }
-    }).then((fn) => unlistenFns.push(fn));
-
-    listen<ThumbUpdatedEvent>("thumb:updated", (event) => {
-      const { slug } = event.payload;
-      // Bump the cache-buster BEFORE scheduling refresh so the coalesced
-      // IPC result builds URLs with the new `?v=N`.
-      const version = (versionsRef.current.get(slug) ?? 0) + 1;
-      versionsRef.current.set(slug, version);
-      scheduleRefresh();
-    }).then((fn) => unlistenFns.push(fn));
-
-    return () => {
-      for (const fn of unlistenFns) fn();
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-    };
-  }, [vaultPath, scheduleRefresh]);
-
-  return { channelPreviews, refresh };
+  return { channelPreviews, refresh, bumpThumbVersion };
 }

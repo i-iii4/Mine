@@ -42,6 +42,7 @@ function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock 
     first_image: null,
     media_urls: null,
     media_dimensions: null,
+    preview_manifest: null,
     tags: ["test"],
     ...overrides,
   };
@@ -50,9 +51,43 @@ function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock 
 // Deterministic per-block heights. Keyed by block id so that add/remove
 // operations stay stable across rerenders.
 const BLOCK_HEIGHTS = new Map<number, number>();
+const BLOCK_HEIGHTS_BY_COLUMN_WIDTH = new Map<string, number>();
 
 function setBlockHeight(id: number, height: number): void {
   BLOCK_HEIGHTS.set(id, height);
+}
+
+function resolveBlockHeight(id: number, columnWidth?: number): number {
+  if (columnWidth !== undefined && Number.isFinite(columnWidth)) {
+    const byWidth = BLOCK_HEIGHTS_BY_COLUMN_WIDTH.get(
+      `${id}:${Math.round(columnWidth)}`,
+    );
+    if (byWidth !== undefined) return byWidth;
+  }
+  return BLOCK_HEIGHTS.get(id) ?? 200;
+}
+
+function testColumnWidth(parentWidth: number): number {
+  const provisionalColumnCount = Math.max(
+    1,
+    Math.floor((parentWidth + TEST_GAP) / (TEST_COLUMN_MIN_WIDTH + TEST_GAP)),
+  );
+  return Math.max(
+    1,
+    (Math.max(0, parentWidth - TEST_GAP * (provisionalColumnCount - 1))) /
+      provisionalColumnCount,
+  );
+}
+
+function setBlockHeightAtParentWidth(
+  id: number,
+  parentWidth: number,
+  height: number,
+): void {
+  BLOCK_HEIGHTS_BY_COLUMN_WIDTH.set(
+    `${id}:${Math.round(testColumnWidth(parentWidth))}`,
+    height,
+  );
 }
 
 // ─── Environment mocks ─────────────────────────────────────────────────────
@@ -60,21 +95,28 @@ function setBlockHeight(id: number, height: number): void {
 // Mock ResizeObserver so Grid's useEffect reports a non-zero parentWidth.
 // jsdom has no layout engine, so clientWidth is 0 — we fire the observer
 // callback synchronously with a fake contentRect.
+let mockViewport = { width: 1200, height: 800 };
+const resizeObservers = new Set<MockResizeObserver>();
+
 class MockResizeObserver {
   private cb: ResizeObserverCallback;
+  private el: Element | null = null;
+
   constructor(cb: ResizeObserverCallback) {
     this.cb = cb;
   }
-  observe(el: Element): void {
+
+  emit(): void {
+    if (!this.el) return;
     const entry = {
-      target: el,
+      target: this.el,
       contentRect: {
-        width: 1200,
-        height: 800,
+        width: mockViewport.width,
+        height: mockViewport.height,
         top: 0,
         left: 0,
-        right: 1200,
-        bottom: 800,
+        right: mockViewport.width,
+        bottom: mockViewport.height,
         x: 0,
         y: 0,
         toJSON: () => ({}),
@@ -85,8 +127,27 @@ class MockResizeObserver {
     } as unknown as ResizeObserverEntry;
     this.cb([entry], this as unknown as ResizeObserver);
   }
-  unobserve(): void {}
-  disconnect(): void {}
+
+  observe(el: Element): void {
+    this.el = el;
+    resizeObservers.add(this);
+    this.emit();
+  }
+  unobserve(): void {
+    resizeObservers.delete(this);
+    this.el = null;
+  }
+  disconnect(): void {
+    resizeObservers.delete(this);
+    this.el = null;
+  }
+}
+
+function triggerResize(width: number, height: number = 800): void {
+  mockViewport = { width, height };
+  for (const observer of resizeObservers) {
+    observer.emit();
+  }
 }
 
 // Mock getBoundingClientRect on Elements: when called on a MeasureCard
@@ -98,7 +159,8 @@ function mockGetBoundingClientRect(): void {
     const idAttr = this.getAttribute("data-measure-id");
     if (idAttr !== null) {
       const id = Number(idAttr);
-      const height = BLOCK_HEIGHTS.get(id) ?? 200;
+      const width = parseFloat((this as HTMLElement).style.width || "0");
+      const height = resolveBlockHeight(id, width);
       return {
         width: 240,
         height,
@@ -129,6 +191,9 @@ function mockGetBoundingClientRect(): void {
 
 beforeEach(() => {
   BLOCK_HEIGHTS.clear();
+  BLOCK_HEIGHTS_BY_COLUMN_WIDTH.clear();
+  mockViewport = { width: 1200, height: 800 };
+  resizeObservers.clear();
   globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
   mockGetBoundingClientRect();
   // jsdom does not implement Element.scrollTo — stub it out.
@@ -171,7 +236,7 @@ function readRenderedPositions(): RenderedPosition[] {
     // can reason about collision-free packing.
     const idMatch = slug.match(/^block-(\d+)$/);
     const id = idMatch ? Number(idMatch[1]) : -1;
-    const height = BLOCK_HEIGHTS.get(id) ?? 0;
+    const height = resolveBlockHeight(id);
     return {
       slug,
       left: match ? parseFloat(match[1]!) : NaN,
@@ -478,6 +543,62 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(positions.length).toBe(4);
     assertPositionsMatchFreshLayout(visitAAgain, positions, 1200);
   });
+
+  it("keeps rendering the last stable layout while a new resize bucket is still measuring", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeBlock(400),
+      makeBlock(401),
+      makeBlock(402),
+      makeBlock(403),
+    ];
+    const wideParentWidth = 1200;
+    const narrowParentWidth = 720;
+
+    setBlockHeightAtParentWidth(400, wideParentWidth, 180);
+    setBlockHeightAtParentWidth(401, wideParentWidth, 260);
+    setBlockHeightAtParentWidth(402, wideParentWidth, 220);
+    setBlockHeightAtParentWidth(403, wideParentWidth, 300);
+
+    setBlockHeightAtParentWidth(400, narrowParentWidth, 260);
+    setBlockHeightAtParentWidth(401, narrowParentWidth, 360);
+    setBlockHeightAtParentWidth(402, narrowParentWidth, 280);
+    setBlockHeightAtParentWidth(403, narrowParentWidth, 410);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="alpha" />);
+    await flushAsync();
+
+    const widePositions = readRenderedPositions();
+    assertPositionsMatchExplicitLayout(
+      blocks,
+      widePositions,
+      wideParentWidth,
+      [180, 260, 220, 300],
+    );
+
+    act(() => {
+      triggerResize(narrowParentWidth);
+    });
+
+    const stillWidePositions = readRenderedPositions();
+    assertPositionsMatchExplicitLayout(
+      blocks,
+      stillWidePositions,
+      wideParentWidth,
+      [180, 260, 220, 300],
+    );
+
+    await flushAsync();
+
+    const narrowPositions = readRenderedPositions();
+    assertPositionsMatchExplicitLayout(
+      blocks,
+      narrowPositions,
+      narrowParentWidth,
+      [260, 360, 280, 410],
+    );
+  });
 });
 
 // ─── Assertion helpers ─────────────────────────────────────────────────────
@@ -495,6 +616,15 @@ function assertPositionsMatchFreshLayout(
   parentWidth: number,
 ): void {
   const heights = blocks.map((b) => BLOCK_HEIGHTS.get(b.id) ?? 200);
+  assertPositionsMatchExplicitLayout(blocks, rendered, parentWidth, heights);
+}
+
+function assertPositionsMatchExplicitLayout(
+  blocks: LightBlock[],
+  rendered: RenderedPosition[],
+  parentWidth: number,
+  heights: number[],
+): void {
   const expectedLayout = computeMasonryLayout(
     heights,
     parentWidth,

@@ -19,6 +19,8 @@ function mkBlock(id: number): LightBlock {
     body: "",
     first_image: null,
     media_urls: null,
+    media_dimensions: null,
+    preview_manifest: null,
     tags: [],
   };
 }
@@ -35,6 +37,12 @@ describe("layoutCacheKey", () => {
   it("differs for different parentWidth buckets", () => {
     const a = layoutCacheKey([mkBlock(1)], 1000);
     const b = layoutCacheKey([mkBlock(1)], 1200);
+    expect(a).not.toBe(b);
+  });
+
+  it("differs when only middle blocks change", () => {
+    const a = layoutCacheKey([mkBlock(1), mkBlock(2), mkBlock(3), mkBlock(4)], 1000);
+    const b = layoutCacheKey([mkBlock(1), mkBlock(9), mkBlock(8), mkBlock(4)], 1000);
     expect(a).not.toBe(b);
   });
 

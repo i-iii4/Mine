@@ -49,6 +49,12 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
                 {result.indexed}
               </span>{" "}
               indexed blocks
+              {result.migration_required && (
+                <span className="text-muted-foreground">, preparing local library…</span>
+              )}
+              {!result.migration_required && result.bootstrapped_from_legacy && (
+                <span className="text-muted-foreground">, local snapshot restored from legacy cache…</span>
+              )}
               {result.sync_in_progress && (
                 <span className="text-muted-foreground">, syncing in background…</span>
               )}

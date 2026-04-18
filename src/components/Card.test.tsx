@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Card } from "./Card";
-import type { IndexedBlock } from "@/types";
+import type { LightBlock } from "@/types";
 
-function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
+function block(overrides: Partial<LightBlock> = {}): LightBlock {
   return {
     id: 1,
     slug: "test-block",
@@ -19,6 +19,10 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
     height: null,
     author: null,
     body: "",
+    first_image: null,
+    media_urls: null,
+    media_dimensions: null,
+    preview_manifest: null,
     tags: ["test"],
     ...overrides,
   };
@@ -59,20 +63,20 @@ describe("Card", () => {
 
   // ── Image card ────────────────────────────────────────────────────────
 
-  it("renders image with media_file src", () => {
+  it("renders image card from the generated preview thumbnail", () => {
     const b = block({
       block_type: "image",
       media_file: "sunset.jpg",
     });
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const img = screen.getByRole("img");
-    expect(img).toHaveAttribute("src", expect.stringContaining("sunset.jpg"));
+    expect(img).toHaveAttribute("src", expect.stringContaining("/.arena/cache/thumbs/test-block.jpg"));
   });
 
-  it("renders image card title on hover area", () => {
+  it("renders image card alt text from the title", () => {
     const b = block({ block_type: "image", title: "Sunset" });
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    expect(screen.getByText("Sunset")).toBeInTheDocument();
+    expect(screen.getByRole("img")).toHaveAttribute("alt", "Sunset");
   });
 
   it("renders broken image fallback on error", () => {
@@ -166,21 +170,67 @@ describe("Card", () => {
     expect(authorP).toBeUndefined();
   });
 
+  it("renders article composite overlay for multiple embedded images", () => {
+    const b = block({
+      block_type: "article",
+      title: "Gallery Article",
+      body: "One\n![](a.jpg)\n![](b.jpg)\n![](c.jpg)",
+      first_image: "a.jpg",
+      media_urls: "[\"a.jpg\",\"b.jpg\",\"c.jpg\"]",
+      media_dimensions: "{\"a.jpg\":[800,600],\"b.jpg\":[600,800],\"c.jpg\":[900,900]}",
+    });
+    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(screen.getByText("+2")).toBeInTheDocument();
+  });
+
   // ── Video card ────────────────────────────────────────────────────────
 
-  it("renders video card with play button and title", () => {
+  it("renders video card with autoplay video in feed", () => {
     const b = block({
       block_type: "video",
       title: "Demo Video",
-      url: "https://youtube.com/watch?v=123",
+      media_file: "demo.mp4",
+      preview_manifest: JSON.stringify({
+        kind: "video_poster",
+        primary_preview_path: "test-block.jpg",
+        width: 1280,
+        height: 720,
+        tiles: [
+          { src: "demo.mp4", width: 1280, height: 720, is_video: true, is_video_poster: true },
+        ],
+        overflow_count: 0,
+      }),
     });
     const { container } = render(
       <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
     );
-    expect(screen.getByText("Demo Video")).toBeInTheDocument();
+    expect(container.querySelector("video")).toBeInTheDocument();
     // Play button SVG
     const playIcon = container.querySelector("svg path[d]");
     expect(playIcon).toBeInTheDocument();
+  });
+
+  it("renders article single-video preview as autoplay video in feed", () => {
+    const b = block({
+      block_type: "article",
+      title: "Video Article",
+      body: "Body text",
+      preview_manifest: JSON.stringify({
+        kind: "video_poster",
+        primary_preview_path: "test-block.jpg",
+        width: 1280,
+        height: 720,
+        tiles: [
+          { src: "clip.mp4", width: 1280, height: 720, is_video: true, is_video_poster: true },
+        ],
+        overflow_count: 0,
+      }),
+    });
+    const { container } = render(
+      <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
+    );
+    expect(container.querySelector("video")).toBeInTheDocument();
+    expect(screen.getByText("Video Article")).toBeInTheDocument();
   });
 
   // ── File card ─────────────────────────────────────────────────────────

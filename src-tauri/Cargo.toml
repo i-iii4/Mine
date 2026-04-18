@@ -56,6 +56,8 @@ base64 = "0.22"
 
 # HTTP server for binary file uploads from extension
 tiny_http = "0.12"
+http-range = "0.1"
+percent-encoding = "2"
 
 # Error handling
 thiserror = "2"

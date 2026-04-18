@@ -4,11 +4,11 @@
 
 use tauri::{AppHandle, State};
 
-use crate::commands::state::{AppState, CommandError};
+use crate::commands::state::{current_vault_layout, AppState, CommandError};
 use crate::domain::block::parse_block;
 use crate::domain::block::serialize_block;
 use crate::domain::tag::normalize_tag;
-use crate::storage::{files, index};
+use crate::storage::{db, files, index};
 use crate::storage::index::TagCount;
 use crate::util::append_startup_trace;
 
@@ -16,15 +16,15 @@ use crate::util::append_startup_trace;
 
 /// List all tags with their block counts.
 #[tauri::command]
-pub fn list_tags(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<TagCount>, CommandError> {
+pub async fn list_tags(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<TagCount>, CommandError> {
     append_startup_trace(&app, "list_tags", "start");
-    let vault_state = state.vault_state.lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let Some(vs) = vault_state.as_ref() else {
-        append_startup_trace(&app, "list_tags", "no_vault");
-        return Err(CommandError::NoVault);
-    };
-    let tags = index::get_all_tags(&vs.conn)?;
+    let db_path = current_vault_layout(&state)?.index_db_path();
+    let tags = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<TagCount>, CommandError> {
+        let conn = db::open_read_only(&db_path)?;
+        Ok(index::get_all_tags(&conn)?)
+    })
+    .await
+    .map_err(|e| CommandError::Internal(format!("list_tags task join failed: {e}")))??;
     append_startup_trace(&app, "list_tags", &format!("done count={}", tags.len()));
     Ok(tags)
 }

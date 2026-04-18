@@ -231,6 +231,165 @@ pub fn full_scan(
     Ok(ScanResult { indexed, errors })
 }
 
+/// Scan only files whose source mtime is newer than the last indexed_at
+/// marker stored in SQLite. New files (including channel docs) are always
+/// parsed. Deleted files are removed from the index after the pass.
+pub fn incremental_scan(
+    conn: &Connection,
+    vault: &VaultLayout,
+    on_thumbs_done: Option<Box<dyn FnOnce() + Send>>,
+    app: Option<AppHandle>,
+) -> Result<ScanResult> {
+    let paths = files::scan_md_files(vault)?;
+    let indexed_at_map = index::get_block_indexed_at_map(conn)?;
+    let mut indexed = 0;
+    let mut errors = 0;
+    let mut thumb_jobs: Vec<ThumbJob> = Vec::new();
+    let mut live_slugs = std::collections::HashSet::<String>::new();
+
+    let tx = conn
+        .unchecked_transaction()
+        .context("failed to begin transaction for incremental_scan")?;
+
+    for path in &paths {
+        if let Some(slug) = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_string)
+        {
+            live_slugs.insert(slug.clone());
+            if let Some(indexed_at) = indexed_at_map.get(&slug) {
+                if file_mtime_secs(path).is_some_and(|mtime| mtime <= *indexed_at) {
+                    continue;
+                }
+            }
+        }
+
+        match index_md_file_inner(&tx, vault, path) {
+            Ok(job) => {
+                indexed += 1;
+                if let Some(j) = job {
+                    thumb_jobs.push(j);
+                }
+            }
+            Err(e) => {
+                log::warn!("failed to incrementally index {}: {:#}", path.display(), e);
+                errors += 1;
+            }
+        }
+    }
+
+    let mut orphans_removed = 0usize;
+    for slug in indexed_at_map.keys() {
+        if !live_slugs.contains(slug) {
+            let _ = index::remove_block(&tx, slug);
+            let thumb = vault.thumb_path(slug);
+            if thumb.exists() {
+                let _ = std::fs::remove_file(&thumb);
+            }
+            orphans_removed += 1;
+        }
+    }
+
+    let channels = index::list_channels(&tx).unwrap_or_default();
+    let mut channels_removed = 0usize;
+    for channel in channels {
+        if !live_slugs.contains(&channel.tag) {
+            let _ = index::remove_channel(&tx, &channel.tag);
+            channels_removed += 1;
+        }
+    }
+    if orphans_removed > 0 || channels_removed > 0 {
+        log::info!(
+            "incremental_scan: removed {} orphan blocks and {} orphan channels",
+            orphans_removed,
+            channels_removed
+        );
+    }
+
+    tx.commit()
+        .context("failed to commit incremental_scan transaction")?;
+
+    if !thumb_jobs.is_empty() {
+        let vault_clone = vault.clone();
+        let app_clone = app.clone();
+        match std::thread::Builder::new()
+            .name("thumb-gen".into())
+            .spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let metadata_conn = db::open_or_create(&vault_clone.index_db_path())
+                        .map_err(|e| {
+                            log::error!("thumb-gen: open metadata db failed: {e:#}");
+                            e
+                        })
+                        .ok();
+                    let total = thumb_jobs.len();
+                    let mut generated = 0;
+                    let mut skipped = 0;
+                    let mut metadata_updates = 0;
+                    for job in &thumb_jobs {
+                        let thumb_path = vault_clone.thumb_path(&job.block.slug);
+                        if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, &vault_clone) {
+                            skipped += 1;
+                            if let Some(ref conn) = metadata_conn {
+                                match index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path) {
+                                    Ok(true) => metadata_updates += 1,
+                                    Ok(false) => {}
+                                    Err(e) => log::warn!(
+                                        "thumb-gen: sync fresh metadata failed for {}: {e:#}",
+                                        job.block.slug
+                                    ),
+                                }
+                            }
+                            continue;
+                        }
+
+                        let source = thumbnails::generate_for_block(&job.block, &vault_clone);
+                        if let Some(ref conn) = metadata_conn {
+                            match index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path) {
+                                Ok(true) => metadata_updates += 1,
+                                Ok(false) => {}
+                                Err(e) => log::warn!(
+                                    "thumb-gen: sync generated metadata failed for {}: {e:#}",
+                                    job.block.slug
+                                ),
+                            }
+                        }
+                        if source != thumbnails::ThumbSource::None {
+                            generated += 1;
+                            if let Some(ref app) = app_clone {
+                                emit_thumb_events(app, &vault_clone, &job.block, source);
+                            }
+                        }
+                    }
+                    log::info!(
+                        "incremental thumbnails: {} generated, {} skipped (fresh), {} metadata updates, {} total",
+                        generated, skipped, metadata_updates, total
+                    );
+                    generated + metadata_updates
+                }));
+                match result {
+                    Ok(changed) => {
+                        if changed > 0 {
+                            if let Some(cb) = on_thumbs_done {
+                                cb();
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        log::error!("thumb-gen thread panicked");
+                    }
+                }
+            })
+        {
+            Ok(_handle) => {}
+            Err(e) => log::error!("failed to spawn thumb-gen thread: {}", e),
+        }
+    }
+
+    Ok(ScanResult { indexed, errors })
+}
+
 /// Index a single .md file: read, parse, upsert, generate thumbnail.
 ///
 /// Used by handle_event for individual file changes. Thumbnail is generated
@@ -530,6 +689,16 @@ fn path_to_slug(path: &Path) -> Option<String> {
     path.file_stem()
         .and_then(|s| s.to_str())
         .map(|s| s.to_string())
+}
+
+fn file_mtime_secs(path: &Path) -> Option<u64> {
+    std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
 }
 
 // Extension predicates (is_image_ext, is_video_ext) live in

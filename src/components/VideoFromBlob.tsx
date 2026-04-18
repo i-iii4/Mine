@@ -9,6 +9,8 @@ interface VideoFromBlobProps {
   muted?: boolean;
 }
 
+const DIRECT_VIDEO_FALLBACK_MS = 2500;
+
 /**
  * Video renderer that fetches the asset:// URL, wraps the bytes in a blob
  * URL and feeds that to the <video> element.
@@ -31,10 +33,28 @@ export function VideoFromBlob({
   loop = false,
   muted = false,
 }: VideoFromBlobProps) {
+  const [mode, setMode] = useState<"direct" | "blob">("direct");
+  const [directReady, setDirectReady] = useState(false);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    setMode("direct");
+    setDirectReady(false);
+    setBlobUrl(null);
+    setError(null);
+  }, [src]);
+
+  useEffect(() => {
+    if (mode !== "direct" || directReady) return;
+    const timer = window.setTimeout(() => {
+      setMode((current) => (current === "direct" ? "blob" : current));
+    }, DIRECT_VIDEO_FALLBACK_MS);
+    return () => window.clearTimeout(timer);
+  }, [mode, directReady, src]);
+
+  useEffect(() => {
+    if (mode !== "blob") return;
     let cancelled = false;
     let createdUrl: string | null = null;
     fetch(src)
@@ -55,10 +75,34 @@ export function VideoFromBlob({
       cancelled = true;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [src]);
+  }, [mode, src]);
+
+  if (mode === "direct") {
+    return (
+      <video
+        src={src}
+        className={className}
+        controls={controls}
+        autoPlay={autoPlay}
+        loop={loop}
+        muted={muted}
+        playsInline
+        preload="metadata"
+        onLoadedData={() => {
+          setDirectReady(true);
+          setError(null);
+        }}
+        onError={() => {
+          if (!directReady) {
+            setMode("blob");
+          }
+        }}
+      />
+    );
+  }
 
   if (error || !blobUrl) {
-    return <video className={className} controls={controls} playsInline />;
+    return <video className={className} controls={controls} playsInline preload="metadata" />;
   }
 
   return (
@@ -70,6 +114,7 @@ export function VideoFromBlob({
       loop={loop}
       muted={muted}
       playsInline
+      preload="metadata"
     />
   );
 }

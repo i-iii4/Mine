@@ -5,6 +5,7 @@
 //
 // Contract: SPEC_INTEGRATION.md#commands/vault
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -25,6 +26,10 @@ pub struct VaultOpenResult {
     pub indexed: usize,
     pub errors: usize,
     pub sync_in_progress: bool,
+    pub derived_store_ready: bool,
+    pub bootstrapped_from_legacy: bool,
+    pub migration_required: bool,
+    pub thumbs_root: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -215,16 +220,57 @@ fn initialize_vault(
                 indexed,
                 errors: 0,
                 sync_in_progress: false,
+                derived_store_ready: true,
+                bootstrapped_from_legacy: false,
+                migration_required: false,
+                thumbs_root: vs.vault.thumbs_dir().to_string_lossy().into_owned(),
             });
         }
     }
 
-    let vault = VaultLayout::new(PathBuf::from(path));
+    let vault = resolve_runtime_vault_layout(app, Path::new(path))?;
     append_startup_trace(app, "initialize_vault", &format!("mkdir thumbs={}", vault.thumbs_dir().display()));
+    let local_index_existed = vault.index_db_path().exists();
+    let bootstrapped_thumbs_from_legacy = bootstrap_local_thumbs_from_legacy(&vault)?;
 
-    // Create .arena directories
+    // Create the synced vault metadata dir and the local derived thumbs dir.
     std::fs::create_dir_all(vault.thumbs_dir())
         .map_err(|e| CommandError::Internal(format!("failed to create dirs: {e}")))?;
+    std::fs::create_dir_all(vault.arena_dir())
+        .map_err(|e| CommandError::Internal(format!("failed to create arena dir: {e}")))?;
+
+    let bootstrapped_from_legacy = if !local_index_existed {
+        bootstrap_local_index_from_legacy(&vault)?
+    } else {
+        false
+    };
+
+    if bootstrapped_from_legacy {
+        append_startup_trace(
+            app,
+            "initialize_vault",
+            &format!(
+                "bootstrapped_local_index legacy={} derived={} elapsed_ms={}",
+                vault.legacy_index_db_path().display(),
+                vault.index_db_path().display(),
+                total.elapsed().as_millis()
+            ),
+        );
+    }
+    if bootstrapped_thumbs_from_legacy {
+        append_startup_trace(
+            app,
+            "initialize_vault",
+            &format!(
+                "bootstrapped_local_thumbs legacy={} derived={} elapsed_ms={}",
+                vault.legacy_thumbs_dir().display(),
+                vault.thumbs_dir().display(),
+                total.elapsed().as_millis()
+            ),
+        );
+    }
+    let derived_store_ready = local_index_existed || bootstrapped_from_legacy;
+    let migration_required = !derived_store_ready;
 
     // Expand asset protocol scope for the flat vault root plus thumbnail cache.
     // The vault is intentionally flat; recursive scope over the whole vault
@@ -244,15 +290,6 @@ fn initialize_vault(
     let indexed = count_indexed_blocks(&conn)?;
     append_startup_trace(app, "initialize_vault", &format!("db_open indexed={} elapsed_ms={}", indexed, db_started.elapsed().as_millis()));
 
-    // One-time thumb cache migration: when the format version marker is
-    // absent or outdated, wipe all cached thumbnails so full_scan
-    // regenerates them from scratch with the current pipeline. Covers
-    // legacy JPEG text placeholders, wrong-format thumbs from old code,
-    // and any other stale cache state. The marker is written after the
-    // wipe so subsequent starts skip this step.
-    migrate_thumb_cache(&vault);
-    append_startup_trace(app, "initialize_vault", &format!("thumb_cache_migrated elapsed_ms={}", total.elapsed().as_millis()));
-
     // Start file watcher
     let db_path = vault.index_db_path();
     let watcher_started = Instant::now();
@@ -269,6 +306,7 @@ fn initialize_vault(
         }
     }
 
+    let thumbs_root = vault.thumbs_dir().to_string_lossy().into_owned();
     *vault_state = Some(VaultState { conn, vault });
     append_startup_trace(app, "initialize_vault", &format!("done path={} indexed={} total_elapsed_ms={}", path, indexed, total.elapsed().as_millis()));
 
@@ -278,6 +316,10 @@ fn initialize_vault(
         indexed,
         errors: 0,
         sync_in_progress: false,
+        derived_store_ready,
+        bootstrapped_from_legacy,
+        migration_required,
+        thumbs_root,
     })
 }
 
@@ -287,12 +329,13 @@ fn initialize_vault(
 const THUMB_FORMAT_VERSION: &str = "3";
 
 /// If the thumb cache was written by an older format version, delete
-/// all cached thumbnails and let full_scan regenerate them fresh.
-fn migrate_thumb_cache(vault: &VaultLayout) {
+/// all cached thumbnails and let a background sync regenerate them fresh.
+/// Returns true when a migration actually ran.
+fn migrate_thumb_cache(vault: &VaultLayout) -> bool {
     let marker = vault.thumbs_dir().join(".format-version");
     let current = std::fs::read_to_string(&marker).unwrap_or_default();
     if current.trim() == THUMB_FORMAT_VERSION {
-        return;
+        return false;
     }
 
     log::info!(
@@ -315,6 +358,7 @@ fn migrate_thumb_cache(vault: &VaultLayout) {
     // Write the new version marker. If this fails, next startup will
     // re-run the migration — safe, just slightly wasteful.
     let _ = std::fs::write(&marker, THUMB_FORMAT_VERSION);
+    true
 }
 
 /// Legacy vaults may have thumbnail files on disk but no DB metadata yet.
@@ -326,7 +370,14 @@ fn start_thumb_metadata_backfill(app: AppHandle, path: String) {
     let _ = std::thread::Builder::new()
         .name(format!("thumb-meta-backfill-{}", path))
         .spawn(move || {
-            let vault = VaultLayout::new(PathBuf::from(&path_for_thread));
+            let vault = match resolve_runtime_vault_layout(&app_for_thread, Path::new(&path_for_thread)) {
+                Ok(vault) => vault,
+                Err(err) => {
+                    log::warn!("thumb metadata backfill layout failed for {}: {}", path_for_thread, err);
+                    append_startup_trace(&app_for_thread, "thumb_metadata_backfill", &format!("layout_failed path={} err={}", path_for_thread, err));
+                    return;
+                }
+            };
             let conn = match db::open_or_create(&vault.index_db_path()) {
                 Ok(conn) => conn,
                 Err(err) => {
@@ -365,14 +416,10 @@ fn thumbs_done_cb(app: AppHandle, path: String) -> Box<dyn FnOnce() + Send> {
 
 fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandError> {
     append_startup_trace(&app, "start_vault_sync", &format!("request path={path}"));
-    {
-        let app_state = app.state::<AppState>();
-        let mut syncing = app_state.syncing_vaults.lock()
-            .map_err(|_| CommandError::Internal("syncing_vaults mutex poisoned".into()))?;
-        if !syncing.insert(path.clone()) {
-            append_startup_trace(&app, "start_vault_sync", &format!("already_running path={path}"));
-            return Ok(false);
-        }
+    let app_state = app.state::<AppState>();
+    if !app_state.try_start_sync(&path)? {
+        append_startup_trace(&app, "start_vault_sync", &format!("already_running path={path}"));
+        return Ok(false);
     }
 
     let sync_path = path.clone();
@@ -382,7 +429,23 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
         .name(format!("vault-sync-{}", sync_path))
         .spawn(move || {
             let total = Instant::now();
-            let vault = VaultLayout::new(PathBuf::from(&path_for_thread));
+            let vault = match resolve_runtime_vault_layout(&app_for_thread, Path::new(&path_for_thread)) {
+                Ok(vault) => vault,
+                Err(err) => {
+                    log::error!("failed to resolve runtime vault layout for {}: {}", path_for_thread, err);
+                    let _ = app_for_thread.emit(
+                        "vault-sync-finished",
+                        VaultSyncFinishedPayload {
+                            path: path_for_thread.clone(),
+                            indexed: 0,
+                            errors: 0,
+                            error: Some(err.to_string()),
+                        },
+                    );
+                    let _ = app_for_thread.state::<AppState>().abort_sync(&path_for_thread);
+                    return;
+                }
+            };
             let _ = app_for_thread.emit(
                 "vault-sync-started",
                 VaultSyncStartedPayload {
@@ -405,21 +468,59 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                             error: Some(format!("{:#}", err)),
                         },
                     );
-                    if let Ok(mut syncing) = app_for_thread.state::<AppState>().syncing_vaults.lock() {
-                        syncing.remove(&path_for_thread);
-                    }
+                    let _ = app_for_thread.state::<AppState>().abort_sync(&path_for_thread);
                     return;
                 }
             };
+            let sync_state = app_for_thread.state::<AppState>();
+            let mut force_full_scan = migrate_thumb_cache(&vault);
+            if force_full_scan {
+                append_startup_trace(
+                    &app_for_thread,
+                    "vault_sync_thread",
+                    &format!("thumb_cache_migrated path={} elapsed_ms={}", path_for_thread, total.elapsed().as_millis()),
+                );
+            }
+            let final_result = loop {
+                if let Err(err) = sync_state.begin_sync_pass(&path_for_thread) {
+                    break Err(err);
+                }
+                let result = if force_full_scan {
+                    force_full_scan = false;
+                    handler::full_scan(
+                        &conn,
+                        &vault,
+                        Some(thumbs_done_cb(app_for_thread.clone(), path_for_thread.clone())),
+                        Some(app_for_thread.clone()),
+                    )
+                } else {
+                    handler::incremental_scan(
+                        &conn,
+                        &vault,
+                        Some(thumbs_done_cb(app_for_thread.clone(), path_for_thread.clone())),
+                        Some(app_for_thread.clone()),
+                    )
+                };
+                match result {
+                    Ok(scan) => {
+                        match sync_state.complete_sync_pass(&path_for_thread) {
+                            Ok(true) => {
+                                append_startup_trace(
+                                    &app_for_thread,
+                                    "vault_sync_thread",
+                                    &format!("dirty_during_sync path={} rerun elapsed_ms={}", path_for_thread, total.elapsed().as_millis()),
+                                );
+                                continue;
+                            }
+                            Ok(false) => break Ok(scan),
+                            Err(err) => break Err(err),
+                        }
+                    }
+                    Err(err) => break Err(CommandError::Internal(format!("{:#}", err))),
+                }
+            };
 
-            let result = handler::full_scan(
-                &conn,
-                &vault,
-                Some(thumbs_done_cb(app_for_thread.clone(), path_for_thread.clone())),
-                Some(app_for_thread.clone()),
-            );
-
-            match result {
+            match final_result {
                 Ok(scan) => {
                     migrate_channels_to_files(&conn, &vault);
                     append_startup_trace(&app_for_thread, "vault_sync_thread", &format!("done path={} indexed={} errors={} elapsed_ms={}", path_for_thread, scan.indexed, scan.errors, total.elapsed().as_millis()));
@@ -434,30 +535,25 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                     );
                 }
                 Err(err) => {
-                    log::error!("background vault sync failed for {}: {:#}", path_for_thread, err);
-                    append_startup_trace(&app_for_thread, "vault_sync_thread", &format!("failed path={} elapsed_ms={} err={:#}", path_for_thread, total.elapsed().as_millis(), err));
+                    log::error!("background vault sync failed for {}: {}", path_for_thread, err);
+                    append_startup_trace(&app_for_thread, "vault_sync_thread", &format!("failed path={} elapsed_ms={} err={}", path_for_thread, total.elapsed().as_millis(), err));
+                    let _ = sync_state.abort_sync(&path_for_thread);
                     let _ = app_for_thread.emit(
                         "vault-sync-finished",
                         VaultSyncFinishedPayload {
                             path: path_for_thread.clone(),
                             indexed: 0,
                             errors: 0,
-                            error: Some(format!("{:#}", err)),
+                            error: Some(err.to_string()),
                         },
                     );
                 }
-            }
-
-            if let Ok(mut syncing) = app_for_thread.state::<AppState>().syncing_vaults.lock() {
-                syncing.remove(&path_for_thread);
             }
         })
     {
         Ok(_handle) => Ok(true),
         Err(err) => {
-            if let Ok(mut syncing) = app.state::<AppState>().syncing_vaults.lock() {
-                syncing.remove(&path);
-            }
+            let _ = app.state::<AppState>().abort_sync(&path);
             Err(CommandError::Internal(format!("failed to spawn vault sync thread: {err}")))
         }
     }
@@ -470,12 +566,163 @@ fn count_indexed_blocks(conn: &Connection) -> Result<usize, CommandError> {
     Ok(count as usize)
 }
 
+fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLayout, CommandError> {
+    let base = VaultLayout::new(root.to_path_buf());
+    std::fs::create_dir_all(base.arena_dir())
+        .map_err(|e| CommandError::Internal(format!("failed to create arena dir: {e}")))?;
+    let vault_id = ensure_vault_id(&base)?;
+    let derived_root = derived_store_root(app, &vault_id)?;
+    Ok(VaultLayout::with_derived_root(root.to_path_buf(), derived_root))
+}
+
+fn ensure_vault_id(vault: &VaultLayout) -> Result<String, CommandError> {
+    let path = vault.vault_id_path();
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let trimmed = existing.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    let new_id = generate_vault_id()?;
+    std::fs::write(&path, format!("{new_id}\n"))
+        .map_err(|e| CommandError::Internal(format!("failed to write vault-id: {e}")))?;
+    Ok(new_id)
+}
+
+fn generate_vault_id() -> Result<String, CommandError> {
+    let mut bytes = [0u8; 16];
+    match std::fs::File::open("/dev/urandom") {
+        Ok(mut file) => file
+            .read_exact(&mut bytes)
+            .map_err(|e| CommandError::Internal(format!("failed to read /dev/urandom: {e}")))?,
+        Err(_) => {
+            let fallback = format!(
+                "{:016x}{:08x}{:08x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| CommandError::Internal(format!("system time before epoch: {e}")))?
+                    .as_nanos(),
+                std::process::id(),
+                0x5A17_u32,
+            );
+            return Ok(fallback);
+        }
+    }
+
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Ok(format!(
+        "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11],
+        bytes[12], bytes[13], bytes[14], bytes[15],
+    ))
+}
+
+fn derived_store_root(app: &AppHandle, vault_id: &str) -> Result<PathBuf, CommandError> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| CommandError::Internal(format!("failed to resolve app data dir: {e}")))?;
+    Ok(app_data.join("vaults").join(vault_id))
+}
+
+fn bootstrap_local_index_from_legacy(vault: &VaultLayout) -> Result<bool, CommandError> {
+    let target = vault.index_db_path();
+    let source = vault.legacy_index_db_path();
+    if target.exists() || !source.exists() {
+        return Ok(false);
+    }
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| CommandError::Internal(format!("failed to create local derived dir: {e}")))?;
+    }
+
+    std::fs::copy(&source, &target)
+        .map_err(|e| CommandError::Internal(format!("failed to copy legacy index db: {e}")))?;
+
+    for suffix in ["-wal", "-shm"] {
+        let source_sidecar = PathBuf::from(format!("{}{}", source.display(), suffix));
+        let target_sidecar = PathBuf::from(format!("{}{}", target.display(), suffix));
+        if source_sidecar.exists() {
+            std::fs::copy(&source_sidecar, &target_sidecar).map_err(|e| {
+                CommandError::Internal(format!(
+                    "failed to copy legacy sqlite sidecar {}: {e}",
+                    source_sidecar.display()
+                ))
+            })?;
+        }
+    }
+
+    Ok(true)
+}
+
+fn bootstrap_local_thumbs_from_legacy(vault: &VaultLayout) -> Result<bool, CommandError> {
+    let source = vault.legacy_thumbs_dir();
+    let target = vault.thumbs_dir();
+    if !source.exists() {
+        return Ok(false);
+    }
+
+    if target.exists() {
+        let mut entries = target.read_dir().map_err(|e| {
+            CommandError::Internal(format!(
+                "failed to inspect local thumb cache {}: {e}",
+                target.display()
+            ))
+        })?;
+        if entries.next().is_some() {
+            return Ok(false);
+        }
+    } else {
+        std::fs::create_dir_all(&target).map_err(|e| {
+            CommandError::Internal(format!(
+                "failed to create local thumb cache {}: {e}",
+                target.display()
+            ))
+        })?;
+    }
+
+    let mut copied_any = false;
+    for entry in std::fs::read_dir(&source).map_err(|e| {
+        CommandError::Internal(format!(
+            "failed to read legacy thumb cache {}: {e}",
+            source.display()
+        ))
+    })? {
+        let entry = entry.map_err(|e| {
+            CommandError::Internal(format!(
+                "failed to enumerate legacy thumb cache {}: {e}",
+                source.display()
+            ))
+        })?;
+        let source_path = entry.path();
+        if !source_path.is_file() {
+            continue;
+        }
+        let target_path = target.join(entry.file_name());
+        std::fs::copy(&source_path, &target_path).map_err(|e| {
+            CommandError::Internal(format!(
+                "failed to copy legacy thumb {} -> {}: {e}",
+                source_path.display(),
+                target_path.display()
+            ))
+        })?;
+        copied_any = true;
+    }
+
+    Ok(copied_any)
+}
+
 // ─── Channel migration ──────────────────────────────────────────────────────
 
 /// One-time migration: create .md files for channels that only exist in SQLite.
 /// After this, channels are read from .md files (type: channel) during full_scan.
 fn migrate_channels_to_files(conn: &Connection, vault: &VaultLayout) {
-    use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
+    use crate::domain::block::{Block, BlockType, Frontmatter};
     use crate::storage::{files, index};
 
     let channels = match index::list_channels(conn) {
@@ -592,5 +839,69 @@ fn load_known_vaults(app: &AppHandle) -> Vec<String> {
 fn clear_saved_vault_path(app: &AppHandle) {
     if let Some(config) = config_path(app) {
         let _ = std::fs::remove_file(&config);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ensure_vault_id_persists_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(vault.arena_dir()).unwrap();
+
+        let first = ensure_vault_id(&vault).unwrap();
+        let second = ensure_vault_id(&vault).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(
+            std::fs::read_to_string(vault.vault_id_path()).unwrap().trim(),
+            first
+        );
+    }
+
+    #[test]
+    fn bootstrap_local_index_from_legacy_copies_sqlite_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("vault");
+        let derived = dir.path().join("derived");
+        let vault = VaultLayout::with_derived_root(root.clone(), derived);
+        std::fs::create_dir_all(vault.arena_dir()).unwrap();
+        std::fs::write(vault.legacy_index_db_path(), b"legacy-db").unwrap();
+        std::fs::write(format!("{}-wal", vault.legacy_index_db_path().display()), b"legacy-wal").unwrap();
+        std::fs::write(format!("{}-shm", vault.legacy_index_db_path().display()), b"legacy-shm").unwrap();
+
+        assert!(bootstrap_local_index_from_legacy(&vault).unwrap());
+        assert_eq!(std::fs::read(vault.index_db_path()).unwrap(), b"legacy-db");
+        assert_eq!(
+            std::fs::read(format!("{}-wal", vault.index_db_path().display())).unwrap(),
+            b"legacy-wal"
+        );
+        assert_eq!(
+            std::fs::read(format!("{}-shm", vault.index_db_path().display())).unwrap(),
+            b"legacy-shm"
+        );
+        assert!(!bootstrap_local_index_from_legacy(&vault).unwrap());
+    }
+
+    #[test]
+    fn bootstrap_local_thumbs_from_legacy_copies_thumb_cache_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("vault");
+        let derived = dir.path().join("derived");
+        let vault = VaultLayout::with_derived_root(root.clone(), derived);
+        std::fs::create_dir_all(vault.legacy_thumbs_dir()).unwrap();
+        std::fs::write(vault.legacy_thumbs_dir().join("alpha.jpg"), b"jpg").unwrap();
+        std::fs::write(vault.legacy_thumbs_dir().join(".format-version"), b"3").unwrap();
+
+        assert!(bootstrap_local_thumbs_from_legacy(&vault).unwrap());
+        assert_eq!(std::fs::read(vault.thumbs_dir().join("alpha.jpg")).unwrap(), b"jpg");
+        assert_eq!(
+            std::fs::read(vault.thumbs_dir().join(".format-version")).unwrap(),
+            b"3"
+        );
+        assert!(!bootstrap_local_thumbs_from_legacy(&vault).unwrap());
     }
 }

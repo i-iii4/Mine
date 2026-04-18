@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use thiserror::Error;
 
 use crate::domain::vault::VaultLayout;
+use crate::util::SingleInstanceGuard;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -22,13 +23,22 @@ pub struct VaultState {
     pub vault: VaultLayout,
 }
 
+#[derive(Default)]
+pub struct SyncTracker {
+    syncing_vaults: HashSet<String>,
+    dirty_during_sync: HashSet<String>,
+}
+
 /// Shared state managed by Tauri, accessible from all commands.
 pub struct AppState {
     pub vault_state: Mutex<Option<VaultState>>,
     /// File watcher handle. Dropping it stops watching.
     pub watcher: Mutex<Option<RecommendedWatcher>>,
-    /// Paths currently undergoing background sync.
-    pub syncing_vaults: Mutex<HashSet<String>>,
+    /// Runtime lock preventing a second desktop instance from launching.
+    pub instance_guard: Mutex<Option<SingleInstanceGuard>>,
+    /// Paths currently undergoing background sync plus a dirty marker for
+    /// notify events that arrived while the sync owned the index.
+    pub sync_tracker: Mutex<SyncTracker>,
 }
 
 impl AppState {
@@ -36,9 +46,82 @@ impl AppState {
         Self {
             vault_state: Mutex::new(None),
             watcher: Mutex::new(None),
-            syncing_vaults: Mutex::new(HashSet::new()),
+            instance_guard: Mutex::new(None),
+            sync_tracker: Mutex::new(SyncTracker::default()),
         }
     }
+
+    pub fn set_instance_guard(&self, guard: SingleInstanceGuard) -> Result<(), CommandError> {
+        let mut slot = self
+            .instance_guard
+            .lock()
+            .map_err(|_| CommandError::Internal("instance_guard mutex poisoned".into()))?;
+        *slot = Some(guard);
+        Ok(())
+    }
+
+    pub fn try_start_sync(&self, path: &str) -> Result<bool, CommandError> {
+        let mut tracker = self
+            .sync_tracker
+            .lock()
+            .map_err(|_| CommandError::Internal("sync_tracker mutex poisoned".into()))?;
+        if !tracker.syncing_vaults.insert(path.to_string()) {
+            return Ok(false);
+        }
+        tracker.dirty_during_sync.remove(path);
+        Ok(true)
+    }
+
+    pub fn begin_sync_pass(&self, path: &str) -> Result<(), CommandError> {
+        let mut tracker = self
+            .sync_tracker
+            .lock()
+            .map_err(|_| CommandError::Internal("sync_tracker mutex poisoned".into()))?;
+        tracker.dirty_during_sync.remove(path);
+        Ok(())
+    }
+
+    pub fn complete_sync_pass(&self, path: &str) -> Result<bool, CommandError> {
+        let mut tracker = self
+            .sync_tracker
+            .lock()
+            .map_err(|_| CommandError::Internal("sync_tracker mutex poisoned".into()))?;
+        if tracker.dirty_during_sync.remove(path) {
+            return Ok(true);
+        }
+        tracker.syncing_vaults.remove(path);
+        Ok(false)
+    }
+
+    pub fn abort_sync(&self, path: &str) -> Result<(), CommandError> {
+        let mut tracker = self
+            .sync_tracker
+            .lock()
+            .map_err(|_| CommandError::Internal("sync_tracker mutex poisoned".into()))?;
+        tracker.syncing_vaults.remove(path);
+        tracker.dirty_during_sync.remove(path);
+        Ok(())
+    }
+
+    pub fn mark_dirty_if_syncing(&self, path: &str) -> bool {
+        let Ok(mut tracker) = self.sync_tracker.lock() else {
+            return false;
+        };
+        if !tracker.syncing_vaults.contains(path) {
+            return false;
+        }
+        tracker.dirty_during_sync.insert(path.to_string());
+        true
+    }
+}
+
+pub fn current_vault_layout(state: &AppState) -> Result<VaultLayout, CommandError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    Ok(vs.vault.clone())
 }
 
 /// Error type for Tauri commands. Serialized as a string for the frontend.
@@ -72,4 +155,30 @@ impl From<anyhow::Error> for CommandError {
 /// Delegates to `crate::util::now_iso8601`.
 pub fn now_iso8601() -> String {
     crate::util::now_iso8601()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppState;
+
+    #[test]
+    fn sync_tracker_repeats_when_marked_dirty() {
+        let state = AppState::new();
+        assert!(state.try_start_sync("/tmp/vault").unwrap());
+        state.begin_sync_pass("/tmp/vault").unwrap();
+        assert!(state.mark_dirty_if_syncing("/tmp/vault"));
+        assert!(state.complete_sync_pass("/tmp/vault").unwrap());
+        state.begin_sync_pass("/tmp/vault").unwrap();
+        assert!(!state.complete_sync_pass("/tmp/vault").unwrap());
+    }
+
+    #[test]
+    fn sync_tracker_ignores_dirty_marks_outside_sync() {
+        let state = AppState::new();
+        assert!(!state.mark_dirty_if_syncing("/tmp/vault"));
+        assert!(state.try_start_sync("/tmp/vault").unwrap());
+        assert!(state.mark_dirty_if_syncing("/tmp/vault"));
+        state.abort_sync("/tmp/vault").unwrap();
+        assert!(!state.mark_dirty_if_syncing("/tmp/vault"));
+    }
 }

@@ -8,7 +8,7 @@
 
 use ab_glyph::{FontArc, PxScale};
 use anyhow::{Context, Result};
-use image::{GenericImageView, Rgb, Rgba, RgbImage, RgbaImage};
+use image::{DynamicImage, GenericImageView, Rgba, RgbImage, RgbaImage};
 use imageproc::drawing::draw_text_mut;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -18,6 +18,7 @@ use crate::domain::vault::VaultLayout;
 
 /// Default max side for thumbnails: 480px covers 240px CSS columns at 2x Retina.
 pub const DEFAULT_MAX_SIZE: u32 = 480;
+const COMPOSITE_TILE_LIMIT: usize = 4;
 
 const JPEG_QUALITY: u8 = 85;
 
@@ -89,14 +90,12 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
 
     // 3. Article body: first image.
     if block.frontmatter.block_type == BlockType::Article {
-        if let Some(first_image) = find_first_local_media(&block.body, is_image_ext) {
-            let media_path = vault.root().join(&first_image);
-            if media_path.exists() {
-                if is_rust_decodable(&media_path) {
-                    return ExpectedThumb::OnlyJpeg;
-                }
-                return ExpectedThumb::Either;
-            }
+        let article_images = collect_article_preview_images(block, vault, COMPOSITE_TILE_LIMIT);
+        if article_images.len() >= 2 {
+            return ExpectedThumb::OnlyJpeg;
+        }
+        if !article_images.is_empty() {
+            return ExpectedThumb::OnlyJpeg;
         }
         // 4. Article body: first video.
         if let Some(first_video) = find_first_local_media(&block.body, is_video_ext) {
@@ -112,12 +111,51 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
     ExpectedThumb::OnlyPng
 }
 
+/// Resolve the media dependencies that actually feed the current preview
+/// cascade. Mirrors the precedence in `generate_for_block` / `expected_thumb`
+/// so freshness only depends on files that the current thumbnail would use.
+fn preview_dependency_paths(block: &Block, vault: &VaultLayout) -> Vec<std::path::PathBuf> {
+    if let Some(ref file_name) = block.frontmatter.file {
+        let media_path = vault.root().join(file_name);
+        if media_path.exists() {
+            return vec![media_path];
+        }
+    }
+
+    if let Some(ref thumb_file) = block.frontmatter.thumbnail {
+        let media_path = vault.root().join(thumb_file);
+        if media_path.exists() {
+            return vec![media_path];
+        }
+    }
+
+    if block.frontmatter.block_type == BlockType::Article {
+        let article_images = collect_article_preview_images(block, vault, COMPOSITE_TILE_LIMIT);
+        if article_images.len() >= 2 {
+            return article_images;
+        }
+        if let Some(media_path) = article_images.into_iter().next() {
+            return vec![media_path];
+        }
+        if let Some(first_video) = find_first_local_media(&block.body, is_video_ext) {
+            let media_path = vault.root().join(&first_video);
+            if media_path.exists() {
+                return vec![media_path];
+            }
+        }
+    }
+
+    Vec::new()
+}
+
 /// Returns `true` if the thumbnail at `thumb_path` is still usable for
 /// `block`. False means the thumb must be regenerated.
 ///
 /// Freshness checks, in order:
 /// 1. File exists on disk.
 /// 2. Thumb mtime is not older than source .md mtime.
+/// 3. Thumb mtime is not older than the media dependency that currently
+///    drives the preview cascade.
 /// 3. Magic bytes match a recognized image format (JPEG or PNG).
 /// 4. The on-disk format matches what the current pipeline would
 ///    produce for this block. Catches legacy thumbs written by earlier
@@ -144,6 +182,17 @@ pub fn is_thumb_fresh(
     };
     if thumb_mtime < source_mtime {
         return false;
+    }
+    for dependency in preview_dependency_paths(block, vault) {
+        let Ok(dep_meta) = std::fs::metadata(&dependency) else {
+            return false;
+        };
+        let Ok(dep_mtime) = dep_meta.modified() else {
+            return false;
+        };
+        if thumb_mtime < dep_mtime {
+            return false;
+        }
     }
 
     let magic = read_thumb_magic(thumb_path);
@@ -209,6 +258,75 @@ pub fn generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<(
         .with_context(|| format!("failed to encode thumbnail: {}", dest.display()))?;
 
     Ok((rw, rh))
+}
+
+fn composite_layout_slots(count: usize, size: u32) -> Vec<(u32, u32, u32, u32)> {
+    match count {
+        0 => Vec::new(),
+        1 => vec![(0, 0, size, size)],
+        2 => {
+            let left = size / 2;
+            vec![(0, 0, left, size), (left, 0, size - left, size)]
+        }
+        3 => {
+            let left = size / 2;
+            let right = size - left;
+            let top = size / 2;
+            vec![
+                (0, 0, left, size),
+                (left, 0, right, top),
+                (left, top, right, size - top),
+            ]
+        }
+        _ => {
+            let left = size / 2;
+            let top = size / 2;
+            vec![
+                (0, 0, left, top),
+                (left, 0, size - left, top),
+                (0, top, left, size - top),
+                (left, top, size - left, size - top),
+            ]
+        }
+    }
+}
+
+pub fn generate_composite_thumbnail(
+    sources: &[std::path::PathBuf],
+    dest: &Path,
+    max_size: u32,
+) -> Result<(u32, u32)> {
+    let tile_count = sources.len().min(COMPOSITE_TILE_LIMIT);
+    anyhow::ensure!(tile_count >= 2, "composite thumbnail needs at least two source images");
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+    }
+
+    let mut canvas = RgbaImage::from_pixel(max_size, max_size, Rgba([24, 24, 27, 255]));
+    for (source, (x, y, width, height)) in sources
+        .iter()
+        .take(tile_count)
+        .zip(composite_layout_slots(tile_count, max_size).into_iter())
+    {
+        let img = image::open(source)
+            .with_context(|| format!("failed to open composite source image: {}", source.display()))?;
+        let tile = img
+            .resize_to_fill(width.max(1), height.max(1), image::imageops::FilterType::Lanczos3)
+            .to_rgba8();
+        image::imageops::overlay(&mut canvas, &tile, i64::from(x), i64::from(y));
+    }
+
+    let rgb = DynamicImage::ImageRgba8(canvas).to_rgb8();
+    let file = std::fs::File::create(dest)
+        .with_context(|| format!("failed to create composite thumbnail file: {}", dest.display()))?;
+    let mut writer = std::io::BufWriter::new(file);
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, JPEG_QUALITY);
+    rgb.write_with_encoder(encoder)
+        .with_context(|| format!("failed to encode composite thumbnail: {}", dest.display()))?;
+
+    Ok((max_size, max_size))
 }
 
 // ─── Text thumbnail ─────────────────────────────────────────────────────────
@@ -633,6 +751,8 @@ pub fn is_rust_decodable(path: &std::path::Path) -> bool {
 pub enum ThumbSource {
     /// Resized from a raster image file (JPEG/PNG/GIF/etc).
     Image,
+    /// Composited from multiple embedded images into a single JPEG preview.
+    Composite,
     /// Extracted first visible frame from an H.264 MP4.
     Video,
     /// Baked from article title + body when no usable media was found,
@@ -702,16 +822,21 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
         }
     }
 
-    // 3-4. Scan body for first embedded image/video (articles). Again,
-    //      Rust decode only runs on sniffed JPEG/PNG/GIF content.
+    // 3-5. Scan body for embedded image/video previews (articles). Multi-image
+    //      articles/social posts prefer a composite JPEG preview; otherwise we
+    //      fall back to the first decodable image or first video frame.
     if block.frontmatter.block_type == BlockType::Article {
-        if let Some(first_image) = find_first_local_media(&block.body, is_image_ext) {
-            let media_path = vault.root().join(&first_image);
-            if media_path.exists() && is_rust_decodable(&media_path) {
-                match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
-                    Ok(_) => return ThumbSource::Image,
-                    Err(e) => log::warn!("first-image thumb failed for {}: {}", slug, e),
-                }
+        let article_images = collect_article_preview_images(block, vault, COMPOSITE_TILE_LIMIT);
+        if article_images.len() >= 2 {
+            match generate_composite_thumbnail(&article_images, &thumb_path, DEFAULT_MAX_SIZE) {
+                Ok(_) => return ThumbSource::Composite,
+                Err(e) => log::warn!("composite thumb failed for {}: {}", slug, e),
+            }
+        }
+        if let Some(media_path) = article_images.into_iter().next() {
+            match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
+                Ok(_) => return ThumbSource::Image,
+                Err(e) => log::warn!("first-image thumb failed for {}: {}", slug, e),
             }
         }
         if let Some(first_video) = find_first_local_media(&block.body, is_video_ext) {
@@ -761,13 +886,26 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
 /// a local path (not http(s)://) and matches the given extension predicate.
 /// Returns the filename string if found.
 pub fn find_first_local_media(body: &str, ext_predicate: fn(&str) -> bool) -> Option<String> {
+    find_local_media(body, ext_predicate, 1).into_iter().next()
+}
+
+fn find_local_media(body: &str, ext_predicate: fn(&str) -> bool, limit: usize) -> Vec<String> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let mut results = Vec::new();
     let mut search_from = 0;
     while let Some(start) = body[search_from..].find("![") {
         let abs_start = search_from + start;
         let rest = &body[abs_start + 2..];
-        let bracket = rest.find("](")?;
+        let Some(bracket) = rest.find("](") else {
+            break;
+        };
         let url_start = abs_start + 2 + bracket + 2;
-        let paren_end = body[url_start..].find(')')?;
+        let Some(paren_end) = body[url_start..].find(')') else {
+            break;
+        };
         let url = &body[url_start..url_start + paren_end];
         search_from = url_start + paren_end + 1;
 
@@ -776,10 +914,39 @@ pub fn find_first_local_media(body: &str, ext_predicate: fn(&str) -> bool) -> Op
         }
         let ext = ext_lower(url);
         if ext_predicate(&ext) {
-            return Some(url.to_string());
+            results.push(url.to_string());
+            if results.len() >= limit {
+                break;
+            }
         }
     }
-    None
+    results
+}
+
+fn collect_article_preview_images(
+    block: &Block,
+    vault: &VaultLayout,
+    limit: usize,
+) -> Vec<std::path::PathBuf> {
+    if block.frontmatter.block_type != BlockType::Article || limit == 0 {
+        return Vec::new();
+    }
+
+    let mut seen = std::collections::HashSet::<String>::new();
+    let mut paths = Vec::new();
+    for image_name in find_local_media(&block.body, is_image_ext, limit.saturating_mul(3)) {
+        if !seen.insert(image_name.clone()) {
+            continue;
+        }
+        let path = vault.root().join(&image_name);
+        if path.exists() && is_rust_decodable(&path) {
+            paths.push(path);
+            if paths.len() >= limit {
+                break;
+            }
+        }
+    }
+    paths
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -789,9 +956,13 @@ mod tests {
     use super::*;
 
     /// Create a solid-color test image of given dimensions.
-    fn create_test_image(path: &Path, width: u32, height: u32) {
-        let img = image::RgbImage::from_fn(width, height, |_, _| image::Rgb([100, 150, 200]));
+    fn create_test_image_with_color(path: &Path, width: u32, height: u32, color: [u8; 3]) {
+        let img = image::RgbImage::from_fn(width, height, |_, _| image::Rgb(color));
         img.save(path).unwrap();
+    }
+
+    fn create_test_image(path: &Path, width: u32, height: u32) {
+        create_test_image_with_color(path, width, height, [100, 150, 200]);
     }
 
     #[test]
@@ -968,6 +1139,45 @@ mod tests {
     }
 
     #[test]
+    fn generate_for_block_article_with_multiple_images_writes_composite_jpeg() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+
+        let red = dir.path().join("img-red.jpg");
+        let green = dir.path().join("img-green.jpg");
+        let blue = dir.path().join("img-blue.jpg");
+        create_test_image_with_color(&red, 240, 480, [240, 20, 20]);
+        create_test_image_with_color(&green, 480, 240, [20, 240, 20]);
+        create_test_image_with_color(&blue, 360, 360, [20, 20, 240]);
+
+        let block = make_article(
+            "multi-image",
+            "![](img-red.jpg)\n![](img-green.jpg)\n![](img-blue.jpg)\n",
+        );
+
+        let source = generate_for_block(&block, &vault);
+        assert_eq!(source, ThumbSource::Composite);
+
+        let thumb_path = vault.thumb_path("multi-image");
+        let mut header = [0u8; 3];
+        use std::io::Read;
+        let mut f = std::fs::File::open(&thumb_path).unwrap();
+        f.read_exact(&mut header).unwrap();
+        assert_eq!(header, JPEG_MAGIC);
+
+        let composite = image::open(&thumb_path).unwrap().to_rgb8();
+        assert_eq!(composite.dimensions(), (DEFAULT_MAX_SIZE, DEFAULT_MAX_SIZE));
+
+        let left = composite.get_pixel(DEFAULT_MAX_SIZE / 4, DEFAULT_MAX_SIZE / 2);
+        let right_top = composite.get_pixel(DEFAULT_MAX_SIZE * 3 / 4, DEFAULT_MAX_SIZE / 4);
+        let right_bottom = composite.get_pixel(DEFAULT_MAX_SIZE * 3 / 4, DEFAULT_MAX_SIZE * 3 / 4);
+
+        assert!(left[0] > left[1] && left[0] > left[2]);
+        assert!(right_top[1] > right_top[0] && right_top[1] > right_top[2]);
+        assert!(right_bottom[2] > right_bottom[0] && right_bottom[2] > right_bottom[1]);
+    }
+
+    #[test]
     fn generate_for_block_article_pure_text_falls_back_to_text_png() {
         // Article with no media — falls through the whole cascade to
         // text thumbnail (which is PNG with transparency for dark-mode
@@ -1009,6 +1219,33 @@ mod tests {
     }
 
     #[test]
+    fn generate_for_block_article_skips_non_decodable_first_image_and_uses_next_decodable_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+
+        let undecodable = dir.path().join("cover.webp");
+        std::fs::write(&undecodable, b"RIFFxxxxWEBPVP8X").unwrap();
+
+        let decodable = dir.path().join("fallback.jpg");
+        create_test_image(&decodable, 640, 480);
+
+        let block = make_article(
+            "mixed-article",
+            "![](cover.webp)\n![](fallback.jpg)\n",
+        );
+
+        let source = generate_for_block(&block, &vault);
+        assert_eq!(source, ThumbSource::Image);
+
+        let thumb_path = vault.thumb_path("mixed-article");
+        let mut header = [0u8; 3];
+        use std::io::Read;
+        let mut f = std::fs::File::open(&thumb_path).unwrap();
+        f.read_exact(&mut header).unwrap();
+        assert_eq!(header, JPEG_MAGIC);
+    }
+
+    #[test]
     fn is_thumb_fresh_rejects_non_image_content() {
         // Thumb file with a newer mtime but wrong content (plain text,
         // not JPEG or PNG) must NOT be considered fresh — forces the
@@ -1018,20 +1255,24 @@ mod tests {
         let source = dir.path().join("source.md");
         std::fs::write(&source, "# Source\n").unwrap();
 
-        // Article with an embedded WebP (non-Rust-decodable) — expected_thumb
-        // returns Either, so any valid magic (JPEG or PNG) passes the format
-        // check. This isolates the test to the magic-bytes branch.
+        // Article where the first image is non-Rust-decodable but a later
+        // image is decodable. The new preview pipeline must still classify
+        // the block as JPEG-backed via the later image, so this test keeps
+        // exercising the magic-bytes freshness gate rather than the format
+        // classifier itself.
         let webp = dir.path().join("source-img0.webp");
         std::fs::write(&webp, b"RIFF\x00\x00\x00\x00WEBPVP8X").unwrap();
-        let block = make_article("source", "![](source-img0.webp)");
+        let fallback = dir.path().join("source-img1.jpg");
+        create_test_image(&fallback, 100, 100);
+        let block = make_article("source", "![](source-img0.webp)\n![](source-img1.jpg)");
 
         let thumb = vault.thumb_path("source");
         std::fs::create_dir_all(thumb.parent().unwrap()).unwrap();
         std::fs::write(&thumb, b"\x00\x01\x02garbage").unwrap();
         assert!(!is_thumb_fresh(&thumb, &source, &block, &vault));
 
-        // Write a real JPEG — freshness check passes (Either category
-        // accepts both JPEG and PNG).
+        // Write a real JPEG — freshness check passes because the preview
+        // classifier now resolves to the later decodable image.
         create_test_image(&dir.path().join("real.png"), 100, 100);
         generate_thumbnail(&dir.path().join("real.png"), &thumb, 240).unwrap();
         assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
@@ -1100,6 +1341,94 @@ mod tests {
         // Real JPEG thumb — considered fresh
         generate_thumbnail(&dir.path().join("src.png"), &thumb, 240).unwrap();
         assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
+    }
+
+    #[test]
+    fn is_thumb_fresh_rejects_thumb_older_than_embedded_preview_dependency() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let source = dir.path().join("article.md");
+        std::fs::write(&source, "# Source\n").unwrap();
+
+        let embedded = dir.path().join("hero.png");
+        create_test_image(&embedded, 80, 80);
+        let block = make_article("article", "![](hero.png)");
+
+        let thumb = vault.thumb_path("article");
+        generate_thumbnail(&embedded, &thumb, 240).unwrap();
+        assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        create_test_image(&embedded, 120, 120);
+
+        assert!(!is_thumb_fresh(&thumb, &source, &block, &vault));
+    }
+
+    #[test]
+    fn is_thumb_fresh_rejects_thumb_older_than_any_composite_dependency() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let source = dir.path().join("article.md");
+        std::fs::write(&source, "# Source\n").unwrap();
+
+        let first = dir.path().join("first.png");
+        let second = dir.path().join("second.png");
+        create_test_image(&first, 80, 80);
+        create_test_image(&second, 90, 90);
+        let block = make_article("article", "![](first.png)\n![](second.png)\n");
+
+        let thumb = vault.thumb_path("article");
+        generate_composite_thumbnail(&[first.clone(), second.clone()], &thumb, 240).unwrap();
+        assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        create_test_image(&second, 120, 120);
+
+        assert!(!is_thumb_fresh(&thumb, &source, &block, &vault));
+    }
+
+    #[test]
+    fn is_thumb_fresh_rejects_thumb_older_than_frontmatter_thumbnail_dependency() {
+        use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
+
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let source = dir.path().join("link.md");
+        std::fs::write(&source, "# Source\n").unwrap();
+
+        let poster = dir.path().join("poster.jpg");
+        create_test_image(&poster, 80, 80);
+
+        let block = Block {
+            slug: "link".into(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Link,
+                title: Some("Link".into()),
+                description: None,
+                url: Some("https://example.com".into()),
+                file: None,
+                thumbnail: Some("poster.jpg".into()),
+                tags: vec![],
+                saved_at: DateTime::new("2026-01-15T12:00:00Z").unwrap(),
+                source: None,
+                width: None,
+                height: None,
+                author: None,
+                position: None,
+                color: None,
+                icon: None,
+            },
+            body: String::new(),
+        };
+
+        let thumb = vault.thumb_path("link");
+        generate_thumbnail(&poster, &thumb, 240).unwrap();
+        assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        create_test_image(&poster, 120, 120);
+
+        assert!(!is_thumb_fresh(&thumb, &source, &block, &vault));
     }
 
     // ─── Tests for is_rust_decodable content sniff ─────────────────────────

@@ -17,9 +17,17 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${path}`),
 }));
 
-// Mock @tauri-apps/api/event — listen returns a no-op unlisten.
+// Mock @tauri-apps/api/event — bridge Tauri events onto window CustomEvents
+// so tests can drive listener-based flows.
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn().mockResolvedValue(() => {}),
+  listen: vi.fn(async (event: string, handler: (payload: unknown) => void) => {
+    const wrapped: EventListener = (domEvent) => {
+      const customEvent = domEvent as CustomEvent;
+      void handler(customEvent.detail);
+    };
+    window.addEventListener(event, wrapped);
+    return () => window.removeEventListener(event, wrapped);
+  }),
 }));
 
 // Mock @tauri-apps/plugin-dialog

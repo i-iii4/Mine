@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { Suspense, lazy, useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   BrowserRouter,
   Routes,
@@ -50,8 +50,7 @@ import {
   selectVault,
   startVaultSync,
   listGridBlocks,
-  listTags,
-  listChannels,
+  listTaxonomySnapshot,
   createChannel,
   deleteChannel,
   reorderChannels,
@@ -62,34 +61,6 @@ import {
   deleteBlock,
 } from "@/lib/commands";
 import { pushRecentTag } from "@/lib/recentTags";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
@@ -98,22 +69,33 @@ import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { Sidebar } from "@/components/Sidebar";
 import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { Grid } from "@/components/Grid";
-import { Search } from "@/components/Search";
-import { Detail } from "@/components/Detail";
-import { ImportDialog } from "@/components/ImportDialog";
-import { DropZone } from "@/components/DropZone";
 import { ActionButton } from "@/components/ActionButton";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Progress } from "@/components/ui/progress";
-import {
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-} from "@/components/ui/tooltip";
-import { Plus, Trash2, Info, ExternalLink } from "lucide-react";
+
+const Search = lazy(async () => {
+  const mod = await import("@/components/Search");
+  return { default: mod.Search };
+});
+
+const Detail = lazy(async () => {
+  const mod = await import("@/components/Detail");
+  return { default: mod.Detail };
+});
+
+const ImportDialog = lazy(async () => {
+  const mod = await import("@/components/ImportDialog");
+  return { default: mod.ImportDialog };
+});
+
+const DropZone = lazy(async () => {
+  const mod = await import("@/components/DropZone");
+  return { default: mod.DropZone };
+});
+
+const ComponentTestBench = lazy(async () => {
+  const mod = await import("@/components/ComponentTestBench");
+  return { default: mod.ComponentTestBench };
+});
 
 const GRID_PAGE_SIZE = 200;
 
@@ -130,6 +112,22 @@ interface VaultSyncFinishedEvent {
   indexed: number;
   errors: number;
   error: string | null;
+}
+
+interface BlockAddedEvent {
+  slug: string;
+  tags: string[];
+  is_text: boolean;
+}
+
+interface BlockRemovedEvent {
+  slug: string;
+  tags: string[];
+}
+
+interface ThumbUpdatedEvent {
+  slug: string;
+  is_text: boolean;
 }
 
 // ─── Visual grid navigation ────────────────────────────────────────────────
@@ -230,7 +228,7 @@ export function App() {
 
 // ─── Main app (vault selected) ─────────────────────────────────────────────
 
-function AppWithVault({
+export function AppWithVault({
   vaultPath,
   onVaultSelected,
 }: {
@@ -265,10 +263,23 @@ function AppWithVault({
   const suppressRedirectRef = useRef(false);
   const vaultPathRef = useRef(vaultPath);
   vaultPathRef.current = vaultPath;
+  const currentTagRef = useRef(currentTag);
+  currentTagRef.current = currentTag;
   const loadRequestIdRef = useRef(0);
+  const taxonomyRequestIdRef = useRef(0);
   const routeSnapshotCacheRef = useRef<Map<string, GridSnapshot>>(new Map());
+  const lastRevalidatedRouteKeyRef = useRef<string | null>(null);
+  const refreshTimerRef = useRef<number | null>(null);
+  const refreshInFlightRef = useRef(false);
+  const pendingRefreshRef = useRef({
+    grid: false,
+    taxonomy: false,
+    previews: false,
+  });
   const [isSyncing, setIsSyncing] = useState(true);
   const [vaultReady, setVaultReady] = useState(false);
+  const [migrationRequired, setMigrationRequired] = useState(false);
+  const [thumbsRootPath, setThumbsRootPath] = useState<string | null>(null);
 
   const routeKeyFor = useCallback((tag?: string) => tag ?? "__all__", []);
 
@@ -282,6 +293,7 @@ function AppWithVault({
 
   const invalidateRouteSnapshots = useCallback(() => {
     routeSnapshotCacheRef.current.clear();
+    lastRevalidatedRouteKeyRef.current = null;
   }, []);
 
   // Redirect if navigated to a channel that doesn't exist (check both tags and channels)
@@ -392,14 +404,12 @@ function AppWithVault({
 
   // ── Channel preview cards (sidebar thumbnails) ─────────────────────────
   //
-  // Event-driven: initial load via listChannelPreviews, then incremental
-  // patches driven by Tauri events (block:added / block:removed /
-  // thumb:updated). See SPEC_THUMBNAILS.md Phase 3 for the contract.
-  // Polling loop (`vault-changed` → full reload) has been replaced by
-  // targeted updates — sidebar latency drops from ~500ms to ~110ms.
+  // Derived state: the hook owns only the current snapshot + cache-buster
+  // versions. All invalidation scheduling now lives in App.tsx so grid,
+  // taxonomy and previews share one coalesced refresh loop.
 
-  const { channelPreviews, refresh: loadPreviews } = useChannelPreviewsEvents({
-    vaultPath: vaultReady ? vaultPath : null,
+  const { channelPreviews, refresh: loadPreviews, bumpThumbVersion } = useChannelPreviewsEvents({
+    thumbsRootPath: vaultReady ? thumbsRootPath : null,
     limit: 20,
   });
 
@@ -410,69 +420,56 @@ function AppWithVault({
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const loadData = useCallback(async ({
-    includePreviews = true,
-    includeTaxonomy = true,
+  const invalidateRoutesForTags = useCallback((affectedTags: readonly string[]) => {
+    routeSnapshotCacheRef.current.delete(routeKeyFor(undefined));
+    for (const tag of affectedTags) {
+      routeSnapshotCacheRef.current.delete(routeKeyFor(tag));
+    }
+    lastRevalidatedRouteKeyRef.current = null;
+  }, [routeKeyFor]);
+
+  const loadGridSnapshot = useCallback(async ({
+    tag = currentTagRef.current,
     preferCachedRoute = false,
     invalidateCachedRoutes = false,
-    skipFetchIfCached = false,
   }: {
-    includePreviews?: boolean;
-    includeTaxonomy?: boolean;
+    tag?: string;
     preferCachedRoute?: boolean;
     invalidateCachedRoutes?: boolean;
-    skipFetchIfCached?: boolean;
   } = {}) => {
     const requestId = ++loadRequestIdRef.current;
     const pathAtStart = vaultPathRef.current;
-    const tagAtStart = currentTag;
+    const tagAtStart = tag;
     const routeKey = routeKeyFor(tagAtStart);
     const started = performance.now();
     if (invalidateCachedRoutes) {
-      routeSnapshotCacheRef.current.clear();
+      invalidateRouteSnapshots();
     }
     if (preferCachedRoute) {
       const cached = routeSnapshotCacheRef.current.get(routeKey);
       if (cached) {
         applyGridSnapshot(tagAtStart, cached);
         setLoadError(null);
-        if (skipFetchIfCached) {
-          return;
-        }
       }
     }
-    console.info("[startup] loadData:start", {
+    console.info("[startup] loadGrid:start", {
       requestId,
       tag: tagAtStart ?? "__all__",
-      includePreviews,
-      includeTaxonomy,
       preferCachedRoute,
     });
     try {
-      const gridPromise = listGridBlocks(tagAtStart, 0, GRID_PAGE_SIZE);
-      const taxonomyPromise = includeTaxonomy
-        ? Promise.all([listTags(), listChannels()] as const)
-        : Promise.resolve(null);
-      const [grid, taxonomy] = await Promise.all([gridPromise, taxonomyPromise]);
+      const grid = await listGridBlocks(tagAtStart, 0, GRID_PAGE_SIZE);
       if (
         loadRequestIdRef.current !== requestId
         || vaultPathRef.current !== pathAtStart
-        || currentTag !== tagAtStart
+        || currentTagRef.current !== tagAtStart
       ) {
         return;
       }
       applyGridSnapshot(tagAtStart, grid);
-      if (taxonomy) {
-        const [t, ch] = taxonomy;
-        setTags(t);
-        setChannels(ch);
-      }
       setLoadError(null);
       window.dispatchEvent(new Event("vault-refreshed"));
-      if (includePreviews) {
-        await loadPreviews();
-      }
-      console.info("[startup] loadData:done", {
+      console.info("[startup] loadGrid:done", {
         requestId,
         blocks: grid.blocks.length,
         elapsedMs: Math.round(performance.now() - started),
@@ -482,23 +479,129 @@ function AppWithVault({
       if (
         loadRequestIdRef.current === requestId
         && vaultPathRef.current === pathAtStart
-        && currentTag === tagAtStart
+        && currentTagRef.current === tagAtStart
       ) {
-        console.error("[LOAD] FAILED:", msg, err);
+        console.error("[LOAD_GRID] FAILED:", msg, err);
         setLoadError(msg);
       }
-      console.error("[startup] loadData:failed", {
+      console.error("[startup] loadGrid:failed", {
         requestId,
         tag: tagAtStart ?? "__all__",
         elapsedMs: Math.round(performance.now() - started),
         error: msg,
       });
     }
-  }, [applyGridSnapshot, currentTag, loadPreviews, routeKeyFor]);
+  }, [applyGridSnapshot, invalidateRouteSnapshots, routeKeyFor]);
 
-  const loadDataRef = useRef(loadData);
-  loadDataRef.current = loadData;
+  const loadTaxonomySnapshotState = useCallback(async () => {
+    const requestId = ++taxonomyRequestIdRef.current;
+    const pathAtStart = vaultPathRef.current;
+    const started = performance.now();
+    console.info("[startup] loadTaxonomy:start", { requestId });
+    try {
+      const snapshot = await listTaxonomySnapshot();
+      if (
+        taxonomyRequestIdRef.current !== requestId
+        || vaultPathRef.current !== pathAtStart
+      ) {
+        return;
+      }
+      setTags(snapshot.tags);
+      setChannels(snapshot.channels);
+      setTotalBlocks(snapshot.total_blocks);
+      setLoadError(null);
+      console.info("[startup] loadTaxonomy:done", {
+        requestId,
+        tags: snapshot.tags.length,
+        channels: snapshot.channels.length,
+        elapsedMs: Math.round(performance.now() - started),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        taxonomyRequestIdRef.current === requestId
+        && vaultPathRef.current === pathAtStart
+      ) {
+        console.error("[LOAD_TAXONOMY] FAILED:", msg, err);
+        setLoadError(msg);
+      }
+      console.error("[startup] loadTaxonomy:failed", {
+        requestId,
+        elapsedMs: Math.round(performance.now() - started),
+        error: msg,
+      });
+    }
+  }, []);
+
+  const loadGridSnapshotRef = useRef(loadGridSnapshot);
+  loadGridSnapshotRef.current = loadGridSnapshot;
+  const loadTaxonomySnapshotRef = useRef(loadTaxonomySnapshotState);
+  loadTaxonomySnapshotRef.current = loadTaxonomySnapshotState;
   const initialRouteLoadDoneRef = useRef(false);
+
+  const flushRefreshQueue = useCallback(async () => {
+    if (!vaultReady || refreshInFlightRef.current) {
+      return;
+    }
+    const pending = pendingRefreshRef.current;
+    if (!pending.grid && !pending.taxonomy && !pending.previews) {
+      return;
+    }
+    pendingRefreshRef.current = {
+      grid: false,
+      taxonomy: false,
+      previews: false,
+    };
+    refreshInFlightRef.current = true;
+    try {
+      await Promise.all([
+        pending.grid ? loadGridSnapshotRef.current({ preferCachedRoute: true }) : Promise.resolve(),
+        pending.taxonomy ? loadTaxonomySnapshotRef.current() : Promise.resolve(),
+        pending.previews ? loadPreviews() : Promise.resolve(),
+      ]);
+    } finally {
+      refreshInFlightRef.current = false;
+      const next = pendingRefreshRef.current;
+      if ((next.grid || next.taxonomy || next.previews) && refreshTimerRef.current === null) {
+        refreshTimerRef.current = window.setTimeout(() => {
+          refreshTimerRef.current = null;
+          void flushRefreshQueue();
+        }, 2000);
+      }
+    }
+  }, [loadPreviews, vaultReady]);
+
+  const scheduleRefresh = useCallback((
+    flags: {
+      grid?: boolean;
+      taxonomy?: boolean;
+      previews?: boolean;
+    },
+    delayMs = 2000,
+  ) => {
+    if (!vaultReady) {
+      return;
+    }
+    if (flags.grid) pendingRefreshRef.current.grid = true;
+    if (flags.taxonomy) pendingRefreshRef.current.taxonomy = true;
+    if (flags.previews) pendingRefreshRef.current.previews = true;
+    if (refreshInFlightRef.current || refreshTimerRef.current !== null) {
+      return;
+    }
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      void flushRefreshQueue();
+    }, delayMs);
+  }, [flushRefreshQueue, vaultReady]);
+
+  const reloadAllSnapshots = useCallback(async () => {
+    invalidateRouteSnapshots();
+    await Promise.all([
+      loadGridSnapshot({ invalidateCachedRoutes: true }),
+      loadTaxonomySnapshotState(),
+      loadPreviews(),
+    ]);
+  }, [invalidateRouteSnapshots, loadGridSnapshot, loadPreviews, loadTaxonomySnapshotState]);
 
   const loadMoreBlocks = useCallback(async () => {
     if (loadingMoreBlocks || !hasMoreBlocks) return;
@@ -538,16 +641,33 @@ function AppWithVault({
     let cancelled = false;
     setVaultReady(false);
     setLoadError(null);
+    setThumbsRootPath(null);
     invalidateRouteSnapshots();
+    pendingRefreshRef.current = {
+      grid: false,
+      taxonomy: false,
+      previews: false,
+    };
+    refreshInFlightRef.current = false;
+    if (refreshTimerRef.current !== null) {
+      window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
     const started = performance.now();
     console.info("[startup] openVault:start", { vaultPath });
     void openVault(vaultPath)
-      .then(() => {
+      .then((result) => {
         if (!cancelled) {
           console.info("[startup] openVault:done", {
             vaultPath,
+            indexed: result.indexed,
+            derivedStoreReady: result.derived_store_ready,
+            bootstrappedFromLegacy: result.bootstrapped_from_legacy,
+            migrationRequired: result.migration_required,
             elapsedMs: Math.round(performance.now() - started),
           });
+          setMigrationRequired(result.migration_required);
+          setThumbsRootPath(result.thumbs_root);
           setVaultReady(true);
         }
       })
@@ -574,12 +694,17 @@ function AppWithVault({
     }
     let cancelled = false;
     let syncTimer: number | null = null;
+    const initialTag = currentTag;
 
     setIsSyncing(true);
     initialRouteLoadDoneRef.current = false;
     void (async () => {
-      await loadDataRef.current({ includePreviews: false });
+      await Promise.all([
+        loadGridSnapshotRef.current({ tag: initialTag }),
+        loadTaxonomySnapshotRef.current(),
+      ]);
       if (cancelled) return;
+      lastRevalidatedRouteKeyRef.current = routeKeyFor(initialTag);
       initialRouteLoadDoneRef.current = true;
       syncTimer = window.setTimeout(() => {
         void startVaultSync()
@@ -605,7 +730,7 @@ function AppWithVault({
         window.clearTimeout(syncTimer);
       }
     };
-  }, [vaultPath, vaultReady]);
+  }, [routeKeyFor, vaultPath, vaultReady]);
 
   useEffect(() => {
     if (!vaultReady) {
@@ -614,45 +739,66 @@ function AppWithVault({
     if (!initialRouteLoadDoneRef.current) {
       return;
     }
-    void loadDataRef.current({
-      includePreviews: false,
-      includeTaxonomy: false,
+    const routeKey = routeKeyFor(currentTag);
+    if (lastRevalidatedRouteKeyRef.current === routeKey) {
+      return;
+    }
+    lastRevalidatedRouteKeyRef.current = routeKey;
+    void loadGridSnapshotRef.current({
+      tag: currentTag,
       preferCachedRoute: true,
-      skipFetchIfCached: true,
     });
-  }, [currentTag, vaultReady]);
+  }, [currentTag, routeKeyFor, vaultReady]);
 
-  // Listen for vault-changed events from file watcher (with debounce)
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
     if (!vaultReady) {
       return;
     }
-    const unlisten = listen<VaultChangedEvent>("vault-changed", (event) => {
+
+    const unlistenFns: Array<Promise<() => void>> = [];
+
+    unlistenFns.push(listen<BlockAddedEvent>("block:added", (event) => {
+      invalidateRoutesForTags(event.payload.tags);
+      scheduleRefresh({
+        grid: currentTagRef.current === undefined || event.payload.tags.includes(currentTagRef.current),
+        taxonomy: true,
+        previews: true,
+      });
+    }));
+
+    unlistenFns.push(listen<BlockRemovedEvent>("block:removed", (event) => {
+      invalidateRoutesForTags(event.payload.tags);
+      scheduleRefresh({
+        grid: currentTagRef.current === undefined || event.payload.tags.includes(currentTagRef.current),
+        taxonomy: true,
+        previews: true,
+      });
+    }));
+
+    unlistenFns.push(listen<ThumbUpdatedEvent>("thumb:updated", (event) => {
+      bumpThumbVersion(event.payload.slug);
+      scheduleRefresh({ previews: true });
+    }));
+
+    unlistenFns.push(listen<VaultChangedEvent>("vault-changed", (event) => {
       if (event.payload.path !== vaultPathRef.current) {
         return;
       }
-      clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        void loadDataRef.current({ includePreviews: false, invalidateCachedRoutes: true });
-      }, 250);
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-      clearTimeout(debounceRef.current);
-    };
-  }, [vaultReady]);
+      invalidateRouteSnapshots();
+      scheduleRefresh({
+        grid: true,
+        taxonomy: true,
+        previews: true,
+      });
+    }));
 
-  useEffect(() => {
-    if (!vaultReady) {
-      return;
-    }
-    const unlistenStarted = listen<VaultSyncStartedEvent>("vault-sync-started", (event) => {
+    unlistenFns.push(listen<VaultSyncStartedEvent>("vault-sync-started", (event) => {
       if (event.payload.path === vaultPathRef.current) {
         setIsSyncing(true);
       }
-    });
-    const unlistenFinished = listen<VaultSyncFinishedEvent>("vault-sync-finished", (event) => {
+    }));
+
+    unlistenFns.push(listen<VaultSyncFinishedEvent>("vault-sync-finished", (event) => {
       if (event.payload.path !== vaultPathRef.current) {
         return;
       }
@@ -661,14 +807,35 @@ function AppWithVault({
         setLoadError(event.payload.error);
         return;
       }
-      void loadDataRef.current({ invalidateCachedRoutes: true });
-    });
+      invalidateRouteSnapshots();
+      if (migrationRequired) {
+        void reloadAllSnapshots().finally(() => {
+          setMigrationRequired(false);
+        });
+        return;
+      }
+      scheduleRefresh({
+        grid: true,
+        taxonomy: true,
+        previews: true,
+      });
+    }));
 
     return () => {
-      unlistenStarted.then((fn) => fn());
-      unlistenFinished.then((fn) => fn());
+      for (const unlisten of unlistenFns) {
+        unlisten.then((fn) => fn());
+      }
     };
-  }, [vaultReady]);
+  }, [bumpThumbVersion, invalidateRouteSnapshots, invalidateRoutesForTags, migrationRequired, reloadAllSnapshots, scheduleRefresh, vaultReady]);
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current !== null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // ── Vault switching ──────────────────────────────────────────────────────
 
@@ -750,7 +917,7 @@ function AppWithVault({
       suppressRedirectRef.current = true;
       try {
         const result = await renameChannel(oldTag, newTag);
-        await loadData({ invalidateCachedRoutes: true });
+        await reloadAllSnapshots();
         if (window.location.pathname === `/channel/${encodeURIComponent(oldTag)}`) {
           navigate(`/channel/${encodeURIComponent(result.tag)}`);
         }
@@ -760,7 +927,7 @@ function AppWithVault({
         suppressRedirectRef.current = false;
       }
     },
-    [loadData, navigate],
+    [navigate, reloadAllSnapshots],
   );
 
   const handleDeleteTagFromAll = useCallback(
@@ -774,9 +941,9 @@ function AppWithVault({
       } catch (err) {
         console.error("Failed to delete tag:", err);
       }
-      await loadData({ invalidateCachedRoutes: true });
+      await reloadAllSnapshots();
     },
-    [loadData, currentTag, navigate],
+    [currentTag, navigate, reloadAllSnapshots],
   );
 
   // ── Ordered tags: channels by position, then remaining alphabetically ──
@@ -842,9 +1009,9 @@ function AppWithVault({
       } catch (err) {
         console.error("Failed to create channel:", err);
       }
-      await loadData({ invalidateCachedRoutes: true });
+      await reloadAllSnapshots();
     },
-    [loadData],
+    [reloadAllSnapshots],
   );
 
   const handleReorderTag = useCallback(
@@ -861,9 +1028,9 @@ function AppWithVault({
       } catch (err) {
         console.error("Failed to reorder channels:", err);
       }
-      await loadData({ invalidateCachedRoutes: true });
+      await reloadAllSnapshots();
     },
-    [orderedTags, loadData],
+    [orderedTags, reloadAllSnapshots],
   );
 
   // ── Card drag-to-tag (dnd-kit) ──────────────────────────────────────────
@@ -875,9 +1042,9 @@ function AppWithVault({
       } catch (err) {
         console.error("Failed to add tag:", err);
       }
-      await loadData({ invalidateCachedRoutes: true });
+      await reloadAllSnapshots();
     },
-    [loadData],
+    [reloadAllSnapshots],
   );
 
   const handleDndStart = useCallback(
@@ -938,9 +1105,9 @@ function AppWithVault({
       } catch (err) {
         console.error("Failed to toggle tag:", err);
       }
-      await loadData({ invalidateCachedRoutes: true });
+      await reloadAllSnapshots();
     },
-    [loadData],
+    [reloadAllSnapshots],
   );
 
   const handleCreateTagFromMenu = useCallback(
@@ -951,9 +1118,9 @@ function AppWithVault({
       } catch (err) {
         console.error("Failed to create tag:", err);
       }
-      await loadData({ invalidateCachedRoutes: true });
+      await reloadAllSnapshots();
     },
-    [loadData],
+    [reloadAllSnapshots],
   );
 
   const handleDeleteBlock = useCallback(
@@ -969,11 +1136,11 @@ function AppWithVault({
       } catch (err) {
         console.error("[DELETE] deleteBlock FAILED:", err);
       }
-      console.log("[DELETE] calling loadData...");
-      await loadData({ invalidateCachedRoutes: true });
-      console.log("[DELETE] loadData done, blocks:", blocks.length, "tags:", tags.length);
+      console.log("[DELETE] calling reloadAllSnapshots...");
+      await reloadAllSnapshots();
+      console.log("[DELETE] reloadAllSnapshots done, blocks:", blocks.length, "tags:", tags.length);
     },
-    [loadData, currentTag, selectedBlock, blocks.length, tags.length],
+    [reloadAllSnapshots, currentTag, selectedBlock, blocks.length, tags.length],
   );
 
   if (!vaultReady && !loadError) {
@@ -992,6 +1159,11 @@ function AppWithVault({
       </div>
     );
   }
+
+  const showPreparingLibrary =
+    migrationRequired
+    && !loadError
+    && (isSyncing || (blocks.length === 0 && tags.length === 0 && channels.length === 0));
 
   return (
     <DndContext
@@ -1048,12 +1220,27 @@ function AppWithVault({
             <p className="text-sm text-destructive">{loadError}</p>
           </div>
         )}
+        {!loadError && showPreparingLibrary && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/96 px-8">
+            <div className="max-w-md text-center">
+              <p className="text-base font-medium text-foreground">Preparing library…</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Creating a local index and preview cache for this vault. The shell is ready;
+                the first usable snapshot will appear as soon as the initial rebuild commits.
+              </p>
+              <p className="mt-4 text-sm text-muted-foreground">
+                Steps: Creating local index → Scanning markdown → Generating previews
+              </p>
+            </div>
+          </div>
+        )}
         <Routes>
           <Route
             element={
               <PageShell
                 blocks={activeBlocks}
                 vaultPath={vaultPath}
+                thumbsRootPath={thumbsRootPath ?? undefined}
                 tags={tags}
                 currentTag={currentTag}
                 scrollToTop={scrollToTopSignal}
@@ -1077,39 +1264,48 @@ function AppWithVault({
 
         {designSystemOpen && (
           <div className="absolute inset-0 z-40 overflow-y-auto bg-background">
-            <ComponentTestBench />
+            <Suspense fallback={null}>
+              <ComponentTestBench />
+            </Suspense>
           </div>
         )}
 
         {selectedBlock && (
-          <Detail
-            block={selectedBlock}
-            vaultPath={vaultPath}
-            onClose={handleDetailClose}
-            onNavigate={handleDetailNavigate}
-            onTagsChanged={() => {
-              void loadData({ invalidateCachedRoutes: true });
-            }}
-          />
+          <Suspense fallback={null}>
+            <Detail
+              block={selectedBlock}
+              vaultPath={vaultPath}
+              thumbsRootPath={thumbsRootPath ?? undefined}
+              onClose={handleDetailClose}
+              onNavigate={handleDetailNavigate}
+              onTagsChanged={() => {
+                void reloadAllSnapshots();
+              }}
+            />
+          </Suspense>
         )}
       </main>
 
-      <Search
-        open={searchOpen}
-        onClose={() => setSearchOpen(false)}
-        onSelect={(block) => {
-          setSelectedBlock(block);
-          setSearchOpen(false);
-        }}
-      />
+      <Suspense fallback={null}>
+        <Search
+          open={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          onSelect={(block) => {
+            setSelectedBlock(block);
+            setSearchOpen(false);
+          }}
+        />
+      </Suspense>
 
-      <ImportDialog
-        open={importOpen}
-        onClose={() => setImportOpen(false)}
-        onImportComplete={() => {
-          void loadData({ invalidateCachedRoutes: true });
-        }}
-      />
+      <Suspense fallback={null}>
+        <ImportDialog
+          open={importOpen}
+          onClose={() => setImportOpen(false)}
+          onImportComplete={() => {
+            void reloadAllSnapshots();
+          }}
+        />
+      </Suspense>
     </div>{/* end body */}
 
       {/* Bottom action bar */}
@@ -1141,12 +1337,14 @@ function AppWithVault({
         </ActionButton>
       </div>
 
-      <DropZone
-        currentTag={currentTag}
-        onBlocksCreated={() => {
-          void loadData({ invalidateCachedRoutes: true });
-        }}
-      />
+      <Suspense fallback={null}>
+        <DropZone
+          currentTag={currentTag}
+          onBlocksCreated={() => {
+            void reloadAllSnapshots();
+          }}
+        />
+      </Suspense>
     </div>{/* end flex-col */}
 
     <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
@@ -1170,6 +1368,7 @@ function AppWithVault({
 interface RouteContext {
   blocks: LightBlock[];
   vaultPath: string;
+  thumbsRootPath?: string;
   tags: TagCount[];
   currentTag?: string;
   scrollToTop: number;
@@ -1194,220 +1393,6 @@ function useRouteCtx(): RouteContext {
 }
 
 // ─── Pages ─────────────────────────────────────────────────────────────────
-
-function ComponentTestBench() {
-  return (
-    <div className="border-b border-border p-8">
-      <p className="mb-6 font-mono text-sm text-muted-foreground">Component test bench</p>
-
-      {/* Button — Sizes */}
-      <Section label="Button — Sizes">
-        <Button size="xs">xs 24px</Button>
-        <Button>default 32px</Button>
-      </Section>
-
-      {/* Button — Variants */}
-      <Section label="Button — Variants">
-        <Button variant="default">Default</Button>
-        <Button variant="ghost">Ghost</Button>
-        <Button variant="destructive">Destructive</Button>
-        <Button variant="link">Link</Button>
-      </Section>
-
-      {/* Button — with icons */}
-      <Section label="Button — Icons">
-        <Button size="xs"><Plus className="size-3" />Add</Button>
-        <Button><Plus className="size-4" />Add</Button>
-        <Button variant="destructive"><Trash2 className="size-4" />Delete</Button>
-      </Section>
-
-      {/* Button — Icon only */}
-      <Section label="Button — Icon only">
-        <Button size="icon-xs"><Plus className="size-3" /></Button>
-        <Button size="icon"><Plus className="size-4" /></Button>
-      </Section>
-
-      {/* Button — Disabled */}
-      <Section label="Button — Disabled">
-        <Button disabled>Disabled</Button>
-        <Button variant="destructive" disabled>Disabled</Button>
-      </Section>
-
-      {/* ActionButton */}
-      <Section label="ActionButton (bottom bar)">
-        <ActionButton hotkey="⌘K">Search</ActionButton>
-        <ActionButton hotkey="⌘⇧N">New Channel</ActionButton>
-        <ActionButton hotkey="⌘,">Settings</ActionButton>
-        <ActionButton>No hotkey</ActionButton>
-        <ActionButton hotkey="⌘⇧O" isSelected>Selected</ActionButton>
-      </Section>
-
-      {/* Input */}
-      <Section label="Input">
-        <Input placeholder="Default" className="w-48" />
-        <Input defaultValue="With value" className="w-48" />
-        <Input disabled placeholder="Disabled" className="w-48" />
-      </Section>
-
-      <Section label="Input — Ghost">
-        <Input variant="ghost" placeholder="Ghost input..." className="w-48" />
-        <Input variant="ghost" defaultValue="With value" className="w-48" />
-      </Section>
-
-
-      {/* Checkbox */}
-      <Section label="Checkbox">
-        <div className="flex items-center gap-2">
-          <Checkbox id="cb1" />
-          <label htmlFor="cb1" className="text-base">Unchecked</label>
-        </div>
-        <div className="flex items-center gap-2">
-          <Checkbox id="cb2" defaultChecked />
-          <label htmlFor="cb2" className="text-base">Checked</label>
-        </div>
-        <div className="flex items-center gap-2">
-          <Checkbox id="cb3" disabled />
-          <label htmlFor="cb3" className="text-base text-muted-foreground">Disabled</label>
-        </div>
-      </Section>
-
-      {/* Progress */}
-      <Section label="Progress">
-        <Progress value={0} className="w-64" />
-        <Progress value={45} className="w-64" />
-        <Progress value={100} className="w-64" />
-      </Section>
-
-      {/* Tooltip */}
-      <Section label="Tooltip">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button><Info className="size-4" />Hover me</Button>
-          </TooltipTrigger>
-          <TooltipContent>Tooltip content</TooltipContent>
-        </Tooltip>
-      </Section>
-
-      {/* DropdownMenu */}
-      <Section label="DropdownMenu">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button>Open menu</Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem><Plus className="size-3" />Action</DropdownMenuItem>
-            <DropdownMenuItem><ExternalLink className="size-3" />Open link</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive"><Trash2 className="size-3" />Delete</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost">With submenu</Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger><Plus className="size-3" />Submenu</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                <DropdownMenuItem>Sub item 1</DropdownMenuItem>
-                <DropdownMenuItem>Sub item 2</DropdownMenuItem>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            <DropdownMenuItem>Regular item</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </Section>
-
-      {/* ContextMenu */}
-      <Section label="ContextMenu (right-click the box)">
-        <ContextMenu>
-          <ContextMenuTrigger asChild>
-            <div className="flex h-16 w-48 items-center justify-center rounded-1 border border-dashed border-border text-sm text-muted-foreground">
-              Right-click here
-            </div>
-          </ContextMenuTrigger>
-          <ContextMenuContent>
-            <ContextMenuItem>Action</ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem variant="destructive"><Trash2 className="size-3" />Delete</ContextMenuItem>
-          </ContextMenuContent>
-        </ContextMenu>
-      </Section>
-
-      {/* AlertDialog */}
-      <Section label="AlertDialog">
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="destructive">Open dialog</Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent size="sm">
-            <AlertDialogHeader>
-              <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-              <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction variant="destructive">Confirm</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </Section>
-
-      {/* Typography */}
-      <Section label="Typography">
-        <span className="text-sm text-foreground">text-sm (12px)</span>
-        <span className="text-base text-foreground">text-base (14px)</span>
-        <span className="text-lg text-foreground">text-lg (18px)</span>
-      </Section>
-
-      {/* Text hierarchy */}
-      <Section label="Text hierarchy">
-        <span className="text-base text-foreground">foreground</span>
-        <span className="text-base text-muted-foreground">muted-foreground</span>
-        <span className="text-base text-tertiary-foreground">tertiary-foreground</span>
-      </Section>
-
-      {/* Surfaces */}
-      <Section label="Surfaces (background layering)" vertical>
-        <div className="flex gap-2">
-          <Swatch label="background" className="bg-background border border-border" />
-          <Swatch label="accent (+1)" className="bg-accent" />
-          <Swatch label="sidebar-accent (+2)" className="bg-sidebar-accent" />
-          <Swatch label="active/border (+3)" className="bg-active" />
-        </div>
-      </Section>
-
-      {/* Button tokens */}
-      <Section label="Button tokens" vertical>
-        <div className="flex gap-2">
-          <Swatch label="component-fill" className="bg-component-fill" />
-          <Swatch label="component-fill-inner" className="bg-component-fill-inner" />
-          <Swatch label="component-fill-hover" className="bg-component-fill-hover" />
-        </div>
-      </Section>
-    </div>
-  );
-}
-
-function Section({ label, children, vertical }: { label: string; children: React.ReactNode; vertical?: boolean }) {
-  return (
-    <div className="mb-4">
-      <p className="mb-2 font-mono text-sm text-muted-foreground">{label}</p>
-      <div className={vertical ? "flex flex-col gap-2" : "flex flex-wrap items-center gap-2"}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Swatch({ label, className }: { label: string; className: string }) {
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <div className={`size-12 rounded-1 ${className}`} />
-      <span className="text-sm text-muted-foreground">{label}</span>
-    </div>
-  );
-}
 
 function AllBlocksPage() {
   const ctx = useRouteCtx();

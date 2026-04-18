@@ -8,6 +8,7 @@ import type {
   LightBlock,
   TagCount,
   ChannelDto,
+  TaxonomySnapshot,
   VaultOpenResult,
   CreateBlockParams,
   ArenaChannelInfo,
@@ -77,6 +78,9 @@ export const search = (query: string) =>
 // Channels
 export const listChannels = () =>
   invoke<ChannelDto[]>("list_channels");
+
+export const listTaxonomySnapshot = () =>
+  invoke<TaxonomySnapshot>("list_taxonomy_snapshot");
 
 export const createChannel = (tag: string, title?: string) =>
   invoke<ChannelDto>("create_channel", { tag, title });

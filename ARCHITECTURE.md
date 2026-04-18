@@ -15,7 +15,7 @@ Mine решает это: визуальный букмаркинг с лока�
 3. **Каналы — это теги.** Канал = сохранённый фильтр по тегу в frontmatter. Нет папок-каналов
 4. **Плоская структура.** Все файлы в корне vault. Позже — изолированные проекты (отдельные vault'ы)
 5. **Индекс восстановим.** Удаление `.arena/index.db` не приводит к потере данных
-6. **Thumbnail-пайплайн.** На экране показываются превью 240px, не оригиналы
+6. **Thumbnail / preview pipeline.** В feed/grid/sidebar показываются preview-артефакты из локального derived store, не оригиналы
 7. **Wikilinks.** Связи между блоками — через `[[wikilinks]]` в Obsidian-стиле
 
 ## Data model
@@ -104,11 +104,9 @@ saved_at: 2026-02-26T14:30:00Z
 ### Vault — файловая структура
 
 ```
-~/Mine/                        ← vault (выбирается пользователем)
-├── .arena/                          ← служебные данные
-│   ├── index.db                     ← SQLite: FTS5, кэш тегов, каналы
-│   └── cache/
-│       └── thumbs/                  ← thumbnails 240px
+~/Mine/                        ← source vault (выбирается пользователем)
+├── .arena/
+│   └── vault-id                     ← sync'ed идентификатор vault
 ├── sunset-tokyo.md                  ← метаданные изображения
 ├── sunset-tokyo.jpg                 ← само изображение
 ├── stripe-homepage.md               ← метаданные ссылки
@@ -119,6 +117,25 @@ saved_at: 2026-02-26T14:30:00Z
 ├── demo-reel.mp4                    ← видеофайл
 └── ...                              ← всё плоско
 ```
+
+```
+~/Library/Application Support/com.mine.app/vaults/<vault-id>/
+├── index.db                         ← local derived SQLite index
+├── thumbs/                          ← local preview / thumb cache
+└── ...                              ← manifests, migration state, derived artifacts
+```
+
+Source vault хранит только пользовательские файлы и `vault-id`. Все derived данные живут per-device в app data и могут быть rebuilt локально.
+
+## Current Critical Path Reset
+
+Текущий runtime contract после срезов `Critical Path Reset v1`:
+
+- startup/open работает против local derived store, а не против SQLite внутри iCloud vault;
+- feed/grid/sidebar используют preview-first pipeline;
+- `Detail` остаётся full-fidelity path и может открывать оригиналы;
+- async asset protocol override убирает синхронный `asset://` hotspot с main thread WebView для оставшихся asset-paths;
+- multi-image article/social preview должен приходить как один composite preview asset, а не как client-side gallery.
 
 ## Components
 
@@ -153,14 +170,22 @@ saved_at: 2026-02-26T14:30:00Z
                           │
                           ▼
               ┌──────────────────────┐
-              │   Vault (filesystem)  │
+              │ Source Vault (files)   │
+│                      │
+│  *.md + media files   │
+│  (flat structure)     │
+│                      │
+│  .arena/vault-id     │
+              └──────────────────────┘
+                          │
+                          ▼
+              ┌──────────────────────┐
+              │ Local Derived Store   │
+              │ (per-device app data) │
               │                      │
-              │  *.md + media files   │
-              │  (flat structure)     │
-              │                      │
-              │  .arena/             │
-              │  ├── index.db        │
-              │  └── cache/thumbs/   │
+              │  index.db            │
+              │  thumbs/ previews/   │
+              │  manifests/          │
               └──────────────────────┘
 ```
 

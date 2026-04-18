@@ -28,11 +28,17 @@ pub enum VaultError {
 #[derive(Debug, Clone)]
 pub struct VaultLayout {
     root: PathBuf,
+    derived_root: PathBuf,
 }
 
 impl VaultLayout {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        let derived_root = root.join(".arena");
+        Self { root, derived_root }
+    }
+
+    pub fn with_derived_root(root: PathBuf, derived_root: PathBuf) -> Self {
+        Self { root, derived_root }
     }
 
     /// The vault root directory.
@@ -64,17 +70,39 @@ impl VaultLayout {
         self.root.join(".arena")
     }
 
-    /// Path to the SQLite index: `.arena/index.db`.
+    /// Path to the synced vault identity marker: `.arena/vault-id`.
+    pub fn vault_id_path(&self) -> PathBuf {
+        self.arena_dir().join("vault-id")
+    }
+
+    /// Root directory for local derived state (per-device cache/index).
+    pub fn derived_root(&self) -> &Path {
+        &self.derived_root
+    }
+
+    /// Path to the legacy SQLite index in the vault: `.arena/index.db`.
+    pub fn legacy_index_db_path(&self) -> PathBuf {
+        self.arena_dir().join("index.db")
+    }
+
+    /// Path to the SQLite index in the local derived store.
     pub fn index_db_path(&self) -> PathBuf {
-        self.root.join(".arena").join("index.db")
+        self.derived_root.join("index.db")
     }
 
-    /// Path to the thumbnails directory: `.arena/cache/thumbs/`.
+    /// Path to the legacy thumbnails directory inside the vault:
+    /// `.arena/cache/thumbs`.
+    pub fn legacy_thumbs_dir(&self) -> PathBuf {
+        self.arena_dir().join("cache").join("thumbs")
+    }
+
+    /// Path to the thumbnails directory in the local derived store.
     pub fn thumbs_dir(&self) -> PathBuf {
-        self.root.join(".arena").join("cache").join("thumbs")
+        self.derived_root.join("cache").join("thumbs")
     }
 
-    /// Path to a specific thumbnail: `.arena/cache/thumbs/slug.jpg`.
+    /// Path to a specific thumbnail in the local derived store:
+    /// `<derived_root>/cache/thumbs/slug.jpg`.
     ///
     /// Panics in debug builds if slug fails validation.
     /// Call `validate_slug()` at IPC boundaries before using this.
@@ -177,6 +205,24 @@ mod tests {
     }
 
     #[test]
+    fn vault_id_path() {
+        assert_eq!(layout().vault_id_path(), PathBuf::from("/vault/.arena/vault-id"));
+    }
+
+    #[test]
+    fn derived_root_defaults_to_arena_dir() {
+        assert_eq!(layout().derived_root(), Path::new("/vault/.arena"));
+    }
+
+    #[test]
+    fn legacy_index_db_path() {
+        assert_eq!(
+            layout().legacy_index_db_path(),
+            PathBuf::from("/vault/.arena/index.db")
+        );
+    }
+
+    #[test]
     fn index_db_path() {
         assert_eq!(
             layout().index_db_path(),
@@ -193,6 +239,14 @@ mod tests {
     }
 
     #[test]
+    fn legacy_thumbs_dir() {
+        assert_eq!(
+            layout().legacy_thumbs_dir(),
+            PathBuf::from("/vault/.arena/cache/thumbs")
+        );
+    }
+
+    #[test]
     fn thumb_path() {
         // V4
         assert_eq!(
@@ -204,6 +258,32 @@ mod tests {
     #[test]
     fn root() {
         assert_eq!(layout().root(), Path::new("/vault"));
+    }
+
+    #[test]
+    fn custom_derived_root_overrides_index_location() {
+        let layout = VaultLayout::with_derived_root(
+            PathBuf::from("/vault"),
+            PathBuf::from("/local-derived/vault-123"),
+        );
+        assert_eq!(layout.root(), Path::new("/vault"));
+        assert_eq!(layout.derived_root(), Path::new("/local-derived/vault-123"));
+        assert_eq!(
+            layout.index_db_path(),
+            PathBuf::from("/local-derived/vault-123/index.db")
+        );
+        assert_eq!(
+            layout.legacy_index_db_path(),
+            PathBuf::from("/vault/.arena/index.db")
+        );
+        assert_eq!(
+            layout.thumbs_dir(),
+            PathBuf::from("/local-derived/vault-123/cache/thumbs")
+        );
+        assert_eq!(
+            layout.legacy_thumbs_dir(),
+            PathBuf::from("/vault/.arena/cache/thumbs")
+        );
     }
 
     // ── validate_slug ─────────────────────────────────────────────────
