@@ -161,6 +161,19 @@ describe("computeCardHeight — social", () => {
     });
     expect(computeCardHeight(four, 280, wordWidths)).toBeGreaterThan(computeCardHeight(two, 280, wordWidths));
   });
+
+  it("does not reserve an invisible top gap before social media when top text is absent", () => {
+    const block = makeBlock({
+      block_type: "article",
+      url: "https://instagram.com/p/1",
+      author: "@artist",
+      body: "![](a.jpg)\n![](b.jpg)",
+      media_urls: "[\"a.jpg\",\"b.jpg\"]",
+    });
+    const h = computeCardHeight(block, 280, wordWidths);
+    // border 2 + top padding 16 + one media row 122 + author gap 8 + author 16 + bottom padding 16
+    expect(h).toBe(180);
+  });
 });
 
 describe("computeCardHeight — determinism", () => {

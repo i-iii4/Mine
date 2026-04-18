@@ -197,6 +197,39 @@ describe("Card", () => {
     expect(screen.queryByText("+2")).not.toBeInTheDocument();
   });
 
+  it("falls back to distinct source images when social gallery tiles have no preview assets", () => {
+    const b = block({
+      block_type: "article",
+      url: "https://x.com/a/status/1",
+      author: "@artist",
+      body: "![](img0.jpg)\n![](img1.jpg)\n![](img2.jpg)\n![](img3.jpg)",
+      media_urls: "[\"img0.jpg\",\"img1.jpg\",\"img2.jpg\",\"img3.jpg\"]",
+    });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const images = Array.from(container.querySelectorAll("img"));
+    expect(images).toHaveLength(4);
+    expect(images[0]?.getAttribute("src")).toContain("/img0.jpg");
+    expect(images[1]?.getAttribute("src")).toContain("/img1.jpg");
+    expect(images[2]?.getAttribute("src")).toContain("/img2.jpg");
+    expect(images[3]?.getAttribute("src")).toContain("/img3.jpg");
+  });
+
+  it("does not add a phantom top gap before social media when top content is absent", () => {
+    const b = block({
+      block_type: "article",
+      url: "https://instagram.com/p/1",
+      author: "@sorochii_",
+      body: "![](photo-a.jpg)\n![](photo-b.jpg)",
+      media_urls: "[\"photo-a.jpg\",\"photo-b.jpg\"]",
+    });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const image = container.querySelector("img");
+    const mediaWrapper = image?.parentElement?.parentElement ?? null;
+    expect(mediaWrapper).toBeTruthy();
+    expect(mediaWrapper?.className).not.toContain("mt-3");
+    expect(screen.getByText("by @sorochii_")).toBeInTheDocument();
+  });
+
   // ── Video card ────────────────────────────────────────────────────────
 
   it("renders video card with autoplay video in feed", () => {

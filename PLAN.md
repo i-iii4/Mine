@@ -127,7 +127,8 @@ Goal: устранить две подтверждённые архитекту�
   - введён `FeedPreviewManifest`;
   - query/read path переведён на local preview-first contract;
   - image/article/social feed-path больше не должен читать оригиналы как основной runtime path;
-  - multi-image preview pipeline ещё не доведён до продуктового состояния.
+  - user-visible multi-image fallback regression закрыт: gallery tiles больше не дублируют один block-level thumb при missing `preview_manifest` / missing tile preview assets;
+  - tile preview pipeline на storage-слое всё ещё не доведён до полного existence-backed состояния для legacy rows, поэтому `C2` остаётся partial.
 - `C3` выполнен частично:
   - route/layout invalidation и resize bucket handling усилены;
   - sync IPC и asset-serving main-thread hotspots из trace/sample выведены из critical path;
@@ -141,10 +142,10 @@ Goal: устранить две подтверждённые архитекту�
 
 ### Current known blocker before phase completion
 
-- **Multi-image preview regression.**
-  - Intended result for multi-image article/social cards: one composite preview that visually summarizes the first 2-4 images, plus `+N` only for overflow beyond those tiles.
-  - Current observed result on `Mine`: some multi-image cards show a single image with `+N`, which means the runtime falls back below the intended composite-preview contract.
-  - This must be fixed before `C2` can be marked complete.
+- **Existence-backed tile preview contract.**
+  - Intended result for multi-image article/social cards: feed получает либо готовый composite preview, либо подтверждённые per-tile preview assets.
+  - Current runtime no longer duplicates one `slug.jpg` across all tiles: при missing tile preview asset UI падает в distinct per-source media fallback и сохраняет правильную галерею.
+  - Но storage pipeline всё ещё не гарантирует полный set per-tile preview files и backfill `preview_manifest` для legacy rows. Это остаётся незавершённым куском `C2`.
 
 ### Acceptance Criteria
 
@@ -156,7 +157,7 @@ Goal: устранить две подтверждённые архитекту�
 - Второй Mac открывает тот же vault через rebuild local derived store.
 - Feed не использует real media в measurement path.
 - Initial visible window, route switch и resize не рендерят live cards внутри stale envelope; системной bottom clip / white tail underflow больше нет.
-- Multi-image article/social cards show composite previews in feed instead of a single-image fallback.
+- Multi-image article/social cards no longer collapse to a repeated block-level thumb; feed shows either composite preview or distinct gallery tiles.
 - `Detail` продолжает открывать оригиналы.
 
 ### Known Residuals

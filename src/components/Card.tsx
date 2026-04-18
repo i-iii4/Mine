@@ -3,13 +3,17 @@ import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
 import type { LightBlock } from "@/types";
 import {
-  thumbnailUrl,
   mediaUrl,
   previewAssetUrl,
+  thumbnailUrl,
   domainFromUrl,
   legacyThumbsRoot,
 } from "@/lib/assets";
-import { deriveCardLayoutDescriptor, type CardLayoutDescriptor } from "@/lib/cardLayout";
+import {
+  deriveCardLayoutDescriptor,
+  deriveContentCardSlots,
+  type CardLayoutDescriptor,
+} from "@/lib/cardLayout";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
 import { VideoFromBlob } from "./VideoFromBlob";
@@ -193,14 +197,47 @@ function resolveFeedMediaSrc(vaultPath: string, src: string): string {
   return src.startsWith("http://") || src.startsWith("https://") ? src : mediaUrl(vaultPath, src);
 }
 
-function resolveFeedPreviewSrc(
-  thumbsRootPath: string,
-  previewPath: string | null,
-  fallbackSlug: string,
-): string {
-  return previewPath
-    ? previewAssetUrl(thumbsRootPath, previewPath)
-    : thumbnailUrl(thumbsRootPath, fallbackSlug);
+function GalleryTileImage({
+  item,
+  vaultPath,
+  thumbsRootPath,
+  fallbackSlug,
+  loading,
+}: {
+  item: CardLayoutDescriptor["mediaItems"][number];
+  vaultPath: string;
+  thumbsRootPath: string;
+  fallbackSlug: string;
+  loading: "eager" | "lazy";
+}) {
+  const previewSrc = item.previewPath
+    ? previewAssetUrl(thumbsRootPath, item.previewPath)
+    : null;
+  const sourceSrc = resolveFeedMediaSrc(vaultPath, item.sourcePath);
+  const fallbackSrc = thumbnailUrl(thumbsRootPath, fallbackSlug);
+  const [src, setSrc] = useState(previewSrc ?? sourceSrc);
+
+  useEffect(() => {
+    setSrc(previewSrc ?? sourceSrc);
+  }, [previewSrc, sourceSrc]);
+
+  return (
+    <img
+      src={src}
+      alt=""
+      className="absolute inset-0 h-full w-full object-cover"
+      loading={loading}
+      onError={() => {
+        if (src !== sourceSrc) {
+          setSrc(sourceSrc);
+          return;
+        }
+        if (src !== fallbackSrc) {
+          setSrc(fallbackSrc);
+        }
+      }}
+    />
+  );
 }
 
 function isPlayableVideoSrc(src: string): boolean {
@@ -261,19 +298,15 @@ function GalleryTiles({
     <div className="absolute inset-0 grid gap-[2px] bg-background" style={gridStyle}>
       {visibleItems.map((item, index) => {
         const tileStyle = count === 3 && index === 0 ? { gridRow: "1 / span 2" } : undefined;
-        const tilePreviewSrc = resolveFeedPreviewSrc(
-          thumbsRootPath,
-          item.previewPath,
-          fallbackSlug,
-        );
 
         return (
           <div key={`${item.sourcePath}-${index}`} className="relative overflow-hidden bg-accent" style={tileStyle}>
             {!measurementMode && !item.isVideo && (
-              <img
-                src={tilePreviewSrc}
-                alt=""
-                className="absolute inset-0 h-full w-full object-cover"
+              <GalleryTileImage
+                item={item}
+                vaultPath={vaultPath}
+                thumbsRootPath={thumbsRootPath}
+                fallbackSlug={fallbackSlug}
                 loading={imgLoading}
               />
             )}
@@ -459,6 +492,9 @@ const SocialCard = memo(function SocialCard({
   const text = descriptor.previewText;
   const media = descriptor.mediaItems;
   const previewSrc = thumbnailUrl(thumbsRootPath, block.slug);
+  const slots = deriveContentCardSlots(descriptor);
+  const hasTopContent = slots?.hasTopContent ?? false;
+  const hasBottomMeta = slots?.hasBottomMeta ?? false;
 
   return (
     <div className="p-4">
@@ -474,7 +510,10 @@ const SocialCard = memo(function SocialCard({
         const absClass = "absolute inset-0 h-full w-full object-cover";
         return (
           <div
-            className="mt-3 relative w-full overflow-hidden bg-accent"
+            className={cn(
+              "relative w-full overflow-hidden bg-accent",
+              hasTopContent && "mt-3",
+            )}
             style={{ aspectRatio: `${m.aspectRatio ?? 1}` }}
           >
             {m.isVideo ? (
@@ -495,7 +534,10 @@ const SocialCard = memo(function SocialCard({
       })()}
       {descriptor.variant === "social-media-grid" && media.length >= 2 && (
         <div
-          className="mt-3 relative w-full overflow-hidden bg-accent"
+          className={cn(
+            "relative w-full overflow-hidden bg-accent",
+            hasTopContent && "mt-3",
+          )}
           style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? 1}` }}
         >
           <GalleryTiles
@@ -508,8 +550,10 @@ const SocialCard = memo(function SocialCard({
         </div>
       )}
 
-      {block.author && (
-        <p className="mt-2 text-sm text-muted-foreground">by {block.author}</p>
+      {hasBottomMeta && (
+        <p className={cn("text-sm text-muted-foreground", (hasTopContent || media.length > 0) && "mt-2")}>
+          by {block.author}
+        </p>
       )}
     </div>
   );
@@ -532,6 +576,9 @@ const ArticleCard = memo(function ArticleCard({
   const hasPreview = descriptor.variant === "article-media";
   const primaryMedia = descriptor.mediaItems[0];
   const rendersFeedVideo = hasPreview && descriptor.mediaItems.length === 1 && primaryMedia?.isVideo;
+  const slots = deriveContentCardSlots(descriptor);
+  const hasTopContent = slots?.hasTopContent ?? false;
+  const hasBottomMeta = slots?.hasBottomMeta ?? false;
 
   return (
     <div className="p-4">
@@ -559,7 +606,10 @@ const ArticleCard = memo(function ArticleCard({
         // article previews reserve a square gallery slot; single-image
         // previews use object-cover to avoid letterboxing in feed cards.
         <div
-          className="relative mt-3 w-full overflow-hidden bg-accent"
+          className={cn(
+            "relative w-full overflow-hidden bg-accent",
+            hasTopContent && "mt-3",
+          )}
           style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? (16 / 9)}` }}
         >
           {descriptor.totalMediaCount > 1 ? (
@@ -587,9 +637,12 @@ const ArticleCard = memo(function ArticleCard({
           {rendersFeedVideo && <PlayBadge />}
         </div>
       )}
-      {block.author && (
+      {hasBottomMeta && (
         <p
-          className="mt-2 text-sm text-muted-foreground"
+          className={cn(
+            "text-sm text-muted-foreground",
+            (hasTopContent || hasPreview) && "mt-2",
+          )}
           style={{ lineHeight: "16px" }}
         >
           {block.author}

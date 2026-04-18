@@ -35,6 +35,12 @@ export interface CardLayoutDescriptor {
   totalMediaCount: number;
 }
 
+export interface ContentCardSlots {
+  hasTopContent: boolean;
+  hasMedia: boolean;
+  hasBottomMeta: boolean;
+}
+
 function stripMarkdown(text: string): string {
   return text
     .replace(/^#{1,6}\s+/gm, "")
@@ -307,4 +313,28 @@ export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescrip
 
   const _never: never = block.block_type;
   return _never;
+}
+
+export function deriveContentCardSlots(
+  descriptor: CardLayoutDescriptor,
+): ContentCardSlots | null {
+  switch (descriptor.variant) {
+    case "article-text":
+    case "article-media":
+      return {
+        hasTopContent: descriptor.titleText.length > 0 || descriptor.previewText.length > 0,
+        hasMedia: descriptor.variant === "article-media",
+        hasBottomMeta: descriptor.authorText.length > 0,
+      };
+    case "social-text":
+    case "social-single-media":
+    case "social-media-grid":
+      return {
+        hasTopContent: descriptor.previewText.length > 0,
+        hasMedia: descriptor.variant !== "social-text",
+        hasBottomMeta: descriptor.authorText.length > 0,
+      };
+    default:
+      return null;
+  }
 }

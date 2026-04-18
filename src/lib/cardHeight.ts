@@ -14,7 +14,7 @@
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 import { countLines } from "./wordWrap";
-import { deriveCardLayoutDescriptor } from "./cardLayout";
+import { deriveCardLayoutDescriptor, deriveContentCardSlots } from "./cardLayout";
 
 // ─── Layout constants (must match Card.tsx) ─────────────────────────────────
 //
@@ -144,23 +144,28 @@ function computeArticleHeight(
   wordWidths: WordWidths | null,
 ): number {
   const descriptor = deriveCardLayoutDescriptor(block);
+  const slots = deriveContentCardSlots(descriptor);
   // Width inside the card border. Article padding is applied inside this.
   const iw = innerWidth(columnWidth);
   const contentWidth = Math.max(1, iw - ARTICLE_PADDING_X * 2);
 
   if (wordWidths) {
     // Precise path: known word widths, exact line count.
-    const titleLines = Math.min(
-      ARTICLE_TITLE_MAX_LINES,
-      Math.max(1, countLines(wordWidths.title, wordWidths.titleSpace, contentWidth)),
-    );
+    const titleLines = descriptor.titleText
+      ? Math.min(
+          ARTICLE_TITLE_MAX_LINES,
+          Math.max(1, countLines(wordWidths.title, wordWidths.titleSpace, contentWidth)),
+        )
+      : 0;
     const previewMax = descriptor.variant === "article-media"
       ? ARTICLE_PREVIEW_MAX_LINES_WITH_IMAGE
       : ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE;
-    const previewLines = Math.min(
-      previewMax,
-      Math.max(0, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth)),
-    );
+    const previewLines = descriptor.previewText
+      ? Math.min(
+          previewMax,
+          Math.max(0, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth)),
+        )
+      : 0;
 
     const titleH = titleLines * ARTICLE_TITLE_LINE_HEIGHT;
     const previewH = previewLines * ARTICLE_PREVIEW_LINE_HEIGHT;
@@ -175,10 +180,14 @@ function computeArticleHeight(
     //   title → preview: mt-1.5 (6px), only when preview exists
     //   (previous) → image: mt-3 (12px), only when image exists
     //   (previous) → author: mt-2 (8px), only when author exists
+    const hasTitle = titleH > 0;
+    const hasPreview = previewH > 0;
+    const hasMedia = imageH > 0;
+    const hasBottomMeta = authorH > 0;
     const gaps =
-      (previewLines > 0 ? ARTICLE_GAP_TITLE_TO_PREVIEW : 0) +
-      (imageH > 0 ? ARTICLE_GAP_BEFORE_IMAGE : 0) +
-      (authorH > 0 ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
+      (hasTitle && hasPreview ? ARTICLE_GAP_TITLE_TO_PREVIEW : 0) +
+      ((hasTitle || hasPreview) && hasMedia ? ARTICLE_GAP_BEFORE_IMAGE : 0) +
+      ((hasTitle || hasPreview || hasMedia) && hasBottomMeta ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
 
     return (
       CARD_BORDER_HEIGHT +
@@ -205,10 +214,14 @@ function computeArticleHeight(
     ? Math.round(contentWidth / Math.max(descriptor.primaryAspectRatio ?? ARTICLE_IMAGE_ASPECT, 0.01))
     : 0;
   const authorH = descriptor.authorText ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
+  const hasTitle = descriptor.titleText.length > 0;
+  const hasPreviewText = descriptor.previewText.length > 0 && previewLines > 0;
+  const hasMedia = imageH > 0;
+  const hasBottomMeta = authorH > 0 && (slots?.hasBottomMeta ?? false);
   const gaps =
-    (previewLines > 0 ? ARTICLE_GAP_TITLE_TO_PREVIEW : 0) +
-    (imageH > 0 ? ARTICLE_GAP_BEFORE_IMAGE : 0) +
-    (authorH > 0 ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
+    (hasTitle && hasPreviewText ? ARTICLE_GAP_TITLE_TO_PREVIEW : 0) +
+    ((hasTitle || hasPreviewText) && hasMedia ? ARTICLE_GAP_BEFORE_IMAGE : 0) +
+    ((hasTitle || hasPreviewText || hasMedia) && hasBottomMeta ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
 
   return (
     CARD_BORDER_HEIGHT +
@@ -228,14 +241,17 @@ function computeSocialHeight(
   wordWidths: WordWidths | null,
 ): number {
   const descriptor = deriveCardLayoutDescriptor(block);
+  const slots = deriveContentCardSlots(descriptor);
   const iw = innerWidth(columnWidth);
   const contentWidth = Math.max(1, iw - SOCIAL_PADDING_X * 2);
 
   const previewLines = wordWidths
-    ? Math.min(
-        SOCIAL_PREVIEW_MAX_LINES,
-        Math.max(0, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth)),
-      )
+    ? (descriptor.previewText
+        ? Math.min(
+            SOCIAL_PREVIEW_MAX_LINES,
+            Math.max(0, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth)),
+          )
+        : 0)
     : (descriptor.previewText ? SOCIAL_PREVIEW_MAX_LINES : 0);
 
   const previewH = previewLines * SOCIAL_PREVIEW_LINE_HEIGHT;
@@ -250,9 +266,12 @@ function computeSocialHeight(
     mediaH = rows * cell + Math.max(0, rows - 1) * SOCIAL_GRID_GAP;
   }
 
+  const hasTopContent = previewH > 0 && (slots?.hasTopContent ?? false);
+  const hasMedia = mediaH > 0;
+  const hasBottomMeta = authorH > 0 && (slots?.hasBottomMeta ?? false);
   const gaps =
-    (mediaH > 0 ? SOCIAL_GAP_BEFORE_MEDIA : 0) +
-    (authorH > 0 ? SOCIAL_GAP_BEFORE_AUTHOR : 0);
+    (hasTopContent && hasMedia ? SOCIAL_GAP_BEFORE_MEDIA : 0) +
+    ((hasTopContent || hasMedia) && hasBottomMeta ? SOCIAL_GAP_BEFORE_AUTHOR : 0);
 
   return (
     CARD_BORDER_HEIGHT +

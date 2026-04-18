@@ -1,5 +1,42 @@
 # Devlog
 
+## 18.04.2026 11:10 [primary] — Gallery fallback fix + slot-based content spacing
+
+### Goal
+Закрыть два user-visible regression'а в feed: duplicated gallery tiles у multi-image cards и phantom top gap у контентных карточек без верхнего текста.
+
+### Actually completed
+
+**Gallery tiles больше не дублируют один `slug.jpg`** (`src/components/Card.tsx`, `src/components/Card.test.tsx`)
+- выяснено, что для legacy rows часть multi-image карточек приходит без `preview_manifest`, а local derived store хранит только block-level `slug.jpg`
+- старый frontend fallback рендерил один и тот же block thumb для каждого tile, поэтому 4 изображения превращались в 4 копии одного кадра
+- новый fallback сначала использует tile preview asset, затем конкретный `source_path` tile'а, и только в самом конце — block-level thumb
+- практический эффект: карточки вроде `pre-order-via-metalabel-now` снова показывают разные изображения вместо повторяющегося одного preview
+
+**Spacing контентных карточек переведён на slot-based contract** (`src/lib/cardLayout.ts`, `src/components/Card.tsx`, `src/lib/cardHeight.ts`)
+- gap перед media больше не задаётся самим variant'ом карточки
+- введён явный slot model: `top content`, `media`, `bottom meta`
+- внутренние gap'ы теперь появляются только между реально существующими соседними слотами
+- это устранило phantom top gap в карточках, где верхнего текста нет, но раньше оставалось место “как будто он есть”
+
+**Height contract синхронизирован с render contract**
+- `cardHeight.ts` теперь использует тот же slot-based spacing logic, что и `Card.tsx`
+- дополнительно убран precise-path drift: word-widths больше не резервируют preview/title lines, если соответствующий текстовый слот реально пустой
+
+**Regression coverage добавлен**
+- `Card.test.tsx`: distinct gallery fallback по `source_path`, отсутствие phantom top gap
+- `cardLayout.test.ts`: content-card slots без верхнего текста
+- `cardHeight.test.ts`: social/media card без невидимого top gap
+
+### Checks
+- `bun run test src/components/Card.test.tsx src/lib/cardLayout.test.ts src/lib/cardHeight.test.ts`
+- `bun run test src/components/Grid.test.tsx src/components/MeasureCard.test.tsx`
+- `bun run build`
+- ручная проверка пользователем в `Mine`: “Проблема решена”
+
+### Push
+- [текущий]
+
 ## 18.04.2026 10:15 [primary] — Generation-safe masonry height correctness accepted on Mine
 
 ### Goal

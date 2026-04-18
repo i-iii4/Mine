@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LightBlock } from "@/types";
-import { deriveCardLayoutDescriptor } from "./cardLayout";
+import { deriveCardLayoutDescriptor, deriveContentCardSlots } from "./cardLayout";
 
 function makeBlock(
   overrides: Partial<LightBlock> & { block_type: LightBlock["block_type"] },
@@ -112,6 +112,25 @@ describe("deriveCardLayoutDescriptor", () => {
     );
     expect(descriptor.variant).toBe("social-media-grid");
     expect(descriptor.visibleMediaCount).toBe(3);
+  });
+
+  it("treats social cards without preview text as content cards with no top slot", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "article",
+        url: "https://x.com/a/status/1",
+        author: "@artist",
+        body: "![](a.jpg)\n![](b.jpg)",
+        media_urls: "[\"a.jpg\",\"b.jpg\"]",
+      }),
+    );
+    const slots = deriveContentCardSlots(descriptor);
+    expect(descriptor.variant).toBe("social-media-grid");
+    expect(slots).toEqual({
+      hasTopContent: false,
+      hasMedia: true,
+      hasBottomMeta: true,
+    });
   });
 
   it("prefers preview_manifest for social video previews", () => {
