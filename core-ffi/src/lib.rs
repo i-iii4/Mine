@@ -67,7 +67,9 @@ impl ArenaVault {
 
     /// List all blocks (lightweight, for grid views).
     fn list_blocks(&self) -> Result<Vec<FfiLightBlock>, ArenaError> {
-        let conn = self.conn.lock()
+        let conn = self
+            .conn
+            .lock()
             .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
         let blocks = index::list_blocks_light(&conn)
             .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
@@ -77,12 +79,14 @@ impl ArenaVault {
     /// Scan all .md files in vault and index them in SQLite.
     /// Must be called after open() to populate the database.
     fn scan_vault(&self) -> Result<u32, ArenaError> {
-        let conn = self.conn.lock()
+        let conn = self
+            .conn
+            .lock()
             .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
 
         let vault_dir = PathBuf::from(&self.vault_path);
-        let entries = std::fs::read_dir(&vault_dir)
-            .map_err(|e| ArenaError::Io { msg: e.to_string() })?;
+        let entries =
+            std::fs::read_dir(&vault_dir).map_err(|e| ArenaError::Io { msg: e.to_string() })?;
 
         let mut count = 0u32;
         for entry in entries.flatten() {
@@ -93,7 +97,9 @@ impl ArenaVault {
             if let Ok((slug, content)) = mine_lib::storage::files::read_block_file(&path) {
                 match mine_lib::domain::block::parse_block(&slug, &content) {
                     Ok(block) => {
-                        if block.frontmatter.block_type == mine_lib::domain::block::BlockType::Channel {
+                        if block.frontmatter.block_type
+                            == mine_lib::domain::block::BlockType::Channel
+                        {
                             let _ = index::upsert_channel_from_block(&conn, &block);
                         } else {
                             let _ = index::upsert_block(&conn, &block);
@@ -118,8 +124,8 @@ impl ArenaVault {
 /// Parse a .md file content into a block. Useful for testing and direct file reads.
 #[uniffi::export]
 fn parse_block_file(slug: String, content: String) -> Result<FfiLightBlock, ArenaError> {
-    let block = parse_block(&slug, &content)
-        .map_err(|e| ArenaError::Parse { msg: e.to_string() })?;
+    let block =
+        parse_block(&slug, &content).map_err(|e| ArenaError::Parse { msg: e.to_string() })?;
     Ok(FfiLightBlock {
         id: 0,
         slug: block.slug,

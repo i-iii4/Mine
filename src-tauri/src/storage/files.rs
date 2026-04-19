@@ -78,10 +78,7 @@ pub fn scan_md_files(vault: &VaultLayout) -> Result<Vec<PathBuf>> {
 /// Copy a media file into the vault with slug-based naming.
 /// Preserves the original extension. Returns the destination path.
 pub fn copy_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Result<PathBuf> {
-    let ext = source
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("bin");
+    let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("bin");
 
     let dest = vault.media_path(slug, ext);
 
@@ -93,20 +90,20 @@ pub fn copy_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Result
 
 /// Delete a block's .md file and optional media file.
 /// Also removes the thumbnail (best-effort). Non-existent files are silently ignored.
-pub fn delete_block_files(
-    vault: &VaultLayout,
-    slug: &str,
-    media_ext: Option<&str>,
-) -> Result<()> {
+pub fn delete_block_files(vault: &VaultLayout, slug: &str, media_ext: Option<&str>) -> Result<()> {
     // Move user content to OS trash (recoverable).
     // Fallback to permanent delete if trash fails (e.g. iCloud placeholders).
     let md_path = vault.block_path(slug);
     if md_path.exists() {
         let trashed = {
             #[cfg(not(target_os = "ios"))]
-            { trash::delete(&md_path).is_ok() }
+            {
+                trash::delete(&md_path).is_ok()
+            }
             #[cfg(target_os = "ios")]
-            { false }
+            {
+                false
+            }
         };
         if !trashed {
             std::fs::remove_file(&md_path)
@@ -119,9 +116,13 @@ pub fn delete_block_files(
         if media_path.exists() {
             let trashed = {
                 #[cfg(not(target_os = "ios"))]
-                { trash::delete(&media_path).is_ok() }
+                {
+                    trash::delete(&media_path).is_ok()
+                }
                 #[cfg(target_os = "ios")]
-                { false }
+                {
+                    false
+                }
             };
             if !trashed {
                 let _ = std::fs::remove_file(&media_path);
@@ -154,7 +155,8 @@ pub fn persist_new_block(
 
     // Copy media + generate thumbnail
     if let Some(source) = source_file {
-        let canonical = source.canonicalize()
+        let canonical = source
+            .canonicalize()
             .with_context(|| format!("invalid file path: {}", source.display()))?;
         anyhow::ensure!(canonical.is_file(), "path is not a file");
 
@@ -178,7 +180,12 @@ pub fn persist_new_block(
 
     // Index
     index::upsert_block(conn, block, Some(vault.root()))?;
-    let _ = index::sync_thumb_metadata(conn, &block.slug, &vault.thumb_path(&block.slug));
+    let _ = index::sync_thumb_metadata(
+        conn,
+        &block.slug,
+        &vault.thumb_path(&block.slug),
+        Some(vault.root()),
+    );
 
     // Return the indexed block
     index::get_block(conn, &block.slug)?

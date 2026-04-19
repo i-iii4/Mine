@@ -31,9 +31,7 @@ struct VaultChangedPayload {
 
 /// Fetch public channels for an Are.na user.
 #[tauri::command]
-pub fn list_arena_channels(
-    username: String,
-) -> Result<Vec<ArenaChannelInfo>, CommandError> {
+pub fn list_arena_channels(username: String) -> Result<Vec<ArenaChannelInfo>, CommandError> {
     let channels = arena_api::fetch_user_channels(&username)?;
 
     Ok(channels
@@ -58,22 +56,19 @@ pub fn import_arena_channels(
     state: State<'_, AppState>,
     channels: Vec<ImportChannelRequest>,
 ) -> Result<Vec<importer::ImportChannelResult>, CommandError> {
-    let vault_state = state.vault_state.lock()
+    let vault_state = state
+        .vault_state
+        .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     let mut results = Vec::new();
 
     for req in &channels {
-        let result = importer::import_channel(
-            &vs.conn,
-            &vs.vault,
-            &req.slug,
-            &req.tag,
-            |progress| {
+        let result =
+            importer::import_channel(&vs.conn, &vs.vault, &req.slug, &req.tag, |progress| {
                 let _ = app.emit("import-progress", &progress);
-            },
-        );
+            });
 
         match result {
             Ok(r) => results.push(r),

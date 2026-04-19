@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::block::{extract_wikilinks, Block, BlockType, DateTime};
+use crate::domain::block::{extract_wikilinks, Block, BlockType, DateTime, Frontmatter};
 use crate::domain::channel::Channel;
 use crate::domain::search::{SearchFilter, SearchQuery};
 use crate::domain::vault::VaultLayout;
@@ -38,6 +38,7 @@ pub struct IndexedBlock {
     pub body: String,
     pub media_dimensions: Option<String>,
     pub preview_manifest: Option<String>,
+    pub feed_playback: Option<String>,
     pub tags: Vec<String>,
 }
 
@@ -61,6 +62,7 @@ pub struct LightBlock {
     pub media_urls: Option<String>,
     pub media_dimensions: Option<String>,
     pub preview_manifest: Option<String>,
+    pub feed_playback: Option<String>,
 }
 
 /// Minimal block projection for Phase 2 thumbnail upgrades.
@@ -104,7 +106,46 @@ pub struct FeedPreviewManifest {
     pub overflow_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FeedPlaybackContainer {
+    #[serde(rename = "mp4")]
+    Mp4,
+    #[serde(rename = "webm")]
+    Webm,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FeedPlaybackKind {
+    #[serde(rename = "single_video")]
+    SingleVideo,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FeedPlaybackProfile {
+    #[serde(rename = "standard")]
+    Standard,
+    #[serde(rename = "heavy")]
+    Heavy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedPlaybackDescriptor {
+    pub kind: FeedPlaybackKind,
+    pub source_path: String,
+    pub poster_preview_path: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub container: FeedPlaybackContainer,
+    pub profile: FeedPlaybackProfile,
+}
+
 const LIGHT_BLOCK_BODY_PREVIEW_CHARS: i64 = 220;
+const FEED_AUTOPLAY_STANDARD_MAX_SOURCE_BYTES: u64 = 10 * 1024 * 1024;
+const FEED_AUTOPLAY_STANDARD_MAX_LONGEST_SIDE_PX: u32 = 2560;
+const FEED_AUTOPLAY_STANDARD_MAX_PIXEL_AREA: u64 = 4_000_000;
+const FEED_AUTOPLAY_HARD_MAX_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
+const FEED_AUTOPLAY_HARD_MAX_LONGEST_SIDE_PX: u32 = 5120;
+const FEED_AUTOPLAY_HARD_MAX_PIXEL_AREA: u64 = 12_000_000;
 
 /// A tag with its usage count across blocks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -150,7 +191,11 @@ fn extract_first_image(body: &str) -> Option<String> {
     let url_start = start + 2 + bracket + 2;
     let paren_end = body[url_start..].find(')')?;
     let url = &body[url_start..url_start + paren_end];
-    if url.is_empty() { None } else { Some(url.to_string()) }
+    if url.is_empty() {
+        None
+    } else {
+        Some(url.to_string())
+    }
 }
 
 /// Extract all markdown image/video URLs from body text as JSON array.
@@ -202,7 +247,19 @@ fn media_ext_lower(src: &str) -> Option<String> {
 fn is_image_media(src: &str) -> bool {
     matches!(
         media_ext_lower(src).as_deref(),
-        Some("jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "heic" | "heif" | "avif")
+        Some(
+            "jpg"
+                | "jpeg"
+                | "png"
+                | "gif"
+                | "webp"
+                | "bmp"
+                | "tiff"
+                | "tif"
+                | "heic"
+                | "heif"
+                | "avif"
+        )
     )
 }
 
@@ -217,7 +274,9 @@ fn parse_media_dimensions_json(
     media_dimensions: Option<&str>,
 ) -> std::collections::HashMap<String, [u32; 2]> {
     media_dimensions
-        .and_then(|raw| serde_json::from_str::<std::collections::HashMap<String, [u32; 2]>>(raw).ok())
+        .and_then(|raw| {
+            serde_json::from_str::<std::collections::HashMap<String, [u32; 2]>>(raw).ok()
+        })
         .unwrap_or_default()
 }
 
@@ -276,7 +335,12 @@ fn extract_social_preview_tiles(
         let Some(src) = parse_inline_media_src(line) else {
             continue;
         };
-        tiles.push(media_tile(src, dims, is_video_media(src), next_is_video_poster));
+        tiles.push(media_tile(
+            src,
+            dims,
+            is_video_media(src),
+            next_is_video_poster,
+        ));
         next_is_video_poster = false;
     }
 
@@ -340,14 +404,14 @@ fn serialize_feed_preview_manifest(
                 .file
                 .as_deref()
                 .map(|src| {
-                        vec![FeedPreviewTile {
-                            source_path: src.to_string(),
-                            preview_path: Some(primary_preview_path(&block.slug)),
-                            width,
-                            height,
-                            is_video: true,
-                            is_video_poster: true,
-                        }]
+                    vec![FeedPreviewTile {
+                        source_path: src.to_string(),
+                        preview_path: Some(primary_preview_path(&block.slug)),
+                        width,
+                        height,
+                        is_video: true,
+                        is_video_poster: true,
+                    }]
                 })
                 .or_else(|| {
                     block.frontmatter.thumbnail.as_deref().map(|src| {
@@ -440,7 +504,11 @@ fn serialize_feed_preview_manifest(
                         tiles: image_tiles,
                         overflow_count: 0,
                     }
-                } else if let Some(video_src) = extract_local_media_items(media_urls, is_video_media).into_iter().next() {
+                } else if let Some(video_src) =
+                    extract_local_media_items(media_urls, is_video_media)
+                        .into_iter()
+                        .next()
+                {
                     FeedPreviewManifest {
                         kind: FeedPreviewKind::VideoPoster,
                         primary_preview_path: Some(primary_preview_path(&block.slug)),
@@ -464,6 +532,204 @@ fn serialize_feed_preview_manifest(
     };
 
     serde_json::to_string(&manifest).ok()
+}
+
+fn serialize_feed_preview_manifest_from_index_row(
+    slug: &str,
+    block_type: BlockType,
+    url: Option<&str>,
+    media_file: Option<&str>,
+    thumbnail: Option<&str>,
+    width: Option<u32>,
+    height: Option<u32>,
+    body: &str,
+    media_dimensions: Option<&str>,
+    media_urls: Option<&str>,
+) -> Option<String> {
+    let block = Block {
+        slug: slug.to_string(),
+        frontmatter: Frontmatter {
+            block_type,
+            title: None,
+            description: None,
+            url: url.map(str::to_string),
+            file: media_file.map(str::to_string),
+            thumbnail: thumbnail.map(str::to_string),
+            tags: Vec::new(),
+            saved_at: DateTime::new("1970-01-01T00:00:00Z").ok()?,
+            source: None,
+            width,
+            height,
+            author: None,
+            position: None,
+            color: None,
+            icon: None,
+        },
+        body: body.to_string(),
+    };
+
+    serialize_feed_preview_manifest(&block, width, height, media_dimensions, media_urls)
+}
+
+fn parse_feed_preview_manifest(raw: Option<&str>) -> Option<FeedPreviewManifest> {
+    raw.and_then(|value| serde_json::from_str::<FeedPreviewManifest>(value).ok())
+}
+
+fn autoplay_container_for_source(src: &str) -> Option<FeedPlaybackContainer> {
+    if is_remote_media(src) {
+        return None;
+    }
+    match media_ext_lower(src).as_deref() {
+        Some("mp4") => Some(FeedPlaybackContainer::Mp4),
+        Some("webm") => Some(FeedPlaybackContainer::Webm),
+        _ => None,
+    }
+}
+
+fn local_media_file_size_bytes(vault_root: &Path, source_path: &str) -> Option<u64> {
+    if is_remote_media(source_path) {
+        return None;
+    }
+    let metadata = std::fs::metadata(vault_root.join(source_path)).ok()?;
+    metadata.is_file().then_some(metadata.len())
+}
+
+fn feed_autoplay_dimensions_within_limits(
+    width: Option<u32>,
+    height: Option<u32>,
+    longest_side_limit: u32,
+    pixel_area_limit: u64,
+) -> bool {
+    if let Some(longest_side) = width.max(height) {
+        if longest_side > longest_side_limit {
+            return false;
+        }
+    }
+
+    if let (Some(width), Some(height)) = (width, height) {
+        if u64::from(width) * u64::from(height) > pixel_area_limit {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn feed_autoplay_profile_for_source(
+    vault_root: Option<&Path>,
+    source_path: &str,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> Option<FeedPlaybackProfile> {
+    if !feed_autoplay_dimensions_within_limits(
+        width,
+        height,
+        FEED_AUTOPLAY_HARD_MAX_LONGEST_SIDE_PX,
+        FEED_AUTOPLAY_HARD_MAX_PIXEL_AREA,
+    ) {
+        return None;
+    }
+
+    match vault_root {
+        Some(root) => {
+            let bytes = local_media_file_size_bytes(root, source_path)?;
+            if bytes > FEED_AUTOPLAY_HARD_MAX_SOURCE_BYTES {
+                return None;
+            }
+            if bytes <= FEED_AUTOPLAY_STANDARD_MAX_SOURCE_BYTES
+                && feed_autoplay_dimensions_within_limits(
+                    width,
+                    height,
+                    FEED_AUTOPLAY_STANDARD_MAX_LONGEST_SIDE_PX,
+                    FEED_AUTOPLAY_STANDARD_MAX_PIXEL_AREA,
+                )
+            {
+                Some(FeedPlaybackProfile::Standard)
+            } else {
+                Some(FeedPlaybackProfile::Heavy)
+            }
+        }
+        None => {
+            if feed_autoplay_dimensions_within_limits(
+                width,
+                height,
+                FEED_AUTOPLAY_STANDARD_MAX_LONGEST_SIDE_PX,
+                FEED_AUTOPLAY_STANDARD_MAX_PIXEL_AREA,
+            ) {
+                Some(FeedPlaybackProfile::Standard)
+            } else {
+                Some(FeedPlaybackProfile::Heavy)
+            }
+        }
+    }
+}
+
+fn serialize_feed_playback(
+    vault_root: Option<&Path>,
+    block_type: BlockType,
+    media_file: Option<&str>,
+    width: Option<u32>,
+    height: Option<u32>,
+    preview_manifest: Option<&str>,
+    thumb_format: Option<ThumbFormat>,
+) -> Option<String> {
+    if thumb_format.is_none() {
+        return None;
+    }
+
+    let manifest = parse_feed_preview_manifest(preview_manifest)?;
+    let poster_preview_path = manifest.primary_preview_path?;
+
+    let (source_path, playback_width, playback_height) = match block_type {
+        BlockType::Video => {
+            let source_path = media_file?;
+            let container = autoplay_container_for_source(source_path)?;
+            let profile = feed_autoplay_profile_for_source(vault_root, source_path, width, height)?;
+            let descriptor = FeedPlaybackDescriptor {
+                kind: FeedPlaybackKind::SingleVideo,
+                source_path: source_path.to_string(),
+                poster_preview_path,
+                width,
+                height,
+                container,
+                profile,
+            };
+            return serde_json::to_string(&descriptor).ok();
+        }
+        BlockType::Article => {
+            if manifest.kind != FeedPreviewKind::VideoPoster
+                || manifest.overflow_count != 0
+                || manifest.tiles.len() != 1
+            {
+                return None;
+            }
+
+            let tile = manifest.tiles.first()?;
+            if !tile.is_video {
+                return None;
+            }
+            (
+                tile.source_path.clone(),
+                tile.width.or(manifest.width),
+                tile.height.or(manifest.height),
+            )
+        }
+        _ => return None,
+    };
+
+    let container = autoplay_container_for_source(&source_path)?;
+    let profile =
+        feed_autoplay_profile_for_source(vault_root, &source_path, playback_width, playback_height)?;
+    let descriptor = FeedPlaybackDescriptor {
+        kind: FeedPlaybackKind::SingleVideo,
+        source_path,
+        poster_preview_path,
+        width: playback_width,
+        height: playback_height,
+        container,
+        profile,
+    };
+    serde_json::to_string(&descriptor).ok()
 }
 
 fn read_thumb_metadata_from_disk(path: &Path) -> Option<(ThumbFormat, u64)> {
@@ -490,12 +756,18 @@ fn read_thumb_metadata_from_disk(path: &Path) -> Option<(ThumbFormat, u64)> {
     Some((format, mtime))
 }
 
-fn row_to_preview_block(row: &rusqlite::Row<'_>, slug_index: usize) -> rusqlite::Result<PreviewBlock> {
+fn row_to_preview_block(
+    row: &rusqlite::Row<'_>,
+    slug_index: usize,
+) -> rusqlite::Result<PreviewBlock> {
     let thumb_format = row
         .get::<_, Option<String>>(slug_index + 1)?
         .as_deref()
         .and_then(ThumbFormat::from_db);
-    let thumb_mtime = row.get::<_, Option<i64>>(slug_index + 2)?.unwrap_or(0).max(0) as u64;
+    let thumb_mtime = row
+        .get::<_, Option<i64>>(slug_index + 2)?
+        .unwrap_or(0)
+        .max(0) as u64;
 
     Ok(PreviewBlock {
         slug: row.get(slug_index)?,
@@ -516,11 +788,7 @@ fn row_to_preview_block(row: &rusqlite::Row<'_>, slug_index: usize) -> rusqlite:
 /// have a vault path context (tests, migration tools) can pass `None`,
 /// in which case the dimensions column is left NULL and the frontend
 /// falls back to a fixed aspect ratio.
-pub fn upsert_block(
-    conn: &Connection,
-    block: &Block,
-    vault_root: Option<&Path>,
-) -> Result<i64> {
+pub fn upsert_block(conn: &Connection, block: &Block, vault_root: Option<&Path>) -> Result<i64> {
     // Use SAVEPOINT via raw SQL for nestability — this works both standalone
     // and inside an outer transaction (e.g. full_scan).
     conn.execute_batch("SAVEPOINT upsert_block")
@@ -542,19 +810,11 @@ pub fn upsert_block(
     result
 }
 
-fn upsert_block_inner(
-    conn: &Connection,
-    block: &Block,
-    vault_root: Option<&Path>,
-) -> Result<i64> {
+fn upsert_block_inner(conn: &Connection, block: &Block, vault_root: Option<&Path>) -> Result<i64> {
     let first_image = extract_first_image(&block.body);
     let media_urls = extract_media_urls(&block.body);
     let media_dimensions = vault_root.and_then(|root| {
-        build_media_dimensions_json(
-            root,
-            block.frontmatter.file.as_deref(),
-            &block.body,
-        )
+        build_media_dimensions_json(root, block.frontmatter.file.as_deref(), &block.body)
     });
 
     // Width/height priority: (1) existing DB row if present, (2) frontmatter,
@@ -562,18 +822,24 @@ fn upsert_block_inner(
     // files is expensive on main thread (image crate 0.25 reads whole JPEG,
     // not just header), so we avoid re-reading on every full_scan. File
     // extraction runs only for blocks that truly lack dimensions.
-    let existing_dims: Option<(u32, u32)> = conn
+    let existing_row: Option<(Option<(u32, u32)>, Option<ThumbFormat>)> = conn
         .query_row(
-            "SELECT width, height FROM blocks WHERE slug = ?1",
+            "SELECT width, height, thumb_format FROM blocks WHERE slug = ?1",
             [&block.slug],
             |row| {
                 let w: Option<i64> = row.get(0)?;
                 let h: Option<i64> = row.get(1)?;
-                Ok(w.zip(h).map(|(w, h)| (w as u32, h as u32)))
+                let thumb_format = row
+                    .get::<_, Option<String>>(2)?
+                    .as_deref()
+                    .and_then(ThumbFormat::from_db);
+                Ok((w.zip(h).map(|(w, h)| (w as u32, h as u32)), thumb_format))
             },
         )
-        .ok()
-        .flatten();
+        .ok();
+
+    let existing_dims = existing_row.as_ref().and_then(|(dims, _)| *dims);
+    let existing_thumb_format = existing_row.and_then(|(_, thumb_format)| thumb_format);
 
     let (width, height) = if let Some((w, h)) = existing_dims {
         (Some(w), Some(h))
@@ -585,7 +851,9 @@ fn upsert_block_inner(
             .and_then(|root| {
                 let file_name = block.frontmatter.file.as_deref()?;
                 let path = root.join(file_name);
-                use crate::storage::media_dimensions::{extract_image_dimensions, extract_video_dimensions};
+                use crate::storage::media_dimensions::{
+                    extract_image_dimensions, extract_video_dimensions,
+                };
                 let ext = path.extension()?.to_str()?.to_lowercase();
                 if matches!(ext.as_str(), "mp4" | "m4v") {
                     extract_video_dimensions(&path)
@@ -603,12 +871,21 @@ fn upsert_block_inner(
         media_dimensions.as_deref(),
         media_urls.as_deref(),
     );
+    let feed_playback = serialize_feed_playback(
+        vault_root,
+        block.frontmatter.block_type,
+        block.frontmatter.file.as_deref(),
+        width,
+        height,
+        preview_manifest.as_deref(),
+        existing_thumb_format,
+    );
 
     conn.execute(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body, first_image,
-            media_urls, media_dimensions, preview_manifest)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            media_urls, media_dimensions, preview_manifest, feed_playback)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
             title = excluded.title,
@@ -626,6 +903,7 @@ fn upsert_block_inner(
             media_urls = excluded.media_urls,
             media_dimensions = excluded.media_dimensions,
             preview_manifest = excluded.preview_manifest,
+            feed_playback = excluded.feed_playback,
             indexed_at = datetime('now')",
         params![
             block.slug,
@@ -645,6 +923,7 @@ fn upsert_block_inner(
             media_urls,
             media_dimensions,
             preview_manifest,
+            feed_playback,
         ],
     )
     .context("failed to upsert block")?;
@@ -693,12 +972,22 @@ pub fn remove_block(conn: &Connection, slug: &str) -> Result<bool> {
 
 /// Sync thumbnail metadata columns from the on-disk thumb file.
 /// Returns true when the row changed.
-pub fn sync_thumb_metadata(conn: &Connection, slug: &str, thumb_path: &Path) -> Result<bool> {
+pub fn sync_thumb_metadata(
+    conn: &Connection,
+    slug: &str,
+    thumb_path: &Path,
+    vault_root: Option<&Path>,
+) -> Result<bool> {
     let current = conn
         .query_row(
             "SELECT thumb_format, thumb_mtime FROM blocks WHERE slug = ?1",
             [slug],
-            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<i64>>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                ))
+            },
         )
         .optional()?;
     let Some((current_format, current_mtime)) = current else {
@@ -713,11 +1002,39 @@ pub fn sync_thumb_metadata(conn: &Connection, slug: &str, thumb_path: &Path) -> 
         return Ok(false);
     }
 
+    let feed_playback = conn
+        .query_row(
+            "SELECT block_type, media_file, width, height, preview_manifest
+             FROM blocks WHERE slug = ?1",
+            [slug],
+            |row| {
+                let raw_type: String = row.get(0)?;
+                let block_type = BlockType::from_str(&raw_type).map_err(|_| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        format!("unknown block_type: {}", raw_type).into(),
+                    )
+                })?;
+                Ok(serialize_feed_playback(
+                    vault_root,
+                    block_type,
+                    row.get::<_, Option<String>>(1)?.as_deref(),
+                    row.get::<_, Option<i64>>(2)?.map(|v| v as u32),
+                    row.get::<_, Option<i64>>(3)?.map(|v| v as u32),
+                    row.get::<_, Option<String>>(4)?.as_deref(),
+                    next.map(|(format, _)| format),
+                ))
+            },
+        )
+        .optional()?
+        .flatten();
+
     conn.execute(
         "UPDATE blocks
-         SET thumb_format = ?2, thumb_mtime = ?3
+         SET thumb_format = ?2, thumb_mtime = ?3, feed_playback = ?4
          WHERE slug = ?1",
-        params![slug, next_format, next_mtime],
+        params![slug, next_format, next_mtime, feed_playback],
     )?;
     Ok(true)
 }
@@ -726,7 +1043,7 @@ pub fn sync_thumb_metadata(conn: &Connection, slug: &str, thumb_path: &Path) -> 
 pub fn clear_thumb_metadata(conn: &Connection, slug: &str) -> Result<bool> {
     let changed = conn.execute(
         "UPDATE blocks
-         SET thumb_format = NULL, thumb_mtime = NULL
+         SET thumb_format = NULL, thumb_mtime = NULL, feed_playback = NULL
          WHERE slug = ?1
            AND (thumb_format IS NOT NULL OR thumb_mtime IS NOT NULL)",
         [slug],
@@ -752,9 +1069,149 @@ pub fn backfill_missing_thumb_metadata(conn: &Connection, vault: &VaultLayout) -
 
     let mut updated = 0usize;
     for slug in slugs {
-        if sync_thumb_metadata(conn, &slug, &vault.thumb_path(&slug))? {
+        if sync_thumb_metadata(conn, &slug, &vault.thumb_path(&slug), Some(vault.root()))? {
             updated += 1;
         }
+    }
+
+    Ok(updated)
+}
+
+/// Backfill preview manifests for legacy rows that predate the
+/// `preview_manifest` column but already have enough indexed content to derive
+/// the current feed preview contract.
+pub fn backfill_missing_preview_manifest(conn: &Connection) -> Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, media_dimensions, media_urls
+         FROM blocks
+         WHERE slug != ''
+           AND block_type != 'channel'
+           AND preview_manifest IS NULL",
+    )?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<i64>>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<String>>(9)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut updated = 0usize;
+    for (
+        slug,
+        raw_type,
+        url,
+        media_file,
+        thumbnail,
+        width,
+        height,
+        body,
+        media_dimensions,
+        media_urls,
+    ) in rows
+    {
+        let block_type = BlockType::from_str(&raw_type).with_context(|| {
+            format!("unknown block_type in preview manifest backfill: {raw_type}")
+        })?;
+        let Some(preview_manifest) = serialize_feed_preview_manifest_from_index_row(
+            &slug,
+            block_type,
+            url.as_deref(),
+            media_file.as_deref(),
+            thumbnail.as_deref(),
+            width.map(|value| value as u32),
+            height.map(|value| value as u32),
+            &body,
+            media_dimensions.as_deref(),
+            media_urls.as_deref(),
+        ) else {
+            continue;
+        };
+
+        updated += conn.execute(
+            "UPDATE blocks
+             SET preview_manifest = ?2
+             WHERE slug = ?1
+               AND preview_manifest IS NULL",
+            params![slug, preview_manifest],
+        )?;
+    }
+
+    Ok(updated)
+}
+
+/// Reconcile feed playback descriptors against the current autoplay policy.
+///
+/// This restores missing descriptors for legacy rows and clears stale ones
+/// when the current policy no longer allows autoplay for a block.
+pub fn backfill_missing_feed_playback(conn: &Connection, vault: &VaultLayout) -> Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT slug, block_type, media_file, width, height, preview_manifest, thumb_format, feed_playback
+         FROM blocks
+         WHERE slug != ''
+           AND block_type IN ('video', 'article')",
+    )?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut updated = 0usize;
+    for (
+        slug,
+        raw_type,
+        media_file,
+        width,
+        height,
+        preview_manifest,
+        raw_thumb_format,
+        current_feed_playback,
+    ) in rows
+    {
+        let block_type = BlockType::from_str(&raw_type)
+            .with_context(|| format!("unknown block_type in feed playback backfill: {raw_type}"))?;
+        let thumb_format = raw_thumb_format.as_deref().and_then(ThumbFormat::from_db);
+        let next_feed_playback = serialize_feed_playback(
+            Some(vault.root()),
+            block_type,
+            media_file.as_deref(),
+            width.map(|value| value as u32),
+            height.map(|value| value as u32),
+            preview_manifest.as_deref(),
+            thumb_format,
+        );
+
+        if current_feed_playback == next_feed_playback {
+            continue;
+        }
+
+        updated += conn.execute(
+            "UPDATE blocks
+             SET feed_playback = ?2
+             WHERE slug = ?1",
+            params![slug, next_feed_playback],
+        )?;
     }
 
     Ok(updated)
@@ -813,7 +1270,10 @@ pub fn resolve_unique_slug(conn: &Connection, raw_slug: &str) -> Result<String> 
         }
     }
 
-    anyhow::bail!("could not resolve slug conflict for '{}' after 1000 attempts", raw_slug);
+    anyhow::bail!(
+        "could not resolve slug conflict for '{}' after 1000 attempts",
+        raw_slug
+    );
 }
 
 /// List all blocks without description/source (lightweight for grid views).
@@ -822,7 +1282,7 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, url, media_file,
                 thumbnail, saved_at, width, height, author,
-                SUBSTR(body, 1, ?1), first_image, media_urls, media_dimensions, preview_manifest
+                SUBSTR(body, 1, ?1), first_image, media_urls, media_dimensions, preview_manifest, feed_playback
          FROM blocks ORDER BY saved_at DESC",
     )?;
 
@@ -854,6 +1314,7 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
                 media_urls: row.get(13)?,
                 media_dimensions: row.get(14)?,
                 preview_manifest: row.get(15)?,
+                feed_playback: row.get(16)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -876,7 +1337,7 @@ pub fn list_grid_blocks(
             "SELECT b.id, b.slug, b.block_type, b.title, b.url, b.media_file,
                     b.thumbnail, b.saved_at, b.width, b.height, b.author,
                     CASE WHEN b.block_type = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
-                    b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest
+                    b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest, b.feed_playback
              FROM blocks b
              INNER JOIN block_tags bt ON bt.block_id = b.id
              WHERE b.block_type != 'channel' AND bt.tag = ?2
@@ -887,7 +1348,7 @@ pub fn list_grid_blocks(
             "SELECT id, slug, block_type, title, url, media_file,
                     thumbnail, saved_at, width, height, author,
                     CASE WHEN block_type = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
-                    first_image, media_urls, media_dimensions, preview_manifest
+                    first_image, media_urls, media_dimensions, preview_manifest, feed_playback
              FROM blocks
              WHERE block_type != 'channel'
              ORDER BY saved_at DESC
@@ -897,41 +1358,48 @@ pub fn list_grid_blocks(
 
     let mut stmt = conn.prepare(sql)?;
     let map_row = |row: &rusqlite::Row<'_>| {
-            Ok(LightBlock {
-                id: row.get(0)?,
-                slug: row.get(1)?,
-                block_type: {
-                    let raw: String = row.get(2)?;
-                    BlockType::from_str(&raw).map_err(|_| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            2,
-                            rusqlite::types::Type::Text,
-                            format!("unknown block_type: {}", raw).into(),
-                        )
-                    })?
-                },
-                title: row.get(3)?,
-                url: row.get(4)?,
-                media_file: row.get(5)?,
-                thumbnail: row.get(6)?,
-                saved_at: row.get(7)?,
-                width: row.get::<_, Option<i64>>(8)?.map(|v| v as u32),
-                height: row.get::<_, Option<i64>>(9)?.map(|v| v as u32),
-                author: row.get(10)?,
-                body: row.get(11)?,
-                first_image: row.get(12)?,
-                media_urls: row.get(13)?,
-                media_dimensions: row.get(14)?,
-                preview_manifest: row.get(15)?,
-            })
+        Ok(LightBlock {
+            id: row.get(0)?,
+            slug: row.get(1)?,
+            block_type: {
+                let raw: String = row.get(2)?;
+                BlockType::from_str(&raw).map_err(|_| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        2,
+                        rusqlite::types::Type::Text,
+                        format!("unknown block_type: {}", raw).into(),
+                    )
+                })?
+            },
+            title: row.get(3)?,
+            url: row.get(4)?,
+            media_file: row.get(5)?,
+            thumbnail: row.get(6)?,
+            saved_at: row.get(7)?,
+            width: row.get::<_, Option<i64>>(8)?.map(|v| v as u32),
+            height: row.get::<_, Option<i64>>(9)?.map(|v| v as u32),
+            author: row.get(10)?,
+            body: row.get(11)?,
+            first_image: row.get(12)?,
+            media_urls: row.get(13)?,
+            media_dimensions: row.get(14)?,
+            preview_manifest: row.get(15)?,
+            feed_playback: row.get(16)?,
+        })
     };
 
     let mut blocks = match tag {
         Some(tag) => stmt
-            .query_map(params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, tag, fetch_limit, offset], map_row)?
+            .query_map(
+                params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, tag, fetch_limit, offset],
+                map_row,
+            )?
             .collect::<Result<Vec<_>, _>>()?,
         None => stmt
-            .query_map(params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, fetch_limit, offset], map_row)?
+            .query_map(
+                params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, fetch_limit, offset],
+                map_row,
+            )?
             .collect::<Result<Vec<_>, _>>()?,
     };
 
@@ -954,7 +1422,9 @@ pub fn count_grid_blocks(conn: &Connection) -> Result<usize> {
 }
 
 /// Return `slug -> indexed_at` (unix seconds) for non-channel blocks.
-pub fn get_block_indexed_at_map(conn: &Connection) -> Result<std::collections::HashMap<String, u64>> {
+pub fn get_block_indexed_at_map(
+    conn: &Connection,
+) -> Result<std::collections::HashMap<String, u64>> {
     let mut stmt = conn.prepare(
         "SELECT slug, COALESCE(CAST(strftime('%s', indexed_at) AS INTEGER), 0)
          FROM blocks
@@ -1033,7 +1503,9 @@ pub fn list_preview_blocks_by_tag(
 
 /// List only blocks whose thumbnail metadata says the on-disk thumb is still
 /// a PNG text placeholder and may need a Phase 2 browser-decoded upgrade.
-pub fn list_pending_thumb_upgrade_blocks(conn: &Connection) -> Result<Vec<PendingThumbUpgradeBlock>> {
+pub fn list_pending_thumb_upgrade_blocks(
+    conn: &Connection,
+) -> Result<Vec<PendingThumbUpgradeBlock>> {
     let mut stmt = conn.prepare(
         "SELECT slug, media_file, thumbnail, first_image, media_urls
          FROM blocks
@@ -1063,7 +1535,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
     let mut stmt = conn
         .prepare(
             "SELECT id, slug, block_type, title, description, url, media_file,
-                    thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest
+                    thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback
              FROM blocks WHERE slug = ?1",
         )
         .context("failed to prepare get_block")?;
@@ -1082,7 +1554,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
 pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, description, url, media_file,
-                thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest
+                thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback
          FROM blocks ORDER BY saved_at DESC",
     )?;
     collect_blocks(conn, &mut stmt, &[] as &[&dyn rusqlite::types::ToSql])
@@ -1093,7 +1565,7 @@ pub fn list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlo
     let mut stmt = conn.prepare(
         "SELECT b.id, b.slug, b.block_type, b.title, b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest
+                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback
          FROM blocks b
          JOIN block_tags bt ON bt.block_id = b.id
          WHERE bt.tag = ?1
@@ -1166,7 +1638,7 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
     let mut sql = String::from(
         "SELECT DISTINCT b.id, b.slug, b.block_type, b.title, b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest
+                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback
          FROM blocks b",
     );
 
@@ -1181,8 +1653,10 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
     sql.push_str(" ORDER BY b.saved_at DESC");
 
     let mut stmt = conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-        param_values.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values
+        .iter()
+        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .collect();
     collect_blocks(conn, &mut stmt, &param_refs)
 }
 
@@ -1220,7 +1694,11 @@ pub fn upsert_channel(conn: &Connection, channel: &Channel) -> Result<i64> {
 pub fn upsert_channel_from_block(conn: &Connection, block: &Block) -> Result<i64> {
     let channel = Channel {
         tag: block.slug.clone(),
-        title: block.frontmatter.title.clone().unwrap_or_else(|| block.slug.clone()),
+        title: block
+            .frontmatter
+            .title
+            .clone()
+            .unwrap_or_else(|| block.slug.clone()),
         description: block.frontmatter.description.clone(),
         color: block.frontmatter.color.clone(),
         icon: block.frontmatter.icon.clone(),
@@ -1251,17 +1729,19 @@ pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
         .collect::<Result<Vec<_>, _>>()?;
 
     rows.into_iter()
-        .map(|(tag, title, description, color, icon, position, created_at)| {
-            let dt = DateTime::new(&created_at)
-                .map_err(|e| anyhow::anyhow!("invalid datetime in channel: {}", e))?;
-            let mut ch = Channel::new(&tag, Some(&title), dt)
-                .map_err(|e| anyhow::anyhow!("invalid channel from db: {}", e))?;
-            ch.description = description;
-            ch.color = color;
-            ch.icon = icon;
-            ch.position = position as u32;
-            Ok(ch)
-        })
+        .map(
+            |(tag, title, description, color, icon, position, created_at)| {
+                let dt = DateTime::new(&created_at)
+                    .map_err(|e| anyhow::anyhow!("invalid datetime in channel: {}", e))?;
+                let mut ch = Channel::new(&tag, Some(&title), dt)
+                    .map_err(|e| anyhow::anyhow!("invalid channel from db: {}", e))?;
+                ch.description = description;
+                ch.color = color;
+                ch.icon = icon;
+                ch.position = position as u32;
+                Ok(ch)
+            },
+        )
         .collect()
 }
 
@@ -1271,8 +1751,7 @@ pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
 pub fn update_channel_positions(conn: &Connection, positions: &[(String, u32)]) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     {
-        let mut stmt =
-            tx.prepare("UPDATE channels SET position = ?1 WHERE tag = ?2")?;
+        let mut stmt = tx.prepare("UPDATE channels SET position = ?1 WHERE tag = ?2")?;
         for (tag, pos) in positions {
             stmt.execute(params![*pos as i64, tag])?;
         }
@@ -1330,13 +1809,13 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
         body: row.get(13)?,
         media_dimensions: row.get(14)?,
         preview_manifest: row.get(15)?,
+        feed_playback: row.get(16)?,
         tags: Vec::new(), // filled by caller
     })
 }
 
 fn get_tags_for_block(conn: &Connection, block_id: i64) -> Result<Vec<String>> {
-    let mut stmt =
-        conn.prepare("SELECT tag FROM block_tags WHERE block_id = ?1 ORDER BY tag")?;
+    let mut stmt = conn.prepare("SELECT tag FROM block_tags WHERE block_id = ?1 ORDER BY tag")?;
     let tags = stmt
         .query_map([block_id], |row| row.get(0))?
         .collect::<Result<Vec<String>, _>>()?;
@@ -1364,14 +1843,15 @@ fn collect_blocks(
         placeholders
     );
     let mut tag_stmt = conn.prepare(&sql)?;
-    let id_params: Vec<&dyn rusqlite::types::ToSql> =
-        ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+    let id_params: Vec<&dyn rusqlite::types::ToSql> = ids
+        .iter()
+        .map(|id| id as &dyn rusqlite::types::ToSql)
+        .collect();
     let rows = tag_stmt.query_map(&*id_params, |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
     })?;
 
-    let mut tag_map: std::collections::HashMap<i64, Vec<String>> =
-        std::collections::HashMap::new();
+    let mut tag_map: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
     for row in rows {
         let (block_id, tag) = row?;
         tag_map.entry(block_id).or_default().push(tag);
@@ -1431,6 +1911,17 @@ mod tests {
         }
     }
 
+    fn sync_test_jpeg_thumb(conn: &Connection, slug: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let thumb_path = dir.path().join(format!("{slug}.jpg"));
+        std::fs::write(&thumb_path, [0xFF, 0xD8, 0xFF, 0x00]).unwrap();
+        assert!(sync_thumb_metadata(conn, slug, &thumb_path, None).unwrap());
+    }
+
+    fn write_test_media(vault: &VaultLayout, name: &str, size_bytes: usize) {
+        std::fs::write(vault.root().join(name), vec![0u8; size_bytes]).unwrap();
+    }
+
     // ── upsert_block ─────────────────────────────────────────────────────
 
     #[test]
@@ -1449,10 +1940,24 @@ mod tests {
     #[test]
     fn upsert_update_existing_block() {
         let conn = test_conn();
-        let block1 = make_block_full("sunset", "image", Some("Old"), "2026-01-01T00:00:00Z", &["old-tag"], "");
+        let block1 = make_block_full(
+            "sunset",
+            "image",
+            Some("Old"),
+            "2026-01-01T00:00:00Z",
+            &["old-tag"],
+            "",
+        );
         upsert_block(&conn, &block1, None).unwrap();
 
-        let block2 = make_block_full("sunset", "link", Some("New"), "2026-02-01T00:00:00Z", &["new-tag"], "body");
+        let block2 = make_block_full(
+            "sunset",
+            "link",
+            Some("New"),
+            "2026-02-01T00:00:00Z",
+            &["new-tag"],
+            "body",
+        );
         upsert_block(&conn, &block2, None).unwrap();
 
         let got = get_block(&conn, "sunset").unwrap().unwrap();
@@ -1478,7 +1983,14 @@ mod tests {
     #[test]
     fn upsert_replaces_wikilinks() {
         let conn = test_conn();
-        let block = make_block_full("src", "article", None, "2026-01-01T00:00:00Z", &[], "See [[target-a]]");
+        let block = make_block_full(
+            "src",
+            "article",
+            None,
+            "2026-01-01T00:00:00Z",
+            &[],
+            "See [[target-a]]",
+        );
         upsert_block(&conn, &block, None).unwrap();
 
         let count1: i64 = conn
@@ -1486,7 +1998,14 @@ mod tests {
             .unwrap();
         assert_eq!(count1, 1);
 
-        let block2 = make_block_full("src", "article", None, "2026-01-01T00:00:00Z", &[], "See [[target-b]] and [[target-c]]");
+        let block2 = make_block_full(
+            "src",
+            "article",
+            None,
+            "2026-01-01T00:00:00Z",
+            &[],
+            "See [[target-b]] and [[target-c]]",
+        );
         upsert_block(&conn, &block2, None).unwrap();
 
         let count2: i64 = conn
@@ -1566,9 +2085,24 @@ mod tests {
     #[test]
     fn list_blocks_ordered_by_saved_at() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block_full("old", "image", None, "2026-01-01T00:00:00Z", &[], ""), None).unwrap();
-        upsert_block(&conn, &make_block_full("new", "image", None, "2026-03-01T00:00:00Z", &[], ""), None).unwrap();
-        upsert_block(&conn, &make_block_full("mid", "image", None, "2026-02-01T00:00:00Z", &[], ""), None).unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full("old", "image", None, "2026-01-01T00:00:00Z", &[], ""),
+            None,
+        )
+        .unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full("new", "image", None, "2026-03-01T00:00:00Z", &[], ""),
+            None,
+        )
+        .unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full("mid", "image", None, "2026-02-01T00:00:00Z", &[], ""),
+            None,
+        )
+        .unwrap();
 
         let blocks = list_blocks(&conn).unwrap();
         let slugs: Vec<&str> = blocks.iter().map(|b| b.slug.as_str()).collect();
@@ -1609,7 +2143,13 @@ mod tests {
         upsert_block(&conn, &make_block("c", &["photo"]), None).unwrap();
 
         let tags = get_all_tags(&conn).unwrap();
-        assert_eq!(tags[0], TagCount { tag: "design".to_string(), count: 2 });
+        assert_eq!(
+            tags[0],
+            TagCount {
+                tag: "design".to_string(),
+                count: 2
+            }
+        );
         assert_eq!(tags.len(), 3);
     }
 
@@ -1641,12 +2181,28 @@ mod tests {
         let conn = test_conn();
         upsert_block(
             &conn,
-            &make_block_full("sunset", "image", Some("Sunset in Tokyo"), "2026-01-01T00:00:00Z", &[], ""), None,
+            &make_block_full(
+                "sunset",
+                "image",
+                Some("Sunset in Tokyo"),
+                "2026-01-01T00:00:00Z",
+                &[],
+                "",
+            ),
+            None,
         )
         .unwrap();
         upsert_block(
             &conn,
-            &make_block_full("coffee", "image", Some("Morning Coffee"), "2026-01-02T00:00:00Z", &[], ""), None,
+            &make_block_full(
+                "coffee",
+                "image",
+                Some("Morning Coffee"),
+                "2026-01-02T00:00:00Z",
+                &[],
+                "",
+            ),
+            None,
         )
         .unwrap();
 
@@ -1662,8 +2218,18 @@ mod tests {
     #[test]
     fn search_by_type_filter() {
         let conn = test_conn();
-        upsert_block(&conn, &make_block_full("img", "image", None, "2026-01-01T00:00:00Z", &[], ""), None).unwrap();
-        upsert_block(&conn, &make_block_full("art", "article", None, "2026-01-01T00:00:00Z", &[], ""), None).unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full("img", "image", None, "2026-01-01T00:00:00Z", &[], ""),
+            None,
+        )
+        .unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full("art", "article", None, "2026-01-01T00:00:00Z", &[], ""),
+            None,
+        )
+        .unwrap();
 
         let query = SearchQuery {
             text: String::new(),
@@ -1694,17 +2260,41 @@ mod tests {
         let conn = test_conn();
         upsert_block(
             &conn,
-            &make_block_full("match", "image", Some("Beautiful sunset"), "2026-01-01T00:00:00Z", &["photo"], ""), None,
+            &make_block_full(
+                "match",
+                "image",
+                Some("Beautiful sunset"),
+                "2026-01-01T00:00:00Z",
+                &["photo"],
+                "",
+            ),
+            None,
         )
         .unwrap();
         upsert_block(
             &conn,
-            &make_block_full("no-tag", "image", Some("Another sunset"), "2026-01-01T00:00:00Z", &[], ""), None,
+            &make_block_full(
+                "no-tag",
+                "image",
+                Some("Another sunset"),
+                "2026-01-01T00:00:00Z",
+                &[],
+                "",
+            ),
+            None,
         )
         .unwrap();
         upsert_block(
             &conn,
-            &make_block_full("no-text", "image", Some("Morning coffee"), "2026-01-01T00:00:00Z", &["photo"], ""), None,
+            &make_block_full(
+                "no-text",
+                "image",
+                Some("Morning coffee"),
+                "2026-01-01T00:00:00Z",
+                &["photo"],
+                "",
+            ),
+            None,
         )
         .unwrap();
 
@@ -1743,8 +2333,17 @@ mod tests {
         let long_body = "x".repeat(1000);
         upsert_block(
             &conn,
-            &make_block_full("article", "article", Some("Test"), "2026-01-01T00:00:00Z", &[], &long_body), None,
-        ).unwrap();
+            &make_block_full(
+                "article",
+                "article",
+                Some("Test"),
+                "2026-01-01T00:00:00Z",
+                &[],
+                &long_body,
+            ),
+            None,
+        )
+        .unwrap();
 
         let light = list_blocks_light(&conn).unwrap();
         assert_eq!(light.len(), 1);
@@ -1765,12 +2364,13 @@ mod tests {
         upsert_block(&conn, &block, None).unwrap();
 
         let light = list_blocks_light(&conn).unwrap();
-        let manifest: FeedPreviewManifest = serde_json::from_str(
-            light[0].preview_manifest.as_deref().unwrap(),
-        )
-        .unwrap();
+        let manifest: FeedPreviewManifest =
+            serde_json::from_str(light[0].preview_manifest.as_deref().unwrap()).unwrap();
         assert_eq!(manifest.kind, FeedPreviewKind::Composite);
-        assert_eq!(manifest.primary_preview_path.as_deref(), Some("gallery-article.jpg"));
+        assert_eq!(
+            manifest.primary_preview_path.as_deref(),
+            Some("gallery-article.jpg")
+        );
         assert_eq!(manifest.tiles.len(), 3);
         assert_eq!(manifest.overflow_count, 0);
     }
@@ -1790,14 +2390,169 @@ mod tests {
         upsert_block(&conn, &block, None).unwrap();
 
         let light = list_blocks_light(&conn).unwrap();
-        let manifest: FeedPreviewManifest = serde_json::from_str(
-            light[0].preview_manifest.as_deref().unwrap(),
-        )
-        .unwrap();
+        let manifest: FeedPreviewManifest =
+            serde_json::from_str(light[0].preview_manifest.as_deref().unwrap()).unwrap();
         assert_eq!(manifest.kind, FeedPreviewKind::VideoPoster);
         assert_eq!(manifest.tiles.len(), 1);
         assert!(manifest.tiles[0].is_video);
         assert!(manifest.tiles[0].is_video_poster);
+    }
+
+    #[test]
+    fn list_blocks_light_serializes_feed_playback_for_dedicated_mp4_video() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "feed-video",
+            "video",
+            Some("Demo"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.file = Some("demo.mp4".to_string());
+        block.frontmatter.width = Some(1280);
+        block.frontmatter.height = Some(720);
+        upsert_block(&conn, &block, None).unwrap();
+        sync_test_jpeg_thumb(&conn, "feed-video");
+
+        let light = list_blocks_light(&conn).unwrap();
+        let playback: FeedPlaybackDescriptor =
+            serde_json::from_str(light[0].feed_playback.as_deref().unwrap()).unwrap();
+        assert_eq!(playback.kind, FeedPlaybackKind::SingleVideo);
+        assert_eq!(playback.source_path, "demo.mp4");
+        assert_eq!(playback.poster_preview_path, "feed-video.jpg");
+        assert_eq!(playback.width, Some(1280));
+        assert_eq!(playback.height, Some(720));
+        assert_eq!(playback.container, FeedPlaybackContainer::Mp4);
+        assert_eq!(playback.profile, FeedPlaybackProfile::Standard);
+    }
+
+    #[test]
+    fn list_blocks_light_serializes_feed_playback_for_dedicated_webm_video() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "feed-video-webm",
+            "video",
+            Some("Demo"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.file = Some("demo.webm".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+        sync_test_jpeg_thumb(&conn, "feed-video-webm");
+
+        let light = list_blocks_light(&conn).unwrap();
+        let playback: FeedPlaybackDescriptor =
+            serde_json::from_str(light[0].feed_playback.as_deref().unwrap()).unwrap();
+        assert_eq!(playback.source_path, "demo.webm");
+        assert_eq!(playback.container, FeedPlaybackContainer::Webm);
+        assert_eq!(playback.profile, FeedPlaybackProfile::Standard);
+    }
+
+    #[test]
+    fn list_blocks_light_keeps_feed_playback_null_for_dedicated_mov_video() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "feed-video-mov",
+            "video",
+            Some("Demo"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.file = Some("demo.mov".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+        sync_test_jpeg_thumb(&conn, "feed-video-mov");
+
+        let light = list_blocks_light(&conn).unwrap();
+        assert_eq!(light[0].feed_playback, None);
+    }
+
+    #[test]
+    fn list_blocks_light_serializes_feed_playback_for_single_video_social_preview() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "tweet-video-playback",
+            "article",
+            Some("Tweet"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "hello\n<!-- tweet-video -->\n![](clip.mp4)",
+        );
+        block.frontmatter.url = Some("https://x.com/user/status/1".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+        sync_test_jpeg_thumb(&conn, "tweet-video-playback");
+
+        let light = list_blocks_light(&conn).unwrap();
+        let playback: FeedPlaybackDescriptor =
+            serde_json::from_str(light[0].feed_playback.as_deref().unwrap()).unwrap();
+        assert_eq!(playback.source_path, "clip.mp4");
+        assert_eq!(playback.poster_preview_path, "tweet-video-playback.jpg");
+        assert_eq!(playback.container, FeedPlaybackContainer::Mp4);
+        assert_eq!(playback.profile, FeedPlaybackProfile::Standard);
+    }
+
+    #[test]
+    fn list_blocks_light_keeps_feed_playback_null_for_multi_media_social_preview() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "tweet-gallery",
+            "article",
+            Some("Tweet"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "hello\n<!-- tweet-video -->\n![](clip.mp4)\n![](still.jpg)",
+        );
+        block.frontmatter.url = Some("https://x.com/user/status/1".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+        sync_test_jpeg_thumb(&conn, "tweet-gallery");
+
+        let light = list_blocks_light(&conn).unwrap();
+        assert_eq!(light[0].feed_playback, None);
+    }
+
+    #[test]
+    fn list_blocks_light_keeps_feed_playback_null_for_remote_video_sources() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "tweet-remote-video",
+            "article",
+            Some("Tweet"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "hello\n<!-- tweet-video -->\n![](https://cdn.example.com/clip.mp4)",
+        );
+        block.frontmatter.url = Some("https://x.com/user/status/1".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+        sync_test_jpeg_thumb(&conn, "tweet-remote-video");
+
+        let light = list_blocks_light(&conn).unwrap();
+        assert_eq!(light[0].feed_playback, None);
+    }
+
+    #[test]
+    fn clear_thumb_metadata_clears_feed_playback() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "feed-video-clear",
+            "video",
+            Some("Demo"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.file = Some("demo.mp4".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+        sync_test_jpeg_thumb(&conn, "feed-video-clear");
+
+        let before = list_blocks_light(&conn).unwrap();
+        assert!(before[0].feed_playback.is_some());
+
+        assert!(clear_thumb_metadata(&conn, "feed-video-clear").unwrap());
+
+        let after = list_blocks_light(&conn).unwrap();
+        assert_eq!(after[0].feed_playback, None);
     }
 
     #[test]
@@ -1808,14 +2563,24 @@ mod tests {
         upsert_block(&conn, &make_block("web-only", &["web"]), None).unwrap();
         upsert_block(
             &conn,
-            &make_block_full("channel", "channel", Some("Design"), "2026-01-01T00:00:00Z", &[], ""),
+            &make_block_full(
+                "channel",
+                "channel",
+                Some("Design"),
+                "2026-01-01T00:00:00Z",
+                &[],
+                "",
+            ),
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         let (all, has_more_all) = list_grid_blocks(&conn, None, 0, 50).unwrap();
         assert_eq!(all.len(), 3);
         assert!(!has_more_all);
-        assert!(all.iter().all(|block| block.block_type != BlockType::Channel));
+        assert!(all
+            .iter()
+            .all(|block| block.block_type != BlockType::Channel));
 
         let (design, has_more_design) = list_grid_blocks(&conn, Some("design"), 0, 50).unwrap();
         assert_eq!(design.len(), 2);
@@ -1851,8 +2616,8 @@ mod tests {
         let jpeg_thumb = dir.path().join("design-b.jpg");
         std::fs::write(&jpeg_thumb, [0xFF, 0xD8, 0xFF, 0x00]).unwrap();
 
-        assert!(sync_thumb_metadata(&conn, "design-a", &png_thumb).unwrap());
-        assert!(sync_thumb_metadata(&conn, "design-b", &jpeg_thumb).unwrap());
+        assert!(sync_thumb_metadata(&conn, "design-a", &png_thumb, None).unwrap());
+        assert!(sync_thumb_metadata(&conn, "design-b", &jpeg_thumb, None).unwrap());
 
         let all = list_preview_blocks(&conn, 10).unwrap();
         assert_eq!(all.len(), 2);
@@ -1891,7 +2656,10 @@ mod tests {
         upsert_block(&conn, &make_block("legacy-thumb", &["design"]), None).unwrap();
 
         let before = list_preview_blocks(&conn, 10).unwrap();
-        let legacy_before = before.iter().find(|item| item.slug == "legacy-thumb").unwrap();
+        let legacy_before = before
+            .iter()
+            .find(|item| item.slug == "legacy-thumb")
+            .unwrap();
         assert_eq!(legacy_before.thumb_format, None);
         assert_eq!(legacy_before.thumb_mtime, 0);
 
@@ -1901,9 +2669,213 @@ mod tests {
         assert_eq!(updated, 1);
 
         let after = list_preview_blocks(&conn, 10).unwrap();
-        let legacy_after = after.iter().find(|item| item.slug == "legacy-thumb").unwrap();
+        let legacy_after = after
+            .iter()
+            .find(|item| item.slug == "legacy-thumb")
+            .unwrap();
         assert_eq!(legacy_after.thumb_format, Some(ThumbFormat::Jpeg));
         assert!(legacy_after.thumb_mtime > 0);
+    }
+
+    #[test]
+    fn backfill_missing_preview_manifest_restores_legacy_social_video_rows() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "legacy-social-video",
+            "article",
+            Some("Tweet"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "hello\n<!-- tweet-video -->\n![](clip.mp4)",
+        );
+        block.frontmatter.url = Some("https://x.com/user/status/1".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+        sync_test_jpeg_thumb(&conn, "legacy-social-video");
+
+        conn.execute(
+            "UPDATE blocks SET preview_manifest = NULL, feed_playback = NULL WHERE slug = ?1",
+            ["legacy-social-video"],
+        )
+        .unwrap();
+
+        let updated = backfill_missing_preview_manifest(&conn).unwrap();
+        assert_eq!(updated, 1);
+
+        let light = list_blocks_light(&conn).unwrap();
+        let manifest: FeedPreviewManifest =
+            serde_json::from_str(light[0].preview_manifest.as_deref().unwrap()).unwrap();
+        assert_eq!(manifest.kind, FeedPreviewKind::VideoPoster);
+        assert_eq!(manifest.tiles.len(), 1);
+        assert!(manifest.tiles[0].is_video);
+    }
+
+    #[test]
+    fn backfill_missing_feed_playback_restores_legacy_rows_with_existing_thumb_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "legacy-feed-video",
+            "video",
+            Some("Demo"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.file = Some("demo.mp4".to_string());
+        block.frontmatter.width = Some(1280);
+        block.frontmatter.height = Some(720);
+        write_test_media(&vault, "demo.mp4", 256 * 1024);
+        upsert_block(&conn, &block, Some(vault.root())).unwrap();
+        sync_test_jpeg_thumb(&conn, "legacy-feed-video");
+
+        conn.execute(
+            "UPDATE blocks SET feed_playback = NULL WHERE slug = ?1",
+            ["legacy-feed-video"],
+        )
+        .unwrap();
+
+        let updated = backfill_missing_feed_playback(&conn, &vault).unwrap();
+        assert_eq!(updated, 1);
+
+        let light = list_blocks_light(&conn).unwrap();
+        let playback: FeedPlaybackDescriptor =
+            serde_json::from_str(light[0].feed_playback.as_deref().unwrap()).unwrap();
+        assert_eq!(playback.source_path, "demo.mp4");
+        assert_eq!(playback.container, FeedPlaybackContainer::Mp4);
+        assert_eq!(playback.profile, FeedPlaybackProfile::Standard);
+    }
+
+    #[test]
+    fn combined_metadata_backfills_restore_feed_video_contract_for_legacy_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "legacy-contract-video",
+            "article",
+            Some("Tweet"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "hello\n<!-- tweet-video -->\n![](clip.mp4)",
+        );
+        block.frontmatter.url = Some("https://x.com/user/status/1".to_string());
+        write_test_media(&vault, "clip.mp4", 256 * 1024);
+        upsert_block(&conn, &block, Some(vault.root())).unwrap();
+        sync_test_jpeg_thumb(&conn, "legacy-contract-video");
+
+        conn.execute(
+            "UPDATE blocks
+             SET preview_manifest = NULL, feed_playback = NULL
+             WHERE slug = ?1",
+            ["legacy-contract-video"],
+        )
+        .unwrap();
+
+        assert_eq!(backfill_missing_preview_manifest(&conn).unwrap(), 1);
+        assert_eq!(backfill_missing_feed_playback(&conn, &vault).unwrap(), 1);
+
+        let light = list_blocks_light(&conn).unwrap();
+        let manifest: FeedPreviewManifest =
+            serde_json::from_str(light[0].preview_manifest.as_deref().unwrap()).unwrap();
+        let playback: FeedPlaybackDescriptor =
+            serde_json::from_str(light[0].feed_playback.as_deref().unwrap()).unwrap();
+        assert_eq!(manifest.kind, FeedPreviewKind::VideoPoster);
+        assert_eq!(playback.source_path, "clip.mp4");
+        assert_eq!(playback.poster_preview_path, "legacy-contract-video.jpg");
+        assert_eq!(playback.profile, FeedPlaybackProfile::Standard);
+    }
+
+    #[test]
+    fn backfill_missing_feed_playback_skips_multi_media_social_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "legacy-multi-social",
+            "article",
+            Some("Tweet"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "hello\n<!-- tweet-video -->\n![](clip.mp4)\n![](still.jpg)",
+        );
+        block.frontmatter.url = Some("https://x.com/user/status/1".to_string());
+        write_test_media(&vault, "clip.mp4", 256 * 1024);
+        write_test_media(&vault, "still.jpg", 64 * 1024);
+        upsert_block(&conn, &block, Some(vault.root())).unwrap();
+        sync_test_jpeg_thumb(&conn, "legacy-multi-social");
+
+        conn.execute(
+            "UPDATE blocks SET feed_playback = NULL WHERE slug = ?1",
+            ["legacy-multi-social"],
+        )
+        .unwrap();
+
+        assert_eq!(backfill_missing_feed_playback(&conn, &vault).unwrap(), 0);
+
+        let light = list_blocks_light(&conn).unwrap();
+        assert_eq!(light[0].feed_playback, None);
+    }
+
+    #[test]
+    fn upsert_block_with_vault_root_marks_large_but_valid_videos_as_heavy_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "heavy-feed-video",
+            "video",
+            Some("Heavy clip"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.file = Some("heavy.mp4".to_string());
+        block.frontmatter.width = Some(4096);
+        block.frontmatter.height = Some(1956);
+        write_test_media(&vault, "heavy.mp4", 24 * 1024 * 1024);
+
+        upsert_block(&conn, &block, Some(vault.root())).unwrap();
+        sync_test_jpeg_thumb(&conn, "heavy-feed-video");
+
+        let light = list_blocks_light(&conn).unwrap();
+        let playback: FeedPlaybackDescriptor =
+            serde_json::from_str(light[0].feed_playback.as_deref().unwrap()).unwrap();
+        assert_eq!(playback.profile, FeedPlaybackProfile::Heavy);
+    }
+
+    #[test]
+    fn backfill_missing_feed_playback_clears_stale_truly_excessive_video_descriptors() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "stale-heavy-video",
+            "video",
+            Some("Heavy clip"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.file = Some("heavy.mp4".to_string());
+        block.frontmatter.width = Some(4096);
+        block.frontmatter.height = Some(1956);
+        write_test_media(
+            &vault,
+            "heavy.mp4",
+            (FEED_AUTOPLAY_HARD_MAX_SOURCE_BYTES + 1) as usize,
+        );
+
+        upsert_block(&conn, &block, None).unwrap();
+        sync_test_jpeg_thumb(&conn, "stale-heavy-video");
+
+        let before = list_blocks_light(&conn).unwrap();
+        assert!(before[0].feed_playback.is_some());
+
+        assert_eq!(backfill_missing_feed_playback(&conn, &vault).unwrap(), 1);
+
+        let after = list_blocks_light(&conn).unwrap();
+        assert_eq!(after[0].feed_playback, None);
     }
 
     // ── resolve_unique_slug ─────────────────────────────────────────────
@@ -1952,8 +2924,17 @@ mod tests {
         let conn = test_conn();
         upsert_block(
             &conn,
-            &make_block_full("test", "article", Some("Hello World"), "2026-01-01T00:00:00Z", &[], "body"), None,
-        ).unwrap();
+            &make_block_full(
+                "test",
+                "article",
+                Some("Hello World"),
+                "2026-01-01T00:00:00Z",
+                &[],
+                "body",
+            ),
+            None,
+        )
+        .unwrap();
 
         // These would cause FTS5 syntax errors without escaping
         for query_text in &["\"quoted\"", "hello*world", "(parens)", "a OR b", "prefix*"] {

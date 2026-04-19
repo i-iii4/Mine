@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md)
 
 ## Goal
 
@@ -114,7 +114,7 @@ Goal: устранить две подтверждённые архитекту�
 | C2 | Feed Preview Pipeline | [~] | `FeedPreviewManifest`, composite previews, feed/detail split, removal of originals from grid path |
 | C3 | Measurement + Invalidation Hardening | [~] | media-free measurement, `source_stamp` invalidation, acceptance profiling |
 | C4 | Residual Risks / Follow-up | [ ] | watcher hardening beyond current catch-up, remaining frontend boot optimization, optional async/custom asset path for Detail/original flows, remaining windowing bugs |
-| C5 | Feed Video Phase | [~] | autoplay for dedicated `video` blocks and single-video previews, without regressing preview-only multi-media feed paths |
+| C5 | Feed Video Phase | [~] | explicit `feed_playback` contract, tiered `standard/heavy` autoplay policy, poster-first `FeedVideoSurface`, single-active autoplay, preview-only galleries |
 
 ### Current progress snapshot
 
@@ -137,9 +137,18 @@ Goal: устранить две подтверждённые архитекту�
   - на живом `Mine` подтверждено, что системная обрезка низа и white-tail underflow больше не воспроизводятся;
   - оставшийся scope `C3` — `source_stamp` invalidation и финальный profiling gate, а не height correctness.
 - `C5` выполнен частично:
-  - autoplay уже возвращён для dedicated `video` blocks;
-  - autoplay уже возвращён для single-video previews (`article` / `social`);
-  - multi-media feed остаётся preview-only.
+  - введён explicit backend-derived `feed_playback` contract для desktop feed autoplay;
+  - galleries больше не монтируют live video вообще и остаются preview-only;
+  - dedicated `video` blocks и single-video `article` / `social` autoplay'ят только через `FeedVideoSurface`;
+  - `FeedVideoSurface` получил poster-first fail-safe state machine (`direct -> blob -> poster-only`) без blank video box;
+  - autoplay policy стала двухступенчатой вместо жёсткого compact-only gate:
+    - `standard` — compact clips идут через `direct -> blob -> poster-only`;
+    - `heavy` — larger single-video clips теперь тоже получают `feed_playback`, но идут через longer `direct -> poster-only` без blob fallback;
+    - descriptor не создаётся только для truly excessive clips выше hard limits;
+  - grid autoplay policy смягчена под feed UX:
+    - все committed `standard` clips autoplay'ят одновременно, если их playback surface видима `>= 50%`;
+    - `heavy` clips остаются консервативными: одновременно autoplay'ит только один top-most committed heavy clip;
+  - `C5` остаётся `[~]` до ручной приёмки пользователем: autoplay dedicated video, autoplay single-video previews, preview-only multi-media, no blank square on failures.
 
 ### Current known blocker before phase completion
 

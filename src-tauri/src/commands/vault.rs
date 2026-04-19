@@ -91,12 +91,22 @@ pub fn open_vault(
         Ok(open) => append_startup_trace(
             &app,
             "open_vault",
-            &format!("done path={} indexed={} elapsed_ms={}", path, open.indexed, started.elapsed().as_millis()),
+            &format!(
+                "done path={} indexed={} elapsed_ms={}",
+                path,
+                open.indexed,
+                started.elapsed().as_millis()
+            ),
         ),
         Err(err) => append_startup_trace(
             &app,
             "open_vault",
-            &format!("error path={} elapsed_ms={} err={}", path, started.elapsed().as_millis(), err),
+            &format!(
+                "error path={} elapsed_ms={} err={}",
+                path,
+                started.elapsed().as_millis(),
+                err
+            ),
         ),
     }
     result
@@ -117,7 +127,9 @@ pub fn get_vault_path(
     append_startup_trace(&app, "get_vault_path", "start");
     // Check in-memory state first
     {
-        let vault_state = state.vault_state.lock()
+        let vault_state = state
+            .vault_state
+            .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
         if let Some(ref vs) = *vault_state {
             let path = vs.vault.root().to_string_lossy().to_string();
@@ -129,11 +141,19 @@ pub fn get_vault_path(
     // Try to restore from saved config
     if let Some(saved_path) = load_saved_vault_path(&app) {
         if PathBuf::from(&saved_path).is_dir() {
-            append_startup_trace(&app, "get_vault_path", &format!("from_config path={saved_path}"));
+            append_startup_trace(
+                &app,
+                "get_vault_path",
+                &format!("from_config path={saved_path}"),
+            );
             return Ok(Some(saved_path));
         } else {
             log::info!("saved vault no longer exists: {}", saved_path);
-            append_startup_trace(&app, "get_vault_path", &format!("stale_config path={saved_path}"));
+            append_startup_trace(
+                &app,
+                "get_vault_path",
+                &format!("stale_config path={saved_path}"),
+            );
             clear_saved_vault_path(&app);
         }
     }
@@ -145,12 +165,11 @@ pub fn get_vault_path(
 /// Start a background sync for the currently opened vault.
 /// Returns true if a new sync was started, false if one is already running.
 #[tauri::command]
-pub fn start_vault_sync(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<bool, CommandError> {
+pub fn start_vault_sync(app: AppHandle, state: State<'_, AppState>) -> Result<bool, CommandError> {
     let path = {
-        let vault_state = state.vault_state.lock()
+        let vault_state = state
+            .vault_state
+            .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
         let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
         vs.vault.root().to_string_lossy().into_owned()
@@ -166,8 +185,10 @@ pub fn rebuild_index(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ScanResult, CommandError> {
-    let vault_state = state.vault_state.lock()
-            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     // Clear all indexed data
@@ -210,12 +231,23 @@ fn initialize_vault(
 ) -> Result<VaultOpenResult, CommandError> {
     let total = Instant::now();
     append_startup_trace(app, "initialize_vault", &format!("start path={path}"));
-    let mut vault_state = state.vault_state.lock()
+    let mut vault_state = state
+        .vault_state
+        .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     if let Some(ref vs) = *vault_state {
         if vs.vault.root() == Path::new(path) {
             let indexed = count_indexed_blocks(&vs.conn)?;
-            append_startup_trace(app, "initialize_vault", &format!("reuse_existing path={} indexed={} elapsed_ms={}", path, indexed, total.elapsed().as_millis()));
+            append_startup_trace(
+                app,
+                "initialize_vault",
+                &format!(
+                    "reuse_existing path={} indexed={} elapsed_ms={}",
+                    path,
+                    indexed,
+                    total.elapsed().as_millis()
+                ),
+            );
             return Ok(VaultOpenResult {
                 indexed,
                 errors: 0,
@@ -229,7 +261,11 @@ fn initialize_vault(
     }
 
     let vault = resolve_runtime_vault_layout(app, Path::new(path))?;
-    append_startup_trace(app, "initialize_vault", &format!("mkdir thumbs={}", vault.thumbs_dir().display()));
+    append_startup_trace(
+        app,
+        "initialize_vault",
+        &format!("mkdir thumbs={}", vault.thumbs_dir().display()),
+    );
     let local_index_existed = vault.index_db_path().exists();
     let bootstrapped_thumbs_from_legacy = bootstrap_local_thumbs_from_legacy(&vault)?;
 
@@ -278,39 +314,87 @@ fn initialize_vault(
     app.asset_protocol_scope()
         .allow_directory(vault.root(), false)
         .map_err(|e| CommandError::Internal(format!("failed to allow vault root: {e}")))?;
-    append_startup_trace(app, "initialize_vault", &format!("asset_scope root elapsed_ms={}", total.elapsed().as_millis()));
+    append_startup_trace(
+        app,
+        "initialize_vault",
+        &format!(
+            "asset_scope root elapsed_ms={}",
+            total.elapsed().as_millis()
+        ),
+    );
     app.asset_protocol_scope()
         .allow_directory(vault.thumbs_dir(), false)
         .map_err(|e| CommandError::Internal(format!("failed to allow thumbs dir: {e}")))?;
-    append_startup_trace(app, "initialize_vault", &format!("asset_scope thumbs elapsed_ms={}", total.elapsed().as_millis()));
+    append_startup_trace(
+        app,
+        "initialize_vault",
+        &format!(
+            "asset_scope thumbs elapsed_ms={}",
+            total.elapsed().as_millis()
+        ),
+    );
 
     // Open or create database
     let db_started = Instant::now();
     let conn = db::open_or_create(&vault.index_db_path())?;
     let indexed = count_indexed_blocks(&conn)?;
-    append_startup_trace(app, "initialize_vault", &format!("db_open indexed={} elapsed_ms={}", indexed, db_started.elapsed().as_millis()));
+    append_startup_trace(
+        app,
+        "initialize_vault",
+        &format!(
+            "db_open indexed={} elapsed_ms={}",
+            indexed,
+            db_started.elapsed().as_millis()
+        ),
+    );
 
     // Start file watcher
     let db_path = vault.index_db_path();
     let watcher_started = Instant::now();
     match watch::start_watching(app, &vault, &db_path) {
         Ok(w) => {
-            let mut watcher = state.watcher.lock()
+            let mut watcher = state
+                .watcher
+                .lock()
                 .map_err(|_| CommandError::Internal("watcher mutex poisoned".into()))?;
             *watcher = Some(w);
-            append_startup_trace(app, "initialize_vault", &format!("watcher_started elapsed_ms={}", watcher_started.elapsed().as_millis()));
+            append_startup_trace(
+                app,
+                "initialize_vault",
+                &format!(
+                    "watcher_started elapsed_ms={}",
+                    watcher_started.elapsed().as_millis()
+                ),
+            );
         }
         Err(e) => {
             log::warn!("failed to start file watcher: {e:#}");
-            append_startup_trace(app, "initialize_vault", &format!("watcher_failed elapsed_ms={} err={:#}", watcher_started.elapsed().as_millis(), e));
+            append_startup_trace(
+                app,
+                "initialize_vault",
+                &format!(
+                    "watcher_failed elapsed_ms={} err={:#}",
+                    watcher_started.elapsed().as_millis(),
+                    e
+                ),
+            );
         }
     }
 
     let thumbs_root = vault.thumbs_dir().to_string_lossy().into_owned();
     *vault_state = Some(VaultState { conn, vault });
-    append_startup_trace(app, "initialize_vault", &format!("done path={} indexed={} total_elapsed_ms={}", path, indexed, total.elapsed().as_millis()));
+    append_startup_trace(
+        app,
+        "initialize_vault",
+        &format!(
+            "done path={} indexed={} total_elapsed_ms={}",
+            path,
+            indexed,
+            total.elapsed().as_millis()
+        ),
+    );
 
-    start_thumb_metadata_backfill(app.clone(), path.to_string());
+    start_index_metadata_backfill(app.clone(), path.to_string());
 
     Ok(VaultOpenResult {
         indexed,
@@ -361,48 +445,130 @@ fn migrate_thumb_cache(vault: &VaultLayout) -> bool {
     true
 }
 
-/// Legacy vaults may have thumbnail files on disk but no DB metadata yet.
-/// Backfill `thumb_format` / `thumb_mtime` in the background so sidebar
-/// previews start working again without blocking startup.
-fn start_thumb_metadata_backfill(app: AppHandle, path: String) {
+/// Legacy derived stores may predate the current preview/feed metadata
+/// columns. Backfill `preview_manifest`, `thumb_format` / `thumb_mtime`, and
+/// `feed_playback` in the background so feed contracts recover without
+/// blocking startup.
+fn start_index_metadata_backfill(app: AppHandle, path: String) {
     let app_for_thread = app.clone();
     let path_for_thread = path.clone();
     let _ = std::thread::Builder::new()
-        .name(format!("thumb-meta-backfill-{}", path))
+        .name(format!("index-meta-backfill-{}", path))
         .spawn(move || {
-            let vault = match resolve_runtime_vault_layout(&app_for_thread, Path::new(&path_for_thread)) {
-                Ok(vault) => vault,
-                Err(err) => {
-                    log::warn!("thumb metadata backfill layout failed for {}: {}", path_for_thread, err);
-                    append_startup_trace(&app_for_thread, "thumb_metadata_backfill", &format!("layout_failed path={} err={}", path_for_thread, err));
-                    return;
-                }
-            };
+            let vault =
+                match resolve_runtime_vault_layout(&app_for_thread, Path::new(&path_for_thread)) {
+                    Ok(vault) => vault,
+                    Err(err) => {
+                        log::warn!(
+                            "index metadata backfill layout failed for {}: {}",
+                            path_for_thread,
+                            err
+                        );
+                        append_startup_trace(
+                            &app_for_thread,
+                            "index_metadata_backfill",
+                            &format!("layout_failed path={} err={}", path_for_thread, err),
+                        );
+                        return;
+                    }
+                };
             let conn = match db::open_or_create(&vault.index_db_path()) {
                 Ok(conn) => conn,
                 Err(err) => {
-                    log::warn!("thumb metadata backfill db open failed for {}: {:#}", path_for_thread, err);
-                    append_startup_trace(&app_for_thread, "thumb_metadata_backfill", &format!("db_open_failed path={} err={:#}", path_for_thread, err));
+                    log::warn!(
+                        "index metadata backfill db open failed for {}: {:#}",
+                        path_for_thread,
+                        err
+                    );
+                    append_startup_trace(
+                        &app_for_thread,
+                        "index_metadata_backfill",
+                        &format!("db_open_failed path={} err={:#}", path_for_thread, err),
+                    );
                     return;
                 }
             };
 
-            match index::backfill_missing_thumb_metadata(&conn, &vault) {
-                Ok(0) => {
-                    append_startup_trace(&app_for_thread, "thumb_metadata_backfill", &format!("noop path={}", path_for_thread));
-                }
-                Ok(updated) => {
-                    log::info!("thumb metadata backfill: {} row(s) updated for {}", updated, path_for_thread);
-                    append_startup_trace(&app_for_thread, "thumb_metadata_backfill", &format!("updated path={} rows={}", path_for_thread, updated));
-                    let _ = app_for_thread.emit("vault-changed", VaultChangedPayload {
-                        path: path_for_thread.clone(),
-                    });
-                }
+            let preview_updated = match index::backfill_missing_preview_manifest(&conn) {
+                Ok(updated) => updated,
                 Err(err) => {
-                    log::warn!("thumb metadata backfill failed for {}: {:#}", path_for_thread, err);
-                    append_startup_trace(&app_for_thread, "thumb_metadata_backfill", &format!("failed path={} err={:#}", path_for_thread, err));
+                    log::warn!(
+                        "preview manifest backfill failed for {}: {:#}",
+                        path_for_thread,
+                        err
+                    );
+                    append_startup_trace(
+                        &app_for_thread,
+                        "index_metadata_backfill",
+                        &format!("preview_failed path={} err={:#}", path_for_thread, err),
+                    );
+                    return;
                 }
+            };
+            let thumb_updated = match index::backfill_missing_thumb_metadata(&conn, &vault) {
+                Ok(updated) => updated,
+                Err(err) => {
+                    log::warn!(
+                        "thumb metadata backfill failed for {}: {:#}",
+                        path_for_thread,
+                        err
+                    );
+                    append_startup_trace(
+                        &app_for_thread,
+                        "index_metadata_backfill",
+                        &format!("thumb_failed path={} err={:#}", path_for_thread, err),
+                    );
+                    return;
+                }
+            };
+            let playback_updated = match index::backfill_missing_feed_playback(&conn, &vault) {
+                Ok(updated) => updated,
+                Err(err) => {
+                    log::warn!(
+                        "feed playback backfill failed for {}: {:#}",
+                        path_for_thread,
+                        err
+                    );
+                    append_startup_trace(
+                        &app_for_thread,
+                        "index_metadata_backfill",
+                        &format!("playback_failed path={} err={:#}", path_for_thread, err),
+                    );
+                    return;
+                }
+            };
+
+            let total_updated = preview_updated + thumb_updated + playback_updated;
+            if total_updated == 0 {
+                append_startup_trace(
+                    &app_for_thread,
+                    "index_metadata_backfill",
+                    &format!("noop path={}", path_for_thread),
+                );
+                return;
             }
+
+            log::info!(
+                "index metadata backfill: preview={} thumb={} playback={} for {}",
+                preview_updated,
+                thumb_updated,
+                playback_updated,
+                path_for_thread,
+            );
+            append_startup_trace(
+                &app_for_thread,
+                "index_metadata_backfill",
+                &format!(
+                    "updated path={} preview={} thumb={} playback={}",
+                    path_for_thread, preview_updated, thumb_updated, playback_updated
+                ),
+            );
+            let _ = app_for_thread.emit(
+                "vault-changed",
+                VaultChangedPayload {
+                    path: path_for_thread.clone(),
+                },
+            );
         });
 }
 
@@ -418,7 +584,11 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
     append_startup_trace(&app, "start_vault_sync", &format!("request path={path}"));
     let app_state = app.state::<AppState>();
     if !app_state.try_start_sync(&path)? {
-        append_startup_trace(&app, "start_vault_sync", &format!("already_running path={path}"));
+        append_startup_trace(
+            &app,
+            "start_vault_sync",
+            &format!("already_running path={path}"),
+        );
         return Ok(false);
     }
 
@@ -429,36 +599,51 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
         .name(format!("vault-sync-{}", sync_path))
         .spawn(move || {
             let total = Instant::now();
-            let vault = match resolve_runtime_vault_layout(&app_for_thread, Path::new(&path_for_thread)) {
-                Ok(vault) => vault,
-                Err(err) => {
-                    log::error!("failed to resolve runtime vault layout for {}: {}", path_for_thread, err);
-                    let _ = app_for_thread.emit(
-                        "vault-sync-finished",
-                        VaultSyncFinishedPayload {
-                            path: path_for_thread.clone(),
-                            indexed: 0,
-                            errors: 0,
-                            error: Some(err.to_string()),
-                        },
-                    );
-                    let _ = app_for_thread.state::<AppState>().abort_sync(&path_for_thread);
-                    return;
-                }
-            };
+            let vault =
+                match resolve_runtime_vault_layout(&app_for_thread, Path::new(&path_for_thread)) {
+                    Ok(vault) => vault,
+                    Err(err) => {
+                        log::error!(
+                            "failed to resolve runtime vault layout for {}: {}",
+                            path_for_thread,
+                            err
+                        );
+                        let _ = app_for_thread.emit(
+                            "vault-sync-finished",
+                            VaultSyncFinishedPayload {
+                                path: path_for_thread.clone(),
+                                indexed: 0,
+                                errors: 0,
+                                error: Some(err.to_string()),
+                            },
+                        );
+                        let _ = app_for_thread
+                            .state::<AppState>()
+                            .abort_sync(&path_for_thread);
+                        return;
+                    }
+                };
             let _ = app_for_thread.emit(
                 "vault-sync-started",
                 VaultSyncStartedPayload {
                     path: path_for_thread.clone(),
                 },
             );
-            append_startup_trace(&app_for_thread, "vault_sync_thread", &format!("start path={}", path_for_thread));
+            append_startup_trace(
+                &app_for_thread,
+                "vault_sync_thread",
+                &format!("start path={}", path_for_thread),
+            );
 
             let conn = match db::open_or_create(&vault.index_db_path()) {
                 Ok(conn) => conn,
                 Err(err) => {
                     log::error!("failed to open db for sync {}: {:#}", path_for_thread, err);
-                    append_startup_trace(&app_for_thread, "vault_sync_thread", &format!("db_open_failed path={} err={:#}", path_for_thread, err));
+                    append_startup_trace(
+                        &app_for_thread,
+                        "vault_sync_thread",
+                        &format!("db_open_failed path={} err={:#}", path_for_thread, err),
+                    );
                     let _ = app_for_thread.emit(
                         "vault-sync-finished",
                         VaultSyncFinishedPayload {
@@ -468,7 +653,9 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                             error: Some(format!("{:#}", err)),
                         },
                     );
-                    let _ = app_for_thread.state::<AppState>().abort_sync(&path_for_thread);
+                    let _ = app_for_thread
+                        .state::<AppState>()
+                        .abort_sync(&path_for_thread);
                     return;
                 }
             };
@@ -478,7 +665,11 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                 append_startup_trace(
                     &app_for_thread,
                     "vault_sync_thread",
-                    &format!("thumb_cache_migrated path={} elapsed_ms={}", path_for_thread, total.elapsed().as_millis()),
+                    &format!(
+                        "thumb_cache_migrated path={} elapsed_ms={}",
+                        path_for_thread,
+                        total.elapsed().as_millis()
+                    ),
                 );
             }
             let final_result = loop {
@@ -490,32 +681,40 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                     handler::full_scan(
                         &conn,
                         &vault,
-                        Some(thumbs_done_cb(app_for_thread.clone(), path_for_thread.clone())),
+                        Some(thumbs_done_cb(
+                            app_for_thread.clone(),
+                            path_for_thread.clone(),
+                        )),
                         Some(app_for_thread.clone()),
                     )
                 } else {
                     handler::incremental_scan(
                         &conn,
                         &vault,
-                        Some(thumbs_done_cb(app_for_thread.clone(), path_for_thread.clone())),
+                        Some(thumbs_done_cb(
+                            app_for_thread.clone(),
+                            path_for_thread.clone(),
+                        )),
                         Some(app_for_thread.clone()),
                     )
                 };
                 match result {
-                    Ok(scan) => {
-                        match sync_state.complete_sync_pass(&path_for_thread) {
-                            Ok(true) => {
-                                append_startup_trace(
-                                    &app_for_thread,
-                                    "vault_sync_thread",
-                                    &format!("dirty_during_sync path={} rerun elapsed_ms={}", path_for_thread, total.elapsed().as_millis()),
-                                );
-                                continue;
-                            }
-                            Ok(false) => break Ok(scan),
-                            Err(err) => break Err(err),
+                    Ok(scan) => match sync_state.complete_sync_pass(&path_for_thread) {
+                        Ok(true) => {
+                            append_startup_trace(
+                                &app_for_thread,
+                                "vault_sync_thread",
+                                &format!(
+                                    "dirty_during_sync path={} rerun elapsed_ms={}",
+                                    path_for_thread,
+                                    total.elapsed().as_millis()
+                                ),
+                            );
+                            continue;
                         }
-                    }
+                        Ok(false) => break Ok(scan),
+                        Err(err) => break Err(err),
+                    },
                     Err(err) => break Err(CommandError::Internal(format!("{:#}", err))),
                 }
             };
@@ -523,7 +722,17 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
             match final_result {
                 Ok(scan) => {
                     migrate_channels_to_files(&conn, &vault);
-                    append_startup_trace(&app_for_thread, "vault_sync_thread", &format!("done path={} indexed={} errors={} elapsed_ms={}", path_for_thread, scan.indexed, scan.errors, total.elapsed().as_millis()));
+                    append_startup_trace(
+                        &app_for_thread,
+                        "vault_sync_thread",
+                        &format!(
+                            "done path={} indexed={} errors={} elapsed_ms={}",
+                            path_for_thread,
+                            scan.indexed,
+                            scan.errors,
+                            total.elapsed().as_millis()
+                        ),
+                    );
                     let _ = app_for_thread.emit(
                         "vault-sync-finished",
                         VaultSyncFinishedPayload {
@@ -535,8 +744,21 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                     );
                 }
                 Err(err) => {
-                    log::error!("background vault sync failed for {}: {}", path_for_thread, err);
-                    append_startup_trace(&app_for_thread, "vault_sync_thread", &format!("failed path={} elapsed_ms={} err={}", path_for_thread, total.elapsed().as_millis(), err));
+                    log::error!(
+                        "background vault sync failed for {}: {}",
+                        path_for_thread,
+                        err
+                    );
+                    append_startup_trace(
+                        &app_for_thread,
+                        "vault_sync_thread",
+                        &format!(
+                            "failed path={} elapsed_ms={} err={}",
+                            path_for_thread,
+                            total.elapsed().as_millis(),
+                            err
+                        ),
+                    );
                     let _ = sync_state.abort_sync(&path_for_thread);
                     let _ = app_for_thread.emit(
                         "vault-sync-finished",
@@ -549,12 +771,13 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                     );
                 }
             }
-        })
-    {
+        }) {
         Ok(_handle) => Ok(true),
         Err(err) => {
             let _ = app.state::<AppState>().abort_sync(&path);
-            Err(CommandError::Internal(format!("failed to spawn vault sync thread: {err}")))
+            Err(CommandError::Internal(format!(
+                "failed to spawn vault sync thread: {err}"
+            )))
         }
     }
 }
@@ -572,7 +795,10 @@ fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLay
         .map_err(|e| CommandError::Internal(format!("failed to create arena dir: {e}")))?;
     let vault_id = ensure_vault_id(&base)?;
     let derived_root = derived_store_root(app, &vault_id)?;
-    Ok(VaultLayout::with_derived_root(root.to_path_buf(), derived_root))
+    Ok(VaultLayout::with_derived_root(
+        root.to_path_buf(),
+        derived_root,
+    ))
 }
 
 fn ensure_vault_id(vault: &VaultLayout) -> Result<String, CommandError> {
@@ -637,8 +863,9 @@ fn bootstrap_local_index_from_legacy(vault: &VaultLayout) -> Result<bool, Comman
     }
 
     if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| CommandError::Internal(format!("failed to create local derived dir: {e}")))?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            CommandError::Internal(format!("failed to create local derived dir: {e}"))
+        })?;
     }
 
     std::fs::copy(&source, &target)
@@ -768,7 +995,10 @@ fn migrate_channels_to_files(conn: &Connection, vault: &VaultLayout) {
 
 /// Path to the app config file: <app_data_dir>/config.json
 fn config_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_data_dir().ok().map(|dir| dir.join("config.json"))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| dir.join("config.json"))
 }
 
 /// Load the full config JSON, or empty object if missing.
@@ -784,11 +1014,16 @@ fn load_config(app: &AppHandle) -> serde_json::Value {
 
 /// Write the full config JSON to disk.
 fn write_config(app: &AppHandle, json: &serde_json::Value) {
-    let Some(config) = config_path(app) else { return };
+    let Some(config) = config_path(app) else {
+        return;
+    };
     if let Some(parent) = config.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Err(e) = std::fs::write(&config, serde_json::to_string_pretty(json).unwrap_or_default()) {
+    if let Err(e) = std::fs::write(
+        &config,
+        serde_json::to_string_pretty(json).unwrap_or_default(),
+    ) {
         log::warn!("failed to save config: {e}");
     }
 }
@@ -823,7 +1058,8 @@ fn load_known_vaults(app: &AppHandle) -> Vec<String> {
     let cfg = load_config(app);
     let Some(arr) = cfg.get("known_vaults").and_then(|v| v.as_array()) else {
         // Fallback: if no known_vaults, use current vault_path
-        return cfg.get("vault_path")
+        return cfg
+            .get("vault_path")
             .and_then(|v| v.as_str())
             .filter(|p| PathBuf::from(p).is_dir())
             .map(|s| vec![s.to_string()])
@@ -857,7 +1093,9 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(
-            std::fs::read_to_string(vault.vault_id_path()).unwrap().trim(),
+            std::fs::read_to_string(vault.vault_id_path())
+                .unwrap()
+                .trim(),
             first
         );
     }
@@ -870,8 +1108,16 @@ mod tests {
         let vault = VaultLayout::with_derived_root(root.clone(), derived);
         std::fs::create_dir_all(vault.arena_dir()).unwrap();
         std::fs::write(vault.legacy_index_db_path(), b"legacy-db").unwrap();
-        std::fs::write(format!("{}-wal", vault.legacy_index_db_path().display()), b"legacy-wal").unwrap();
-        std::fs::write(format!("{}-shm", vault.legacy_index_db_path().display()), b"legacy-shm").unwrap();
+        std::fs::write(
+            format!("{}-wal", vault.legacy_index_db_path().display()),
+            b"legacy-wal",
+        )
+        .unwrap();
+        std::fs::write(
+            format!("{}-shm", vault.legacy_index_db_path().display()),
+            b"legacy-shm",
+        )
+        .unwrap();
 
         assert!(bootstrap_local_index_from_legacy(&vault).unwrap());
         assert_eq!(std::fs::read(vault.index_db_path()).unwrap(), b"legacy-db");
@@ -897,7 +1143,10 @@ mod tests {
         std::fs::write(vault.legacy_thumbs_dir().join(".format-version"), b"3").unwrap();
 
         assert!(bootstrap_local_thumbs_from_legacy(&vault).unwrap());
-        assert_eq!(std::fs::read(vault.thumbs_dir().join("alpha.jpg")).unwrap(), b"jpg");
+        assert_eq!(
+            std::fs::read(vault.thumbs_dir().join("alpha.jpg")).unwrap(),
+            b"jpg"
+        );
         assert_eq!(
             std::fs::read(vault.thumbs_dir().join(".format-version")).unwrap(),
             b"3"

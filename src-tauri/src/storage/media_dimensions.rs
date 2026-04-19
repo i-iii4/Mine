@@ -162,10 +162,7 @@ pub fn build_media_dimensions_json(
 fn is_image_extension(name: &str) -> bool {
     let lower = name.to_lowercase();
     matches!(
-        lower
-            .rsplit_once('.')
-            .map(|(_, ext)| ext)
-            .unwrap_or(""),
+        lower.rsplit_once('.').map(|(_, ext)| ext).unwrap_or(""),
         "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "avif" | "heic" | "heif"
     )
 }
@@ -176,10 +173,7 @@ fn is_image_extension(name: &str) -> bool {
 fn is_video_extension(name: &str) -> bool {
     let lower = name.to_lowercase();
     matches!(
-        lower
-            .rsplit_once('.')
-            .map(|(_, ext)| ext)
-            .unwrap_or(""),
+        lower.rsplit_once('.').map(|(_, ext)| ext).unwrap_or(""),
         "mp4" | "m4v"
     )
 }
@@ -244,11 +238,8 @@ mod tests {
     #[test]
     fn build_media_dimensions_returns_none_when_files_missing() {
         let dir = tempdir().unwrap();
-        let result = build_media_dimensions_json(
-            dir.path(),
-            Some("missing.jpg"),
-            "![](also_missing.png)",
-        );
+        let result =
+            build_media_dimensions_json(dir.path(), Some("missing.jpg"), "![](also_missing.png)");
         assert!(result.is_none());
     }
 
@@ -274,12 +265,9 @@ mod tests {
         let img_b = image::RgbImage::from_fn(30, 40, |_, _| image::Rgb([0, 0, 0]));
         img_b.save(dir.path().join("secondary.png")).unwrap();
 
-        let json = build_media_dimensions_json(
-            dir.path(),
-            Some("primary.png"),
-            "![](secondary.png)",
-        )
-        .unwrap();
+        let json =
+            build_media_dimensions_json(dir.path(), Some("primary.png"), "![](secondary.png)")
+                .unwrap();
 
         assert!(json.contains("\"primary.png\""));
         assert!(json.contains("[10,20]"));
@@ -311,12 +299,8 @@ mod tests {
         let img = image::RgbImage::from_fn(5, 7, |_, _| image::Rgb([0, 0, 0]));
         img.save(dir.path().join("same.png")).unwrap();
 
-        let json = build_media_dimensions_json(
-            dir.path(),
-            Some("same.png"),
-            "![](same.png)",
-        )
-        .unwrap();
+        let json =
+            build_media_dimensions_json(dir.path(), Some("same.png"), "![](same.png)").unwrap();
 
         // Only one key in the JSON object.
         let occurrences = json.matches("\"same.png\"").count();

@@ -72,7 +72,7 @@ function isSocialUrl(url: string | null): boolean {
 }
 
 function isVideoFile(src: string): boolean {
-  return /\.mp4(\?|$)|\.webm(\?|$)/i.test(src);
+  return /\.mp4(\?|$)|\.webm(\?|$)|\.m4v(\?|$)|\.mov(\?|$)/i.test(src);
 }
 
 function isLocalImageFile(src: string): boolean {

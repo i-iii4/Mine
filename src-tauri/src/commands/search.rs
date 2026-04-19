@@ -16,7 +16,9 @@ pub fn search(
     state: State<'_, AppState>,
     query: String,
 ) -> Result<Vec<IndexedBlock>, CommandError> {
-    let vault_state = state.vault_state.lock()
+    let vault_state = state
+        .vault_state
+        .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 

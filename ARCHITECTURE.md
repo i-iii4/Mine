@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
 
 ## Context
 
@@ -137,6 +137,48 @@ Source vault хранит только пользовательские файл
 - async asset protocol override убирает синхронный `asset://` hotspot с main thread WebView для оставшихся asset-paths;
 - multi-image article/social preview должен приходить как один composite preview asset, а не как client-side gallery.
 - grid больше не допускает mixed-generation layout: live cards рендерятся только внутри exact `committed` prefix текущего layout generation.
+- feed video contract больше не определяется render-time эвристиками: autoplay разрешён только при наличии backend-derived `feed_playback`, galleries остаются preview-only, а failure mode feed-video всегда poster-safe.
+
+## Feed Video Contract
+
+Desktop feed-video после финализации живёт по четырём поверхностям:
+
+- `gallery feed` — preview-only, без live `<video>`
+- `feed autoplay` — узкое исключение только для dedicated `video` и single-video `article/social`
+- `detail` — full-fidelity playback originals
+- `measurement` — никогда не монтирует `<video>`
+
+Ключевой data contract:
+
+- `preview_manifest` остаётся layout/preview source-of-truth
+- `feed_playback` — отдельный nullable descriptor autoplay eligibility
+- `feed_playback.profile` делит одиночные feed-video на:
+  - `standard` — compact clips с `direct -> blob -> poster-only`
+  - `heavy` — larger but still acceptable clips с longer `direct -> poster-only`
+
+Frontend больше не принимает autoplay-решения по regex от имени файла. Единственная feed autoplay surface — `FeedVideoSurface` с poster-first state machine:
+
+- `poster`
+- `loading_direct`
+- `playing_direct`
+- `loading_blob`
+- `playing_blob`
+- `failed_poster_only`
+
+Backend derivation больше не режет любой non-compact single-video clip в `poster-only`.
+Теперь политика двухступенчатая:
+
+- `standard` до `10 MiB`, `2560px`, `4_000_000 px`
+- `heavy` до `64 MiB`, `5120px`, `12_000_000 px`
+- выше hard limits autoplay descriptor не создаётся вовсе
+
+Grid держит дополнительный invariant:
+
+- все видимые `standard` video cards могут autoplay'ить одновременно
+- из `heavy` video cards одновременно autoplay'ит максимум одна
+- autoplay разрешён только для committed cards текущего generation
+- autoplay разрешён только при visibility threshold `>= 50%` по playback surface
+- `heavy` active card выбирается как top-most visible block
 
 ## Components
 

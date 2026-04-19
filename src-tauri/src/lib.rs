@@ -102,9 +102,7 @@ pub fn run() {
                 .select_all()
                 .build()?;
 
-            let view_menu = SubmenuBuilder::new(app, "View")
-                .fullscreen()
-                .build()?;
+            let view_menu = SubmenuBuilder::new(app, "View").fullscreen().build()?;
 
             let window_menu = SubmenuBuilder::new(app, "Window")
                 .minimize()

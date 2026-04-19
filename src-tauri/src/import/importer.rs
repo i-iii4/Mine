@@ -9,7 +9,6 @@ use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::HashSet;
 
-
 use crate::domain::block::{suggest_slug, Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::VaultLayout;
 use crate::import::arena_api::{self, ArenaBlock};
@@ -110,10 +109,7 @@ fn import_single_block(
 ) -> Result<()> {
     let block_type = map_block_type(&arena_block.class);
     let title = arena_block.title.clone();
-    let url = arena_block
-        .source
-        .as_ref()
-        .and_then(|s| s.url.clone());
+    let url = arena_block.source.as_ref().and_then(|s| s.url.clone());
 
     // Generate unique slug (check DB + session-local set)
     let raw_slug = suggest_slug(title.as_deref(), url.as_deref());
@@ -129,9 +125,12 @@ fn import_single_block(
                     break;
                 }
             }
-            found.ok_or_else(|| anyhow::anyhow!(
-                "could not resolve slug conflict for '{}' after 1000 attempts", raw_slug
-            ))?
+            found.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "could not resolve slug conflict for '{}' after 1000 attempts",
+                    raw_slug
+                )
+            })?
         }
     };
     session_slugs.insert(slug.clone());
@@ -152,7 +151,11 @@ fn import_single_block(
             let media_path = vault.media_path(&slug, ext);
             if media_path.exists() {
                 let thumb_path = vault.thumb_path(&slug);
-                let _ = thumbnails::generate_thumbnail(&media_path, &thumb_path, thumbnails::DEFAULT_MAX_SIZE);
+                let _ = thumbnails::generate_thumbnail(
+                    &media_path,
+                    &thumb_path,
+                    thumbnails::DEFAULT_MAX_SIZE,
+                );
             }
         }
     }
@@ -226,10 +229,7 @@ fn download_media(
             }
         }
         "Attachment" => {
-            let att_url = arena_block
-                .attachment
-                .as_ref()
-                .map(|a| a.url.as_str());
+            let att_url = arena_block.attachment.as_ref().map(|a| a.url.as_str());
             match att_url {
                 Some(u) => (u.to_string(), arena_api::ext_from_url(u)),
                 None => return Ok((None, None)),

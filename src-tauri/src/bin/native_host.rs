@@ -128,9 +128,8 @@ fn write_message(json: &str) -> io::Result<()> {
 }
 
 fn send_response<T: serde::Serialize>(resp: &T) {
-    let json = serde_json::to_string(resp).unwrap_or_else(|_| {
-        r#"{"ok":false,"error":"serialization failed"}"#.to_string()
-    });
+    let json = serde_json::to_string(resp)
+        .unwrap_or_else(|_| r#"{"ok":false,"error":"serialization failed"}"#.to_string());
     let _ = write_message(&json);
 }
 
@@ -154,8 +153,8 @@ fn load_vault_path() -> Option<String> {
     let home = std::env::var("HOME").ok()?;
 
     // Try config from desktop app first
-    let config_path = PathBuf::from(&home)
-        .join("Library/Application Support/com.mine.app/config.json");
+    let config_path =
+        PathBuf::from(&home).join("Library/Application Support/com.mine.app/config.json");
     if let Ok(data) = std::fs::read_to_string(&config_path) {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
             if let Some(path) = json.get("vault_path").and_then(|v| v.as_str()) {
@@ -176,8 +175,8 @@ fn load_known_vaults() -> Vec<String> {
         Ok(h) => h,
         Err(_) => return vec![],
     };
-    let config_path = PathBuf::from(&home)
-        .join("Library/Application Support/com.mine.app/config.json");
+    let config_path =
+        PathBuf::from(&home).join("Library/Application Support/com.mine.app/config.json");
     let data = match std::fs::read_to_string(&config_path) {
         Ok(d) => d,
         Err(_) => return vec![],
@@ -187,7 +186,8 @@ fn load_known_vaults() -> Vec<String> {
         Err(_) => return vec![],
     };
     match json.get("known_vaults").and_then(|v| v.as_array()) {
-        Some(arr) => arr.iter()
+        Some(arr) => arr
+            .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
             .filter(|p| PathBuf::from(p).is_dir())
             .collect(),
@@ -213,7 +213,11 @@ fn handle_list_known_vaults() {
     }
     let vaults = load_known_vaults();
     let current = load_vault_path();
-    send_response(&KnownVaultsResponse { ok: true, vaults, current });
+    send_response(&KnownVaultsResponse {
+        ok: true,
+        vaults,
+        current,
+    });
 }
 
 fn handle_get_status_with_upload(upload: &Option<UploadServer>) {
@@ -299,10 +303,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     };
 
     // Generate slug
-    let raw_slug = mine_lib::domain::block::suggest_slug(
-        p.title.as_deref(),
-        p.url.as_deref(),
-    );
+    let raw_slug = mine_lib::domain::block::suggest_slug(p.title.as_deref(), p.url.as_deref());
     let existing: HashSet<String> = index::list_blocks(&conn)
         .unwrap_or_default()
         .iter()
@@ -380,8 +381,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
                                 continue; // already present
                             }
                             // Insert after first tweet text, before first ---
-                            let insert_pos = raw.find("\n\n---\n")
-                                .unwrap_or(raw.len());
+                            let insert_pos = raw.find("\n\n---\n").unwrap_or(raw.len());
                             let markup = format!("\n\n![]({})", video_url);
                             raw.insert_str(insert_pos, &markup);
                         }
@@ -413,7 +413,10 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             url: p.url,
             file: media_file,
             thumbnail: thumbnail_file,
-            tags: p.tags.unwrap_or_default().iter()
+            tags: p
+                .tags
+                .unwrap_or_default()
+                .iter()
                 .map(|t| mine_lib::domain::tag::normalize_tag(t))
                 .filter(|t| !t.is_empty())
                 .collect(),
@@ -540,9 +543,11 @@ fn capitalize_first(s: &str) -> String {
 fn decode_data_url(data_url: &str) -> anyhow::Result<(Vec<u8>, String)> {
     use base64::Engine;
     // Format: data:image/png;base64,iVBOR...
-    let rest = data_url.strip_prefix("data:")
+    let rest = data_url
+        .strip_prefix("data:")
         .ok_or_else(|| anyhow::anyhow!("not a data URL"))?;
-    let (header, data) = rest.split_once(',')
+    let (header, data) = rest
+        .split_once(',')
         .ok_or_else(|| anyhow::anyhow!("malformed data URL: no comma"))?;
     // Extract MIME type → extension
     let mime = header.split(';').next().unwrap_or("image/png");
@@ -553,7 +558,8 @@ fn decode_data_url(data_url: &str) -> anyhow::Result<(Vec<u8>, String)> {
         "image/gif" => "gif",
         _ => "png",
     };
-    let bytes = base64::engine::general_purpose::STANDARD.decode(data)
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
         .map_err(|e| anyhow::anyhow!("base64 decode failed: {e}"))?;
     Ok((bytes, ext.to_string()))
 }
@@ -573,7 +579,11 @@ fn validate_fetch_url(url: &str) -> anyhow::Result<()> {
         anyhow::bail!("only http:// and https:// URLs are allowed, got: {}", url);
     }
     // Extract host: skip "http(s)://" and take until "/" or ":"
-    let after_scheme = if url.starts_with("https://") { &url[8..] } else { &url[7..] };
+    let after_scheme = if url.starts_with("https://") {
+        &url[8..]
+    } else {
+        &url[7..]
+    };
     let host = after_scheme
         .split('/')
         .next()
@@ -589,7 +599,11 @@ fn validate_fetch_url(url: &str) -> anyhow::Result<()> {
         || lower.starts_with("192.168.")
         || lower.starts_with("169.254.")
         || (lower.starts_with("172.")
-            && lower.split('.').nth(1).and_then(|s| s.parse::<u8>().ok()).is_some_and(|n| (16..=31).contains(&n)))
+            && lower
+                .split('.')
+                .nth(1)
+                .and_then(|s| s.parse::<u8>().ok())
+                .is_some_and(|n| (16..=31).contains(&n)))
     {
         anyhow::bail!("private/loopback addresses are not allowed: {}", host);
     }
@@ -684,24 +698,34 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
                         line_start -= 1;
                     }
                     let mut line_end = remove_end;
-                    while line_end < result.len() && result.as_bytes().get(line_end) == Some(&b'\n') {
+                    while line_end < result.len() && result.as_bytes().get(line_end) == Some(&b'\n')
+                    {
                         line_end += 1;
                     }
                     // Also remove caption line if it matches alt text
                     let alt = result[alt_start..bracket_pos].trim().to_string();
                     if !alt.is_empty() && line_end < result.len() {
-                        let next_newline = result[line_end..].find('\n').map(|p| line_end + p).unwrap_or(result.len());
+                        let next_newline = result[line_end..]
+                            .find('\n')
+                            .map(|p| line_end + p)
+                            .unwrap_or(result.len());
                         let next_line = result[line_end..next_newline].trim();
                         if next_line == alt {
                             line_end = next_newline;
-                            while line_end < result.len() && result.as_bytes().get(line_end) == Some(&b'\n') {
+                            while line_end < result.len()
+                                && result.as_bytes().get(line_end) == Some(&b'\n')
+                            {
                                 line_end += 1;
                             }
                         }
                     }
                     result = result[..line_start].to_string() + &result[line_end..];
                     search_from = line_start;
-                    log::info!("deduplicated image: {} is identical to {}", img_name, existing_name);
+                    log::info!(
+                        "deduplicated image: {} is identical to {}",
+                        img_name,
+                        existing_name
+                    );
                     continue;
                 }
 
@@ -729,16 +753,26 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
 /// Compare two files byte-by-byte. Returns true if identical.
 fn files_identical(a: &std::path::Path, b: &std::path::Path) -> bool {
     use std::io::Read;
-    let (Ok(meta_a), Ok(meta_b)) = (std::fs::metadata(a), std::fs::metadata(b)) else { return false };
-    if meta_a.len() != meta_b.len() { return false; }
-    let (Ok(mut fa), Ok(mut fb)) = (std::fs::File::open(a), std::fs::File::open(b)) else { return false };
+    let (Ok(meta_a), Ok(meta_b)) = (std::fs::metadata(a), std::fs::metadata(b)) else {
+        return false;
+    };
+    if meta_a.len() != meta_b.len() {
+        return false;
+    }
+    let (Ok(mut fa), Ok(mut fb)) = (std::fs::File::open(a), std::fs::File::open(b)) else {
+        return false;
+    };
     let mut buf_a = [0u8; 8192];
     let mut buf_b = [0u8; 8192];
     loop {
         let na = fa.read(&mut buf_a).unwrap_or(0);
         let nb = fb.read(&mut buf_b).unwrap_or(0);
-        if na != nb || buf_a[..na] != buf_b[..nb] { return false; }
-        if na == 0 { return true; }
+        if na != nb || buf_a[..na] != buf_b[..nb] {
+            return false;
+        }
+        if na == 0 {
+            return true;
+        }
     }
 }
 
@@ -782,9 +816,7 @@ fn fetch_tweet_videos(tweet_id: &str) -> anyhow::Result<Vec<String>> {
             {
                 let best = variants
                     .iter()
-                    .filter(|v| {
-                        v.get("content_type").and_then(|c| c.as_str()) == Some("video/mp4")
-                    })
+                    .filter(|v| v.get("content_type").and_then(|c| c.as_str()) == Some("video/mp4"))
                     .max_by_key(|v| v.get("bitrate").and_then(|b| b.as_u64()).unwrap_or(0));
                 if let Some(variant) = best {
                     if let Some(url) = variant.get("url").and_then(|u| u.as_str()) {
@@ -808,7 +840,10 @@ struct UploadServer {
 
 fn generate_token() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     format!("{:032x}", seed ^ 0xdeadbeef_cafebabe_u128)
 }
 
@@ -818,7 +853,9 @@ fn start_upload_server() -> Option<UploadServer> {
         Err(_) => return None,
     };
     let port = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(0);
-    if port == 0 { return None; }
+    if port == 0 {
+        return None;
+    }
     let token = generate_token();
     let token_clone = token.clone();
 
@@ -845,22 +882,40 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     // CORS preflight
     if *request.method() == "OPTIONS".parse::<tiny_http::Method>().unwrap() {
         let response = tiny_http::Response::empty(200)
-            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap())
-            .with_header("Access-Control-Allow-Methods: POST, OPTIONS".parse::<tiny_http::Header>().unwrap())
-            .with_header("Access-Control-Allow-Headers: Authorization, Content-Type".parse::<tiny_http::Header>().unwrap());
+            .with_header(
+                "Access-Control-Allow-Origin: *"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            )
+            .with_header(
+                "Access-Control-Allow-Methods: POST, OPTIONS"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            )
+            .with_header(
+                "Access-Control-Allow-Headers: Authorization, Content-Type"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
         let _ = request.respond(response);
         return;
     }
 
     // Auth check
-    let auth = request.headers().iter()
+    let auth = request
+        .headers()
+        .iter()
         .find(|h| h.field.as_str() == "Authorization" || h.field.as_str() == "authorization")
         .map(|h| h.value.as_str().to_string());
     let expected = format!("Bearer {token}");
     if auth.as_deref() != Some(&expected) {
         let response = tiny_http::Response::from_string("Unauthorized")
             .with_status_code(403)
-            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap());
+            .with_header(
+                "Access-Control-Allow-Origin: *"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
         let _ = request.respond(response);
         return;
     }
@@ -869,17 +924,26 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     if *request.method() != tiny_http::Method::Post || !request.url().starts_with("/upload") {
         let response = tiny_http::Response::from_string("Not Found")
             .with_status_code(404)
-            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap());
+            .with_header(
+                "Access-Control-Allow-Origin: *"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
         let _ = request.respond(response);
         return;
     }
 
     // Extract filename from query: /upload?filename=screenshot.jpg
-    let filename = request.url()
+    let filename = request
+        .url()
         .split('?')
         .nth(1)
         .and_then(|q| q.split('&').find(|p| p.starts_with("filename=")))
-        .map(|p| p.strip_prefix("filename=").unwrap_or("upload.jpg").to_string())
+        .map(|p| {
+            p.strip_prefix("filename=")
+                .unwrap_or("upload.jpg")
+                .to_string()
+        })
         .unwrap_or_else(|| "upload.jpg".to_string());
 
     // Read body
@@ -887,7 +951,11 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     if let Err(e) = request.as_reader().read_to_end(&mut body) {
         let response = tiny_http::Response::from_string(format!("Read error: {e}"))
             .with_status_code(500)
-            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap());
+            .with_header(
+                "Access-Control-Allow-Origin: *"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
         let _ = request.respond(response);
         return;
     }
@@ -897,7 +965,11 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     let Some(vp) = vault_path else {
         let response = tiny_http::Response::from_string("Vault not configured")
             .with_status_code(500)
-            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap());
+            .with_header(
+                "Access-Control-Allow-Origin: *"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
         let _ = request.respond(response);
         return;
     };
@@ -906,15 +978,31 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     if let Err(e) = std::fs::write(&dest, &body) {
         let response = tiny_http::Response::from_string(format!("Write error: {e}"))
             .with_status_code(500)
-            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap());
+            .with_header(
+                "Access-Control-Allow-Origin: *"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
         let _ = request.respond(response);
         return;
     }
 
-    let json = format!(r#"{{"ok":true,"filename":"{}","size":{}}}"#, filename, body.len());
+    let json = format!(
+        r#"{{"ok":true,"filename":"{}","size":{}}}"#,
+        filename,
+        body.len()
+    );
     let response = tiny_http::Response::from_string(json)
-        .with_header("Content-Type: application/json".parse::<tiny_http::Header>().unwrap())
-        .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap());
+        .with_header(
+            "Content-Type: application/json"
+                .parse::<tiny_http::Header>()
+                .unwrap(),
+        )
+        .with_header(
+            "Access-Control-Allow-Origin: *"
+                .parse::<tiny_http::Header>()
+                .unwrap(),
+        );
     let _ = request.respond(response);
 }
 

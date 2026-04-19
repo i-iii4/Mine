@@ -48,11 +48,7 @@ impl Channel {
     ///
     /// If `title` is None, generates one from the tag:
     /// `"web-design"` becomes `"Web design"`.
-    pub fn new(
-        tag: &str,
-        title: Option<&str>,
-        created_at: DateTime,
-    ) -> Result<Self, ChannelError> {
+    pub fn new(tag: &str, title: Option<&str>, created_at: DateTime) -> Result<Self, ChannelError> {
         let normalized_tag = normalize_tag(tag);
         if normalized_tag.is_empty() {
             return Err(ChannelError::EmptyTag);

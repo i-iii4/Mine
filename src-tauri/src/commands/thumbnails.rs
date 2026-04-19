@@ -60,7 +60,11 @@ pub fn save_thumb(
     bytes: Vec<u8>,
 ) -> Result<(), CommandError> {
     // Slug validation — prevent path traversal and unexpected separators.
-    if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if slug.is_empty()
+        || !slug
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Err(CommandError::Internal(format!("invalid slug: {}", slug)));
     }
 
@@ -73,13 +77,17 @@ pub fn save_thumb(
         ));
     }
 
-    let (thumb_path, db_path) = {
+    let (thumb_path, db_path, vault_root) = {
         let vault_state = state
             .vault_state
             .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
         let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-        (vs.vault.thumb_path(&slug), vs.vault.index_db_path())
+        (
+            vs.vault.thumb_path(&slug),
+            vs.vault.index_db_path(),
+            vs.vault.root().to_path_buf(),
+        )
     };
 
     if let Some(parent) = thumb_path.parent() {
@@ -104,11 +112,17 @@ pub fn save_thumb(
 
     let conn = db::open_or_create(&db_path)
         .map_err(|e| CommandError::Internal(format!("open thumb metadata db: {e:#}")))?;
-    index::sync_thumb_metadata(&conn, &slug, &thumb_path)
+    index::sync_thumb_metadata(&conn, &slug, &thumb_path, Some(&vault_root))
         .map_err(|e| CommandError::Internal(format!("sync_thumb_metadata: {e:#}")))?;
 
     // save_thumb always writes JPEG — never a text placeholder.
-    let _ = app.emit("thumb:updated", ThumbUpdatedPayload { slug, is_text: false });
+    let _ = app.emit(
+        "thumb:updated",
+        ThumbUpdatedPayload {
+            slug,
+            is_text: false,
+        },
+    );
     Ok(())
 }
 
@@ -146,26 +160,29 @@ pub async fn list_pending_thumb_upgrades(
     };
 
     let db_path = vault.index_db_path();
-    let requests = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<ThumbUpgradeRequest>, CommandError> {
-        let conn = db::open_or_create(&db_path)
-            .map_err(|e| CommandError::Internal(format!("open thumb upgrade db: {e:#}")))?;
-        let blocks = index::list_pending_thumb_upgrade_blocks(&conn)
-            .map_err(|e| CommandError::Internal(format!("list_pending_thumb_upgrade_blocks: {e:#}")))?;
+    let requests = tauri::async_runtime::spawn_blocking(
+        move || -> Result<Vec<ThumbUpgradeRequest>, CommandError> {
+            let conn = db::open_or_create(&db_path)
+                .map_err(|e| CommandError::Internal(format!("open thumb upgrade db: {e:#}")))?;
+            let blocks = index::list_pending_thumb_upgrade_blocks(&conn).map_err(|e| {
+                CommandError::Internal(format!("list_pending_thumb_upgrade_blocks: {e:#}"))
+            })?;
 
-        let mut out: Vec<ThumbUpgradeRequest> = Vec::new();
-        for block in &blocks {
-            if let Some((media_path, kind)) = resolve_upgrade_media(&vault, block) {
-                out.push(ThumbUpgradeRequest {
-                    slug: block.slug.clone(),
-                    media_path: media_path.to_string_lossy().into_owned(),
-                    kind: kind.into(),
-                });
+            let mut out: Vec<ThumbUpgradeRequest> = Vec::new();
+            for block in &blocks {
+                if let Some((media_path, kind)) = resolve_upgrade_media(&vault, block) {
+                    out.push(ThumbUpgradeRequest {
+                        slug: block.slug.clone(),
+                        media_path: media_path.to_string_lossy().into_owned(),
+                        kind: kind.into(),
+                    });
+                }
             }
-        }
 
-        log::info!("list_pending_thumb_upgrades: {} block(s) queued", out.len());
-        Ok(out)
-    })
+            log::info!("list_pending_thumb_upgrades: {} block(s) queued", out.len());
+            Ok(out)
+        },
+    )
     .await
     .map_err(|e| CommandError::Internal(format!("list_pending_thumb_upgrades join: {e}")))??;
 
@@ -184,11 +201,7 @@ fn resolve_upgrade_media(
 ) -> Option<(PathBuf, &'static str)> {
     // 1. frontmatter.file — explicit media for image/video blocks
     if let Some(ref file_name) = block.media_file {
-        let ext = file_name
-            .rsplit('.')
-            .next()
-            .unwrap_or("")
-            .to_lowercase();
+        let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
         let media_path = vault.root().join(file_name);
         if media_path.exists() {
             if thumbnails::is_image_ext(&ext) {
@@ -202,11 +215,7 @@ fn resolve_upgrade_media(
 
     // 2. frontmatter.thumbnail — video poster / OG image for link blocks
     if let Some(ref thumb_file) = block.thumbnail {
-        let ext = thumb_file
-            .rsplit('.')
-            .next()
-            .unwrap_or("")
-            .to_lowercase();
+        let ext = thumb_file.rsplit('.').next().unwrap_or("").to_lowercase();
         if thumbnails::is_image_ext(&ext) {
             let media_path = vault.root().join(thumb_file);
             if media_path.exists() {
@@ -217,11 +226,7 @@ fn resolve_upgrade_media(
 
     // 3. First local `![](...)` image in body — article branch
     if let Some(ref first_image) = block.first_image {
-        let ext = first_image
-            .rsplit('.')
-            .next()
-            .unwrap_or("")
-            .to_lowercase();
+        let ext = first_image.rsplit('.').next().unwrap_or("").to_lowercase();
         if thumbnails::is_image_ext(&ext) {
             let media_path = vault.root().join(first_image);
             if media_path.exists() {
@@ -369,7 +374,7 @@ mod tests {
         assert_eq!(src, thumbnails::ThumbSource::Text);
 
         let thumb = vault.thumb_path("art");
-        index::sync_thumb_metadata(&conn, "art", &thumb).unwrap();
+        index::sync_thumb_metadata(&conn, "art", &thumb, Some(vault.root())).unwrap();
 
         // Phase B startup enumeration must pick it up
         let light = index::list_pending_thumb_upgrade_blocks(&conn).unwrap();
@@ -391,7 +396,8 @@ mod tests {
         let block = make_article("clip", "text\n\n![](clip.mp4)\n\nmore");
         write_block(&vault, &conn, block.clone());
         let _ = thumbnails::generate_for_block(&block, &vault);
-        index::sync_thumb_metadata(&conn, "clip", &vault.thumb_path("clip")).unwrap();
+        index::sync_thumb_metadata(&conn, "clip", &vault.thumb_path("clip"), Some(vault.root()))
+            .unwrap();
 
         let light = index::list_pending_thumb_upgrade_blocks(&conn).unwrap();
         let target = light.iter().find(|b| b.slug == "clip").unwrap();

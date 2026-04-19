@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { computeCardHeight, DEFAULT_CARD_HEIGHT } from "./cardHeight";
+import {
+  computeCardHeight,
+  computeFeedPlaybackSurfaceEnvelope,
+  DEFAULT_CARD_HEIGHT,
+} from "./cardHeight";
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 
@@ -69,6 +73,92 @@ describe("computeCardHeight — video / link / file", () => {
     const block = makeBlock({ block_type: "file" });
     expect(computeCardHeight(block, 280, null)).toBe(88 + CARD_BORDER);
     expect(computeCardHeight(block, 500, null)).toBe(88 + CARD_BORDER);
+  });
+});
+
+describe("computeFeedPlaybackSurfaceEnvelope", () => {
+  it("returns the dedicated video surface inside the bordered card frame", () => {
+    const block = makeBlock({ block_type: "video" });
+    expect(computeFeedPlaybackSurfaceEnvelope(block, 320)).toEqual({
+      topOffsetPx: 1,
+      heightPx: Math.round(318 * 9 / 16),
+    });
+  });
+
+  it("returns the media-first surface for single-video article cards", () => {
+    const block = makeBlock({
+      block_type: "article",
+      title: "Glass browser",
+      body: "hello\n![](clip.mp4)",
+      media_urls: "[\"clip.mp4\"]",
+      preview_manifest: JSON.stringify({
+        kind: "video_poster",
+        primary_preview_path: "test.jpg",
+        width: 1144,
+        height: 720,
+        tiles: [
+          {
+            source_path: "clip.mp4",
+            preview_path: "clip.jpg",
+            width: 1144,
+            height: 720,
+            is_video: true,
+            is_video_poster: false,
+          },
+        ],
+        overflow_count: 0,
+      }),
+      feed_playback: JSON.stringify({
+        kind: "single_video",
+        source_path: "clip.mp4",
+        poster_preview_path: "test.jpg",
+        width: 1144,
+        height: 720,
+        container: "mp4",
+      }),
+    });
+
+    expect(computeFeedPlaybackSurfaceEnvelope(block, 280)).toEqual({
+      topOffsetPx: 17,
+      heightPx: Math.round(246 / (1144 / 720)),
+    });
+  });
+
+  it("returns null for multi-media galleries", () => {
+    const block = makeBlock({
+      block_type: "article",
+      url: "https://x.com/a/status/1",
+      body: "hello\n![](clip.mp4)\n![](still.jpg)",
+      media_urls: "[\"clip.mp4\",\"still.jpg\"]",
+      preview_manifest: JSON.stringify({
+        kind: "composite",
+        primary_preview_path: "test.jpg",
+        width: 1,
+        height: 1,
+        tiles: [
+          {
+            source_path: "clip.mp4",
+            preview_path: "clip.jpg",
+            width: 1144,
+            height: 720,
+            is_video: true,
+            is_video_poster: false,
+          },
+          {
+            source_path: "still.jpg",
+            preview_path: "still.jpg",
+            width: 1144,
+            height: 720,
+            is_video: false,
+            is_video_poster: false,
+          },
+        ],
+        overflow_count: 0,
+      }),
+      feed_playback: null,
+    });
+
+    expect(computeFeedPlaybackSurfaceEnvelope(block, 280)).toBeNull();
   });
 });
 

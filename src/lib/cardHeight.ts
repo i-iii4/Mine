@@ -17,6 +17,11 @@ import { countLines } from "./wordWrap";
 import { deriveCardLayoutDescriptor, deriveContentCardSlots } from "./cardLayout";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "./cardTypography";
 
+export interface FeedPlaybackSurfaceEnvelope {
+  topOffsetPx: number;
+  heightPx: number;
+}
+
 // ─── Layout constants (must match Card.tsx) ─────────────────────────────────
 //
 // All values are derived from the project theme in src/styles/global.css:
@@ -36,6 +41,7 @@ export const DEFAULT_CARD_HEIGHT = 240;
  * type's final height includes this adjustment.
  */
 const CARD_BORDER_HEIGHT = 2;
+const CARD_BORDER_TOP = 1;
 
 /**
  * Width inside the border. Card body (article padding, image element, etc.)
@@ -283,6 +289,66 @@ function computeSocialHeight(
     gaps +
     SOCIAL_PADDING_BOTTOM
   );
+}
+
+/**
+ * Returns the geometry of the autoplay-relevant video surface inside the
+ * outer card envelope. Grid uses this to arbitrate single active autoplay
+ * by the visible media surface, not by the visible fraction of the whole
+ * card (which is wrong for cards with long text stacks under the video).
+ */
+export function computeFeedPlaybackSurfaceEnvelope(
+  block: LightBlock,
+  columnWidth: number,
+): FeedPlaybackSurfaceEnvelope | null {
+  const descriptor = deriveCardLayoutDescriptor(block);
+  const iw = innerWidth(columnWidth);
+
+  switch (block.block_type) {
+    case "video":
+      return {
+        topOffsetPx: CARD_BORDER_TOP,
+        heightPx: Math.round(iw * THUMBNAIL_ASPECT),
+      };
+
+    case "article": {
+      const primaryMedia = descriptor.mediaItems[0];
+      const contentWidth = Math.max(1, iw - ARTICLE_PADDING_X * 2);
+
+      if (
+        descriptor.variant === "article-media" &&
+        descriptor.mediaItems.length === 1 &&
+        primaryMedia?.isVideo
+      ) {
+        return {
+          topOffsetPx: CARD_BORDER_TOP + ARTICLE_PADDING_TOP,
+          heightPx: Math.round(
+            contentWidth /
+              Math.max(descriptor.primaryAspectRatio ?? ARTICLE_IMAGE_ASPECT, 0.01),
+          ),
+        };
+      }
+
+      if (
+        descriptor.variant === "social-single-media" &&
+        descriptor.mediaItems.length === 1 &&
+        primaryMedia?.isVideo
+      ) {
+        return {
+          topOffsetPx: CARD_BORDER_TOP + SOCIAL_PADDING_TOP,
+          heightPx: Math.round(
+            contentWidth /
+              Math.max(descriptor.primaryAspectRatio ?? 1, 0.01),
+          ),
+        };
+      }
+
+      return null;
+    }
+
+    default:
+      return null;
+  }
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────

@@ -86,12 +86,17 @@ pub fn now_iso8601() -> String {
 
 #[cfg(feature = "desktop")]
 fn startup_trace_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_data_dir().ok().map(|dir| dir.join("startup-trace.log"))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| dir.join("startup-trace.log"))
 }
 
 #[cfg(feature = "desktop")]
 pub fn reset_startup_trace(app: &AppHandle) {
-    let Some(path) = startup_trace_path(app) else { return };
+    let Some(path) = startup_trace_path(app) else {
+        return;
+    };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -100,14 +105,19 @@ pub fn reset_startup_trace(app: &AppHandle) {
 
 #[cfg(feature = "desktop")]
 pub fn append_startup_trace(app: &AppHandle, scope: &str, message: &str) {
-    let Some(path) = startup_trace_path(app) else { return };
+    let Some(path) = startup_trace_path(app) else {
+        return;
+    };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path) else { return };
+        .open(&path)
+    else {
+        return;
+    };
     let _ = writeln!(file, "{} [{}] {}", now_iso8601(), scope, message);
 }
 
@@ -135,8 +145,14 @@ mod tests {
     #[test]
     #[cfg(feature = "desktop")]
     fn single_instance_port_is_stable() {
-        assert_eq!(single_instance_port("com.mine.app"), single_instance_port("com.mine.app"));
-        assert_ne!(single_instance_port("com.mine.app"), single_instance_port("com.mine.dev"));
+        assert_eq!(
+            single_instance_port("com.mine.app"),
+            single_instance_port("com.mine.app")
+        );
+        assert_ne!(
+            single_instance_port("com.mine.app"),
+            single_instance_port("com.mine.dev")
+        );
     }
 
     #[test]

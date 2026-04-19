@@ -2,15 +2,15 @@
 //
 // Contract: SPEC_INTEGRATION.md#commands/blocks
 
+use serde::Serialize;
 use std::path::PathBuf;
 use tauri::{AppHandle, State};
-use serde::Serialize;
 
 use crate::commands::state::{current_vault_layout, AppState, CommandError};
 use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::validate_slug;
-use crate::storage::{db, files, index};
 use crate::storage::index::IndexedBlock;
+use crate::storage::{db, files, index};
 use crate::util::append_startup_trace;
 
 #[derive(Debug, Serialize)]
@@ -25,7 +25,9 @@ pub struct GridSnapshot {
 /// List all blocks (lightweight — without body/description), ordered by saved_at descending.
 #[tauri::command]
 pub fn list_blocks(state: State<'_, AppState>) -> Result<Vec<index::LightBlock>, CommandError> {
-    let vault_state = state.vault_state.lock()
+    let vault_state = state
+        .vault_state
+        .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     Ok(index::list_blocks_light(&vs.conn)?)
@@ -60,18 +62,23 @@ pub async fn list_grid_blocks(
     let page_limit = limit.unwrap_or(200).max(1);
     let db_path = vault.index_db_path();
     let current_tag_for_task = current_tag.clone();
-    let snapshot = tauri::async_runtime::spawn_blocking(move || -> Result<GridSnapshot, CommandError> {
-        let conn = db::open_read_only(&db_path)?;
-        let (blocks, has_more) =
-            index::list_grid_blocks(&conn, current_tag_for_task.as_deref(), page_offset, page_limit)?;
-        Ok(GridSnapshot {
-            blocks,
-            total_blocks: index::count_grid_blocks(&conn)?,
-            has_more,
+    let snapshot =
+        tauri::async_runtime::spawn_blocking(move || -> Result<GridSnapshot, CommandError> {
+            let conn = db::open_read_only(&db_path)?;
+            let (blocks, has_more) = index::list_grid_blocks(
+                &conn,
+                current_tag_for_task.as_deref(),
+                page_offset,
+                page_limit,
+            )?;
+            Ok(GridSnapshot {
+                blocks,
+                total_blocks: index::count_grid_blocks(&conn)?,
+                has_more,
+            })
         })
-    })
-    .await
-    .map_err(|e| CommandError::Internal(format!("list_grid_blocks task join failed: {e}")))??;
+        .await
+        .map_err(|e| CommandError::Internal(format!("list_grid_blocks task join failed: {e}")))??;
     append_startup_trace(
         &app,
         "list_grid_blocks",
@@ -92,7 +99,9 @@ pub fn get_block(
     slug: String,
 ) -> Result<Option<IndexedBlock>, CommandError> {
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
-    let vault_state = state.vault_state.lock()
+    let vault_state = state
+        .vault_state
+        .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     Ok(index::get_block(&vs.conn, &slug)?)
@@ -108,12 +117,13 @@ pub fn create_block(
     tags: Vec<String>,
     file_path: Option<String>,
 ) -> Result<IndexedBlock, CommandError> {
-    let vault_state = state.vault_state.lock()
+    let vault_state = state
+        .vault_state
+        .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
-    let bt = BlockType::from_str(&block_type)
-        .map_err(|e| CommandError::Internal(e.to_string()))?;
+    let bt = BlockType::from_str(&block_type).map_err(|e| CommandError::Internal(e.to_string()))?;
 
     // Generate unique slug
     let raw_slug = crate::domain::block::suggest_slug(title.as_deref(), url.as_deref());
@@ -129,8 +139,7 @@ pub fn create_block(
     });
 
     let now = crate::commands::state::now_iso8601();
-    let saved_at = DateTime::new(&now)
-        .map_err(|e| CommandError::Internal(e.to_string()))?;
+    let saved_at = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
 
     let block = Block {
         slug,
@@ -155,16 +164,20 @@ pub fn create_block(
     };
 
     let source = file_path.as_ref().map(|fp| PathBuf::from(fp));
-    Ok(files::persist_new_block(&vs.conn, &vs.vault, &block, source.as_deref())?)
+    Ok(files::persist_new_block(
+        &vs.conn,
+        &vs.vault,
+        &block,
+        source.as_deref(),
+    )?)
 }
 
 /// Delete a block: remove from index, delete .md and media files.
 #[tauri::command]
-pub fn delete_block(
-    state: State<'_, AppState>,
-    slug: String,
-) -> Result<bool, CommandError> {
-    let vault_state = state.vault_state.lock()
+pub fn delete_block(state: State<'_, AppState>, slug: String) -> Result<bool, CommandError> {
+    let vault_state = state
+        .vault_state
+        .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 

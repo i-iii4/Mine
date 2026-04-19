@@ -24,15 +24,16 @@ pub fn register<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.register_asynchronous_uri_scheme_protocol("asset", |ctx, request, responder| {
         let app = ctx.app_handle().clone();
         tauri::async_runtime::spawn(async move {
-            let response = tauri::async_runtime::spawn_blocking(move || build_asset_response(&app, request))
-                .await
-                .unwrap_or_else(|err| {
-                    log::error!("asset protocol task join failed: {}", err);
-                    Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(Vec::<u8>::new().into())
-                        .expect("failed to build asset protocol join-error response")
-                });
+            let response =
+                tauri::async_runtime::spawn_blocking(move || build_asset_response(&app, request))
+                    .await
+                    .unwrap_or_else(|err| {
+                        log::error!("asset protocol task join failed: {}", err);
+                        Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Vec::<u8>::new().into())
+                            .expect("failed to build asset protocol join-error response")
+                    });
             responder.respond(response);
         });
     })
@@ -50,7 +51,10 @@ fn build_asset_response<R: Runtime>(
     };
 
     if !app.asset_protocol_scope().is_allowed(&path) {
-        log::error!("asset protocol not configured to allow path: {}", path.display());
+        log::error!(
+            "asset protocol not configured to allow path: {}",
+            path.display()
+        );
         return empty_response(resp.status(StatusCode::FORBIDDEN));
     }
 
@@ -143,7 +147,11 @@ fn build_range_response(
                 buf,
             ),
             Err(err) => {
-                log::error!("asset range read failed path={} err={}", path.display(), err);
+                log::error!(
+                    "asset range read failed path={} err={}",
+                    path.display(),
+                    err
+                );
                 empty_response(resp.status(StatusCode::INTERNAL_SERVER_ERROR))
             }
         }
@@ -169,7 +177,10 @@ fn build_range_response(
 
         response_with_body(
             resp.status(StatusCode::PARTIAL_CONTENT)
-                .header(CONTENT_TYPE, format!("multipart/byteranges; boundary={boundary}"))
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/byteranges; boundary={boundary}"),
+                )
                 .header(CONTENT_LENGTH, multipart.len()),
             multipart,
         )

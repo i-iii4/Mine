@@ -27,6 +27,7 @@ export interface IndexedBlock {
    */
   media_dimensions: string | null;
   preview_manifest: string | null;
+  feed_playback: string | null;
   tags: string[];
 }
 
@@ -48,6 +49,7 @@ export interface LightBlock {
   media_urls: string | null;
   media_dimensions: string | null;
   preview_manifest: string | null;
+  feed_playback: string | null;
 }
 
 export type FeedPreviewKind = "text" | "image" | "video_poster" | "composite";
@@ -69,6 +71,20 @@ export interface FeedPreviewManifest {
   height: number | null;
   tiles: FeedPreviewTile[];
   overflow_count: number;
+}
+
+export type FeedPlaybackKind = "single_video";
+export type FeedPlaybackContainer = "mp4" | "webm";
+export type FeedPlaybackProfile = "standard" | "heavy";
+
+export interface FeedPlaybackDescriptor {
+  kind: FeedPlaybackKind;
+  source_path: string;
+  poster_preview_path: string;
+  width: number | null;
+  height: number | null;
+  container: FeedPlaybackContainer;
+  profile: FeedPlaybackProfile;
 }
 
 export interface GridSnapshot {

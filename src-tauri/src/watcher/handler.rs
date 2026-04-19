@@ -95,7 +95,8 @@ pub fn full_scan(
 
     // Wrap all indexing in a single transaction for performance (one commit
     // instead of N commits). Individual upsert_block calls use savepoints.
-    let tx = conn.unchecked_transaction()
+    let tx = conn
+        .unchecked_transaction()
         .context("failed to begin transaction for full_scan")?;
 
     for path in &paths {
@@ -119,8 +120,7 @@ pub fn full_scan(
         .iter()
         .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(String::from))
         .collect();
-    let all_indexed = index::list_blocks_light(&tx)
-        .unwrap_or_default();
+    let all_indexed = index::list_blocks_light(&tx).unwrap_or_default();
     let mut orphans_removed = 0;
     for block in &all_indexed {
         if block.slug.is_empty() || block.block_type == BlockType::Channel {
@@ -137,10 +137,14 @@ pub fn full_scan(
         }
     }
     if orphans_removed > 0 {
-        log::info!("full_scan: removed {} orphan index entries", orphans_removed);
+        log::info!(
+            "full_scan: removed {} orphan index entries",
+            orphans_removed
+        );
     }
 
-    tx.commit().context("failed to commit full_scan transaction")?;
+    tx.commit()
+        .context("failed to commit full_scan transaction")?;
 
     // Spawn background thread for thumbnail generation
     if !thumb_jobs.is_empty() {
@@ -169,7 +173,12 @@ pub fn full_scan(
                         if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, &vault_clone) {
                             skipped += 1;
                             if let Some(ref conn) = metadata_conn {
-                                match index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path) {
+                                match index::sync_thumb_metadata(
+                                    conn,
+                                    &job.block.slug,
+                                    &thumb_path,
+                                    Some(vault_clone.root()),
+                                ) {
                                     Ok(true) => metadata_updates += 1,
                                     Ok(false) => {}
                                     Err(e) => log::warn!(
@@ -183,7 +192,12 @@ pub fn full_scan(
 
                         let source = thumbnails::generate_for_block(&job.block, &vault_clone);
                         if let Some(ref conn) = metadata_conn {
-                            match index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path) {
+                            match index::sync_thumb_metadata(
+                                conn,
+                                &job.block.slug,
+                                &thumb_path,
+                                Some(vault_clone.root()),
+                            ) {
                                 Ok(true) => metadata_updates += 1,
                                 Ok(false) => {}
                                 Err(e) => log::warn!(
@@ -332,7 +346,12 @@ pub fn incremental_scan(
                         if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, &vault_clone) {
                             skipped += 1;
                             if let Some(ref conn) = metadata_conn {
-                                match index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path) {
+                                match index::sync_thumb_metadata(
+                                    conn,
+                                    &job.block.slug,
+                                    &thumb_path,
+                                    Some(vault_clone.root()),
+                                ) {
                                     Ok(true) => metadata_updates += 1,
                                     Ok(false) => {}
                                     Err(e) => log::warn!(
@@ -346,7 +365,12 @@ pub fn incremental_scan(
 
                         let source = thumbnails::generate_for_block(&job.block, &vault_clone);
                         if let Some(ref conn) = metadata_conn {
-                            match index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path) {
+                            match index::sync_thumb_metadata(
+                                conn,
+                                &job.block.slug,
+                                &thumb_path,
+                                Some(vault_clone.root()),
+                            ) {
                                 Ok(true) => metadata_updates += 1,
                                 Ok(false) => {}
                                 Err(e) => log::warn!(
@@ -432,7 +456,8 @@ pub fn index_md_file(
         let thumb_path = vault.thumb_path(&job.block.slug);
 
         if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, vault) {
-            let _ = index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path);
+            let _ =
+                index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path, Some(vault.root()));
             return Ok(true);
         }
 
@@ -450,11 +475,18 @@ pub fn index_md_file(
                 let source = thumbnails::generate_for_block(&job.block, &vault);
                 match db::open_or_create(&vault.index_db_path()) {
                     Ok(conn) => {
-                        if let Err(e) = index::sync_thumb_metadata(&conn, &slug, &thumb_path) {
+                        if let Err(e) = index::sync_thumb_metadata(
+                            &conn,
+                            &slug,
+                            &thumb_path,
+                            Some(vault.root()),
+                        ) {
                             log::warn!("thumb thread: sync metadata failed for {}: {e:#}", slug);
                         }
                     }
-                    Err(e) => log::warn!("thumb thread: open metadata db failed for {}: {e:#}", slug),
+                    Err(e) => {
+                        log::warn!("thumb thread: open metadata db failed for {}: {e:#}", slug)
+                    }
                 }
                 if let Some(app) = app_clone {
                     emit_thumb_events(&app, &vault, &job.block, source);
@@ -515,11 +547,7 @@ fn resolve_upgrade_media_for_block(
 ) -> Option<(PathBuf, &'static str)> {
     // 1. frontmatter.file — use filename from frontmatter directly
     if let Some(ref file_name) = block.frontmatter.file {
-        let ext = file_name
-            .rsplit('.')
-            .next()
-            .unwrap_or("")
-            .to_lowercase();
+        let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
         let media_path = vault.root().join(file_name);
         if media_path.exists() {
             if thumbnails::is_image_ext(&ext) {
@@ -533,11 +561,7 @@ fn resolve_upgrade_media_for_block(
 
     // 2. frontmatter.thumbnail
     if let Some(ref thumb_file) = block.frontmatter.thumbnail {
-        let ext = thumb_file
-            .rsplit('.')
-            .next()
-            .unwrap_or("")
-            .to_lowercase();
+        let ext = thumb_file.rsplit('.').next().unwrap_or("").to_lowercase();
         if thumbnails::is_image_ext(&ext) {
             let media_path = vault.root().join(thumb_file);
             if media_path.exists() {
@@ -586,11 +610,11 @@ fn index_md_file_inner(
     vault: &VaultLayout,
     path: &Path,
 ) -> Result<Option<ThumbJob>> {
-    let (slug, content) = files::read_block_file(path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let (slug, content) =
+        files::read_block_file(path).with_context(|| format!("reading {}", path.display()))?;
 
-    let block = parse_block(&slug, &content)
-        .with_context(|| format!("parsing {}", path.display()))?;
+    let block =
+        parse_block(&slug, &content).with_context(|| format!("parsing {}", path.display()))?;
 
     // Channel files → index as channel, no thumbnail
     if block.frontmatter.block_type == BlockType::Channel {
@@ -645,21 +669,35 @@ pub fn handle_event(
                     // Also fire thumb:updated so sidebars currently
                     // displaying this slug's thumb re-render (the cache
                     // bust will turn into a 404 → placeholder state).
-                    let _ = app.emit("thumb:updated", ThumbUpdatedPayload { slug, is_text: false });
+                    let _ = app.emit(
+                        "thumb:updated",
+                        ThumbUpdatedPayload {
+                            slug,
+                            is_text: false,
+                        },
+                    );
                 }
                 return Ok(removed);
             }
         }
         VaultEvent::MediaChanged(path) => {
             if let Some(slug) = path_to_slug(path) {
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
                 if thumbnails::is_image_ext(&ext) {
                     let thumb_path = vault.thumb_path(&slug);
                     let path_owned = path.to_path_buf();
                     std::thread::Builder::new()
                         .name(format!("thumb-media-{}", &slug))
                         .spawn(move || {
-                            if let Err(e) = thumbnails::generate_thumbnail(&path_owned, &thumb_path, thumbnails::DEFAULT_MAX_SIZE) {
+                            if let Err(e) = thumbnails::generate_thumbnail(
+                                &path_owned,
+                                &thumb_path,
+                                thumbnails::DEFAULT_MAX_SIZE,
+                            ) {
                                 log::warn!("thumbnail failed for {}: {}", slug, e);
                             }
                         })
@@ -750,7 +788,13 @@ mod tests {
         let conn = test_conn();
 
         let result = full_scan(&conn, &vault, None, None).unwrap();
-        assert_eq!(result, ScanResult { indexed: 0, errors: 0 });
+        assert_eq!(
+            result,
+            ScanResult {
+                indexed: 0,
+                errors: 0
+            }
+        );
     }
 
     #[test]
@@ -764,7 +808,13 @@ mod tests {
         write_md_file(&vault, "gamma", "article", &[]);
 
         let result = full_scan(&conn, &vault, None, None).unwrap();
-        assert_eq!(result, ScanResult { indexed: 3, errors: 0 });
+        assert_eq!(
+            result,
+            ScanResult {
+                indexed: 3,
+                errors: 0
+            }
+        );
 
         let blocks = index::list_blocks(&conn).unwrap();
         assert_eq!(blocks.len(), 3);

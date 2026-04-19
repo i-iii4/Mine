@@ -23,6 +23,7 @@ function block(overrides: Partial<LightBlock> = {}): LightBlock {
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    feed_playback: null,
     tags: ["test"],
     ...overrides,
   };
@@ -311,14 +312,21 @@ describe("Card", () => {
         ],
         overflow_count: 0,
       }),
+      feed_playback: JSON.stringify({
+        kind: "single_video",
+        source_path: "demo.mp4",
+        poster_preview_path: "test-block.jpg",
+        width: 1280,
+        height: 720,
+        container: "mp4",
+        profile: "standard",
+      }),
     });
     const { container } = render(
       <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
     );
     expect(container.querySelector("video")).toBeInTheDocument();
-    // Play button SVG
-    const playIcon = container.querySelector("svg path[d]");
-    expect(playIcon).toBeInTheDocument();
+    expect(container.querySelector("svg path[d]")).toBeNull();
   });
 
   it("renders legacy poster-only video cards as an image with play affordance", () => {
@@ -332,6 +340,32 @@ describe("Card", () => {
     );
     expect(container.querySelector("video")).toBeNull();
     expect(container.querySelector("img")).toBeInTheDocument();
+    expect(container.querySelector("svg path[d]")).toBeInTheDocument();
+  });
+
+  it("keeps dedicated video cards poster-only when feed_playback is absent", () => {
+    const b = block({
+      block_type: "video",
+      title: "Poster Only Video",
+      media_file: "demo.mp4",
+      preview_manifest: JSON.stringify({
+        kind: "video_poster",
+        primary_preview_path: "test-block.jpg",
+        width: 1280,
+        height: 720,
+        tiles: [
+          { src: "demo.mp4", width: 1280, height: 720, is_video: true, is_video_poster: true },
+        ],
+        overflow_count: 0,
+      }),
+      feed_playback: null,
+    });
+    const { container } = render(
+      <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
+    );
+    expect(container.querySelector("video")).toBeNull();
+    expect(container.querySelector("img")).toBeInTheDocument();
+    expect(container.querySelector("svg path[d]")).toBeInTheDocument();
   });
 
   it("renders article single-video preview as autoplay video in feed", () => {
@@ -349,12 +383,48 @@ describe("Card", () => {
         ],
         overflow_count: 0,
       }),
+      feed_playback: JSON.stringify({
+        kind: "single_video",
+        source_path: "clip.mp4",
+        poster_preview_path: "test-block.jpg",
+        width: 1280,
+        height: 720,
+        container: "mp4",
+        profile: "standard",
+      }),
     });
     const { container } = render(
       <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
     );
     expect(container.querySelector("video")).toBeInTheDocument();
     expect(screen.getByText("Video Article")).toBeInTheDocument();
+    expect(container.querySelector("svg path[d]")).toBeNull();
+  });
+
+  it("keeps gallery video tiles preview-only and never mounts live video", () => {
+    const b = block({
+      block_type: "article",
+      title: "Mixed Gallery",
+      preview_manifest: JSON.stringify({
+        kind: "composite",
+        primary_preview_path: "test-block.jpg",
+        width: 1,
+        height: 1,
+        tiles: [
+          { source_path: "clip.mp4", preview_path: "clip.jpg", width: 1280, height: 720, is_video: true, is_video_poster: true },
+          { source_path: "still.jpg", preview_path: "still.jpg", width: 1280, height: 720, is_video: false, is_video_poster: false },
+        ],
+        overflow_count: 0,
+      }),
+    });
+    const { container } = render(
+      <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
+    );
+    expect(container.querySelector("video")).toBeNull();
+    const images = Array.from(container.querySelectorAll("img"));
+    expect(images).toHaveLength(2);
+    expect(images[0]?.getAttribute("src")).toContain("/clip.jpg");
+    expect(images[1]?.getAttribute("src")).toContain("/still.jpg");
   });
 
   // ── File card ─────────────────────────────────────────────────────────

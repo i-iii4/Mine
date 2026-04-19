@@ -414,7 +414,7 @@ pub fn suggest_slug(title: Option<&str>, url: Option<&str>) -> String {
             .unwrap_or(url)
             .to_string()
     } else {
-        return "untitled".to_string()
+        return "untitled".to_string();
     };
 
     normalize_slug(&raw)
@@ -497,7 +497,9 @@ fn parse_tags(parent: &Value) -> Result<Vec<String>, BlockError> {
         // Coerce to string so tags like "1" don't break block indexing.
         let s = match item.as_str() {
             Some(s) => s.to_string(),
-            None => item.as_i64().map(|n| n.to_string())
+            None => item
+                .as_i64()
+                .map(|n| n.to_string())
                 .or_else(|| item.as_f64().map(|n| n.to_string()))
                 .or_else(|| item.as_bool().map(|b| b.to_string()))
                 .ok_or(BlockError::InvalidTagValue)?,
@@ -887,7 +889,8 @@ mod tests {
     #[test]
     fn parse_frontmatter_unknown_fields_ignored() {
         // E10: unknown fields are silently ignored (forward compatibility).
-        let yaml = "type: image\nsaved_at: 2026-02-26T14:30:00Z\ncustom_field: whatever\nanother: 42";
+        let yaml =
+            "type: image\nsaved_at: 2026-02-26T14:30:00Z\ncustom_field: whatever\nanother: 42";
         let fm = parse_frontmatter(yaml).unwrap();
         assert_eq!(fm.block_type, BlockType::Image);
     }
@@ -1287,7 +1290,9 @@ mod tests {
     fn slug_special_chars_replaced() {
         let slug = suggest_slug(Some("Hello, World! @#$% Test"), None);
         // Only [a-z0-9-] allowed.
-        assert!(slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'));
+        assert!(slug
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'));
         // Multiple dashes collapsed.
         assert!(!slug.contains("--"));
     }

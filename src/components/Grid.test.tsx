@@ -43,9 +43,96 @@ function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock 
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    feed_playback: null,
     tags: ["test"],
     ...overrides,
   };
+}
+
+function makeVideoBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
+  return makeBlock(id, {
+    block_type: "video",
+    media_file: `clip-${id}.mp4`,
+    preview_manifest: JSON.stringify({
+      kind: "video_poster",
+      primary_preview_path: `block-${id}.jpg`,
+      width: 1280,
+      height: 720,
+      tiles: [
+        {
+          source_path: `clip-${id}.mp4`,
+          preview_path: `block-${id}.jpg`,
+          width: 1280,
+          height: 720,
+          is_video: true,
+          is_video_poster: true,
+        },
+      ],
+      overflow_count: 0,
+    }),
+    feed_playback: JSON.stringify({
+      kind: "single_video",
+      source_path: `clip-${id}.mp4`,
+      poster_preview_path: `block-${id}.jpg`,
+      width: 1280,
+      height: 720,
+      container: "mp4",
+      profile: "standard",
+    }),
+    ...overrides,
+  });
+}
+
+function makeHeavyVideoBlock(
+  id: number,
+  overrides: Partial<LightBlock> = {},
+): LightBlock {
+  const block = makeVideoBlock(id, overrides);
+  const playback = JSON.parse(block.feed_playback ?? "{}") as Record<string, unknown>;
+  block.feed_playback = JSON.stringify({
+    ...playback,
+    profile: "heavy",
+  });
+  return block;
+}
+
+function makeArticleVideoBlock(
+  id: number,
+  overrides: Partial<LightBlock> = {},
+): LightBlock {
+  return makeBlock(id, {
+    title: `Article video ${id}`,
+    body: "Video preview text that continues below the media surface.",
+    first_image: `clip-${id}.mp4`,
+    media_urls: JSON.stringify([`clip-${id}.mp4`]),
+    preview_manifest: JSON.stringify({
+      kind: "video_poster",
+      primary_preview_path: `block-${id}.jpg`,
+      width: 1144,
+      height: 720,
+      tiles: [
+        {
+          source_path: `clip-${id}.mp4`,
+          preview_path: `clip-${id}.jpg`,
+          width: 1144,
+          height: 720,
+          is_video: true,
+          is_video_poster: false,
+        },
+      ],
+      overflow_count: 0,
+    }),
+    feed_playback: JSON.stringify({
+      kind: "single_video",
+      source_path: `clip-${id}.mp4`,
+      poster_preview_path: `block-${id}.jpg`,
+      width: 1144,
+      height: 720,
+      container: "mp4",
+      profile: "standard",
+    }),
+    ...overrides,
+  });
 }
 
 // Deterministic per-block heights. Keyed by block id so that add/remove
@@ -697,6 +784,146 @@ describe("Grid — no collapse after add / revisit", () => {
       narrowParentWidth,
       [260, 360, 280, 410],
     );
+  });
+
+  it("autoplays all sufficiently visible standard feed videos", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeVideoBlock(1001),
+      makeVideoBlock(1002),
+      makeVideoBlock(1003),
+    ];
+    setBlockHeight(1001, 300);
+    setBlockHeight(1002, 300);
+    setBlockHeight(1003, 300);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="video-feed" />);
+
+    act(() => {
+      triggerResize(280, 800);
+    });
+
+    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(0);
+
+    await flushAsync();
+
+    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(3);
+    expect(document.querySelector("[data-block-slug='block-1001'] [data-feed-video-surface='true']")).toBeTruthy();
+    expect(document.querySelector("[data-block-slug='block-1002'] [data-feed-video-surface='true']")).toBeTruthy();
+    expect(document.querySelector("[data-block-slug='block-1003'] [data-feed-video-surface='true']")).toBeTruthy();
+
+    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
+    expect(scrollEl).toBeTruthy();
+
+    act(() => {
+      if (scrollEl) {
+        scrollEl.scrollTop = 250;
+        scrollEl.dispatchEvent(new Event("scroll"));
+      }
+    });
+
+    await flushAsync();
+
+    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(2);
+    expect(document.querySelector("[data-block-slug='block-1001'] [data-feed-video-surface='true']")).toBeFalsy();
+    expect(document.querySelector("[data-block-slug='block-1002'] [data-feed-video-surface='true']")).toBeTruthy();
+    expect(document.querySelector("[data-block-slug='block-1003'] [data-feed-video-surface='true']")).toBeTruthy();
+  });
+
+  it("keeps only the top-most heavy video active when multiple heavy cards compete", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeHeavyVideoBlock(1201),
+      makeHeavyVideoBlock(1202),
+      makeHeavyVideoBlock(1203),
+    ];
+    setBlockHeight(1201, 300);
+    setBlockHeight(1202, 300);
+    setBlockHeight(1203, 300);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="video-tie-break" />);
+
+    act(() => {
+      triggerResize(280, 800);
+    });
+
+    await flushAsync();
+
+    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(1);
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1201'] [data-feed-video-surface='true']",
+      ),
+    ).toBeTruthy();
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1202'] [data-feed-video-surface='true']",
+      ),
+    ).toBeFalsy();
+  });
+
+  it("allows one heavy video alongside visible standard videos", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeVideoBlock(1301),
+      makeHeavyVideoBlock(1302),
+      makeHeavyVideoBlock(1303),
+    ];
+    setBlockHeight(1301, 300);
+    setBlockHeight(1302, 300);
+    setBlockHeight(1303, 300);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="mixed-video-policy" />);
+
+    act(() => {
+      triggerResize(280, 800);
+    });
+
+    await flushAsync();
+
+    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(2);
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1301'] [data-feed-video-surface='true']",
+      ),
+    ).toBeTruthy();
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1302'] [data-feed-video-surface='true']",
+      ),
+    ).toBeTruthy();
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1303'] [data-feed-video-surface='true']",
+      ),
+    ).toBeFalsy();
+  });
+
+  it("uses visible playback surface, not full card height, for tall article-video cards", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeArticleVideoBlock(1101)];
+    setBlockHeight(1101, 450);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="video-surface" />);
+
+    act(() => {
+      triggerResize(280, 180);
+    });
+
+    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(0);
+
+    await flushAsync();
+
+    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(1);
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1101'] [data-feed-video-surface='true']",
+      ),
+    ).toBeTruthy();
   });
 });
 

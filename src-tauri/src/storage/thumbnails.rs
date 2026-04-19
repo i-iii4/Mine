@@ -8,7 +8,7 @@
 
 use ab_glyph::{FontArc, PxScale};
 use anyhow::{Context, Result};
-use image::{DynamicImage, GenericImageView, Rgba, RgbImage, RgbaImage};
+use image::{DynamicImage, GenericImageView, RgbImage, Rgba, RgbaImage};
 use imageproc::drawing::draw_text_mut;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -297,7 +297,10 @@ pub fn generate_composite_thumbnail(
     max_size: u32,
 ) -> Result<(u32, u32)> {
     let tile_count = sources.len().min(COMPOSITE_TILE_LIMIT);
-    anyhow::ensure!(tile_count >= 2, "composite thumbnail needs at least two source images");
+    anyhow::ensure!(
+        tile_count >= 2,
+        "composite thumbnail needs at least two source images"
+    );
 
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
@@ -310,17 +313,29 @@ pub fn generate_composite_thumbnail(
         .take(tile_count)
         .zip(composite_layout_slots(tile_count, max_size).into_iter())
     {
-        let img = image::open(source)
-            .with_context(|| format!("failed to open composite source image: {}", source.display()))?;
+        let img = image::open(source).with_context(|| {
+            format!(
+                "failed to open composite source image: {}",
+                source.display()
+            )
+        })?;
         let tile = img
-            .resize_to_fill(width.max(1), height.max(1), image::imageops::FilterType::Lanczos3)
+            .resize_to_fill(
+                width.max(1),
+                height.max(1),
+                image::imageops::FilterType::Lanczos3,
+            )
             .to_rgba8();
         image::imageops::overlay(&mut canvas, &tile, i64::from(x), i64::from(y));
     }
 
     let rgb = DynamicImage::ImageRgba8(canvas).to_rgb8();
-    let file = std::fs::File::create(dest)
-        .with_context(|| format!("failed to create composite thumbnail file: {}", dest.display()))?;
+    let file = std::fs::File::create(dest).with_context(|| {
+        format!(
+            "failed to create composite thumbnail file: {}",
+            dest.display()
+        )
+    })?;
     let mut writer = std::io::BufWriter::new(file);
     let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, JPEG_QUALITY);
     rgb.write_with_encoder(encoder)
@@ -366,11 +381,7 @@ const TITLE_COLOR: Rgba<u8> = Rgba([51, 51, 51, 255]);
 /// - Strips markdown formatting before rendering
 /// - Saves as PNG (browser reads format from content, not extension)
 /// - Sidebar wraps in `bg-background` div + `dark:invert` for theme adaptation
-pub fn generate_text_thumbnail(
-    title: Option<&str>,
-    body: &str,
-    dest: &Path,
-) -> Result<(u32, u32)> {
+pub fn generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> Result<(u32, u32)> {
     let font = &*FONT;
 
     let size = TEXT_THUMB_SIZE;
@@ -389,7 +400,15 @@ pub fn generate_text_thumbnail(
             if y + line_step > size - PADDING {
                 break;
             }
-            draw_text_mut(&mut img, TITLE_COLOR, PADDING as i32, y as i32, title_scale, font, line);
+            draw_text_mut(
+                &mut img,
+                TITLE_COLOR,
+                PADDING as i32,
+                y as i32,
+                title_scale,
+                font,
+                line,
+            );
             y += (FONT_SIZE * 1.3 * LINE_HEIGHT) as u32;
         }
         y += line_step / 2;
@@ -404,7 +423,15 @@ pub fn generate_text_thumbnail(
         if y + line_step > size - PADDING {
             break;
         }
-        draw_text_mut(&mut img, TEXT_COLOR, PADDING as i32, y as i32, body_scale, font, line);
+        draw_text_mut(
+            &mut img,
+            TEXT_COLOR,
+            PADDING as i32,
+            y as i32,
+            body_scale,
+            font,
+            line,
+        );
         y += line_step;
     }
 
@@ -440,20 +467,31 @@ pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Re
         .with_context(|| format!("failed to open video: {}", source.display()))?;
     let size = file.metadata()?.len();
     let reader = std::io::BufReader::new(file);
-    let mut mp4_reader = mp4::Mp4Reader::read_header(reader, size)
-        .with_context(|| "failed to parse MP4 header")?;
+    let mut mp4_reader =
+        mp4::Mp4Reader::read_header(reader, size).with_context(|| "failed to parse MP4 header")?;
 
     // Find H.264 video track
-    let video_track_id = mp4_reader.tracks().iter()
+    let video_track_id = mp4_reader
+        .tracks()
+        .iter()
         .find(|(_, t)| t.track_type().ok() == Some(TrackType::Video))
         .map(|(&id, _)| id)
         .ok_or_else(|| anyhow::anyhow!("no video track found in MP4"))?;
 
-    let track = mp4_reader.tracks().get(&video_track_id)
+    let track = mp4_reader
+        .tracks()
+        .get(&video_track_id)
         .ok_or_else(|| anyhow::anyhow!("track disappeared"))?;
 
     // Extract SPS/PPS from AVCC configuration (needed to initialize decoder)
-    let avc1 = track.trak.mdia.minf.stbl.stsd.avc1.as_ref()
+    let avc1 = track
+        .trak
+        .mdia
+        .minf
+        .stbl
+        .stsd
+        .avc1
+        .as_ref()
         .ok_or_else(|| anyhow::anyhow!("not an AVC/H.264 track"))?;
 
     let mut h264_stream: Vec<u8> = Vec::new();
@@ -470,13 +508,11 @@ pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Re
     }
 
     let nal_length_size = avc1.avcc.length_size_minus_one + 1;
-    let sample_count = mp4_reader.sample_count(video_track_id)
-        .unwrap_or(1)
-        .min(30); // Check up to 30 samples to skip black frames
+    let sample_count = mp4_reader.sample_count(video_track_id).unwrap_or(1).min(30); // Check up to 30 samples to skip black frames
 
     // Decode with OpenH264
-    let mut decoder = Decoder::new()
-        .map_err(|e| anyhow::anyhow!("failed to create H.264 decoder: {:?}", e))?;
+    let mut decoder =
+        Decoder::new().map_err(|e| anyhow::anyhow!("failed to create H.264 decoder: {:?}", e))?;
 
     // Feed SPS/PPS first
     for packet in openh264::nal_units(&h264_stream) {
@@ -485,8 +521,12 @@ pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Re
 
     let mut decoded_frame = None;
     for sample_id in 1..=sample_count {
-        let Some(sample) = mp4_reader.read_sample(video_track_id, sample_id)
-            .with_context(|| format!("failed to read video sample {}", sample_id))? else { continue };
+        let Some(sample) = mp4_reader
+            .read_sample(video_track_id, sample_id)
+            .with_context(|| format!("failed to read video sample {}", sample_id))?
+        else {
+            continue;
+        };
 
         // Convert AVCC → Annex B
         let mut sample_stream: Vec<u8> = Vec::new();
@@ -494,13 +534,25 @@ pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Re
         let mut offset = 0;
         while offset + nal_length_size as usize <= data.len() {
             let nal_len = match nal_length_size {
-                4 => u32::from_be_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]) as usize,
-                2 => u16::from_be_bytes([data[offset], data[offset+1]]) as usize,
+                4 => u32::from_be_bytes([
+                    data[offset],
+                    data[offset + 1],
+                    data[offset + 2],
+                    data[offset + 3],
+                ]) as usize,
+                2 => u16::from_be_bytes([data[offset], data[offset + 1]]) as usize,
                 1 => data[offset] as usize,
-                _ => return Err(anyhow::anyhow!("unsupported NAL length size: {}", nal_length_size)),
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "unsupported NAL length size: {}",
+                        nal_length_size
+                    ))
+                }
             };
             offset += nal_length_size as usize;
-            if offset + nal_len > data.len() { break; }
+            if offset + nal_len > data.len() {
+                break;
+            }
             sample_stream.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
             sample_stream.extend_from_slice(&data[offset..offset + nal_len]);
             offset += nal_len;
@@ -515,8 +567,8 @@ pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Re
                 yuv.write_rgb8(&mut rgb_buf);
 
                 // Skip near-black frames (average brightness < 40)
-                let avg_brightness: u64 = rgb_buf.iter().map(|&b| b as u64).sum::<u64>()
-                    / rgb_buf.len().max(1) as u64;
+                let avg_brightness: u64 =
+                    rgb_buf.iter().map(|&b| b as u64).sum::<u64>() / rgb_buf.len().max(1) as u64;
                 if avg_brightness < 40 {
                     continue;
                 }
@@ -525,7 +577,9 @@ pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Re
                 break;
             }
         }
-        if decoded_frame.is_some() { break; }
+        if decoded_frame.is_some() {
+            break;
+        }
     }
 
     let (rgb_buf, w, h) = decoded_frame
@@ -629,7 +683,11 @@ fn strip_markdown(text: &str) -> String {
             trimmed
         };
         // Strip bold/italic markers
-        let cleaned = cleaned.replace("**", "").replace("__", "").replace('*', "").replace('_', " ");
+        let cleaned = cleaned
+            .replace("**", "")
+            .replace("__", "")
+            .replace('*', "")
+            .replace('_', " ");
         // Strip links: [text](url) -> text
         let cleaned = strip_links(&cleaned);
         if !result.is_empty() {
@@ -657,7 +715,7 @@ fn strip_links(text: &str) -> String {
             }
             if found_close && chars.peek() == Some(&'(') {
                 chars.next(); // skip '('
-                // skip until ')'
+                              // skip until ')'
                 for inner in chars.by_ref() {
                     if inner == ')' {
                         break;
@@ -682,8 +740,7 @@ fn strip_links(text: &str) -> String {
 
 /// Extensions recognized as still images that `generate_thumbnail` can process.
 const IMAGE_EXTS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif",
-    "heic", "heif", "avif",
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif", "heic", "heif", "avif",
 ];
 /// Extensions recognized as video containers that `generate_video_thumbnail` can process.
 const VIDEO_EXTS: &[&str] = &["mp4", "webm", "mov"];
@@ -846,7 +903,8 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
                     Ok(_) => return ThumbSource::Video,
                     Err(e) => log::warn!(
                         "first-video thumb failed for {}, falling back to text: {}",
-                        slug, e
+                        slug,
+                        e
                     ),
                 }
             }
@@ -1229,10 +1287,7 @@ mod tests {
         let decodable = dir.path().join("fallback.jpg");
         create_test_image(&decodable, 640, 480);
 
-        let block = make_article(
-            "mixed-article",
-            "![](cover.webp)\n![](fallback.jpg)\n",
-        );
+        let block = make_article("mixed-article", "![](cover.webp)\n![](fallback.jpg)\n");
 
         let source = generate_for_block(&block, &vault);
         assert_eq!(source, ThumbSource::Image);
@@ -1323,12 +1378,20 @@ mod tests {
             slug: "photo".into(),
             frontmatter: Frontmatter {
                 block_type: BlockType::Image,
-                title: None, description: None, url: None,
-                file: Some("photo.jpg".into()), thumbnail: None,
+                title: None,
+                description: None,
+                url: None,
+                file: Some("photo.jpg".into()),
+                thumbnail: None,
                 tags: vec![],
                 saved_at: DateTime::new("2026-01-15T12:00:00Z").unwrap(),
-                source: None, width: None, height: None, author: None,
-                position: None, color: None, icon: None,
+                source: None,
+                width: None,
+                height: None,
+                author: None,
+                position: None,
+                color: None,
+                icon: None,
             },
             body: String::new(),
         };

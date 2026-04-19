@@ -1,5 +1,91 @@
 # Devlog
 
+## 19.04.2026 10:20 [primary] — Feed video finalization: explicit playback contract + poster-first surface
+
+### Goal
+Довести desktop feed-video до финального preview-first контракта: убрать autoplay-решения из render layer, полностью запретить live video внутри galleries и сделать failure mode poster-safe вместо blank video box.
+
+### Actually completed
+
+**Backend теперь сериализует explicit `feed_playback` contract** (`src-tauri/src/storage/db.rs`, `src-tauri/src/storage/index.rs`, `src/types/index.ts`)
+- в `blocks` добавлен новый nullable field `feed_playback`
+- `feed_playback` генерируется в indexer рядом с `preview_manifest`, а не во frontend render path
+- eligibility matrix в этом срезе консервативная:
+  - только local `mp4`
+  - только local `webm`
+  - `mov`, `m4v`, remote video URLs, multi-media cases => `null`
+- autoplay descriptor не создаётся без подтверждённого poster preview / thumb metadata
+
+**Feed split зафиксирован как `preview_manifest` vs `feed_playback`** (`src/lib/feedPlayback.ts`, `src/lib/cardLayout.ts`)
+- `preview_manifest` остаётся layout/preview source-of-truth
+- `CardLayoutDescriptor.mediaItems` больше не несёт autoplay semantics
+- layout-layer знает про video tiles как про media type, но не решает вопрос playback eligibility
+
+**Gallery feed стал строго preview-only** (`src/components/Card.tsx`)
+- `GalleryTiles` больше не монтирует live `<video>` ни в каком случае
+- video tiles рендерятся как poster/preview image + play badge
+- fallback к source media сохранён только для image tiles; для video tiles source video больше не используется как render fallback
+
+**Введён `FeedVideoSurface` как единственная feed autoplay surface** (`src/components/FeedVideoSurface.tsx`)
+- новый state machine:
+  - `poster`
+  - `loading_direct`
+  - `playing_direct`
+  - `loading_blob`
+  - `playing_blob`
+  - `failed_poster_only`
+- poster показывается сразу и не уходит с экрана до `loadeddata` / `playing`
+- direct timeout/error => blob fallback
+- blob timeout/error => permanent poster-only
+- пустой `<video>` без `src` больше не существует как fallback mode
+
+**Autoplay policy стала двухуровневой, а не hard-compact** (`src-tauri/src/storage/index.rs`, `src/components/FeedVideoSurface.tsx`, `SPEC_FEED_VIDEO.md`)
+- `feed_playback` теперь сериализует `profile`:
+  - `standard` для compact single-video clips
+  - `heavy` для larger, но всё ещё допустимых single-video clips
+- backend больше не режет любой ролик вне compact-порогов в `poster-only`:
+  - `standard` limits: `10 MiB`, `2560px`, `4_000_000 px`
+  - `heavy` hard limits: `64 MiB`, `5120px`, `12_000_000 px`
+  - autoplay descriptor не создаётся только для truly excessive clips выше hard limits
+- runtime policy у `FeedVideoSurface` теперь соответствует profile:
+  - `standard` использует `direct -> blob -> poster-only`
+  - `heavy` использует longer `direct -> poster-only` без blob fallback, чтобы не тянуть тяжёлый файл в память целиком
+
+**Grid autoplay перестал быть single-active для всех профилей** (`src/components/Grid.tsx`, `src/components/Grid.test.tsx`)
+- `standard` clips теперь autoplay'ят все одновременно, если их playback surface действительно видима
+- `heavy` clips остаются консервативными: одновременно активен только один `heavy` block
+- selection по-прежнему идёт по playback surface, а не по полной высоте карточки
+
+**Grid autoplay gating теперь profile-aware** (`src/components/Grid.tsx`)
+- источник истины — current committed visible cards
+- card eligible только если:
+  - есть валидный `feed_playback`
+  - block committed
+  - visibility `>= 50%`
+- `standard` clips autoplay'ят все одновременно, если проходят visibility threshold
+- `heavy` clips остаются single-active: при конкуренции выбирается top-most visible card
+- внутри provisional/measuring phases autoplay не активируется
+
+**Play overlay больше не остаётся поверх реально играющего feed-video** (`src/components/Card.tsx`, `src/components/Card.test.tsx`)
+- `PlayBadge` скрывается на autoplay-active dedicated video, article single-video и social single-video surfaces
+- в poster-only состояниях и в gallery video tiles badge сохраняется
+
+**Покрыты automated regression tests для нового video contract**
+- frontend:
+  - `src/components/FeedVideoSurface.test.tsx`
+  - `src/components/Card.test.tsx`
+  - `src/components/Grid.test.tsx`
+- backend:
+  - `src-tauri/src/storage/index.rs` tests на `feed_playback` serialization / null cases / clear path
+
+### Checks
+- `bun run build`
+- `bun run test src/components/FeedVideoSurface.test.tsx src/components/Card.test.tsx src/components/Grid.test.tsx src/components/MeasureCard.test.tsx src/components/VideoFromBlob.test.tsx src/lib/cardLayout.test.ts src/lib/cardHeight.test.ts`
+- `cargo test -p mine --lib feed_playback --quiet`
+
+### Push
+- [текущий]
+
 ## 19.04.2026 08:35 [primary] — Two-image gallery aspect refinement
 
 ### Goal

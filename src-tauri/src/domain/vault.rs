@@ -51,7 +51,11 @@ impl VaultLayout {
     /// Panics in debug builds if slug fails validation.
     /// Call `validate_slug()` at IPC boundaries before using this.
     pub fn block_path(&self, slug: &str) -> PathBuf {
-        debug_assert!(validate_slug(slug).is_ok(), "invalid slug passed to block_path: {:?}", slug);
+        debug_assert!(
+            validate_slug(slug).is_ok(),
+            "invalid slug passed to block_path: {:?}",
+            slug
+        );
         self.root.join(format!("{}.md", slug))
     }
 
@@ -60,7 +64,11 @@ impl VaultLayout {
     /// Panics in debug builds if slug fails validation.
     /// Call `validate_slug()` at IPC boundaries before using this.
     pub fn media_path(&self, slug: &str, ext: &str) -> PathBuf {
-        debug_assert!(validate_slug(slug).is_ok(), "invalid slug passed to media_path: {:?}", slug);
+        debug_assert!(
+            validate_slug(slug).is_ok(),
+            "invalid slug passed to media_path: {:?}",
+            slug
+        );
         let ext = ext.strip_prefix('.').unwrap_or(ext);
         self.root.join(format!("{}.{}", slug, ext))
     }
@@ -107,7 +115,11 @@ impl VaultLayout {
     /// Panics in debug builds if slug fails validation.
     /// Call `validate_slug()` at IPC boundaries before using this.
     pub fn thumb_path(&self, slug: &str) -> PathBuf {
-        debug_assert!(validate_slug(slug).is_ok(), "invalid slug passed to thumb_path: {:?}", slug);
+        debug_assert!(
+            validate_slug(slug).is_ok(),
+            "invalid slug passed to thumb_path: {:?}",
+            slug
+        );
         self.thumbs_dir().join(format!("{}.jpg", slug))
     }
 }
@@ -178,7 +190,10 @@ mod tests {
     #[test]
     fn block_path() {
         // V1
-        assert_eq!(layout().block_path("sunset-tokyo"), PathBuf::from("/vault/sunset-tokyo.md"));
+        assert_eq!(
+            layout().block_path("sunset-tokyo"),
+            PathBuf::from("/vault/sunset-tokyo.md")
+        );
     }
 
     #[test]
@@ -206,7 +221,10 @@ mod tests {
 
     #[test]
     fn vault_id_path() {
-        assert_eq!(layout().vault_id_path(), PathBuf::from("/vault/.arena/vault-id"));
+        assert_eq!(
+            layout().vault_id_path(),
+            PathBuf::from("/vault/.arena/vault-id")
+        );
     }
 
     #[test]

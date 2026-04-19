@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::domain::vault::VaultLayout;
 use crate::commands::state::AppState;
+use crate::domain::vault::VaultLayout;
 use crate::storage::db;
 use crate::util::append_startup_trace;
 use crate::watcher::{events, handler};
@@ -34,70 +34,79 @@ pub fn start_watching(
     db_path: &Path,
 ) -> Result<RecommendedWatcher> {
     let started = Instant::now();
-    append_startup_trace(app, "watcher", &format!("start path={}", vault.root().display()));
+    append_startup_trace(
+        app,
+        "watcher",
+        &format!("start path={}", vault.root().display()),
+    );
     let vault_clone = vault.clone();
     let app_clone = app.clone();
 
     // Separate DB connection for the watcher thread (WAL mode allows this)
     let conn = db::open_or_create(db_path)?;
-    append_startup_trace(app, "watcher", &format!("db_open elapsed_ms={}", started.elapsed().as_millis()));
+    append_startup_trace(
+        app,
+        "watcher",
+        &format!("db_open elapsed_ms={}", started.elapsed().as_millis()),
+    );
 
     // Debounce: track last emit time to avoid flooding the frontend
-    let last_emit: Arc<Mutex<Instant>> = Arc::new(Mutex::new(
-        Instant::now() - Duration::from_secs(10),
-    ));
+    let last_emit: Arc<Mutex<Instant>> =
+        Arc::new(Mutex::new(Instant::now() - Duration::from_secs(10)));
 
-    let mut watcher = notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-        let event = match res {
-            Ok(e) => e,
-            Err(e) => {
-                log::error!("watcher error: {e}");
+    let mut watcher =
+        notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+            let event = match res {
+                Ok(e) => e,
+                Err(e) => {
+                    log::error!("watcher error: {e}");
+                    return;
+                }
+            };
+
+            let vault_events = events::classify_notify_event(&event, &vault_clone);
+            if vault_events.is_empty() {
                 return;
             }
-        };
 
-        let vault_events = events::classify_notify_event(&event, &vault_clone);
-        if vault_events.is_empty() {
-            return;
-        }
-
-        let path = vault_clone.root().to_string_lossy().into_owned();
-        if app_clone
-            .state::<AppState>()
-            .mark_dirty_if_syncing(&path)
-        {
-            return;
-        }
-
-        let mut any_changed = false;
-        for ve in &vault_events {
-            match handler::handle_event(&conn, &vault_clone, ve, Some(&app_clone)) {
-                Ok(changed) => any_changed |= changed,
-                Err(e) => log::warn!("watcher handle_event: {e:#}"),
+            let path = vault_clone.root().to_string_lossy().into_owned();
+            if app_clone.state::<AppState>().mark_dirty_if_syncing(&path) {
+                return;
             }
-        }
-        if !any_changed {
-            return;
-        }
 
-        // Debounce: emit at most once per DEBOUNCE_MS
-        let mut last = last_emit.lock().unwrap_or_else(|e| e.into_inner());
-        let now = Instant::now();
-        if now.duration_since(*last) >= Duration::from_millis(DEBOUNCE_MS) {
-            *last = now;
-            let _ = app_clone.emit(
-                "vault-changed",
-                VaultChangedPayload {
-                    path: vault_clone.root().to_string_lossy().into_owned(),
-                },
-            );
-        }
-    })?;
+            let mut any_changed = false;
+            for ve in &vault_events {
+                match handler::handle_event(&conn, &vault_clone, ve, Some(&app_clone)) {
+                    Ok(changed) => any_changed |= changed,
+                    Err(e) => log::warn!("watcher handle_event: {e:#}"),
+                }
+            }
+            if !any_changed {
+                return;
+            }
+
+            // Debounce: emit at most once per DEBOUNCE_MS
+            let mut last = last_emit.lock().unwrap_or_else(|e| e.into_inner());
+            let now = Instant::now();
+            if now.duration_since(*last) >= Duration::from_millis(DEBOUNCE_MS) {
+                *last = now;
+                let _ = app_clone.emit(
+                    "vault-changed",
+                    VaultChangedPayload {
+                        path: vault_clone.root().to_string_lossy().into_owned(),
+                    },
+                );
+            }
+        })?;
 
     watcher.watch(vault.root(), RecursiveMode::NonRecursive)?;
 
     log::info!("file watcher started for {}", vault.root().display());
-    append_startup_trace(app, "watcher", &format!("ready elapsed_ms={}", started.elapsed().as_millis()));
+    append_startup_trace(
+        app,
+        "watcher",
+        &format!("ready elapsed_ms={}", started.elapsed().as_millis()),
+    );
 
     Ok(watcher)
 }

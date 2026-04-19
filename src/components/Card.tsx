@@ -14,10 +14,11 @@ import {
   deriveContentCardSlots,
   type CardLayoutDescriptor,
 } from "@/lib/cardLayout";
+import { normalizeFeedPlayback } from "@/lib/feedPlayback";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
-import { VideoFromBlob } from "./VideoFromBlob";
+import { FeedVideoSurface } from "./FeedVideoSurface";
 
 const PriorityContext = createContext(false);
 const usePriority = () => useContext(PriorityContext);
@@ -31,6 +32,7 @@ interface CardProps {
   thumbsRootPath?: string;
   isFocused?: boolean;
   priority?: boolean;
+  allowPlayback?: boolean;
   onClick: (block: LightBlock) => void;
   tags?: import("@/types").TagCount[];
   currentTag?: string;
@@ -73,7 +75,7 @@ export function MeasuredCardFrame({
   );
 }
 
-export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFocused, priority, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestDelete }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFocused, priority, allowPlayback = true, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestDelete }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
   });
@@ -113,7 +115,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
           onRequestDelete={onRequestDelete}
         />
       )}
-      <CardContent block={block} vaultPath={vaultPath} thumbsRootPath={thumbsRootPath} priority={priority} />
+      <CardContent block={block} vaultPath={vaultPath} thumbsRootPath={thumbsRootPath} priority={priority} allowPlayback={allowPlayback} />
     </CardFrame>
   );
 });
@@ -161,16 +163,22 @@ export function CardContent({
   vaultPath,
   thumbsRootPath,
   priority,
+  allowPlayback = false,
   measurementMode = false,
 }: {
   block: LightBlock;
   vaultPath: string;
   thumbsRootPath?: string;
   priority?: boolean;
+  allowPlayback?: boolean;
   measurementMode?: boolean;
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
   const descriptor = useMemo(() => deriveCardLayoutDescriptor(block), [block]);
+  const playback = useMemo(
+    () => normalizeFeedPlayback(block.feed_playback),
+    [block.feed_playback],
+  );
   const content = (() => {
     switch (descriptor.variant) {
       case "image":
@@ -179,13 +187,13 @@ export function CardContent({
         return <LinkCard block={block} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
       case "article-text":
       case "article-media":
-        return <ArticleCard block={block} descriptor={descriptor} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
+        return <ArticleCard block={block} descriptor={descriptor} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "social-text":
       case "social-single-media":
       case "social-media-grid":
-        return <SocialCard block={block} descriptor={descriptor} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
+        return <SocialCard block={block} descriptor={descriptor} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "video":
-        return <VideoCard block={block} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
+        return <VideoCard block={block} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "file":
         return <FileCard block={block} />;
     }
@@ -206,24 +214,28 @@ function GalleryTileImage({
   vaultPath,
   thumbsRootPath,
   fallbackSlug,
+  allowSourceFallback,
   loading,
 }: {
   item: CardLayoutDescriptor["mediaItems"][number];
   vaultPath: string;
   thumbsRootPath: string;
   fallbackSlug: string;
+  allowSourceFallback: boolean;
   loading: "eager" | "lazy";
 }) {
   const previewSrc = item.previewPath
     ? previewAssetUrl(thumbsRootPath, item.previewPath)
     : null;
-  const sourceSrc = resolveFeedMediaSrc(vaultPath, item.sourcePath);
+  const sourceSrc = allowSourceFallback
+    ? resolveFeedMediaSrc(vaultPath, item.sourcePath)
+    : null;
   const fallbackSrc = thumbnailUrl(thumbsRootPath, fallbackSlug);
-  const [src, setSrc] = useState(previewSrc ?? sourceSrc);
+  const [src, setSrc] = useState(previewSrc ?? sourceSrc ?? fallbackSrc);
 
   useEffect(() => {
-    setSrc(previewSrc ?? sourceSrc);
-  }, [previewSrc, sourceSrc]);
+    setSrc(previewSrc ?? sourceSrc ?? fallbackSrc);
+  }, [fallbackSrc, previewSrc, sourceSrc]);
 
   return (
     <img
@@ -232,7 +244,7 @@ function GalleryTileImage({
       className="absolute inset-0 h-full w-full object-cover"
       loading={loading}
       onError={() => {
-        if (src !== sourceSrc) {
+        if (sourceSrc && src !== sourceSrc) {
           setSrc(sourceSrc);
           return;
         }
@@ -240,22 +252,6 @@ function GalleryTileImage({
           setSrc(fallbackSrc);
         }
       }}
-    />
-  );
-}
-
-function isPlayableVideoSrc(src: string): boolean {
-  return /\.mp4(\?|$)|\.webm(\?|$)|\.m4v(\?|$)|\.mov(\?|$)/i.test(src);
-}
-
-function renderFeedVideo(vaultPath: string, src: string, className: string) {
-  return (
-    <VideoFromBlob
-      src={resolveFeedMediaSrc(vaultPath, src)}
-      className={className}
-      autoPlay
-      loop
-      muted
     />
   );
 }
@@ -311,17 +307,25 @@ function GalleryTiles({
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath}
                 fallbackSlug={fallbackSlug}
+                allowSourceFallback
                 loading={imgLoading}
               />
             )}
-            {!measurementMode && item.isVideoPoster && !item.isVideo && <PlayBadge />}
-            {!measurementMode && item.isVideo && isPlayableVideoSrc(item.sourcePath) && (
+            {!measurementMode && item.isVideo && (
               <>
-                {renderFeedVideo(vaultPath, item.sourcePath, "absolute inset-0 h-full w-full object-cover")}
+                <GalleryTileImage
+                  item={item}
+                  vaultPath={vaultPath}
+                  thumbsRootPath={thumbsRootPath}
+                  fallbackSlug={fallbackSlug}
+                  allowSourceFallback={false}
+                  loading={imgLoading}
+                />
                 <PlayBadge />
               </>
             )}
-            {(measurementMode || (item.isVideo && !isPlayableVideoSrc(item.sourcePath))) && (
+            {!measurementMode && item.isVideoPoster && !item.isVideo && <PlayBadge />}
+            {measurementMode && (
               <div className="absolute inset-0 bg-accent" />
             )}
           </div>
@@ -484,12 +488,16 @@ const SocialCard = memo(function SocialCard({
   descriptor,
   vaultPath,
   thumbsRootPath,
+  playback,
+  allowPlayback,
   measurementMode = false,
 }: {
   block: LightBlock;
   descriptor: CardLayoutDescriptor;
   vaultPath: string;
   thumbsRootPath: string;
+  playback: ReturnType<typeof normalizeFeedPlayback>;
+  allowPlayback: boolean;
   measurementMode?: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
@@ -509,13 +517,21 @@ const SocialCard = memo(function SocialCard({
         // visible gray letterboxing inside the slot while scrolling.
         const m = media[0]!;
         const absClass = "absolute inset-0 h-full w-full object-cover";
+        const shouldAutoplay =
+          m.isVideo && !measurementMode && allowPlayback && playback !== null;
         return (
           <div
             className="relative w-full overflow-hidden bg-accent"
             style={{ aspectRatio: `${m.aspectRatio ?? 1}` }}
           >
-            {m.isVideo ? (
-              measurementMode ? <div className={cn("absolute inset-0 bg-accent", absClass)} /> : renderFeedVideo(vaultPath, m.sourcePath, absClass)
+            {shouldAutoplay ? (
+              <FeedVideoSurface
+                playback={playback}
+                allowPlayback={allowPlayback}
+                vaultPath={vaultPath}
+                thumbsRootPath={thumbsRootPath}
+                className={absClass}
+              />
             ) : (
               !measurementMode && (
                 <img
@@ -526,7 +542,10 @@ const SocialCard = memo(function SocialCard({
                 />
               )
             )}
-            {m.isVideoPoster && <PlayBadge />}
+            {measurementMode && (
+              <div className={cn("absolute inset-0 bg-accent", absClass)} />
+            )}
+            {(m.isVideo || m.isVideoPoster) && !shouldAutoplay && <PlayBadge />}
           </div>
         );
       })()}
@@ -572,18 +591,24 @@ const ArticleCard = memo(function ArticleCard({
   descriptor,
   vaultPath,
   thumbsRootPath,
+  playback,
+  allowPlayback,
   measurementMode = false,
 }: {
   block: LightBlock;
   descriptor: CardLayoutDescriptor;
   vaultPath: string;
   thumbsRootPath: string;
+  playback: ReturnType<typeof normalizeFeedPlayback>;
+  allowPlayback: boolean;
   measurementMode?: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const hasPreview = descriptor.variant === "article-media";
   const primaryMedia = descriptor.mediaItems[0];
   const rendersFeedVideo = hasPreview && descriptor.mediaItems.length === 1 && primaryMedia?.isVideo;
+  const shouldAutoplayVideo =
+    rendersFeedVideo && !measurementMode && allowPlayback && playback !== null;
   const slots = deriveContentCardSlots(descriptor);
   const hasBottomMeta = slots?.hasBottomMeta ?? false;
   const hasTextStack = Boolean(block.title ?? block.slug) || descriptor.previewText.length > 0 || hasBottomMeta;
@@ -609,10 +634,23 @@ const ArticleCard = memo(function ArticleCard({
               measurementMode={measurementMode}
             />
           ) : rendersFeedVideo ? (
-            measurementMode ? (
-              <div className="absolute inset-0 bg-accent" />
+            shouldAutoplayVideo ? (
+              <FeedVideoSurface
+                playback={playback}
+                allowPlayback={allowPlayback}
+                vaultPath={vaultPath}
+                thumbsRootPath={thumbsRootPath}
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+            ) : !measurementMode ? (
+              <img
+                src={thumbnailUrl(thumbsRootPath, block.slug)}
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover"
+                loading={imgLoading}
+              />
             ) : (
-              renderFeedVideo(vaultPath, primaryMedia.sourcePath, "absolute inset-0 h-full w-full object-cover")
+              <div className="absolute inset-0 bg-accent" />
             )
           ) : !measurementMode && (
             <img
@@ -622,7 +660,7 @@ const ArticleCard = memo(function ArticleCard({
               loading={imgLoading}
             />
           )}
-          {rendersFeedVideo && <PlayBadge />}
+          {rendersFeedVideo && !shouldAutoplayVideo && <PlayBadge />}
         </div>
       )}
       {hasTextStack && (
@@ -666,32 +704,34 @@ const VideoCard = memo(function VideoCard({
   block,
   vaultPath,
   thumbsRootPath,
+  playback,
+  allowPlayback,
   measurementMode = false,
 }: {
   block: LightBlock;
   vaultPath: string;
   thumbsRootPath: string;
+  playback: ReturnType<typeof normalizeFeedPlayback>;
+  allowPlayback: boolean;
   measurementMode?: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const thumb = thumbnailUrl(thumbsRootPath, block.slug);
-  const mediaSrc = block.media_file ? mediaUrl(vaultPath, block.media_file) : null;
-  const playableVideo = block.media_file ? isPlayableVideoSrc(block.media_file) : false;
-  const posterSrc = mediaSrc && !playableVideo ? mediaSrc : thumb;
+  const shouldAutoplay = !measurementMode && allowPlayback && playback !== null;
 
   return (
     <div className="relative aspect-video">
-      {!measurementMode && playableVideo && mediaSrc ? (
-        <VideoFromBlob
-          src={mediaSrc}
+      {shouldAutoplay ? (
+        <FeedVideoSurface
+          playback={playback}
+          allowPlayback={allowPlayback}
+          vaultPath={vaultPath}
+          thumbsRootPath={thumbsRootPath}
           className="h-full w-full object-cover"
-          autoPlay
-          loop
-          muted
         />
       ) : !measurementMode ? (
         <img
-          src={posterSrc}
+          src={thumb}
           alt=""
           className="h-full w-full object-cover"
           loading={imgLoading}
@@ -702,7 +742,7 @@ const VideoCard = memo(function VideoCard({
       ) : (
         <div className="h-full w-full bg-accent" />
       )}
-      <PlayBadge />
+      {!shouldAutoplay && <PlayBadge />}
     </div>
   );
 });

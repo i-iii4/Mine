@@ -131,7 +131,10 @@ mod tests {
             vec![PathBuf::from("/vault/note.md")],
         );
         let result = classify_notify_event(&event, &vault());
-        assert_eq!(result, vec![VaultEvent::BlockChanged(PathBuf::from("/vault/note.md"))]);
+        assert_eq!(
+            result,
+            vec![VaultEvent::BlockChanged(PathBuf::from("/vault/note.md"))]
+        );
     }
 
     #[test]
@@ -141,7 +144,10 @@ mod tests {
             vec![PathBuf::from("/vault/note.md")],
         );
         let result = classify_notify_event(&event, &vault());
-        assert_eq!(result, vec![VaultEvent::BlockChanged(PathBuf::from("/vault/note.md"))]);
+        assert_eq!(
+            result,
+            vec![VaultEvent::BlockChanged(PathBuf::from("/vault/note.md"))]
+        );
     }
 
     // ── BlockDeleted ─────────────────────────────────────────────────────
@@ -153,7 +159,10 @@ mod tests {
             vec![PathBuf::from("/vault/note.md")],
         );
         let result = classify_notify_event(&event, &vault());
-        assert_eq!(result, vec![VaultEvent::BlockDeleted(PathBuf::from("/vault/note.md"))]);
+        assert_eq!(
+            result,
+            vec![VaultEvent::BlockDeleted(PathBuf::from("/vault/note.md"))]
+        );
     }
 
     // ── MediaChanged / MediaDeleted ──────────────────────────────────────
@@ -165,7 +174,10 @@ mod tests {
             vec![PathBuf::from("/vault/photo.jpg")],
         );
         let result = classify_notify_event(&event, &vault());
-        assert_eq!(result, vec![VaultEvent::MediaChanged(PathBuf::from("/vault/photo.jpg"))]);
+        assert_eq!(
+            result,
+            vec![VaultEvent::MediaChanged(PathBuf::from("/vault/photo.jpg"))]
+        );
     }
 
     #[test]
@@ -175,7 +187,10 @@ mod tests {
             vec![PathBuf::from("/vault/photo.jpg")],
         );
         let result = classify_notify_event(&event, &vault());
-        assert_eq!(result, vec![VaultEvent::MediaDeleted(PathBuf::from("/vault/photo.jpg"))]);
+        assert_eq!(
+            result,
+            vec![VaultEvent::MediaDeleted(PathBuf::from("/vault/photo.jpg"))]
+        );
     }
 
     // ── Filtering ────────────────────────────────────────────────────────
@@ -214,14 +229,17 @@ mod tests {
     fn multiple_paths_in_one_event() {
         let event = make_event(
             EventKind::Create(CreateKind::File),
-            vec![
-                PathBuf::from("/vault/a.md"),
-                PathBuf::from("/vault/b.jpg"),
-            ],
+            vec![PathBuf::from("/vault/a.md"), PathBuf::from("/vault/b.jpg")],
         );
         let result = classify_notify_event(&event, &vault());
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0], VaultEvent::BlockChanged(PathBuf::from("/vault/a.md")));
-        assert_eq!(result[1], VaultEvent::MediaChanged(PathBuf::from("/vault/b.jpg")));
+        assert_eq!(
+            result[0],
+            VaultEvent::BlockChanged(PathBuf::from("/vault/a.md"))
+        );
+        assert_eq!(
+            result[1],
+            VaultEvent::MediaChanged(PathBuf::from("/vault/b.jpg"))
+        );
     }
 }

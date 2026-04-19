@@ -32,6 +32,7 @@ import {
   type MasonryLayout,
 } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
+import { computeFeedPlaybackSurfaceEnvelope } from "@/lib/cardHeight";
 import { LayoutCache } from "@/lib/layoutCache";
 import { fetchWordWidths } from "@/lib/fontMetrics";
 import {
@@ -47,6 +48,7 @@ import {
   buildLayoutGenerationKey,
   type LayoutGenerationKey,
 } from "@/lib/layoutGeneration";
+import { normalizeFeedPlayback } from "@/lib/feedPlayback";
 
 // ─── Layout constants ───────────────────────────────────────────────────────
 
@@ -59,6 +61,7 @@ const PRIORITY_FORWARD_PX = 1400;
 const MEASUREMENT_BATCH_SIZE = 48;
 const INITIAL_COMMIT_BLOCKS = 24;
 const COMMIT_LOOKAHEAD_BLOCKS = 24;
+const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -162,6 +165,7 @@ export function Grid({
   const parentRef = useRef<HTMLDivElement>(null);
   const [parentWidth, setParentWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
   const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
 
@@ -204,8 +208,36 @@ export function Grid({
 
     setParentWidth(el.clientWidth);
     setViewportHeight(el.clientHeight);
+    setScrollTop(el.scrollTop);
     observer.observe(el);
     return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+
+    let rafId: number | null = null;
+
+    const updateScrollTop = () => {
+      rafId = null;
+      setScrollTop((current) => {
+        const next = el.scrollTop;
+        return current === next ? current : next;
+      });
+    };
+
+    const handleScroll = () => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(updateScrollTop);
+    };
+
+    setScrollTop(el.scrollTop);
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", handleScroll);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, []);
 
   // Warm the in-memory height cache from IndexedDB on first mount.
@@ -373,6 +405,17 @@ export function Grid({
     return "committed";
   }, [blocks.length, committedEndIndex, parentWidth, targetCommittedEndIndex]);
 
+  const autoplayEligibleBySlug = useMemo(() => {
+    const eligible = new Map<string, ReturnType<typeof normalizeFeedPlayback>>();
+    for (const block of blocks) {
+      const playback = normalizeFeedPlayback(block.feed_playback);
+      if (playback) {
+        eligible.set(block.slug, playback);
+      }
+    }
+    return eligible;
+  }, [blocks]);
+
   // Priority zone — cards in this range get eager image loading.
   const priorityBounds = useMemo(() => {
     return {
@@ -400,6 +443,88 @@ export function Grid({
 
     return missingPrefixBlocks;
   }, [blocks, heightsMap, targetCommittedEndIndex, warmedUp]);
+
+  const activePlaybackSlugs = useMemo(() => {
+    if (phase !== "committed" || viewportHeight <= 0) {
+      return new Set<string>();
+    }
+
+    const viewportBottom = scrollTop + viewportHeight;
+    const viewportCenter = scrollTop + viewportHeight / 2;
+    const active = new Set<string>();
+    let activeHeavy:
+      | {
+          slug: string;
+          visibleFraction: number;
+          centerDistance: number;
+          top: number;
+        }
+      | null = null;
+
+    for (const item of visibleItems) {
+      if (item.index > committedEndIndex) continue;
+      const block = blocks[item.index];
+      if (!block) continue;
+      const playback = autoplayEligibleBySlug.get(block.slug);
+      if (!playback) continue;
+
+      const playbackSurface = computeFeedPlaybackSurfaceEnvelope(
+        block,
+        item.width,
+      );
+      if (!playbackSurface) continue;
+
+      const surfaceTop = item.top + playbackSurface.topOffsetPx;
+      const surfaceBottom = surfaceTop + playbackSurface.heightPx;
+      const visiblePx =
+        Math.min(surfaceBottom, viewportBottom) -
+        Math.max(surfaceTop, scrollTop);
+      if (visiblePx <= 0) continue;
+
+      const visibleFraction = visiblePx / Math.max(playbackSurface.heightPx, 1);
+      if (visibleFraction < FEED_AUTOPLAY_MIN_VISIBLE_FRACTION) continue;
+
+      if (playback.profile === "standard") {
+        active.add(block.slug);
+        continue;
+      }
+
+      const centerDistance = Math.abs(
+        surfaceTop + playbackSurface.heightPx / 2 - viewportCenter,
+      );
+
+      if (
+        !activeHeavy ||
+        visibleFraction > activeHeavy.visibleFraction + 0.001 ||
+        (Math.abs(visibleFraction - activeHeavy.visibleFraction) <= 0.001 &&
+          surfaceTop < activeHeavy.top - 0.5) ||
+        (Math.abs(visibleFraction - activeHeavy.visibleFraction) <= 0.001 &&
+          Math.abs(surfaceTop - activeHeavy.top) <= 0.5 &&
+          centerDistance < activeHeavy.centerDistance - 0.5)
+      ) {
+        activeHeavy = {
+          slug: block.slug,
+          visibleFraction,
+          centerDistance,
+          top: surfaceTop,
+        };
+      }
+    }
+
+    if (activeHeavy) {
+      active.add(activeHeavy.slug);
+    }
+
+    return active;
+  }, [
+    autoplayEligibleBySlug,
+    blocks,
+    committedEndIndex,
+    phase,
+    scrollTop,
+    viewportHeight,
+    visibleItems,
+  ]);
 
   useEffect(() => {
     if (!hasMoreBlocks || loadingMoreBlocks || !onLoadMoreBlocks) {
@@ -480,6 +605,7 @@ export function Grid({
               totalHeight={layout.totalHeight}
               priorityBounds={priorityBounds}
               committedEndIndex={committedEndIndex}
+              activePlaybackSlugs={activePlaybackSlugs}
               context={gridContext}
             />
           )}
@@ -551,6 +677,7 @@ function VirtualMasonryLayout({
   totalHeight,
   priorityBounds,
   committedEndIndex,
+  activePlaybackSlugs,
   context,
 }: {
   blocks: LightBlock[];
@@ -558,6 +685,7 @@ function VirtualMasonryLayout({
   totalHeight: number;
   priorityBounds: { start: number; end: number };
   committedEndIndex: number;
+  activePlaybackSlugs: Set<string>;
   context: GridContext;
 }) {
   return (
@@ -574,6 +702,7 @@ function VirtualMasonryLayout({
               item.top <= priorityBounds.end && item.bottom >= priorityBounds.start
             }
             isCommitted={item.index <= committedEndIndex}
+            allowPlayback={activePlaybackSlugs.has(block.slug)}
             context={context}
           />
         );
@@ -587,12 +716,14 @@ const GridItem = memo(function GridItem({
   item,
   priority,
   isCommitted,
+  allowPlayback,
   context,
 }: {
   block: LightBlock;
   item: MasonryPosition;
   priority: boolean;
   isCommitted: boolean;
+  allowPlayback: boolean;
   context: GridContext;
 }) {
   return (
@@ -619,6 +750,7 @@ const GridItem = memo(function GridItem({
           thumbsRootPath={context.thumbsRootPath}
           isFocused={block.id === context.focusedBlockId}
           priority={priority}
+          allowPlayback={allowPlayback}
           onClick={context.onBlockClick}
           tags={context.tags}
           currentTag={context.currentTag}
