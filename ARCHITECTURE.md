@@ -280,6 +280,7 @@ Source vault хранит только пользовательские файл
 - **CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`, картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки картинки — нет layout shift.
 - `computeCardHeight()` остаётся heuristic для scheduling / placeholder geometry, но не имеет права клампить live content. Hard clamp `height + overflow hidden` валиден только внутри exact committed prefix текущего generation.
 - Gallery fallback contract: если у multi-image карточки нет подтверждённого tile preview asset, feed больше не размножает один block-level thumb на все tiles. Gallery tile падает в свой `source_path`, а block-level `slug.jpg` остаётся только single-preview fallback.
+- Gallery aspect contract: composite/media-grid previews with `3+` items используют квадратный wrapper, а gallery ровно из `2` изображений использует `2:1` wrapper, чтобы две tiles оставались почти квадратными и не деградировали в узкий `1:2` crop.
 - Legacy article fallback contract: если у article-карточки есть `media_urls` / `first_image`, но для строки ещё нет `preview_manifest`, feed всё равно обязан строить реальный tile set из source images. `imageCount > 1` без `mediaItems` больше не допускается, иначе карточка деградирует в пустой серый gallery wrapper.
 
 ### Sidebar preview pipeline

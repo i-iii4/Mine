@@ -1,5 +1,30 @@
 # Devlog
 
+## 19.04.2026 08:35 [primary] — Two-image gallery aspect refinement
+
+### Goal
+Убрать слишком агрессивный кроп у карточек с галереей ровно из двух изображений: текущий квадратный wrapper делал две плитки узкими `1:2`.
+
+### Actually completed
+
+**Для `2`-image galleries введён отдельный wrapper contract** (`src/lib/cardLayout.ts`, `src/lib/cardLayout.test.ts`)
+- галереи с ровно двумя изображениями больше не используют квадратный `1:1` container
+- descriptor-layer теперь задаёт для такого случая `primaryAspectRatio = 2`
+- практический эффект: две tiles рядом становятся почти квадратными, а не узкими вертикальными полосами
+- правило заведено на уровне layout contract, поэтому render и masonry получают один и тот же geometry source
+
+**Покрыт и legacy, и manifest-backed path**
+- article legacy fallback с `media_urls`
+- article `preview_manifest kind=composite`
+- social two-image galleries
+
+### Checks
+- `bun run test src/lib/cardLayout.test.ts src/components/Card.test.tsx src/lib/cardHeight.test.ts`
+- `bun run build`
+
+### Push
+- [текущий]
+
 ## 19.04.2026 08:20 [primary] — Legacy article gallery fallback + media-first text stack
 
 ### Goal

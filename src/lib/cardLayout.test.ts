@@ -47,7 +47,7 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.primaryAspectRatio).toBeCloseTo(800 / 600);
   });
 
-  it("reserves square geometry for article composite previews", () => {
+  it("reserves square geometry for article composite previews with 3+ items", () => {
     const descriptor = deriveCardLayoutDescriptor(
       makeBlock({
         block_type: "article",
@@ -60,6 +60,21 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.variant).toBe("article-media");
     expect(descriptor.visibleMediaCount).toBe(3);
     expect(descriptor.primaryAspectRatio).toBe(1);
+  });
+
+  it("uses a 2:1 wrapper for article galleries with exactly two items", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "article",
+        body: "hello\n![](a.jpg)\n![](b.jpg)",
+        first_image: "a.jpg",
+        media_urls: "[\"a.jpg\",\"b.jpg\"]",
+        media_dimensions: "{\"a.jpg\":[800,600],\"b.jpg\":[600,800]}",
+      }),
+    );
+    expect(descriptor.variant).toBe("article-media");
+    expect(descriptor.visibleMediaCount).toBe(2);
+    expect(descriptor.primaryAspectRatio).toBe(2);
   });
 
   it("builds legacy article gallery items from media_urls when preview_manifest is missing", () => {
@@ -78,7 +93,7 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.mediaItems[1]?.sourcePath).toBe("b.webp");
     expect(descriptor.visibleMediaCount).toBe(2);
     expect(descriptor.totalMediaCount).toBe(2);
-    expect(descriptor.primaryAspectRatio).toBe(1);
+    expect(descriptor.primaryAspectRatio).toBe(2);
   });
 
   it("prefers preview_manifest for article composite previews", () => {
@@ -103,6 +118,29 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.variant).toBe("article-media");
     expect(descriptor.visibleMediaCount).toBe(3);
     expect(descriptor.primaryAspectRatio).toBe(1);
+  });
+
+  it("uses a 2:1 wrapper for two-item article composites from preview_manifest", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "article",
+        body: "plain text only",
+        preview_manifest: JSON.stringify({
+          kind: "composite",
+          primary_preview_path: "test.jpg",
+          width: 1,
+          height: 1,
+          tiles: [
+            { source_path: "a.jpg", preview_path: "a.jpg", width: 800, height: 600, is_video: false, is_video_poster: false },
+            { source_path: "b.jpg", preview_path: "b.jpg", width: 600, height: 800, is_video: false, is_video_poster: false },
+          ],
+          overflow_count: 0,
+        }),
+      }),
+    );
+    expect(descriptor.variant).toBe("article-media");
+    expect(descriptor.visibleMediaCount).toBe(2);
+    expect(descriptor.primaryAspectRatio).toBe(2);
   });
 
   it("classifies social posts with one media item", () => {
@@ -131,6 +169,20 @@ describe("deriveCardLayoutDescriptor", () => {
     );
     expect(descriptor.variant).toBe("social-media-grid");
     expect(descriptor.visibleMediaCount).toBe(3);
+  });
+
+  it("uses a 2:1 wrapper for social galleries with exactly two items", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "article",
+        url: "https://instagram.com/p/1",
+        body: "hello\n![](a.jpg)\n![](b.jpg)",
+        media_urls: "[\"a.jpg\",\"b.jpg\"]",
+      }),
+    );
+    expect(descriptor.variant).toBe("social-media-grid");
+    expect(descriptor.visibleMediaCount).toBe(2);
+    expect(descriptor.primaryAspectRatio).toBe(2);
   });
 
   it("treats social cards without preview text as content cards with no top slot", () => {

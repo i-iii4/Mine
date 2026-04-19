@@ -203,6 +203,10 @@ function mediaItemsFromManifestTiles(
   }));
 }
 
+function galleryAspectRatio(itemCount: number): number {
+  return itemCount === 2 ? 2 : 1;
+}
+
 export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescriptor {
   const titleText = block.title ?? block.slug;
   const authorText = block.author ?? "";
@@ -309,7 +313,7 @@ export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescrip
           titleText: "",
           previewText,
           authorText,
-          primaryAspectRatio: aspectRatioFromDimensions(previewManifest?.width, previewManifest?.height),
+          primaryAspectRatio: galleryAspectRatio(Math.min(4, totalMediaCount)),
           mediaItems,
           visibleMediaCount: Math.min(4, totalMediaCount),
           totalMediaCount,
@@ -329,10 +333,10 @@ export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescrip
         : imageCount > 0 || !!block.thumbnail || !!block.media_file;
       const primaryAspectRatio = previewManifest
         ? (previewManifest.kind === "composite"
-          ? 1
+          ? galleryAspectRatio(Math.min(4, totalMediaCount))
           : aspectRatioFromDimensions(previewManifest.width, previewManifest.height) ?? (16 / 9))
         : (imageCount >= 2
-          ? 1
+          ? galleryAspectRatio(Math.min(4, totalMediaCount))
           : parseAspectRatio(parseMediaDimensions(block), firstImage) ?? (16 / 9));
       return {
         variant: hasVisualPreview ? "article-media" : "article-text",
