@@ -1,5 +1,37 @@
 # Devlog
 
+## 19.04.2026 08:20 [primary] — Legacy article gallery fallback + media-first text stack
+
+### Goal
+Закрыть feed-regression, при котором legacy article с несколькими локальными изображениями и пустым `preview_manifest` рендерился как серый квадрат, и синхронизировать текущий content-card contract после перехода на media-first порядок слотов.
+
+### Actually completed
+
+**Legacy article fallback больше не падает в пустой gallery shell** (`src/lib/cardLayout.ts`, `src/lib/cardLayout.test.ts`, `src/components/Card.test.tsx`)
+- найден конкретный failure mode: derived-store row содержал `media_urls` и валидный block-level `slug.jpg`, но `preview_manifest` был пустой
+- `deriveCardLayoutDescriptor()` считал `imageCount >= 2`, переводил карточку в `article-media`, но оставлял `mediaItems = []`
+- `ArticleCard` из-за `totalMediaCount > 1` шёл в gallery path, а `GalleryTiles` с пустым `items` ничего не рисовал, оставляя только `bg-accent` wrapper
+- исправление: legacy article path теперь строит реальные `mediaItems` из `media_urls` / `first_image` даже без `preview_manifest`
+- практический эффект: старые article clips с локальными картинками больше не превращаются в серый квадрат в feed
+
+**Content cards зафиксированы как media-first text-stack contract** (`src/components/Card.tsx`, `src/lib/cardHeight.ts`, `src/lib/cardHeight.test.ts`)
+- порядок слотов теперь явный: `media -> title -> preview -> author` для article и `media -> preview -> byline` для social
+- при этом системный внутренний gap под media возвращён как единый text-stack inset, а не как случайная сумма локальных `mt-*`
+- `cardHeight.ts` синхронизирован с этим же contract, чтобы masonry не жила на старой модели spacing
+
+**Диагностика duplicate fighter image зафиксирована как legacy clip artifact, не current clipper regression**
+- для статьи Meduza про F-15 проверено, что в оригинале статьи визуально одна фотография
+- в сохранённом `.md` оказались две локальные markdown-картинки с одинаковым содержимым (`img0.webp` и `img1.webp` byte-identical)
+- пользователь подтвердил, что этот материал был сохранён старой версией clipper; current clipper regression здесь не фиксировался
+
+### Checks
+- `bun run test src/lib/cardLayout.test.ts src/components/Card.test.tsx`
+- `bun run test src/components/Card.test.tsx src/lib/cardHeight.test.ts`
+- `bun run build`
+
+### Push
+- [текущий]
+
 ## 18.04.2026 11:10 [primary] — Gallery fallback fix + slot-based content spacing
 
 ### Goal

@@ -1,0 +1,2 @@
+export const CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX = 20;
+

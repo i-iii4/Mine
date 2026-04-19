@@ -128,6 +128,7 @@ Goal: устранить две подтверждённые архитекту�
   - query/read path переведён на local preview-first contract;
   - image/article/social feed-path больше не должен читать оригиналы как основной runtime path;
   - user-visible multi-image fallback regression закрыт: gallery tiles больше не дублируют один block-level thumb при missing `preview_manifest` / missing tile preview assets;
+  - legacy article rows без `preview_manifest`, но с `media_urls`, больше не деградируют в пустой серый gallery shell: runtime собирает fallback tiles напрямую из source images;
   - tile preview pipeline на storage-слое всё ещё не доведён до полного existence-backed состояния для legacy rows, поэтому `C2` остаётся partial.
 - `C3` выполнен частично:
   - route/layout invalidation и resize bucket handling усилены;
@@ -145,6 +146,7 @@ Goal: устранить две подтверждённые архитекту�
 - **Existence-backed tile preview contract.**
   - Intended result for multi-image article/social cards: feed получает либо готовый composite preview, либо подтверждённые per-tile preview assets.
   - Current runtime no longer duplicates one `slug.jpg` across all tiles: при missing tile preview asset UI падает в distinct per-source media fallback и сохраняет правильную галерею.
+  - Legacy article rows без `preview_manifest` теперь тоже не должны падать в пустой `bg-accent` wrapper: fallback строится из `media_urls` / `first_image` и даёт реальный tile set.
   - Но storage pipeline всё ещё не гарантирует полный set per-tile preview files и backfill `preview_manifest` для legacy rows. Это остаётся незавершённым куском `C2`.
 
 ### Acceptance Criteria

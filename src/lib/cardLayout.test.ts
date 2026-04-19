@@ -62,6 +62,25 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.primaryAspectRatio).toBe(1);
   });
 
+  it("builds legacy article gallery items from media_urls when preview_manifest is missing", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "article",
+        body: "hello\n![](a.webp)\n![](b.webp)",
+        first_image: "a.webp",
+        media_urls: "[\"a.webp\",\"b.webp\"]",
+        media_dimensions: "{\"a.webp\":[1960,1307],\"b.webp\":[1960,1307]}",
+      }),
+    );
+    expect(descriptor.variant).toBe("article-media");
+    expect(descriptor.mediaItems).toHaveLength(2);
+    expect(descriptor.mediaItems[0]?.sourcePath).toBe("a.webp");
+    expect(descriptor.mediaItems[1]?.sourcePath).toBe("b.webp");
+    expect(descriptor.visibleMediaCount).toBe(2);
+    expect(descriptor.totalMediaCount).toBe(2);
+    expect(descriptor.primaryAspectRatio).toBe(1);
+  });
+
   it("prefers preview_manifest for article composite previews", () => {
     const descriptor = deriveCardLayoutDescriptor(
       makeBlock({

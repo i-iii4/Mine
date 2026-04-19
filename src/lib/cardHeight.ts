@@ -15,6 +15,7 @@ import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 import { countLines } from "./wordWrap";
 import { deriveCardLayoutDescriptor, deriveContentCardSlots } from "./cardLayout";
+import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "./cardTypography";
 
 // ─── Layout constants (must match Card.tsx) ─────────────────────────────────
 //
@@ -63,10 +64,10 @@ const FILE_CARD_HEIGHT = 88;
 const SOCIAL_PADDING_X = 16;
 const SOCIAL_PADDING_TOP = 16;
 const SOCIAL_PADDING_BOTTOM = 16;
-const SOCIAL_PREVIEW_LINE_HEIGHT = 16;
+const SOCIAL_PREVIEW_LINE_HEIGHT = CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX;
 const SOCIAL_AUTHOR_LINE_HEIGHT = 16;
 const SOCIAL_PREVIEW_MAX_LINES = 3;
-const SOCIAL_GAP_BEFORE_MEDIA = 12;
+const SOCIAL_GAP_BEFORE_TEXT_STACK = 12;
 const SOCIAL_GAP_BEFORE_AUTHOR = 8;
 const SOCIAL_GRID_GAP = 2;
 
@@ -91,7 +92,7 @@ const ARTICLE_TITLE_LINE_HEIGHT = 16;
  * Line height of the preview text. `leading-relaxed` forces line-height:
  * 1.625 relative. At 12px font-size: ceil(12 * 1.625) = 20px.
  */
-const ARTICLE_PREVIEW_LINE_HEIGHT = 20;
+const ARTICLE_PREVIEW_LINE_HEIGHT = CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX;
 
 /** Height of the author line (text-sm plain, 16px line-height). */
 const ARTICLE_AUTHOR_LINE_HEIGHT = 16;
@@ -99,8 +100,8 @@ const ARTICLE_AUTHOR_LINE_HEIGHT = 16;
 /** Margin between title and preview (mt-1.5 = 6px). */
 const ARTICLE_GAP_TITLE_TO_PREVIEW = 6;
 
-/** Margin from previous block to first_image (mt-3 = 12px). */
-const ARTICLE_GAP_BEFORE_IMAGE = 12;
+/** Margin between media and the following text stack (mt-3 = 12px). */
+const ARTICLE_GAP_BEFORE_TEXT_STACK = 12;
 
 /** Margin from previous block to author (mt-2 = 8px). */
 const ARTICLE_GAP_BEFORE_AUTHOR = 8;
@@ -177,16 +178,16 @@ function computeArticleHeight(
     const authorH = descriptor.authorText ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
 
     // Gap structure mirroring Card.tsx mt-* classes:
+    //   image → title: mt-3 (12px), only when image exists
     //   title → preview: mt-1.5 (6px), only when preview exists
-    //   (previous) → image: mt-3 (12px), only when image exists
     //   (previous) → author: mt-2 (8px), only when author exists
     const hasTitle = titleH > 0;
     const hasPreview = previewH > 0;
     const hasMedia = imageH > 0;
     const hasBottomMeta = authorH > 0;
     const gaps =
+      (hasMedia && (hasTitle || hasPreview || hasBottomMeta) ? ARTICLE_GAP_BEFORE_TEXT_STACK : 0) +
       (hasTitle && hasPreview ? ARTICLE_GAP_TITLE_TO_PREVIEW : 0) +
-      ((hasTitle || hasPreview) && hasMedia ? ARTICLE_GAP_BEFORE_IMAGE : 0) +
       ((hasTitle || hasPreview || hasMedia) && hasBottomMeta ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
 
     return (
@@ -219,8 +220,8 @@ function computeArticleHeight(
   const hasMedia = imageH > 0;
   const hasBottomMeta = authorH > 0 && (slots?.hasBottomMeta ?? false);
   const gaps =
+    (hasMedia && (hasTitle || hasPreviewText || hasBottomMeta) ? ARTICLE_GAP_BEFORE_TEXT_STACK : 0) +
     (hasTitle && hasPreviewText ? ARTICLE_GAP_TITLE_TO_PREVIEW : 0) +
-    ((hasTitle || hasPreviewText) && hasMedia ? ARTICLE_GAP_BEFORE_IMAGE : 0) +
     ((hasTitle || hasPreviewText || hasMedia) && hasBottomMeta ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
 
   return (
@@ -266,12 +267,12 @@ function computeSocialHeight(
     mediaH = rows * cell + Math.max(0, rows - 1) * SOCIAL_GRID_GAP;
   }
 
-  const hasTopContent = previewH > 0 && (slots?.hasTopContent ?? false);
+  const hasPreviewText = previewH > 0 && (slots?.hasTopContent ?? false);
   const hasMedia = mediaH > 0;
   const hasBottomMeta = authorH > 0 && (slots?.hasBottomMeta ?? false);
   const gaps =
-    (hasTopContent && hasMedia ? SOCIAL_GAP_BEFORE_MEDIA : 0) +
-    ((hasTopContent || hasMedia) && hasBottomMeta ? SOCIAL_GAP_BEFORE_AUTHOR : 0);
+    (hasMedia && (hasPreviewText || hasBottomMeta) ? SOCIAL_GAP_BEFORE_TEXT_STACK : 0) +
+    (hasPreviewText && hasBottomMeta ? SOCIAL_GAP_BEFORE_AUTHOR : 0);
 
   return (
     CARD_BORDER_HEIGHT +

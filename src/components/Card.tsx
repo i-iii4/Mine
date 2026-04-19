@@ -14,12 +14,16 @@ import {
   deriveContentCardSlots,
   type CardLayoutDescriptor,
 } from "@/lib/cardLayout";
+import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
 import { VideoFromBlob } from "./VideoFromBlob";
 
 const PriorityContext = createContext(false);
 const usePriority = () => useContext(PriorityContext);
+const contentCardPreviewTextStyle = {
+  lineHeight: `${CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX}px`,
+} as const;
 
 interface CardProps {
   block: LightBlock;
@@ -493,15 +497,12 @@ const SocialCard = memo(function SocialCard({
   const media = descriptor.mediaItems;
   const previewSrc = thumbnailUrl(thumbsRootPath, block.slug);
   const slots = deriveContentCardSlots(descriptor);
-  const hasTopContent = slots?.hasTopContent ?? false;
+  const hasPreviewText = text.length > 0;
   const hasBottomMeta = slots?.hasBottomMeta ?? false;
+  const hasTextStack = hasPreviewText || hasBottomMeta;
 
   return (
     <div className="p-4">
-      {text && (
-        <p className="line-clamp-3 text-sm text-muted-foreground">{text}</p>
-      )}
-
       {descriptor.variant === "social-single-media" && media.length === 1 && (() => {
         // Exact aspect-ratio from the indexer when available, aspect-square
         // fallback otherwise. Feed cards use object-cover here to avoid
@@ -510,10 +511,7 @@ const SocialCard = memo(function SocialCard({
         const absClass = "absolute inset-0 h-full w-full object-cover";
         return (
           <div
-            className={cn(
-              "relative w-full overflow-hidden bg-accent",
-              hasTopContent && "mt-3",
-            )}
+            className="relative w-full overflow-hidden bg-accent"
             style={{ aspectRatio: `${m.aspectRatio ?? 1}` }}
           >
             {m.isVideo ? (
@@ -534,10 +532,7 @@ const SocialCard = memo(function SocialCard({
       })()}
       {descriptor.variant === "social-media-grid" && media.length >= 2 && (
         <div
-          className={cn(
-            "relative w-full overflow-hidden bg-accent",
-            hasTopContent && "mt-3",
-          )}
+          className="relative w-full overflow-hidden bg-accent"
           style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? 1}` }}
         >
           <GalleryTiles
@@ -550,10 +545,23 @@ const SocialCard = memo(function SocialCard({
         </div>
       )}
 
-      {hasBottomMeta && (
-        <p className={cn("text-sm text-muted-foreground", (hasTopContent || media.length > 0) && "mt-2")}>
-          by {block.author}
-        </p>
+      {hasTextStack && (
+        <div className={cn(media.length > 0 && "mt-3")}>
+          {text && (
+            <p
+              className="line-clamp-3 text-sm text-muted-foreground"
+              style={contentCardPreviewTextStyle}
+            >
+              {text}
+            </p>
+          )}
+
+          {hasBottomMeta && (
+            <p className={cn("text-sm text-muted-foreground", hasPreviewText && "mt-2")}>
+              by {block.author}
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
@@ -577,28 +585,11 @@ const ArticleCard = memo(function ArticleCard({
   const primaryMedia = descriptor.mediaItems[0];
   const rendersFeedVideo = hasPreview && descriptor.mediaItems.length === 1 && primaryMedia?.isVideo;
   const slots = deriveContentCardSlots(descriptor);
-  const hasTopContent = slots?.hasTopContent ?? false;
   const hasBottomMeta = slots?.hasBottomMeta ?? false;
+  const hasTextStack = Boolean(block.title ?? block.slug) || descriptor.previewText.length > 0 || hasBottomMeta;
 
   return (
     <div className="p-4">
-      <p
-        className="line-clamp-2 text-sm font-semibold text-foreground"
-        style={{ lineHeight: "16px" }}
-      >
-        {block.title ?? block.slug}
-      </p>
-      {descriptor.previewText && (
-        <p
-          className={cn(
-            "mt-1.5 text-sm text-muted-foreground",
-            hasPreview ? "line-clamp-3" : "line-clamp-8",
-          )}
-          style={{ lineHeight: "20px" }}
-        >
-          {descriptor.previewText}
-        </p>
-      )}
       {hasPreview && (
         // Exact aspect-ratio from the indexer's media_dimensions when
         // available (images extracted from body at index time), or
@@ -606,10 +597,7 @@ const ArticleCard = memo(function ArticleCard({
         // article previews reserve a square gallery slot; single-image
         // previews use object-cover to avoid letterboxing in feed cards.
         <div
-          className={cn(
-            "relative w-full overflow-hidden bg-accent",
-            hasTopContent && "mt-3",
-          )}
+          className="relative w-full overflow-hidden bg-accent"
           style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? (16 / 9)}` }}
         >
           {descriptor.totalMediaCount > 1 ? (
@@ -637,16 +625,38 @@ const ArticleCard = memo(function ArticleCard({
           {rendersFeedVideo && <PlayBadge />}
         </div>
       )}
-      {hasBottomMeta && (
-        <p
-          className={cn(
-            "text-sm text-muted-foreground",
-            (hasTopContent || hasPreview) && "mt-2",
+      {hasTextStack && (
+        <div className={cn(hasPreview && "mt-3")}>
+          <p
+            className="line-clamp-2 text-sm font-semibold text-foreground"
+            style={{ lineHeight: "16px" }}
+          >
+            {block.title ?? block.slug}
+          </p>
+          {descriptor.previewText && (
+            <p
+              className={cn(
+                "text-sm text-muted-foreground",
+                hasPreview ? "line-clamp-3" : "line-clamp-8",
+                "mt-1.5",
+              )}
+              style={contentCardPreviewTextStyle}
+            >
+              {descriptor.previewText}
+            </p>
           )}
-          style={{ lineHeight: "16px" }}
-        >
-          {block.author}
-        </p>
+          {hasBottomMeta && (
+            <p
+              className={cn(
+                "text-sm text-muted-foreground",
+                (descriptor.previewText.length > 0 || (block.title ?? block.slug).length > 0) && "mt-2",
+              )}
+              style={{ lineHeight: "16px" }}
+            >
+              {block.author}
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

@@ -149,6 +149,25 @@ describe("Card", () => {
     expect(screen.getByText("Author Name")).toBeInTheDocument();
   });
 
+  it("renders article media above the full text stack", () => {
+    const b = block({
+      block_type: "article",
+      title: "My Article",
+      body: "This is a long article body text for testing.",
+      author: "Author Name",
+      first_image: "hero.jpg",
+    });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const media = container.querySelector("img");
+    const title = screen.getByText("My Article");
+    const preview = screen.getByText("This is a long article body text for testing.");
+    const author = screen.getByText("Author Name");
+    expect(media).toBeTruthy();
+    expect(media!.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(title.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(preview.compareDocumentPosition(author) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("article card hides author when absent", () => {
     const b = block({
       block_type: "article",
@@ -197,6 +216,22 @@ describe("Card", () => {
     expect(screen.queryByText("+2")).not.toBeInTheDocument();
   });
 
+  it("renders legacy article multi-image previews from source images when preview_manifest is missing", () => {
+    const b = block({
+      block_type: "article",
+      title: "Legacy Gallery Article",
+      body: "![](img0.webp)\n![](img1.webp)",
+      first_image: "img0.webp",
+      media_urls: "[\"img0.webp\",\"img1.webp\"]",
+      media_dimensions: "{\"img0.webp\":[1960,1307],\"img1.webp\":[1960,1307]}",
+    });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const images = Array.from(container.querySelectorAll("img"));
+    expect(images).toHaveLength(2);
+    expect(images[0]?.getAttribute("src")).toContain("/img0.webp");
+    expect(images[1]?.getAttribute("src")).toContain("/img1.webp");
+  });
+
   it("falls back to distinct source images when social gallery tiles have no preview assets", () => {
     const b = block({
       block_type: "article",
@@ -228,6 +263,35 @@ describe("Card", () => {
     expect(mediaWrapper).toBeTruthy();
     expect(mediaWrapper?.className).not.toContain("mt-3");
     expect(screen.getByText("by @sorochii_")).toBeInTheDocument();
+  });
+
+  it("renders social media above text and byline", () => {
+    const b = block({
+      block_type: "article",
+      url: "https://x.com/a/status/1",
+      author: "@artist",
+      body: "Social preview body text\n![](img0.jpg)",
+      media_urls: "[\"img0.jpg\"]",
+    });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const media = container.querySelector("img");
+    const preview = screen.getByText("Social preview body text");
+    const author = screen.getByText("by @artist");
+    expect(media).toBeTruthy();
+    expect(media!.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(preview.compareDocumentPosition(author) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("renders social preview text with the same article line-height contract", () => {
+    const b = block({
+      block_type: "article",
+      url: "https://x.com/a/status/1",
+      body: "Social preview body text",
+    });
+    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(screen.getByText("Social preview body text")).toHaveStyle({
+      lineHeight: "20px",
+    });
   });
 
   // ── Video card ────────────────────────────────────────────────────────

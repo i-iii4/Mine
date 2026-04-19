@@ -99,6 +99,42 @@ function extractArticlePreviewImageCount(block: LightBlock): number {
   }
 }
 
+function extractArticlePreviewMedia(block: LightBlock): CardLayoutMediaItem[] {
+  const dims = parseMediaDimensions(block);
+
+  if (block.media_urls) {
+    try {
+      const urls: string[] = JSON.parse(block.media_urls);
+      const imageItems = urls
+        .filter((src) => isLocalImageFile(src))
+        .map((src) => ({
+          sourcePath: src,
+          previewPath: null,
+          aspectRatio: parseAspectRatio(dims, src),
+          isVideo: false,
+          isVideoPoster: false,
+        }));
+      if (imageItems.length > 0) {
+        return imageItems;
+      }
+    } catch {
+      // ignore malformed JSON
+    }
+  }
+
+  if (block.first_image && isLocalImageFile(block.first_image)) {
+    return [{
+      sourcePath: block.first_image,
+      previewPath: null,
+      aspectRatio: parseAspectRatio(dims, block.first_image),
+      isVideo: false,
+      isVideoPoster: false,
+    }];
+  }
+
+  return [];
+}
+
 function parseAspectRatio(
   dims: ReturnType<typeof parseMediaDimensions>,
   filename: string | null | undefined,
@@ -284,7 +320,7 @@ export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescrip
       const imageCount = previewManifest
         ? previewManifest.tiles.length + previewManifest.overflowCount
         : extractArticlePreviewImageCount(block);
-      const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
+      const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : extractArticlePreviewMedia(block);
       const totalMediaCount = previewManifest
         ? mediaItems.length + previewManifest.overflowCount
         : imageCount;
