@@ -55,6 +55,10 @@ class VaultViewModel: ObservableObject {
         return blocks.filter { $0.tags.contains(tag) }
     }
 
+    var currentVault: ArenaVault? {
+        vault
+    }
+
     private func titleFromTag(_ tag: String) -> String {
         tag.split(separator: "-")
             .map { word in

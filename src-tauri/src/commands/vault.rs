@@ -264,13 +264,19 @@ fn initialize_vault(
     append_startup_trace(
         app,
         "initialize_vault",
-        &format!("mkdir thumbs={}", vault.thumbs_dir().display()),
+        &format!(
+            "mkdir thumbs={} audio={}",
+            vault.thumbs_dir().display(),
+            vault.audio_dir().display()
+        ),
     );
     let local_index_existed = vault.index_db_path().exists();
     let bootstrapped_thumbs_from_legacy = bootstrap_local_thumbs_from_legacy(&vault)?;
 
     // Create the synced vault metadata dir and the local derived thumbs dir.
     std::fs::create_dir_all(vault.thumbs_dir())
+        .map_err(|e| CommandError::Internal(format!("failed to create dirs: {e}")))?;
+    std::fs::create_dir_all(vault.audio_dir())
         .map_err(|e| CommandError::Internal(format!("failed to create dirs: {e}")))?;
     std::fs::create_dir_all(vault.arena_dir())
         .map_err(|e| CommandError::Internal(format!("failed to create arena dir: {e}")))?;
@@ -330,6 +336,17 @@ fn initialize_vault(
         "initialize_vault",
         &format!(
             "asset_scope thumbs elapsed_ms={}",
+            total.elapsed().as_millis()
+        ),
+    );
+    app.asset_protocol_scope()
+        .allow_directory(vault.audio_dir(), false)
+        .map_err(|e| CommandError::Internal(format!("failed to allow audio dir: {e}")))?;
+    append_startup_trace(
+        app,
+        "initialize_vault",
+        &format!(
+            "asset_scope audio elapsed_ms={}",
             total.elapsed().as_millis()
         ),
     );
@@ -1002,7 +1019,7 @@ fn config_path(app: &AppHandle) -> Option<PathBuf> {
 }
 
 /// Load the full config JSON, or empty object if missing.
-fn load_config(app: &AppHandle) -> serde_json::Value {
+pub(crate) fn load_config(app: &AppHandle) -> serde_json::Value {
     let Some(config) = config_path(app) else {
         return serde_json::json!({});
     };
@@ -1013,7 +1030,7 @@ fn load_config(app: &AppHandle) -> serde_json::Value {
 }
 
 /// Write the full config JSON to disk.
-fn write_config(app: &AppHandle, json: &serde_json::Value) {
+pub(crate) fn write_config(app: &AppHandle, json: &serde_json::Value) {
     let Some(config) = config_path(app) else {
         return;
     };

@@ -14,6 +14,7 @@ import type {
   ArenaChannelInfo,
   ImportChannelRequest,
   ImportChannelResult,
+  ArticleAudioState,
 } from "@/types";
 
 // Vault
@@ -31,6 +32,28 @@ export const listKnownVaults = () =>
 
 export const startVaultSync = () =>
   invoke<boolean>("start_vault_sync");
+
+export const getArticleAudioState = (slug: string) =>
+  invoke<ArticleAudioState>("get_article_audio_state", { slug });
+
+export const generateArticleAudio = (slug: string) =>
+  invoke<ArticleAudioState>("generate_article_audio", { slug });
+
+export const deleteArticleAudio = (slug: string) =>
+  invoke<void>("delete_article_audio", { slug });
+
+export const setArticleAudioPosition = (
+  slug: string,
+  position_ms: number,
+  duration_ms: number | null,
+  completed: boolean,
+) =>
+  invoke<void>("set_article_audio_position", {
+    slug,
+    position_ms,
+    duration_ms,
+    completed,
+  });
 
 // Blocks
 export const listBlocks = () =>

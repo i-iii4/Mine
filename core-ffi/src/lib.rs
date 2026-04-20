@@ -6,6 +6,7 @@
 uniffi::setup_scaffolding!();
 
 use mine_lib::domain::block::parse_block;
+use mine_lib::domain::article_audio::prepare_article_speech;
 use mine_lib::storage::{db, index};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -30,6 +31,13 @@ pub struct FfiLightBlock {
     pub tags: Vec<String>,
 }
 
+#[derive(uniffi::Record)]
+pub struct FfiPreparedArticleSpeech {
+    pub speakable_text: String,
+    pub text_hash: String,
+    pub language_tag: Option<String>,
+}
+
 /// Error type exposed to Swift.
 #[derive(Debug, uniffi::Error, thiserror::Error)]
 pub enum ArenaError {
@@ -39,6 +47,8 @@ pub enum ArenaError {
     Parse { msg: String },
     #[error("IO error: {msg}")]
     Io { msg: String },
+    #[error("Article audio error: {msg}")]
+    ArticleAudio { msg: String },
 }
 
 // ─── Vault handle ───────────────────────────────────────────────────────────
@@ -71,7 +81,7 @@ impl ArenaVault {
             .conn
             .lock()
             .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
-        let blocks = index::list_blocks_light(&conn)
+        let blocks = index::list_blocks(&conn)
             .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
         Ok(blocks.into_iter().map(light_block_to_ffi).collect())
     }
@@ -102,7 +112,11 @@ impl ArenaVault {
                         {
                             let _ = index::upsert_channel_from_block(&conn, &block);
                         } else {
-                            let _ = index::upsert_block(&conn, &block);
+                            let _ = index::upsert_block(
+                                &conn,
+                                &block,
+                                Some(std::path::Path::new(&self.vault_path)),
+                            );
                         }
                         count += 1;
                     }
@@ -116,6 +130,20 @@ impl ArenaVault {
     /// Get the vault path.
     fn vault_path(&self) -> String {
         self.vault_path.clone()
+    }
+
+    fn prepare_article_speech(&self, slug: String) -> Result<FfiPreparedArticleSpeech, ArenaError> {
+        let vault = mine_lib::domain::vault::VaultLayout::new(PathBuf::from(&self.vault_path));
+        let block = mine_lib::storage::article_audio::load_block_for_audio(&vault, &slug)
+            .map_err(|e| ArenaError::Io { msg: e.to_string() })?;
+        let prepared = prepare_article_speech(&block)
+            .map_err(|e| ArenaError::ArticleAudio { msg: e.to_string() })?;
+
+        Ok(FfiPreparedArticleSpeech {
+            speakable_text: prepared.speakable_text,
+            text_hash: prepared.text_hash,
+            language_tag: prepared.language_tag,
+        })
     }
 }
 
@@ -145,7 +173,8 @@ fn parse_block_file(slug: String, content: String) -> Result<FfiLightBlock, Aren
 
 // ─── Internal helpers ───────────────────────────────────────────────────────
 
-fn light_block_to_ffi(b: index::LightBlock) -> FfiLightBlock {
+fn light_block_to_ffi(b: index::IndexedBlock) -> FfiLightBlock {
+    let media_urls = extract_markdown_media_urls(&b.body);
     FfiLightBlock {
         id: b.id,
         slug: b.slug,
@@ -157,8 +186,37 @@ fn light_block_to_ffi(b: index::LightBlock) -> FfiLightBlock {
         author: b.author,
         body: b.body,
         saved_at: b.saved_at,
-        first_image: b.first_image,
-        media_urls: b.media_urls,
+        first_image: None,
+        media_urls: if media_urls.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&media_urls).ok()
+        },
         tags: b.tags,
     }
+}
+
+fn extract_markdown_media_urls(body: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    let mut index = 0usize;
+
+    while let Some(image_start) = body[index..].find("![") {
+        let absolute_start = index + image_start;
+        let rest = &body[absolute_start..];
+        let Some(paren_start) = rest.find('(') else {
+            break;
+        };
+        let url_start = absolute_start + paren_start + 1;
+        let Some(paren_end) = body[url_start..].find(')') else {
+            break;
+        };
+        let url_end = url_start + paren_end;
+        let candidate = body[url_start..url_end].trim();
+        if !candidate.starts_with("http://") && !candidate.starts_with("https://") {
+            urls.push(candidate.to_string());
+        }
+        index = url_end + 1;
+    }
+
+    urls
 }

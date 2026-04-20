@@ -1,5 +1,164 @@
 # Devlog
 
+## 20.04.2026 09:45 [primary] — Desktop article-audio distortion fix
+
+### Goal
+Убрать сильные искажения и почти неразличимый noise в desktop article-audio playback на реальных статьях после перехода на native `.wav` backend.
+
+### Actually completed
+
+**Найден реальный корень искажения в desktop helper conversion path** (`src-tauri/native/article_audio_helper.swift`)
+- проблема оказалась не в Apple voice preset и не в frontend playback
+- helper раньше ресэмплил каждый маленький `AVSpeechSynthesizer.write` callback отдельно, создавая новый `AVAudioConverter` на каждый chunk
+- такой per-chunk resample рвал continuity фильтра на границах буферов и давал audible distortion / noise, хотя сам `.wav` был формально валиден
+
+**Desktop synthesis переведён на buffered single-pass conversion** (`src-tauri/native/article_audio_helper.swift`)
+- helper теперь сначала пишет непрерывный source PCM stream во временный audio file
+- после `didFinish` выполняется один последовательный conversion pass в финальный `44.1 kHz mono PCM .wav`
+- EOF/read path в offline conversion теперь тоже закрыт явно через `framePosition < length`, без чтения за конец файла и без `Foundation._GenericObjCError` на хвосте
+
+**Документация синхронизирована с новым synthesis contract** (`SPEC_ARTICLE_AUDIO.md`, `ARCHITECTURE.md`)
+- зафиксировано, что desktop helper использует buffered source PCM + single-pass conversion, а не per-chunk resample
+
+### Checks
+- `cargo test -p mine --lib article_audio_desktop --quiet`
+- `cargo test -p mine --lib --quiet`
+- direct native helper probe on regenerated `.wav`
+
+### Push
+- [current]
+
+## 19.04.2026 21:00 [primary] — Apple TTS Stabilization v2 on desktop
+
+### Goal
+Стабилизировать desktop article-audio backend без изменения UI: убрать `/usr/bin/say -o`, перевести generation на native macOS helper, зафиксировать persisted Apple voice defaults и перестать переиспользовать legacy audio artifacts.
+
+### Actually completed
+
+**Desktop generation больше не зависит от `/usr/bin/say`** (`src-tauri/native/article_audio_helper.swift`, `src-tauri/build.rs`, `src-tauri/tauri.conf.json`)
+- добавлен macOS-only helper, который собирается в `src-tauri/binaries/article-audio-helper-<target>`
+- helper использует `AVSpeechSynthesizer.write`, native completion callbacks и пишет финальный `.wav` (`44.1 kHz`, mono PCM)
+- helper включён в desktop runtime как bundled external binary, а не как shell dependency пользователя
+
+**Rust backend получил отдельный desktop-native orchestration layer** (`src-tauri/src/commands/article_audio_desktop.rs`, `src-tauri/src/commands/article_audio.rs`, `src-tauri/src/commands/vault.rs`)
+- `generate_article_audio` теперь вызывает native helper через `spawn_blocking`, а не shell `say`
+- добавлен helper timeout/kill path, поэтому desktop generation больше не может зависнуть бесконечно
+- app config теперь автоматически bootstrap'ит `article_audio.apple_voice_overrides`
+- resolution order зафиксирован как:
+  - exact override
+  - curated default
+  - exact language
+  - language prefix
+  - system default
+
+**Persisted desktop voice defaults появились как backend contract** (`src-tauri/src/commands/article_audio_desktop.rs`)
+- defaults для этого этапа:
+  - `en-US` -> `com.apple.voice.compact.en-US.Samantha`
+  - `en-GB` -> `com.apple.voice.super-compact.en-GB.Daniel`
+  - `ru-RU` -> `com.apple.voice.compact.ru-RU.Milena`
+- UI их пока не редактирует; это intentional storage contract под будущий voice picker
+
+**Desktop article-audio storage перешёл на sidecar v2** (`src-tauri/src/storage/article_audio.rs`)
+- desktop artifacts теперь живут как `cache/audio/<slug>.json + <slug>.wav`
+- sidecar хранит:
+  - `format_version = 2`
+  - `generation_backend = apple_avspeech_v2`
+  - `voice_id`
+  - `voice_name`
+  - `duration_ms`
+  - `last_position_ms`
+  - `completed_at`
+- любые desktop artifacts с `format_version < 2` автоматически invalidated on read
+- cleanup path теперь удаляет legacy `.m4a`, `.aiff`, `.caf` alongside current `.wav`
+
+**Frontend contract не менялся, но теперь закреплён под `.wav` backend** (`src/components/ArticleAudioControls.tsx`)
+- существующий Web Audio playback path прозрачно продолжает работать с `.wav`
+- UI states `Create Audio / Remove Audio / Play/Pause / Retry` не изменились
+
+**Документация синхронизирована с desktop v2 contract** (`SPEC_ARTICLE_AUDIO.md`, `ARCHITECTURE.md`, `PLAN.md`, `AGENTS.md`)
+- удалены устаревшие упоминания `/usr/bin/say`, `.m4a` и hidden `<audio>` desktop contract
+- зафиксированы `.wav`, `apple_avspeech_v2`, voice overrides и legacy invalidation policy
+
+### Checks
+- `cargo check -p mine --quiet`
+- `cargo test -p mine --lib article_audio_desktop --quiet`
+- `cargo test -p mine --lib --quiet`
+- `bun run test src/components/ArticleAudioControls.test.tsx src/App.test.tsx`
+- `bun run build`
+
+### Push
+- [current]
+
+## 19.04.2026 19:05 [primary] — Article Audio Renditions v1 on desktop + iOS
+
+### Goal
+Добавить ручной `Listen` pipeline для `article` blocks: локальная генерация аудиоверсии по кнопке, повторное удаление, compact controls в Detail и единый speech-prep contract для desktop + iOS.
+
+### Actually completed
+
+**Shared Rust speech-prep вынесен в чистый domain module** (`src-tauri/src/domain/article_audio.rs`, `core-ffi/src/lib.rs`)
+- введён `PreparedArticleSpeech` с `speakable_text`, `text_hash`, `language_tag`
+- speech text строится только из `title`, `author` и prose-body
+- из текста вырезаются изображения, raw URLs, code fences, inline code, tables и прочий non-prose markdown noise
+- freshness локального аудио теперь определяется по `text_hash`, а не по наличию старого файла
+- `core-ffi` экспортирует `prepare_article_speech(slug)`; Swift больше не дублирует markdown-to-speech pipeline
+
+**Появился отдельный derived audio store** (`src-tauri/src/storage/article_audio.rs`, `src-tauri/src/domain/vault.rs`, `src-tauri/src/commands/vault.rs`)
+- desktop хранит audio artifacts в per-vault derived store: `cache/audio/<slug>.json + <slug>.m4a`
+- sidecar хранит `text_hash`, `duration_ms`, `last_position_ms`, `completed_at`
+- missing audio file / stale hash self-heal'ятся обратно в `absent`
+- asset scope Tauri расширен на audio cache directory
+
+**Desktop backend получил explicit article-audio commands** (`src-tauri/src/commands/article_audio.rs`, `src-tauri/src/lib.rs`, `src/lib/commands.ts`, `src/types/index.ts`)
+- добавлены:
+  - `get_article_audio_state`
+  - `generate_article_audio`
+  - `delete_article_audio`
+  - `set_article_audio_position`
+- generation использует системный macOS speech backend через `/usr/bin/say`, но lifecycle остаётся в backend, а не в UI
+- `article-audio-updated` событие эмитится только для generate/delete/invalidate paths, не для каждого position update
+
+**Watcher и delete-path теперь инвалидируют stale audio artifacts** (`src-tauri/src/watcher/handler.rs`, `src-tauri/src/commands/blocks.rs`)
+- reindex после edit статьи сравнивает speech-relevant content и удаляет устаревшее audio, если `text_hash` сменился
+- block deletion теперь чистит и audio artifacts
+- orphan cleanup во время scans тоже удаляет оставшиеся `cache/audio` artifacts
+
+**Desktop Detail получил компактную AUDIO секцию** (`src/components/ArticleAudioControls.tsx`, `src/components/Detail.tsx`)
+- секция ставится в самый верх fixed metadata rail
+- состояния:
+  - `absent` -> `Create Audio`
+  - `generating` -> `Creating Audio…`
+  - `ready` -> `Remove Audio`, `Play/Pause`, slim progress row
+  - `failed` -> `Retry`
+- playback position сохраняется на `pause`, `ended` и `unmount`
+- повторное открытие статьи resume'ит playback с `last_position_ms`
+- unsupported article-like social URLs (`x.com`, `twitter.com`, `instagram.com`) исключены из этой v1 surface
+
+**iOS получил symmetric article-audio path** (`ios/Mine/DetailView.swift`, `ios/Mine/VaultViewModel.swift`, `ios/Generated/*`, `ios/MineCore.xcframework/*`)
+- `DetailView` получил compact `AudioSection` под `title/author` и перед body
+- добавлены `ArticleAudioService` и `ArticleAudioController`
+- generation использует `AVSpeechSynthesizer.write`, playback — `AVAudioPlayer`
+- local audio cache живёт в app-local `Application Support/Mine/ArticleAudio/<vault-hash>/`
+- playback state (`duration`, `position`, `completed`) хранится в sidecar JSON
+- UniFFI bindings и xcframework regenerated под новый `prepareArticleSpeech` API
+
+**Документный контракт зафиксирован** (`SPEC_ARTICLE_AUDIO.md`, `ARCHITECTURE.md`, `PLAN.md`, `AGENTS.md`)
+- создана отдельная feature spec для manual article audio
+- архитектура теперь явно фиксирует shared speech-prep, desktop/iOS storage split и local audio derived artifacts
+- план получил отдельную завершённую фазу `Article Audio Renditions v1`
+
+### Checks
+- `cargo test -p mine --lib --quiet`
+- `cargo test -p mine --lib article_audio --quiet`
+- `cargo check -p mine --quiet`
+- `cargo check -p mine-ffi --quiet`
+- `bun run test src/components/ArticleAudioControls.test.tsx src/components/Card.test.tsx src/App.test.tsx`
+- `bun run build`
+- `xcodebuild -project ios/Mine.xcodeproj -scheme Mine -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/local-arena-xcode ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build`
+
+### Push
+- [current]
+
 ## 19.04.2026 10:20 [primary] — Feed video finalization: explicit playback contract + poster-first surface
 
 ### Goal

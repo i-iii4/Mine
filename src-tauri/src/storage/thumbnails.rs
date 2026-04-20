@@ -458,6 +458,7 @@ pub fn generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> 
 /// - Extracts SPS/PPS + first video sample
 /// - Decodes H.264 to YUV via OpenH264, converts to RGB
 /// - Resizes and saves as JPEG
+#[cfg(not(target_os = "ios"))]
 pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<(u32, u32)> {
     use mp4::TrackType;
     use openh264::decoder::Decoder;
@@ -611,6 +612,15 @@ pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Re
         .with_context(|| format!("failed to encode video thumbnail: {}", dest.display()))?;
 
     Ok((rw, rh))
+}
+
+#[cfg(target_os = "ios")]
+pub fn generate_video_thumbnail(
+    _source: &Path,
+    _dest: &Path,
+    _max_size: u32,
+) -> Result<(u32, u32)> {
+    anyhow::bail!("video thumbnail generation is unavailable on iOS builds");
 }
 
 /// Simple word-wrap: splits text into lines that fit within `max_width` pixels.

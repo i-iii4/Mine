@@ -10,7 +10,7 @@ use crate::commands::state::{current_vault_layout, AppState, CommandError};
 use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::validate_slug;
 use crate::storage::index::IndexedBlock;
-use crate::storage::{db, files, index};
+use crate::storage::{article_audio, db, files, index};
 use crate::util::append_startup_trace;
 
 #[derive(Debug, Serialize)]
@@ -200,6 +200,9 @@ pub fn delete_block(state: State<'_, AppState>, slug: String) -> Result<bool, Co
     // Then delete files (may be slow for iCloud placeholders)
     if let Err(e) = files::delete_block_files(&vs.vault, &slug, media_ext.as_deref()) {
         log::warn!("failed to delete files for {slug}: {e:#}");
+    }
+    if let Err(e) = article_audio::delete_all_artifacts(&vs.vault, &slug) {
+        log::warn!("failed to delete article audio for {slug}: {e:#}");
     }
 
     Ok(removed)

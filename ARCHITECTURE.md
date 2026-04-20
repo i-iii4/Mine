@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
 
 ## Context
 
@@ -228,9 +228,75 @@ Grid держит дополнительный invariant:
               │                      │
               │  index.db            │
               │  thumbs/ previews/   │
+              │  cache/audio/        │
               │  manifests/          │
               └──────────────────────┘
 ```
+
+## Article Audio Contract
+
+Article audio — отдельный manual pipeline поверх `article` blocks. Это не source-vault feature и не inline markdown mutation.
+
+Ключевой контракт:
+
+- audio не существует по умолчанию;
+- пользователь явно создаёт local audio rendition кнопкой `Create Audio`;
+- повторное действие удаляет local audio rendition;
+- freshness определяется по `PreparedArticleSpeech.text_hash`, а не по существованию старого файла;
+- desktop и iOS делят один Rust speech-prep contract, но хранят audio artifacts в своих local stores.
+
+Shared data contract:
+
+- `PreparedArticleSpeech`
+  - `speakable_text`
+  - `text_hash`
+  - `language_tag`
+- `ArticleAudioState`
+  - `status`
+  - `audio_path`
+  - `duration_ms`
+  - `last_position_ms`
+  - `completed_at`
+
+Desktop хранит audio artifacts в per-vault derived store:
+
+```text
+~/Library/Application Support/com.mine.app/vaults/<vault-id>/cache/audio/
+  <slug>.json
+  <slug>.wav
+```
+
+iOS хранит audio artifacts в app-local storage, keyed by hashed vault path:
+
+```text
+Application Support/Mine/ArticleAudio/<vault-hash>/
+  <slug>.json
+  <slug>.caf
+```
+
+Speech-prep живёт в чистом Rust domain module и исключает из озвучки non-prose markdown:
+
+- изображения
+- raw URLs
+- code fences
+- inline code
+- tables
+
+Desktop UI contract:
+
+- `ArticleAudioControls` рендерится в fixed metadata rail `Detail`
+- `article-audio-updated` refreshes UI после generate/delete/invalidate
+- playback position persists on pause/end/unmount
+- desktop generation идёт через native macOS helper на `AVSpeechSynthesizer.write`
+- helper буферизует source PCM и делает single-pass conversion в `.wav`, чтобы не вносить chunk-boundary distortion при desktop synthesis
+- desktop sidecar хранит `format_version = 2`, `generation_backend = apple_avspeech_v2`, `voice_id`, `voice_name`
+- legacy desktop artifacts (`format_version < 2`, `.m4a/.aiff/.caf`) invalidated on read и удаляются cleanup path'ом
+
+iOS UI contract:
+
+- `AudioSection` рендерится под `title / author` и перед body
+- `ArticleAudioService` отвечает за generate/delete/state resolution
+- `ArticleAudioController` отвечает за play/pause/resume/persistence
 
 ### iOS Architecture
 
@@ -242,6 +308,7 @@ Grid держит дополнительный invariant:
 │  (@State навигация, без NavigationStack)       │
 │  CardViews: Social, Image, Article, Link, Video│
 │  LoopingVideoView (AVPlayerLooper — автоплей)  │
+│  AudioSection + ArticleAudioController         │
 │       │                                        │
 │  VaultViewModel (@MainActor)                   │
 │       │                                        │
@@ -250,6 +317,7 @@ Grid держит дополнительный invariant:
 │  │  ArenaVault.open()      │                   │
 │  │  .scanVault()           │                   │
 │  │  .listBlocks()          │                   │
+│  │  .prepareArticleSpeech()│                   │
 │  └────────┬───────────────┘                    │
 └───────────┼────────────────────────────────────┘
             │ FFI (C ABI)
@@ -275,9 +343,10 @@ Grid держит дополнительный invariant:
 
 | Компонент | Назначение | Технология |
 |---|---|---|
-| SwiftUI Views | Сетка, карточки, детальный просмотр | SwiftUI, AVKit |
+| SwiftUI Views | Сетка, карточки, детальный просмотр, article audio controls | SwiftUI, AVKit, AVFoundation |
 | VaultViewModel | Мост SwiftUI → Rust FFI | Swift (@MainActor) |
-| core-ffi | UniFFI bindings: ArenaVault Object, FfiLightBlock Record | Rust, uniffi |
+| ArticleAudioService | Local audio generation, sidecar persistence, cleanup | Swift, AVSpeechSynthesizer |
+| core-ffi | UniFFI bindings: ArenaVault Object, FfiLightBlock Record, prepared article speech | Rust, uniffi |
 | local-arena | Domain + storage (общий с десктопом) | Rust, rusqlite |
 | xcframework | Скомпилированная библиотека для device + simulator | Xcode, lipo |
 

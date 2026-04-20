@@ -718,8 +718,12 @@ fn serialize_feed_playback(
     };
 
     let container = autoplay_container_for_source(&source_path)?;
-    let profile =
-        feed_autoplay_profile_for_source(vault_root, &source_path, playback_width, playback_height)?;
+    let profile = feed_autoplay_profile_for_source(
+        vault_root,
+        &source_path,
+        playback_width,
+        playback_height,
+    )?;
     let descriptor = FeedPlaybackDescriptor {
         kind: FeedPlaybackKind::SingleVideo,
         source_path,

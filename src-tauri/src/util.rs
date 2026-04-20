@@ -30,6 +30,7 @@ pub struct SingleInstanceGuard {
     _listener: TcpListener,
 }
 
+#[cfg(feature = "desktop")]
 pub fn acquire_single_instance(identifier: &str) -> io::Result<SingleInstanceAcquire> {
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, single_instance_port(identifier));
     acquire_single_instance_at(addr)

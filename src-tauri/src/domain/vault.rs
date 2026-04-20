@@ -109,6 +109,11 @@ impl VaultLayout {
         self.derived_root.join("cache").join("thumbs")
     }
 
+    /// Path to the local article-audio cache directory in the derived store.
+    pub fn audio_dir(&self) -> PathBuf {
+        self.derived_root.join("cache").join("audio")
+    }
+
     /// Path to a specific thumbnail in the local derived store:
     /// `<derived_root>/cache/thumbs/slug.jpg`.
     ///
@@ -121,6 +126,29 @@ impl VaultLayout {
             slug
         );
         self.thumbs_dir().join(format!("{}.jpg", slug))
+    }
+
+    /// Path to an article-audio sidecar JSON in the local derived store:
+    /// `<derived_root>/cache/audio/slug.json`.
+    pub fn article_audio_state_path(&self, slug: &str) -> PathBuf {
+        debug_assert!(
+            validate_slug(slug).is_ok(),
+            "invalid slug passed to article_audio_state_path: {:?}",
+            slug
+        );
+        self.audio_dir().join(format!("{}.json", slug))
+    }
+
+    /// Path to an article-audio file in the local derived store:
+    /// `<derived_root>/cache/audio/slug.ext`.
+    pub fn article_audio_asset_path(&self, slug: &str, ext: &str) -> PathBuf {
+        debug_assert!(
+            validate_slug(slug).is_ok(),
+            "invalid slug passed to article_audio_asset_path: {:?}",
+            slug
+        );
+        let ext = ext.strip_prefix('.').unwrap_or(ext);
+        self.audio_dir().join(format!("{}.{}", slug, ext))
     }
 }
 
@@ -261,6 +289,30 @@ mod tests {
         assert_eq!(
             layout().legacy_thumbs_dir(),
             PathBuf::from("/vault/.arena/cache/thumbs")
+        );
+    }
+
+    #[test]
+    fn audio_dir() {
+        assert_eq!(
+            layout().audio_dir(),
+            PathBuf::from("/vault/.arena/cache/audio")
+        );
+    }
+
+    #[test]
+    fn article_audio_state_path() {
+        assert_eq!(
+            layout().article_audio_state_path("sunset-tokyo"),
+            PathBuf::from("/vault/.arena/cache/audio/sunset-tokyo.json")
+        );
+    }
+
+    #[test]
+    fn article_audio_asset_path() {
+        assert_eq!(
+            layout().article_audio_asset_path("sunset-tokyo", "aiff"),
+            PathBuf::from("/vault/.arena/cache/audio/sunset-tokyo.aiff")
         );
     }
 

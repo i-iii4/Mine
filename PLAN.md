@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md)
 
 ## Goal
 
@@ -683,6 +683,38 @@ Goal: полноценная поддержка видео-страниц в к�
 | M2.5b | Видео-автоплей в ленте и Detail (AVPlayerLooper) | [x] |
 | M2.6 | Channel list / навигация | [x] |
 | M2.7 | Detail view (просмотр блока) | [x] |
+
+### Phase 14 — Article Audio Renditions v1 [COMPLETED]
+
+Goal: manual local audio renditions для `article` blocks на desktop и iOS с общим Rust speech-prep contract, compact controls и local playback persistence.
+
+SPEC: [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md)
+
+| # | Task | Status |
+|---|------|--------|
+| 14.1 | Shared Rust speech-prep: `PreparedArticleSpeech`, `text_hash`, language detection, prose-only cleanup | [x] |
+| 14.2 | Desktop derived audio store + Tauri commands (`get/generate/delete/set_position`) | [x] |
+| 14.3 | Desktop Detail audio rail: `Create Audio`, `Remove Audio`, `Play/Pause`, compact progress | [x] |
+| 14.4 | Watcher / block deletion invalidation of stale audio artifacts | [x] |
+| 14.5 | `core-ffi` export `prepare_article_speech(slug)` for iOS | [x] |
+| 14.6 | iOS `AudioSection`, `ArticleAudioService`, `ArticleAudioController`, local CAF cache | [x] |
+| 14.7 | Verification: Rust tests, frontend tests, `cargo check -p mine-ffi`, arm64 iOS simulator build | [x] |
+
+### Phase 15 — Apple TTS Stabilization v2 [COMPLETED]
+
+Goal: стабилизировать desktop article-audio backend без UI-изменений: убрать нестабильный `/usr/bin/say -o`, перевести desktop generation на native macOS helper, ввести persisted Apple voice defaults и перестать переиспользовать legacy audio artifacts.
+
+SPEC: [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md)
+
+| # | Task | Status |
+|---|------|--------|
+| 15.1 | Native desktop helper on `AVSpeechSynthesizer.write` + `.wav` output (`44.1 kHz`, mono PCM) | [x] |
+| 15.2 | Persisted desktop `article_audio.apple_voice_overrides` contract in app config | [x] |
+| 15.3 | Voice resolution order: override → curated default → exact language → prefix → system default | [x] |
+| 15.4 | Desktop sidecar v2 metadata: `format_version`, `generation_backend`, `voice_id`, `voice_name` | [x] |
+| 15.5 | Legacy desktop artifact invalidation (`format_version < 2`, `.m4a/.aiff/.caf`) | [x] |
+| 15.6 | Helper timeout/kill path so generation cannot hang indefinitely | [x] |
+| 15.7 | Verification: native helper tests, full Rust lib tests, frontend controls tests, production build | [x] |
 
 ### Phase 10 — Виртуализированная masonry-сетка [IN PROGRESS]
 

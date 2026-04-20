@@ -20,6 +20,10 @@ export function mediaUrl(vaultPath: string, fileName: string): string {
   return convertFileSrc(`${vaultPath}/${fileName}`);
 }
 
+export function audioAssetUrl(audioPath: string): string {
+  return convertFileSrc(audioPath);
+}
+
 export function domainFromUrl(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, "");

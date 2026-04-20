@@ -77,6 +77,16 @@ export type FeedPlaybackKind = "single_video";
 export type FeedPlaybackContainer = "mp4" | "webm";
 export type FeedPlaybackProfile = "standard" | "heavy";
 
+export type ArticleAudioStatus = "absent" | "ready";
+
+export interface ArticleAudioState {
+  status: ArticleAudioStatus;
+  audio_path: string | null;
+  duration_ms: number | null;
+  last_position_ms: number;
+  completed_at: string | null;
+}
+
 export interface FeedPlaybackDescriptor {
   kind: FeedPlaybackKind;
   source_path: string;

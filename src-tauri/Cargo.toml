@@ -49,7 +49,6 @@ imageproc = "0.25"
 
 # Video frame extraction (MP4/H.264 thumbnail generation)
 mp4 = "0.14"
-openh264 = "0.6"
 
 # Base64 (data URL decoding for screenshots)
 base64 = "0.22"
@@ -62,6 +61,8 @@ percent-encoding = "2"
 # Error handling
 thiserror = "2"
 anyhow = "1"
+sha2 = "0.10"
+whatlang = "0.16"
 
 # Logging
 log = "0.4"
@@ -73,6 +74,7 @@ tauri-specta = { version = "=2.0.0-rc.21", features = ["typescript"] }
 # OS trash (not available on iOS)
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 trash = "5"
+openh264 = "0.6"
 
 [[bin]]
 name = "native-host"

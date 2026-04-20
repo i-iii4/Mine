@@ -13,7 +13,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::domain::block::{parse_block, Block, BlockType};
 use crate::domain::vault::VaultLayout;
-use crate::storage::{db, files, index, thumbnails};
+use crate::storage::{article_audio, db, files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
 
 // ─── Event payloads (Rust → Frontend) ───────────────────────────────────────
@@ -57,6 +57,11 @@ struct ThumbUpgradeRequestedPayload {
     kind: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ArticleAudioUpdatedPayload {
+    slug: String,
+}
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /// Result of a full vault scan.
@@ -67,6 +72,8 @@ pub struct ScanResult {
     /// Number of files that failed to parse.
     pub errors: usize,
 }
+
+const ARTICLE_AUDIO_UPDATED_EVENT: &str = "article-audio-updated";
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -101,10 +108,15 @@ pub fn full_scan(
 
     for path in &paths {
         match index_md_file_inner(&tx, vault, path) {
-            Ok(job) => {
+            Ok(outcome) => {
                 indexed += 1;
-                if let Some(j) = job {
+                if let Some(j) = outcome.thumb_job {
                     thumb_jobs.push(j);
+                }
+                if outcome.audio_invalidated {
+                    if let Some(ref app) = app {
+                        emit_article_audio_updated(app, &outcome.slug);
+                    }
                 }
             }
             Err(e) => {
@@ -133,6 +145,7 @@ pub fn full_scan(
             if thumb.exists() {
                 let _ = std::fs::remove_file(&thumb);
             }
+            let _ = article_audio::delete_all_artifacts(vault, &block.slug);
             orphans_removed += 1;
         }
     }
@@ -280,10 +293,15 @@ pub fn incremental_scan(
         }
 
         match index_md_file_inner(&tx, vault, path) {
-            Ok(job) => {
+            Ok(outcome) => {
                 indexed += 1;
-                if let Some(j) = job {
+                if let Some(j) = outcome.thumb_job {
                     thumb_jobs.push(j);
+                }
+                if outcome.audio_invalidated {
+                    if let Some(ref app) = app {
+                        emit_article_audio_updated(app, &outcome.slug);
+                    }
                 }
             }
             Err(e) => {
@@ -301,6 +319,7 @@ pub fn incremental_scan(
             if thumb.exists() {
                 let _ = std::fs::remove_file(&thumb);
             }
+            let _ = article_audio::delete_all_artifacts(vault, slug);
             orphans_removed += 1;
         }
     }
@@ -429,9 +448,15 @@ pub fn index_md_file(
     path: &Path,
     app: Option<&AppHandle>,
 ) -> Result<bool> {
-    let job = index_md_file_inner(conn, vault, path)?;
+    let outcome = index_md_file_inner(conn, vault, path)?;
 
-    if let Some(job) = job {
+    if outcome.audio_invalidated {
+        if let Some(app) = app {
+            emit_article_audio_updated(app, &outcome.slug);
+        }
+    }
+
+    if let Some(job) = outcome.thumb_job {
         // Emit block:added synchronously — frontend wants this latency to
         // be as low as possible so newly-clipped blocks appear in the
         // sidebar before the background thumb thread even wakes up. The
@@ -603,13 +628,19 @@ struct ThumbJob {
     source_path: PathBuf,
 }
 
+struct IndexMdOutcome {
+    slug: String,
+    thumb_job: Option<ThumbJob>,
+    audio_invalidated: bool,
+}
+
 /// Core indexing logic: parse + upsert. Returns a ThumbJob if a thumbnail
 /// should be (re-)generated.
 fn index_md_file_inner(
     conn: &Connection,
     vault: &VaultLayout,
     path: &Path,
-) -> Result<Option<ThumbJob>> {
+) -> Result<IndexMdOutcome> {
     let (slug, content) =
         files::read_block_file(path).with_context(|| format!("reading {}", path.display()))?;
 
@@ -620,16 +651,26 @@ fn index_md_file_inner(
     if block.frontmatter.block_type == BlockType::Channel {
         index::upsert_channel_from_block(conn, &block)
             .with_context(|| format!("indexing channel {}", path.display()))?;
-        return Ok(None);
+        let audio_invalidated = article_audio::delete_all_artifacts(vault, &block.slug)?;
+        return Ok(IndexMdOutcome {
+            slug: block.slug,
+            thumb_job: None,
+            audio_invalidated,
+        });
     }
 
     index::upsert_block(conn, &block, Some(vault.root()))
         .with_context(|| format!("indexing {}", path.display()))?;
+    let audio_invalidated = article_audio::invalidate_for_block(vault, &block)?;
 
-    Ok(Some(ThumbJob {
-        block,
-        source_path: path.to_path_buf(),
-    }))
+    Ok(IndexMdOutcome {
+        slug: block.slug.clone(),
+        thumb_job: Some(ThumbJob {
+            block,
+            source_path: path.to_path_buf(),
+        }),
+        audio_invalidated,
+    })
 }
 
 /// Handle a single vault event: dispatch to the appropriate storage operation.
@@ -658,6 +699,7 @@ pub fn handle_event(
                     .map(|b| b.tags)
                     .unwrap_or_default();
                 let removed = index::remove_block(conn, &slug)?;
+                let audio_removed = article_audio::delete_all_artifacts(vault, &slug)?;
                 if let Some(app) = app {
                     let _ = app.emit(
                         "block:removed",
@@ -676,6 +718,9 @@ pub fn handle_event(
                             is_text: false,
                         },
                     );
+                    if audio_removed {
+                        emit_article_audio_updated(app, &path_to_slug(path).unwrap_or_default());
+                    }
                 }
                 return Ok(removed);
             }
@@ -737,6 +782,15 @@ fn file_mtime_secs(path: &Path) -> Option<u64> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .map(|duration| duration.as_secs())
+}
+
+fn emit_article_audio_updated(app: &AppHandle, slug: &str) {
+    let _ = app.emit(
+        ARTICLE_AUDIO_UPDATED_EVENT,
+        ArticleAudioUpdatedPayload {
+            slug: slug.to_string(),
+        },
+    );
 }
 
 // Extension predicates (is_image_ext, is_video_ext) live in

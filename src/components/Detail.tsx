@@ -23,6 +23,7 @@ import {
   normalizeFeedPreviewManifest,
 } from "@/lib/feedPreview";
 import { VideoFromBlob } from "./VideoFromBlob";
+import { ArticleAudioControls } from "./ArticleAudioControls";
 
 // Layout constants — shared between scroll layer and metadata layer
 const LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-16";
@@ -214,6 +215,12 @@ function MetadataPanel({
   const displayBlock = fullBlock ?? block;
   return (
     <div className="flex flex-col gap-5 font-mono">
+      <ArticleAudioControls
+        slug={displayBlock.slug}
+        blockType={displayBlock.block_type}
+        url={displayBlock.url}
+      />
+
       {displayBlock.width != null && displayBlock.height != null && (
         <MetadataField label="RESOLUTION" value={`${displayBlock.width} \u00d7 ${displayBlock.height}`} />
       )}

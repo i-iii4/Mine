@@ -484,6 +484,8 @@ public protocol ArenaVaultProtocol: AnyObject, Sendable {
      */
     func listBlocks() throws  -> [FfiLightBlock]
     
+    func prepareArticleSpeech(slug: String) throws  -> FfiPreparedArticleSpeech
+    
     /**
      * Scan all .md files in vault and index them in SQLite.
      * Must be called after open() to populate the database.
@@ -569,6 +571,14 @@ public static func `open`(vaultPath: String)throws  -> ArenaVault  {
 open func listBlocks()throws  -> [FfiLightBlock]  {
     return try  FfiConverterSequenceTypeFfiLightBlock.lift(try rustCallWithError(FfiConverterTypeArenaError_lift) {
     uniffi_local_arena_ffi_fn_method_arenavault_list_blocks(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func prepareArticleSpeech(slug: String)throws  -> FfiPreparedArticleSpeech  {
+    return try  FfiConverterTypeFfiPreparedArticleSpeech_lift(try rustCallWithError(FfiConverterTypeArenaError_lift) {
+    uniffi_local_arena_ffi_fn_method_arenavault_prepare_article_speech(self.uniffiClonePointer(),
+        FfiConverterString.lower(slug),$0
     )
 })
 }
@@ -811,6 +821,84 @@ public func FfiConverterTypeFfiLightBlock_lower(_ value: FfiLightBlock) -> RustB
 }
 
 
+public struct FfiPreparedArticleSpeech {
+    public var speakableText: String
+    public var textHash: String
+    public var languageTag: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(speakableText: String, textHash: String, languageTag: String?) {
+        self.speakableText = speakableText
+        self.textHash = textHash
+        self.languageTag = languageTag
+    }
+}
+
+#if compiler(>=6)
+extension FfiPreparedArticleSpeech: Sendable {}
+#endif
+
+
+extension FfiPreparedArticleSpeech: Equatable, Hashable {
+    public static func ==(lhs: FfiPreparedArticleSpeech, rhs: FfiPreparedArticleSpeech) -> Bool {
+        if lhs.speakableText != rhs.speakableText {
+            return false
+        }
+        if lhs.textHash != rhs.textHash {
+            return false
+        }
+        if lhs.languageTag != rhs.languageTag {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(speakableText)
+        hasher.combine(textHash)
+        hasher.combine(languageTag)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPreparedArticleSpeech: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPreparedArticleSpeech {
+        return
+            try FfiPreparedArticleSpeech(
+                speakableText: FfiConverterString.read(from: &buf), 
+                textHash: FfiConverterString.read(from: &buf), 
+                languageTag: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPreparedArticleSpeech, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.speakableText, into: &buf)
+        FfiConverterString.write(value.textHash, into: &buf)
+        FfiConverterOptionString.write(value.languageTag, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPreparedArticleSpeech_lift(_ buf: RustBuffer) throws -> FfiPreparedArticleSpeech {
+    return try FfiConverterTypeFfiPreparedArticleSpeech.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPreparedArticleSpeech_lower(_ value: FfiPreparedArticleSpeech) -> RustBuffer {
+    return FfiConverterTypeFfiPreparedArticleSpeech.lower(value)
+}
+
+
 /**
  * Error type exposed to Swift.
  */
@@ -823,6 +911,8 @@ public enum ArenaError: Swift.Error {
     case Parse(msg: String
     )
     case Io(msg: String
+    )
+    case ArticleAudio(msg: String
     )
 }
 
@@ -849,6 +939,9 @@ public struct FfiConverterTypeArenaError: FfiConverterRustBuffer {
         case 3: return .Io(
             msg: try FfiConverterString.read(from: &buf)
             )
+        case 4: return .ArticleAudio(
+            msg: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -873,6 +966,11 @@ public struct FfiConverterTypeArenaError: FfiConverterRustBuffer {
         
         case let .Io(msg):
             writeInt(&buf, Int32(3))
+            FfiConverterString.write(msg, into: &buf)
+            
+        
+        case let .ArticleAudio(msg):
+            writeInt(&buf, Int32(4))
             FfiConverterString.write(msg, into: &buf)
             
         }
@@ -1013,6 +1111,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_local_arena_ffi_checksum_method_arenavault_list_blocks() != 7893) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_local_arena_ffi_checksum_method_arenavault_prepare_article_speech() != 28477) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_local_arena_ffi_checksum_method_arenavault_scan_vault() != 52430) {
