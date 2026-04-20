@@ -60,6 +60,8 @@ import {
   removeTag,
   deleteBlock,
 } from "@/lib/commands";
+import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
+import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
 import { pushRecentTag } from "@/lib/recentTags";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
@@ -216,13 +218,15 @@ export function App() {
   }
 
   return (
-    <BrowserRouter>
-      <AppWithVault
-        key={vaultPath}
-        vaultPath={vaultPath}
-        onVaultSelected={setVaultPath}
-      />
-    </BrowserRouter>
+    <ArticleAudioGatewayProvider gateway={desktopArticleAudioGateway}>
+      <BrowserRouter>
+        <AppWithVault
+          key={vaultPath}
+          vaultPath={vaultPath}
+          onVaultSelected={setVaultPath}
+        />
+      </BrowserRouter>
+    </ArticleAudioGatewayProvider>
   );
 }
 

@@ -1,5 +1,39 @@
 # Devlog
 
+## 20.04.2026 10:05 [primary] — Article-audio gateway extraction
+
+### Goal
+Разделить `article audio` frontend на UI contract и desktop transport layer, чтобы убрать прямую зависимость `ArticleAudioControls` от Tauri и подготовить код к отдельному browser adapter без функциональных изменений.
+
+### Actually completed
+
+**Frontend transport выделен в explicit gateway contract** (`src/lib/articleAudioGateway.tsx`, `src/lib/articleAudioDesktopGateway.ts`)
+- добавлен `ArticleAudioGateway` с операциями `getState / generate / remove / setPosition / resolvePlaybackSource / subscribe`
+- Tauri IPC, desktop event subscription и `asset://` playback source вынесены в отдельный desktop adapter
+- `ArticleAudioGatewayProvider` стал единственной точкой injection transport layer в React tree
+
+**`ArticleAudioControls` перестал быть монолитом UI + Tauri adapter** (`src/components/ArticleAudioControls.tsx`, `src/App.tsx`)
+- компонент больше не импортирует `@tauri-apps/api/event`, `@/lib/commands` и `audioAssetUrl` напрямую
+- UI теперь работает только через gateway contract и не знает о desktop helper lifecycle
+- desktop wiring сделан в `App.tsx` через `desktopArticleAudioGateway`, без изменения пользовательского поведения
+
+**Тестовый слой переведён на provider injection** (`src/components/ArticleAudioControls.test.tsx`, `src/App.test.tsx`)
+- `ArticleAudioControls` тестируется через mock gateway, а не через прямой mock Tauri commands
+- `App.test.tsx` изолирован от desktop adapter через отдельный mock `desktopArticleAudioGateway`
+- это закрепляет новую архитектурную границу и упрощает добавление web adapter в следующем шаге
+
+**Документация синхронизирована с новым frontend contract** (`SPEC_ARTICLE_AUDIO.md`, `ARCHITECTURE.md`, `PLAN.md`, `AGENTS.md`)
+- зафиксирован `ArticleAudioGateway` как обязательная граница между UI и platform transport
+- в архитектуре явно отмечено, что `ArticleAudioControls` больше не импортирует Tauri article-audio APIs напрямую
+
+### Checks
+- `bun run test src/components/ArticleAudioControls.test.tsx src/App.test.tsx`
+- `bun run build`
+- `bunx eslint src/App.tsx src/components/ArticleAudioControls.tsx src/components/ArticleAudioControls.test.tsx src/lib/articleAudioGateway.tsx src/lib/articleAudioDesktopGateway.ts`
+
+### Push
+- [current]
+
 ## 20.04.2026 09:45 [primary] — Desktop article-audio distortion fix
 
 ### Goal

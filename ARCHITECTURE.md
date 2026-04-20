@@ -285,6 +285,8 @@ Speech-prep живёт в чистом Rust domain module и исключает 
 Desktop UI contract:
 
 - `ArticleAudioControls` рендерится в fixed metadata rail `Detail`
+- `ArticleAudioGatewayProvider` инжектит active platform adapter в React tree
+- `ArticleAudioControls` не импортирует Tauri article-audio APIs напрямую
 - `article-audio-updated` refreshes UI после generate/delete/invalidate
 - playback position persists on pause/end/unmount
 - desktop generation идёт через native macOS helper на `AVSpeechSynthesizer.write`

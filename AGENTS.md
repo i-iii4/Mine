@@ -121,7 +121,7 @@ local-arena/
 │   ├── hooks/
 │   │   └── useSidebarResize.ts # Хук ресайза сайдбара (pointer events + persist)
 │   ├── types/                  # TypeScript-типы (ручные, без specta)
-│   ├── lib/                    # commands.ts (IPC), assets.ts, utils.ts (cn()), recentTags.ts
+│   ├── lib/                    # commands.ts (IPC), articleAudioGateway.tsx (UI transport contract), articleAudioDesktopGateway.ts (desktop adapter), assets.ts, utils.ts (cn()), recentTags.ts
 │   └── styles/                 # Глобальные стили
 ├── extension/                  # Chrome/Safari веб-клиппер
 │   ├── background.js           # Service worker: контекстное меню, native messaging

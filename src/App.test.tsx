@@ -31,6 +31,17 @@ vi.mock("@/lib/commands", () => ({
   deleteBlock: vi.fn(),
 }));
 
+vi.mock("@/lib/articleAudioDesktopGateway", () => ({
+  desktopArticleAudioGateway: {
+    getState: vi.fn(),
+    generate: vi.fn(),
+    remove: vi.fn(),
+    setPosition: vi.fn(),
+    resolvePlaybackSource: vi.fn(() => null),
+    subscribe: vi.fn(async () => vi.fn()),
+  },
+}));
+
 vi.mock("@/hooks/useSidebarResize", () => ({
   useSidebarResize: () => ({
     width: 300,

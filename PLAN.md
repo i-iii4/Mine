@@ -715,6 +715,7 @@ SPEC: [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md)
 | 15.5 | Legacy desktop artifact invalidation (`format_version < 2`, `.m4a/.aiff/.caf`) | [x] |
 | 15.6 | Helper timeout/kill path so generation cannot hang indefinitely | [x] |
 | 15.7 | Verification: native helper tests, full Rust lib tests, frontend controls tests, production build | [x] |
+| 15.8 | Frontend `ArticleAudioGateway`: desktop adapter + provider injection, без прямых Tauri imports в `ArticleAudioControls` | [x] |
 
 ### Phase 10 — Виртуализированная masonry-сетка [IN PROGRESS]
 

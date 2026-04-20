@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { LoaderCircle, Pause, Play, Trash2, Volume2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { audioAssetUrl } from "@/lib/assets";
-import {
-  deleteArticleAudio,
-  generateArticleAudio,
-  getArticleAudioState,
-  setArticleAudioPosition,
-} from "@/lib/commands";
+import { useArticleAudioGateway } from "@/lib/articleAudioGateway";
 import type { ArticleAudioState } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -17,10 +10,6 @@ interface ArticleAudioControlsProps {
   slug: string;
   blockType: string;
   url: string | null;
-}
-
-interface ArticleAudioUpdatedEvent {
-  slug: string;
 }
 
 function supportsArticleAudio(blockType: string, url: string | null): boolean {
@@ -75,9 +64,14 @@ export function ArticleAudioControls({
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [durationMs, setDurationMs] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const articleAudio = useArticleAudioGateway();
 
   const isSupported = supportsArticleAudio(blockType, url);
-  const isReady = audioState?.status === "ready" && Boolean(audioState.audio_path);
+  const playbackSource = useMemo(
+    () => (audioState ? articleAudio.resolvePlaybackSource(audioState) : null),
+    [articleAudio, audioState],
+  );
+  const isReady = audioState?.status === "ready" && playbackSource !== null;
 
   useEffect(() => {
     isReadyRef.current = isReady;
@@ -110,7 +104,7 @@ export function ArticleAudioControls({
 
     setIsLoading(true);
     try {
-      const nextState = await getArticleAudioState(slug);
+      const nextState = await articleAudio.getState(slug);
       setAudioState(nextState);
       setCurrentTimeMs(nextState.last_position_ms);
       playOffsetMsRef.current = nextState.last_position_ms;
@@ -132,7 +126,7 @@ export function ArticleAudioControls({
       setIsGenerating(false);
       setIsRemoving(false);
     }
-  }, [isSupported, slug]);
+  }, [articleAudio, isSupported, slug]);
 
   const clearProgressTimer = useCallback(() => {
     if (progressTimerRef.current != null) {
@@ -210,7 +204,7 @@ export function ArticleAudioControls({
       : explicitPositionMs ?? computeCurrentPlaybackPositionMs();
 
     try {
-      await setArticleAudioPosition(
+      await articleAudio.setPosition(
         slug,
         nextPositionMs,
         nextDurationMs ?? null,
@@ -236,7 +230,7 @@ export function ArticleAudioControls({
     } catch (error) {
       console.error("Failed to persist article audio playback position:", error);
     }
-  }, [computeCurrentPlaybackPositionMs, getEffectiveDurationMs, slug]);
+  }, [articleAudio, computeCurrentPlaybackPositionMs, getEffectiveDurationMs, slug]);
 
   const startPlayback = useCallback(async () => {
     const context = ensureAudioContext();
@@ -295,8 +289,8 @@ export function ArticleAudioControls({
       return;
     }
     let unlisten: (() => void) | undefined;
-    void listen<ArticleAudioUpdatedEvent>("article-audio-updated", (event) => {
-      if (event.payload.slug === slug) {
+    void articleAudio.subscribe((event) => {
+      if (event.slug === slug) {
         void loadState();
       }
     }).then((nextUnlisten) => {
@@ -307,7 +301,7 @@ export function ArticleAudioControls({
         unlisten();
       }
     };
-  }, [isSupported, loadState, slug]);
+  }, [articleAudio, isSupported, loadState, slug]);
 
   useEffect(() => {
     return () => {
@@ -329,7 +323,7 @@ export function ArticleAudioControls({
   ]);
 
   useEffect(() => {
-    if (!isReady || !audioState.audio_path) {
+    if (!isReady || !playbackSource) {
       clearProgressTimer();
       stopSourceNode();
       audioBufferRef.current = null;
@@ -345,14 +339,12 @@ export function ArticleAudioControls({
     }
 
     let cancelled = false;
-    const assetUrl = audioAssetUrl(audioState.audio_path);
-
     clearProgressTimer();
     stopSourceNode();
     audioBufferRef.current = null;
     setIsPreparingPlayback(true);
 
-    fetch(assetUrl)
+    fetch(playbackSource.url)
       .then((response) => {
         if (!response.ok) {
           throw new Error(`Audio fetch failed with HTTP ${response.status}`);
@@ -372,7 +364,7 @@ export function ArticleAudioControls({
         playOffsetMsRef.current = audioState.last_position_ms;
         setErrorMessage(null);
         if (audioState.duration_ms == null) {
-          void setArticleAudioPosition(
+          void articleAudio.setPosition(
             slug,
             audioState.last_position_ms,
             nextDurationMs,
@@ -402,10 +394,12 @@ export function ArticleAudioControls({
       cancelled = true;
     };
   }, [
-    audioState?.audio_path,
+    articleAudio,
+    audioState,
     clearProgressTimer,
     ensureAudioContext,
     isReady,
+    playbackSource,
     slug,
     stopSourceNode,
     startPlayback,
@@ -415,7 +409,7 @@ export function ArticleAudioControls({
     setIsGenerating(true);
     setErrorMessage(null);
     try {
-      const nextState = await generateArticleAudio(slug);
+      const nextState = await articleAudio.generate(slug);
       setAudioState(nextState);
       setCurrentTimeMs(nextState.last_position_ms);
       playOffsetMsRef.current = nextState.last_position_ms;
@@ -429,7 +423,7 @@ export function ArticleAudioControls({
     } finally {
       setIsGenerating(false);
     }
-  }, [slug]);
+  }, [articleAudio, slug]);
 
   const handleRemoveAudio = useCallback(async () => {
     setIsRemoving(true);
@@ -441,7 +435,7 @@ export function ArticleAudioControls({
     isPlayingRef.current = false;
 
     try {
-      await deleteArticleAudio(slug);
+      await articleAudio.remove(slug);
       setAudioState({
         status: "absent",
         audio_path: null,
@@ -459,7 +453,7 @@ export function ArticleAudioControls({
       pendingPlayRef.current = false;
       setIsRemoving(false);
     }
-  }, [clearProgressTimer, slug, stopSourceNode]);
+  }, [articleAudio, clearProgressTimer, slug, stopSourceNode]);
 
   const handleTogglePlayback = useCallback(async () => {
     if (!isReady) {

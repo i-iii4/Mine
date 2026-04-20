@@ -115,6 +115,36 @@ type ArticleAudioUpdateEvent = {
 
 Событие не эмитится на каждый playback position update.
 
+### `ArticleAudioGateway`
+
+React UI работает через injected gateway contract, а не через прямые platform APIs:
+
+```ts
+type ArticleAudioGateway = {
+  getState(slug: string): Promise<ArticleAudioState>;
+  generate(slug: string): Promise<ArticleAudioState>;
+  remove(slug: string): Promise<void>;
+  setPosition(
+    slug: string,
+    positionMs: number,
+    durationMs: number | null,
+    completed: boolean,
+  ): Promise<void>;
+  resolvePlaybackSource(
+    state: ArticleAudioState,
+  ): { url: string } | null;
+  subscribe(
+    onUpdated: (event: ArticleAudioUpdateEvent) => void,
+  ): Promise<() => void>;
+};
+```
+
+Инварианты:
+
+- UI не знает о Tauri IPC, asset protocol или native helper lifecycle;
+- adapter layer отвечает за transport-specific state refresh и playback source resolution;
+- смена platform adapter не требует переписывания `ArticleAudioControls`.
+
 ## Speech preparation rules
 
 `PreparedArticleSpeech` готовится только в Rust.
@@ -265,6 +295,7 @@ Resolution order:
 
 Desktop playback state хранится через `ArticleAudioControls` Web Audio path:
 
+- active transport приходит через `ArticleAudioGatewayProvider`;
 - decode/update path работает для `.wav` без специальных UI-веток;
 - `pause`, `ended`, `unmount` сохраняют позицию;
 - `ended` пишет `completed_at` и сбрасывает позицию на `0`.
