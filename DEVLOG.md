@@ -1,5 +1,83 @@
 # Devlog
 
+## 22.04.2026 18:15 [primary] — Phase 18.H complete: inline media → Obsidian wikilinks
+
+### Goal
+Устранить целый класс багов 18.F hotfix cascade (URL_in_body ≠
+filename_on_disk) за счёт перехода inline media syntax в body на
+Obsidian wikilinks `![[name|alt]]`. Закрыть Phase 18 final architecture
+и документировать контракт.
+
+### Actually completed
+
+**18.H.1 Backend writer → wikilinks** (`d0f6aaca`)
+- `build_inline_wikilink` helper в `native_host.rs` — `![[name]]` без
+  alt, `![[name|alt]]` с alt, `|` → `&#124;` escape, `\n` → пробел
+- `localize_body_images` теперь пишет wikilinks вместо
+  `![alt](percent-encoded-url)`
+- `iter_inline_media_sources` в `storage/index.rs` — единый iterator,
+  handles оба syntax в document order
+- `extract_first_image`, `extract_media_urls`, `parse_inline_media_src`
+  переведены на новый iterator
+- `collect_body_media` в `storage/media_dimensions.rs` тоже dual-syntax
+- Pathological `]]` в имени — fallback на markdown form
+
+**18.H.2 Frontend rendering** (`ba02e09c`)
+- `preprocessWikilinks(body)` в `src/lib/markdownWikilinks.ts` —
+  `![[name]]` → `![](encoded)`, `![[name|alt]]` → `![alt](encoded)`,
+  text-link variants тоже; empty wikilinks дропаются; ordinary
+  markdown passthrough
+- `Detail.tsx` memoizes `preprocessWikilinks(body)` перед
+  `<ReactMarkdown>`
+- `stripMarkdown` в `cardLayout.ts` удаляет embed wikilinks (media, не
+  prose), collapse text wikilinks в display text
+- 11 новых frontend тестов; bun run build green
+
+**18.H.3 Migration CLI** (current)
+- `domain::markdown::convert_markdown_images_to_wikilinks(body)` pure
+  function: `![alt](local-encoded-url)` → `![[decoded-name|alt]]`.
+  Remote URLs, existing wikilinks, pathological filenames preserved.
+  Idempotent.
+- `src-tauri/src/bin/migrate_body_to_wikilinks.rs` CLI — `--dry-run` /
+  `--apply`, preserves frontmatter, logs changed files. Backup
+  responsibility на пользователе.
+- 15 тестов для transform + 3 теста для frontmatter split
+
+**18.H.4 SPEC document** (current)
+- [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) —
+  полная спецификация syntax, canonical write, dual-syntax read,
+  render preprocessor, migration protocol, invariants, testing plan,
+  acceptance criteria
+
+### Architectural outcome
+
+Invariant восстановлен:
+```
+URL_in_body ≡ filename_on_disk
+```
+
+Каждый body parser работает с wikilink name напрямую как с filesystem
+path. Markdown backward compat сохраняется для legacy блоков. Obsidian
+raw source view теперь читается одинаково чисто для новых и
+мигрированных блоков.
+
+### Checks
+- `cargo test --lib --quiet` — 372/372
+- `cargo test --bin native-host --quiet` — 29/29
+- `cargo test --bin migrate-body-to-wikilinks --quiet` — 3/3
+- `bun run test src/lib/markdownWikilinks.test.ts src/lib/cardLayout.test.ts` — 25/25
+- `bun run build` — green
+
+### Push
+- `d0f6aaca` 18.H.1, `ba02e09c` 18.H.2, [current] 18.H.3 + H.4
+
+### Known residuals
+- Migration opt-in: пользователь запускает CLI когда хочет
+  унифицировать vault. Automatic migration при open vault
+  сознательно не реализована — vault changes должны быть explicit.
+- Pathological filenames с `]]` fallback'ят на markdown form —
+  принятый edge case, практически невозможен на APFS/HFS+.
+
 ## 22.04.2026 14:45 [primary] — Phase 18.F hotfix cascade + plan for 18.H wikilinks
 
 ### Goal

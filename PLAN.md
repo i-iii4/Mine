@@ -832,10 +832,10 @@ SPEC: `SPEC_OBSIDIAN_WIKILINKS.md` (создать как часть phase).
 
 | # | Slice | Status | Scope |
 |---|-------|--------|-------|
-| 18.H.1 | Backend writer on wikilinks | [ ] | `localize_body_images` → `![[name]]`, extract functions parse both syntax, unit tests |
-| 18.H.2 | Frontend wikilink rendering | [ ] | `remark-wiki-link` integration или custom remark plugin, Detail + article body render path |
-| 18.H.3 | Migration command | [ ] | `migrate_body_to_wikilinks` bin tool с `--dry-run`/`--apply`, converts existing `![](encoded)` → `![[decoded]]` |
-| 18.H.4 | SPEC document | [ ] | `SPEC_OBSIDIAN_WIKILINKS.md` finalizes the syntax contract, both-forms compatibility rules, Obsidian semantics (alt pipe, embed vs link) |
+| 18.H.1 | Backend writer on wikilinks | [x] | `localize_body_images` → `![[name\|alt]]`, extract functions parse оба syntax. — `d0f6aaca` |
+| 18.H.2 | Frontend wikilink rendering | [x] | `preprocessWikilinks` helper + integration в `Detail.tsx`, updates для `stripMarkdown` в card preview. — `ba02e09c` |
+| 18.H.3 | Migration CLI | [x] | `migrate-body-to-wikilinks` binary с `--dry-run`/`--apply`, `domain::markdown::convert_markdown_images_to_wikilinks` pure function |
+| 18.H.4 | SPEC document | [x] | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) — canonical write syntax, dual-syntax read, migration contract |
 
 ### Why not immediately
 

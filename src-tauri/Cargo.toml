@@ -85,6 +85,10 @@ openh264 = "0.6"
 name = "native-host"
 path = "src/bin/native_host.rs"
 
+[[bin]]
+name = "migrate-body-to-wikilinks"
+path = "src/bin/migrate_body_to_wikilinks.rs"
+
 [dev-dependencies]
 indoc = "2"
 tempfile = "3"
