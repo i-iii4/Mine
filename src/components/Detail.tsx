@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import type { IndexedBlock, LightBlock } from "@/types";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { preprocessWikilinks } from "@/lib/markdownWikilinks";
 import {
   thumbnailUrl,
   mediaUrl,
@@ -517,10 +518,16 @@ function ArticleBody({
     [previewManifest, thumbsRootPath, vaultPath],
   );
 
+  // Phase 18.H.2: rewrite Obsidian wikilinks into standard markdown
+  // before passing to react-markdown. The raw `.md` file stays in
+  // wikilink form for Obsidian; only the render pipeline sees the
+  // transformed markdown.
+  const processedBody = useMemo(() => preprocessWikilinks(body), [body]);
+
   return (
     <div className="prose prose-sm mt-4 max-w-none">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {body}
+        {processedBody}
       </ReactMarkdown>
     </div>
   );

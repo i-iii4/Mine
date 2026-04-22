@@ -47,7 +47,14 @@ function stripMarkdown(text: string): string {
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/\*(.+?)\*/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
+    // Obsidian wikilink embeds (Phase 18.H.1): strip entirely — they are
+    // media references, not prose.
+    .replace(/!\[\[[^\]]*\]\]/g, "")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    // Obsidian wikilink text links (no leading `!`): keep the display
+    // name if present after `|`, otherwise the target name.
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
+    .replace(/\[\[([^\]]+)\]\]/g, "$1")
     .replace(/\[(.+?)\]\(.*?\)/g, "$1")
     .replace(/^[-*+]\s+/gm, "")
     .replace(/^>\s+/gm, "")
