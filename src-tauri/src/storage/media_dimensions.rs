@@ -61,37 +61,66 @@ pub fn extract_video_dimensions(path: &Path) -> Option<(u32, u32)> {
 /// `https://` are skipped — they are remote and cannot be measured from
 /// the vault filesystem.
 fn collect_body_media(body: &str) -> Vec<String> {
+    // Both `![[name]]` wikilinks (Phase 18.H.1 canonical) and legacy
+    // `![alt](url)` markdown are accepted. For markdown URLs the
+    // percent-encoded local form is decoded back to the on-disk
+    // filename; remote URLs (`http://`, `https://`) are skipped because
+    // dimensions can only be read from local files.
     let mut out: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    let mut search_from = 0usize;
-    while let Some(offset) = body[search_from..].find("![") {
-        let start = search_from + offset;
-        let Some(bracket) = body[start + 2..].find("](") else {
-            search_from = start + 2;
-            continue;
+    let mut i = 0usize;
+    while i < body.len() {
+        let Some(rel) = body[i..].find("![") else {
+            break;
         };
-        let url_start = start + 2 + bracket + 2;
-        let Some(paren_end) = body[url_start..].find(')') else {
-            search_from = url_start;
-            continue;
-        };
-        let url = &body[url_start..url_start + paren_end];
-        search_from = url_start + paren_end + 1;
-        if url.is_empty() {
-            continue;
+        let excl = i + rel;
+        let after_excl = excl + 2;
+        if after_excl >= body.len() {
+            break;
         }
-        if url.starts_with("http://") || url.starts_with("https://") {
-            continue;
-        }
-        // Percent-decode the markdown URL back to its on-disk filename
-        // so `vault_root.join(name)` actually finds the file. The body
-        // stores the encoded form for the markdown parser (Phase 18.F.1);
-        // consumers that read files by name need the decoded form.
-        let decoded = percent_encoding::percent_decode_str(url)
-            .decode_utf8_lossy()
-            .into_owned();
-        if seen.insert(decoded.clone()) {
-            out.push(decoded);
+
+        if body[after_excl..].starts_with('[') {
+            // Wikilink `![[name]]` or `![[name|alt]]`
+            let name_start = after_excl + 1;
+            let Some(close_offset) = body[name_start..].find("]]") else {
+                i = name_start;
+                continue;
+            };
+            let inner = &body[name_start..name_start + close_offset];
+            let name = inner.split('|').next().unwrap_or(inner).trim();
+            if !name.is_empty()
+                && !name.starts_with("http://")
+                && !name.starts_with("https://")
+                && seen.insert(name.to_string())
+            {
+                out.push(name.to_string());
+            }
+            i = name_start + close_offset + 2;
+        } else {
+            // Markdown `![alt](url)`
+            let Some(bracket_offset) = body[after_excl..].find("](") else {
+                i = after_excl;
+                continue;
+            };
+            let url_start = after_excl + bracket_offset + 2;
+            let Some(paren_end) = body[url_start..].find(')') else {
+                i = url_start;
+                continue;
+            };
+            let url = &body[url_start..url_start + paren_end];
+            let next_i = url_start + paren_end + 1;
+            if !url.is_empty()
+                && !url.starts_with("http://")
+                && !url.starts_with("https://")
+            {
+                let decoded = percent_encoding::percent_decode_str(url)
+                    .decode_utf8_lossy()
+                    .into_owned();
+                if seen.insert(decoded.clone()) {
+                    out.push(decoded);
+                }
+            }
+            i = next_i;
         }
     }
     out

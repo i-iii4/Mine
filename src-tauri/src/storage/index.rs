@@ -206,39 +206,71 @@ fn normalize_local_markdown_url(url: &str) -> String {
         .into_owned()
 }
 
-/// Extract the first markdown image URL from body text.
-fn extract_first_image(body: &str) -> Option<String> {
-    let start = body.find("![")?;
-    let bracket = body[start + 2..].find("](")?;
-    let url_start = start + 2 + bracket + 2;
-    let paren_end = body[url_start..].find(')')?;
-    let url = &body[url_start..url_start + paren_end];
-    if url.is_empty() {
-        None
-    } else {
-        Some(normalize_local_markdown_url(url))
+/// Single entry point for extracting every inline media reference from a
+/// markdown body, in document order. Supports both syntaxes:
+///
+/// - `![[name]]` / `![[name|alt]]` — Obsidian wikilink (Phase 18.H.1,
+///   the canonical form for locally-downloaded media)
+/// - `![alt](url)` — standard markdown (legacy blocks, remote URLs)
+///
+/// For wikilinks, the `name` portion is returned verbatim (already
+/// matches the filesystem). For markdown, `url` is percent-decoded
+/// when it is a local reference (Phase 18.F.2) and left as-is for
+/// remote URLs. Callers can therefore treat every returned string as
+/// either a filesystem name or a remote URL without further decoding.
+pub(crate) fn iter_inline_media_sources(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < body.len() {
+        let Some(rel) = body[i..].find("![") else { break };
+        let excl = i + rel;
+        let after_excl = excl + 2;
+        if after_excl >= body.len() {
+            break;
+        }
+
+        if body[after_excl..].starts_with('[') {
+            // Wikilink: `![[name]]` or `![[name|alt]]`
+            let name_start = after_excl + 1;
+            let Some(close_offset) = body[name_start..].find("]]") else {
+                i = name_start;
+                continue;
+            };
+            let inner = &body[name_start..name_start + close_offset];
+            let name = inner.split('|').next().unwrap_or(inner).trim();
+            if !name.is_empty() {
+                out.push(name.to_string());
+            }
+            i = name_start + close_offset + 2;
+        } else {
+            // Markdown: `![alt](url)`
+            let Some(bracket_offset) = body[after_excl..].find("](") else {
+                i = after_excl;
+                continue;
+            };
+            let url_start = after_excl + bracket_offset + 2;
+            let Some(paren_end) = body[url_start..].find(')') else {
+                i = url_start;
+                continue;
+            };
+            let url = &body[url_start..url_start + paren_end];
+            if !url.is_empty() {
+                out.push(normalize_local_markdown_url(url));
+            }
+            i = url_start + paren_end + 1;
+        }
     }
+    out
 }
 
-/// Extract all markdown image/video URLs from body text as JSON array.
+/// Extract the first inline media reference from body text.
+fn extract_first_image(body: &str) -> Option<String> {
+    iter_inline_media_sources(body).into_iter().next()
+}
+
+/// Extract all inline media references from body text as a JSON array.
 fn extract_media_urls(body: &str) -> Option<String> {
-    let mut urls = Vec::new();
-    let mut search_from = 0;
-    while let Some(offset) = body[search_from..].find("![") {
-        let start = search_from + offset;
-        if let Some(bracket) = body[start + 2..].find("](") {
-            let url_start = start + 2 + bracket + 2;
-            if let Some(paren_end) = body[url_start..].find(')') {
-                let url = &body[url_start..url_start + paren_end];
-                if !url.is_empty() {
-                    urls.push(normalize_local_markdown_url(url));
-                }
-                search_from = url_start + paren_end + 1;
-                continue;
-            }
-        }
-        search_from = start + 2;
-    }
+    let urls = iter_inline_media_sources(body);
     if urls.is_empty() {
         None
     } else {
@@ -332,13 +364,31 @@ fn tile_preview_path(src: &str) -> Option<String> {
     Some(format!("{stem}.jpg"))
 }
 
-fn parse_inline_media_src(line: &str) -> Option<&str> {
+/// Parse a single inline-media reference from one markdown line.
+///
+/// Recognizes both `![[name]]` / `![[name|alt]]` wikilinks and legacy
+/// `![alt](url)` markdown. Returns the resolved reference in filesystem
+/// form: wikilink names pass through verbatim (they always match disk);
+/// markdown URLs get percent-decoded when local so consumers do not
+/// need to know the underlying syntax or apply decoding themselves.
+fn parse_inline_media_src(line: &str) -> Option<String> {
     let start = line.find("![")?;
-    let bracket = line[start + 2..].find("](")?;
-    let url_start = start + 2 + bracket + 2;
-    let paren_end = line[url_start..].find(')')?;
-    let src = &line[url_start..url_start + paren_end];
-    (!src.is_empty()).then_some(src)
+    let after_excl = start + 2;
+    if line[after_excl..].starts_with('[') {
+        // Wikilink `![[name]]` or `![[name|alt]]`
+        let name_start = after_excl + 1;
+        let close_offset = line[name_start..].find("]]")?;
+        let inner = &line[name_start..name_start + close_offset];
+        let name = inner.split('|').next().unwrap_or(inner).trim();
+        (!name.is_empty()).then(|| name.to_string())
+    } else {
+        // Standard `![alt](url)`
+        let bracket_offset = line[after_excl..].find("](")?;
+        let url_start = after_excl + bracket_offset + 2;
+        let paren_end = line[url_start..].find(')')?;
+        let src = &line[url_start..url_start + paren_end];
+        (!src.is_empty()).then(|| normalize_local_markdown_url(src))
+    }
 }
 
 fn extract_social_preview_tiles(
@@ -357,16 +407,14 @@ fn extract_social_preview_tiles(
         let Some(src) = parse_inline_media_src(line) else {
             continue;
         };
-        // Decode percent-encoded local URL so the tile's `source_path`
-        // matches the actual on-disk filename. Downstream consumers
-        // (feed autoplay size probe, thumb resolution, file existence
-        // checks) look the file up by this string and fail silently
-        // when it is still in markdown-URL form.
-        let decoded = normalize_local_markdown_url(src);
+        // `parse_inline_media_src` already returns a filesystem-form
+        // string: wikilinks pass through, percent-encoded markdown URLs
+        // are decoded. Downstream consumers can look the file up by
+        // this string directly.
         tiles.push(media_tile(
-            &decoded,
+            &src,
             dims,
-            is_video_media(&decoded),
+            is_video_media(&src),
             next_is_video_poster,
         ));
         next_is_video_poster = false;
@@ -3233,6 +3281,62 @@ mod tests {
             json,
             "[\"https://cdn.example.com/path%20with%20space.jpg\"]"
         );
+    }
+
+    // ── Wikilink syntax parsing (18.H.1) ────────────────────────────────
+
+    #[test]
+    fn extract_media_urls_reads_wikilink() {
+        let body = "intro\n\n![[Title (image 1).jpg]]\n\nmore text";
+        let json = extract_media_urls(body).unwrap();
+        assert_eq!(json, "[\"Title (image 1).jpg\"]");
+    }
+
+    #[test]
+    fn extract_media_urls_reads_wikilink_with_alt() {
+        let body = "![[Title (image 1).jpg|a caption]]";
+        let json = extract_media_urls(body).unwrap();
+        assert_eq!(json, "[\"Title (image 1).jpg\"]");
+    }
+
+    #[test]
+    fn extract_media_urls_reads_mixed_wikilink_and_markdown() {
+        // Both syntaxes in one body; order preserved.
+        let body = "![[Note (image 1).png]]\n\ncontext\n\n\
+                    ![](https://cdn.example.com/remote.jpg)\n\n\
+                    ![[Other (video 1).mp4]]";
+        let json = extract_media_urls(body).unwrap();
+        assert_eq!(
+            json,
+            "[\"Note (image 1).png\",\"https://cdn.example.com/remote.jpg\",\"Other (video 1).mp4\"]"
+        );
+    }
+
+    #[test]
+    fn extract_first_image_picks_wikilink_when_first() {
+        let body = "![[First (image 1).jpg]]\n\n![](later.png)";
+        assert_eq!(
+            extract_first_image(body),
+            Some("First (image 1).jpg".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_first_image_picks_markdown_when_first() {
+        let body = "![alt](early.png)\n\n![[Later (image 1).jpg]]";
+        assert_eq!(extract_first_image(body), Some("early.png".to_string()));
+    }
+
+    #[test]
+    fn extract_ignores_malformed_wikilink_without_closing() {
+        let body = "![[Unclosed wikilink";
+        assert_eq!(extract_media_urls(body), None);
+    }
+
+    #[test]
+    fn extract_ignores_empty_wikilink() {
+        let body = "![[]] and ![[  ]]";
+        assert_eq!(extract_media_urls(body), None);
     }
 
     // ── FTS5 escaping ───────────────────────────────────────────────────

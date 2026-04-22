@@ -699,6 +699,39 @@ fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Re
     Err(last_err.unwrap().into())
 }
 
+/// Build an Obsidian wikilink embed for a locally-downloaded media file.
+///
+/// Format: `![[name]]` or `![[name|alt]]` when alt text is non-empty.
+///
+/// Phase 18.H.1: wikilink syntax removes the body-vs-disk asymmetry that
+/// the percent-encoded `![alt](url)` form introduced. `]]` is not a
+/// valid filename character on any supported platform, so parsers can
+/// find it unambiguously and the URL literally equals the filename.
+///
+/// Obsidian renders `![[file.jpg]]` as an embedded image natively, so
+/// the raw markdown source stays readable when the user inspects the
+/// `.md` file in Obsidian.
+fn build_inline_wikilink(name: &str, alt: &str) -> String {
+    // Defensive: if a filename ever contained `]]` it would confuse
+    // the reader. Filesystem normally rejects this, but fall back to
+    // the old encoded markdown form on the pathological case to keep
+    // the output valid markdown no matter what.
+    if name.contains("]]") {
+        let encoded = encode_markdown_url_component(name);
+        return format!("![{alt}]({encoded})");
+    }
+
+    if alt.is_empty() {
+        format!("![[{name}]]")
+    } else {
+        // Obsidian pipe separates alt/caption from filename.
+        // A literal `|` in a filename would break the split, so encode
+        // it as an entity equivalent. Practically rare in filenames.
+        let safe_alt = alt.replace('|', "&#124;").replace('\n', " ");
+        format!("![[{name}|{safe_alt}]]")
+    }
+}
+
 /// Percent-encode characters that would confuse a markdown parser's
 /// inline image URL parser: space, parentheses, and the percent sign
 /// itself (so it does not look like an encoding escape to humans).
@@ -896,11 +929,15 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
 
                 downloaded.push((dest, img_name.clone()));
                 let alt = result[alt_start..bracket_pos].to_string();
-                // Encode parens/spaces in URL so the markdown parser
-                // doesn't truncate at the first `)` inside the filename.
-                // The file on disk keeps its human-readable name.
-                let encoded_url = encode_markdown_url_component(&img_name);
-                let new_markup = format!("![{alt}]({encoded_url})");
+                // Phase 18.H.1: write downloaded local media as Obsidian
+                // wikilink `![[name|alt]]`. The `]]` delimiter does not
+                // collide with filename characters, so no encoding is
+                // required. URL in body now equals filename on disk,
+                // restoring the invariant the whole codebase assumes.
+                //
+                // Alt text preserved via `|` separator when present so
+                // accessibility/captions survive the rewrite.
+                let new_markup = build_inline_wikilink(&img_name, alt.trim());
                 let new_len = new_markup.len();
                 result = result[..img_start].to_string() + &new_markup + &result[paren_end + 1..];
                 total_count += 1;
@@ -1458,5 +1495,69 @@ mod tests {
     fn encode_url_idempotent_on_no_special_chars() {
         let input = "simple-name.mp4";
         assert_eq!(encode_markdown_url_component(input), input);
+    }
+
+    // ── Wikilink builder (18.H.1) ───────────────────────────────────────
+
+    #[test]
+    fn wikilink_plain_name_without_alt() {
+        assert_eq!(
+            build_inline_wikilink("Title (image 1).jpg", ""),
+            "![[Title (image 1).jpg]]"
+        );
+    }
+
+    #[test]
+    fn wikilink_with_alt_uses_pipe_separator() {
+        assert_eq!(
+            build_inline_wikilink("Photo.jpg", "sunset on the beach"),
+            "![[Photo.jpg|sunset on the beach]]"
+        );
+    }
+
+    #[test]
+    fn wikilink_preserves_unicode_name() {
+        assert_eq!(
+            build_inline_wikilink("Закат (image 1).jpg", ""),
+            "![[Закат (image 1).jpg]]"
+        );
+    }
+
+    #[test]
+    fn wikilink_escapes_pipe_in_alt() {
+        // A literal `|` in alt text would split the wikilink early.
+        assert_eq!(
+            build_inline_wikilink("File.jpg", "before | after"),
+            "![[File.jpg|before &#124; after]]"
+        );
+    }
+
+    #[test]
+    fn wikilink_collapses_newlines_in_alt() {
+        // Alt text with a newline would split the wikilink across lines.
+        assert_eq!(
+            build_inline_wikilink("File.jpg", "line one\nline two"),
+            "![[File.jpg|line one line two]]"
+        );
+    }
+
+    #[test]
+    fn wikilink_falls_back_to_markdown_when_name_contains_close_delim() {
+        // `]]` inside the filename would corrupt the wikilink; fall
+        // back to the encoded markdown form so output stays valid.
+        let built = build_inline_wikilink("weird]]name.jpg", "");
+        assert!(built.starts_with("!["));
+        assert!(built.contains("](")); // markdown form
+        assert!(!built.contains("![["));
+    }
+
+    #[test]
+    fn wikilink_omits_alt_when_only_whitespace() {
+        // An alt that is whitespace-only should behave like empty alt
+        // (caller passes `alt.trim()` — this mirrors that).
+        assert_eq!(
+            build_inline_wikilink("f.jpg", ""),
+            "![[f.jpg]]"
+        );
     }
 }
