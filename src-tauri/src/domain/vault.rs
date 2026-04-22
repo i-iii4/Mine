@@ -210,14 +210,19 @@ pub fn validate_slug(slug: &str) -> Result<(), VaultError> {
 /// Find the next available slug given a set of existing slugs.
 ///
 /// If `slug` is available, returns it unchanged.
-/// If taken, tries `slug-2`, `slug-3`, etc. up to `slug-1000`.
+/// If taken, tries `slug (2)`, `slug (3)`, etc. up to `slug (1000)`.
+///
+/// The parenthetical suffix matches the human-readable basename style
+/// introduced in Phase 18.C: e.g. `Hello World (2).md` instead of
+/// `Hello World-2.md`. Obsidian uses the same convention for filename
+/// deduplication, so the output stays native to both environments.
 pub fn resolve_slug_conflict(slug: &str, existing: &HashSet<String>) -> Result<String, VaultError> {
     if !existing.contains(slug) {
         return Ok(slug.to_string());
     }
 
     for n in 2..=1000 {
-        let candidate = format!("{}-{}", slug, n);
+        let candidate = format!("{} ({})", slug, n);
         if !existing.contains(&candidate) {
             return Ok(candidate);
         }
@@ -427,30 +432,27 @@ mod tests {
 
     #[test]
     fn conflict_no_conflict() {
-        // V5
         let existing = HashSet::new();
         assert_eq!(resolve_slug_conflict("slug", &existing).unwrap(), "slug");
     }
 
     #[test]
     fn conflict_one_existing() {
-        // V6
         let existing: HashSet<String> = ["slug"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(resolve_slug_conflict("slug", &existing).unwrap(), "slug-2");
+        assert_eq!(resolve_slug_conflict("slug", &existing).unwrap(), "slug (2)");
     }
 
     #[test]
     fn conflict_two_existing() {
-        // V7
-        let existing: HashSet<String> = ["slug", "slug-2"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(resolve_slug_conflict("slug", &existing).unwrap(), "slug-3");
+        let existing: HashSet<String> = ["slug", "slug (2)"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(resolve_slug_conflict("slug", &existing).unwrap(), "slug (3)");
     }
 
     #[test]
     fn conflict_gap_in_sequence() {
-        // V8: slug-2 is free even though slug-3 exists
-        let existing: HashSet<String> = ["slug", "slug-3"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(resolve_slug_conflict("slug", &existing).unwrap(), "slug-2");
+        // slug (2) is free even though slug (3) exists
+        let existing: HashSet<String> = ["slug", "slug (3)"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(resolve_slug_conflict("slug", &existing).unwrap(), "slug (2)");
     }
 
     #[test]
@@ -458,9 +460,9 @@ mod tests {
         let mut existing = HashSet::new();
         existing.insert("doc".to_string());
         for i in 2..=10 {
-            existing.insert(format!("doc-{}", i));
+            existing.insert(format!("doc ({})", i));
         }
-        assert_eq!(resolve_slug_conflict("doc", &existing).unwrap(), "doc-11");
+        assert_eq!(resolve_slug_conflict("doc", &existing).unwrap(), "doc (11)");
     }
 
     #[test]
@@ -468,12 +470,31 @@ mod tests {
         let mut existing = HashSet::new();
         existing.insert("slug".to_string());
         for i in 2..=1000 {
-            existing.insert(format!("slug-{}", i));
+            existing.insert(format!("slug ({})", i));
         }
         let result = resolve_slug_conflict("slug", &existing);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("slug"));
+    }
+
+    #[test]
+    fn conflict_preserves_unicode_base() {
+        let existing: HashSet<String> = ["Закат в Токио"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            resolve_slug_conflict("Закат в Токио", &existing).unwrap(),
+            "Закат в Токио (2)"
+        );
+    }
+
+    #[test]
+    fn conflict_preserves_base_containing_parentheses() {
+        // Base already has parens from user content; suffix still appends.
+        let existing: HashSet<String> = ["Note (draft)"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            resolve_slug_conflict("Note (draft)", &existing).unwrap(),
+            "Note (draft) (2)"
+        );
     }
 
     // ── Unicode normalization ───────────────────────────────────────────
