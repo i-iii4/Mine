@@ -1,5 +1,38 @@
 # Devlog
 
+## 22.04.2026 19:45 [primary] — Social single-image clip preview fallback fix
+
+### Goal
+Убрать регресс в browser clipper feed, где новые single-image X/Twitter клипы сохранялись с валидной локальной картинкой, но в гриде вместо неё показывался серый block-level preview с baked tweet text.
+
+### Actually completed
+
+**Root cause найден в frontend render path, а не в clipper save path** (`src/components/Card.tsx`, `src/components/Card.test.tsx`)
+- проблемные клипы индексировались корректно: `first_image`, `media_urls`, `media_dimensions` и `preview_manifest` были заполнены, локальный `.jpg` реально существовал в vault
+- ветка `social-single-media` в `Card.tsx` продолжала жить на старом допущении и всегда рендерила `thumbnailUrl(block.slug)`, то есть block-level `slug.jpg`
+- для новых single-image social clips этот `slug.jpg` мог быть text/fallback preview, а не сама картинка твита; отсюда серый квадрат с baked tweet text
+- multi-image social clips не страдали, потому что `social-media-grid` уже шёл через `GalleryTiles` и tile-level media contract
+
+**Single-image social preview переведён на tile-level contract** (`src/components/Card.tsx`)
+- `social-single-media` больше не рендерит жёстко `thumbnailUrl(block.slug)`
+- вместо этого single-image ветка теперь использует тот же `GalleryTileImage`, что и gallery path:
+  - сначала `previewPath`
+  - если tile preview не существует — fallback на `sourcePath` из vault
+  - block-level `slug.jpg` остаётся только последним fallback
+- video behavior не менялся: live playback path по-прежнему идёт через `FeedVideoSurface`
+
+**Добавлена регрессия на новый clipper contract** (`src/components/Card.test.tsx`)
+- тест закрепляет single-image X/Twitter post с `preview_manifest.kind = image`
+- проверяется загрузка tile preview asset
+- и fallback на source image при `img.onerror`
+
+### Checks
+- `bun run test src/components/Card.test.tsx`
+- `bun run build`
+
+### Push
+- [current]
+
 ## 22.04.2026 19:00 [primary] — Phase 18.G.4: iCloud conflict resolution UI — Phase 18 fully closed
 
 ### Goal

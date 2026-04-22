@@ -283,6 +283,45 @@ describe("Card", () => {
     expect(preview.compareDocumentPosition(author) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("renders social single-image cards from the tile preview and falls back to the source image", () => {
+    const b = block({
+      block_type: "article",
+      slug: "tweet-block",
+      url: "https://x.com/a/status/1",
+      author: "@artist",
+      body: "Preview text",
+      preview_manifest: JSON.stringify({
+        kind: "image",
+        primary_preview_path: "tweet-block.jpg",
+        width: 1200,
+        height: 628,
+        tiles: [
+          {
+            source_path: "tweet-photo.jpg",
+            preview_path: "tweet-photo.jpg",
+            width: 1200,
+            height: 628,
+            is_video: false,
+            is_video_poster: false,
+          },
+        ],
+        overflow_count: 0,
+      }),
+    });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const img = container.querySelector("img");
+    expect(img).toBeTruthy();
+    expect(img).toHaveAttribute(
+      "src",
+      expect.stringContaining(`${VAULT}/.arena/cache/thumbs/tweet-photo.jpg`),
+    );
+    fireEvent.error(img!);
+    expect(img).toHaveAttribute(
+      "src",
+      expect.stringContaining(`${VAULT}/tweet-photo.jpg`),
+    );
+  });
+
   it("renders social preview text with the same article line-height contract", () => {
     const b = block({
       block_type: "article",

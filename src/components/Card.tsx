@@ -503,7 +503,6 @@ const SocialCard = memo(function SocialCard({
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const text = descriptor.previewText;
   const media = descriptor.mediaItems;
-  const previewSrc = thumbnailUrl(thumbsRootPath, block.slug);
   const slots = deriveContentCardSlots(descriptor);
   const hasPreviewText = text.length > 0;
   const hasBottomMeta = slots?.hasBottomMeta ?? false;
@@ -534,10 +533,12 @@ const SocialCard = memo(function SocialCard({
               />
             ) : (
               !measurementMode && (
-                <img
-                  src={previewSrc}
-                  alt=""
-                  className={absClass}
+                <GalleryTileImage
+                  item={m}
+                  vaultPath={vaultPath}
+                  thumbsRootPath={thumbsRootPath}
+                  fallbackSlug={block.slug}
+                  allowSourceFallback={!m.isVideo}
                   loading={imgLoading}
                 />
               )
