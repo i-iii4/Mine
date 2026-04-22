@@ -774,6 +774,56 @@ SPEC: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) — полная архитект
 | 12.12 | Startup safety: `list_pending_thumb_upgrades` через SQLite + `spawn_blocking`, без file peek'ов на UI thread | [x] |
 | 12.13 | Legacy vault compatibility: backfill `thumb_format/thumb_mtime` из существующих `.jpg` при `open_vault()` | [x] |
 
+### Phase 18 — Filename Identity Refactor [IN PROGRESS]
+
+Goal: перейти на human-readable filenames без повторения регрессии монолитного Phase 16 + 17. Каждая sub-phase — изолированный коммит с обязательным end-to-end Chrome clipper test перед следующей. Existing vault файлы продолжают читаться в любом из стилей (kebab legacy + Unicode new).
+
+Корневая архитектурная установка: identity блока остаётся filename-derived (`.md` stem). Никаких служебных `id` / `uuid` во frontmatter — это нарушение Markdown First. Стабильность identity против rename/conflict обеспечивается через runtime mitigations (content hash rename detection, iCloud conflict UX), не через добавление мусора в source of truth.
+
+Контекст: предыдущая попытка (`stash@{0}: WIP 21-22.04 Phase 16+17 clipper work`) объединила 7 разных slice'ов в один refactor без промежуточных коммитов, что привело к полной неработоспособности клиппера и невозможности локализовать регрессию. Эта Phase разбивает ту же работу на изолированные шаги.
+
+| # | Sub-phase | Status | Scope |
+|---|-----------|--------|-------|
+| 18.A | NFC normalization infrastructure | [ ] | `unicode-normalization` crate, helper `normalize_filename_stem`, применение на boundary (read_block_file, watcher, native_host save, clipper upload). Existing files продолжают работать, new files нормализуются на write. Никаких изменений в generation/validation logic |
+| 18.B | DB uniqueness safe для non-ASCII | [ ] | Escape-aware `LIKE` с `%`, `_`, `\` экранированием в `resolve_unique_slug`. Preparation для Unicode/бракетов/пробелов в slug. Само по себе kebab names не требует |
+| 18.C | `suggest_slug` human-readable для новых блоков | [ ] | Только функция `suggest_slug`: Unicode, пробелы, NFC, без kebab/transliteration, fallback `Untitled`. Existing files не мигрируются. Validation (`validate_slug`) в этой phase принимает оба стиля |
+| 18.D | Collision resolution UX | [ ] | `resolve_slug_conflict` suffix ` (n)` вместо `-n`. Clipper URL deduplication: повторный clip того же URL → `Already saved`. Разные URL с одинаковым title → semantic ` — YYYY-MM-DD` суффикс |
+| 18.E | Clipper staged upload pipeline | [ ] | IPC contract change: `upload_binary` кладёт file в `.arena/uploads/upload-<nonce>.<ext>`, `save_block` принимает nonce и генерит финальный basename. Popup больше не отправляет filename как источник истины. **Самая рискованная sub-phase** — делать после A–D стабильны |
+| 18.F | Inline article media naming | [ ] | Embedded images/videos в article body именуются `Название (image N).ext`, `Название (video N).mp4`. Требует Phase E (staged upload для inline media) |
+| 18.G | Identity robustness (rename + conflict) | [ ] | SPEC_IDENTITY_ROBUSTNESS.md (извлечь из `stash@{0}`). DB body_hash колонка, pending remove queue в watcher с 500ms debounce, content-hash rename detection, iCloud conflict surface, `vault_conflicts` таблица, UI banner разрешения. Независимо от A–F, может идти параллельно или после |
+
+#### Discipline requirements
+
+Каждая sub-phase обязана пройти **все** шаги до перехода к следующей:
+
+1. **Один коммит на sub-phase** с clear scope statement в message (что меняется, что НЕ меняется)
+2. **Rust unit tests** для изменённой логики
+3. **`cargo test -p mine --lib --quiet`** зелёный
+4. **`bun run build:extension`** проходит без warnings
+5. **Manual Chrome smoke test**: reload extension → clip reaal tweet или article → проверить что `.md` появился в vault и открывается в Obsidian
+6. **Revertable независимо**: каждый коммит имеет чистый `git revert` path без cascading failures
+
+#### Known residuals until Phase G completes
+
+- `-2`, `-3`, `-7.md` существующие файлы остаются как есть. Migration tool опциональна, в scope `pathological_filename_repair` (можно cherry-pick из stash)
+- Rename `.md` в Obsidian без Phase G всё ещё ломает thumb/audio cache (это было до Phase 18 тоже)
+- iCloud conflict files без Phase G создают дубликаты блоков (status quo)
+
+Phase G закрывает эти residuals. До её завершения существующее поведение не ухудшается.
+
+#### Stash usage
+
+`stash@{0}` содержит реализации:
+- `suggest_slug` Unicode + NFC (применимо к 18.C)
+- `resolve_slug_conflict` с ` (n)` (применимо к 18.D)
+- DB escaping в `resolve_unique_slug` (применимо к 18.B)
+- Clipper staged upload pipeline (применимо к 18.E)
+- Inline article media naming (применимо к 18.F)
+- `SPEC_IDENTITY_ROBUSTNESS.md` (применимо к 18.G)
+- `pathological_filename_repair` CLI tool (follow-up utility)
+
+Рекомендация: не делать `git stash pop` целиком. Извлекать по одному файлу через `git checkout stash@{0} -- <path>` или `git show stash@{0}:<path>` для reference реализации в каждой sub-phase. После успешного Phase G можно `git stash drop stash@{0}`.
+
 ### Backlog
 
 | Task | Description |
