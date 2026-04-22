@@ -699,6 +699,34 @@ fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Re
     Err(last_err.unwrap().into())
 }
 
+/// Percent-encode characters that would confuse a markdown parser's
+/// inline image URL parser: space, parentheses, and the percent sign
+/// itself (so it does not look like an encoding escape to humans).
+///
+/// Markdown readers require either balanced/escaped parens or an
+/// angle-bracket-wrapped URL for paths with parens. We keep the file on
+/// disk human-readable (`Title (image 1).jpg`) but write the encoded
+/// form in the markdown body so `![alt](url)` parses correctly both in
+/// Obsidian and in the in-app renderer.
+///
+/// Kept intentionally narrow: anything outside the problem set (letters,
+/// digits, unicode codepoints, dots, hyphens, underscores, `/`) is not
+/// encoded — encoding them would make wikilinks less readable for users
+/// inspecting the markdown source directly.
+fn encode_markdown_url_component(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        match c {
+            ' ' => out.push_str("%20"),
+            '(' => out.push_str("%28"),
+            ')' => out.push_str("%29"),
+            '%' => out.push_str("%25"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Kind of inline media embedded in an article body, used to produce
 /// human-readable filenames like `Название (image 1).jpg`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -868,7 +896,11 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
 
                 downloaded.push((dest, img_name.clone()));
                 let alt = result[alt_start..bracket_pos].to_string();
-                let new_markup = format!("![{alt}]({img_name})");
+                // Encode parens/spaces in URL so the markdown parser
+                // doesn't truncate at the first `)` inside the filename.
+                // The file on disk keeps its human-readable name.
+                let encoded_url = encode_markdown_url_component(&img_name);
+                let new_markup = format!("![{alt}]({encoded_url})");
                 let new_len = new_markup.len();
                 result = result[..img_start].to_string() + &new_markup + &result[paren_end + 1..];
                 total_count += 1;
@@ -1384,5 +1416,47 @@ mod tests {
             build_inline_media_name("Note (draft)", InlineMediaKind::Image, 1, "jpg"),
             "Note (draft) (image 1).jpg"
         );
+    }
+
+    // ── Markdown URL encoding ───────────────────────────────────────────
+
+    #[test]
+    fn encode_url_spaces_and_parens() {
+        assert_eq!(
+            encode_markdown_url_component("Hello World (image 1).jpg"),
+            "Hello%20World%20%28image%201%29.jpg"
+        );
+    }
+
+    #[test]
+    fn encode_url_ascii_safe_passthrough() {
+        assert_eq!(encode_markdown_url_component("photo.jpg"), "photo.jpg");
+        assert_eq!(
+            encode_markdown_url_component("sunset-tokyo.png"),
+            "sunset-tokyo.png"
+        );
+    }
+
+    #[test]
+    fn encode_url_preserves_unicode_chars() {
+        // Cyrillic passes through: modern markdown parsers accept Unicode
+        // in URLs, and keeping it readable is a Mine value.
+        assert_eq!(
+            encode_markdown_url_component("Закат (image 1).jpg"),
+            "Закат%20%28image%201%29.jpg"
+        );
+    }
+
+    #[test]
+    fn encode_url_escapes_bare_percent() {
+        // Paranoid: if a future filename ever contains a literal %, it
+        // must not look like a malformed escape to the markdown parser.
+        assert_eq!(encode_markdown_url_component("50%.jpg"), "50%25.jpg");
+    }
+
+    #[test]
+    fn encode_url_idempotent_on_no_special_chars() {
+        let input = "simple-name.mp4";
+        assert_eq!(encode_markdown_url_component(input), input);
     }
 }
