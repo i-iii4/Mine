@@ -320,12 +320,20 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     let mut warning = None;
 
     if let Some(ref uploaded) = p.pre_uploaded_file {
-        // File already uploaded via HTTP /upload endpoint
-        let path = vault.root().join(uploaded);
-        if path.exists() {
-            media_file = Some(uploaded.clone());
-        } else {
-            warning = Some(format!("pre-uploaded file not found: {uploaded}"));
+        // File already uploaded via HTTP /upload endpoint.
+        // Phase 18.E: backend is authoritative for the final media filename.
+        // The uploaded file may have arrived under any popup-chosen staging
+        // name (e.g. `screenshot.jpg`, `upload.mp4`). We rename it to
+        // `<slug>.<ext>` here so that the media file basename always matches
+        // the resolved block slug — consistent with screenshot and HTTP
+        // download paths below.
+        match finalize_uploaded_filename(vault.root(), uploaded, &slug) {
+            Ok(final_name) => {
+                media_file = Some(final_name);
+            }
+            Err(e) => {
+                warning = Some(e);
+            }
         }
     } else if let Some(ref image_url) = p.image_url {
         if image_url.starts_with("data:") {
@@ -536,6 +544,59 @@ fn capitalize_first(s: &str) -> String {
         Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
     }
+}
+
+/// Finalize a pre-uploaded staging file by renaming it from whatever name
+/// the popup used (`screenshot.jpg`, `upload.mp4`, ...) to `<final_stem>.<ext>`,
+/// where `final_stem` is the resolved block slug.
+///
+/// Behavior:
+/// - If the staging file does not exist, returns an error describing which
+///   filename was missing.
+/// - If `uploaded` already equals the target filename, no rename is performed.
+/// - If the target filename already exists, returns an error — the caller's
+///   slug-conflict resolution should have produced a unique stem, so a
+///   collision here indicates an orphan media file on disk and we must not
+///   overwrite it silently.
+/// - Otherwise renames the file and returns the new basename.
+///
+/// Phase 18.E: backend is authoritative for the final media filename.
+fn finalize_uploaded_filename(
+    vault_root: &std::path::Path,
+    uploaded: &str,
+    final_stem: &str,
+) -> Result<String, String> {
+    let src = vault_root.join(uploaded);
+    if !src.exists() {
+        return Err(format!("pre-uploaded file not found: {uploaded}"));
+    }
+
+    let ext = std::path::Path::new(uploaded)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+
+    let final_name = if ext.is_empty() {
+        final_stem.to_string()
+    } else {
+        format!("{}.{}", final_stem, ext)
+    };
+
+    if uploaded == final_name {
+        return Ok(final_name);
+    }
+
+    let dest = vault_root.join(&final_name);
+    if dest.exists() {
+        return Err(format!(
+            "cannot finalize staged upload: target already exists: {final_name}"
+        ));
+    }
+
+    std::fs::rename(&src, &dest)
+        .map_err(|e| format!("failed to rename staged upload to {final_name}: {e}"))?;
+
+    Ok(final_name)
 }
 
 /// Extract file extension from URL, stripping query string and fragment.
@@ -1068,5 +1129,88 @@ fn main() {
 
             other => send_error(&format!("unknown action: {other}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn make_staging(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn finalize_renames_staged_file_to_slug_and_returns_new_name() {
+        let tmp = TempDir::new().unwrap();
+        make_staging(tmp.path(), "upload.jpg", b"image-bytes");
+
+        let result = finalize_uploaded_filename(tmp.path(), "upload.jpg", "Hello World");
+
+        assert_eq!(result, Ok("Hello World.jpg".to_string()));
+        assert!(!tmp.path().join("upload.jpg").exists());
+        assert!(tmp.path().join("Hello World.jpg").exists());
+    }
+
+    #[test]
+    fn finalize_preserves_extension_including_multi_char() {
+        let tmp = TempDir::new().unwrap();
+        make_staging(tmp.path(), "upload.webp", b"x");
+        let result = finalize_uploaded_filename(tmp.path(), "upload.webp", "Photo");
+        assert_eq!(result, Ok("Photo.webp".to_string()));
+    }
+
+    #[test]
+    fn finalize_preserves_unicode_slug() {
+        let tmp = TempDir::new().unwrap();
+        make_staging(tmp.path(), "upload.jpg", b"x");
+        let result =
+            finalize_uploaded_filename(tmp.path(), "upload.jpg", "Закат в Токио");
+        assert_eq!(result, Ok("Закат в Токио.jpg".to_string()));
+        assert!(tmp.path().join("Закат в Токио.jpg").exists());
+    }
+
+    #[test]
+    fn finalize_noop_when_names_already_match() {
+        let tmp = TempDir::new().unwrap();
+        make_staging(tmp.path(), "Hello.jpg", b"x");
+        let result = finalize_uploaded_filename(tmp.path(), "Hello.jpg", "Hello");
+        assert_eq!(result, Ok("Hello.jpg".to_string()));
+        // Source still exists, not renamed to anything else.
+        assert!(tmp.path().join("Hello.jpg").exists());
+    }
+
+    #[test]
+    fn finalize_errors_when_source_missing() {
+        let tmp = TempDir::new().unwrap();
+        let result = finalize_uploaded_filename(tmp.path(), "missing.jpg", "Slug");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn finalize_errors_when_target_exists_to_avoid_overwrite() {
+        let tmp = TempDir::new().unwrap();
+        make_staging(tmp.path(), "upload.jpg", b"new");
+        make_staging(tmp.path(), "Hello.jpg", b"existing");
+        let result = finalize_uploaded_filename(tmp.path(), "upload.jpg", "Hello");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("target already exists"));
+        // Both files still present — no destructive action.
+        assert!(tmp.path().join("upload.jpg").exists());
+        assert!(tmp.path().join("Hello.jpg").exists());
+        assert_eq!(std::fs::read(tmp.path().join("Hello.jpg")).unwrap(), b"existing");
+    }
+
+    #[test]
+    fn finalize_handles_file_without_extension() {
+        let tmp = TempDir::new().unwrap();
+        make_staging(tmp.path(), "upload", b"x");
+        let result = finalize_uploaded_filename(tmp.path(), "upload", "Plain");
+        assert_eq!(result, Ok("Plain".to_string()));
+        assert!(tmp.path().join("Plain").exists());
     }
 }
