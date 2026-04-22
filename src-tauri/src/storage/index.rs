@@ -357,10 +357,16 @@ fn extract_social_preview_tiles(
         let Some(src) = parse_inline_media_src(line) else {
             continue;
         };
+        // Decode percent-encoded local URL so the tile's `source_path`
+        // matches the actual on-disk filename. Downstream consumers
+        // (feed autoplay size probe, thumb resolution, file existence
+        // checks) look the file up by this string and fail silently
+        // when it is still in markdown-URL form.
+        let decoded = normalize_local_markdown_url(src);
         tiles.push(media_tile(
-            src,
+            &decoded,
             dims,
-            is_video_media(src),
+            is_video_media(&decoded),
             next_is_video_poster,
         ));
         next_is_video_poster = false;

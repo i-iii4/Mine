@@ -83,8 +83,15 @@ fn collect_body_media(body: &str) -> Vec<String> {
         if url.starts_with("http://") || url.starts_with("https://") {
             continue;
         }
-        if seen.insert(url.to_string()) {
-            out.push(url.to_string());
+        // Percent-decode the markdown URL back to its on-disk filename
+        // so `vault_root.join(name)` actually finds the file. The body
+        // stores the encoded form for the markdown parser (Phase 18.F.1);
+        // consumers that read files by name need the decoded form.
+        let decoded = percent_encoding::percent_decode_str(url)
+            .decode_utf8_lossy()
+            .into_owned();
+        if seen.insert(decoded.clone()) {
+            out.push(decoded);
         }
     }
     out
