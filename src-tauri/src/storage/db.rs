@@ -83,6 +83,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
             height INTEGER,
             author TEXT,
             body TEXT DEFAULT '',
+            body_hash TEXT,
             preview_manifest TEXT,
             feed_playback TEXT,
             thumb_format TEXT,
@@ -158,6 +159,28 @@ fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN feed_playback TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_format TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_mtime INTEGER");
+
+    // Migration: add body_hash column. SHA-256 over the block body, used by
+    // Phase 18.G watcher rename detection to match a Remove+Create event
+    // pair as a single rename without losing identity. Null for rows not
+    // yet indexed after upgrade; backfilled incrementally on next scan.
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN body_hash TEXT");
+
+    // Migration: vault_conflicts table. Records iCloud-style filename
+    // conflicts ("<name> (conflicted copy).md") so the UI can surface them
+    // and let the user choose a resolution. Conflict files are never
+    // automatically indexed as separate blocks.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS vault_conflicts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            base_slug TEXT NOT NULL,
+            conflict_slug TEXT NOT NULL,
+            detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(base_slug, conflict_slug)
+        );
+        CREATE INDEX IF NOT EXISTS idx_vault_conflicts_base_slug
+            ON vault_conflicts(base_slug);",
+    )?;
 
     Ok(())
 }

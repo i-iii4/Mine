@@ -401,6 +401,33 @@ pub fn extract_wikilinks(body: &str) -> Vec<String> {
     results
 }
 
+/// Compute a stable content hash of a block body.
+///
+/// Used by Phase 18.G watcher rename detection to match a `Remove` event
+/// on the old filename with a `Create` event on the new filename: if both
+/// yield the same body hash inside the debounce window, the watcher treats
+/// them as a rename and preserves the DB identity (thumb cache, audio
+/// position, wikilinks) instead of deleting the old row and creating a
+/// new one.
+///
+/// The hash is computed over the raw body string (after frontmatter is
+/// stripped upstream). It is stable across NFC-normalized filenames and
+/// any purely cosmetic changes to the filename itself.
+///
+/// Returns a 16-char hex prefix of SHA-256. Collisions are astronomically
+/// unlikely for text bodies; this width keeps DB rows small.
+pub fn compute_body_hash(body: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(body.as_bytes());
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(16);
+    for byte in digest.iter().take(8) {
+        out.push_str(&format!("{:02x}", byte));
+    }
+    out
+}
+
 /// Generate a human-readable filesystem-safe slug from a title or URL.
 ///
 /// Title takes precedence over URL. Unicode, spaces, parentheses and most
@@ -1417,6 +1444,46 @@ mod tests {
         let slug = suggest_slug(Some(nfd_title), None);
         // Expected NFC: "йог"
         assert_eq!(slug, "\u{0439}ог");
+    }
+
+    // ── compute_body_hash (18.G) ────────────────────────────────────────
+
+    #[test]
+    fn body_hash_is_16_char_lowercase_hex() {
+        let hash = compute_body_hash("some body");
+        assert_eq!(hash.len(), 16);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(hash.chars().all(|c| !c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn body_hash_deterministic() {
+        let a = compute_body_hash("Hello, world!");
+        let b = compute_body_hash("Hello, world!");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn body_hash_differs_for_different_inputs() {
+        let a = compute_body_hash("Hello");
+        let b = compute_body_hash("Hello.");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn body_hash_empty_body_is_stable() {
+        // Empty body is legitimate (e.g. link blocks) and must produce a
+        // well-defined hash, not a special sentinel.
+        let hash = compute_body_hash("");
+        assert_eq!(hash.len(), 16);
+        assert_eq!(hash, compute_body_hash(""));
+    }
+
+    #[test]
+    fn body_hash_unicode_content_stable() {
+        let a = compute_body_hash("Закат в Токио — прекрасный вид");
+        let b = compute_body_hash("Закат в Токио — прекрасный вид");
+        assert_eq!(a, b);
     }
 
     // ── Edge cases summary ──────────────────────────────────────────────

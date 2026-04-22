@@ -885,11 +885,16 @@ fn upsert_block_inner(conn: &Connection, block: &Block, vault_root: Option<&Path
         existing_thumb_format,
     );
 
+    // Compute body hash at index time so watcher rename detection
+    // (Phase 18.G) can match Remove+Create events without reading the
+    // file off disk at event time.
+    let body_hash = crate::domain::block::compute_body_hash(&block.body);
+
     conn.execute(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body, first_image,
-            media_urls, media_dimensions, preview_manifest, feed_playback)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            media_urls, media_dimensions, preview_manifest, feed_playback, body_hash)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
             title = excluded.title,
@@ -908,6 +913,7 @@ fn upsert_block_inner(conn: &Connection, block: &Block, vault_root: Option<&Path
             media_dimensions = excluded.media_dimensions,
             preview_manifest = excluded.preview_manifest,
             feed_playback = excluded.feed_playback,
+            body_hash = excluded.body_hash,
             indexed_at = datetime('now')",
         params![
             block.slug,
@@ -928,6 +934,7 @@ fn upsert_block_inner(conn: &Connection, block: &Block, vault_root: Option<&Path
             media_dimensions,
             preview_manifest,
             feed_playback,
+            body_hash,
         ],
     )
     .context("failed to upsert block")?;
@@ -1307,6 +1314,120 @@ pub fn resolve_unique_slug(conn: &Connection, raw_slug: &str) -> Result<String> 
         "could not resolve slug conflict for '{}' after 1000 attempts",
         raw_slug
     );
+}
+
+/// Look up the stored body hash for a given slug.
+///
+/// Returns `None` if the slug does not exist or its `body_hash` column is
+/// NULL (e.g. a pre-18.G row that has not been re-indexed yet). Used by
+/// watcher rename detection to match a pending Remove against a later
+/// Create with identical content.
+pub fn lookup_body_hash(conn: &Connection, slug: &str) -> Result<Option<String>> {
+    let hash: Option<String> = conn
+        .query_row(
+            "SELECT body_hash FROM blocks WHERE slug = ?1",
+            [slug],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to look up body_hash")?
+        .flatten();
+    Ok(hash)
+}
+
+/// Rename a block's slug in place, preserving its `id` and all relations
+/// (tags, wikilinks, preview_manifest, feed_playback, cached metadata).
+///
+/// Returns `Ok(true)` if the rename was performed, `Ok(false)` if
+/// `old_slug` does not exist. Returns an error if `new_slug` is already
+/// taken by another block (caller should either finalize as two separate
+/// blocks or resolve conflict beforehand).
+///
+/// Contract: Phase 18.G watcher invokes this when a Remove+Create event
+/// pair shares the same body_hash in the pending debounce window.
+pub fn rename_slug(conn: &Connection, old_slug: &str, new_slug: &str) -> Result<bool> {
+    if old_slug == new_slug {
+        return Ok(false);
+    }
+    let existing: Option<i64> = conn
+        .query_row("SELECT id FROM blocks WHERE slug = ?1", [new_slug], |row| {
+            row.get(0)
+        })
+        .optional()
+        .context("failed to check target slug availability")?;
+    if existing.is_some() {
+        anyhow::bail!(
+            "rename target slug '{}' already exists in index",
+            new_slug
+        );
+    }
+
+    let affected = conn
+        .execute(
+            "UPDATE blocks SET slug = ?1, indexed_at = datetime('now') WHERE slug = ?2",
+            params![new_slug, old_slug],
+        )
+        .context("failed to update slug")?;
+    Ok(affected > 0)
+}
+
+// ─── vault_conflicts surface ────────────────────────────────────────────────
+
+/// Record a pending iCloud-style conflict between `base_slug` and `conflict_slug`.
+/// Idempotent — repeated detection during scans does not duplicate rows.
+pub fn record_vault_conflict(
+    conn: &Connection,
+    base_slug: &str,
+    conflict_slug: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO vault_conflicts (base_slug, conflict_slug)
+         VALUES (?1, ?2)",
+        params![base_slug, conflict_slug],
+    )
+    .context("failed to record vault conflict")?;
+    Ok(())
+}
+
+/// A pending iCloud conflict awaiting user resolution.
+#[derive(Debug, Clone)]
+pub struct VaultConflict {
+    pub base_slug: String,
+    pub conflict_slug: String,
+    pub detected_at: String,
+}
+
+/// List all pending conflicts, newest first.
+pub fn list_vault_conflicts(conn: &Connection) -> Result<Vec<VaultConflict>> {
+    let mut stmt = conn.prepare(
+        "SELECT base_slug, conflict_slug, detected_at
+         FROM vault_conflicts
+         ORDER BY detected_at DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(VaultConflict {
+            base_slug: row.get(0)?,
+            conflict_slug: row.get(1)?,
+            detected_at: row.get(2)?,
+        })
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .context("failed to list vault conflicts")
+}
+
+/// Clear a single conflict entry after user resolution.
+pub fn clear_vault_conflict(
+    conn: &Connection,
+    base_slug: &str,
+    conflict_slug: &str,
+) -> Result<()> {
+    conn.execute(
+        "DELETE FROM vault_conflicts
+         WHERE base_slug = ?1 AND conflict_slug = ?2",
+        params![base_slug, conflict_slug],
+    )
+    .context("failed to clear vault conflict")?;
+    Ok(())
 }
 
 /// List all blocks without description/source (lightweight for grid views).

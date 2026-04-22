@@ -153,6 +153,58 @@ impl VaultLayout {
     }
 }
 
+// ─── iCloud conflict detection ──────────────────────────────────────────────
+
+/// Check whether a filename stem looks like an iCloud sync conflict.
+///
+/// iCloud Drive appends one of several conflict markers to the base
+/// filename when it cannot merge concurrent edits:
+///
+/// - `<name> (conflicted copy).md`
+/// - `<name> (conflicted copy 2).md`
+/// - `<name> (user-name's MacBook Pro conflicted copy).md`
+/// - `<name> (conflict).md`
+///
+/// If the stem matches one of those patterns, returns the inferred
+/// `base_slug` (the original name before the conflict suffix). Returns
+/// `None` for ordinary filenames.
+///
+/// Contract: Phase 18.G watcher uses this to divert conflict files into
+/// the `vault_conflicts` surface instead of indexing them as new blocks.
+pub fn detect_icloud_conflict(stem: &str) -> Option<String> {
+    // Patterns are parenthetical and case-insensitive. We match from the end
+    // so the base includes any user-authored parens earlier in the title.
+    // Minimum signal: a parenthetical group ending with "conflict" or
+    // "conflicted copy" (optionally followed by a number).
+    let trimmed = stem.trim_end();
+    let close = trimmed.rfind(')')?;
+    // The closing paren must be at (or very near) the end of the stem.
+    if close + 1 < trimmed.len() {
+        return None;
+    }
+    // Find the matching opening paren (last ' (' before close).
+    let before_close = &trimmed[..close];
+    let open = before_close.rfind(" (")?;
+    let inside = trimmed[open + 2..close].to_lowercase();
+
+    let is_conflict = inside == "conflict"
+        || inside == "conflicted copy"
+        || inside.starts_with("conflicted copy ")
+        || inside.ends_with(" conflicted copy")
+        || inside.contains("conflicted copy");
+
+    if !is_conflict {
+        return None;
+    }
+
+    let base = trimmed[..open].trim_end();
+    if base.is_empty() {
+        None
+    } else {
+        Some(base.to_string())
+    }
+}
+
 // ─── Unicode normalization ──────────────────────────────────────────────────
 
 /// Normalize a filename stem to NFC form.
@@ -534,5 +586,84 @@ mod tests {
         let nfc = normalize_filename_stem(nfd);
         // Expected composed: "caf" + "é" (U+00E9)
         assert_eq!(nfc, "caf\u{00E9}");
+    }
+
+    // ── iCloud conflict detection ───────────────────────────────────────
+
+    #[test]
+    fn detect_conflict_basic() {
+        assert_eq!(
+            detect_icloud_conflict("Hello World (conflicted copy)"),
+            Some("Hello World".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_conflict_numbered() {
+        assert_eq!(
+            detect_icloud_conflict("Note (conflicted copy 2)"),
+            Some("Note".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_conflict_with_device_name() {
+        assert_eq!(
+            detect_icloud_conflict("Doc (MacBook Pro conflicted copy)"),
+            Some("Doc".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_conflict_short_form() {
+        assert_eq!(
+            detect_icloud_conflict("Note (conflict)"),
+            Some("Note".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_conflict_case_insensitive_marker() {
+        assert_eq!(
+            detect_icloud_conflict("Thing (Conflicted Copy)"),
+            Some("Thing".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_conflict_preserves_unicode_base() {
+        assert_eq!(
+            detect_icloud_conflict("Закат (conflicted copy)"),
+            Some("Закат".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_conflict_preserves_user_parentheses_in_base() {
+        // "Note (draft)" is the real base; the trailing paren group is
+        // the conflict marker only.
+        assert_eq!(
+            detect_icloud_conflict("Note (draft) (conflicted copy)"),
+            Some("Note (draft)".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_conflict_rejects_ordinary_parenthetical() {
+        // Mine's own collision suffix (Phase 18.D) is not a conflict.
+        assert_eq!(detect_icloud_conflict("Hello World (2)"), None);
+        assert_eq!(detect_icloud_conflict("Note (draft)"), None);
+    }
+
+    #[test]
+    fn detect_conflict_rejects_plain_filename() {
+        assert_eq!(detect_icloud_conflict("sunset-tokyo"), None);
+        assert_eq!(detect_icloud_conflict("Hello World"), None);
+    }
+
+    #[test]
+    fn detect_conflict_rejects_empty_base() {
+        assert_eq!(detect_icloud_conflict("(conflicted copy)"), None);
+        assert_eq!(detect_icloud_conflict(" (conflict)"), None);
     }
 }
