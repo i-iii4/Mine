@@ -1,5 +1,99 @@
 # Devlog
 
+## 22.04.2026 14:45 [primary] — Phase 18.F hotfix cascade + plan for 18.H wikilinks
+
+### Goal
+Починить регрессию от 18.F, при которой Twitter-клипы с видео перестали
+автовоспроизводиться после переименования inline media в
+`{slug} (image N).ext` / `{slug} (video N).mp4`. И зафиксировать
+архитектурно верную финальную цель — переход на Obsidian wikilinks
+вместо percent-encoding cascade.
+
+### Root cause analysis
+
+До Phase 18.F inline media именовались `{slug}-img{N}.ext` — без
+пробелов и скобок. Во всём codebase работал implicit invariant:
+
+```
+URL_in_markdown_body ≡ filename_on_disk
+```
+
+Phase 18.F ввёл скобки и пробелы в inline media naming. Это потребовало
+percent-encoding URL в body чтобы markdown parser не обрезал на внутреннем
+`)`. Но encoding создал **архитектурный разрыв**: body содержит
+`Title%20%28image%201%29.mp4`, а на диске — `Title (image 1).mp4`.
+
+Каждая функция в codebase, парсящая body markdown URL и использующая его
+как filesystem path, теперь содержала скрытый баг: находила encoded URL,
+передавала в `vault_root.join()` → файл не найден → consumer тихо падал.
+
+### Найденные и исправленные места (hotfix cascade)
+
+**18.F.1** (`38901e75`) — Percent-encode URL in body markdown.
+Закрыл parser-level regression. Backend `localize_body_images` теперь
+пишет `![alt](Title%20%28image%201%29.mp4)` вместо сломанного
+`![alt](Title (image 1).mp4)`.
+
+**18.F.2** (`03f63deb`) — Decode on extraction. `extract_first_image` и
+`extract_media_urls` теперь percent-decode local URLs перед сохранением
+в `first_image` и `media_urls` columns. Remote URLs (`http://`,
+`https://`) passed through untouched — их encoding семантически значим.
+Shared helper `normalize_local_markdown_url`.
+
+**18.F.3** (`42a7eeec`) — Two more extractors. Two more places with the
+same pattern:
+- `extract_social_preview_tiles` (Twitter/X/Instagram): this was the
+  actual root of "видео не играет". Without decode, `tile.source_path`
+  stayed encoded → `local_media_file_size_bytes` NotFound →
+  `feed_autoplay_profile_for_source` None → `feed_playback` NULL → no
+  autoplay descriptor for feed video.
+- `collect_body_media` in `media_dimensions.rs`: without decode, image
+  header reads missed every inline media file, `media_dimensions` column
+  was null for body images.
+
+### Architectural lesson
+
+Three hotfixes for the same underlying issue: **naming convention with
+markdown-special characters in filenames forces a body-vs-disk asymmetry**
+that every body-parsing consumer must reconcile. Invariant
+"decode everywhere URL is used as path" is easy to forget in future
+code. Right final shape is to **not introduce the asymmetry at all**.
+
+### Phase 18.H planned: Obsidian wikilinks
+
+Move inline media from `![alt](url)` to `![[name]]` Obsidian wikilink
+syntax in body. Advantages:
+
+- `]]` delimiter does not conflict with filename characters — parser
+  finds it unambiguously
+- Spaces, parens, unicode allowed inside `[[...]]` as literals — no
+  escape required
+- Obsidian native format — raw markdown source stays readable
+- Restores invariant `URL ≡ filename` → all body parsers work without
+  decode
+- Alt text via pipe: `![[file.jpg|alt text]]`
+
+Scope:
+- Backend writer + dual-syntax extractors
+- Frontend `remark-wiki-link` integration + Detail renderer
+- Migration command for blocks clipped between 18.F and 18.H
+
+Added to PLAN.md as `Phase 18.H` with four sub-phases (H.1–H.4).
+
+### Checks
+- `cargo test --lib --quiet` — 350/350 (7 new `normalize_url_*` +
+  `extract_*_decodes_*` tests from 18.F.2)
+- `cargo test --bin native-host --quiet` — 22/22 (5 new
+  `encode_markdown_url_component` tests from 18.F.1)
+- Chrome clipper smoke test after 18.F.1: text articles render
+  correctly; parser no longer leaks `!.jpg)` / `!.mp4)`
+- Twitter video test block: still requires re-index after 18.F.3
+  install to pick up decoded `preview_manifest.tiles[].source_path`.
+  New clips after reinstall should have `feed_playback` populated
+
+### Push
+- `38901e75`, `03f63deb`, `42a7eeec` — three hotfix commits for 18.F
+
 ## 22.04.2026 13:30 [primary] — Phase 18 filename refactor: sub-phases A through G.3 shipped
 
 ### Goal

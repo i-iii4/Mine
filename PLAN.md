@@ -793,9 +793,61 @@ Goal: перейти на human-readable filenames без повторения �
 | 18.G.1 | Identity robustness infrastructure | [x] | DB migration: `body_hash` column, `vault_conflicts` table. `compute_body_hash`, `detect_icloud_conflict`, `lookup_body_hash`, `rename_slug`, `record/list/clear_vault_conflict`. — `3ea8c8fd` |
 | 18.G.2 | Watcher rename detection | [x] | Pending-remove queue с 500ms deadline. BlockDeleted → defer. BlockChanged → body-hash match → `rename_slug` + derived-store migration. `block:renamed` event. — `a957e338` |
 | 18.G.3 | iCloud conflict runtime | [x] | `index_md_file` и `full_scan` диверсифицируют conflict файлы в `vault_conflicts`. `vault-conflict-detected` event. Orphan cleanup не считает conflict stems. — `489e9e4a` |
-| 18.G.4 | Frontend conflict UI | [ ] | IPC commands для list/resolve, sidebar banner, resolution dialog (Keep original / Keep conflict / Merge manually). **Следующая sub-phase.** |
+| 18.G.4 | Frontend conflict UI | [ ] | IPC commands для list/resolve, sidebar banner, resolution dialog (Keep original / Keep conflict / Merge manually) |
+| 18.F.1 | Hotfix: URL-encode parens in body markdown | [x] | Внутренние parens в inline media name ломали markdown parser. Percent-encoding `space`/`(`/`)`/`%` в body URL. — `38901e75` |
+| 18.F.2 | Decode local URLs in extract functions | [x] | `extract_first_image`, `extract_media_urls` теперь decode URLs перед сохранением в DB. Remote URLs не трогаются. — `03f63deb` |
+| 18.F.3 | Decode in social tiles + media_dimensions | [x] | `extract_social_preview_tiles` (ломало видео в Twitter) + `collect_body_media`. Каскадная коррекция той же проблемы. — `42a7eeec` |
 
-Status: 9 of 10 sub-phases complete. Waiting on 18.G.4 frontend conflict UI. Per-sub-phase smoke test in Chrome clipper confirmed A–F working end-to-end after install-native-host reinstall. G.1–G.3 are backend-only, visible only via DB inspection until G.4 surfaces conflicts in UI.
+### Phase 18.H — Inline media via Obsidian wikilinks [PLANNED]
+
+Goal: устранить **class of bugs** `URL-in-body ≠ filename-on-disk`, который возник в Phase 18.F после перехода на `{slug} (image N).ext` naming. Вместо percent-encoding cascade (F.1 → F.2 → F.3 → ...), перейти на Obsidian-native wikilink syntax `![[name]]` для inline media, где delimiter `]]` не конфликтует с filename characters.
+
+SPEC: `SPEC_OBSIDIAN_WIKILINKS.md` (создать как часть phase).
+
+### Architectural rationale
+
+**Root cause F-series каскада:** markdown `![alt](url)` использует `(` и `)` как URL boundary, что несовместимо с именами файлов содержащими parens. Percent-encoding в body решает parsing, но создаёт системный разрыв: `URL_in_body != filename_on_disk`. Каждый consumer body markdown, использующий URL как path, должен декодировать. Это неформализованный invariant, легко упустить при следующем изменении.
+
+**Wikilink `![[name]]` делает delimiter `]]`, который практически не встречается в именах файлов.** Внутри `[[...]]` разрешены пробелы, parens, unicode, almost everything. Parser находит закрывающий `]]` однозначно, URL извлекается как есть, совпадает с filename.
+
+### Scope
+
+**Backend:**
+- `localize_body_images` пишет `![[name]]` для inline media (вместо `![](encoded_url)`)
+- `extract_first_image`, `extract_media_urls`, `extract_social_preview_tiles`, `collect_body_media` расширены на оба syntax (`![alt](url)` + `![[name]]`)
+- Alt-text supported через Obsidian pipe: `![[name|alt text]]`
+- Backward compat: existing блоки с `![](...)` продолжают работать
+
+**Frontend:**
+- `remark-wiki-link` plugin или custom remark transformer
+- Detail renderer handle wikilink embed
+- Card preview pipeline уже использует `preview_manifest`, который backend generates из both syntaxes — изменений там минимум
+
+**Migration:**
+- One-time script проходит по всем `.md` файлам vault, преобразует `![](percent-encoded)` → `![[decoded-name]]`
+- Opt-in (команда `migrate_to_wikilinks`), не автомат
+- Documented как recovery для блоков, склипанных между 18.F и 18.H
+
+### Sub-phases
+
+| # | Slice | Status | Scope |
+|---|-------|--------|-------|
+| 18.H.1 | Backend writer on wikilinks | [ ] | `localize_body_images` → `![[name]]`, extract functions parse both syntax, unit tests |
+| 18.H.2 | Frontend wikilink rendering | [ ] | `remark-wiki-link` integration или custom remark plugin, Detail + article body render path |
+| 18.H.3 | Migration command | [ ] | `migrate_body_to_wikilinks` bin tool с `--dry-run`/`--apply`, converts existing `![](encoded)` → `![[decoded]]` |
+| 18.H.4 | SPEC document | [ ] | `SPEC_OBSIDIAN_WIKILINKS.md` finalizes the syntax contract, both-forms compatibility rules, Obsidian semantics (alt pipe, embed vs link) |
+
+### Why not immediately
+
+Phase 18.H требует frontend work (`remark-wiki-link` integration, Detail renderer path). Это больший scope чем percent-encoding hotfixes. 18.F.2/F.3 разблокируют видео для новых клипов **сейчас**; 18.H — правильная финальная архитектура, которая устраняет весь класс проблем и делает markdown files максимально Obsidian-native.
+
+### Known residuals until 18.H closes
+
+- `![](%-encoded)` формат в body остаётся в блоках, склипанных после 18.F.1 и до 18.H.1
+- Obsidian raw-view для этих блоков показывает нечитаемый encoded URL
+- 18.H.3 migration script конвертирует их в wikilinks
+
+Status: 9 of 10 Phase 18 sub-phases complete + 3 F-hotfixes. Waiting on 18.G.4 frontend conflict UI and full 18.H wikilink migration. Per-sub-phase smoke test in Chrome clipper confirmed A–F working end-to-end after install-native-host reinstall. G.1–G.3 are backend-only, visible only via DB inspection until G.4 surfaces conflicts in UI.
 
 #### Discipline requirements
 
