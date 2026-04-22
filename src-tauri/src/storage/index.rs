@@ -11,7 +11,10 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::block::{extract_wikilinks, Block, BlockType, DateTime, Frontmatter};
+use crate::domain::block::{
+    extract_wikilinks, iter_inline_media_sources, normalize_local_markdown_url, Block, BlockType,
+    DateTime, Frontmatter,
+};
 use crate::domain::channel::Channel;
 use crate::domain::search::{SearchFilter, SearchQuery};
 use crate::domain::vault::VaultLayout;
@@ -182,85 +185,6 @@ pub struct PreviewBlock {
     pub slug: String,
     pub thumb_format: Option<ThumbFormat>,
     pub thumb_mtime: u64,
-}
-
-/// Decode a local markdown URL back to its filesystem name.
-///
-/// Phase 18.F.1 writes inline article media URLs with spaces and parens
-/// percent-encoded (`Title%20%28image%201%29.jpg`) so the markdown parser
-/// does not truncate at inner parens. When we extract URLs downstream
-/// (`media_urls` JSON, `first_image`, preview manifest tiles), consumers
-/// expect the real filesystem name — `std::fs::metadata` and thumb
-/// resolution look up files by their on-disk names, not the encoded form.
-///
-/// Remote URLs (http/https) may contain legitimate percent-encoding that
-/// must survive unchanged (a query string, a pre-encoded path segment),
-/// so we skip decoding for them entirely. Only local references —
-/// vault-relative paths — get decoded.
-fn normalize_local_markdown_url(url: &str) -> String {
-    if is_remote_media(url) {
-        return url.to_string();
-    }
-    percent_encoding::percent_decode_str(url)
-        .decode_utf8_lossy()
-        .into_owned()
-}
-
-/// Single entry point for extracting every inline media reference from a
-/// markdown body, in document order. Supports both syntaxes:
-///
-/// - `![[name]]` / `![[name|alt]]` — Obsidian wikilink (Phase 18.H.1,
-///   the canonical form for locally-downloaded media)
-/// - `![alt](url)` — standard markdown (legacy blocks, remote URLs)
-///
-/// For wikilinks, the `name` portion is returned verbatim (already
-/// matches the filesystem). For markdown, `url` is percent-decoded
-/// when it is a local reference (Phase 18.F.2) and left as-is for
-/// remote URLs. Callers can therefore treat every returned string as
-/// either a filesystem name or a remote URL without further decoding.
-pub(crate) fn iter_inline_media_sources(body: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < body.len() {
-        let Some(rel) = body[i..].find("![") else { break };
-        let excl = i + rel;
-        let after_excl = excl + 2;
-        if after_excl >= body.len() {
-            break;
-        }
-
-        if body[after_excl..].starts_with('[') {
-            // Wikilink: `![[name]]` or `![[name|alt]]`
-            let name_start = after_excl + 1;
-            let Some(close_offset) = body[name_start..].find("]]") else {
-                i = name_start;
-                continue;
-            };
-            let inner = &body[name_start..name_start + close_offset];
-            let name = inner.split('|').next().unwrap_or(inner).trim();
-            if !name.is_empty() {
-                out.push(name.to_string());
-            }
-            i = name_start + close_offset + 2;
-        } else {
-            // Markdown: `![alt](url)`
-            let Some(bracket_offset) = body[after_excl..].find("](") else {
-                i = after_excl;
-                continue;
-            };
-            let url_start = after_excl + bracket_offset + 2;
-            let Some(paren_end) = body[url_start..].find(')') else {
-                i = url_start;
-                continue;
-            };
-            let url = &body[url_start..url_start + paren_end];
-            if !url.is_empty() {
-                out.push(normalize_local_markdown_url(url));
-            }
-            i = url_start + paren_end + 1;
-        }
-    }
-    out
 }
 
 /// Extract the first inline media reference from body text.

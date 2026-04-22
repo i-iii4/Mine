@@ -8,6 +8,7 @@
 //
 // Contract: SPEC_BLOCK.md
 
+use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use serde_yaml::Value;
 use thiserror::Error;
@@ -399,6 +400,66 @@ pub fn extract_wikilinks(body: &str) -> Vec<String> {
     }
 
     results
+}
+
+/// Decode a local markdown URL back to its filesystem name.
+///
+/// Remote URLs may contain legitimate percent-encoding that must survive
+/// unchanged; only local vault-relative references are decoded.
+pub fn normalize_local_markdown_url(url: &str) -> String {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        return url.to_string();
+    }
+    percent_decode_str(url).decode_utf8_lossy().into_owned()
+}
+
+/// Extract every inline media reference from a markdown body in document order.
+///
+/// Supports both canonical local embeds (`![[name]]`, `![[name|alt]]`) and
+/// legacy markdown image syntax (`![alt](url)`). Local markdown URLs are
+/// percent-decoded back to their on-disk filenames; remote URLs are left
+/// unchanged.
+pub fn iter_inline_media_sources(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < body.len() {
+        let Some(rel) = body[i..].find("![") else { break };
+        let excl = i + rel;
+        let after_excl = excl + 2;
+        if after_excl >= body.len() {
+            break;
+        }
+
+        if body[after_excl..].starts_with('[') {
+            let name_start = after_excl + 1;
+            let Some(close_offset) = body[name_start..].find("]]") else {
+                i = name_start;
+                continue;
+            };
+            let inner = &body[name_start..name_start + close_offset];
+            let name = inner.split('|').next().unwrap_or(inner).trim();
+            if !name.is_empty() {
+                out.push(name.to_string());
+            }
+            i = name_start + close_offset + 2;
+        } else {
+            let Some(bracket_offset) = body[after_excl..].find("](") else {
+                i = after_excl;
+                continue;
+            };
+            let url_start = after_excl + bracket_offset + 2;
+            let Some(paren_end) = body[url_start..].find(')') else {
+                i = url_start;
+                continue;
+            };
+            let url = &body[url_start..url_start + paren_end];
+            if !url.is_empty() {
+                out.push(normalize_local_markdown_url(url));
+            }
+            i = url_start + paren_end + 1;
+        }
+    }
+    out
 }
 
 /// Compute a stable content hash of a block body.
@@ -1340,6 +1401,55 @@ mod tests {
     fn wikilinks_multiline() {
         let result = extract_wikilinks("line one [[foo]]\nline two [[bar]]");
         assert_eq!(result, vec!["foo", "bar"]);
+    }
+
+    // ── inline media parsing ───────────────────────────────────────────
+
+    #[test]
+    fn normalize_local_markdown_url_decodes_local_filename() {
+        assert_eq!(
+            normalize_local_markdown_url("Title%20%28image%201%29.jpg"),
+            "Title (image 1).jpg"
+        );
+    }
+
+    #[test]
+    fn normalize_local_markdown_url_preserves_remote_url() {
+        let url = "https://cdn.example.com/path%20with%20space.jpg";
+        assert_eq!(normalize_local_markdown_url(url), url);
+    }
+
+    #[test]
+    fn inline_media_reads_wikilink() {
+        let body = "intro\n\n![[Title (image 1).jpg]]\n\nmore";
+        assert_eq!(iter_inline_media_sources(body), vec!["Title (image 1).jpg"]);
+    }
+
+    #[test]
+    fn inline_media_reads_wikilink_with_alt() {
+        let body = "![[Title (image 1).jpg|a caption]]";
+        assert_eq!(iter_inline_media_sources(body), vec!["Title (image 1).jpg"]);
+    }
+
+    #[test]
+    fn inline_media_reads_mixed_wikilink_and_markdown() {
+        let body = "![[Note (image 1).png]]\n\ncontext\n\n\
+                    ![](https://cdn.example.com/remote.jpg)\n\n\
+                    ![](Title%20%28video%201%29.mp4)";
+        assert_eq!(
+            iter_inline_media_sources(body),
+            vec![
+                "Note (image 1).png",
+                "https://cdn.example.com/remote.jpg",
+                "Title (video 1).mp4",
+            ]
+        );
+    }
+
+    #[test]
+    fn inline_media_ignores_malformed_wikilink_without_closing() {
+        let body = "![[Unclosed wikilink";
+        assert!(iter_inline_media_sources(body).is_empty());
     }
 
     // ── suggest_slug ────────────────────────────────────────────────────

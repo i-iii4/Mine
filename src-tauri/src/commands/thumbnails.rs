@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::state::{AppState, CommandError};
+use crate::domain::vault::validate_slug;
 use crate::storage::{db, index, thumbnails};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -45,7 +46,7 @@ pub struct ThumbUpgradeRequest {
 ///
 /// Preconditions enforced in code:
 ///   - Vault is open
-///   - `slug` matches `^[a-zA-Z0-9_-]+$` (no path traversal, no separators)
+///   - `slug` is a safe filename stem (`validate_slug`)
 ///   - `bytes` starts with JPEG magic (FF D8 FF)
 ///
 /// Writes atomically (temp file + rename) so a concurrent read of the
@@ -59,23 +60,7 @@ pub fn save_thumb(
     slug: String,
     bytes: Vec<u8>,
 ) -> Result<(), CommandError> {
-    // Slug validation — prevent path traversal and unexpected separators.
-    if slug.is_empty()
-        || !slug
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(CommandError::Internal(format!("invalid slug: {}", slug)));
-    }
-
-    // Magic byte check — reject anything that isn't a real JPEG. Protects
-    // the cache from corrupt bytes and enforces the contract that thumbs
-    // written through this path are always decodable JPEGs.
-    if bytes.len() < 3 || bytes[0] != 0xFF || bytes[1] != 0xD8 || bytes[2] != 0xFF {
-        return Err(CommandError::Internal(
-            "save_thumb: bytes are not a JPEG (missing FF D8 FF magic)".into(),
-        ));
-    }
+    validate_thumb_write_request(&slug, &bytes)?;
 
     let (thumb_path, db_path, vault_root) = {
         let vault_state = state
@@ -123,6 +108,18 @@ pub fn save_thumb(
             is_text: false,
         },
     );
+    Ok(())
+}
+
+fn validate_thumb_write_request(slug: &str, bytes: &[u8]) -> Result<(), CommandError> {
+    validate_slug(slug).map_err(|e| CommandError::Internal(e.to_string()))?;
+
+    if bytes.len() < 3 || bytes[0] != 0xFF || bytes[1] != 0xD8 || bytes[2] != 0xFF {
+        return Err(CommandError::Internal(
+            "save_thumb: bytes are not a JPEG (missing FF D8 FF magic)".into(),
+        ));
+    }
+
     Ok(())
 }
 
@@ -405,5 +402,33 @@ mod tests {
         let (path, kind) = resolve_upgrade_media(&vault, target).unwrap();
         assert_eq!(kind, "video");
         assert_eq!(path, video);
+    }
+
+    #[test]
+    fn validate_thumb_write_request_accepts_human_readable_slug() {
+        let slug = "Announcing USVC AngelList exists to power the innovation economy. To date, we";
+        assert!(validate_thumb_write_request(slug, &[0xFF, 0xD8, 0xFF, 0x00]).is_ok());
+    }
+
+    #[test]
+    fn validate_thumb_write_request_accepts_unicode_slug() {
+        assert!(validate_thumb_write_request("続きを描いてます", &[0xFF, 0xD8, 0xFF, 0x00]).is_ok());
+    }
+
+    #[test]
+    fn validate_thumb_write_request_rejects_path_traversal_and_separators() {
+        for slug in ["foo/bar", "foo\\bar", "..", "../x", ""] {
+            assert!(validate_thumb_write_request(slug, &[0xFF, 0xD8, 0xFF, 0x00]).is_err());
+        }
+    }
+
+    #[test]
+    fn validate_thumb_write_request_rejects_nul_byte() {
+        assert!(validate_thumb_write_request("foo\0bar", &[0xFF, 0xD8, 0xFF, 0x00]).is_err());
+    }
+
+    #[test]
+    fn validate_thumb_write_request_rejects_non_jpeg_bytes() {
+        assert!(validate_thumb_write_request("valid slug", &[0x89, 0x50, 0x4E]).is_err());
     }
 }

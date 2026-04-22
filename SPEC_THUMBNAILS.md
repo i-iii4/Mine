@@ -183,7 +183,7 @@ if block_type == Image && downloaded main media exists:
 elif block has frontmatter.thumbnail field pointing to local file:
     candidate = vault/<thumbnail field>
 elif block_type == Article:
-    candidate = first ![](local_file) in body (via find_first_local_media)
+    candidate = first local embedded media in body (`![[local_file]]`, `![[local_file|alt]]`, legacy `![](local_file)`) via `find_first_local_media`
 else:
     candidate = None
 ```
@@ -494,7 +494,7 @@ fn save_thumb(
 **Preconditions:**
 - Vault open
 - `bytes` first 3 match JPEG magic (`FF D8 FF`)
-- `slug` matches `^[a-z0-9-_]+$` (no path traversal)
+- `slug` is a safe filename stem (`validate_slug`): spaces, Unicode, скобки и пунктуация допустимы; path traversal, separators и NUL запрещены
 
 **Behavior:**
 - Validate magic bytes — reject with `CommandError::InvalidArgument` if not JPEG

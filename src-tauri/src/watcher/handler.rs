@@ -1439,6 +1439,30 @@ mod tests {
         assert!(!thumb.exists());
     }
 
+    #[test]
+    fn resolve_upgrade_media_for_block_reads_wikilink_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+
+        let image_name = "Title (image 1).jpg";
+        std::fs::write(vault.root().join(image_name), b"fake image bytes").unwrap();
+        write_md_file_with_body(
+            &vault,
+            "Human Readable Title",
+            "article",
+            &[],
+            "![[Title (image 1).jpg]]",
+        );
+
+        let path = vault.block_path("Human Readable Title");
+        let (slug, content) = files::read_block_file(&path).unwrap();
+        let block = parse_block(&slug, &content).unwrap();
+
+        let (media_path, kind) = resolve_upgrade_media_for_block(&vault, &block).unwrap();
+        assert_eq!(kind, "image");
+        assert_eq!(media_path, vault.root().join(image_name));
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────
 
     #[test]

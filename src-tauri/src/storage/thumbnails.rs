@@ -13,7 +13,7 @@ use imageproc::drawing::draw_text_mut;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use crate::domain::block::{Block, BlockType};
+use crate::domain::block::{iter_inline_media_sources, Block, BlockType};
 use crate::domain::vault::VaultLayout;
 
 /// Default max side for thumbnails: 480px covers 240px CSS columns at 2x Retina.
@@ -950,9 +950,9 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
     ThumbSource::None
 }
 
-/// Scan a markdown body for the first `![](filename)` where `filename` is
-/// a local path (not http(s)://) and matches the given extension predicate.
-/// Returns the filename string if found.
+/// Scan a markdown body for the first local embedded media reference whose
+/// extension matches `ext_predicate`. Supports both `![[name]]` and
+/// legacy `![](name)` syntax via the shared domain parser.
 pub fn find_first_local_media(body: &str, ext_predicate: fn(&str) -> bool) -> Option<String> {
     find_local_media(body, ext_predicate, 1).into_iter().next()
 }
@@ -963,26 +963,13 @@ fn find_local_media(body: &str, ext_predicate: fn(&str) -> bool, limit: usize) -
     }
 
     let mut results = Vec::new();
-    let mut search_from = 0;
-    while let Some(start) = body[search_from..].find("![") {
-        let abs_start = search_from + start;
-        let rest = &body[abs_start + 2..];
-        let Some(bracket) = rest.find("](") else {
-            break;
-        };
-        let url_start = abs_start + 2 + bracket + 2;
-        let Some(paren_end) = body[url_start..].find(')') else {
-            break;
-        };
-        let url = &body[url_start..url_start + paren_end];
-        search_from = url_start + paren_end + 1;
-
-        if url.is_empty() || url.starts_with("http://") || url.starts_with("https://") {
+    for src in iter_inline_media_sources(body) {
+        if src.is_empty() || src.starts_with("http://") || src.starts_with("https://") {
             continue;
         }
-        let ext = ext_lower(url);
+        let ext = ext_lower(&src);
         if ext_predicate(&ext) {
-            results.push(url.to_string());
+            results.push(src);
             if results.len() >= limit {
                 break;
             }
@@ -1560,6 +1547,33 @@ mod tests {
     }
 
     #[test]
+    fn find_first_local_media_reads_wikilink_image() {
+        let body = "intro\n\n![[Title (image 1).jpg]]\n\nmore";
+        assert_eq!(
+            find_first_local_media(body, is_image_ext),
+            Some("Title (image 1).jpg".to_string())
+        );
+    }
+
+    #[test]
+    fn find_first_local_media_reads_wikilink_with_alt() {
+        let body = "![[Title (image 1).jpg|caption]]";
+        assert_eq!(
+            find_first_local_media(body, is_image_ext),
+            Some("Title (image 1).jpg".to_string())
+        );
+    }
+
+    #[test]
+    fn find_first_local_media_reads_mixed_markdown_and_wikilink_in_order() {
+        let body = "![](legacy.png)\n\n![[Later (image 1).jpg]]";
+        assert_eq!(
+            find_first_local_media(body, is_image_ext),
+            Some("legacy.png".to_string())
+        );
+    }
+
+    #[test]
     fn generate_for_block_article_with_non_decodable_webp_falls_back_to_text() {
         // Article embeds a WebP file that Rust's image crate cannot decode
         // (VP8X with alpha, animation, etc). The cascade must NOT attempt
@@ -1591,5 +1605,53 @@ mod tests {
         let mut f = std::fs::File::open(&thumb_path).unwrap();
         f.read_exact(&mut header).unwrap();
         assert_eq!(header, PNG_MAGIC);
+    }
+
+    #[test]
+    fn generate_for_block_article_with_wikilink_image_returns_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+
+        let image_path = dir.path().join("Title (image 1).jpg");
+        create_test_image(&image_path, 120, 80);
+
+        let block = make_article(
+            "Human Readable Title",
+            "Article with image\n\n![[Title (image 1).jpg]]\n",
+        );
+
+        let source = generate_for_block(&block, &vault);
+        assert_eq!(source, ThumbSource::Image);
+
+        let thumb_path = vault.thumb_path("Human Readable Title");
+        let mut header = [0u8; 3];
+        use std::io::Read;
+        let mut f = std::fs::File::open(&thumb_path).unwrap();
+        f.read_exact(&mut header).unwrap();
+        assert_eq!(header, JPEG_MAGIC);
+    }
+
+    #[test]
+    fn generate_for_block_article_with_two_wikilink_images_writes_composite_jpeg() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+
+        create_test_image(&dir.path().join("First (image 1).jpg"), 120, 80);
+        create_test_image(&dir.path().join("Second (image 2).jpg"), 90, 90);
+
+        let block = make_article(
+            "Human Readable Title",
+            "![[First (image 1).jpg]]\n\n![[Second (image 2).jpg]]",
+        );
+
+        let source = generate_for_block(&block, &vault);
+        assert_eq!(source, ThumbSource::Composite);
+
+        let thumb_path = vault.thumb_path("Human Readable Title");
+        let mut header = [0u8; 3];
+        use std::io::Read;
+        let mut f = std::fs::File::open(&thumb_path).unwrap();
+        f.read_exact(&mut header).unwrap();
+        assert_eq!(header, JPEG_MAGIC);
     }
 }

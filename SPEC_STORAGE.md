@@ -238,8 +238,8 @@ is_video_ext(ext: &str) -> bool
 1. `frontmatter.file` указывает на existing image → `generate_thumbnail`
 2. `frontmatter.file` указывает на existing video → `generate_video_thumbnail` (с fallback к text при ошибке)
 3. `frontmatter.thumbnail` field указывает на existing image → `generate_thumbnail`
-4. First `![](local_file)` в body — image → `generate_thumbnail`
-5. First `![](local_file)` в body — video → `generate_video_thumbnail` (с fallback к text при ошибке)
+4. First local embedded media in body (`![[local_file]]`, `![[local_file|alt]]`, legacy `![](local_file)`) — image → `generate_thumbnail`
+5. First local embedded media in body (`![[local_file]]`, `![[local_file|alt]]`, legacy `![](local_file)`) — video → `generate_video_thumbnail` (с fallback к text при ошибке)
 6. Block is Article → `generate_text_thumbnail` (всегда успешно)
 
 Возвращает `ThumbSource` enum (`Image | Video | Text | None`) для telemetry и определения необходимости WebView upgrade (см. SPEC_THUMBNAILS.md Phase 2).

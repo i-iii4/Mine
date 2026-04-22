@@ -1,5 +1,39 @@
 # Devlog
 
+## 22.04.2026 23:35 [primary] — Sidebar thumbnails for human-readable filenames
+
+### Goal
+Исправить регресс, где новые clipper-блоки с human-readable basename и inline media в формате `![[name]]` индексировались, но в sidebar оставались без нормальной миниатюры.
+
+### Actually completed
+
+**Root cause закрыт в thumbnail pipeline, не во фронтенде sidebar**
+- `storage/index` уже понимал новый inline-media contract (`![[name]]`, `![[name|alt]]`) и корректно заполнял `first_image`, `media_urls`, `preview_manifest`
+- `storage/thumbnails` всё ещё жил на старом parser’е и искал только legacy `![](url)`, поэтому для новых article/social clips Phase 1 часто писала text placeholder вместо real block-level `slug.jpg`
+- Phase 2 тоже была partially broken: `save_thumb` принимал только ASCII slug’и, из-за чего backlog upgrade не мог перезаписать placeholder у human-readable basename
+
+**Inline media parser вынесен в shared domain helper** (`src-tauri/src/domain/block.rs`)
+- добавлен единый pure parser для body media extraction
+- поддерживает:
+  - `![[filename]]`
+  - `![[filename|alt]]`
+  - legacy `![alt](url)`
+- локальные markdown URLs percent-decode’ятся обратно в реальное имя файла; remote URLs сохраняются как есть
+
+**Thumbnail generation переведена на shared parser** (`src-tauri/src/storage/thumbnails.rs`, `src-tauri/src/storage/index.rs`)
+- `find_first_local_media` и `collect_article_preview_images` больше не расходятся с индексатором по синтаксису body media
+- новые blocks с `![[Title (image 1).jpg]]` снова строят правильный block-level `slug.jpg` уже на Rust Phase 1, если source image декодируемый
+- watcher live-upgrade path автоматически получил тот же parser через `find_first_local_media`
+
+**Phase 2 upgrade path теперь принимает human-readable slug** (`src-tauri/src/commands/thumbnails.rs`)
+- `save_thumb` больше не использует ASCII whitelist
+- вместо этого применяет общий `validate_slug` contract из `domain/vault`
+- result: уже сохранённые human-readable blocks с `thumb_format='png'` могут self-heal’иться штатно через `list_pending_thumb_upgrades` + `save_thumb`, без cache purge и без format-version bump
+
+### Checks
+- `cargo test -p mine --lib --quiet`
+- `cargo check -p mine --quiet`
+
 ## 22.04.2026 19:45 [primary] — Social single-image clip preview fallback fix
 
 ### Goal
