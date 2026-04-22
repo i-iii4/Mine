@@ -1233,14 +1233,38 @@ pub fn slug_exists(conn: &Connection, slug: &str) -> Result<bool> {
     Ok(exists)
 }
 
+/// Escape SQL LIKE wildcards so they match as literal characters.
+///
+/// SQLite LIKE treats `%` as "any sequence" and `_` as "any single char".
+/// A slug that itself contains `%`, `_`, or `\` would otherwise cause the
+/// LIKE pattern to match far more than intended (e.g. a slug "50%" would
+/// silently match every other slug in the table).
+///
+/// Paired with `ESCAPE '\'` in the SQL statement.
+fn escape_like_pattern(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// Given a raw slug, return a unique variant that does not collide with existing slugs.
 /// Tries `raw_slug` first, then `raw_slug-2`, `raw_slug-3`, ..., up to `raw_slug-1000`.
+///
+/// Safe for slugs containing Unicode, spaces, parentheses, and any characters
+/// allowed by filesystem naming. LIKE wildcards (`%`, `_`, `\`) in the slug
+/// are escaped so they match literally.
 pub fn resolve_unique_slug(conn: &Connection, raw_slug: &str) -> Result<String> {
-    let pattern = format!("{raw_slug}-%");
+    let escaped = escape_like_pattern(raw_slug);
+    let pattern = format!("{escaped}-%");
     let mut stmt = conn.prepare(
         "SELECT slug
          FROM blocks
-         WHERE slug = ?1 OR slug LIKE ?2",
+         WHERE slug = ?1 OR slug LIKE ?2 ESCAPE '\\'",
     )?;
 
     let rows = stmt.query_map(params![raw_slug, pattern], |row| row.get::<_, String>(0))?;
@@ -2919,6 +2943,63 @@ mod tests {
 
         let slug = resolve_unique_slug(&conn, "note").unwrap();
         assert_eq!(slug, "note-3");
+    }
+
+    // ── resolve_unique_slug: LIKE pattern safety ────────────────────────
+
+    #[test]
+    fn resolve_unique_slug_with_percent_does_not_match_unrelated_slugs() {
+        // A raw slug "50%" must NOT match "50abc-5" via LIKE wildcard expansion.
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("50abc-5", &[]), None).unwrap();
+        let slug = resolve_unique_slug(&conn, "50%").unwrap();
+        // No conflict: "50%" itself is not in DB and "50abc-5" is unrelated.
+        assert_eq!(slug, "50%");
+    }
+
+    #[test]
+    fn resolve_unique_slug_with_percent_still_detects_literal_conflict() {
+        // If the raw slug "50%" itself exists, collision must still be detected.
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("50%", &[]), None).unwrap();
+        let slug = resolve_unique_slug(&conn, "50%").unwrap();
+        assert_eq!(slug, "50%-2");
+    }
+
+    #[test]
+    fn resolve_unique_slug_with_underscore_is_literal() {
+        // Underscore is a LIKE single-char wildcard; must be escaped.
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("foo_bar", &[]), None).unwrap();
+        upsert_block(&conn, &make_block("fooXbar-2", &[]), None).unwrap();
+        let slug = resolve_unique_slug(&conn, "foo_bar").unwrap();
+        // Only the literal "foo_bar" and "foo_bar-N" may count; "fooXbar-2" does not.
+        assert_eq!(slug, "foo_bar-2");
+    }
+
+    #[test]
+    fn resolve_unique_slug_with_backslash_is_literal() {
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("path\\segment", &[]), None).unwrap();
+        let slug = resolve_unique_slug(&conn, "path\\segment").unwrap();
+        assert_eq!(slug, "path\\segment-2");
+    }
+
+    #[test]
+    fn resolve_unique_slug_with_unicode_and_spaces() {
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("Закат в Токио", &[]), None).unwrap();
+        let slug = resolve_unique_slug(&conn, "Закат в Токио").unwrap();
+        assert_eq!(slug, "Закат в Токио-2");
+    }
+
+    #[test]
+    fn resolve_unique_slug_with_parentheses() {
+        // Parentheses are not LIKE wildcards but ensure they round-trip.
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("Note (draft)", &[]), None).unwrap();
+        let slug = resolve_unique_slug(&conn, "Note (draft)").unwrap();
+        assert_eq!(slug, "Note (draft)-2");
     }
 
     // ── FTS5 escaping ───────────────────────────────────────────────────
