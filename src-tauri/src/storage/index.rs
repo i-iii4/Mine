@@ -184,6 +184,28 @@ pub struct PreviewBlock {
     pub thumb_mtime: u64,
 }
 
+/// Decode a local markdown URL back to its filesystem name.
+///
+/// Phase 18.F.1 writes inline article media URLs with spaces and parens
+/// percent-encoded (`Title%20%28image%201%29.jpg`) so the markdown parser
+/// does not truncate at inner parens. When we extract URLs downstream
+/// (`media_urls` JSON, `first_image`, preview manifest tiles), consumers
+/// expect the real filesystem name — `std::fs::metadata` and thumb
+/// resolution look up files by their on-disk names, not the encoded form.
+///
+/// Remote URLs (http/https) may contain legitimate percent-encoding that
+/// must survive unchanged (a query string, a pre-encoded path segment),
+/// so we skip decoding for them entirely. Only local references —
+/// vault-relative paths — get decoded.
+fn normalize_local_markdown_url(url: &str) -> String {
+    if is_remote_media(url) {
+        return url.to_string();
+    }
+    percent_encoding::percent_decode_str(url)
+        .decode_utf8_lossy()
+        .into_owned()
+}
+
 /// Extract the first markdown image URL from body text.
 fn extract_first_image(body: &str) -> Option<String> {
     let start = body.find("![")?;
@@ -194,7 +216,7 @@ fn extract_first_image(body: &str) -> Option<String> {
     if url.is_empty() {
         None
     } else {
-        Some(url.to_string())
+        Some(normalize_local_markdown_url(url))
     }
 }
 
@@ -209,7 +231,7 @@ fn extract_media_urls(body: &str) -> Option<String> {
             if let Some(paren_end) = body[url_start..].find(')') {
                 let url = &body[url_start..url_start + paren_end];
                 if !url.is_empty() {
-                    urls.push(url.to_string());
+                    urls.push(normalize_local_markdown_url(url));
                 }
                 search_from = url_start + paren_end + 1;
                 continue;
@@ -3139,6 +3161,72 @@ mod tests {
         upsert_block(&conn, &make_block("Note (draft)", &[]), None).unwrap();
         let slug = resolve_unique_slug(&conn, "Note (draft)").unwrap();
         assert_eq!(slug, "Note (draft) (2)");
+    }
+
+    // ── normalize_local_markdown_url (18.F.2) ───────────────────────────
+
+    #[test]
+    fn normalize_url_decodes_local_percent_encoded_parens_and_spaces() {
+        let encoded = "Title%20%28image%201%29.jpg";
+        assert_eq!(
+            normalize_local_markdown_url(encoded),
+            "Title (image 1).jpg"
+        );
+    }
+
+    #[test]
+    fn normalize_url_decodes_cyrillic_names() {
+        let encoded = "Закат%20%28image%201%29.jpg";
+        assert_eq!(
+            normalize_local_markdown_url(encoded),
+            "Закат (image 1).jpg"
+        );
+    }
+
+    #[test]
+    fn normalize_url_passes_remote_urls_through_unchanged() {
+        // Remote URLs may have legitimate percent-encoded query strings
+        // that must survive unchanged.
+        let url = "https://cdn.example.com/path?x=%20y&z=%28";
+        assert_eq!(normalize_local_markdown_url(url), url);
+    }
+
+    #[test]
+    fn normalize_url_is_noop_for_plain_ascii_names() {
+        assert_eq!(
+            normalize_local_markdown_url("photo.jpg"),
+            "photo.jpg"
+        );
+    }
+
+    #[test]
+    fn extract_media_urls_decodes_local_filenames() {
+        let body = "![](Title%20%28image%201%29.jpg)\n\nsome text\n\n\
+                    ![](Other%20%28video%201%29.mp4)";
+        let json = extract_media_urls(body).unwrap();
+        assert_eq!(
+            json,
+            "[\"Title (image 1).jpg\",\"Other (video 1).mp4\"]"
+        );
+    }
+
+    #[test]
+    fn extract_first_image_decodes_local_filename() {
+        let body = "prelude\n\n![alt](Title%20%28image%201%29.jpg)\n\nend";
+        assert_eq!(
+            extract_first_image(body),
+            Some("Title (image 1).jpg".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_media_urls_preserves_remote_encoded_urls() {
+        let body = "![](https://cdn.example.com/path%20with%20space.jpg)";
+        let json = extract_media_urls(body).unwrap();
+        assert_eq!(
+            json,
+            "[\"https://cdn.example.com/path%20with%20space.jpg\"]"
+        );
     }
 
     // ── FTS5 escaping ───────────────────────────────────────────────────
