@@ -9,9 +9,11 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
-use crate::domain::block::{parse_block, Block, BlockType};
+use crate::domain::block::{compute_body_hash, parse_block, Block, BlockType};
 use crate::domain::vault::{normalize_filename_stem, VaultLayout};
 use crate::storage::{article_audio, db, files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
@@ -678,51 +680,297 @@ fn index_md_file_inner(
 /// When `app` is `Some`, emits Tauri events (`block:added`, `block:removed`,
 /// `thumb:updated`, `thumb:upgrade-requested`) to drive the event-driven
 /// sidebar in the frontend. Tests pass `None` to exercise the pure logic.
+// ─── Rename-detection pending queue (Phase 18.G) ────────────────────────────
+//
+// Filesystem-level rename on macOS surfaces as a BlockDeleted followed by a
+// BlockChanged. Without correlation, this class of events destroys block
+// identity: thumb cache becomes an orphan, audio playback position is lost,
+// wikilinks break. We defer BlockDeleted events briefly and correlate them
+// with an incoming BlockChanged that shares the same content hash. When a
+// match appears within the debounce window, we issue a rename_slug and
+// migrate derived-store artifacts (thumb .jpg, audio .wav + sidecar) in
+// place. Entries that time out without a match fall through to a real
+// block removal as if they had been removed immediately.
+
+/// Window during which a BlockDeleted event waits for a matching
+/// BlockChanged before being committed as a real removal.
+const RENAME_MATCH_WINDOW_MS: u64 = 500;
+
+#[derive(Debug, Clone)]
+struct PendingRemove {
+    slug: String,
+    body_hash: Option<String>,
+    /// Tags captured before removal so the eventual `block:removed` event
+    /// tells the frontend which channels to invalidate.
+    tags: Vec<String>,
+    deadline: Instant,
+}
+
+fn pending_queue() -> &'static Mutex<Vec<PendingRemove>> {
+    static QUEUE: Mutex<Vec<PendingRemove>> = Mutex::new(Vec::new());
+    &QUEUE
+}
+
+fn push_pending_remove(entry: PendingRemove) {
+    if let Ok(mut q) = pending_queue().lock() {
+        q.push(entry);
+    }
+}
+
+/// Remove and return the first pending entry whose body hash matches.
+fn take_pending_by_hash(hash: &str) -> Option<PendingRemove> {
+    let mut q = pending_queue().lock().ok()?;
+    let pos = q
+        .iter()
+        .position(|p| p.body_hash.as_deref() == Some(hash))?;
+    Some(q.remove(pos))
+}
+
+/// Drain entries whose deadline has already passed. Caller commits each
+/// as a real block removal.
+fn drain_expired_pending() -> Vec<PendingRemove> {
+    let now = Instant::now();
+    let mut q = match pending_queue().lock() {
+        Ok(g) => g,
+        Err(_) => return Vec::new(),
+    };
+    let mut expired = Vec::new();
+    q.retain(|p| {
+        if p.deadline <= now {
+            expired.push(p.clone());
+            false
+        } else {
+            true
+        }
+    });
+    expired
+}
+
+/// Test-only: drain the entire pending queue and commit every entry as a
+/// removal, regardless of deadline. Lets unit tests assert post-removal
+/// state without sleeping for the rename-match window.
+#[cfg(test)]
+fn flush_pending_for_test(conn: &Connection, vault: &VaultLayout, app: Option<&AppHandle>) {
+    let pending: Vec<PendingRemove> = match pending_queue().lock() {
+        Ok(mut g) => g.drain(..).collect(),
+        Err(_) => return,
+    };
+    for p in pending {
+        commit_deferred_removal(conn, vault, &p, app);
+    }
+}
+
+/// Rename a block's derived-store artifacts in place so they continue to
+/// serve the new slug after a rename_slug migration. Best-effort: missing
+/// files are skipped silently (the regular generation paths will recreate
+/// them on demand).
+fn rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) {
+    if old_slug == new_slug {
+        return;
+    }
+    // Thumbnail .jpg
+    let old_thumb = vault.thumb_path(old_slug);
+    let new_thumb = vault.thumb_path(new_slug);
+    if old_thumb.exists() && !new_thumb.exists() {
+        if let Err(e) = std::fs::rename(&old_thumb, &new_thumb) {
+            log::warn!(
+                "rename thumb {} -> {} failed: {}",
+                old_thumb.display(),
+                new_thumb.display(),
+                e
+            );
+        }
+    }
+    // Article audio .wav + sidecar .json — articles only, but rename is
+    // extension-agnostic so we iterate over the audio cache directory.
+    for ext in ["wav", "json"] {
+        let old_path = vault.article_audio_asset_path(old_slug, ext);
+        let new_path = vault.article_audio_asset_path(new_slug, ext);
+        if old_path.exists() && !new_path.exists() {
+            if let Err(e) = std::fs::rename(&old_path, &new_path) {
+                log::warn!(
+                    "rename audio artifact {} -> {} failed: {}",
+                    old_path.display(),
+                    new_path.display(),
+                    e
+                );
+            }
+        }
+    }
+}
+
+/// Commit a deferred block removal as if it had been processed immediately.
+/// Used when the rename-match window expires without an incoming Create.
+fn commit_deferred_removal(
+    conn: &Connection,
+    vault: &VaultLayout,
+    pending: &PendingRemove,
+    app: Option<&AppHandle>,
+) {
+    if let Err(e) = index::remove_block(conn, &pending.slug) {
+        log::warn!(
+            "deferred removal: index::remove_block for {} failed: {}",
+            pending.slug,
+            e
+        );
+    }
+    let _ = article_audio::delete_all_artifacts(vault, &pending.slug);
+    if let Some(app) = app {
+        let _ = app.emit(
+            "block:removed",
+            BlockRemovedPayload {
+                slug: pending.slug.clone(),
+                tags: pending.tags.clone(),
+            },
+        );
+        let _ = app.emit(
+            "thumb:updated",
+            ThumbUpdatedPayload {
+                slug: pending.slug.clone(),
+                is_text: false,
+            },
+        );
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BlockRenamedPayload {
+    old_slug: String,
+    new_slug: String,
+}
+
+/// Read a .md file and compute its body hash for rename-match comparison.
+/// Body is taken after frontmatter parsing so filename or metadata edits
+/// do not break identity for unchanged content.
+fn read_body_hash_from_md(path: &Path) -> Result<String> {
+    let (slug, content) = files::read_block_file(path)?;
+    // parse_block peels off frontmatter; if it fails we treat the whole
+    // content as the body, since hashing the raw file still gives a
+    // stable identity for the rename match.
+    let body = match parse_block(&slug, &content) {
+        Ok(block) => block.body,
+        Err(_) => content,
+    };
+    Ok(compute_body_hash(&body))
+}
+
+/// Commit a rename-match: update DB slug, migrate derived artifacts, and
+/// notify the frontend. Runs the regular index_md_file path afterwards
+/// so any metadata changes in the renamed file (title, tags) also land.
+fn perform_rename_match(
+    conn: &Connection,
+    vault: &VaultLayout,
+    pending: &PendingRemove,
+    new_slug: &str,
+    new_path: &Path,
+    app: Option<&AppHandle>,
+) -> Result<bool> {
+    log::info!(
+        "watcher: rename detected {} -> {} (body hash match)",
+        pending.slug,
+        new_slug
+    );
+
+    match index::rename_slug(conn, &pending.slug, new_slug) {
+        Ok(true) => {
+            rename_derived_artifacts(vault, &pending.slug, new_slug);
+            if let Some(app) = app {
+                let _ = app.emit(
+                    "block:renamed",
+                    BlockRenamedPayload {
+                        old_slug: pending.slug.clone(),
+                        new_slug: new_slug.to_string(),
+                    },
+                );
+            }
+        }
+        Ok(false) => {
+            // Old slug was not in index (shouldn't happen — we captured
+            // body_hash from it on remove). Fall through to index.
+            log::warn!(
+                "rename_slug: source slug {} not found; indexing {} as new",
+                pending.slug,
+                new_slug
+            );
+        }
+        Err(e) => {
+            log::warn!(
+                "rename_slug {} -> {} failed: {}; treating as separate blocks",
+                pending.slug,
+                new_slug,
+                e
+            );
+            // Commit the deferred removal and fall through to normal
+            // indexing so both blocks end up in a consistent state.
+            commit_deferred_removal(conn, vault, pending, app);
+        }
+    }
+
+    // Re-index the new file so title/tags/preview changes (not just the
+    // rename) are captured.
+    index_md_file(conn, vault, new_path, app)
+}
+
 pub fn handle_event(
     conn: &Connection,
     vault: &VaultLayout,
     event: &VaultEvent,
     app: Option<&AppHandle>,
 ) -> Result<bool> {
+    // Before any dispatch, commit removals whose rename-match window
+    // expired. Keeps the pending queue bounded and ensures deferred
+    // deletes are eventually visible to the frontend.
+    for expired in drain_expired_pending() {
+        commit_deferred_removal(conn, vault, &expired, app);
+    }
+
     match event {
         VaultEvent::BlockChanged(path) => {
+            // Rename detection: if this looks like a brand-new slug and its
+            // body matches a recently-deferred removal, migrate identity
+            // instead of creating a second row.
+            if let Some(new_slug) = path_to_slug(path) {
+                let already_indexed = index::get_block(conn, &new_slug)
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if !already_indexed {
+                    if let Ok(body_hash) = read_body_hash_from_md(path) {
+                        if let Some(pending) = take_pending_by_hash(&body_hash) {
+                            return perform_rename_match(
+                                conn, vault, &pending, &new_slug, path, app,
+                            );
+                        }
+                    }
+                }
+            }
             return index_md_file(conn, vault, path, app);
         }
         VaultEvent::BlockDeleted(path) => {
             if let Some(slug) = path_to_slug(path) {
-                // Snapshot the block's tag list BEFORE removing it so the
-                // frontend can drop the preview from each affected channel.
-                // After remove_block the tags are gone from the index.
+                // Defer the removal into the rename-detection queue.
+                // Capture body hash and tags now so either a matching Create
+                // within the window can rename identity cleanly, or the
+                // expired drain can emit block:removed with the right
+                // channel list. The DB row itself is NOT removed yet —
+                // rename_slug on match would fail if we pre-deleted.
+                let body_hash = index::lookup_body_hash(conn, &slug)
+                    .ok()
+                    .flatten();
                 let tags = index::get_block(conn, &slug)
                     .ok()
                     .flatten()
                     .map(|b| b.tags)
                     .unwrap_or_default();
-                let removed = index::remove_block(conn, &slug)?;
-                let audio_removed = article_audio::delete_all_artifacts(vault, &slug)?;
-                if let Some(app) = app {
-                    let _ = app.emit(
-                        "block:removed",
-                        BlockRemovedPayload {
-                            slug: slug.clone(),
-                            tags,
-                        },
-                    );
-                    // Also fire thumb:updated so sidebars currently
-                    // displaying this slug's thumb re-render (the cache
-                    // bust will turn into a 404 → placeholder state).
-                    let _ = app.emit(
-                        "thumb:updated",
-                        ThumbUpdatedPayload {
-                            slug,
-                            is_text: false,
-                        },
-                    );
-                    if audio_removed {
-                        emit_article_audio_updated(app, &path_to_slug(path).unwrap_or_default());
-                    }
-                }
-                return Ok(removed);
+                push_pending_remove(PendingRemove {
+                    slug,
+                    body_hash,
+                    tags,
+                    deadline: Instant::now() + Duration::from_millis(RENAME_MATCH_WINDOW_MS),
+                });
+                // Treat as "no-change for now". If no match arrives, the
+                // next handle_event call will drain and commit it.
+                return Ok(false);
             }
         }
         VaultEvent::MediaChanged(path) => {
@@ -811,6 +1059,16 @@ mod tests {
     }
 
     fn write_md_file(vault: &VaultLayout, slug: &str, block_type: &str, tags: &[&str]) {
+        write_md_file_with_body(vault, slug, block_type, tags, "");
+    }
+
+    fn write_md_file_with_body(
+        vault: &VaultLayout,
+        slug: &str,
+        block_type: &str,
+        tags: &[&str],
+        body: &str,
+    ) {
         let block = crate::domain::block::Block {
             slug: slug.to_string(),
             frontmatter: Frontmatter {
@@ -830,7 +1088,7 @@ mod tests {
                 color: None,
                 icon: None,
             },
-            body: String::new(),
+            body: body.to_string(),
         };
         files::write_block_file(vault, &block).unwrap();
     }
@@ -945,9 +1203,93 @@ mod tests {
         let path = vault.block_path("note");
         index_md_file(&conn, &vault, &path, None).unwrap();
 
-        // Then delete it
+        // BlockDeleted now defers removal into the rename-match queue
+        // (Phase 18.G). The row stays in the index for up to 500ms so a
+        // matching BlockChanged can rename identity. Flush the queue
+        // explicitly to observe the committed removal.
         handle_event(&conn, &vault, &VaultEvent::BlockDeleted(path), None).unwrap();
+        assert!(
+            index::get_block(&conn, "note").unwrap().is_some(),
+            "deferral preserves row until window expires or flush runs"
+        );
+
+        flush_pending_for_test(&conn, &vault, None);
         assert!(index::get_block(&conn, "note").unwrap().is_none());
+    }
+
+    #[test]
+    fn handle_block_rename_preserves_identity() {
+        // Remove + Create with identical body inside the match window
+        // should update the slug in place, not delete + insert.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+
+        // Static pending queue is shared across parallel tests; clear it
+        // before and after so no other test's remnants leak in.
+        flush_pending_for_test(&conn, &vault, None);
+
+        let unique_body = format!("rename-identity-body-{:?}", std::thread::current().id());
+        write_md_file_with_body(&vault, "old-name", "article", &[], &unique_body);
+        let old_path = vault.block_path("old-name");
+        index_md_file(&conn, &vault, &old_path, None).unwrap();
+        let original = index::get_block(&conn, "old-name").unwrap().unwrap();
+        let original_id = original.id;
+
+        // Simulate rename: delete old file, write new with same body
+        std::fs::remove_file(&old_path).unwrap();
+        handle_event(
+            &conn,
+            &vault,
+            &VaultEvent::BlockDeleted(old_path.clone()),
+            None,
+        )
+        .unwrap();
+
+        write_md_file_with_body(&vault, "new-name", "article", &[], &unique_body);
+        let new_path = vault.block_path("new-name");
+        handle_event(
+            &conn,
+            &vault,
+            &VaultEvent::BlockChanged(new_path.clone()),
+            None,
+        )
+        .unwrap();
+
+        // Old slug gone, new slug present with same id (identity preserved).
+        assert!(index::get_block(&conn, "old-name").unwrap().is_none());
+        let renamed = index::get_block(&conn, "new-name").unwrap().unwrap();
+        assert_eq!(renamed.id, original_id);
+
+        flush_pending_for_test(&conn, &vault, None);
+    }
+
+    #[test]
+    fn handle_block_delete_without_matching_create_commits_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+
+        write_md_file_with_body(&vault, "solo", "link", &[], "body");
+        let path = vault.block_path("solo");
+        index_md_file(&conn, &vault, &path, None).unwrap();
+
+        handle_event(&conn, &vault, &VaultEvent::BlockDeleted(path), None).unwrap();
+        // No matching create: forcing a flush commits the deferred removal.
+        flush_pending_for_test(&conn, &vault, None);
+        assert!(index::get_block(&conn, "solo").unwrap().is_none());
+    }
+
+    #[test]
+    fn handle_block_create_without_pending_remove_is_regular_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+
+        write_md_file_with_body(&vault, "fresh", "link", &[], "body");
+        let path = vault.block_path("fresh");
+        handle_event(&conn, &vault, &VaultEvent::BlockChanged(path), None).unwrap();
+        assert!(index::get_block(&conn, "fresh").unwrap().is_some());
     }
 
     #[test]
