@@ -1,5 +1,60 @@
 # Devlog
 
+## 22.04.2026 10:00 [primary] — Clipper rollback to `84cdfb80` + legacy target path fix
+
+### Goal
+Вернуть полностью неработоспособный browser clipper в рабочее состояние после трёх uncommitted итераций `Phase 16 (human-readable filenames) + Phase 17 (clipper native host completion) + Chrome bootstrap fix` показали регрессию двух subsystem сразу (compatibility gate timeout + broken media save pipeline).
+
+### Actually completed
+
+**Hard rollback всей незакоммиченной работы в stash, HEAD вернулся на `84cdfb80`**
+- `git stash push -u -m "WIP 21-22.04 Phase 16+17 clipper work"` сохранил 31 modified + 11 untracked файлов без потери
+- `stash@{0}` остаётся доступным для cherry-pick работающих частей позднее (`SPEC_IDENTITY_ROBUSTNESS.md`, `pathological_filename_repair` tool, SPEC документация)
+
+**Pre-Phase-17 native host переустановлен из source 84cdfb80** (`extension/install-native-host.sh`)
+- release build → `/Users/i_iii/Library/Application Support/LocalArena/native-host`
+- Chrome native messaging manifest → `com.localarena.clipper.json` с актуальным extension ID `mfmocklgopobknfgeedgdlnchfohicii`
+- pre-Phase-17 compatibility gate больше не блокирует popup
+
+**Найден и зафиксирован root cause script regression** (`extension/install-native-host.sh`)
+- начальный rollback не помог: popup показывал `VaultSelect` скрытым, потому что native host возвращал `unknown action: list_known_vaults`
+- разбор: cargo workspace build кладёт release artifacts в workspace root `target/release/native-host`, но `install-native-host.sh` копировал из legacy `src-tauri/target/release/native-host`, который не обновлялся с 15.03.2026
+- в результате installed binary был pre-cargo-workspace stale binary без `list_known_vaults` action
+- это **тот же класс бага**, который Phase 17 Chrome bootstrap fix пытался закрыть в `scripts/clipper-host.mjs` через `cargo metadata`, но этот fix откатился вместе со stash
+
+**Fix зашит в классический `install-native-host.sh`**
+- script теперь определяет реальный cargo `target_directory` через `cargo metadata --format-version 1 --no-deps`
+- copy теперь идёт из `$TARGET_DIR/release/native-host`, а не из жёстко прописанного `src-tauri/target/release/native-host`
+- после fix: `md5` installed binary == `md5` workspace target release binary
+- `list_known_vaults` action больше не `unknown`, VaultSelect в popup снова получает список vaults
+
+**Rebuild extension dist из source 84cdfb80** (`extension/dist/`)
+- `bun run build:extension` пересобрал popup + overlay bundles
+- extension не тянет Phase-17 compatibility helper, compatibility gate отсутствует
+- manual QA пользователем: clip работает end-to-end, vault selector снова видим
+
+### Checks
+- `bash extension/install-native-host.sh mfmocklgopobknfgeedgdlnchfohicii`
+- `bun run build:extension`
+- `md5` installed vs workspace target release binary — совпадают
+- `list_known_vaults` probe через native host — action распознан (silent success)
+- ручной Chrome smoke test: Reload extension в `chrome://extensions`, popup открывается без timeout, VaultSelect виден, clip сохраняет корректно
+
+### Push
+- [current]
+
+### Decisions and lessons learned
+
+**Paттерн повторяется третий раз.** Большой refactor filenames + extension сделан тремя сессиями без промежуточных коммитов. При появлении runtime регрессии — нет bisect-точки, невозможно откатить один слой. Предыдущий forward-fix цикл не сработал. Rollback на последний рабочий `84cdfb80` выполнен целиком.
+
+**Stale target path — системный риск cargo workspace migration.** Scripts, hardcoded на pre-workspace layout (`src-tauri/target/*`), ломаются после миграции без обратной связи: cargo build succeeds, cargo signals "Finished", но artifacts уходят в другое место. Любой скрипт, копирующий cargo artifacts, обязан резолвить target directory через `cargo metadata`.
+
+**Следующая попытка Phase 16 (human-readable filenames) должна идти по-другому:**
+1. Маленькие коммиты после каждого изолированного изменения
+2. End-to-end Chrome test перед переходом к следующему шагу
+3. Clipper compatibility gate выносить в отдельную phase после filenames, не одним slice'ом
+4. SPEC_IDENTITY_ROBUSTNESS.md (в stash) — архитектурная основа для нового подхода без служебных ID во frontmatter
+
 ## 20.04.2026 10:05 [primary] — Article-audio gateway extraction
 
 ### Goal

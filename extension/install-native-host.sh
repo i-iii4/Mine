@@ -36,9 +36,15 @@ echo "Building native-host (release)..."
 cd "$PROJECT_DIR/src-tauri"
 cargo build --release --bin native-host
 
-echo "Installing native-host binary..."
+# Resolve the actual cargo target directory. Since the repo migrated to a
+# cargo workspace, artifacts land in the workspace root `target/`, not the
+# legacy `src-tauri/target/`. Trust cargo metadata instead of hardcoded paths.
+TARGET_DIR="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
+BINARY_SRC="$TARGET_DIR/release/native-host"
+
+echo "Installing native-host binary from $BINARY_SRC ..."
 mkdir -p "$HOST_DIR"
-cp "target/release/native-host" "$HOST_PATH"
+cp "$BINARY_SRC" "$HOST_PATH"
 chmod +x "$HOST_PATH"
 
 echo "Creating Chrome native messaging manifest..."
