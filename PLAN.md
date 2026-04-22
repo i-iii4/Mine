@@ -784,13 +784,18 @@ Goal: перейти на human-readable filenames без повторения �
 
 | # | Sub-phase | Status | Scope |
 |---|-----------|--------|-------|
-| 18.A | NFC normalization infrastructure | [ ] | `unicode-normalization` crate, helper `normalize_filename_stem`, применение на boundary (read_block_file, watcher, native_host save, clipper upload). Existing files продолжают работать, new files нормализуются на write. Никаких изменений в generation/validation logic |
-| 18.B | DB uniqueness safe для non-ASCII | [ ] | Escape-aware `LIKE` с `%`, `_`, `\` экранированием в `resolve_unique_slug`. Preparation для Unicode/бракетов/пробелов в slug. Само по себе kebab names не требует |
-| 18.C | `suggest_slug` human-readable для новых блоков | [ ] | Только функция `suggest_slug`: Unicode, пробелы, NFC, без kebab/transliteration, fallback `Untitled`. Existing files не мигрируются. Validation (`validate_slug`) в этой phase принимает оба стиля |
-| 18.D | Collision resolution UX | [ ] | `resolve_slug_conflict` suffix ` (n)` вместо `-n`. Clipper URL deduplication: повторный clip того же URL → `Already saved`. Разные URL с одинаковым title → semantic ` — YYYY-MM-DD` суффикс |
-| 18.E | Clipper staged upload pipeline | [ ] | IPC contract change: `upload_binary` кладёт file в `.arena/uploads/upload-<nonce>.<ext>`, `save_block` принимает nonce и генерит финальный basename. Popup больше не отправляет filename как источник истины. **Самая рискованная sub-phase** — делать после A–D стабильны |
-| 18.F | Inline article media naming | [ ] | Embedded images/videos в article body именуются `Название (image N).ext`, `Название (video N).mp4`. Требует Phase E (staged upload для inline media) |
-| 18.G | Identity robustness (rename + conflict) | [ ] | SPEC_IDENTITY_ROBUSTNESS.md (извлечь из `stash@{0}`). DB body_hash колонка, pending remove queue в watcher с 500ms debounce, content-hash rename detection, iCloud conflict surface, `vault_conflicts` таблица, UI banner разрешения. Независимо от A–F, может идти параллельно или после |
+| 18.A | NFC normalization infrastructure | [x] | `unicode-normalization` crate, helper `normalize_filename_stem`, применение на boundary (`read_block_file`, watcher, `live_slugs`). ASCII pass-through. — `ac103c61` |
+| 18.B | DB uniqueness safe для non-ASCII | [x] | Escape-aware `LIKE` с `%`, `_`, `\` экранированием в `resolve_unique_slug` + `ESCAPE '\\'`. — `fa462729` |
+| 18.C | `suggest_slug` human-readable | [x] | Unicode, пробелы, NFC, фильтр filesystem-unsafe чаров, 100-char truncation, fallback `Untitled`. Existing kebab files читаются без migration. — `7c48d33a` |
+| 18.D | Collision resolution UX | [x] | `resolve_slug_conflict` и `resolve_unique_slug` перешли на суффикс ` (N)` (совпадает с Obsidian). Legacy `-N` files не интерферируют. — `e136c69c` |
+| 18.E | Backend finalizes uploaded media filename | [x] | `handle_save_block` переименовывает staged file в `<slug>.<ext>`. IPC contract не меняется — минимальный scope. `finalize_uploaded_filename` с guard'ом против overwrite. — `c40b858b` |
+| 18.F | Inline article media naming | [x] | Embedded images/videos в article body → `Название (image N).ext` / `Название (video N).mp4`. Per-kind 1-based counters, rollback at failure/dedup. — `26a19d00` |
+| 18.G.1 | Identity robustness infrastructure | [x] | DB migration: `body_hash` column, `vault_conflicts` table. `compute_body_hash`, `detect_icloud_conflict`, `lookup_body_hash`, `rename_slug`, `record/list/clear_vault_conflict`. — `3ea8c8fd` |
+| 18.G.2 | Watcher rename detection | [x] | Pending-remove queue с 500ms deadline. BlockDeleted → defer. BlockChanged → body-hash match → `rename_slug` + derived-store migration. `block:renamed` event. — `a957e338` |
+| 18.G.3 | iCloud conflict runtime | [x] | `index_md_file` и `full_scan` диверсифицируют conflict файлы в `vault_conflicts`. `vault-conflict-detected` event. Orphan cleanup не считает conflict stems. — `489e9e4a` |
+| 18.G.4 | Frontend conflict UI | [ ] | IPC commands для list/resolve, sidebar banner, resolution dialog (Keep original / Keep conflict / Merge manually). **Следующая sub-phase.** |
+
+Status: 9 of 10 sub-phases complete. Waiting on 18.G.4 frontend conflict UI. Per-sub-phase smoke test in Chrome clipper confirmed A–F working end-to-end after install-native-host reinstall. G.1–G.3 are backend-only, visible only via DB inspection until G.4 surfaces conflicts in UI.
 
 #### Discipline requirements
 

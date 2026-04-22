@@ -1,5 +1,107 @@
 # Devlog
 
+## 22.04.2026 13:30 [primary] — Phase 18 filename refactor: sub-phases A through G.3 shipped
+
+### Goal
+Replace the failed monolithic Phase 16+17 with discrete, independently
+revertable sub-phases. Deliver human-readable filenames, collision UX,
+backend-authoritative media naming, inline article media naming, and
+backend-side identity robustness (rename detection, iCloud conflict
+detection) without breaking the Chrome clipper at any point.
+
+### Actually completed (sub-phases delivered as separate commits)
+
+**18.A NFC normalization infrastructure** (`ac103c61`)
+- `unicode-normalization` crate, `normalize_filename_stem()` helper
+- Applied at `read_block_file`, watcher `path_to_slug`, orphan-cleanup
+  `live_slugs`, incremental-scan slug collection
+- ASCII files pass through unchanged; NFD filenames compose to NFC for
+  identity-stable matching across HFS+/APFS boundaries
+
+**18.B DB uniqueness safe for non-ASCII slugs** (`fa462729`)
+- `escape_like_pattern()` + `ESCAPE '\'` in `resolve_unique_slug`
+- Closes a pre-existing correctness bug: slugs containing `%`, `_`, or
+  `\` could silently match unrelated rows
+
+**18.C `suggest_slug` human-readable** (`7c48d33a`)
+- Unicode, spaces, parentheses preserved
+- Filesystem-hostile chars (`/ \ : * ? " < > |` NUL, control) stripped
+  or replaced with a single space
+- 100-char cap by char count (not bytes) preserves multi-byte integrity
+- Fallback to `Untitled` when neither title nor URL yields content
+- Legacy `transliterate` and `normalize_slug` kept with
+  `#[allow(dead_code)]` for tactical revert if needed
+
+**18.D Collision suffix → ` (N)`** (`e136c69c`)
+- Both `resolve_slug_conflict` and `resolve_unique_slug` emit the
+  Obsidian-compatible parenthetical format
+- Legacy `-N` filenames remain readable but are not counted as
+  parenthetical suffix owners (new sequence starts at `(2)`)
+
+**18.E Backend finalizes uploaded media filename** (`c40b858b`)
+- `finalize_uploaded_filename()` renames staged upload to `<slug>.<ext>`
+- Guard: refuses to overwrite an existing target (prevents silent
+  orphan overwrite)
+- IPC contract unchanged — minimal-risk slice that achieves backend
+  authority without reshaping popup→native-host protocol
+
+**18.F Inline article media naming** (`26a19d00`)
+- `{slug} (image N).ext`, `{slug} (video N).mp4`, `{slug} (file N).ext`
+- Per-kind 1-based counters, rolled back on download failure and on
+  content-dedup removal
+- Extension-based classification: image/video/other
+
+**18.G.1 Identity robustness infrastructure** (`3ea8c8fd`)
+- DB: `body_hash` column + backfill via upsert, `vault_conflicts` table
+- Domain: `compute_body_hash`, `detect_icloud_conflict`
+- Storage: `lookup_body_hash`, `rename_slug`, `record/list/clear_vault_conflict`
+
+**18.G.2 Watcher rename detection** (`a957e338`)
+- Pending-remove queue with 500ms rename-match deadline
+- BlockDeleted defers into queue, BlockChanged with matching body hash
+  triggers `rename_slug` + derived-store artifact migration
+- `block:renamed` event for frontend notification
+- Edge cases: null body_hash degrades to regular delete+create; target
+  conflict falls back to separate blocks; cosmetic filename/metadata
+  changes do not break identity
+
+**18.G.3 iCloud conflict runtime detection** (`489e9e4a`)
+- `index_md_file` and `full_scan` divert conflict files into
+  `vault_conflicts` instead of indexing as blocks
+- `vault-conflict-detected` event
+- Orphan cleanup ignores conflict stems so they don't falsely extend or
+  kill real blocks
+
+### Discipline
+
+Every sub-phase shipped as a single commit with a scope-specific
+message, unit tests, and a Chrome clipper smoke test before the next
+slice. 343/343 lib tests + 17/17 native-host tests pass at HEAD.
+
+stash@{0} (previous Phase 16+17 monolith) remains available for
+cherry-pick reference of the staged upload pipeline and frontend
+conflict UI shape.
+
+### Not closed in this slice
+
+**18.G.4 Frontend conflict UI** — IPC list/resolve commands, sidebar
+banner, resolution dialog. Backend already records conflicts; the UI
+surface is the last remaining piece of Phase 18 and is queued as the
+next sub-phase.
+
+### Checks
+- `cargo test --lib --quiet` — 343/343
+- `cargo test --bin native-host --quiet` — 17/17
+- `cargo check --quiet` — green
+- Chrome clipper smoke tests after A, C, D, E, F: human-readable
+  filenames, Obsidian-style collision suffix, rename preserves
+  identity, media basename matches .md basename
+
+### Push
+- 10 commits: `bf2fc05a`, `dd61ea4c`, `ac103c61`, `fa462729`,
+  `7c48d33a`, `e136c69c`, `c40b858b`, `26a19d00`, `3ea8c8fd`,
+  `a957e338`, `489e9e4a`
+
 ## 22.04.2026 10:00 [primary] — Clipper rollback to `84cdfb80` + legacy target path fix
 
 ### Goal
