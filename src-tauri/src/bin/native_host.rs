@@ -699,19 +699,71 @@ fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Re
     Err(last_err.unwrap().into())
 }
 
+/// Kind of inline media embedded in an article body, used to produce
+/// human-readable filenames like `Название (image 1).jpg`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InlineMediaKind {
+    Image,
+    Video,
+    File,
+}
+
+impl InlineMediaKind {
+    fn label(self) -> &'static str {
+        match self {
+            InlineMediaKind::Image => "image",
+            InlineMediaKind::Video => "video",
+            InlineMediaKind::File => "file",
+        }
+    }
+}
+
+/// Classify an extension (lowercase, no leading dot) as image/video/other.
+fn inline_media_kind_from_ext(ext: &str) -> InlineMediaKind {
+    match ext.to_lowercase().as_str() {
+        "jpg" | "jpeg" | "png" | "webp" | "gif" | "avif" | "heic" | "heif" | "bmp" | "svg"
+        | "tiff" | "tif" => InlineMediaKind::Image,
+        "mp4" | "webm" | "m4v" | "mov" | "mkv" | "avi" => InlineMediaKind::Video,
+        _ => InlineMediaKind::File,
+    }
+}
+
+/// Build the local filename for a piece of inline article media.
+///
+/// Format: `<slug> (<kind> <1-based idx>).<ext>`
+/// Example: `Hello World (image 1).jpg`, `Story (video 2).mp4`.
+/// The `idx` is 1-based per-kind so a single article mixing 3 images and
+/// 2 videos produces `(image 1/2/3)` and `(video 1/2)` independently.
+fn build_inline_media_name(slug: &str, kind: InlineMediaKind, idx: u32, ext: &str) -> String {
+    if ext.is_empty() {
+        format!("{slug} ({label} {idx})", slug = slug, label = kind.label(), idx = idx)
+    } else {
+        format!(
+            "{slug} ({label} {idx}).{ext}",
+            slug = slug,
+            label = kind.label(),
+            idx = idx,
+            ext = ext
+        )
+    }
+}
+
 /// Download inline images from Markdown body, replacing external URLs with local filenames.
 /// Images that fail to download keep their original URL.
 const MAX_INLINE_IMAGES: u32 = 30;
 
 fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &str) -> String {
     let mut result = body.to_string();
-    let mut img_idx: u32 = 0;
+    let mut total_count: u32 = 0;
+    let mut image_idx: u32 = 0;
+    let mut video_idx: u32 = 0;
+    let mut file_idx: u32 = 0;
     let mut search_from = 0;
     // Track downloaded files for deduplication
     let mut downloaded: Vec<(PathBuf, String)> = Vec::new();
 
     loop {
-        if img_idx >= MAX_INLINE_IMAGES {
+        if total_count >= MAX_INLINE_IMAGES {
             break;
         }
 
@@ -741,8 +793,23 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
 
         if url.starts_with("http://") || url.starts_with("https://") {
             let ext = ext_from_url(&url);
+            let kind = inline_media_kind_from_ext(ext);
+            let idx = match kind {
+                InlineMediaKind::Image => {
+                    image_idx += 1;
+                    image_idx
+                }
+                InlineMediaKind::Video => {
+                    video_idx += 1;
+                    video_idx
+                }
+                InlineMediaKind::File => {
+                    file_idx += 1;
+                    file_idx
+                }
+            };
 
-            let img_name = format!("{slug}-img{img_idx}.{ext}");
+            let img_name = build_inline_media_name(slug, kind, idx, ext);
             let dest = vault.root().join(&img_name);
 
             if download_file(&url, &dest, page_url).is_ok() {
@@ -782,6 +849,15 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
                     }
                     result = result[..line_start].to_string() + &result[line_end..];
                     search_from = line_start;
+                    // Roll back per-kind counter: this index was reserved but
+                    // consumed by a duplicate that was removed. The next
+                    // unique inline of the same kind should reuse it so the
+                    // user-visible numbering stays tight (1, 2, 3, ...).
+                    match kind {
+                        InlineMediaKind::Image => image_idx -= 1,
+                        InlineMediaKind::Video => video_idx -= 1,
+                        InlineMediaKind::File => file_idx -= 1,
+                    }
                     log::info!(
                         "deduplicated image: {} is identical to {}",
                         img_name,
@@ -795,13 +871,21 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
                 let new_markup = format!("![{alt}]({img_name})");
                 let new_len = new_markup.len();
                 result = result[..img_start].to_string() + &new_markup + &result[paren_end + 1..];
-                img_idx += 1;
+                total_count += 1;
                 // Delay between downloads to avoid CDN rate-limiting
-                if img_idx < MAX_INLINE_IMAGES {
+                if total_count < MAX_INLINE_IMAGES {
                     std::thread::sleep(std::time::Duration::from_millis(300));
                 }
                 search_from = img_start + new_len;
                 continue;
+            } else {
+                // Download failed: roll back the per-kind counter so the next
+                // successful inline of the same kind reuses the skipped index.
+                match kind {
+                    InlineMediaKind::Image => image_idx -= 1,
+                    InlineMediaKind::Video => video_idx -= 1,
+                    InlineMediaKind::File => file_idx -= 1,
+                }
             }
         }
 
@@ -1212,5 +1296,93 @@ mod tests {
         let result = finalize_uploaded_filename(tmp.path(), "upload", "Plain");
         assert_eq!(result, Ok("Plain".to_string()));
         assert!(tmp.path().join("Plain").exists());
+    }
+
+    // ── Inline media naming (18.F) ──────────────────────────────────────
+
+    #[test]
+    fn inline_kind_image_extensions_recognized() {
+        for ext in ["jpg", "jpeg", "png", "webp", "gif", "avif", "heic", "heif"] {
+            assert_eq!(
+                inline_media_kind_from_ext(ext),
+                InlineMediaKind::Image,
+                "expected {} to be Image",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn inline_kind_video_extensions_recognized() {
+        for ext in ["mp4", "webm", "m4v", "mov"] {
+            assert_eq!(
+                inline_media_kind_from_ext(ext),
+                InlineMediaKind::Video,
+                "expected {} to be Video",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn inline_kind_case_insensitive() {
+        assert_eq!(inline_media_kind_from_ext("JPG"), InlineMediaKind::Image);
+        assert_eq!(inline_media_kind_from_ext("MP4"), InlineMediaKind::Video);
+    }
+
+    #[test]
+    fn inline_kind_unknown_ext_is_file() {
+        assert_eq!(inline_media_kind_from_ext("pdf"), InlineMediaKind::File);
+        assert_eq!(inline_media_kind_from_ext(""), InlineMediaKind::File);
+    }
+
+    #[test]
+    fn inline_name_image() {
+        assert_eq!(
+            build_inline_media_name("Hello World", InlineMediaKind::Image, 1, "jpg"),
+            "Hello World (image 1).jpg"
+        );
+    }
+
+    #[test]
+    fn inline_name_video_second() {
+        assert_eq!(
+            build_inline_media_name("Story", InlineMediaKind::Video, 2, "mp4"),
+            "Story (video 2).mp4"
+        );
+    }
+
+    #[test]
+    fn inline_name_with_unicode_slug() {
+        assert_eq!(
+            build_inline_media_name("Закат", InlineMediaKind::Image, 3, "png"),
+            "Закат (image 3).png"
+        );
+    }
+
+    #[test]
+    fn inline_name_file_fallback_for_unknown_kind() {
+        assert_eq!(
+            build_inline_media_name("Doc", InlineMediaKind::File, 1, "pdf"),
+            "Doc (file 1).pdf"
+        );
+    }
+
+    #[test]
+    fn inline_name_without_extension() {
+        assert_eq!(
+            build_inline_media_name("Plain", InlineMediaKind::File, 1, ""),
+            "Plain (file 1)"
+        );
+    }
+
+    #[test]
+    fn inline_name_preserves_slug_parentheses() {
+        // Base slug that already contains parens from user-authored title.
+        // Final name reads correctly: `Note (draft) (image 1).jpg`.
+        assert_eq!(
+            build_inline_media_name("Note (draft)", InlineMediaKind::Image, 1, "jpg"),
+            "Note (draft) (image 1).jpg"
+        );
     }
 }
