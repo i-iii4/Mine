@@ -136,3 +136,29 @@ export const saveThumb = (slug: string, bytes: Uint8Array) =>
 
 export const listPendingThumbUpgrades = () =>
   invoke<ThumbUpgradeRequest[]>("list_pending_thumb_upgrades");
+
+// Vault conflicts (Phase 18.G.4 — see SPEC_IDENTITY_ROBUSTNESS.md)
+export interface VaultConflictItem {
+  baseSlug: string;
+  conflictSlug: string;
+  detectedAt: string;
+}
+
+export type VaultConflictResolveAction =
+  | "keep_original"
+  | "keep_conflict"
+  | "dismiss_for_manual_merge";
+
+export const listVaultConflicts = () =>
+  invoke<VaultConflictItem[]>("list_vault_conflicts");
+
+export const resolveVaultConflict = (
+  baseSlug: string,
+  conflictSlug: string,
+  action: VaultConflictResolveAction,
+) =>
+  invoke<void>("resolve_vault_conflict", {
+    base_slug: baseSlug,
+    conflict_slug: conflictSlug,
+    action: { action },
+  });

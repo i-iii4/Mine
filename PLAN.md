@@ -793,7 +793,7 @@ Goal: перейти на human-readable filenames без повторения �
 | 18.G.1 | Identity robustness infrastructure | [x] | DB migration: `body_hash` column, `vault_conflicts` table. `compute_body_hash`, `detect_icloud_conflict`, `lookup_body_hash`, `rename_slug`, `record/list/clear_vault_conflict`. — `3ea8c8fd` |
 | 18.G.2 | Watcher rename detection | [x] | Pending-remove queue с 500ms deadline. BlockDeleted → defer. BlockChanged → body-hash match → `rename_slug` + derived-store migration. `block:renamed` event. — `a957e338` |
 | 18.G.3 | iCloud conflict runtime | [x] | `index_md_file` и `full_scan` диверсифицируют conflict файлы в `vault_conflicts`. `vault-conflict-detected` event. Orphan cleanup не считает conflict stems. — `489e9e4a` |
-| 18.G.4 | Frontend conflict UI | [ ] | IPC commands для list/resolve, sidebar banner, resolution dialog (Keep original / Keep conflict / Merge manually) |
+| 18.G.4 | Frontend conflict UI | [x] | IPC commands `list_vault_conflicts` / `resolve_vault_conflict` (keep_original / keep_conflict / dismiss_for_manual_merge), `VaultConflictsBanner` в Sidebar header slot, resolution dialog |
 | 18.F.1 | Hotfix: URL-encode parens in body markdown | [x] | Внутренние parens в inline media name ломали markdown parser. Percent-encoding `space`/`(`/`)`/`%` в body URL. — `38901e75` |
 | 18.F.2 | Decode local URLs in extract functions | [x] | `extract_first_image`, `extract_media_urls` теперь decode URLs перед сохранением в DB. Remote URLs не трогаются. — `03f63deb` |
 | 18.F.3 | Decode in social tiles + media_dimensions | [x] | `extract_social_preview_tiles` (ломало видео в Twitter) + `collect_body_media`. Каскадная коррекция той же проблемы. — `42a7eeec` |

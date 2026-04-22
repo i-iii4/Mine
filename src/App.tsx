@@ -70,6 +70,7 @@ import { VaultPicker } from "@/components/VaultPicker";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { Sidebar } from "@/components/Sidebar";
 import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
+import { VaultConflictsBanner } from "@/components/VaultConflictsBanner";
 import { Grid } from "@/components/Grid";
 import { ActionButton } from "@/components/ActionButton";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
@@ -1207,6 +1208,7 @@ export function AppWithVault({
         onCreateChannel={handleCreateChannel}
         onNavClick={handleDetailClose}
         onScrollToTop={handleScrollToTop}
+        headerSlot={<VaultConflictsBanner vaultReady={vaultReady} />}
       />
 
       <SidebarResizeHandle

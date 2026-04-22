@@ -46,6 +46,8 @@ interface SidebarProps {
   onCreateChannel: (tag: string) => void;
   onNavClick?: () => void;
   onScrollToTop?: () => void;
+  /** Optional slot for a header banner (e.g. iCloud conflict surface). */
+  headerSlot?: React.ReactNode;
 }
 
 export function Sidebar({
@@ -63,6 +65,7 @@ export function Sidebar({
   onCreateChannel,
   onNavClick,
   onScrollToTop,
+  headerSlot,
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
@@ -101,8 +104,14 @@ export function Sidebar({
       }}
     >
 
+      {headerSlot && (
+        <div className={cn("pt-16", compact ? "px-2" : "px-8")}>
+          {headerSlot}
+        </div>
+      )}
+
       {/* Navigation */}
-      <nav ref={navRef} className={cn("flex-1 overflow-y-auto pt-16", compact ? "px-2" : "px-8")} data-sidebar-scroll>
+      <nav ref={navRef} className={cn("flex-1 overflow-y-auto", headerSlot ? "pt-4" : "pt-16", compact ? "px-2" : "px-8")} data-sidebar-scroll>
         <NavItem to="/" label="Everything" count={totalBlocks} cards={channelPreviews.get("__all__") ?? []} compact={compact} end onClick={onNavClick} onSameClick={onScrollToTop} />
 
         <SortableContext

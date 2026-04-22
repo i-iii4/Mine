@@ -1,5 +1,84 @@
 # Devlog
 
+## 22.04.2026 19:00 [primary] — Phase 18.G.4: iCloud conflict resolution UI — Phase 18 fully closed
+
+### Goal
+Surface the iCloud sync conflicts that 18.G.3 records in the backend
+`vault_conflicts` table to the user, and give them a way to resolve
+each one without leaving Mine.
+
+### Actually completed
+
+**Tauri commands** (`src-tauri/src/commands/conflicts.rs`)
+- `list_vault_conflicts` — proxies storage API, returns
+  `VaultConflictItem { base_slug, conflict_slug, detected_at }` as
+  camelCase JSON
+- `resolve_vault_conflict(base_slug, conflict_slug, action)` —
+  three actions on a tagged enum:
+  - `keep_original` — deletes the conflict `.md` file
+  - `keep_conflict` — archives the original to
+    `.arena/conflicts-archive/<slug> (archived <timestamp>).md`,
+    promotes the conflict file onto the base slug, re-indexes
+  - `dismiss_for_manual_merge` — clears the DB entry only (user
+    merges in Obsidian)
+- Emits `vault-conflict-resolved` event on success
+- Registered in `lib.rs` invoke handler
+- Unit test for archive filename uniqueness
+
+**Frontend IPC wrappers** (`src/lib/commands.ts`)
+- `VaultConflictItem` type, `VaultConflictResolveAction` union
+- `listVaultConflicts()`, `resolveVaultConflict(base, conflict, action)`
+
+**UI component** (`src/components/VaultConflictsBanner.tsx`)
+- Badge button "N iCloud sync conflicts" shown only when count > 0
+- Dialog listing all unresolved conflicts, sorted by detection time
+- Three resolution buttons per conflict with per-item busy state
+- Refreshes automatically on `vault-conflict-detected` /
+  `vault-conflict-resolved` / `vault-changed` events
+- Error state for failed resolution
+
+**Sidebar integration** (`src/components/Sidebar.tsx`, `src/App.tsx`)
+- New `headerSlot` prop on Sidebar for header-area banner rendering
+- `App.tsx` passes `<VaultConflictsBanner vaultReady={vaultReady} />`
+  as the slot so conflict surface lives at the top of the left rail,
+  above the channel list
+
+### Acceptance
+
+Backend behavior from 18.G.3 now has a user-visible outcome:
+
+1. iCloud creates `Foo (conflicted copy).md` → watcher records in
+   `vault_conflicts`, emits `vault-conflict-detected`
+2. Sidebar banner appears at the top of the left rail with count badge
+3. User opens dialog → picks resolution per conflict
+4. Backend executes the file operation, clears DB row, emits
+   `vault-conflict-resolved`
+5. Banner disappears when all conflicts are resolved
+
+No automatic resolution — every conflict waits for explicit user
+intent. Archived originals land in `.arena/conflicts-archive/` so no
+data is ever destroyed without audit trail.
+
+### Checks
+- `cargo test --lib --quiet` — 373/373 (1 new unit test)
+- `cargo test --bin native-host --quiet` — 29/29
+- `bun run build` — green, no new TS errors
+
+### Push
+- [current]
+
+### Phase 18 status
+
+All 11 sub-phases complete:
+- A NFC, B DB escape, C suggest_slug, D collision suffix, E backend
+  finalize, F inline media naming (+ F.1/F.2/F.3 hotfix cascade)
+- G.1 identity infra, G.2 rename detection, G.3 iCloud conflict
+  runtime, **G.4 conflict UI**
+- H.1 wikilink writer, H.2 frontend preprocessor, H.3 migration CLI,
+  H.4 SPEC document
+
+Phase 18 filename refactor closed.
+
 ## 22.04.2026 18:15 [primary] — Phase 18.H complete: inline media → Obsidian wikilinks
 
 ### Goal

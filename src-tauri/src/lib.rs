@@ -55,6 +55,8 @@ pub fn run() {
             commands::import::import_arena_channels,
             commands::thumbnails::save_thumb,
             commands::thumbnails::list_pending_thumb_upgrades,
+            commands::conflicts::list_vault_conflicts,
+            commands::conflicts::resolve_vault_conflict,
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
