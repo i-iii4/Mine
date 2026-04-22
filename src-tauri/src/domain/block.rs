@@ -401,23 +401,30 @@ pub fn extract_wikilinks(body: &str) -> Vec<String> {
     results
 }
 
-/// Generate a URL-safe slug from a title or URL.
+/// Generate a human-readable filesystem-safe slug from a title or URL.
 ///
-/// Title takes precedence over URL. Cyrillic is transliterated.
-/// Result contains only `[a-z0-9-]`, max 80 chars, truncated at word boundary.
+/// Title takes precedence over URL. Unicode, spaces, parentheses and most
+/// punctuation are preserved as-is. Only characters that break filesystem
+/// semantics (`/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, NUL, control
+/// characters) are stripped or replaced with a space. Whitespace runs are
+/// collapsed. Leading/trailing spaces and dots are trimmed.
+///
+/// The result is NFC-normalized so HFS+ and APFS filesystems agree on
+/// identity. Maximum length 100 characters (char count, not bytes).
+/// Fallback to `Untitled` when neither input yields usable content.
 pub fn suggest_slug(title: Option<&str>, url: Option<&str>) -> String {
-    let raw = if let Some(title) = title {
-        transliterate(title)
+    let raw = if let Some(title) = title.filter(|t| !t.trim().is_empty()) {
+        title.to_string()
     } else if let Some(url) = url {
         url.strip_prefix("https://")
             .or_else(|| url.strip_prefix("http://"))
             .unwrap_or(url)
             .to_string()
     } else {
-        return "untitled".to_string();
+        return "Untitled".to_string();
     };
 
-    normalize_slug(&raw)
+    sanitize_for_filename(&raw)
 }
 
 // ─── Private helpers ────────────────────────────────────────────────────────
@@ -582,6 +589,68 @@ fn validate_iso8601(s: &str) -> bool {
 }
 
 /// Transliterate Cyrillic characters to Latin equivalents.
+/// Convert an arbitrary title/url string into a filesystem-safe filename stem
+/// while preserving human readability.
+///
+/// Behavior:
+/// - NFC-normalize so filesystem variants (HFS+/APFS) agree on identity
+/// - Replace filesystem-hostile characters with a space
+/// - Strip control characters entirely
+/// - Collapse whitespace runs
+/// - Trim leading/trailing spaces and dots
+/// - Cap at 100 chars (char count; not bytes); trim again post-truncate
+/// - Fall back to "Untitled" on empty result
+fn sanitize_for_filename(raw: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+
+    let normalized: String = raw.nfc().collect();
+
+    let mut result = String::with_capacity(normalized.len());
+    let mut prev_space = false;
+
+    for c in normalized.chars() {
+        match c {
+            // Filesystem-reserved on macOS (/, :) and Windows (* ? " < > |)
+            // plus backslash and NUL. Replace with space to preserve word gaps.
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => {
+                if !prev_space {
+                    result.push(' ');
+                    prev_space = true;
+                }
+            }
+            // Whitespace first — covers \t, \n, \r which are also `is_control()`.
+            c if c.is_whitespace() => {
+                if !prev_space {
+                    result.push(' ');
+                    prev_space = true;
+                }
+            }
+            c if c.is_control() => continue,
+            c => {
+                result.push(c);
+                prev_space = false;
+            }
+        }
+    }
+
+    // Trim spaces and trailing dots (Windows rejects trailing dots/spaces).
+    let trimmed = result.trim_matches(|c: char| c == ' ' || c == '.');
+
+    // Char-count truncation (not bytes) to keep multi-byte chars intact.
+    const MAX_CHARS: usize = 100;
+    let truncated: String = trimmed.chars().take(MAX_CHARS).collect();
+    let truncated = truncated
+        .trim_end_matches(|c: char| c == ' ' || c == '.')
+        .to_string();
+
+    if truncated.is_empty() {
+        "Untitled".to_string()
+    } else {
+        truncated
+    }
+}
+
+#[allow(dead_code)]
 fn transliterate(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 2);
     for c in s.chars() {
@@ -627,6 +696,7 @@ fn transliterate(s: &str) -> String {
 
 /// Normalize a raw string into a valid slug: lowercase, [a-z0-9-] only,
 /// collapsed dashes, trimmed, max 80 chars at word boundary.
+#[allow(dead_code)]
 fn normalize_slug(raw: &str) -> String {
     let lower = raw.to_lowercase();
 
@@ -1248,60 +1318,105 @@ mod tests {
     // ── suggest_slug ────────────────────────────────────────────────────
 
     #[test]
-    fn slug_from_title_ascii() {
+    fn slug_from_title_ascii_preserves_case_and_spaces() {
         let slug = suggest_slug(Some("Hello World"), None);
-        assert_eq!(slug, "hello-world");
+        assert_eq!(slug, "Hello World");
     }
 
     #[test]
-    fn slug_from_title_cyrillic() {
-        // E12: unicode in title, slug is transliterated.
+    fn slug_from_title_cyrillic_preserved() {
         let slug = suggest_slug(Some("Как устроен CRDT"), None);
-        assert_eq!(slug, "kak-ustroen-crdt");
+        assert_eq!(slug, "Как устроен CRDT");
     }
 
     #[test]
-    fn slug_from_url() {
+    fn slug_from_title_mixed_unicode() {
+        let slug = suggest_slug(Some("日本語 テスト"), None);
+        assert_eq!(slug, "日本語 テスト");
+    }
+
+    #[test]
+    fn slug_from_url_preserves_domain_and_path() {
         let slug = suggest_slug(None, Some("https://stripe.com/blog/api"));
-        assert_eq!(slug, "stripe-com-blog-api");
+        // URL path separators collapse to single space.
+        assert_eq!(slug, "stripe.com blog api");
     }
 
     #[test]
-    fn slug_no_input() {
+    fn slug_no_input_defaults_to_untitled() {
         let slug = suggest_slug(None, None);
-        assert_eq!(slug, "untitled");
+        assert_eq!(slug, "Untitled");
+    }
+
+    #[test]
+    fn slug_empty_title_falls_back_to_url() {
+        let slug = suggest_slug(Some("   "), Some("https://example.com"));
+        assert_eq!(slug, "example.com");
     }
 
     #[test]
     fn slug_title_takes_precedence() {
         let slug = suggest_slug(Some("My Title"), Some("https://example.com"));
-        assert_eq!(slug, "my-title");
+        assert_eq!(slug, "My Title");
     }
 
     #[test]
-    fn slug_max_length() {
-        // E13: very long title (>200 chars) produces slug truncated to 80 chars.
-        let long_title = "a ".repeat(120); // 240 chars
+    fn slug_truncated_to_100_chars() {
+        let long_title = "a".repeat(200);
         let slug = suggest_slug(Some(&long_title), None);
-        assert!(slug.len() <= 80);
+        assert_eq!(slug.chars().count(), 100);
     }
 
     #[test]
-    fn slug_special_chars_replaced() {
-        let slug = suggest_slug(Some("Hello, World! @#$% Test"), None);
-        // Only [a-z0-9-] allowed.
-        assert!(slug
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'));
-        // Multiple dashes collapsed.
-        assert!(!slug.contains("--"));
+    fn slug_truncation_preserves_unicode_boundaries() {
+        // Multi-byte Unicode; byte count would overflow 100 but char count stops at 100.
+        let long_title: String = "日".repeat(200);
+        let slug = suggest_slug(Some(&long_title), None);
+        assert_eq!(slug.chars().count(), 100);
     }
 
     #[test]
-    fn slug_no_leading_trailing_dashes() {
-        let slug = suggest_slug(Some("  --Hello--  "), None);
-        assert!(!slug.starts_with('-'));
-        assert!(!slug.ends_with('-'));
+    fn slug_filesystem_unsafe_chars_become_spaces() {
+        let slug = suggest_slug(Some("file/with:bad*chars?"), None);
+        assert!(!slug.contains('/'));
+        assert!(!slug.contains(':'));
+        assert!(!slug.contains('*'));
+        assert!(!slug.contains('?'));
+        // Runs of replacements collapse into a single space.
+        assert!(!slug.contains("  "));
+    }
+
+    #[test]
+    fn slug_keeps_parentheses_brackets_punctuation() {
+        let slug = suggest_slug(Some("Note (draft, v1)"), None);
+        assert_eq!(slug, "Note (draft, v1)");
+    }
+
+    #[test]
+    fn slug_trims_leading_trailing_spaces_and_dots() {
+        let slug = suggest_slug(Some(". . .Hello World. . ."), None);
+        assert_eq!(slug, "Hello World");
+    }
+
+    #[test]
+    fn slug_collapses_whitespace_runs() {
+        let slug = suggest_slug(Some("Hello     world\t\tthere"), None);
+        assert_eq!(slug, "Hello world there");
+    }
+
+    #[test]
+    fn slug_strips_control_characters() {
+        let slug = suggest_slug(Some("Hello\x01World\x07"), None);
+        assert_eq!(slug, "HelloWorld");
+    }
+
+    #[test]
+    fn slug_nfc_normalizes_decomposed_cyrillic() {
+        // NFD: "и" + combining breve
+        let nfd_title = "\u{0438}\u{0306}ог";
+        let slug = suggest_slug(Some(nfd_title), None);
+        // Expected NFC: "йог"
+        assert_eq!(slug, "\u{0439}ог");
     }
 
     // ── Edge cases summary ──────────────────────────────────────────────
