@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 
 use crate::domain::block::{parse_block, Block, BlockType};
-use crate::domain::vault::VaultLayout;
+use crate::domain::vault::{normalize_filename_stem, VaultLayout};
 use crate::storage::{article_audio, db, files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
 
@@ -130,7 +130,7 @@ pub fn full_scan(
     // disk. Covers renamed/deleted blocks that left stale DB rows.
     let live_slugs: std::collections::HashSet<String> = paths
         .iter()
-        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(String::from))
+        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(normalize_filename_stem))
         .collect();
     let all_indexed = index::list_blocks_light(&tx).unwrap_or_default();
     let mut orphans_removed = 0;
@@ -282,7 +282,7 @@ pub fn incremental_scan(
         if let Some(slug) = path
             .file_stem()
             .and_then(|stem| stem.to_str())
-            .map(str::to_string)
+            .map(normalize_filename_stem)
         {
             live_slugs.insert(slug.clone());
             if let Some(indexed_at) = indexed_at_map.get(&slug) {
@@ -768,10 +768,12 @@ pub fn handle_event(
 // ─── Private helpers ────────────────────────────────────────────────────────
 
 /// Extract slug from a file path (file stem without extension).
+/// Normalizes to NFC so HFS+ (NFD) and APFS (NFC) representations of the
+/// same logical filename resolve to one identity.
 fn path_to_slug(path: &Path) -> Option<String> {
     path.file_stem()
         .and_then(|s| s.to_str())
-        .map(|s| s.to_string())
+        .map(normalize_filename_stem)
 }
 
 fn file_mtime_secs(path: &Path) -> Option<u64> {

@@ -9,6 +9,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+use unicode_normalization::UnicodeNormalization;
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
@@ -150,6 +151,30 @@ impl VaultLayout {
         let ext = ext.strip_prefix('.').unwrap_or(ext);
         self.audio_dir().join(format!("{}.{}", slug, ext))
     }
+}
+
+// ─── Unicode normalization ──────────────────────────────────────────────────
+
+/// Normalize a filename stem to NFC form.
+///
+/// HFS+ stores filenames in NFD (decomposed) form; APFS stores in NFC
+/// (composed). iCloud Drive and Finder may surface the same filename in
+/// different canonical forms across devices, which makes byte-for-byte
+/// slug matching fragile for non-ASCII names.
+///
+/// This function is idempotent: ASCII strings pass through unchanged,
+/// pre-NFC input is returned unchanged, NFD input is composed into NFC.
+///
+/// Apply at every filesystem boundary where a path enters the runtime:
+/// - `read_block_file` when deriving a slug from `file_stem()`
+/// - watcher events when handling notify paths
+/// - native messaging host when persisting an uploaded file
+/// - IPC command boundaries that accept a slug from external state
+///
+/// Contract: identity of two `.md` files with filenames that differ only
+/// in Unicode normalization form is a single block, not two.
+pub fn normalize_filename_stem(stem: &str) -> String {
+    stem.nfc().collect()
 }
 
 // ─── Slug validation ────────────────────────────────────────────────────────
@@ -449,5 +474,44 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("slug"));
+    }
+
+    // ── Unicode normalization ───────────────────────────────────────────
+
+    #[test]
+    fn normalize_passes_ascii_through_unchanged() {
+        assert_eq!(normalize_filename_stem("sunset-tokyo"), "sunset-tokyo");
+    }
+
+    #[test]
+    fn normalize_passes_empty_string_through() {
+        assert_eq!(normalize_filename_stem(""), "");
+    }
+
+    #[test]
+    fn normalize_is_idempotent_on_nfc_input() {
+        let nfc_input = "закат-в-токио";
+        let once = normalize_filename_stem(nfc_input);
+        let twice = normalize_filename_stem(&once);
+        assert_eq!(once, nfc_input);
+        assert_eq!(twice, once);
+    }
+
+    #[test]
+    fn normalize_composes_nfd_cyrillic_to_nfc() {
+        // "йог" decomposed: "и" (U+0438) + combining breve (U+0306) + "о" + "г"
+        let nfd = "\u{0438}\u{0306}\u{043E}\u{0433}";
+        let nfc = normalize_filename_stem(nfd);
+        // Expected composed: "й" (U+0439) + "о" + "г"
+        assert_eq!(nfc, "\u{0439}\u{043E}\u{0433}");
+    }
+
+    #[test]
+    fn normalize_composes_nfd_latin_accents_to_nfc() {
+        // "café" decomposed: "cafe" + combining acute accent
+        let nfd = "cafe\u{0301}";
+        let nfc = normalize_filename_stem(nfd);
+        // Expected composed: "caf" + "é" (U+00E9)
+        assert_eq!(nfc, "caf\u{00E9}");
     }
 }

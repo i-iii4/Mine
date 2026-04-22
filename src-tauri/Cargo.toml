@@ -64,6 +64,11 @@ anyhow = "1"
 sha2 = "0.10"
 whatlang = "0.16"
 
+# Unicode NFC normalization for filename/slug identity consistency across
+# HFS+ (NFD) and APFS (NFC) file systems. Required at every filesystem
+# boundary — see SPEC_STORAGE.md and Phase 18.A in PLAN.md.
+unicode-normalization = "0.1"
+
 # Logging
 log = "0.4"
 

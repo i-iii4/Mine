@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 
 use crate::domain::block::{serialize_block, Block, BlockType};
-use crate::domain::vault::VaultLayout;
+use crate::domain::vault::{normalize_filename_stem, VaultLayout};
 use crate::storage::{index, thumbnails};
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -34,12 +34,14 @@ pub fn write_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf> {
 }
 
 /// Read a .md file and return (slug, raw_content).
-/// The slug is derived from the file name (without .md extension).
+/// The slug is derived from the file name (without .md extension) and
+/// normalized to Unicode NFC form so that HFS+/APFS filesystem variants
+/// of the same logical filename resolve to a single identity.
 pub fn read_block_file(path: &Path) -> Result<(String, String)> {
     let slug = path
         .file_stem()
         .and_then(|s| s.to_str())
-        .map(|s| s.to_string())
+        .map(normalize_filename_stem)
         .with_context(|| format!("invalid file name: {}", path.display()))?;
 
     let content = std::fs::read_to_string(path)
