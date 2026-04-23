@@ -185,100 +185,7 @@ pub fn full_scan(
         .context("failed to commit full_scan transaction")?;
 
     // Spawn background thread for thumbnail generation
-    if !thumb_jobs.is_empty() {
-        let vault_clone = vault.clone();
-        let app_clone = app.clone();
-        match std::thread::Builder::new()
-            .name("thumb-gen".into())
-            .spawn(move || {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let metadata_conn = db::open_or_create(&vault_clone.index_db_path())
-                        .map_err(|e| {
-                            log::error!("thumb-gen: open metadata db failed: {e:#}");
-                            e
-                        })
-                        .ok();
-                    let total = thumb_jobs.len();
-                    let mut generated = 0;
-                    let mut skipped = 0;
-                    let mut metadata_updates = 0;
-                    for job in &thumb_jobs {
-                        let thumb_path = vault_clone.thumb_path(&job.block.slug);
-
-                        // O1: skip if thumbnail is fresh (exists, newer than
-                        // source, valid magic, and format matches what the
-                        // current pipeline would produce for this block).
-                        if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, &vault_clone) {
-                            skipped += 1;
-                            if let Some(ref conn) = metadata_conn {
-                                match index::sync_thumb_metadata(
-                                    conn,
-                                    &job.block.slug,
-                                    &thumb_path,
-                                    Some(vault_clone.root()),
-                                ) {
-                                    Ok(true) => metadata_updates += 1,
-                                    Ok(false) => {}
-                                    Err(e) => log::warn!(
-                                        "thumb-gen: sync fresh metadata failed for {}: {e:#}",
-                                        job.block.slug
-                                    ),
-                                }
-                            }
-                            continue;
-                        }
-
-                        let source = thumbnails::generate_for_block(&job.block, &vault_clone);
-                        if let Some(ref conn) = metadata_conn {
-                            match index::sync_thumb_metadata(
-                                conn,
-                                &job.block.slug,
-                                &thumb_path,
-                                Some(vault_clone.root()),
-                            ) {
-                                Ok(true) => metadata_updates += 1,
-                                Ok(false) => {}
-                                Err(e) => log::warn!(
-                                    "thumb-gen: sync generated metadata failed for {}: {e:#}",
-                                    job.block.slug
-                                ),
-                            }
-                        }
-                        if source != thumbnails::ThumbSource::None {
-                            generated += 1;
-                            // Notify frontend per-thumb so the sidebar
-                            // updates URLs incrementally as legacy thumbs
-                            // get migrated, rather than waiting for the
-                            // whole batch to finish.
-                            if let Some(ref app) = app_clone {
-                                emit_thumb_events(app, &vault_clone, &job.block, source);
-                            }
-                        }
-                    }
-                    log::info!(
-                        "thumbnails: {} generated, {} skipped (fresh), {} metadata updates, {} total",
-                        generated, skipped, metadata_updates, total
-                    );
-                    generated + metadata_updates
-                }));
-                match result {
-                    Ok(changed) => {
-                        if changed > 0 {
-                            if let Some(cb) = on_thumbs_done {
-                                cb();
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        log::error!("thumb-gen thread panicked");
-                    }
-                }
-            })
-        {
-            Ok(_handle) => { /* detached: thumbnail generation runs in background */ }
-            Err(e) => log::error!("failed to spawn thumb-gen thread: {}", e),
-        }
-    }
+    spawn_thumb_jobs_worker(thumb_jobs, vault.clone(), app.clone(), on_thumbs_done, "full");
 
     Ok(ScanResult { indexed, errors })
 }
@@ -368,94 +275,177 @@ pub fn incremental_scan(
     tx.commit()
         .context("failed to commit incremental_scan transaction")?;
 
-    if !thumb_jobs.is_empty() {
-        let vault_clone = vault.clone();
-        let app_clone = app.clone();
-        match std::thread::Builder::new()
-            .name("thumb-gen".into())
-            .spawn(move || {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let metadata_conn = db::open_or_create(&vault_clone.index_db_path())
-                        .map_err(|e| {
-                            log::error!("thumb-gen: open metadata db failed: {e:#}");
-                            e
-                        })
-                        .ok();
-                    let total = thumb_jobs.len();
-                    let mut generated = 0;
-                    let mut skipped = 0;
-                    let mut metadata_updates = 0;
-                    for job in &thumb_jobs {
-                        let thumb_path = vault_clone.thumb_path(&job.block.slug);
-                        if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, &vault_clone) {
-                            skipped += 1;
-                            if let Some(ref conn) = metadata_conn {
-                                match index::sync_thumb_metadata(
-                                    conn,
-                                    &job.block.slug,
-                                    &thumb_path,
-                                    Some(vault_clone.root()),
-                                ) {
-                                    Ok(true) => metadata_updates += 1,
-                                    Ok(false) => {}
-                                    Err(e) => log::warn!(
-                                        "thumb-gen: sync fresh metadata failed for {}: {e:#}",
-                                        job.block.slug
-                                    ),
-                                }
-                            }
-                            continue;
-                        }
+    spawn_thumb_jobs_worker(thumb_jobs, vault.clone(), app.clone(), on_thumbs_done, "incremental");
 
-                        let source = thumbnails::generate_for_block(&job.block, &vault_clone);
+    Ok(ScanResult { indexed, errors })
+}
+
+/// Scan every `.md` block in the vault and regenerate any thumbnail whose
+/// on-disk dependencies (media file, inline media, preview tiles) have
+/// drifted ahead of the cached thumb — regardless of whether the `.md`
+/// file itself was touched.
+///
+/// This closes the gap where `incremental_scan` correctly short-circuits
+/// on unchanged `.md` mtime, but external edits to the source image
+/// (e.g. in Preview, Photoshop, an iCloud sync from another device) leave
+/// the sidebar thumb stale. Split out as a standalone pass so the caller
+/// can invoke it on startup, on window focus, and on `refresh_vault`
+/// without paying for a full DB-side reindex.
+///
+/// Work is delegated to the shared background worker used by `full_scan`
+/// and `incremental_scan`; `is_thumb_fresh` skips already-coherent blocks,
+/// so the steady-state cost is O(N) stat calls plus YAML parses (≈ tens
+/// of milliseconds per thousand blocks on SSD, acceptable for a periodic
+/// sweep).
+pub fn thumb_sweep(
+    vault: &VaultLayout,
+    app: Option<AppHandle>,
+    on_done: Option<Box<dyn FnOnce() + Send>>,
+) -> Result<usize> {
+    let paths = files::scan_md_files(vault)?;
+    let mut jobs: Vec<ThumbJob> = Vec::with_capacity(paths.len());
+
+    for path in &paths {
+        let Some(stem) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(normalize_filename_stem)
+        else {
+            continue;
+        };
+        // iCloud sync-conflict files are not real blocks.
+        if crate::domain::vault::detect_icloud_conflict(&stem).is_some() {
+            continue;
+        }
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(e) => {
+                log::warn!("thumb_sweep: read {} failed: {e:#}", path.display());
+                continue;
+            }
+        };
+        match parse_block(&stem, &content) {
+            Ok(block) => {
+                jobs.push(ThumbJob {
+                    block,
+                    source_path: path.clone(),
+                });
+            }
+            Err(e) => {
+                log::warn!("thumb_sweep: parse {} failed: {e:#}", path.display());
+            }
+        }
+    }
+
+    let count = jobs.len();
+    spawn_thumb_jobs_worker(jobs, vault.clone(), app, on_done, "sweep");
+    Ok(count)
+}
+
+/// Spawn the shared background thumb-processing worker.
+///
+/// Used by `full_scan`, `incremental_scan`, and `thumb_sweep`. Behaviour
+/// (freshness check, regeneration, event emission, callback on success)
+/// is identical across callers — only the log label differs so we can
+/// tell the three passes apart in stdout.
+///
+/// Empty `thumb_jobs` → returns immediately without firing `on_done`,
+/// matching the original callers' `if !thumb_jobs.is_empty()` guard.
+fn spawn_thumb_jobs_worker(
+    thumb_jobs: Vec<ThumbJob>,
+    vault: VaultLayout,
+    app: Option<AppHandle>,
+    on_done: Option<Box<dyn FnOnce() + Send>>,
+    label: &'static str,
+) {
+    if thumb_jobs.is_empty() {
+        return;
+    }
+    match std::thread::Builder::new()
+        .name(format!("thumb-gen-{label}"))
+        .spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let metadata_conn = db::open_or_create(&vault.index_db_path())
+                    .map_err(|e| {
+                        log::error!("thumb-gen({label}): open metadata db failed: {e:#}");
+                        e
+                    })
+                    .ok();
+                let total = thumb_jobs.len();
+                let mut generated = 0;
+                let mut skipped = 0;
+                let mut metadata_updates = 0;
+                for job in &thumb_jobs {
+                    let thumb_path = vault.thumb_path(&job.block.slug);
+
+                    if thumbnails::is_thumb_fresh(
+                        &thumb_path,
+                        &job.source_path,
+                        &job.block,
+                        &vault,
+                    ) {
+                        skipped += 1;
                         if let Some(ref conn) = metadata_conn {
                             match index::sync_thumb_metadata(
                                 conn,
                                 &job.block.slug,
                                 &thumb_path,
-                                Some(vault_clone.root()),
+                                Some(vault.root()),
                             ) {
                                 Ok(true) => metadata_updates += 1,
                                 Ok(false) => {}
                                 Err(e) => log::warn!(
-                                    "thumb-gen: sync generated metadata failed for {}: {e:#}",
+                                    "thumb-gen({label}): sync fresh metadata failed for {}: {e:#}",
                                     job.block.slug
                                 ),
                             }
                         }
-                        if source != thumbnails::ThumbSource::None {
-                            generated += 1;
-                            if let Some(ref app) = app_clone {
-                                emit_thumb_events(app, &vault_clone, &job.block, source);
-                            }
+                        continue;
+                    }
+
+                    let source = thumbnails::generate_for_block(&job.block, &vault);
+                    if let Some(ref conn) = metadata_conn {
+                        match index::sync_thumb_metadata(
+                            conn,
+                            &job.block.slug,
+                            &thumb_path,
+                            Some(vault.root()),
+                        ) {
+                            Ok(true) => metadata_updates += 1,
+                            Ok(false) => {}
+                            Err(e) => log::warn!(
+                                "thumb-gen({label}): sync generated metadata failed for {}: {e:#}",
+                                job.block.slug
+                            ),
                         }
                     }
-                    log::info!(
-                        "incremental thumbnails: {} generated, {} skipped (fresh), {} metadata updates, {} total",
-                        generated, skipped, metadata_updates, total
-                    );
-                    generated + metadata_updates
-                }));
-                match result {
-                    Ok(changed) => {
-                        if changed > 0 {
-                            if let Some(cb) = on_thumbs_done {
-                                cb();
-                            }
+                    if source != thumbnails::ThumbSource::None {
+                        generated += 1;
+                        if let Some(ref app) = app {
+                            emit_thumb_events(app, &vault, &job.block, source);
                         }
-                    }
-                    Err(_) => {
-                        log::error!("thumb-gen thread panicked");
                     }
                 }
-            })
-        {
-            Ok(_handle) => {}
-            Err(e) => log::error!("failed to spawn thumb-gen thread: {}", e),
-        }
+                log::info!(
+                    "thumb-gen({label}): {} generated, {} skipped (fresh), {} metadata updates, {} total",
+                    generated, skipped, metadata_updates, total
+                );
+                generated + metadata_updates
+            }));
+            match result {
+                Ok(changed) => {
+                    if changed > 0 {
+                        if let Some(cb) = on_done {
+                            cb();
+                        }
+                    }
+                }
+                Err(_) => log::error!("thumb-gen({label}) thread panicked"),
+            }
+        }) {
+        Ok(_handle) => {}
+        Err(e) => log::error!("failed to spawn thumb-gen-{label} thread: {e}"),
     }
-
-    Ok(ScanResult { indexed, errors })
 }
 
 /// Index a single .md file: read, parse, upsert, generate thumbnail.

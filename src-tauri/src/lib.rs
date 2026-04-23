@@ -29,6 +29,7 @@ pub fn run() {
             commands::vault::list_known_vaults,
             commands::vault::start_vault_sync,
             commands::vault::rebuild_index,
+            commands::vault::sweep_vault_thumbnails,
             commands::article_audio::get_article_audio_state,
             commands::article_audio::generate_article_audio,
             commands::article_audio::delete_article_audio,

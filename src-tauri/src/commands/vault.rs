@@ -221,6 +221,41 @@ pub fn rebuild_index(
     Ok(result)
 }
 
+/// Re-verify the thumb cache against current media dependencies and
+/// regenerate any stale thumbs in the background.
+///
+/// Called by the frontend on window focus / visibility changes so that
+/// external edits to source images — including iCloud Drive syncs from
+/// another device, where `notify` delivers no reliable Modify event —
+/// are eventually reflected in sidebar and grid cards. The sweep is
+/// cheap: it stats thumb + dependency files, reparses `.md` only to
+/// construct a `Block` for `is_thumb_fresh`, and only regenerates the
+/// thumbs that are actually stale. Each regeneration fires
+/// `thumb:updated`, which the frontend cache-busts through rAF.
+#[tauri::command]
+pub fn sweep_vault_thumbnails(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<usize, CommandError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+
+    let vault = vs.vault.clone();
+    let vault_root_str = vault.root().to_string_lossy().into_owned();
+    drop(vault_state); // release the lock before the sweep parses .md files
+
+    let count = handler::thumb_sweep(
+        &vault,
+        Some(app.clone()),
+        Some(thumbs_done_cb(app, vault_root_str)),
+    )?;
+    log::info!("thumb_sweep: queued {count} blocks for freshness check");
+    Ok(count)
+}
+
 // ─── Shared initialization ──────────────────────────────────────────────────
 
 /// Initialize a vault: expand asset scope, create dirs, open DB and restore snapshot.
@@ -739,6 +774,36 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
             match final_result {
                 Ok(scan) => {
                     migrate_channels_to_files(&conn, &vault);
+                    // After the DB side is consistent, run a thumb_sweep so
+                    // that thumbs are refreshed for blocks whose media was
+                    // edited externally (e.g. iCloud sync from another
+                    // device) without touching the `.md` mtime — which
+                    // incremental_scan correctly skips but that would
+                    // otherwise leave the sidebar showing a stale version.
+                    match handler::thumb_sweep(
+                        &vault,
+                        Some(app_for_thread.clone()),
+                        Some(thumbs_done_cb(
+                            app_for_thread.clone(),
+                            path_for_thread.clone(),
+                        )),
+                    ) {
+                        Ok(count) => append_startup_trace(
+                            &app_for_thread,
+                            "vault_sync_thread",
+                            &format!(
+                                "thumb_sweep path={} queued={} elapsed_ms={}",
+                                path_for_thread,
+                                count,
+                                total.elapsed().as_millis()
+                            ),
+                        ),
+                        Err(err) => log::warn!(
+                            "thumb_sweep failed for {}: {:#}",
+                            path_for_thread,
+                            err
+                        ),
+                    }
                     append_startup_trace(
                         &app_for_thread,
                         "vault_sync_thread",
