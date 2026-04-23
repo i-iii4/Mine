@@ -1,5 +1,57 @@
 # Devlog
 
+## 23.04.2026 11:02 [primary] — Feed autoplay window widened to half-screen
+
+### Goal
+Довести feed autoplay до явно неконсервативного поведения: video не должно останавливаться слишком рано на длинных карточках, когда playback surface уже частично ушла из viewport, но пользователь всё ещё воспринимает карточку как “на экране”.
+
+### Actually completed
+
+**Expanded autoplay window увеличен с фиксированных `160px` до `50%` текущей высоты viewport** (`src/components/Grid.tsx`)
+- autoplay window теперь считается динамически от текущего viewport, а не как фиксированный пиксельный запас
+- это даёт значительно более длинный prewarm/linger corridor:
+  - video стартует заметно раньше до фактического входа в viewport
+  - video перестаёт играть заметно позже после фактического выхода из viewport
+- визуально это убирает ранний freeze у длинных карточек при скролле
+
+**`heavy` policy уточнена, чтобы широкий linger не ломал single-heavy arbitration**
+- off-screen heavy clip, который ещё находится внутри expanded autoplay window, больше не удерживает единственный heavy slot, если другой heavy clip уже реально пересекает viewport
+- если несколько heavy clip'ов реально видимы, по-прежнему выигрывает top-most candidate
+
+**Regression coverage обновлена** (`src/components/Grid.test.tsx`)
+- old linger test переставлен на более поздний scroll threshold
+- добавлен heavy-specific test: in-viewport heavy beats off-screen lingering heavy
+
+### Checks
+- `bun run test src/components/Grid.test.tsx`
+- `bun run build`
+
+### Known gap after verification
+
+Валидация на живом feed показала, что widened autoplay window сам по себе не закрывает весь video UX.
+
+- half-visible single-video cards всё ещё могут оставаться в poster-only состоянии, хотя визуально уже ожидается playing surface
+- часть video cards при этом способна деградировать в чёрный прямоугольник с `PlayBadge`, если poster-only branch не нашла корректный постер
+
+Read-only аудит runtime зафиксировал два независимых разрыва:
+
+- **poster split:** `FeedVideoSurface` живёт от `feed_playback.poster_preview_path`, а часть poster-only branches всё ещё живёт от raw block-level thumb
+- **activation split:** widened autoplay window уже стал щедрым, но arbiter всё ещё полностью выключает autoplay вне `phase === committed`, так что один viewport tweak не гарантирует ранний старт
+
+### Next step
+
+Следующий шаг для `C5` — не новый threshold tweak, а **разделение feed-video contract на три независимых слоя**:
+
+- **poster availability** — у single-video card всегда есть единый poster source-of-truth, независимо от autoplay
+- **autoplay eligibility** — backend-derived policy решает только, можно ли запускать live video
+- **viewport activation** — frontend arbiter решает только, играть ли clip сейчас, и не должен сбрасывать healthy state из-за measuring churn
+
+Практический результат следующего шага:
+
+- `FeedVideoSurface` и poster-only branches будут использовать один и тот же poster contract
+- отсутствие autoplay descriptor перестанет превращать video card в чёрный void
+- widened prewarm/linger начнёт работать поверх этого единого video contract, а не вместо него
+
 ## 23.04.2026 06:52 [primary] — Feed autoplay prewarm window for smoother scroll entry
 
 ### Goal

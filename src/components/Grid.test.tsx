@@ -818,7 +818,7 @@ describe("Grid — no collapse after add / revisit", () => {
 
     act(() => {
       if (scrollEl) {
-        scrollEl.scrollTop = 250;
+        scrollEl.scrollTop = 500;
         scrollEl.dispatchEvent(new Event("scroll"));
       }
     });
@@ -899,7 +899,7 @@ describe("Grid — no collapse after add / revisit", () => {
 
     act(() => {
       if (scrollEl) {
-        scrollEl.scrollTop = 250;
+        scrollEl.scrollTop = 340;
         scrollEl.dispatchEvent(new Event("scroll"));
       }
     });
@@ -911,6 +911,48 @@ describe("Grid — no collapse after add / revisit", () => {
         "[data-block-slug='block-1501'] [data-feed-video-surface='true']",
       ),
     ).toBeFalsy();
+  });
+
+  it("prefers an in-viewport heavy clip over an off-screen lingering heavy clip", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeHeavyVideoBlock(1601),
+      makeHeavyVideoBlock(1602),
+    ];
+    setBlockHeight(1601, 300);
+    setBlockHeight(1602, 300);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="video-heavy-priority" />);
+
+    act(() => {
+      triggerResize(280, 400);
+    });
+
+    await flushAsync();
+
+    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
+    expect(scrollEl).toBeTruthy();
+
+    act(() => {
+      if (scrollEl) {
+        scrollEl.scrollTop = 180;
+        scrollEl.dispatchEvent(new Event("scroll"));
+      }
+    });
+
+    await flushAsync();
+
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1601'] [data-feed-video-surface='true']",
+      ),
+    ).toBeFalsy();
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1602'] [data-feed-video-surface='true']",
+      ),
+    ).toBeTruthy();
   });
 
   it("keeps only the top-most heavy video active when multiple heavy cards compete", async () => {

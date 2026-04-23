@@ -62,7 +62,7 @@ const MEASUREMENT_BATCH_SIZE = 48;
 const INITIAL_COMMIT_BLOCKS = 24;
 const COMMIT_LOOKAHEAD_BLOCKS = 24;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
-const FEED_AUTOPLAY_VIEWPORT_MARGIN_PX = 160;
+const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -453,15 +453,21 @@ export function Grid({
       return new Set<string>();
     }
 
-    const autoplayWindowTop = scrollTop - FEED_AUTOPLAY_VIEWPORT_MARGIN_PX;
+    const autoplayViewportMarginPx = Math.round(
+      viewportHeight * FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO,
+    );
+    const autoplayWindowTop = scrollTop - autoplayViewportMarginPx;
     const autoplayWindowBottom =
-      scrollTop + viewportHeight + FEED_AUTOPLAY_VIEWPORT_MARGIN_PX;
+      scrollTop + viewportHeight + autoplayViewportMarginPx;
+    const viewportBottom = scrollTop + viewportHeight;
     const viewportCenter = scrollTop + viewportHeight / 2;
     const active = new Set<string>();
     let activeHeavy:
       | {
           slug: string;
-          visibleFraction: number;
+          inViewport: boolean;
+          viewportVisibleFraction: number;
+          windowVisibleFraction: number;
           centerDistance: number;
           top: number;
         }
@@ -482,35 +488,52 @@ export function Grid({
 
       const surfaceTop = item.top + playbackSurface.topOffsetPx;
       const surfaceBottom = surfaceTop + playbackSurface.heightPx;
-      const visiblePx =
+      const windowVisiblePx =
         Math.min(surfaceBottom, autoplayWindowBottom) -
         Math.max(surfaceTop, autoplayWindowTop);
-      if (visiblePx <= 0) continue;
+      if (windowVisiblePx <= 0) continue;
 
-      const visibleFraction = visiblePx / Math.max(playbackSurface.heightPx, 1);
-      if (visibleFraction < FEED_AUTOPLAY_MIN_VISIBLE_FRACTION) continue;
+      const viewportVisiblePx =
+        Math.min(surfaceBottom, viewportBottom) -
+        Math.max(surfaceTop, scrollTop);
+      const safeSurfaceHeight = Math.max(playbackSurface.heightPx, 1);
+      const windowVisibleFraction = windowVisiblePx / safeSurfaceHeight;
+      if (windowVisibleFraction < FEED_AUTOPLAY_MIN_VISIBLE_FRACTION) continue;
 
       if (playback.profile === "standard") {
         active.add(block.slug);
         continue;
       }
 
+      const inViewport = viewportVisiblePx > 0;
+      const viewportVisibleFraction = Math.max(viewportVisiblePx, 0) / safeSurfaceHeight;
       const centerDistance = Math.abs(
         surfaceTop + playbackSurface.heightPx / 2 - viewportCenter,
       );
 
       if (
         !activeHeavy ||
-        visibleFraction > activeHeavy.visibleFraction + 0.001 ||
-        (Math.abs(visibleFraction - activeHeavy.visibleFraction) <= 0.001 &&
+        (inViewport && !activeHeavy.inViewport) ||
+        (inViewport === activeHeavy.inViewport &&
+          viewportVisibleFraction > activeHeavy.viewportVisibleFraction + 0.001) ||
+        (inViewport === activeHeavy.inViewport &&
+          Math.abs(viewportVisibleFraction - activeHeavy.viewportVisibleFraction) <= 0.001 &&
+          windowVisibleFraction > activeHeavy.windowVisibleFraction + 0.001) ||
+        (inViewport === activeHeavy.inViewport &&
+          Math.abs(viewportVisibleFraction - activeHeavy.viewportVisibleFraction) <= 0.001 &&
+          Math.abs(windowVisibleFraction - activeHeavy.windowVisibleFraction) <= 0.001 &&
           surfaceTop < activeHeavy.top - 0.5) ||
-        (Math.abs(visibleFraction - activeHeavy.visibleFraction) <= 0.001 &&
+        (inViewport === activeHeavy.inViewport &&
+          Math.abs(viewportVisibleFraction - activeHeavy.viewportVisibleFraction) <= 0.001 &&
+          Math.abs(windowVisibleFraction - activeHeavy.windowVisibleFraction) <= 0.001 &&
           Math.abs(surfaceTop - activeHeavy.top) <= 0.5 &&
           centerDistance < activeHeavy.centerDistance - 0.5)
       ) {
         activeHeavy = {
           slug: block.slug,
-          visibleFraction,
+          inViewport,
+          viewportVisibleFraction,
+          windowVisibleFraction,
           centerDistance,
           top: surfaceTop,
         };

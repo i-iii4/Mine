@@ -193,8 +193,19 @@ Grid держит дополнительный invariant:
 - все видимые `standard` video cards могут autoplay'ить одновременно
 - из `heavy` video cards одновременно autoplay'ит максимум одна
 - autoplay разрешён только для committed cards текущего generation
-- autoplay gating использует expanded autoplay window (`viewport ± 160px`): playback surface должна быть покрыта этим окном минимум на `50%`, чтобы video успевало стартовать до фактического входа в viewport и гасло только после выхода
-- `heavy` active card выбирается как top-most visible block
+- autoplay gating использует expanded autoplay window (`viewport ± 50%` его высоты): playback surface должна быть покрыта этим окном минимум на `50%`, чтобы video успевало стартовать до фактического входа в viewport и гасло только после выхода
+- `heavy` active card выбирается с приоритетом для реального viewport overlap: in-viewport heavy clip beats off-screen lingering heavy clip; при прочих равных побеждает top-most candidate
+
+Открытый следующий шаг в этом контракте:
+
+- current runtime всё ещё держит split между **poster contract** и **autoplay contract**
+- `FeedVideoSurface` уже использует `feed_playback.poster_preview_path`, тогда как часть poster-only feed branches всё ещё зависит от raw block-level thumb
+- поэтому widened autoplay window сам по себе не может гарантировать ни ранний старт, ни визуально стабильный poster-only state
+- следующее архитектурное исправление должно развести три слоя:
+  - poster availability
+  - autoplay eligibility
+  - viewport activation / hysteresis
+- widened autoplay window остаётся частью activation policy, но больше не считается единственным рычагом для feed-video UX
 
 ## Components
 

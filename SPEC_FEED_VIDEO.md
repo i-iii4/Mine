@@ -169,6 +169,45 @@ Autoplay semantics в descriptor не кодируются.
 - `FEED_VIDEO_BLOB_TIMEOUT_MS = 1800`
 - `FEED_VIDEO_HEAVY_DIRECT_TIMEOUT_MS = 3500`
 
+## Open gap before phase completion
+
+Текущий runtime уже использует widened autoplay window и poster-first `FeedVideoSurface`, но финальный contract ещё не замкнут.
+
+Подтверждённый разрыв сейчас такой:
+
+- autoplay surface уже живёт от `feed_playback.poster_preview_path`
+- часть poster-only feed branches всё ещё живёт от raw block-level thumb (`<slug>.jpg`)
+- viewport activation при этом полностью выключается вне `phase === committed`
+
+Из-за этого возникают два независимых класса симптомов:
+
+- half-visible video card может ещё не стать playing, хотя widened autoplay window уже достаточно щедрый
+- video card без активного autoplay может визуально деградировать в чёрный прямоугольник, если poster-only branch не попала в тот же poster contract
+
+Это считается не “тонкой настройкой viewport threshold”, а именно несовпадением контрактов.
+
+## Next architectural step
+
+Следующее исправление должно зафиксировать три независимых слоя:
+
+### 1. Poster availability
+
+- single-video feed card всегда должна иметь единый poster source-of-truth
+- autoplay ineligible / delayed / disabled card остаётся visual-video-card с постером и `PlayBadge`
+- poster-only branches и `FeedVideoSurface` обязаны резолвить один и тот же poster contract
+
+### 2. Autoplay eligibility
+
+- backend-derived policy продолжает решать только, можно ли запускать live video
+- отсутствие autoplay descriptor **не** означает отсутствие poster surface
+- имя поля (`feed_playback` или successor) вторично; главное — separation of concerns
+
+### 3. Viewport activation
+
+- frontend arbiter решает только, должен ли eligible clip играть прямо сейчас
+- widened prewarm / linger остаётся activation policy
+- временный `measuring` / generation churn не должен сбрасывать healthy video state в blank poster-less state
+
 ## Grid autoplay gating
 
 ### Global policy
@@ -179,7 +218,7 @@ Autoplay semantics в descriptor не кодируются.
 ### Source of truth
 
 - только committed visible cards текущего grid generation
-- видимость считается не по strict viewport, а по expanded autoplay window: `viewport ± 160px`
+- видимость считается не по strict viewport, а по expanded autoplay window: `viewport ± 50%` его текущей высоты
 
 ### Selection rule
 
@@ -187,14 +226,17 @@ Autoplay semantics в descriptor не кодируются.
 - карточка должна иметь валидный `feed_playback`
 - playback surface карточки должна быть покрыта expanded autoplay window минимум на `50%`
 - `standard` cards autoplay'ят все, если проходят visibility threshold
-- из `heavy` cards активна только top-most visible card
+- из `heavy` cards активна только одна:
+  - heavy clip с фактическим viewport overlap имеет приоритет над off-screen clip, который ещё linger'ит внутри expanded autoplay window
+  - если несколько heavy clip'ов реально видимы, активна top-most candidate
+  - если ни один heavy clip не видим в strict viewport, остаётся top-most candidate внутри expanded autoplay window
 - если ни одна не проходит threshold, autoplay не запускается
 
 ### Prewarm / linger policy
 
 - autoplay может стартовать до фактического входа playback surface в viewport
 - autoplay может продолжаться после фактического выхода playback surface из viewport
-- симметричное expanded autoplay window даёт poster→video transition заранее и убирает визуальный скачок в момент появления карточки на экране
+- симметричное expanded autoplay window в `50%` высоты экрана даёт poster→video transition заранее и убирает визуальный скачок в момент появления карточки на экране
 
 ### Loss of eligibility
 

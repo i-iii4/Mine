@@ -146,8 +146,8 @@ Goal: устранить две подтверждённые архитекту�
     - `heavy` — larger single-video clips теперь тоже получают `feed_playback`, но идут через longer `direct -> poster-only` без blob fallback;
     - descriptor не создаётся только для truly excessive clips выше hard limits;
   - grid autoplay policy смягчена под feed UX:
-    - все committed `standard` clips autoplay'ят одновременно, если их playback surface покрыта expanded autoplay window (`viewport ± 160px`) минимум на `50%`;
-    - `heavy` clips остаются консервативными: одновременно autoplay'ит только один top-most committed heavy clip;
+    - все committed `standard` clips autoplay'ят одновременно, если их playback surface покрыта expanded autoplay window (`viewport ± 50%` высоты экрана) минимум на `50%`;
+    - `heavy` clips остаются консервативными: одновременно autoplay'ит только один committed heavy clip, при этом in-viewport heavy имеет приоритет над off-screen lingering candidate;
   - `C5` остаётся `[~]` до ручной приёмки пользователем: autoplay dedicated video, autoplay single-video previews, preview-only multi-media, no blank square on failures.
 
 ### Current known blocker before phase completion
@@ -157,6 +157,12 @@ Goal: устранить две подтверждённые архитекту�
   - Current runtime no longer duplicates one `slug.jpg` across all tiles: при missing tile preview asset UI падает в distinct per-source media fallback и сохраняет правильную галерею.
   - Legacy article rows без `preview_manifest` теперь тоже не должны падать в пустой `bg-accent` wrapper: fallback строится из `media_urls` / `first_image` и даёт реальный tile set.
   - Но storage pipeline всё ещё не гарантирует полный set per-tile preview files и backfill `preview_manifest` для legacy rows. Это остаётся незавершённым куском `C2`.
+- **Split feed-video contract between poster and autoplay.**
+  - Intended result for `C5`: single-video cards должны иметь один poster source-of-truth независимо от того, autoplay eligible ли ролик и активен ли он прямо сейчас.
+  - Current runtime уже имеет widened autoplay window (`viewport ± 50%`) и profile-aware heavy arbitration, но этого недостаточно:
+    - autoplay activation всё ещё выключается вместе с `phase !== committed`
+    - часть poster-only feed branches всё ещё зависит от raw block-level thumb вместо того же poster contract, что и `FeedVideoSurface`
+  - Next step for `C5`: зафиксировать единый feed-video poster contract, держать autoplay eligibility как отдельный backend-derived слой и отвязать viewport activation/hysteresis от полного сброса healthy video state во время measuring churn.
 
 ### Acceptance Criteria
 
@@ -170,6 +176,7 @@ Goal: устранить две подтверждённые архитекту�
 - Initial visible window, route switch и resize не рендерят live cards внутри stale envelope; системной bottom clip / white tail underflow больше нет.
 - Multi-image article/social cards no longer collapse to a repeated block-level thumb; feed shows either composite preview or distinct gallery tiles.
 - `Detail` продолжает открывать оригиналы.
+- Single-video cards never degrade to a black void when autoplay is disabled, delayed, or ineligible; they always keep a stable poster surface.
 
 ### Known Residuals
 
