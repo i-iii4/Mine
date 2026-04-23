@@ -29,6 +29,15 @@ const JPEG_MAGIC: [u8; 3] = [0xFF, 0xD8, 0xFF];
 /// PNG magic bytes: `89 50 4E` (89 P N) — first 3 bytes of `89 50 4E 47`.
 const PNG_MAGIC: [u8; 3] = [0x89, 0x50, 0x4E];
 
+/// Actual thumb file state on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThumbDiskState {
+    Missing,
+    Jpeg,
+    Png,
+    Invalid,
+}
+
 /// What thumb file format a block is expected to have on disk. Used
 /// by `is_thumb_fresh` to detect stale thumbs that were written by
 /// an older version of the pipeline in a format the current code
@@ -195,18 +204,24 @@ pub fn is_thumb_fresh(
         }
     }
 
-    let magic = read_thumb_magic(thumb_path);
-    let is_jpeg = magic == Some(JPEG_MAGIC);
-    let is_png = magic == Some(PNG_MAGIC);
-
-    if !is_jpeg && !is_png {
-        return false;
+    match (expected_thumb(block, vault), thumb_disk_state(thumb_path)) {
+        (_, ThumbDiskState::Missing | ThumbDiskState::Invalid) => false,
+        (ExpectedThumb::OnlyJpeg, ThumbDiskState::Jpeg) => true,
+        (ExpectedThumb::OnlyPng, ThumbDiskState::Png) => true,
+        (ExpectedThumb::Either, ThumbDiskState::Jpeg | ThumbDiskState::Png) => true,
+        _ => false,
     }
+}
 
-    match expected_thumb(block, vault) {
-        ExpectedThumb::OnlyJpeg => is_jpeg,
-        ExpectedThumb::OnlyPng => is_png,
-        ExpectedThumb::Either => true,
+/// Classify the actual thumb content on disk.
+pub fn thumb_disk_state(thumb_path: &Path) -> ThumbDiskState {
+    if !thumb_path.exists() {
+        return ThumbDiskState::Missing;
+    }
+    match read_thumb_magic(thumb_path) {
+        Some(JPEG_MAGIC) => ThumbDiskState::Jpeg,
+        Some(PNG_MAGIC) => ThumbDiskState::Png,
+        Some(_) | None => ThumbDiskState::Invalid,
     }
 }
 

@@ -68,7 +68,7 @@ pub struct LightBlock {
     pub feed_playback: Option<String>,
 }
 
-/// Minimal block projection for Phase 2 thumbnail upgrades.
+/// Minimal block projection for Phase 2 thumbnail upgrade candidate scans.
 /// Keeps only the fields needed to resolve the original media source
 /// without touching thumbnail files or article bodies on the UI thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1665,7 +1665,6 @@ pub fn list_pending_thumb_upgrade_blocks(
          FROM blocks
          WHERE slug != ''
            AND block_type != 'channel'
-           AND thumb_format = 'png'
          ORDER BY saved_at DESC",
     )?;
 

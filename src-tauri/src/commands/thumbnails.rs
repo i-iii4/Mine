@@ -129,10 +129,10 @@ struct ThumbUpdatedPayload {
     is_text: bool,
 }
 
-/// Enumerate every indexed block whose thumbnail metadata says the on-disk
-/// thumb is still a PNG text placeholder and which references media the
-/// browser can decode. Returned list is what the frontend feeds into the
-/// worker queue at startup — each entry is a pending Phase 2 upgrade.
+/// Enumerate every indexed block whose current on-disk thumb is missing or
+/// is not a real JPEG, and which references media the browser can decode.
+/// Returned list is what the frontend feeds into the worker queue at startup
+/// — each entry is a pending Phase 2 upgrade.
 ///
 /// Runs in `spawn_blocking` and re-opens SQLite from disk, so the startup
 /// backlog scan never blocks the WebView/main thread.
@@ -168,6 +168,9 @@ pub async fn list_pending_thumb_upgrades(
             let mut out: Vec<ThumbUpgradeRequest> = Vec::new();
             for block in &blocks {
                 if let Some((media_path, kind)) = resolve_upgrade_media(&vault, block) {
+                    if !needs_browser_thumb_upgrade(&vault, block) {
+                        continue;
+                    }
                     out.push(ThumbUpgradeRequest {
                         slug: block.slug.clone(),
                         media_path: media_path.to_string_lossy().into_owned(),
@@ -187,6 +190,16 @@ pub async fn list_pending_thumb_upgrades(
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+fn needs_browser_thumb_upgrade(
+    vault: &crate::domain::vault::VaultLayout,
+    block: &index::PendingThumbUpgradeBlock,
+) -> bool {
+    !matches!(
+        thumbnails::thumb_disk_state(&vault.thumb_path(&block.slug)),
+        thumbnails::ThumbDiskState::Jpeg
+    )
+}
 
 /// Resolve which media file should replace a text placeholder for `block`.
 /// Mirrors the cascade priority in `storage::thumbnails::generate_for_block`,
@@ -262,6 +275,11 @@ mod tests {
     fn make_vault(path: &std::path::Path) -> VaultLayout {
         std::fs::create_dir_all(path.join(".arena/cache/thumbs")).unwrap();
         VaultLayout::new(path.to_path_buf())
+    }
+
+    fn create_test_image(path: &std::path::Path, width: u32, height: u32) {
+        let img = image::RgbImage::from_pixel(width, height, image::Rgb([120, 180, 200]));
+        img.save(path).unwrap();
     }
 
     fn write_block(vault: &VaultLayout, conn: &rusqlite::Connection, block: Block) {
@@ -379,6 +397,7 @@ mod tests {
         let (path, kind) = resolve_upgrade_media(&vault, target).unwrap();
         assert_eq!(kind, "image");
         assert_eq!(path, webp);
+        assert!(needs_browser_thumb_upgrade(&vault, target));
     }
 
     #[test]
@@ -402,6 +421,93 @@ mod tests {
         let (path, kind) = resolve_upgrade_media(&vault, target).unwrap();
         assert_eq!(kind, "video");
         assert_eq!(path, video);
+    }
+
+    #[test]
+    fn needs_browser_thumb_upgrade_rejects_real_jpeg_thumb() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let media = dir.path().join("poster.avif");
+        std::fs::write(&media, b"fake avif").unwrap();
+        let src_png = dir.path().join("src.png");
+        create_test_image(&src_png, 100, 100);
+        thumbnails::generate_thumbnail(&src_png, &vault.thumb_path("poster"), 240).unwrap();
+
+        let block = index::PendingThumbUpgradeBlock {
+            slug: "poster".into(),
+            media_file: Some("poster.avif".into()),
+            thumbnail: None,
+            first_image: None,
+            media_urls: None,
+        };
+
+        assert!(!needs_browser_thumb_upgrade(&vault, &block));
+    }
+
+    #[test]
+    fn needs_browser_thumb_upgrade_accepts_missing_thumb() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let media = dir.path().join("poster.avif");
+        std::fs::write(&media, b"fake avif").unwrap();
+
+        let block = index::PendingThumbUpgradeBlock {
+            slug: "poster".into(),
+            media_file: Some("poster.avif".into()),
+            thumbnail: None,
+            first_image: None,
+            media_urls: None,
+        };
+
+        assert!(needs_browser_thumb_upgrade(&vault, &block));
+    }
+
+    #[test]
+    fn list_pending_thumb_upgrades_queues_stale_png_for_image_block_even_if_db_was_jpeg() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let conn = db::open_memory().unwrap();
+
+        std::fs::write(dir.path().join("poster.avif"), b"fake avif").unwrap();
+        let block = Block {
+            slug: "poster".into(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Image,
+                title: Some("poster".into()),
+                description: None,
+                url: None,
+                file: Some("poster.avif".into()),
+                thumbnail: None,
+                tags: vec![],
+                saved_at: DateTime::new("2026-01-15T12:00:00Z").unwrap(),
+                source: None,
+                width: None,
+                height: None,
+                author: None,
+                position: None,
+                color: None,
+                icon: None,
+            },
+            body: String::new(),
+        };
+        write_block(&vault, &conn, block);
+
+        thumbnails::generate_text_thumbnail(Some("poster"), "fallback", &vault.thumb_path("poster"))
+            .unwrap();
+        // Simulate stale DB metadata claiming the thumb is already JPEG.
+        conn.execute(
+            "UPDATE blocks SET thumb_format = 'jpeg', thumb_mtime = 123 WHERE slug = 'poster'",
+            [],
+        )
+        .unwrap();
+
+        let candidates = index::list_pending_thumb_upgrade_blocks(&conn).unwrap();
+        let target = candidates.iter().find(|candidate| candidate.slug == "poster").unwrap();
+        let (path, kind) = resolve_upgrade_media(&vault, target).unwrap();
+
+        assert_eq!(kind, "image");
+        assert_eq!(path, dir.path().join("poster.avif"));
+        assert!(needs_browser_thumb_upgrade(&vault, target));
     }
 
     #[test]
