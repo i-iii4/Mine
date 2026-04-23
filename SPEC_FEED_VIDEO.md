@@ -158,6 +158,7 @@ Autoplay semantics в descriptor не кодируются.
 
 - poster рендерится сразу
 - poster остаётся на экране, пока playback не подтверждён через `loadeddata` или `playing`
+- `FeedVideoSurface` принимает optional `posterCandidates`; если они переданы, poster branch использует общий candidate chain вместо single hardcoded poster URL
 - `standard`: direct timeout/error => blob fallback
 - `heavy`: direct timeout/error => permanent poster-only
 - blob timeout/error => permanent poster-only
@@ -169,44 +170,35 @@ Autoplay semantics в descriptor не кодируются.
 - `FEED_VIDEO_BLOB_TIMEOUT_MS = 1800`
 - `FEED_VIDEO_HEAVY_DIRECT_TIMEOUT_MS = 3500`
 
-## Open gap before phase completion
+## Poster contract
 
-Текущий runtime уже использует widened autoplay window и poster-first `FeedVideoSurface`, но финальный contract ещё не замкнут.
+Single-video feed cards используют единый poster contract независимо от autoplay state.
 
-Подтверждённый разрыв сейчас такой:
+### Poster candidate order
 
-- autoplay surface уже живёт от `feed_playback.poster_preview_path`
-- часть poster-only feed branches всё ещё живёт от raw block-level thumb (`<slug>.jpg`)
-- viewport activation при этом полностью выключается вне `phase === committed`
+Poster source резолвится в таком порядке:
 
-Из-за этого возникают два независимых класса симптомов:
+1. `feed_playback.poster_preview_path`
+2. `preview_manifest.primary_preview_path`
+3. tile-level `previewPath` у primary video tile
+4. block-level thumb `<slug>.jpg`
 
-- half-visible video card может ещё не стать playing, хотя widened autoplay window уже достаточно щедрый
-- video card без активного autoplay может визуально деградировать в чёрный прямоугольник, если poster-only branch не попала в тот же poster contract
+### Runtime behavior
 
-Это считается не “тонкой настройкой viewport threshold”, а именно несовпадением контрактов.
-
-## Next architectural step
-
-Следующее исправление должно зафиксировать три независимых слоя:
-
-### 1. Poster availability
-
-- single-video feed card всегда должна иметь единый poster source-of-truth
+- `FeedVideoSurface` и poster-only branches обязаны использовать один и тот же candidate chain
+- dedicated `video`, single-video `article` и single-video `social` не имеют отдельных poster source-of-truth
 - autoplay ineligible / delayed / disabled card остаётся visual-video-card с постером и `PlayBadge`
-- poster-only branches и `FeedVideoSurface` обязаны резолвить один и тот же poster contract
+- при `img` load failure runtime пробует следующий candidate, а не схлопывается сразу в blank/black card
 
-### 2. Autoplay eligibility
+## Remaining architectural direction
 
-- backend-derived policy продолжает решать только, можно ли запускать live video
-- отсутствие autoplay descriptor **не** означает отсутствие poster surface
-- имя поля (`feed_playback` или successor) вторично; главное — separation of concerns
+Текущий runtime уже закрыл главный frontend split между poster-only и autoplay branches.
 
-### 3. Viewport activation
+- poster availability отделена от autoplay activation на runtime-уровне
+- widened autoplay window больше не считается единственным рычагом для video UX
+- отсутствие autoplay descriptor по-прежнему **не** означает отсутствие poster surface
 
-- frontend arbiter решает только, должен ли eligible clip играть прямо сейчас
-- widened prewarm / linger остаётся activation policy
-- временный `measuring` / generation churn не должен сбрасывать healthy video state в blank poster-less state
+Следующий шаг, если останутся сложные edge cases, уже не про новый threshold tweak, а про возможное поднятие текущего frontend poster resolver в явный backend-derived video descriptor. Это future hardening, а не незакрытый базовый contract bug.
 
 ## Grid autoplay gating
 
@@ -217,7 +209,8 @@ Autoplay semantics в descriptor не кодируются.
 
 ### Source of truth
 
-- только committed visible cards текущего grid generation
+- committed prefix текущего grid generation
+- autoplay disabled только в `provisional`; `measuring` не обнуляет already-committed active set
 - видимость считается не по strict viewport, а по expanded autoplay window: `viewport ± 50%` его текущей высоты
 
 ### Selection rule

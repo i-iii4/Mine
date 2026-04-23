@@ -1,5 +1,40 @@
 # Devlog
 
+## 23.04.2026 12:04 [primary] — Unified feed-video poster contract and measuring-safe autoplay
+
+### Goal
+Закрыть фактический split между poster-only и autoplay video branches в feed: video card должна иметь один и тот же poster contract независимо от того, autoplay eligible ли ролик и активен ли он прямо сейчас, а widened autoplay window не должен обнуляться из-за временного `measuring` churn.
+
+### Actually completed
+
+**Poster contract унифицирован для single-video feed cards** (`src/lib/feedVideoPoster.ts`, `src/components/FeedVideoPoster.tsx`, `src/components/Card.tsx`, `src/components/FeedVideoSurface.tsx`)
+- введён общий candidate resolver для feed-video posters
+- poster candidates теперь выбираются в одном порядке:
+  - `feed_playback.poster_preview_path`
+  - `preview_manifest.primary_preview_path`
+  - tile-level `previewPath`
+  - block-level `thumbnailUrl(<slug>.jpg)`
+- dedicated `video`, single-video `article` и single-video `social` poster-only branches больше не живут на отдельном старом `thumbnailUrl(block.slug)` контракте
+- `FeedVideoSurface` и poster-only ветки теперь используют один и тот же `FeedVideoPoster`, который перебирает candidate chain по `onError`, а не схлопывается сразу в чёрный прямоугольник
+
+**Autoplay activation больше не сбрасывается на всём `measuring` phase** (`src/components/Grid.tsx`)
+- Grid по-прежнему запрещает autoplay в `provisional`
+- но уже committed prefix текущего generation теперь может сохранять и начинать autoplay даже пока нижняя часть grid ещё догоняет измерения
+- widened autoplay window (`viewport ± 50%`) теперь работает поверх этого более стабильного activation path, а не упирается в полный global reset
+
+**Regression coverage расширена под оба дефекта** (`src/components/Card.test.tsx`)
+- dedicated video poster-only path проверяется на использование playback poster contract
+- отдельный test фиксирует fallback от missing poster preview к block thumb
+
+### Checks
+- `bun run test src/components/Card.test.tsx src/components/FeedVideoSurface.test.tsx src/components/Grid.test.tsx`
+- `bun run build`
+
+### Next step
+
+- Прогнать ручную валидацию на реальных проблемных карточках (`2FX`, half-visible long cards, autoplay-ineligible video cards) и убедиться, что poster surface стабилен как в feed, так и на delayed autoplay entry.
+- Если после этого останутся edge cases, уже отдельно решать, стоит ли поднимать текущий frontend poster resolver в явный backend-derived `feed_video` descriptor.
+
 ## 23.04.2026 11:02 [primary] — Feed autoplay window widened to half-screen
 
 ### Goal

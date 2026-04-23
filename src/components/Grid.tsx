@@ -449,7 +449,7 @@ export function Grid({
   }, [blocks, heightsMap, targetCommittedEndIndex, warmedUp]);
 
   const activePlaybackSlugs = useMemo(() => {
-    if (phase !== "committed" || viewportHeight <= 0) {
+    if (phase === "provisional" || viewportHeight <= 0) {
       return new Set<string>();
     }
 

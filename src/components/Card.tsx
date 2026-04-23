@@ -12,13 +12,16 @@ import {
 import {
   deriveCardLayoutDescriptor,
   deriveContentCardSlots,
+  parsePreviewManifest,
   type CardLayoutDescriptor,
 } from "@/lib/cardLayout";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
+import { buildFeedVideoPosterCandidates } from "@/lib/feedVideoPoster";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
 import { FeedVideoSurface } from "./FeedVideoSurface";
+import { FeedVideoPoster } from "./FeedVideoPoster";
 
 const PriorityContext = createContext(false);
 const usePriority = () => useContext(PriorityContext);
@@ -177,6 +180,10 @@ export function CardContent({
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
   const descriptor = useMemo(() => deriveCardLayoutDescriptor(block), [block]);
+  const previewManifest = useMemo(
+    () => parsePreviewManifest(block),
+    [block],
+  );
   const playback = useMemo(
     () => normalizeFeedPlayback(block.feed_playback),
     [block.feed_playback],
@@ -189,13 +196,13 @@ export function CardContent({
         return <LinkCard block={block} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
       case "article-text":
       case "article-media":
-        return <ArticleCard block={block} descriptor={descriptor} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
+        return <ArticleCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "social-text":
       case "social-single-media":
       case "social-media-grid":
-        return <SocialCard block={block} descriptor={descriptor} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
+        return <SocialCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "video":
-        return <VideoCard block={block} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
+        return <VideoCard block={block} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "file":
         return <FileCard block={block} />;
     }
@@ -488,6 +495,7 @@ const LinkCard = memo(function LinkCard({
 const SocialCard = memo(function SocialCard({
   block,
   descriptor,
+  previewManifest,
   vaultPath,
   thumbsRootPath,
   playback,
@@ -496,6 +504,7 @@ const SocialCard = memo(function SocialCard({
 }: {
   block: LightBlock;
   descriptor: CardLayoutDescriptor;
+  previewManifest: ReturnType<typeof parsePreviewManifest>;
   vaultPath: string;
   thumbsRootPath: string;
   playback: ReturnType<typeof normalizeFeedPlayback>;
@@ -520,6 +529,13 @@ const SocialCard = memo(function SocialCard({
         const absClass = "absolute inset-0 h-full w-full object-cover";
         const shouldAutoplay =
           m.isVideo && !measurementMode && allowPlayback && playback !== null;
+        const posterCandidates = buildFeedVideoPosterCandidates({
+          slug: block.slug,
+          thumbsRootPath,
+          previewManifest,
+          playback,
+          primaryMedia: m,
+        });
         return (
           <div
             className="relative w-full overflow-hidden bg-accent"
@@ -531,10 +547,19 @@ const SocialCard = memo(function SocialCard({
                 allowPlayback={allowPlayback}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath}
+                posterCandidates={posterCandidates}
                 className={absClass}
               />
             ) : (
               !measurementMode && (
+                m.isVideo ? (
+                  <FeedVideoPoster
+                    candidateUrls={posterCandidates}
+                    alt=""
+                    className={absClass}
+                    loading={imgLoading}
+                  />
+                ) : (
                 <GalleryTileImage
                   item={m}
                   vaultPath={vaultPath}
@@ -543,6 +568,7 @@ const SocialCard = memo(function SocialCard({
                   allowSourceFallback={!m.isVideo}
                   loading={imgLoading}
                 />
+                )
               )
             )}
             {measurementMode && (
@@ -592,6 +618,7 @@ const SocialCard = memo(function SocialCard({
 const ArticleCard = memo(function ArticleCard({
   block,
   descriptor,
+  previewManifest,
   vaultPath,
   thumbsRootPath,
   playback,
@@ -600,6 +627,7 @@ const ArticleCard = memo(function ArticleCard({
 }: {
   block: LightBlock;
   descriptor: CardLayoutDescriptor;
+  previewManifest: ReturnType<typeof parsePreviewManifest>;
   vaultPath: string;
   thumbsRootPath: string;
   playback: ReturnType<typeof normalizeFeedPlayback>;
@@ -612,6 +640,13 @@ const ArticleCard = memo(function ArticleCard({
   const rendersFeedVideo = hasPreview && descriptor.mediaItems.length === 1 && primaryMedia?.isVideo;
   const shouldAutoplayVideo =
     rendersFeedVideo && !measurementMode && allowPlayback && playback !== null;
+  const posterCandidates = buildFeedVideoPosterCandidates({
+    slug: block.slug,
+    thumbsRootPath,
+    previewManifest,
+    playback,
+    primaryMedia,
+  });
   const slots = deriveContentCardSlots(descriptor);
   const hasBottomMeta = slots?.hasBottomMeta ?? false;
   const hasTextStack = Boolean(block.title ?? block.slug) || descriptor.previewText.length > 0 || hasBottomMeta;
@@ -643,11 +678,12 @@ const ArticleCard = memo(function ArticleCard({
                 allowPlayback={allowPlayback}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath}
+                posterCandidates={posterCandidates}
                 className="absolute inset-0 h-full w-full object-cover"
               />
             ) : !measurementMode ? (
-              <img
-                src={thumbnailUrl(thumbsRootPath, block.slug)}
+              <FeedVideoPoster
+                candidateUrls={posterCandidates}
                 alt=""
                 className="absolute inset-0 h-full w-full object-cover"
                 loading={imgLoading}
@@ -705,6 +741,7 @@ const ArticleCard = memo(function ArticleCard({
 
 const VideoCard = memo(function VideoCard({
   block,
+  previewManifest,
   vaultPath,
   thumbsRootPath,
   playback,
@@ -712,6 +749,7 @@ const VideoCard = memo(function VideoCard({
   measurementMode = false,
 }: {
   block: LightBlock;
+  previewManifest: ReturnType<typeof parsePreviewManifest>;
   vaultPath: string;
   thumbsRootPath: string;
   playback: ReturnType<typeof normalizeFeedPlayback>;
@@ -719,8 +757,13 @@ const VideoCard = memo(function VideoCard({
   measurementMode?: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
-  const thumb = thumbnailUrl(thumbsRootPath, block.slug);
   const shouldAutoplay = !measurementMode && allowPlayback && playback !== null;
+  const posterCandidates = buildFeedVideoPosterCandidates({
+    slug: block.slug,
+    thumbsRootPath,
+    previewManifest,
+    playback,
+  });
 
   return (
     <div className="relative aspect-video">
@@ -730,17 +773,15 @@ const VideoCard = memo(function VideoCard({
           allowPlayback={allowPlayback}
           vaultPath={vaultPath}
           thumbsRootPath={thumbsRootPath}
+          posterCandidates={posterCandidates}
           className="h-full w-full object-cover"
         />
       ) : !measurementMode ? (
-        <img
-          src={thumb}
+        <FeedVideoPoster
+          candidateUrls={posterCandidates}
           alt=""
           className="h-full w-full object-cover"
           loading={imgLoading}
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = "none";
-          }}
         />
       ) : (
         <div className="h-full w-full bg-accent" />

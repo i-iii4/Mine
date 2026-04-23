@@ -192,20 +192,24 @@ Grid держит дополнительный invariant:
 
 - все видимые `standard` video cards могут autoplay'ить одновременно
 - из `heavy` video cards одновременно autoplay'ит максимум одна
-- autoplay разрешён только для committed cards текущего generation
+- autoplay разрешён только для committed prefix текущего generation; `measuring` больше не обнуляет already-committed autoplay path
 - autoplay gating использует expanded autoplay window (`viewport ± 50%` его высоты): playback surface должна быть покрыта этим окном минимум на `50%`, чтобы video успевало стартовать до фактического входа в viewport и гасло только после выхода
 - `heavy` active card выбирается с приоритетом для реального viewport overlap: in-viewport heavy clip beats off-screen lingering heavy clip; при прочих равных побеждает top-most candidate
 
-Открытый следующий шаг в этом контракте:
+Frontend feed-video runtime теперь использует единый poster contract для single-video cards:
 
-- current runtime всё ещё держит split между **poster contract** и **autoplay contract**
-- `FeedVideoSurface` уже использует `feed_playback.poster_preview_path`, тогда как часть poster-only feed branches всё ещё зависит от raw block-level thumb
-- поэтому widened autoplay window сам по себе не может гарантировать ни ранний старт, ни визуально стабильный poster-only state
-- следующее архитектурное исправление должно развести три слоя:
-  - poster availability
-  - autoplay eligibility
-  - viewport activation / hysteresis
-- widened autoplay window остаётся частью activation policy, но больше не считается единственным рычагом для feed-video UX
+- `FeedVideoSurface` и poster-only branches share one poster candidate chain
+- candidate order такой:
+  - `feed_playback.poster_preview_path`
+  - `preview_manifest.primary_preview_path`
+  - tile-level preview
+  - block-level thumb
+- autoplay ineligible или delayed card остаётся normal video card с постером и `PlayBadge`, а не отдельной “legacy thumb branch”
+
+Оставшийся следующий шаг здесь уже не про закрытие базового split, а про возможное future hardening:
+
+- если реальный runtime покажет ещё сложные video edge cases, текущий frontend poster resolver можно будет поднять в явный backend-derived feed-video descriptor
+- widened autoplay window остаётся частью activation policy, но уже работает поверх unified poster contract
 
 ## Components
 

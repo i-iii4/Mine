@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mediaUrl, previewAssetUrl } from "@/lib/assets";
 import type { NormalizedFeedPlaybackDescriptor } from "@/lib/feedPlayback";
+import { FeedVideoPoster } from "./FeedVideoPoster";
 
 export const FEED_VIDEO_DIRECT_TIMEOUT_MS = 1200;
 export const FEED_VIDEO_BLOB_TIMEOUT_MS = 1800;
@@ -19,6 +20,7 @@ interface FeedVideoSurfaceProps {
   allowPlayback: boolean;
   vaultPath: string;
   thumbsRootPath: string;
+  posterCandidates?: string[];
   className?: string;
 }
 
@@ -27,6 +29,7 @@ export function FeedVideoSurface({
   allowPlayback,
   vaultPath,
   thumbsRootPath,
+  posterCandidates,
   className,
 }: FeedVideoSurfaceProps) {
   const [phase, setPhase] = useState<FeedVideoPhase>("poster");
@@ -41,6 +44,10 @@ export function FeedVideoSurface({
   const posterSrc = useMemo(
     () => previewAssetUrl(thumbsRootPath, playback.posterPreviewPath),
     [playback.posterPreviewPath, thumbsRootPath],
+  );
+  const resolvedPosterCandidates = useMemo(
+    () => (posterCandidates && posterCandidates.length > 0 ? posterCandidates : [posterSrc]),
+    [posterCandidates, posterSrc],
   );
   const usesBlobFallback = playback.profile === "standard";
   const directFailurePhase: "loading_blob" | "failed_poster_only" =
@@ -173,12 +180,13 @@ export function FeedVideoSurface({
       data-feed-video-phase={phase}
       className="relative h-full w-full"
     >
-      <img
-        src={posterSrc}
+      <FeedVideoPoster
+        candidateUrls={resolvedPosterCandidates}
         alt=""
         className={`${className ?? "h-full w-full object-cover"} absolute inset-0 transition-opacity ${
           posterVisible ? "opacity-100" : "opacity-0"
         }`}
+        loading="eager"
       />
 
       {(phase === "loading_direct" || phase === "playing_direct") && (

@@ -407,6 +407,70 @@ describe("Card", () => {
     expect(container.querySelector("svg path[d]")).toBeInTheDocument();
   });
 
+  it("uses the playback poster contract for dedicated video poster-only branches", () => {
+    const b = block({
+      block_type: "video",
+      title: "Poster Contract Video",
+      media_file: "demo.mp4",
+      preview_manifest: JSON.stringify({
+        kind: "video_poster",
+        primary_preview_path: "video-poster.jpg",
+        width: 1280,
+        height: 720,
+        tiles: [
+          { src: "demo.mp4", preview_path: "clip-frame.jpg", width: 1280, height: 720, is_video: true, is_video_poster: true },
+        ],
+        overflow_count: 0,
+      }),
+      feed_playback: JSON.stringify({
+        kind: "single_video",
+        source_path: "demo.mp4",
+        poster_preview_path: "video-poster.jpg",
+        width: 1280,
+        height: 720,
+        container: "mp4",
+        profile: "standard",
+      }),
+    });
+    const { container } = render(
+      <Card block={b} vaultPath={VAULT} allowPlayback={false} onClick={vi.fn()} />,
+    );
+    expect(container.querySelector("video")).toBeNull();
+    expect(container.querySelector("img")).toHaveAttribute(
+      "src",
+      expect.stringContaining("/video-poster.jpg"),
+    );
+  });
+
+  it("falls back from missing dedicated video poster preview to the block thumb", () => {
+    const b = block({
+      block_type: "video",
+      title: "Poster Fallback Video",
+      media_file: "demo.mp4",
+      preview_manifest: JSON.stringify({
+        kind: "video_poster",
+        primary_preview_path: "missing-video-poster.jpg",
+        width: 1280,
+        height: 720,
+        tiles: [
+          { src: "demo.mp4", preview_path: "missing-clip-frame.jpg", width: 1280, height: 720, is_video: true, is_video_poster: true },
+        ],
+        overflow_count: 0,
+      }),
+      feed_playback: null,
+    });
+    const { container } = render(
+      <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
+    );
+    const img = container.querySelector("img");
+    expect(img).toBeInTheDocument();
+    fireEvent.error(img!);
+    expect(img).toHaveAttribute(
+      "src",
+      expect.stringContaining(`${VAULT}/.arena/cache/thumbs/test-block.jpg`),
+    );
+  });
+
   it("renders article single-video preview as autoplay video in feed", () => {
     const b = block({
       block_type: "article",
