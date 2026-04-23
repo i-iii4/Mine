@@ -12,6 +12,8 @@ use http_range::HttpRange;
 #[cfg(feature = "desktop")]
 use percent_encoding::percent_decode_str;
 #[cfg(feature = "desktop")]
+use unicode_normalization::UnicodeNormalization;
+#[cfg(feature = "desktop")]
 use tauri::http::{header::*, Method, Request, Response, StatusCode};
 #[cfg(feature = "desktop")]
 use tauri::{Manager, Runtime};
@@ -86,10 +88,10 @@ fn build_asset_response<R: Runtime>(
 
 #[cfg(feature = "desktop")]
 fn decode_request_path(request: &Request<Vec<u8>>) -> Option<PathBuf> {
-    let raw_path = request.uri().path();
-    let path = raw_path.strip_prefix('/')?;
-    let decoded = percent_decode_str(path).decode_utf8().ok()?;
-    Some(PathBuf::from(decoded.as_ref()))
+    let path = request.uri().path().strip_prefix('/')?;
+    let decoded: String = percent_decode_str(path).decode_utf8_lossy().into_owned();
+    let normalized: String = decoded.nfc().collect();
+    Some(PathBuf::from(normalized))
 }
 
 #[cfg(feature = "desktop")]
