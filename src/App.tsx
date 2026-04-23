@@ -61,6 +61,7 @@ import {
   removeTag,
   deleteBlock,
   getBlock,
+  sweepVaultThumbnails,
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
@@ -746,6 +747,38 @@ export function AppWithVault({
       }
     };
   }, [routeKeyFor, vaultPath, vaultReady]);
+
+  // Passive thumb sweep on window focus / visibility changes.
+  // Covers the gap where `notify` on iCloud Drive does not reliably
+  // deliver Modify events: when the user returns to Mine after editing
+  // an image elsewhere (or after iCloud syncs a file from another
+  // device), we re-verify the thumb cache against current media mtimes
+  // and regenerate only what is actually stale. Throttled to at most
+  // once every 10 seconds so a flurry of focus events does not pile up.
+  useEffect(() => {
+    if (!vaultReady) {
+      return;
+    }
+    let lastRun = 0;
+    const MIN_INTERVAL_MS = 10_000;
+    const run = () => {
+      const now = Date.now();
+      if (now - lastRun < MIN_INTERVAL_MS) return;
+      if (document.visibilityState !== "visible") return;
+      lastRun = now;
+      void sweepVaultThumbnails().catch((err) => {
+        console.warn("[THUMB_SWEEP] failed:", err);
+      });
+    };
+    const onFocus = () => run();
+    const onVisibility = () => run();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [vaultReady]);
 
   useEffect(() => {
     if (!vaultReady) {

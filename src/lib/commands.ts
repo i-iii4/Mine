@@ -157,6 +157,13 @@ export interface ThumbUpgradeRequest {
 export const saveThumb = (slug: string, bytes: Uint8Array) =>
   invoke<void>("save_thumb", { slug, bytes: Array.from(bytes) });
 
+/** Re-verify the thumb cache against current media dependencies.
+ *  Fire on window focus / visibility changes so that external edits
+ *  (e.g. an iCloud Drive sync from another device, where notify
+ *  delivers no Modify event) eventually propagate to the sidebar. */
+export const sweepVaultThumbnails = () =>
+  invoke<number>("sweep_vault_thumbnails");
+
 export const listPendingThumbUpgrades = () =>
   invoke<ThumbUpgradeRequest[]>("list_pending_thumb_upgrades");
 
