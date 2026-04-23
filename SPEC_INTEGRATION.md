@@ -35,6 +35,7 @@ classify_notify_event(event: &notify::Event, vault: &VaultLayout) -> Vec<VaultEv
 - `.md` файлы → `BlockChanged` / `BlockDeleted`
 - Остальные файлы → `MediaChanged` / `MediaDeleted`
 - Create/Modify → `*Changed`, Remove → `*Deleted`
+- Перед dispatch watcher может отбросить event, если path временно находится в `AppState.suppressed_paths` (in-app rename suppresses its own write/rename burst)
 
 ---
 
@@ -82,6 +83,7 @@ handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) -> Resu
 - `BlockDeleted` → `storage::index::remove_block` (slug из имени файла) + Tauri event `block:removed { slug, tags }`
 - `MediaChanged` → `storage::thumbnails::generate_thumbnail` для image media, эмитит `thumb:updated { slug }` по завершении. **Note:** текущий handler использует `path_to_slug(media_file)` который некорректен для articles с multiple inline images (slug ≠ media filename). См. SPEC_THUMBNAILS.md для правильного routing через block-aware lookup.
 - `MediaDeleted` → удаление thumbnail
+- External rename `.md` файла проходит через pending-remove queue + `body_hash` match (подробности в [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md)): при match handler вызывает `storage::index::rename_slug`, переносит derived artifacts и эмитит `block:renamed { old_slug, new_slug }`. Другие `.md` файлы и source media не переписываются.
 
 ### Tauri events (frontend subscribers)
 
@@ -91,6 +93,7 @@ handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) -> Resu
 |---|---|---|
 | `block:added` | `{ slug: string, tags: string[], is_text: boolean }` | `index_md_file` после `upsert_block` |
 | `block:removed` | `{ slug: string, tags: string[] }` | `handle_event::BlockDeleted` |
+| `block:renamed` | `{ old_slug: string, new_slug: string }` | watcher external rename path и `rename_block_file` |
 | `thumb:updated` | `{ slug: string }` | `save_thumb` command и фоновая генерация |
 | `thumb:upgrade-requested` | `{ slug: string, media_path: string, kind: "image" \| "video" }` | `index_md_file` когда Rust cascade дал text placeholder для block с embedded media |
 
@@ -110,6 +113,7 @@ struct VaultState {
 
 struct AppState {
     vault_state: Mutex<Option<VaultState>>,
+    suppressed_paths: Mutex<...>,
 }
 
 #[derive(Debug, Error, Serialize)]
@@ -118,6 +122,12 @@ enum CommandError {
     Internal(String),
 }
 ```
+
+### Поведение AppState
+
+- `suppressed_paths` — short-lived path suppression map для command-initiated file rewrites
+- `suppress_paths(paths, ttl)` — регистрирует paths, которые watcher должен игнорировать в ближайшее TTL-окно
+- Используется in-app rename, чтобы `.md` rewrite + source file rename не race'или с watcher external-rename logic
 
 ---
 
@@ -146,6 +156,7 @@ enum CommandError {
 #[tauri::command] get_block(state, slug: String) -> Result<Option<IndexedBlock>, CommandError>
 #[tauri::command] create_block(state, ...) -> Result<IndexedBlock, CommandError>
 #[tauri::command] delete_block(state, slug: String) -> Result<bool, CommandError>
+#[tauri::command] rename_block_file(state, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError>
 ```
 
 ### Поведение create_block
@@ -164,6 +175,24 @@ enum CommandError {
 1. Получить блок из индекса (для media_file)
 2. Удалить файлы (`storage::files::delete_block_files`)
 3. Удалить из индекса (`storage::index::remove_block`)
+
+### Поведение rename_block_file
+
+1. NFC-normalize `new_stem`, удалить опциональное `.md`, провалидировать как safe filename stem
+2. Если target имя уже занято — вернуть typed error `NameTaken`
+3. Спланировать source-vault rewrite:
+   - переименовать `.md` файл блока
+   - переименовать Mine-owned rename-family (`old_slug.ext`, `old_slug (image N).*`, `old_slug (video N).*`)
+   - переписать wikilinks и file references по parseable `.md` в vault
+4. Временно suppress'ить затрагиваемые paths в `AppState`
+5. Записать переписанные `.md`, выполнить file renames, перенести derived artifacts
+6. Обновить индекс и эмитить `block:renamed { old_slug, new_slug }`
+
+Boundary:
+- у самого переименовываемого блока `frontmatter.title` синхронизируется с новым stem
+- если rename меняет speakable article text, article-audio invalidируется вместо silent stale migration
+- custom media filenames, не совпадающие с Mine naming patterns, не переименовываются
+- external rename и in-app rename разделены: rewrite других `.md` происходит только в explicit command path
 
 ---
 

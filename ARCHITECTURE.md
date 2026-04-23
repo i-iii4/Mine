@@ -127,6 +127,22 @@ saved_at: 2026-02-26T14:30:00Z
 
 Source vault хранит только пользовательские файлы и `vault-id`. Все derived данные живут per-device в app data и могут быть rebuilt локально.
 
+### Filename-first rename contract
+
+- identity блока остаётся равной `file_stem` его `.md` файла
+- hidden `id` / `uuid` во frontmatter не вводятся
+- **in-app rename** — канонический smart path:
+  - переименовывает `.md`
+  - синхронизирует `frontmatter.title` переименовываемой карточки с новым stem
+  - переименовывает Mine-owned source media (`slug.ext`, `slug (image N).*`, `slug (video N).*`)
+  - переписывает wikilinks и Mine-owned file references по vault
+  - переносит block-level thumb; article audio инвалидируется, если rename меняет speakable text
+- **external rename** через Finder / Obsidian — resilience path:
+  - watcher через `body_hash` трактует `Remove + Create` как rename
+  - DB slug и derived artifacts сохраняются
+  - `block:renamed` эмитится во frontend
+  - другие `.md` файлы и source media не переписываются silently
+
 ## Current Critical Path Reset
 
 Текущий runtime contract после срезов `Critical Path Reset v1`:

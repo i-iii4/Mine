@@ -15,8 +15,11 @@
 - `SPEC_STORAGE.md` — спецификации storage/db, index, files, thumbnails
 - `SPEC_INTEGRATION.md` — спецификации watcher/events, handler, commands
 - `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
+- `SPEC_THUMBNAILS.md` — полная спецификация preview/thumbnail pipeline
 - `SPEC_FEED_VIDEO.md` — спецификация desktop feed video contract: surfaces, `feed_playback`, autoplay gating
 - `SPEC_ARTICLE_AUDIO.md` — спецификация manual article audio renditions: speech prep, derived audio state, desktop/iOS controls
+- `SPEC_IDENTITY_ROBUSTNESS.md` — спецификация filename-first identity: rename, conflicts, NFC
+- `SPEC_OBSIDIAN_WIKILINKS.md` — спецификация inline media через Obsidian wikilinks
 - `SPEC_CLIPPER.md` — спецификация веб-клиппера: типы клипов, popup, native messaging
 - `SPEC_MOBILE.md` — спецификация iOS-приложения: SwiftUI + Rust UniFFI, iCloud sync, Share Extension
 - `DESIGN_SYSTEM_IOS.md` — дизайн-система iOS: цвета, типографика, компоненты, жесты
@@ -67,6 +70,7 @@ local-arena/
 │   │   ├── domain/             # Чистая бизнес-логика (без Tauri, без SQLite)
 │   │   │   ├── mod.rs
 │   │   │   ├── block.rs        # Block, BlockType, frontmatter parsing
+│   │   │   ├── markdown.rs     # Wikilinks, inline media, markdown rewrite helpers
 │   │   │   ├── article_audio.rs # Speakable article text prep + text_hash
 │   │   │   ├── channel.rs      # Channel (promoted tag)
 │   │   │   ├── tag.rs          # Tag operations
@@ -77,7 +81,7 @@ local-arena/
 │   │   │   ├── article_audio.rs # Local derived audio state + sidecar persistence
 │   │   │   ├── db.rs           # Connection pool, migrations
 │   │   │   ├── index.rs        # Frontmatter → SQLite indexing
-│   │   │   ├── files.rs        # File operations (copy, move, delete)
+│   │   │   ├── files.rs        # File operations (copy, move, delete, derived artifact rename)
 │   │   │   └── thumbnails.rs   # Thumbnail generation + cache
 │   │   ├── watcher/            # File system watcher
 │   │   │   ├── mod.rs
@@ -93,7 +97,7 @@ local-arena/
 │   │       ├── article_audio.rs # get/generate/delete/set_position commands
 │   │       ├── article_audio_desktop.rs # Native macOS helper orchestration + voice defaults
 │   │       ├── state.rs        # AppState, VaultState, CommandError
-│   │       ├── blocks.rs       # → вызывает domain + storage
+│   │       ├── blocks.rs       # create/delete/rename block commands → вызывает domain + storage
 │   │       ├── tags.rs
 │   │       ├── search.rs
 │   │       ├── vault.rs        # select_vault, get_vault_path, rebuild_index
@@ -111,6 +115,7 @@ local-arena/
 │   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
 │   │   ├── Detail.tsx          # Lightbox: просмотр, теги, навигация стрелками
+│   │   ├── RenameBlockDialog.tsx # Unified filename rename modal
 │   │   ├── ArticleAudioControls.tsx # Desktop AUDIO rail: create/remove/play/persist progress
 │   │   ├── Search.tsx          # Cmd+K поиск (command palette)
 │   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог
@@ -121,7 +126,7 @@ local-arena/
 │   ├── hooks/
 │   │   └── useSidebarResize.ts # Хук ресайза сайдбара (pointer events + persist)
 │   ├── types/                  # TypeScript-типы (ручные, без specta)
-│   ├── lib/                    # commands.ts (IPC), articleAudioGateway.tsx (UI transport contract), articleAudioDesktopGateway.ts (desktop adapter), assets.ts, utils.ts (cn()), recentTags.ts
+│   ├── lib/                    # commands.ts (IPC), articleAudioGateway.tsx (UI transport contract), articleAudioDesktopGateway.ts (desktop adapter), domSelectors.ts, assets.ts, utils.ts (cn()), recentTags.ts
 │   └── styles/                 # Глобальные стили
 ├── extension/                  # Chrome/Safari веб-клиппер
 │   ├── background.js           # Service worker: контекстное меню, native messaging

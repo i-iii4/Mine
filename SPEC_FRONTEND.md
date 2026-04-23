@@ -65,6 +65,22 @@ interface ScanResult {
 }
 ```
 
+### RenameBlockResult / RenameBlockError
+
+```typescript
+interface RenameBlockResult {
+  old_slug: string;
+  new_slug: string;
+}
+
+type RenameBlockError =
+  | { kind: "no_vault" }
+  | { kind: "block_not_found"; slug: string }
+  | { kind: "invalid_filename"; reason: string }
+  | { kind: "name_taken"; requested: string }
+  | { kind: "internal"; message: string };
+```
+
 ## IPC layer — `lib/commands.ts`
 
 Тонкая обёртка над `invoke()`. Каждая функция строго типизирована:
@@ -76,6 +92,7 @@ listBlocks(): Promise<IndexedBlock[]>
 getBlock(slug: string): Promise<IndexedBlock | null>
 createBlock(params: CreateBlockParams): Promise<IndexedBlock>
 deleteBlock(slug: string): Promise<boolean>
+renameBlockFile(oldSlug: string, newStem: string): Promise<RenameBlockResult>
 listTags(): Promise<TagCount[]>
 addTag(slug: string, tag: string): Promise<void>
 removeTag(slug: string, tag: string): Promise<void>
@@ -103,6 +120,7 @@ Vault-пикер — не маршрут, а состояние: если `vault
 - Состояние vault (путь или null)
 - При старте вызывает `getVaultPath()` — если null, показывает VaultPicker
 - После выбора vault — Layout с sidebar + router
+- Подписывается на `block:renamed` и ретаргетит открытый Detail / scroll target на `new_slug` без закрытия текущего контекста
 
 ### VaultPicker
 
@@ -172,6 +190,22 @@ Thumbnail отображается через `convertFileSrc(vaultPath + "/.are
 
 Медиафайлы (для image-карточек без thumbnail): `convertFileSrc(vaultPath + "/" + media_file)`.
 
+### CardHoverMenu
+
+- Overflow `…` menu содержит action `Rename…`
+- Открывает единый rename dialog для выбранного блока
+- Rename не делает silent auto-fix: занятое имя и invalid stem показываются как явные ошибки
+
+### RenameBlockDialog
+
+- Один modal для всех entry points (`CardHoverMenu`, `Detail`)
+- Поля:
+  - текущее имя файла
+  - input `Filename`
+  - preview финального `<stem>.md`
+- При success закрывается и UI уже работает с `new_slug`
+- Ошибки `name_taken` / `invalid_filename` показываются inline
+
 ### Search (Cmd+K)
 
 Модальное окно command palette:
@@ -192,6 +226,8 @@ Thumbnail отображается через `convertFileSrc(vaultPath + "/.are
 - Оба слоя используют общий `LAYOUT_CLASSES` для идентичного позиционирования
 - Контент центрирован горизонтально (`mx-auto max-w-[58rem]`)
 - Метаданные (Geist Mono): RESOLUTION, FILENAME, DATE, TYPE, SOURCE, AUTHOR, TAGS
+- В секции `FILENAME` есть action `Rename…`
+- После успешного rename Detail продолжает показывать тот же блок уже под новым slug и новым visible title
 - Кнопка X справа вверху (ниже 32px drag region), Esc для закрытия
 - Стрелки влево/вправо — линейная навигация между блоками
 - Detail — plain div с `absolute inset-0 z-10` (не Radix Dialog), внутри `<main>` со стекинг-контекстом `isolation: isolate`
@@ -227,6 +263,10 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 const thumbUrl = convertFileSrc(vaultPath + "/.arena/cache/thumbs/" + slug + ".jpg");
 const mediaUrl = convertFileSrc(vaultPath + "/" + mediaFile);
 ```
+
+## Slug-sensitive DOM lookups
+
+После перехода на human-readable filenames `slug` может содержать пробелы, Unicode и пунктуацию. Поэтому любые DOM selector interpolation по `data-block-slug` должны идти через helper (`src/lib/domSelectors.ts`), который использует `CSS.escape`, а не через raw `querySelector(\`[data-block-slug="${slug}"]\`)`.
 
 ## Тема
 

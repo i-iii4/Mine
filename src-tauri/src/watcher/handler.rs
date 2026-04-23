@@ -1297,6 +1297,57 @@ mod tests {
     }
 
     #[test]
+    fn external_rename_does_not_rewrite_other_markdown_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+
+        flush_pending_for_test(&conn, &vault, None);
+
+        let unique_body = format!("external-rename-body-{:?}", std::thread::current().id());
+        write_md_file_with_body(&vault, "old-name", "article", &[], &unique_body);
+        write_md_file_with_body(
+            &vault,
+            "reference",
+            "article",
+            &[],
+            "See [[old-name]] and ![[old-name]].",
+        );
+
+        let old_path = vault.block_path("old-name");
+        let reference_path = vault.block_path("reference");
+        index_md_file(&conn, &vault, &old_path, None).unwrap();
+        index_md_file(&conn, &vault, &reference_path, None).unwrap();
+
+        std::fs::remove_file(&old_path).unwrap();
+        handle_event(
+            &conn,
+            &vault,
+            &VaultEvent::BlockDeleted(old_path.clone()),
+            None,
+        )
+        .unwrap();
+
+        write_md_file_with_body(&vault, "new-name", "article", &[], &unique_body);
+        let new_path = vault.block_path("new-name");
+        handle_event(
+            &conn,
+            &vault,
+            &VaultEvent::BlockChanged(new_path),
+            None,
+        )
+        .unwrap();
+
+        let (_, reference_content) = files::read_block_file(&reference_path).unwrap();
+        let reference_block = parse_block("reference", &reference_content).unwrap();
+        assert!(reference_block.body.contains("[[old-name]]"));
+        assert!(reference_block.body.contains("![[old-name]]"));
+        assert!(!reference_block.body.contains("[[new-name]]"));
+
+        flush_pending_for_test(&conn, &vault, None);
+    }
+
+    #[test]
     fn handle_block_delete_without_matching_create_commits_removal() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());

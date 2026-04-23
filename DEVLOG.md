@@ -1,5 +1,64 @@
 # Devlog
 
+## 22.04.2026 21:41 [primary] — Rename functionality completion: in-app rename + external rename boundary
+
+### Goal
+Довести rename до законченного filename-first контракта без hidden IDs: explicit in-app rename внутри Mine как канонический smart path, external rename через Finder / Obsidian как resilience path с сохранением identity и derived state.
+
+### Actually completed
+
+**Добавлена явная команда in-app rename** (`src-tauri/src/commands/blocks.rs`)
+- `rename_block_file(old_slug, new_stem)` нормализует stem в NFC, валидирует как safe filename stem, запрещает path traversal и пустые значения
+- target conflict больше не получает silent ` (2)` suffix — команда возвращает typed `NameTaken`
+- результат — `RenameBlockResult { old_slug, new_slug }`, пригодный и для IPC, и для `block:renamed`
+
+**Source-vault rewrite policy формализован и реализован**
+- In-app rename переименовывает сам `.md` файл
+- по всем parseable `.md` в vault переписываются:
+  - `[[old_slug]]` / `![[old_slug]]` → `[[new_slug]]` / `![[new_slug]]`
+  - `frontmatter.file` / `thumbnail`
+  - inline media references в body
+- rewrite file refs ограничен только Mine-owned rename-family:
+  - primary media `old_slug.ext`
+  - generated inline assets `old_slug (image N).*` / `old_slug (video N).*`
+- custom filenames вне этих паттернов не переименовываются автоматически
+- у самого переименовываемого блока `frontmatter.title` теперь синхронизируется с новым filename stem, чтобы rename сразу был видим в feed и Detail
+
+**Derived state переносится вместе с rename**
+- `storage::files::rename_derived_artifacts()` переименовывает block-level thumb
+- `storage::article_audio::rename_all_artifacts()` переносит audio `.wav` и sidecar для slug-bound artifacts
+- если in-app rename меняет speakable article text (сейчас это происходит из-за `title` sync), article-audio state и asset сразу инвалидируются, чтобы не оставлять stale narration под новым title
+- этот же helper теперь использует watcher external-rename path, так что rename `.md` файла снаружи больше не оставляет audio sidecar в partially stale state
+
+**In-app rename развязан с watcher**
+- `AppState` получил short-lived `suppressed_paths`
+- watcher отфильтровывает command-owned write/rename burst до dispatch
+- это убирает race: in-app rename не re-enter'ит watcher как будто это был внешний delete/create
+
+**Frontend rename UX добавлен как единый flow**
+- `Rename…` появился в overflow `…` menu карточки и в metadata panel `Detail`
+- новый `RenameBlockDialog` показывает:
+  - текущее имя файла
+  - editable filename stem
+  - preview финального `<stem>.md`
+  - inline ошибки `name_taken` / `invalid_filename`
+- `App.tsx` подписан на `block:renamed` и ретаргетит открытый detail/grid state на `new_slug`, не закрывая контекст
+- добавлен safe selector helper для human-readable slug'ов с пробелами / Unicode (`src/lib/domSelectors.ts`)
+
+**Граница поведения rename теперь явная**
+- In-app rename — канонический smart path, closest to Obsidian behavior
+- External rename через Finder / Obsidian:
+  - сохраняет identity
+  - переносит derived artifacts
+  - эмитит `block:renamed`
+  - но не переписывает другие `.md` файлы и не переименовывает source media
+
+### Checks
+- `cargo test -p mine --lib --quiet`
+- `cargo check -p mine --quiet`
+- `bun run test src/App.test.tsx src/components/Grid.test.tsx src/components/RenameBlockDialog.test.tsx src/components/CardHoverMenu.test.tsx`
+- `bun run build`
+
 ## 22.04.2026 23:35 [primary] — Sidebar thumbnails for human-readable filenames
 
 ### Goal

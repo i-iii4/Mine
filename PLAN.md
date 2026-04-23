@@ -774,7 +774,7 @@ SPEC: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) — полная архитект
 | 12.12 | Startup safety: `list_pending_thumb_upgrades` через SQLite + `spawn_blocking`, без file peek'ов на UI thread | [x] |
 | 12.13 | Legacy vault compatibility: backfill `thumb_format/thumb_mtime` из существующих `.jpg` при `open_vault()` | [x] |
 
-### Phase 18 — Filename Identity Refactor [IN PROGRESS]
+### Phase 18 — Filename Identity Refactor [COMPLETE]
 
 Goal: перейти на human-readable filenames без повторения регрессии монолитного Phase 16 + 17. Каждая sub-phase — изолированный коммит с обязательным end-to-end Chrome clipper test перед следующей. Existing vault файлы продолжают читаться в любом из стилей (kebab legacy + Unicode new).
 
@@ -798,11 +798,11 @@ Goal: перейти на human-readable filenames без повторения �
 | 18.F.2 | Decode local URLs in extract functions | [x] | `extract_first_image`, `extract_media_urls` теперь decode URLs перед сохранением в DB. Remote URLs не трогаются. — `03f63deb` |
 | 18.F.3 | Decode in social tiles + media_dimensions | [x] | `extract_social_preview_tiles` (ломало видео в Twitter) + `collect_body_media`. Каскадная коррекция той же проблемы. — `42a7eeec` |
 
-### Phase 18.H — Inline media via Obsidian wikilinks [PLANNED]
+### Phase 18.H — Inline media via Obsidian wikilinks [COMPLETE]
 
 Goal: устранить **class of bugs** `URL-in-body ≠ filename-on-disk`, который возник в Phase 18.F после перехода на `{slug} (image N).ext` naming. Вместо percent-encoding cascade (F.1 → F.2 → F.3 → ...), перейти на Obsidian-native wikilink syntax `![[name]]` для inline media, где delimiter `]]` не конфликтует с filename characters.
 
-SPEC: `SPEC_OBSIDIAN_WIKILINKS.md` (создать как часть phase).
+SPEC: [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md).
 
 ### Architectural rationale
 
@@ -837,17 +837,7 @@ SPEC: `SPEC_OBSIDIAN_WIKILINKS.md` (создать как часть phase).
 | 18.H.3 | Migration CLI | [x] | `migrate-body-to-wikilinks` binary с `--dry-run`/`--apply`, `domain::markdown::convert_markdown_images_to_wikilinks` pure function |
 | 18.H.4 | SPEC document | [x] | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) — canonical write syntax, dual-syntax read, migration contract |
 
-### Why not immediately
-
-Phase 18.H требует frontend work (`remark-wiki-link` integration, Detail renderer path). Это больший scope чем percent-encoding hotfixes. 18.F.2/F.3 разблокируют видео для новых клипов **сейчас**; 18.H — правильная финальная архитектура, которая устраняет весь класс проблем и делает markdown files максимально Obsidian-native.
-
-### Known residuals until 18.H closes
-
-- `![](%-encoded)` формат в body остаётся в блоках, склипанных после 18.F.1 и до 18.H.1
-- Obsidian raw-view для этих блоков показывает нечитаемый encoded URL
-- 18.H.3 migration script конвертирует их в wikilinks
-
-Status: 9 of 10 Phase 18 sub-phases complete + 3 F-hotfixes. Waiting on 18.G.4 frontend conflict UI and full 18.H wikilink migration. Per-sub-phase smoke test in Chrome clipper confirmed A–F working end-to-end after install-native-host reinstall. G.1–G.3 are backend-only, visible only via DB inspection until G.4 surfaces conflicts in UI.
+Status: Phase 18 complete. Human-readable filenames, rename/conflict runtime robustness, iCloud conflict UI, and inline media wikilinks are all shipped. Existing vault files continue to read in both legacy and new styles.
 
 #### Discipline requirements
 
@@ -860,13 +850,11 @@ Status: 9 of 10 Phase 18 sub-phases complete + 3 F-hotfixes. Waiting on 18.G.4 f
 5. **Manual Chrome smoke test**: reload extension → clip reaal tweet или article → проверить что `.md` появился в vault и открывается в Obsidian
 6. **Revertable независимо**: каждый коммит имеет чистый `git revert` path без cascading failures
 
-#### Known residuals until Phase G completes
+#### Post-Phase 18 residuals
 
-- `-2`, `-3`, `-7.md` существующие файлы остаются как есть. Migration tool опциональна, в scope `pathological_filename_repair` (можно cherry-pick из stash)
-- Rename `.md` в Obsidian без Phase G всё ещё ломает thumb/audio cache (это было до Phase 18 тоже)
-- iCloud conflict files без Phase G создают дубликаты блоков (status quo)
-
-Phase G закрывает эти residuals. До её завершения существующее поведение не ухудшается.
+- `-2`, `-3`, `-7.md` существующие файлы остаются как есть. Migration tool опциональна, в scope `pathological_filename_repair`
+- external rename сохраняет identity и derived state, но не переписывает другие `.md` файлы
+- in-app rename нужен как отдельный smart path поверх уже завершённой filename-first модели
 
 #### Stash usage
 
@@ -880,6 +868,18 @@ Phase G закрывает эти residuals. До её завершения су
 - `pathological_filename_repair` CLI tool (follow-up utility)
 
 Рекомендация: не делать `git stash pop` целиком. Извлекать по одному файлу через `git checkout stash@{0} -- <path>` или `git show stash@{0}:<path>` для reference реализации в каждой sub-phase. После успешного Phase G можно `git stash drop stash@{0}`.
+
+### Phase 19 — Rename Functionality Completion [COMPLETE]
+
+Goal: довести filename-first rename до законченного продуктового состояния без hidden IDs. In-app rename становится каноническим smart path, external rename через Finder / Obsidian сохраняет identity и derived state, но не делает скрытых rewrite'ов по vault.
+
+| # | Slice | Status | Scope |
+|---|-------|--------|-------|
+| 19.1 | Backend rename command | [x] | `rename_block_file(old_slug, new_stem)` с NFC normalization, safe filename validation и typed errors (`NameTaken`, `InvalidFilename`, ...). |
+| 19.2 | Source-vault rewrite policy | [x] | In-app rename переименовывает `.md`, Mine-owned rename-family (`old_slug.ext`, `old_slug (image N).*`, `old_slug (video N).*`) и переписывает wikilinks / file references по parseable `.md` в vault. У переименовываемого блока `title` синхронизируется с новым stem. |
+| 19.3 | Derived artifacts + watcher suppression | [x] | `rename_derived_artifacts` + `article_audio::rename_all_artifacts`, `AppState.suppressed_paths`, watcher filter против re-entry во время command-driven rename. |
+| 19.4 | Frontend rename UX | [x] | `Rename…` в overflow `…` menu и `Detail`, единый `RenameBlockDialog`, typed error rendering, `block:renamed` retargeting для open detail/grid state. |
+| 19.5 | Specs + tests | [x] | Rust tests на rewrite/media/audio/name collisions, frontend tests на dialog и `block:renamed` state sync, обновление SPEC/PLAN/DEVLOG. |
 
 ### Backlog
 

@@ -6,6 +6,7 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 Укрепить текущую filename-based модель идентичности блоков против реальных сценариев, при которых она сейчас теряет identity:
 
+- in-app rename внутри Mine;
 - rename `.md` файла в Obsidian или Finder;
 - iCloud sync conflict files;
 - Unicode normalization mismatch (NFC vs NFD) между устройствами;
@@ -46,6 +47,7 @@ pub fn read_block_file(path: &Path) -> Result<(String, String)> {
 
 Входит в scope:
 
+- явная in-app команда `rename_block_file(old_slug, new_stem)`;
 - rename detection через content hash сопоставление в watcher;
 - iCloud conflict detection и явный UX разрешения;
 - NFC нормализация на всех boundary (watcher, scan, clipper);
@@ -67,20 +69,57 @@ pub fn read_block_file(path: &Path) -> Result<(String, String)> {
 2. Identity stable для immutable контента: если `.md` файл не менялся и не был перемещён, slug гарантированно тот же при каждом scan.
 3. Rename файла без изменения body содержимого **не создаёт** новый блок в DB — существующая запись обновляется.
 4. iCloud conflict file (`<name> (conflict).md`) **не создаёт** второй блок автоматически — требуется user decision.
+5. In-app rename через Mine — канонический smart path: `.md` файл переименовывается, Mine-owned media rename-family переименовывается, wikilinks и file references переписываются по vault.
+6. External rename через Finder / Obsidian сохраняет identity и derived artifacts, но **не** переписывает другие `.md` файлы и не переименовывает source media.
 
 ### Markdown First invariants
 
-5. `.md` файл не содержит служебных полей идентификации.
-6. Obsidian может открыть любой блок Mine, увидеть только человекочитаемые поля (`title`, `tags`, `saved_at`, `url`, и т.д.).
-7. Wikilinks `[[sunset-tokyo]]` работают в Obsidian без Mine-specific processing.
+7. `.md` файл не содержит служебных полей идентификации.
+8. Obsidian может открыть любой блок Mine, увидеть только человекочитаемые поля (`title`, `tags`, `saved_at`, `url`, и т.д.).
+9. Wikilinks `[[sunset-tokyo]]` работают в Obsidian без Mine-specific processing.
+10. In-app rename синхронизирует `frontmatter.title` у самого переименовываемого блока с новым filename stem; external rename через Finder / Obsidian `title` не меняет.
 
 ### Watcher invariants
 
-8. `notify` события `Remove` и `Create` в одном debounce окне с совпадающим content hash трактуются как rename, не как delete + create.
-9. Rename detection работает только в пределах одного vault root — не корректирует cross-vault moves.
-10. Content hash считается по **body после frontmatter**, чтобы rename с одновременной правкой тела не давал false positive.
+11. `notify` события `Remove` и `Create` в одном debounce окне с совпадающим content hash трактуются как rename, не как delete + create.
+12. Rename detection работает только в пределах одного vault root — не корректирует cross-vault moves.
+13. Content hash считается по **body после frontmatter**, чтобы rename с одновременной правкой тела не давал false positive.
+14. In-app rename suppress'ит собственные watcher path events на короткое TTL-окно, чтобы source rewrite + file rename не re-enter'или watcher как внешние мутации.
 
 ## Architecture
+
+### In-app rename
+
+**Компоненты:**
+
+1. **Tauri command** `src-tauri/src/commands/blocks.rs`:
+   - `rename_block_file(old_slug, new_stem) -> RenameBlockResult { old_slug, new_slug }`;
+   - `new_stem` трактуется как новое имя файла, не как `title`;
+   - boundary normalizes stem в NFC, запрещает path traversal и пустое имя через общий `validate_slug`;
+   - при занятом target возвращает typed error `NameTaken`, без silent suffix.
+
+2. **Vault rewrite policy** в `src-tauri/src/commands/blocks.rs`:
+   - `.md` файл блока переименовывается;
+   - по всем parseable `.md` в vault переписываются `[[old_slug]]` / `![[old_slug]]` → `[[new_slug]]` / `![[new_slug]]`;
+   - `frontmatter.file` / `thumbnail` и inline media references переписываются только для Mine-owned rename-family:
+     - primary media `old_slug.ext` → `new_slug.ext`;
+     - generated inline assets `old_slug (image N).*` / `old_slug (video N).*` → `new_slug ...`;
+     - custom media filenames, не совпадающие с этими паттернами, остаются нетронутыми.
+
+3. **Shared markdown rewrite helpers** в `src-tauri/src/domain/markdown.rs`:
+   - `rename_wikilink_targets(body, old_slug, new_slug)` — pure rewrite text/link wikilinks;
+   - `rename_inline_media_references(body, renames)` — pure rewrite для `![[...]]` и legacy `![](local_file)`;
+   - remote URLs не меняются.
+
+4. **Derived artifact migration**:
+   - `src-tauri/src/storage/files.rs::rename_derived_artifacts(vault, old_slug, new_slug)` — переименовывает block-level thumb;
+   - `src-tauri/src/storage/article_audio.rs::rename_all_artifacts(vault, old_slug, new_slug)` — переименовывает slug-bound audio `.wav` и sidecar, сохраняя `position_ms` и корректируя `audio_file_name` внутри sidecar;
+   - если in-app rename меняет speakable article text, higher-level command инвалидирует перенесённый article-audio state вместо silent stale migration.
+
+5. **Watcher suppression**:
+   - `src-tauri/src/commands/state.rs` держит short-lived `suppressed_paths`;
+   - `src-tauri/src/watcher/watch.rs` отфильтровывает эти события до `handle_event`;
+   - это делает in-app rename атомарной для runtime: команды сами выполняют rewrite + rename, watcher не дублирует ту же работу.
 
 ### Rename detection
 
@@ -94,14 +133,16 @@ pub fn read_block_file(path: &Path) -> Result<(String, String)> {
 2. **Rename match** при `notify::Event::Create` для `.md` файла:
    - читаем новый файл, парсим frontmatter + body, считаем body hash;
    - ищем в `PendingRemoves` запись с тем же hash;
-   - если найдена — выполняем `UPDATE blocks SET slug = ? WHERE slug = ?`, переименовываем thumb cache, preview cache, audio cache файлы в app data;
+   - если найдена — выполняем `rename_slug(old_slug, new_slug)`, переименовываем derived artifacts в app data;
    - эмитим событие `block:renamed { old_slug, new_slug }`;
    - Pending remove помечается как consumed, не обрабатывается дальше.
 
 3. **Cache file rename helpers** в `src-tauri/src/storage/files.rs`:
-   - `rename_thumb_artifacts(vault, old_slug, new_slug)` — переименовывает `.jpg`, sidecar `.json`, preview tiles;
-   - `rename_audio_artifacts(vault, old_slug, new_slug)` — переименовывает `.wav`, sidecar `.json`;
+   - `rename_derived_artifacts(vault, old_slug, new_slug)` — переименовывает block-level `.jpg`;
+   - `storage::article_audio::rename_all_artifacts(vault, old_slug, new_slug)` — переименовывает `.wav`, sidecar `.json`, сохраняет `position_ms`;
    - rename в app data derived store, не в vault.
+
+**Boundary:** external rename **не** переписывает другие `.md` файлы и **не** переименовывает source media. Это deliberate отличие от in-app rename.
 
 ### iCloud conflict detection
 
@@ -164,6 +205,8 @@ pub fn read_block_file(path: &Path) -> Result<(String, String)> {
 |---|---|
 | Rename + edit в одном debounce окне | Content hash не совпадает → rename не детектится → treated as delete + create. Acceptable: rare case, user может вручную восстановить |
 | Два одинаковых блока с одинаковым body (clipboard duplicate) | Content hashes совпадают, rename detection может ошибочно link'нуть. Mitigation: require `file_stem` также не совпадающим в pending queue — true rename всегда меняет stem |
+| In-app rename на уже занятое имя | Команда не делает silent ` (2)`, а возвращает typed `NameTaken`; UI просит ввести другое имя |
+| External rename оставил старые wikilinks в других заметках | Acceptable boundary: identity и derived state сохраняются, но другие `.md` не переписываются автоматически |
 | Conflict file detected но user ignored | Badge остаётся в sidebar, блок не создаётся. На следующем open — re-detection, badge не исчезает до явного решения |
 | Rename в subfolder | Create в subfolder не обнаруживается (scan non-recursive), pending remove висит 500ms и commit как delete. Acceptable: subfolder move документирован как unsupported |
 | NFC/NFD двойная запись | Первый scan нормализует, блок видится одним. Second device с другой normalization — при следующем iCloud sync filename переписывается, watcher видит как rename, content hash сохраняет identity |
@@ -186,45 +229,61 @@ pub fn read_block_file(path: &Path) -> Result<(String, String)> {
 
 ### Unit tests
 
+- `src-tauri/src/commands/blocks.rs`:
+  - `rename_block_file_rewrites_links_and_inline_media`
+  - `rename_block_file_invalidates_article_audio_when_title_changes_speech_text`
+  - `rename_block_file_leaves_custom_media_filenames_untouched`
+  - `rename_block_file_rejects_taken_name`
 - `src-tauri/src/watcher/handler.rs`:
   - `rename_detection_preserves_identity_on_matching_hash`
   - `rename_detection_ignores_unmatched_removes_after_timeout`
   - `rename_detection_ignores_content_change_without_rename`
   - `rename_detection_works_with_unicode_filenames`
+  - `external_rename_does_not_rewrite_other_markdown_files`
 
 - `src-tauri/src/storage/files.rs`:
-  - `rename_thumb_artifacts_moves_jpg_and_sidecar`
-  - `rename_audio_artifacts_preserves_position_ms`
+  - `rename_derived_artifacts_moves_thumb`
   - `conflict_filename_detection_matches_icloud_variants`
+
+- `src-tauri/src/storage/article_audio.rs`:
+  - `rename_all_artifacts_updates_sidecar_and_audio_file_name`
 
 - `src-tauri/src/domain/vault.rs`:
   - `nfc_normalization_idempotent`
   - `nfc_normalization_canonicalizes_cyrillic_stems`
 
+- `src-tauri/src/domain/markdown.rs`:
+  - `rename_wikilink_targets_updates_text_and_embed_forms`
+  - `rename_inline_media_references_updates_wikilinks_and_legacy_markdown`
+
 ### Integration tests
 
-- end-to-end rename в test vault: create block, rename .md, verify DB slug updated, thumb moved, audio position preserved;
+- end-to-end in-app rename в test vault: create block, rename via command, verify `.md` renamed, DB slug updated, Mine-owned media rewritten, `title` synced, thumb moved, stale article-audio invalidated if speakable text changed;
+- external rename в test vault: rename `.md` вручную, verify DB slug updated, derived artifacts preserved, no duplicate block;
 - iCloud conflict simulation: create `foo.md` + `foo (conflict).md` with different bodies, verify `vault_conflicts` entry, verify second block NOT created in `blocks`;
 - NFC roundtrip: write filename в NFD, read back, verify matched как NFC в DB.
 
 ### Manual QA
 
-- реальный Mine vault: переименовать 3-5 блоков в Obsidian, убедиться что thumb и audio переносятся;
+- реальный Mine vault: переименовать 3-5 блоков внутри Mine и убедиться что `.md`, Mine-owned media, wikilinks и derived artifacts обновились;
+- реальный Mine vault: переименовать 3-5 блоков в Obsidian/Finder, убедиться что thumb и audio переносятся, но другие заметки не переписываются;
 - реальный iCloud Drive конфликт: синхронизировать vault между двумя Mac, спровоцировать sync conflict, убедиться что Mine показывает banner, не создаёт дубликат блока.
 
 ## Acceptance criteria
 
-1. Rename `.md` файла в Obsidian: identity сохраняется, thumb cache не становится orphan, audio position сохраняется, wikilinks на этот блок продолжают работать.
-2. iCloud conflict file: появляется в `vault_conflicts`, не создаёт второй блок в `blocks`, UI показывает banner с вариантами разрешения.
-3. Rename с одновременным edit body (same debounce window): content hash не совпадает, treated как delete + create — documented edge case, acceptable.
-4. NFC/NFD mismatch между устройствами: при первом scan после sync filename нормализуется в NFC, identity сохраняется.
-5. Повторный clip того же URL: клиппер детектит via DB match, показывает `Already saved`, не создаёт дубликат.
-6. Повторный clip разных URL с одинаковым title: filename получает `— YYYY-MM-DD` suffix вместо `-2`.
+1. In-app rename внутри Mine: `.md` файл переименован, Mine-owned rename-family переименован, wikilinks и file references обновлены, `title` синхронизирован с новым stem, thumb перенесён; если rename меняет speakable article text, stale article-audio инвалидируется.
+2. Rename `.md` файла в Obsidian/Finder: identity сохраняется, thumb cache не становится orphan, audio position сохраняется, другие `.md` файлы не переписываются silently.
+3. iCloud conflict file: появляется в `vault_conflicts`, не создаёт второй блок в `blocks`, UI показывает banner с вариантами разрешения.
+4. Rename с одновременным edit body (same debounce window): content hash не совпадает, treated как delete + create — documented edge case, acceptable.
+5. NFC/NFD mismatch между устройствами: при первом scan после sync filename нормализуется в NFC, identity сохраняется.
+6. Повторный clip того же URL: клиппер детектит via DB match, показывает `Already saved`, не создаёт дубликат.
+7. Повторный clip разных URL с одинаковым title: filename получает `— YYYY-MM-DD` suffix вместо `-2`.
 
 ## Known residuals
 
 - `move в subfolder` остаётся unsupported. Acceptable: Mine контракт — flat vault structure.
 - `rename + edit в одном debounce окне` теряет identity. Acceptable: rare, documented.
+- External rename не переписывает wikilinks и custom file references в других заметках. Acceptable: canonical smart path — in-app rename.
 - Existing `-2`, `-3` файлы остаются как есть. Migration опциональна, не входит в scope.
 - Cross-vault move (из одного Mine vault в другой) остаётся unsupported. Acceptable: Mine работает с одним active vault одновременно.
 

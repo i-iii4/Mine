@@ -37,6 +37,7 @@ CREATE TABLE blocks (
     height INTEGER,
     author TEXT,
     body TEXT DEFAULT '',
+    body_hash TEXT,
     indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -140,6 +141,7 @@ list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlock>>
 get_all_tags(conn: &Connection) -> Result<Vec<TagCount>>
 slug_exists(conn: &Connection, slug: &str) -> Result<bool>
 resolve_unique_slug(conn: &Connection, raw_slug: &str) -> Result<String>
+rename_slug(conn: &Connection, old_slug: &str, new_slug: &str) -> Result<bool>
 search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<IndexedBlock>>
 upsert_channel(conn: &Connection, channel: &Channel) -> Result<i64>
 list_channels(conn: &Connection) -> Result<Vec<Channel>>
@@ -149,9 +151,17 @@ remove_channel(conn: &Connection, tag: &str) -> Result<bool>
 ### Поведение upsert_block
 
 - Если блок с таким slug уже есть — обновляет все поля
+- Пересчитывает и сохраняет `body_hash` (body после frontmatter) для external rename detection
 - Обновляет block_tags: удаляет старые, вставляет новые
 - Обновляет wikilinks: удаляет старые, вставляет новые (из extract_wikilinks)
 - FTS5 обновляется автоматически через триггеры
+
+### Поведение rename_slug
+
+- Меняет только `blocks.slug` в SQLite-индексе
+- Не делает silent conflict resolution: target slug должен быть свободен
+- Не переписывает другие `.md` файлы и не трогает source vault
+- Используется как low-level primitive для watcher-based external rename; in-app rename поверх него дополнительно переписывает vault refs и source media
 
 ### Поведение search_blocks
 
@@ -175,6 +185,7 @@ scan_md_files(vault: &VaultLayout) -> Result<Vec<PathBuf>>
 copy_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Result<PathBuf>
 delete_block_files(vault: &VaultLayout, slug: &str, media_ext: Option<&str>) -> Result<()>
 persist_new_block(conn: &Connection, vault: &VaultLayout, block: &Block, source_file: Option<&Path>) -> Result<IndexedBlock>
+rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) -> Result<()>
 ```
 
 ### Поведение write_block_file
@@ -188,6 +199,15 @@ persist_new_block(conn: &Connection, vault: &VaultLayout, block: &Block, source_
 - Возвращает пути всех `.md` файлов в корне vault (не рекурсивно)
 - Игнорирует `.arena/` директорию
 - Игнорирует файлы, не являющиеся `.md`
+- NFC-normalizes filename boundary перед возвратом в indexing/watcher pipeline
+
+### Поведение rename_derived_artifacts
+
+- Переименовывает только local derived artifacts, не source vault:
+  - block-level thumbnail `thumbs/<slug>.jpg`
+  - article audio artifacts и sidecar через `storage::article_audio::rename_all_artifacts`
+- Используется и watcher external rename path, и explicit in-app rename command
+- Если higher-level rename flow меняет speakable article text, audio может быть дополнительно инвалидирован поверх этого helper'а
 
 ---
 
