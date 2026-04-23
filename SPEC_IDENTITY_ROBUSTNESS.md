@@ -165,26 +165,40 @@ pub fn read_block_file(path: &Path) -> Result<(String, String)> {
      ```
    - при scan conflict file — записываем в таблицу вместо создания блока.
 
-3. **Frontend UX** в `src/components/Sidebar.tsx` или новом `ConflictBanner`:
-   - badge `N conflicts detected` в sidebar footer;
+3. **Frontend UX** в `src/components/Sidebar.tsx` через `VaultConflictsBanner`:
+   - badge `N conflicts detected` в sidebar header slot;
    - клик открывает диалог `ConflictResolutionDialog`;
-   - для каждого конфликта два варианта:
-     - `Keep original` — удалить conflict file;
-     - `Keep conflict version` — переместить conflict file поверх base, старый backup в `.arena/conflicts-archive/`;
-     - `Merge manually` — показать diff, пользователь редактирует вручную в Obsidian.
+   - для каждого конфликта три варианта (соответствуют `ResolveAction` enum в [`src-tauri/src/commands/conflicts.rs`](file:///Users/i_iii/Проекты/local-arena/src-tauri/src/commands/conflicts.rs)):
+     - `Keep original` (`keep_original`) — удалить conflict file;
+     - `Keep conflict version` (`keep_conflict`) — архивировать base в `.arena/conflicts-archive/<slug> (archived <timestamp>).md` и переименовать conflict file поверх base slug;
+     - `Dismiss for manual merge` (`dismiss_for_manual_merge`) — закрыть запись в `vault_conflicts` без изменений на диске; пользователь мержит файлы вручную в Obsidian.
+
+> Diff-view как опциональное расширение перед dismiss — backlog ([PLAN.md](file:///Users/i_iii/Проекты/local-arena/PLAN.md) § Backlog → «Conflict diff view»).
 
 ### NFC normalization
 
 **Правило:** все входящие filename паттерны нормализуются в NFC **на boundary**.
 
-**Точки применения:**
+**Канонический helper:** [`domain/vault.rs::normalize_filename_stem`](file:///Users/i_iii/Проекты/local-arena/src-tauri/src/domain/vault.rs) — предпочтительная точка вызова `.nfc().collect()` для всех path→slug преобразований. При добавлении новой path boundary — переиспользовать helper, не дублировать `.nfc().collect()`. Для slug-генерации из произвольной user-строки (title, url) доступен второй канал — `domain::block::sanitize_for_filename` (вызывает `.nfc()` внутри и дополнительно фильтрует fs-unsafe символы).
 
-1. `src-tauri/src/storage/files.rs:scan_md_files` — NFC при чтении `DirEntry::file_name()`.
-2. `src-tauri/src/watcher/handler.rs` — NFC при чтении path из `notify::Event`.
-3. `src-tauri/src/bin/native_host.rs` — NFC при save_block перед записью на диск.
-4. `src-tauri/src/domain/vault.rs:validate_slug` — NFC при слаг-валидации.
+**Точки применения** (boundary, где path/slug впервые попадает в runtime):
 
-**Зависимость:** `unicode-normalization` crate (уже есть в Cargo.lock как transitive, возможно потребуется explicit dependency).
+1. [`watcher/handler.rs::path_to_slug`](file:///Users/i_iii/Проекты/local-arena/src-tauri/src/watcher/handler.rs) — превращение path в slug в watcher events и `full_scan` (включая iCloud conflict detection через `detect_icloud_conflict`). Покрывает результат `scan_md_files` и notify-события.
+2. [`storage/files.rs::read_block_file`](file:///Users/i_iii/Проекты/local-arena/src-tauri/src/storage/files.rs) — NFC при извлечении slug из `file_stem()` перед возвратом содержимого.
+3. [`commands/blocks.rs`](file:///Users/i_iii/Проекты/local-arena/src-tauri/src/commands/blocks.rs) rename target — NFC при rename операции.
+4. [`domain/vault.rs::validate_slug`](file:///Users/i_iii/Проекты/local-arena/src-tauri/src/domain/vault.rs) — NFC при валидации slug перед записью.
+5. [`domain/block.rs::sanitize_for_filename`](file:///Users/i_iii/Проекты/local-arena/src-tauri/src/domain/block.rs) — NFC внутри `suggest_slug`. Покрывает весь slug-generation path: clipper native host (`bin/native_host.rs`), Are.na import, IPC команды создания блоков.
+6. [`asset_protocol::decode_request_path`](file:///Users/i_iii/Проекты/local-arena/src-tauri/src/asset_protocol.rs) — NFC при декодировании WebView asset URL (защита от NFD путей с HFS+ или wikilink с кириллицей до нормализации).
+
+**Верификация** полноты списка:
+
+```
+Grep "normalize_filename_stem|\.nfc\(\)" src-tauri/src/
+```
+
+Каждое срабатывание соответствует одной из точек выше, тесту этого helper'а, или внутренним вызовам внутри `normalize_filename_stem` / `sanitize_for_filename`.
+
+**Зависимость:** `unicode-normalization = "0.1"` объявлена в `src-tauri/Cargo.toml` как explicit dependency.
 
 ### Slug collision UX
 
