@@ -146,7 +146,7 @@ Goal: устранить две подтверждённые архитекту�
     - `heavy` — larger single-video clips теперь тоже получают `feed_playback`, но идут через longer `direct -> poster-only` без blob fallback;
     - descriptor не создаётся только для truly excessive clips выше hard limits;
   - grid autoplay policy смягчена под feed UX:
-    - все committed `standard` clips autoplay'ят одновременно, если их playback surface видима `>= 50%`;
+    - все committed `standard` clips autoplay'ят одновременно, если их playback surface покрыта expanded autoplay window (`viewport ± 160px`) минимум на `50%`;
     - `heavy` clips остаются консервативными: одновременно autoplay'ит только один top-most committed heavy clip;
   - `C5` остаётся `[~]` до ручной приёмки пользователем: autoplay dedicated video, autoplay single-video previews, preview-only multi-media, no blank square on failures.
 

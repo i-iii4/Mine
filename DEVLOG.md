@@ -1,5 +1,35 @@
 # Devlog
 
+## 23.04.2026 06:52 [primary] — Feed autoplay prewarm window for smoother scroll entry
+
+### Goal
+Убрать визуальный скачок в ленте в момент, когда autoplay-video впервые становится достаточно видимым для старта. Пользовательский симптом: poster попадает во viewport, потом с задержкой переключается на playing surface, и это выглядит как дёргание при скролле.
+
+### Actually completed
+
+**Grid autoplay gating переведён с strict viewport на expanded autoplay window** (`src/components/Grid.tsx`)
+- autoplay больше не считает видимость только внутри фактического viewport
+- вместо этого Grid использует expanded autoplay window `viewport ± 160px`
+- playback surface по-прежнему должна быть покрыта этим окном минимум на `50%`
+- эффект:
+  - autoplay может стартовать ещё до входа карточки в видимую область
+  - autoplay продолжает жить короткое время после выхода карточки из видимой области
+  - poster→video transition происходит до появления карточки в viewport и больше не выглядит как скачок в момент скролла
+
+**Backend и feed descriptor contract не менялись**
+- `feed_playback` остаётся единственным autoplay eligibility source-of-truth
+- `FeedVideoSurface` не менялся
+- `preview_manifest` не получает новых autoplay semantics
+- `heavy` policy сохраняется: одновременно autoplay'ит максимум один `heavy` clip
+
+**Добавлены regression tests на новое поведение** (`src/components/Grid.test.tsx`)
+- standard video prewarm'ится ещё до фактического входа карточки во viewport
+- standard video не выключается мгновенно при фактическом выходе из viewport, а живёт до выхода из expanded autoplay window
+
+### Checks
+- `bun run test src/components/Grid.test.tsx`
+- `bun run build`
+
 ## 22.04.2026 21:41 [primary] — Rename functionality completion: in-app rename + external rename boundary
 
 ### Goal

@@ -179,19 +179,26 @@ Autoplay semantics в descriptor не кодируются.
 ### Source of truth
 
 - только committed visible cards текущего grid generation
+- видимость считается не по strict viewport, а по expanded autoplay window: `viewport ± 160px`
 
 ### Selection rule
 
 - карточка должна быть committed
 - карточка должна иметь валидный `feed_playback`
-- карточка должна быть видима минимум на `50%`
+- playback surface карточки должна быть покрыта expanded autoplay window минимум на `50%`
 - `standard` cards autoplay'ят все, если проходят visibility threshold
 - из `heavy` cards активна только top-most visible card
 - если ни одна не проходит threshold, autoplay не запускается
 
+### Prewarm / linger policy
+
+- autoplay может стартовать до фактического входа playback surface в viewport
+- autoplay может продолжаться после фактического выхода playback surface из viewport
+- симметричное expanded autoplay window даёт poster→video transition заранее и убирает визуальный скачок в момент появления карточки на экране
+
 ### Loss of eligibility
 
-- при потере active status autoplay surface unmount’ится
+- при потере active status за пределами expanded autoplay window autoplay surface unmount’ится
 - карточка возвращается к poster-only preview
 
 ## Out of scope

@@ -831,6 +831,88 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(document.querySelector("[data-block-slug='block-1003'] [data-feed-video-surface='true']")).toBeTruthy();
   });
 
+  it("prewarms standard feed video before the card enters the visible viewport", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeBlock(1400),
+      makeVideoBlock(1401),
+    ];
+    setBlockHeight(1400, 420);
+    setBlockHeight(1401, 300);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="video-prewarm" />);
+
+    act(() => {
+      triggerResize(280, 400);
+    });
+
+    await flushAsync();
+
+    const positions = readRenderedPositions();
+    const videoCard = positions.find((pos) => pos.slug === "block-1401");
+    expect(videoCard).toBeTruthy();
+    expect(videoCard!.top).toBeGreaterThan(400);
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1401'] [data-feed-video-surface='true']",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("keeps standard feed video playing until it leaves the expanded autoplay window", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeVideoBlock(1501)];
+    setBlockHeight(1501, 300);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="video-linger" />);
+
+    act(() => {
+      triggerResize(280, 400);
+    });
+
+    await flushAsync();
+
+    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
+    expect(scrollEl).toBeTruthy();
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1501'] [data-feed-video-surface='true']",
+      ),
+    ).toBeTruthy();
+
+    act(() => {
+      if (scrollEl) {
+        scrollEl.scrollTop = 170;
+        scrollEl.dispatchEvent(new Event("scroll"));
+      }
+    });
+
+    await flushAsync();
+
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1501'] [data-feed-video-surface='true']",
+      ),
+    ).toBeTruthy();
+
+    act(() => {
+      if (scrollEl) {
+        scrollEl.scrollTop = 250;
+        scrollEl.dispatchEvent(new Event("scroll"));
+      }
+    });
+
+    await flushAsync();
+
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1501'] [data-feed-video-surface='true']",
+      ),
+    ).toBeFalsy();
+  });
+
   it("keeps only the top-most heavy video active when multiple heavy cards compete", async () => {
     vi.useFakeTimers();
 

@@ -62,6 +62,7 @@ const MEASUREMENT_BATCH_SIZE = 48;
 const INITIAL_COMMIT_BLOCKS = 24;
 const COMMIT_LOOKAHEAD_BLOCKS = 24;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
+const FEED_AUTOPLAY_VIEWPORT_MARGIN_PX = 160;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -452,7 +453,9 @@ export function Grid({
       return new Set<string>();
     }
 
-    const viewportBottom = scrollTop + viewportHeight;
+    const autoplayWindowTop = scrollTop - FEED_AUTOPLAY_VIEWPORT_MARGIN_PX;
+    const autoplayWindowBottom =
+      scrollTop + viewportHeight + FEED_AUTOPLAY_VIEWPORT_MARGIN_PX;
     const viewportCenter = scrollTop + viewportHeight / 2;
     const active = new Set<string>();
     let activeHeavy:
@@ -480,8 +483,8 @@ export function Grid({
       const surfaceTop = item.top + playbackSurface.topOffsetPx;
       const surfaceBottom = surfaceTop + playbackSurface.heightPx;
       const visiblePx =
-        Math.min(surfaceBottom, viewportBottom) -
-        Math.max(surfaceTop, scrollTop);
+        Math.min(surfaceBottom, autoplayWindowBottom) -
+        Math.max(surfaceTop, autoplayWindowTop);
       if (visiblePx <= 0) continue;
 
       const visibleFraction = visiblePx / Math.max(playbackSurface.heightPx, 1);

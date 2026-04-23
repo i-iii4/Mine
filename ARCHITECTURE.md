@@ -193,7 +193,7 @@ Grid держит дополнительный invariant:
 - все видимые `standard` video cards могут autoplay'ить одновременно
 - из `heavy` video cards одновременно autoplay'ит максимум одна
 - autoplay разрешён только для committed cards текущего generation
-- autoplay разрешён только при visibility threshold `>= 50%` по playback surface
+- autoplay gating использует expanded autoplay window (`viewport ± 160px`): playback surface должна быть покрыта этим окном минимум на `50%`, чтобы video успевало стартовать до фактического входа в viewport и гасло только после выхода
 - `heavy` active card выбирается как top-most visible block
 
 ## Components
