@@ -1015,6 +1015,8 @@ pub fn handle_event(
                 if thumbnails::is_image_ext(&ext) {
                     let thumb_path = vault.thumb_path(&slug);
                     let path_owned = path.to_path_buf();
+                    let app_clone = app.cloned();
+                    let event_slug = slug.clone();
                     std::thread::Builder::new()
                         .name(format!("thumb-media-{}", &slug))
                         .spawn(move || {
@@ -1023,7 +1025,21 @@ pub fn handle_event(
                                 &thumb_path,
                                 thumbnails::DEFAULT_MAX_SIZE,
                             ) {
-                                log::warn!("thumbnail failed for {}: {}", slug, e);
+                                log::warn!("thumbnail failed for {}: {}", event_slug, e);
+                                return;
+                            }
+                            // Notify frontend that the cached thumb for this
+                            // slug changed on disk — the sidebar otherwise
+                            // keeps showing the stale version until a full
+                            // vault refresh.
+                            if let Some(app) = app_clone {
+                                let _ = app.emit(
+                                    "thumb:updated",
+                                    ThumbUpdatedPayload {
+                                        slug: event_slug,
+                                        is_text: false,
+                                    },
+                                );
                             }
                         })
                         .ok();
