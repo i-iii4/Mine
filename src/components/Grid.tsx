@@ -77,6 +77,7 @@ interface GridProps {
   onBlockClick: (block: LightBlock) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestRename: (block: LightBlock) => void;
   onDeleteBlock: (slug: string) => void;
   onColumnCountChange?: (count: number) => void;
   hasMoreBlocks?: boolean;
@@ -93,6 +94,7 @@ interface GridContext {
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestRename: (block: LightBlock) => void;
   onRequestDelete: (slug: string) => void;
 }
 
@@ -156,6 +158,7 @@ export function Grid({
   onBlockClick,
   onToggleTag,
   onCreateAndAssign,
+  onRequestRename,
   onDeleteBlock,
   onColumnCountChange,
   hasMoreBlocks = false,
@@ -567,6 +570,7 @@ export function Grid({
       currentTag,
       onToggleTag,
       onCreateAndAssign,
+      onRequestRename,
       onRequestDelete: handleRequestDelete,
     }),
     [
@@ -578,6 +582,7 @@ export function Grid({
       currentTag,
       onToggleTag,
       onCreateAndAssign,
+      onRequestRename,
       handleRequestDelete,
     ],
   );
@@ -637,6 +642,7 @@ export function Grid({
           currentTag={currentTag}
           onToggleTag={onToggleTag}
           onCreateAndAssign={onCreateAndAssign}
+          onRequestDelete={(slug) => setBlockToDelete(slug)}
         />
       )}
 
@@ -756,6 +762,7 @@ const GridItem = memo(function GridItem({
           currentTag={context.currentTag}
           onToggleTag={context.onToggleTag}
           onCreateAndAssign={context.onCreateAndAssign}
+          onRequestRename={context.onRequestRename}
           onRequestDelete={context.onRequestDelete}
         />
       ) : (

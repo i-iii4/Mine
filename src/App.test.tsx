@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
-import type { GridSnapshot, LightBlock, TaxonomySnapshot, VaultOpenResult } from "@/types";
+import type { GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult } from "@/types";
 import { AppWithVault } from "./App";
 
 const commandMocks = vi.hoisted(() => ({
@@ -12,6 +12,8 @@ const commandMocks = vi.hoisted(() => ({
   startVaultSync: vi.fn<() => Promise<boolean>>(),
   listGridBlocks: vi.fn<(tag?: string, offset?: number, limit?: number) => Promise<GridSnapshot>>(),
   listTaxonomySnapshot: vi.fn<() => Promise<TaxonomySnapshot>>(),
+  renameBlockFile: vi.fn(),
+  getBlock: vi.fn(),
 }));
 
 vi.mock("@/lib/commands", () => ({
@@ -25,10 +27,12 @@ vi.mock("@/lib/commands", () => ({
   deleteChannel: vi.fn(),
   reorderChannels: vi.fn(),
   renameChannel: vi.fn(),
+  renameBlockFile: commandMocks.renameBlockFile,
   deleteTagFromAll: vi.fn(),
   addTag: vi.fn(),
   removeTag: vi.fn(),
   deleteBlock: vi.fn(),
+  getBlock: commandMocks.getBlock,
 }));
 
 vi.mock("@/lib/articleAudioDesktopGateway", () => ({
@@ -82,10 +86,26 @@ vi.mock("@/components/Grid", () => ({
   Grid: ({
     blocks,
     currentTag,
+    onBlockClick,
   }: {
     blocks: LightBlock[];
     currentTag?: string;
-  }) => <div data-testid="grid">{`${currentTag ?? "__all__"}:${blocks.length}`}</div>,
+    onBlockClick: (block: LightBlock) => void;
+  }) => (
+    <div>
+      <div data-testid="grid">{`${currentTag ?? "__all__"}:${blocks.length}`}</div>
+      {blocks.map((item) => (
+        <div key={`${item.slug}-title`} data-testid={`grid-title-${item.slug}`}>
+          {item.title ?? item.slug}
+        </div>
+      ))}
+      {blocks.map((item) => (
+        <button key={item.slug} type="button" onClick={() => onBlockClick(item)}>
+          {`Open ${item.slug}`}
+        </button>
+      ))}
+    </div>
+  ),
 }));
 
 vi.mock("@/components/Search", () => ({
@@ -93,7 +113,9 @@ vi.mock("@/components/Search", () => ({
 }));
 
 vi.mock("@/components/Detail", () => ({
-  Detail: () => null,
+  Detail: ({ block }: { block: LightBlock | IndexedBlock }) => (
+    <div data-testid="detail-title">{block.title ?? block.slug}</div>
+  ),
 }));
 
 vi.mock("@/components/ImportDialog", () => ({
@@ -164,6 +186,17 @@ function block(id: number, slug: string): LightBlock {
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    feed_playback: null,
+  };
+}
+
+function indexedBlock(id: number, slug: string, title = slug): IndexedBlock {
+  return {
+    ...block(id, slug),
+    title,
+    description: null,
+    source: null,
+    tags: [],
   };
 }
 
@@ -195,6 +228,8 @@ describe("AppWithVault", () => {
 
     commandMocks.openVault.mockResolvedValue(vaultOpenResult());
     commandMocks.startVaultSync.mockResolvedValue(true);
+    commandMocks.renameBlockFile.mockReset();
+    commandMocks.getBlock.mockImplementation(async (slug: string) => indexedBlock(1, slug, slug));
     commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit) => {
       expect(offset).toBe(0);
       expect(limit).toBe(200);
@@ -311,6 +346,58 @@ describe("AppWithVault", () => {
 
     await waitFor(() => {
       expect(screen.queryByText("Preparing library…")).not.toBeInTheDocument();
+    });
+  });
+
+  it("updates the open detail when block:renamed arrives", async () => {
+    let renamed = false;
+    commandMocks.listGridBlocks.mockImplementation(async () => ({
+      blocks: renamed
+        ? [{ ...block(1, "Renamed Alpha"), title: "Renamed Alpha" }]
+        : [{ ...block(1, "alpha-block"), title: "Alpha Title" }],
+      total_blocks: 1,
+      has_more: false,
+    }));
+    commandMocks.getBlock.mockImplementation(async (slug: string) =>
+      slug === "Renamed Alpha"
+        ? indexedBlock(1, "Renamed Alpha", "Renamed Alpha")
+        : indexedBlock(1, slug, "Alpha Title"),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("Alpha Title");
+      expect(screen.getByTestId("grid-title-alpha-block")).toHaveTextContent("Alpha Title");
+    });
+
+    renamed = true;
+    fireEvent(
+      window,
+      new CustomEvent("block:renamed", {
+        detail: {
+          payload: {
+            old_slug: "alpha-block",
+            new_slug: "Renamed Alpha",
+          },
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(commandMocks.getBlock).toHaveBeenCalledWith("Renamed Alpha");
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("Renamed Alpha");
+      expect(screen.getByTestId("grid-title-Renamed Alpha")).toHaveTextContent("Renamed Alpha");
     });
   });
 });

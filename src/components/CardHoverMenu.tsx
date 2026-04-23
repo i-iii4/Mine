@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { MoreHorizontal, Trash2, Plus, ExternalLink, FolderOpen, Copy } from "lucide-react";
+import { MoreHorizontal, Trash2, Plus, ExternalLink, FolderOpen, Copy, Pencil } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +24,7 @@ interface CardHoverMenuProps {
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestRename: (block: LightBlock) => void;
   onRequestDelete: (slug: string) => void;
 }
 
@@ -38,6 +39,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   currentTag,
   onToggleTag,
   onCreateAndAssign,
+  onRequestRename,
   onRequestDelete,
 }: CardHoverMenuProps) {
   const hasUrl = !!block.url;
@@ -118,6 +120,11 @@ export const CardHoverMenu = memo(function CardHoverMenu({
             </DropdownMenuItem>
 
             <DropdownMenuSeparator />
+
+            <DropdownMenuItem onSelect={() => onRequestRename(block)}>
+              <Pencil className="size-3" />
+              Rename…
+            </DropdownMenuItem>
 
             {currentTag && selectedTags.includes(currentTag) && (
               <DropdownMenuItem

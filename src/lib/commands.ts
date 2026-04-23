@@ -6,6 +6,8 @@ import type {
   IndexedBlock,
   GridSnapshot,
   LightBlock,
+  RenameBlockError,
+  RenameBlockResult,
   TagCount,
   ChannelDto,
   TaxonomySnapshot,
@@ -71,6 +73,27 @@ export const getBlock = (slug: string) =>
 
 export const createBlock = (params: CreateBlockParams) =>
   invoke<IndexedBlock>("create_block", { ...params });
+
+function normalizeRenameBlockError(error: unknown): RenameBlockError {
+  if (error && typeof error === "object" && "kind" in error) {
+    return error as RenameBlockError;
+  }
+  if (typeof error === "string") {
+    return { kind: "internal", message: error };
+  }
+  if (error instanceof Error) {
+    return { kind: "internal", message: error.message };
+  }
+  return { kind: "internal", message: String(error) };
+}
+
+export const renameBlockFile = async (old_slug: string, new_stem: string) => {
+  try {
+    return await invoke<RenameBlockResult>("rename_block_file", { old_slug, new_stem });
+  } catch (error) {
+    throw normalizeRenameBlockError(error);
+  }
+};
 
 export const deleteBlock = (slug: string) =>
   invoke<boolean>("delete_block", { slug });

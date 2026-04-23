@@ -25,6 +25,17 @@ pub enum VaultEvent {
     MediaDeleted(PathBuf),
 }
 
+impl VaultEvent {
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::BlockChanged(path)
+            | Self::BlockDeleted(path)
+            | Self::MediaChanged(path)
+            | Self::MediaDeleted(path) => path.as_path(),
+        }
+    }
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /// Classify a raw notify event into zero or more VaultEvents.

@@ -64,13 +64,17 @@ pub fn start_watching(
                 }
             };
 
-            let vault_events = events::classify_notify_event(&event, &vault_clone);
+            let state = app_clone.state::<AppState>();
+            let vault_events: Vec<_> = events::classify_notify_event(&event, &vault_clone)
+                .into_iter()
+                .filter(|vault_event| !state.is_path_suppressed(vault_event.path()))
+                .collect();
             if vault_events.is_empty() {
                 return;
             }
 
             let path = vault_clone.root().to_string_lossy().into_owned();
-            if app_clone.state::<AppState>().mark_dirty_if_syncing(&path) {
+            if state.mark_dirty_if_syncing(&path) {
                 return;
             }
 

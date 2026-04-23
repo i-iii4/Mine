@@ -1,5 +1,6 @@
 import {
   ContextMenuContent,
+  ContextMenuItem,
 } from "@/components/ui/context-menu";
 import { useEffect, useState } from "react";
 import type { TagCount } from "@/types";
@@ -12,6 +13,7 @@ interface CardTagMenuProps {
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestDelete: (blockSlug: string) => void;
 }
 
 /**
@@ -24,6 +26,7 @@ export function CardTagMenu({
   currentTag,
   onToggleTag,
   onCreateAndAssign,
+  onRequestDelete,
 }: CardTagMenuProps) {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
@@ -50,6 +53,9 @@ export function CardTagMenu({
         onCreateAndAssign={onCreateAndAssign}
         stopKeyPropagation
       />
+      <ContextMenuItem variant="destructive" onSelect={() => onRequestDelete(blockSlug)}>
+        Delete
+      </ContextMenuItem>
     </ContextMenuContent>
   );
 }

@@ -365,7 +365,7 @@ const BASE_PROPS = {
   onBlockClick: vi.fn(),
   onToggleTag: vi.fn(),
   onCreateAndAssign: vi.fn(),
-  onCreateChannelFromTag: vi.fn(),
+  onRequestRename: vi.fn(),
   onDeleteBlock: vi.fn(),
 };
 

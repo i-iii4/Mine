@@ -264,6 +264,58 @@ pub fn delete_all_artifacts(vault: &VaultLayout, slug: &str) -> Result<bool> {
     Ok(removed)
 }
 
+pub fn rename_all_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) -> Result<bool> {
+    if old_slug == new_slug {
+        return Ok(false);
+    }
+
+    ensure_audio_dir(vault)?;
+    let mut renamed = false;
+
+    if let Some(mut stored) = read_stored_state(vault, old_slug)? {
+        let current_ext = std::path::Path::new(&stored.audio_file_name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("wav");
+        stored.audio_file_name = audio_file_name_for_ext(new_slug, current_ext);
+        write_stored_state(vault, new_slug, &stored)?;
+
+        let old_state_path = vault.article_audio_state_path(old_slug);
+        if old_state_path.exists() {
+            std::fs::remove_file(&old_state_path).with_context(|| {
+                format!(
+                    "failed to remove old article audio state: {}",
+                    old_state_path.display()
+                )
+            })?;
+        }
+        renamed = true;
+    }
+
+    for ext in ARTICLE_AUDIO_FILE_EXTENSIONS {
+        let old_path = vault.article_audio_asset_path(old_slug, ext);
+        if !old_path.exists() {
+            continue;
+        }
+        let new_path = vault.article_audio_asset_path(new_slug, ext);
+        anyhow::ensure!(
+            !new_path.exists(),
+            "target article audio asset already exists: {}",
+            new_path.display()
+        );
+        std::fs::rename(&old_path, &new_path).with_context(|| {
+            format!(
+                "failed to rename article audio asset {} -> {}",
+                old_path.display(),
+                new_path.display()
+            )
+        })?;
+        renamed = true;
+    }
+
+    Ok(renamed)
+}
+
 pub fn audio_file_name_for_ext(slug: &str, ext: &str) -> String {
     format!("{}.{}", slug, ext.strip_prefix('.').unwrap_or(ext))
 }
@@ -542,5 +594,46 @@ mod tests {
         assert!(!wav_path.exists());
         assert!(!m4a_path.exists());
         assert!(!vault.article_audio_state_path("essay").exists());
+    }
+
+    #[test]
+    fn rename_all_artifacts_updates_sidecar_and_audio_file_name() {
+        let vault = vault();
+        ensure_audio_dir(&vault).unwrap();
+        let wav_path = vault.article_audio_asset_path("essay", "wav");
+        std::fs::write(&wav_path, b"wav").unwrap();
+        write_test_state_file(
+            &vault,
+            "essay",
+            "hash",
+            "essay.wav",
+            Some(42),
+            7,
+            None,
+        )
+        .unwrap();
+
+        assert!(rename_all_artifacts(&vault, "essay", "Renamed Essay").unwrap());
+        assert!(!vault.article_audio_state_path("essay").exists());
+        assert!(!wav_path.exists());
+        assert!(vault.article_audio_asset_path("Renamed Essay", "wav").exists());
+
+        let prepared = PreparedArticleSpeech {
+            speakable_text: "body".to_string(),
+            text_hash: "hash".to_string(),
+            language_tag: None,
+        };
+        let state = resolve_state_for_prepared(&vault, "Renamed Essay", &prepared).unwrap();
+        assert_eq!(state.status, ArticleAudioStatus::Ready);
+        assert_eq!(state.last_position_ms, 7);
+        assert_eq!(
+            state.audio_path.as_deref(),
+            Some(
+                vault
+                    .article_audio_asset_path("Renamed Essay", "wav")
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
     }
 }

@@ -12,7 +12,7 @@ use rusqlite::Connection;
 
 use crate::domain::block::{serialize_block, Block, BlockType};
 use crate::domain::vault::{normalize_filename_stem, VaultLayout};
-use crate::storage::{index, thumbnails};
+use crate::storage::{article_audio, index, thumbnails};
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -138,6 +138,37 @@ pub fn delete_block_files(vault: &VaultLayout, slug: &str, media_ext: Option<&st
         let _ = std::fs::remove_file(&thumb_path);
     }
 
+    Ok(())
+}
+
+/// Rename derived-store artifacts that are keyed by block slug.
+///
+/// Source-of-truth files in the vault are handled separately by rename flows;
+/// this helper only migrates local cache/state under the derived store so the
+/// new slug keeps thumbnails and article-audio progress.
+pub fn rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) -> Result<()> {
+    if old_slug == new_slug {
+        return Ok(());
+    }
+
+    let old_thumb = vault.thumb_path(old_slug);
+    if old_thumb.exists() {
+        let new_thumb = vault.thumb_path(new_slug);
+        anyhow::ensure!(
+            !new_thumb.exists(),
+            "target thumbnail already exists: {}",
+            new_thumb.display()
+        );
+        std::fs::rename(&old_thumb, &new_thumb).with_context(|| {
+            format!(
+                "failed to rename thumbnail {} -> {}",
+                old_thumb.display(),
+                new_thumb.display()
+            )
+        })?;
+    }
+
+    article_audio::rename_all_artifacts(vault, old_slug, new_slug)?;
     Ok(())
 }
 

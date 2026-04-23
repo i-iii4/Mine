@@ -55,13 +55,16 @@ import {
   deleteChannel,
   reorderChannels,
   renameChannel,
+  renameBlockFile,
   deleteTagFromAll,
   addTag,
   removeTag,
   deleteBlock,
+  getBlock,
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
+import { findBlockElement } from "@/lib/domSelectors";
 import { pushRecentTag } from "@/lib/recentTags";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
@@ -74,6 +77,7 @@ import { VaultConflictsBanner } from "@/components/VaultConflictsBanner";
 import { Grid } from "@/components/Grid";
 import { ActionButton } from "@/components/ActionButton";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
+import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 
 const Search = lazy(async () => {
   const mod = await import("@/components/Search");
@@ -128,6 +132,11 @@ interface BlockRemovedEvent {
   tags: string[];
 }
 
+interface BlockRenamedEvent {
+  old_slug: string;
+  new_slug: string;
+}
+
 interface ThumbUpdatedEvent {
   slug: string;
   is_text: boolean;
@@ -140,7 +149,7 @@ function findVisualNeighbor(
   currentSlug: string,
   direction: string,
 ): string | null {
-  const current = document.querySelector(`[data-block-slug="${currentSlug}"]`);
+  const current = findBlockElement(currentSlug);
   if (!current) return null;
 
   const rect = current.getBoundingClientRect();
@@ -257,6 +266,7 @@ export function AppWithVault({
   const [designSystemOpen, setDesignSystemOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
+  const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [focusedBlockId, setFocusedBlockId] = useState<number | null>(null);
   const [scrollToTopSignal, setScrollToTopSignal] = useState(0);
@@ -385,7 +395,7 @@ export function AppWithVault({
     const block = activeBlocks.find((b) => b.id === focusedBlockId);
     if (!block) return;
     requestAnimationFrame(() => {
-      const el = document.querySelector(`[data-block-slug="${block.slug}"]`);
+      const el = findBlockElement(block.slug);
       el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     });
   }, [focusedBlockId, activeBlocks]);
@@ -780,6 +790,40 @@ export function AppWithVault({
       });
     }));
 
+    unlistenFns.push(listen<BlockRenamedEvent>("block:renamed", (event) => {
+      invalidateRouteSnapshots();
+      setSelectedBlock((current) => {
+        if (!current || current.slug !== event.payload.old_slug) {
+          return current;
+        }
+        return {
+          ...current,
+          slug: event.payload.new_slug,
+        };
+      });
+      void getBlock(event.payload.new_slug).then((full) => {
+        if (!full) {
+          return;
+        }
+        setSelectedBlock((current) => {
+          if (!current) {
+            return current;
+          }
+          if (
+            current.slug !== event.payload.old_slug
+            && current.slug !== event.payload.new_slug
+          ) {
+            return current;
+          }
+          return full;
+        });
+      });
+      scheduleRefresh({
+        grid: true,
+        previews: true,
+      }, 0);
+    }));
+
     unlistenFns.push(listen<ThumbUpdatedEvent>("thumb:updated", (event) => {
       bumpThumbVersion(event.payload.slug);
       scheduleRefresh({ previews: true });
@@ -1148,6 +1192,33 @@ export function AppWithVault({
     [reloadAllSnapshots, currentTag, selectedBlock, blocks.length, tags.length],
   );
 
+  const handleRenameBlock = useCallback(
+    async (block: LightBlock | IndexedBlock, newStem: string) => {
+      const result = await renameBlockFile(block.slug, newStem);
+      await reloadAllSnapshots();
+      const refreshed = await getBlock(result.new_slug);
+      if (refreshed) {
+        setSelectedBlock((current) => {
+          if (!current || current.slug !== block.slug) {
+            return current;
+          }
+          return refreshed;
+        });
+      } else {
+        setSelectedBlock((current) => {
+          if (!current || current.slug !== block.slug) {
+            return current;
+          }
+          return {
+            ...current,
+            slug: result.new_slug,
+          };
+        });
+      }
+    },
+    [reloadAllSnapshots],
+  );
+
   if (!vaultReady && !loadError) {
     return (
       <div className="flex h-screen w-screen flex-col bg-background text-foreground">
@@ -1255,6 +1326,7 @@ export function AppWithVault({
                 onBlockClick={handleBlockClick}
                 onToggleTag={handleToggleTag}
                 onCreateAndAssign={handleCreateTagFromMenu}
+                onRequestRename={setRenamingBlock}
                 onDeleteBlock={handleDeleteBlock}
                 onColumnCountChange={handleColumnCountChange}
                 hasMoreBlocks={hasMoreBlocks}
@@ -1284,6 +1356,7 @@ export function AppWithVault({
               thumbsRootPath={thumbsRootPath ?? undefined}
               onClose={handleDetailClose}
               onNavigate={handleDetailNavigate}
+              onRequestRename={setRenamingBlock}
               onTagsChanged={() => {
                 void reloadAllSnapshots();
               }}
@@ -1312,6 +1385,26 @@ export function AppWithVault({
           }}
         />
       </Suspense>
+
+      <RenameBlockDialog
+        open={renamingBlock !== null}
+        currentSlug={renamingBlock?.slug ?? null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRenamingBlock(null);
+          }
+        }}
+        onRename={async (currentSlug, newStem) => {
+          const current =
+            (selectedBlock && selectedBlock.slug === currentSlug ? selectedBlock : null)
+            ?? renamingBlock;
+          if (!current) {
+            throw { kind: "block_not_found", slug: currentSlug } as const;
+          }
+          await handleRenameBlock(current, newStem);
+          setRenamingBlock(null);
+        }}
+      />
     </div>{/* end body */}
 
       {/* Bottom action bar */}
@@ -1383,6 +1476,7 @@ interface RouteContext {
   onBlockClick: (block: LightBlock) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestRename: (block: LightBlock | IndexedBlock) => void;
   onDeleteBlock: (slug: string) => void;
   onColumnCountChange: (count: number) => void;
   hasMoreBlocks: boolean;

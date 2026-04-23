@@ -819,45 +819,6 @@ fn flush_pending_for_test(conn: &Connection, vault: &VaultLayout, app: Option<&A
     }
 }
 
-/// Rename a block's derived-store artifacts in place so they continue to
-/// serve the new slug after a rename_slug migration. Best-effort: missing
-/// files are skipped silently (the regular generation paths will recreate
-/// them on demand).
-fn rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) {
-    if old_slug == new_slug {
-        return;
-    }
-    // Thumbnail .jpg
-    let old_thumb = vault.thumb_path(old_slug);
-    let new_thumb = vault.thumb_path(new_slug);
-    if old_thumb.exists() && !new_thumb.exists() {
-        if let Err(e) = std::fs::rename(&old_thumb, &new_thumb) {
-            log::warn!(
-                "rename thumb {} -> {} failed: {}",
-                old_thumb.display(),
-                new_thumb.display(),
-                e
-            );
-        }
-    }
-    // Article audio .wav + sidecar .json — articles only, but rename is
-    // extension-agnostic so we iterate over the audio cache directory.
-    for ext in ["wav", "json"] {
-        let old_path = vault.article_audio_asset_path(old_slug, ext);
-        let new_path = vault.article_audio_asset_path(new_slug, ext);
-        if old_path.exists() && !new_path.exists() {
-            if let Err(e) = std::fs::rename(&old_path, &new_path) {
-                log::warn!(
-                    "rename audio artifact {} -> {} failed: {}",
-                    old_path.display(),
-                    new_path.display(),
-                    e
-                );
-            }
-        }
-    }
-}
-
 /// Commit a deferred block removal as if it had been processed immediately.
 /// Used when the rename-match window expires without an incoming Create.
 fn commit_deferred_removal(
@@ -938,7 +899,13 @@ fn perform_rename_match(
 
     match index::rename_slug(conn, &pending.slug, new_slug) {
         Ok(true) => {
-            rename_derived_artifacts(vault, &pending.slug, new_slug);
+            if let Err(e) = files::rename_derived_artifacts(vault, &pending.slug, new_slug) {
+                log::warn!(
+                    "rename derived artifacts {} -> {} failed: {e:#}",
+                    pending.slug,
+                    new_slug
+                );
+            }
             if let Some(app) = app {
                 let _ = app.emit(
                     "block:renamed",

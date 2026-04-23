@@ -103,6 +103,18 @@ export interface GridSnapshot {
   has_more: boolean;
 }
 
+export interface RenameBlockResult {
+  old_slug: string;
+  new_slug: string;
+}
+
+export type RenameBlockError =
+  | { kind: "no_vault" }
+  | { kind: "block_not_found"; slug: string }
+  | { kind: "invalid_filename"; reason: string }
+  | { kind: "name_taken"; requested: string }
+  | { kind: "internal"; message: string };
+
 export interface TagCount {
   tag: string;
   count: number;

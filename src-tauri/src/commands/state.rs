@@ -8,8 +8,10 @@
 use notify::RecommendedWatcher;
 use rusqlite::Connection;
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 use crate::domain::vault::VaultLayout;
@@ -39,6 +41,10 @@ pub struct AppState {
     /// Paths currently undergoing background sync plus a dirty marker for
     /// notify events that arrived while the sync owned the index.
     pub sync_tracker: Mutex<SyncTracker>,
+    /// Short-lived path suppressions for app-initiated filesystem mutations
+    /// such as in-app rename. Prevents the watcher from racing the command's
+    /// own source-of-truth update path.
+    pub suppressed_paths: Mutex<HashMap<PathBuf, Instant>>,
 }
 
 impl AppState {
@@ -48,6 +54,7 @@ impl AppState {
             watcher: Mutex::new(None),
             instance_guard: Mutex::new(None),
             sync_tracker: Mutex::new(SyncTracker::default()),
+            suppressed_paths: Mutex::new(HashMap::new()),
         }
     }
 
@@ -112,6 +119,32 @@ impl AppState {
         }
         tracker.dirty_during_sync.insert(path.to_string());
         true
+    }
+
+    pub fn suppress_paths<I>(&self, paths: I, ttl: Duration) -> Result<(), CommandError>
+    where
+        I: IntoIterator<Item = PathBuf>,
+    {
+        let mut suppressed = self
+            .suppressed_paths
+            .lock()
+            .map_err(|_| CommandError::Internal("suppressed_paths mutex poisoned".into()))?;
+        let now = Instant::now();
+        suppressed.retain(|_, deadline| *deadline > now);
+        let deadline = now + ttl;
+        for path in paths {
+            suppressed.insert(path, deadline);
+        }
+        Ok(())
+    }
+
+    pub fn is_path_suppressed(&self, path: &Path) -> bool {
+        let Ok(mut suppressed) = self.suppressed_paths.lock() else {
+            return false;
+        };
+        let now = Instant::now();
+        suppressed.retain(|_, deadline| *deadline > now);
+        suppressed.contains_key(path)
     }
 }
 
@@ -180,5 +213,17 @@ mod tests {
         assert!(state.mark_dirty_if_syncing("/tmp/vault"));
         state.abort_sync("/tmp/vault").unwrap();
         assert!(!state.mark_dirty_if_syncing("/tmp/vault"));
+    }
+
+    #[test]
+    fn suppressed_paths_expire_after_deadline() {
+        let state = AppState::new();
+        let path = std::path::PathBuf::from("/tmp/doc.md");
+        state
+            .suppress_paths([path.clone()], std::time::Duration::from_millis(5))
+            .unwrap();
+        assert!(state.is_path_suppressed(&path));
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        assert!(!state.is_path_suppressed(&path));
     }
 }

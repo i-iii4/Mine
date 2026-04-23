@@ -37,6 +37,7 @@ pub fn run() {
             commands::blocks::list_grid_blocks,
             commands::blocks::get_block,
             commands::blocks::create_block,
+            commands::blocks::rename_block_file,
             commands::blocks::delete_block,
             commands::tags::list_tags,
             commands::tags::add_tag,

@@ -38,6 +38,7 @@ interface CardProps {
   currentTag?: string;
   onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign?: (tag: string, blockSlug: string) => void;
+  onRequestRename?: (block: LightBlock) => void;
   onRequestDelete?: (slug: string) => void;
 }
 
@@ -75,7 +76,7 @@ export function MeasuredCardFrame({
   );
 }
 
-export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFocused, priority, allowPlayback = true, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestDelete }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFocused, priority, allowPlayback = true, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
   });
@@ -104,7 +105,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
         isFocused && "ring-2 ring-ring",
       )}
     >
-      {tags && onToggleTag && onCreateAndAssign && onRequestDelete && (
+      {tags && onToggleTag && onCreateAndAssign && onRequestRename && onRequestDelete && (
         <CardHoverMenu
           block={block}
           vaultPath={vaultPath}
@@ -112,6 +113,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
           currentTag={currentTag}
           onToggleTag={onToggleTag}
           onCreateAndAssign={onCreateAndAssign}
+          onRequestRename={onRequestRename}
           onRequestDelete={onRequestDelete}
         />
       )}

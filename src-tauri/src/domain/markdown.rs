@@ -10,6 +10,8 @@
 // result as applying it once. This lets a user re-run the migration
 // safely without corrupting already-converted bodies.
 
+use std::collections::BTreeMap;
+
 /// Rewrite markdown image embeds into Obsidian wikilinks for every
 /// locally-addressed URL in `body`. Returns the new body.
 ///
@@ -109,9 +111,159 @@ pub fn convert_markdown_images_to_wikilinks(body: &str) -> String {
     out
 }
 
+/// Encode a local filesystem name into the markdown URL form used by Mine's
+/// render boundary helpers. Mirrors the frontend encoder: preserve Unicode,
+/// but percent-encode `%`, spaces, and parentheses so markdown parsers do not
+/// split the URL.
+pub fn encode_local_markdown_url(name: &str) -> String {
+    name.replace('%', "%25")
+        .replace(' ', "%20")
+        .replace('(', "%28")
+        .replace(')', "%29")
+}
+
+/// Rewrite every wikilink target equal to `old_target` to `new_target`.
+///
+/// Applies to both text links (`[[note]]`) and embeds (`![[note]]`), while
+/// preserving any alias after `|`. Non-matching wikilinks are left unchanged.
+pub fn rename_wikilink_targets(body: &str, old_target: &str, new_target: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut i = 0usize;
+
+    while i < body.len() {
+        let Some(rel) = body[i..].find("[[") else {
+            out.push_str(&body[i..]);
+            break;
+        };
+        let start = i + rel;
+        out.push_str(&body[i..start]);
+        let inner_start = start + 2;
+        let Some(close_offset) = body[inner_start..].find("]]") else {
+            out.push_str(&body[start..]);
+            break;
+        };
+
+        let inner = &body[inner_start..inner_start + close_offset];
+        let mut parts = inner.splitn(2, '|');
+        let raw_target = parts.next().unwrap_or("").trim();
+        if raw_target == old_target {
+            out.push_str("[[");
+            out.push_str(new_target);
+            if let Some(alias) = parts.next() {
+                out.push('|');
+                out.push_str(alias);
+            }
+            out.push_str("]]");
+        } else {
+            out.push_str(&body[start..inner_start + close_offset + 2]);
+        }
+
+        i = inner_start + close_offset + 2;
+    }
+
+    out
+}
+
+/// Rewrite local inline-media references according to `renames`.
+///
+/// Supports both canonical Obsidian embeds (`![[file]]`, `![[file|alt]]`) and
+/// legacy markdown images (`![alt](file%20name.jpg)`). Only local filenames
+/// present in `renames` are rewritten; remote URLs and non-matching embeds are
+/// preserved verbatim.
+pub fn rename_inline_media_references(body: &str, renames: &BTreeMap<String, String>) -> String {
+    if renames.is_empty() {
+        return body.to_string();
+    }
+
+    let mut out = String::with_capacity(body.len());
+    let mut i = 0usize;
+
+    while i < body.len() {
+        let Some(rel) = body[i..].find("![") else {
+            out.push_str(&body[i..]);
+            break;
+        };
+        let excl = i + rel;
+        out.push_str(&body[i..excl]);
+        let after_excl = excl + 2;
+        if after_excl >= body.len() {
+            out.push_str(&body[excl..]);
+            break;
+        }
+
+        if body[after_excl..].starts_with('[') {
+            let name_start = after_excl + 1;
+            let Some(close_offset) = body[name_start..].find("]]") else {
+                out.push_str(&body[excl..]);
+                break;
+            };
+
+            let inner = &body[name_start..name_start + close_offset];
+            let mut parts = inner.splitn(2, '|');
+            let raw_name = parts.next().unwrap_or("").trim();
+            if let Some(new_name) = renames.get(raw_name) {
+                out.push_str("![[");
+                out.push_str(new_name);
+                if let Some(alias) = parts.next() {
+                    out.push('|');
+                    out.push_str(alias);
+                }
+                out.push_str("]]");
+            } else {
+                out.push_str(&body[excl..name_start + close_offset + 2]);
+            }
+
+            i = name_start + close_offset + 2;
+            continue;
+        }
+
+        let Some(bracket_offset) = body[after_excl..].find("](") else {
+            out.push_str(&body[excl..after_excl]);
+            i = after_excl;
+            continue;
+        };
+        let alt_start = after_excl;
+        let bracket_pos = alt_start + bracket_offset;
+        let url_start = bracket_pos + 2;
+        let Some(paren_end) = body[url_start..].find(')') else {
+            out.push_str(&body[excl..after_excl]);
+            i = after_excl;
+            continue;
+        };
+
+        let alt = &body[alt_start..bracket_pos];
+        let raw_url = &body[url_start..url_start + paren_end];
+        let end = url_start + paren_end + 1;
+
+        if raw_url.starts_with("http://") || raw_url.starts_with("https://") || raw_url.is_empty()
+        {
+            out.push_str(&body[excl..end]);
+            i = end;
+            continue;
+        }
+
+        let decoded = percent_encoding::percent_decode_str(raw_url)
+            .decode_utf8_lossy()
+            .into_owned();
+        if let Some(new_name) = renames.get(&decoded) {
+            out.push_str("![");
+            out.push_str(alt);
+            out.push_str("](");
+            out.push_str(&encode_local_markdown_url(new_name));
+            out.push(')');
+        } else {
+            out.push_str(&body[excl..end]);
+        }
+        i = end;
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     #[test]
     fn converts_local_markdown_without_alt() {
@@ -234,5 +386,32 @@ mod tests {
     fn no_op_on_body_without_images() {
         let input = "Just a paragraph with **bold** and [a link](https://e.com).";
         assert_eq!(convert_markdown_images_to_wikilinks(input), input);
+    }
+
+    #[test]
+    fn rename_wikilink_targets_updates_text_and_embed_forms() {
+        let input = "See [[Old Name]] and ![[Old Name|preview]], leave [[Other]].";
+        let expected = "See [[New Name]] and ![[New Name|preview]], leave [[Other]].";
+        assert_eq!(rename_wikilink_targets(input, "Old Name", "New Name"), expected);
+    }
+
+    #[test]
+    fn rename_inline_media_references_updates_wikilinks_and_legacy_markdown() {
+        let input = "![[Old Name (image 1).jpg|alt]]\n![cap](Old%20Name%20%28image%201%29.jpg)";
+        let mut renames = BTreeMap::new();
+        renames.insert(
+            "Old Name (image 1).jpg".to_string(),
+            "New Name (image 1).jpg".to_string(),
+        );
+        let expected = "![[New Name (image 1).jpg|alt]]\n![cap](New%20Name%20%28image%201%29.jpg)";
+        assert_eq!(rename_inline_media_references(input, &renames), expected);
+    }
+
+    #[test]
+    fn rename_inline_media_references_leaves_remote_urls_unchanged() {
+        let input = "![cap](https://cdn.example.com/Old%20Name.jpg)";
+        let mut renames = BTreeMap::new();
+        renames.insert("Old Name.jpg".to_string(), "New Name.jpg".to_string());
+        assert_eq!(rename_inline_media_references(input, &renames), input);
     }
 }
