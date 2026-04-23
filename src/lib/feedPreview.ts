@@ -1,4 +1,5 @@
 import type { FeedPreviewKind } from "@/types";
+import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
 
 export interface NormalizedFeedPreviewTile {
   sourcePath: string;
@@ -40,7 +41,7 @@ function isRemotePath(value: string): boolean {
 
 export function deriveTilePreviewPath(sourcePath: string): string | null {
   if (isRemotePath(sourcePath)) return null;
-  const clean = sourcePath.split("?")[0] ?? sourcePath;
+  const clean = (decodeLocalMarkdownUrl(sourcePath).split("?")[0] ?? sourcePath);
   const fileName = clean.split("/").pop();
   if (!fileName) return null;
   const dot = fileName.lastIndexOf(".");
@@ -127,5 +128,9 @@ export function findPreviewTileForSource(
   sourcePath: string,
 ): NormalizedFeedPreviewTile | null {
   if (!manifest) return null;
-  return manifest.tiles.find((tile) => tile.sourcePath === sourcePath) ?? null;
+  const normalizedSource = decodeLocalMarkdownUrl(sourcePath);
+  return (
+    manifest.tiles.find((tile) => decodeLocalMarkdownUrl(tile.sourcePath) === normalizedSource)
+    ?? null
+  );
 }

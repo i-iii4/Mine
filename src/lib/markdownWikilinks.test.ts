@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { preprocessWikilinks } from "./markdownWikilinks";
+import { decodeLocalMarkdownUrl, preprocessWikilinks } from "./markdownWikilinks";
 
 describe("preprocessWikilinks", () => {
   it("rewrites a bare embed wikilink to markdown image without alt", () => {
@@ -61,5 +61,28 @@ describe("preprocessWikilinks", () => {
   it("is a no-op for bodies without wikilinks", () => {
     const input = "plain paragraph\n\nwith **bold** and `code`";
     expect(preprocessWikilinks(input)).toBe(input);
+  });
+});
+
+describe("decodeLocalMarkdownUrl", () => {
+  it("decodes local filenames with spaces and parens", () => {
+    expect(decodeLocalMarkdownUrl("Title%20%28image%201%29.jpg")).toBe(
+      "Title (image 1).jpg",
+    );
+  });
+
+  it("decodes bare percent escapes back to the original filename", () => {
+    expect(decodeLocalMarkdownUrl("50%25%20off.jpg")).toBe("50% off.jpg");
+  });
+
+  it("preserves unicode while decoding encoded separators", () => {
+    expect(decodeLocalMarkdownUrl("Закат%20%28image%201%29.jpg")).toBe(
+      "Закат (image 1).jpg",
+    );
+  });
+
+  it("leaves remote URLs untouched", () => {
+    const remote = "https://example.com/Title%20%28image%201%29.jpg";
+    expect(decodeLocalMarkdownUrl(remote)).toBe(remote);
   });
 });

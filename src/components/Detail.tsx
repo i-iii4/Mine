@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import type { IndexedBlock, LightBlock } from "@/types";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { preprocessWikilinks } from "@/lib/markdownWikilinks";
+import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
 import {
   thumbnailUrl,
   mediaUrl,
@@ -36,6 +37,7 @@ interface DetailProps {
   onClose: () => void;
   onNavigate: (direction: "prev" | "next" | "up" | "down") => void;
   onTagsChanged: () => void;
+  onRequestRename: (block: LightBlock | IndexedBlock) => void;
 }
 
 function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock {
@@ -49,6 +51,7 @@ export function Detail({
   onClose,
   onNavigate,
   onTagsChanged,
+  onRequestRename,
 }: DetailProps) {
   const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
     isIndexedBlock(block) ? block : null,
@@ -180,6 +183,7 @@ export function Detail({
               onTagInputChange={setTagInput}
               onAddTag={handleAddTag}
               onRemoveTag={handleRemoveTag}
+              onRequestRename={() => onRequestRename(displayBlock)}
             />
           </div>
         </div>
@@ -200,6 +204,7 @@ interface MetadataPanelProps {
   onTagInputChange: (value: string) => void;
   onAddTag: () => void;
   onRemoveTag: (tag: string) => void;
+  onRequestRename: () => void;
 }
 
 function MetadataPanel({
@@ -212,6 +217,7 @@ function MetadataPanel({
   onTagInputChange,
   onAddTag,
   onRemoveTag,
+  onRequestRename,
 }: MetadataPanelProps) {
   const displayBlock = fullBlock ?? block;
   return (
@@ -227,6 +233,9 @@ function MetadataPanel({
       )}
 
       <MetadataField label="FILENAME" value={filename} />
+      <Button variant="ghost" size="default" className="h-auto w-fit px-0 py-0 font-mono text-sm" onClick={onRequestRename}>
+        Rename…
+      </Button>
 
       <MetadataField label="DATE" value={formattedDate} />
 
@@ -485,12 +494,13 @@ function ArticleBody({
   const components: Components = useMemo(
     () => ({
       img: ({ src, alt, ...props }) => {
-        const originalSrc = resolveImageSrc(src ?? "", vaultPath);
+        const decodedSrc = decodeLocalMarkdownUrl(src ?? "");
+        const originalSrc = resolveImageSrc(decodedSrc, vaultPath);
         // Video/GIF (downloaded MP4) — render as inline video with controls
-        if (/\.mp4(\?|$)|\.webm(\?|$)/i.test(src ?? "")) {
+        if (/\.mp4(\?|$)|\.webm(\?|$)/i.test(decodedSrc)) {
           return <VideoFromBlob src={originalSrc} controls className="rounded-0" />;
         }
-        const previewTile = findPreviewTileForSource(previewManifest, src ?? "");
+        const previewTile = findPreviewTileForSource(previewManifest, decodedSrc);
         const previewSrc = previewTile?.previewPath
           ? previewAssetUrl(thumbsRootPath, previewTile.previewPath)
           : null;

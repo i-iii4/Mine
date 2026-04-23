@@ -13,6 +13,10 @@
 const WIKILINK_EMBED = /!\[\[([^\]]*)\]\]/g;
 const WIKILINK_LINK = /(?<!!)\[\[([^\]]*)\]\]/g;
 
+function isRemoteMarkdownUrl(src: string): boolean {
+  return src.startsWith("http://") || src.startsWith("https://");
+}
+
 function encodeMarkdownUrl(name: string): string {
   // Mirror the backend encoder (Phase 18.F.1): space, parens, percent.
   // encodeURI would also percent-encode Cyrillic, which we avoid to
@@ -57,4 +61,24 @@ export function preprocessWikilinks(body: string): string {
       const display = alt || name;
       return `[${display}](${encodeMarkdownUrl(name)})`;
     });
+}
+
+/**
+ * Decode a local markdown URL back to the real filename on disk.
+ *
+ * Render-time markdown uses percent-encoding for a small set of characters
+ * (space, parens, bare `%`) so the parser does not truncate. The source
+ * vault and preview manifests keep the actual filenames, so any local path
+ * crossing the render boundary must be decoded before it is used as a file
+ * or preview-manifest lookup key.
+ */
+export function decodeLocalMarkdownUrl(src: string): string {
+  if (!src || isRemoteMarkdownUrl(src)) {
+    return src;
+  }
+  try {
+    return decodeURIComponent(src);
+  } catch {
+    return src;
+  }
 }
