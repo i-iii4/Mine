@@ -35,20 +35,6 @@ function asBoolean(value: unknown): boolean {
   return value === true;
 }
 
-function isRemotePath(value: string): boolean {
-  return value.startsWith("http://") || value.startsWith("https://");
-}
-
-export function deriveTilePreviewPath(sourcePath: string): string | null {
-  if (isRemotePath(sourcePath)) return null;
-  const clean = (decodeLocalMarkdownUrl(sourcePath).split("?")[0] ?? sourcePath);
-  const fileName = clean.split("/").pop();
-  if (!fileName) return null;
-  const dot = fileName.lastIndexOf(".");
-  const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
-  return stem ? `${stem}.jpg` : null;
-}
-
 export function normalizeFeedPreviewManifest(
   raw: string | null | undefined,
 ): NormalizedFeedPreviewManifest | null {
@@ -90,13 +76,19 @@ export function normalizeFeedPreviewManifest(
           const sourcePath = asString(tile.source_path) ?? asString(tile.src);
           if (!sourcePath) return null;
 
+          // Preview paths must come from the backend manifest. If
+          // `preview_path` is absent the backend is telling us there is
+          // no dedicated preview tile — either because the source is
+          // already a valid sidebar-ready image (single-image clips) or
+          // because tile generation was skipped. The consumer falls
+          // back to the source file through `asset://` in that case.
+          // Legacy behaviour (deriving `<stem>.jpg` in the thumbs/
+          // directory) caused 404s for `<slug> (image N).jpg` inline
+          // media whose preview = the source itself.
           let previewPath = asString(tile.preview_path);
           const isVideo = asBoolean(tile.is_video);
           const isVideoPoster = asBoolean(tile.is_video_poster);
 
-          if (!previewPath) {
-            previewPath = deriveTilePreviewPath(sourcePath);
-          }
           if (!previewPath && isVideoPoster) {
             previewPath = primaryPreviewPath;
           }

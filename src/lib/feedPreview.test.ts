@@ -1,24 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-  deriveTilePreviewPath,
   findPreviewTileForSource,
   normalizeFeedPreviewManifest,
 } from "./feedPreview";
 
 describe("feedPreview", () => {
-  it("derives local tile preview paths from source filenames", () => {
-    expect(deriveTilePreviewPath("gallery-item.webp")).toBe("gallery-item.jpg");
-    expect(deriveTilePreviewPath("nested/path/photo.png?x=1")).toBe("photo.jpg");
-    expect(deriveTilePreviewPath("https://example.com/photo.jpg")).toBeNull();
-  });
-
-  it("derives preview paths from encoded local filenames", () => {
-    expect(deriveTilePreviewPath("Title%20%28image%201%29.webp")).toBe(
-      "Title (image 1).jpg",
-    );
-  });
-
-  it("normalizes legacy src-only manifests into preview-first tiles", () => {
+  it("leaves preview path null when the backend did not provide one", () => {
+    // Contract: if preview_path is absent the source file IS the preview.
+    // The consumer falls back to asset://vault/<source> rather than
+    // attempting a synthetic thumbs/<stem>.jpg URL that often 404s for
+    // inline media like `<slug> (image N).jpg`.
     const manifest = normalizeFeedPreviewManifest(
       JSON.stringify({
         kind: "composite",
@@ -39,7 +30,30 @@ describe("feedPreview", () => {
     );
 
     expect(manifest?.tiles[0]?.sourcePath).toBe("article-img0.webp");
-    expect(manifest?.tiles[0]?.previewPath).toBe("article-img0.jpg");
+    expect(manifest?.tiles[0]?.previewPath).toBeNull();
+  });
+
+  it("falls back to primary_preview_path for video poster tiles without their own preview", () => {
+    const manifest = normalizeFeedPreviewManifest(
+      JSON.stringify({
+        kind: "video_poster",
+        primary_preview_path: "clip-poster.jpg",
+        width: 1,
+        height: 1,
+        tiles: [
+          {
+            source_path: "clip.mp4",
+            width: 800,
+            height: 600,
+            is_video: true,
+            is_video_poster: true,
+          },
+        ],
+        overflow_count: 0,
+      }),
+    );
+
+    expect(manifest?.tiles[0]?.previewPath).toBe("clip-poster.jpg");
   });
 
   it("matches preview tiles against encoded local markdown paths", () => {
