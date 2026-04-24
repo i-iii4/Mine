@@ -43,18 +43,24 @@ export function PopupApp() {
   }, [clipper.save, closeClipper]);
 
   // Cmd+Enter to save, Esc to close, Tab to cycle Content → Screenshot → Link.
+  // Listener on window in CAPTURE phase so page scripts cannot swallow Tab
+  // before we see it (apple.com, medium, etc. commonly attach keydown
+  // handlers on document/window in bubble phase). In capture phase we get
+  // the event first, then decide whether to handle.
   //
-  // Listener is on document. For the detached-popup window (icon click /
-  // Alt+A) this is the popup's own document — Chrome gives it keyboard
-  // focus automatically, so Tab lands here. For the content-script
-  // overlay (context-menu path) this is the host page document — focus
-  // is inside the shadow, keydown bubbles out through composed events.
-  //
-  // Activation rule: skip when the true focused leaf is a text input
-  // (on page or in overlay). Walks shadow roots because activeElement
-  // retargets to the shadow host.
+  // Activation rule: handle the event only when focus is already inside
+  // the clipper overlay (or when the page body itself has focus — i.e. no
+  // explicit text-input engagement on the host page). This avoids hijacking
+  // Tab navigation when the user is typing in an input on the underlying
+  // page. The ergonomic consequence: the moment the overlay is visible and
+  // the user has not actively clicked into a page field, Tab cycles clipper
+  // tabs — no clicks on the overlay required.
   useEffect(() => {
     function activeIsTextField(): boolean {
+      // Walk shadow roots so that an input inside a nested shadow (either
+      // ours or the page's) is correctly detected. document.activeElement
+      // retargets to the shadow host, so we descend until we reach the
+      // true leaf focused element.
       let el: Element | null = document.activeElement;
       while (el) {
         const tag = el.tagName;
@@ -84,6 +90,7 @@ export function PopupApp() {
         if (activeIsTextField()) return;
         if (clipper.metadata?.detectedType === "image") return;
         e.preventDefault();
+        e.stopPropagation();
         const order = ["content", "screenshot", "link"] as const;
         const idx = order.indexOf(clipper.currentType as typeof order[number]);
         const step = e.shiftKey ? -1 : 1;
@@ -92,8 +99,8 @@ export function PopupApp() {
         clipper.setCurrentType(next);
       }
     }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
   }, [handleSave, closeClipper, clipper.currentType, clipper.setCurrentType, clipper.metadata?.detectedType]);
 
   if (clipper.state === "loading") {
