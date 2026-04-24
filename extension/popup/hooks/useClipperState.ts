@@ -100,6 +100,7 @@ export function useClipperState() {
   const [selectedVault, setSelectedVault] = useState<string | null>(null);
   const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
   const [screenshotUploadId, setScreenshotUploadId] = useState<string | null>(null);
+  const [screenshotCapturing, setScreenshotCapturing] = useState<boolean>(false);
   const [cropSupported, setCropSupported] = useState<boolean>(false);
   const uploadPortRef = useRef<number | null>(null);
   const uploadTokenRef = useRef<string | null>(null);
@@ -125,6 +126,15 @@ export function useClipperState() {
       }
     }
 
+    // Flip capturing → true so the popup renders a skeleton instead of
+    // the empty area that used to appear between TypeSwitcher click and
+    // the capture callback. The delay is not theoretical: two rAFs for
+    // the overlay hide, a chrome.runtime round-trip through the service
+    // worker (plus up to ~1 s if the worker was idle and needs to spin
+    // up), then captureVisibleTab itself. Users previously read that
+    // window as "nothing happens".
+    setScreenshotCapturing(true);
+
     if (IS_CONTENT_SCRIPT_CONTEXT) {
       overlay?.hide();
       // Wait two animation frames: one for the host display:none to
@@ -136,6 +146,7 @@ export function useClipperState() {
             { target: "background", action: "captureForCrop" },
             (resp) => {
               showAgain();
+              setScreenshotCapturing(false);
               if (chrome.runtime.lastError) {
                 showError(`Screenshot failed: ${chrome.runtime.lastError.message}`);
                 return;
@@ -160,6 +171,7 @@ export function useClipperState() {
       null as unknown as number,
       { format: "jpeg", quality: 85 },
       (dataUrl) => {
+        setScreenshotCapturing(false);
         if (chrome.runtime.lastError) {
           showError(`Screenshot failed: ${chrome.runtime.lastError.message}`);
           return;
@@ -753,6 +765,7 @@ export function useClipperState() {
     currentType,
     setCurrentType: handleTypeChange,
     screenshotDataUrl,
+    screenshotCapturing,
     retakeScreenshot,
     startCropMode,
     cropSupported,
