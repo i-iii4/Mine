@@ -44,10 +44,26 @@ function isContentScriptCompatible(url) {
   return url.startsWith("http://") || url.startsWith("https://") || url.startsWith("file://");
 }
 
-async function openClipperUi(tab) {
+async function openClipperAsWindow() {
+  // Detached popup window — Chrome guarantees keyboard focus on it,
+  // so shortcuts like Tab-cycling work without the user having to
+  // click into the popup first. This is the only reliable way to get
+  // keyboard focus into extension UI when the user triggered the
+  // clipper from the toolbar icon (focus was on Chrome chrome, not
+  // the page, at the time of the click).
+  const popupUrl = chrome.runtime.getURL("dist/index.html");
+  const bounds = await resolvePopupBounds();
+  const win = await chrome.windows.create({
+    url: popupUrl,
+    type: "popup",
+    ...bounds,
+  });
+  if (win?.id) rememberPopupWindow(win.id);
+}
+
+async function openClipperAsOverlay(tab) {
   const tabId = tab?.id;
   const tabUrl = tab?.url;
-
   if (tabId && isContentScriptCompatible(tabUrl)) {
     try {
       // Inject the overlay bundle into the tab's isolated world.
@@ -64,32 +80,23 @@ async function openClipperUi(tab) {
       // fallthrough to detached window
     }
   }
-
-  // Fallback: detached popup window (service pages, CSP-restricted)
-  const popupUrl = chrome.runtime.getURL("dist/index.html");
-  const bounds = await resolvePopupBounds();
-  const win = await chrome.windows.create({
-    url: popupUrl,
-    type: "popup",
-    ...bounds,
-  });
-  if (win?.id) rememberPopupWindow(win.id);
+  await openClipperAsWindow();
 }
 
-// Icon click → open clipper UI. Alt+A shortcut (_execute_action in
-// commands manifest) automatically triggers this listener when
-// default_popup is absent, no separate handler needed.
-chrome.action.onClicked.addListener((tab) => {
-  // Diagnostic: badge "•" confirms the listener fired. If you see the
-  // badge but no overlay, openClipperUi threw. If you don't see the
-  // badge, the service worker is dead or default_popup is still set.
+// Icon click / Alt+A → detached popup window so keyboard focus is
+// on our UI from the first keypress. Content-script overlay had a
+// class of bug where focus stayed in Chrome chrome after a toolbar
+// click, making Tab-cycling dead until the user manually clicked
+// inside the overlay. Detached popup sidesteps that entirely.
+chrome.action.onClicked.addListener(() => {
+  // Diagnostic: badge "•" confirms the listener fired.
   try {
     chrome.action.setBadgeText({ text: "•" });
     chrome.action.setBadgeBackgroundColor({ color: "#22c55e" });
     setTimeout(() => chrome.action.setBadgeText({ text: "" }), 1500);
   } catch {}
-  openClipperUi(tab).catch((e) => {
-    console.error("[Mine] openClipperUi threw:", e);
+  openClipperAsWindow().catch((e) => {
+    console.error("[Mine] openClipperAsWindow threw:", e);
     try {
       chrome.action.setBadgeText({ text: "ERR" });
       chrome.action.setBadgeBackgroundColor({ color: "#dc2626" });
@@ -202,7 +209,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   };
   await chrome.storage.session.set({ contextMenuData: context });
 
-  openClipperUi(tab);
+  // Context menu flows stay as in-page overlay — user's focus is
+  // already on the page (they right-clicked content), and the
+  // in-page overlay preserves that visual context.
+  openClipperAsOverlay(tab);
 });
 
 // ── Native messaging ──────────────────────────────────────────────────────
