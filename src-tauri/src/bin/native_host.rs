@@ -591,27 +591,42 @@ fn finalize_uploaded_filename(
         .and_then(|e| e.to_str())
         .unwrap_or("");
 
-    let final_name = if ext.is_empty() {
-        final_stem.to_string()
-    } else {
-        format!("{}.{}", final_stem, ext)
+    // Deduplicate on collision. Two screenshots from the same page have
+    // the same title → the same slug → the same would-be media filename.
+    // Append the Obsidian-style ` (N)` suffix to the stem until the
+    // target is free. Matches how `resolve_slug_conflict` treats `.md`
+    // collisions in Phase 18.D so media and block filenames stay in
+    // sync (e.g. the second clip becomes both `iPad mini (2).md` and
+    // `iPad mini (2).jpg`). Caller is expected to pass the already
+    // DB-resolved stem; this second check is for disk-only collisions
+    // where the file lingered after the block row was removed.
+    let build_name = |stem: &str| -> String {
+        if ext.is_empty() {
+            stem.to_string()
+        } else {
+            format!("{stem}.{ext}")
+        }
     };
 
-    if uploaded == final_name {
-        return Ok(final_name);
+    let mut candidate_stem = final_stem.to_string();
+    let mut candidate = build_name(&candidate_stem);
+    let mut counter: u32 = 2;
+    while uploaded != candidate && vault_root.join(&candidate).exists() {
+        candidate_stem = format!("{final_stem} ({counter})");
+        candidate = build_name(&candidate_stem);
+        counter = counter
+            .checked_add(1)
+            .ok_or_else(|| "ran out of collision suffixes".to_string())?;
     }
 
-    let dest = vault_root.join(&final_name);
-    if dest.exists() {
-        return Err(format!(
-            "cannot finalize staged upload: target already exists: {final_name}"
-        ));
+    if uploaded == candidate {
+        return Ok(candidate);
     }
 
-    std::fs::rename(&src, &dest)
-        .map_err(|e| format!("failed to rename staged upload to {final_name}: {e}"))?;
+    std::fs::rename(&src, vault_root.join(&candidate))
+        .map_err(|e| format!("failed to rename staged upload to {candidate}: {e}"))?;
 
-    Ok(final_name)
+    Ok(candidate)
 }
 
 /// Extract file extension from URL, stripping query string and fragment.
@@ -1360,17 +1375,32 @@ mod tests {
     }
 
     #[test]
-    fn finalize_errors_when_target_exists_to_avoid_overwrite() {
+    fn finalize_appends_counter_suffix_when_target_exists() {
+        // Two screenshots from the same page land on the same would-be
+        // media filename. Instead of failing the save, dedupe with the
+        // Obsidian-style ` (N)` suffix so both clips survive, matching
+        // how `resolve_slug_conflict` picks unique `.md` names.
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "upload.jpg", b"new");
         make_staging(tmp.path(), "Hello.jpg", b"existing");
         let result = finalize_uploaded_filename(tmp.path(), "upload.jpg", "Hello");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("target already exists"));
-        // Both files still present — no destructive action.
-        assert!(tmp.path().join("upload.jpg").exists());
-        assert!(tmp.path().join("Hello.jpg").exists());
+        assert_eq!(result, Ok("Hello (2).jpg".to_string()));
+        // Original is left intact.
         assert_eq!(std::fs::read(tmp.path().join("Hello.jpg")).unwrap(), b"existing");
+        // Staged upload moved onto the deduped name.
+        assert_eq!(std::fs::read(tmp.path().join("Hello (2).jpg")).unwrap(), b"new");
+        assert!(!tmp.path().join("upload.jpg").exists());
+    }
+
+    #[test]
+    fn finalize_walks_counter_past_multiple_collisions() {
+        let tmp = TempDir::new().unwrap();
+        make_staging(tmp.path(), "upload.jpg", b"new");
+        make_staging(tmp.path(), "Hello.jpg", b"x");
+        make_staging(tmp.path(), "Hello (2).jpg", b"x");
+        make_staging(tmp.path(), "Hello (3).jpg", b"x");
+        let result = finalize_uploaded_filename(tmp.path(), "upload.jpg", "Hello");
+        assert_eq!(result, Ok("Hello (4).jpg".to_string()));
     }
 
     #[test]
