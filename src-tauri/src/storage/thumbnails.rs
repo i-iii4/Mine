@@ -242,9 +242,11 @@ pub fn is_thumb_fresh(
     vault: &VaultLayout,
 ) -> bool {
     let Ok(thumb_meta) = std::fs::metadata(thumb_path) else {
+        log::debug!("is_thumb_fresh({}): thumb missing", block.slug);
         return false;
     };
     let Ok(source_meta) = std::fs::metadata(source_path) else {
+        log::debug!("is_thumb_fresh({}): source missing", block.slug);
         return false;
     };
     let Ok(thumb_mtime) = thumb_meta.modified() else {
@@ -254,26 +256,60 @@ pub fn is_thumb_fresh(
         return false;
     };
     if thumb_mtime < source_mtime {
+        log::debug!(
+            "is_thumb_fresh({}): thumb older than source .md",
+            block.slug
+        );
         return false;
     }
     for dependency in preview_dependency_paths(block, vault) {
         let Ok(dep_meta) = std::fs::metadata(&dependency) else {
+            log::debug!(
+                "is_thumb_fresh({}): dependency missing: {}",
+                block.slug,
+                dependency.display()
+            );
             return false;
         };
         let Ok(dep_mtime) = dep_meta.modified() else {
             return false;
         };
         if thumb_mtime < dep_mtime {
+            log::debug!(
+                "is_thumb_fresh({}): thumb older than dep {}",
+                block.slug,
+                dependency.display()
+            );
             return false;
         }
     }
 
-    match (expected_thumb(block, vault), thumb_disk_state(thumb_path)) {
-        (_, ThumbDiskState::Missing | ThumbDiskState::Invalid) => false,
-        (ExpectedThumb::OnlyJpeg, ThumbDiskState::Jpeg) => true,
-        (ExpectedThumb::OnlyPng, ThumbDiskState::Png) => true,
-        (ExpectedThumb::Either, ThumbDiskState::Jpeg | ThumbDiskState::Png) => true,
-        _ => false,
+    // Accept any thumb with valid magic bytes as fresh.
+    //
+    // The earlier, stricter rule compared `expected_thumb` (what the
+    // cascade would pick based on *currently visible* dependencies)
+    // against `thumb_disk_state` (the format actually written). On a
+    // vault stored in iCloud Drive those two readings can disagree
+    // purely because of placeholder materialization timing:
+    // `collect_article_preview_images` needs `exists()` +
+    // `is_rust_decodable()` to both succeed, and iCloud flips that
+    // state back and forth as it offloads cold files and rehydrates
+    // them on access. A block whose inline images are offloaded when
+    // the sweep checks freshness, then rehydrated a millisecond later
+    // when `generate_for_block` runs, produces a composite JPEG that
+    // the next sweep reads back as "format mismatch" — a thrash loop
+    // that touches the same slug every focus event without delivering
+    // a different thumb.
+    //
+    // Mtime-based staleness (source or dependency newer than the
+    // cached thumb) is still enforced above — that is the real signal
+    // that the preview is out of date. The format equality check was
+    // only meant to catch legacy JPEG text-placeholders written before
+    // the PNG migration, and those are already covered by mtime drift
+    // the first time `generate_for_block` rewrites them.
+    match thumb_disk_state(thumb_path) {
+        ThumbDiskState::Jpeg | ThumbDiskState::Png => true,
+        ThumbDiskState::Missing | ThumbDiskState::Invalid => false,
     }
 }
 
@@ -1389,75 +1425,32 @@ mod tests {
     }
 
     #[test]
-    fn is_thumb_fresh_pure_text_article_rejects_legacy_jpeg() {
-        // Regression: old versions of the pipeline wrote text thumbs as
-        // JPEG. New code writes PNG with transparent bg for CSS invert.
-        // Pure-text article must have PNG thumb — a stale JPEG triggers
-        // auto-regeneration on next full_scan.
+    fn is_thumb_fresh_accepts_any_valid_magic_bytes_regardless_of_expected_format() {
+        // The freshness check deliberately ignores the "expected"
+        // format (JPEG vs PNG) when the thumb magic is valid. Reason:
+        // on iCloud Drive the `exists()` + decodability checks that
+        // drive `expected_thumb` flip between offloaded and hydrated
+        // states, which would otherwise thrash the cache by demanding
+        // regeneration of thumbs that are perfectly correct just in a
+        // different encoding than the cascade currently thinks it would
+        // produce. Legacy format migrations still happen, but through
+        // the mtime comparison above — the next `.md` edit bumps the
+        // source mtime and forces regeneration.
         let dir = tempfile::tempdir().unwrap();
         let vault = make_vault(dir.path());
         let source = dir.path().join("pure.md");
         std::fs::write(&source, "# Source\n").unwrap();
-
         let block = make_article("pure", "Just plain text, no images.");
 
-        // Legacy JPEG thumb: mtime fresh, magic valid, but wrong format
-        // for a pure-text article.
         let thumb = vault.thumb_path("pure");
+        // JPEG thumb for a pure-text article — previously rejected,
+        // now accepted as long as the magic bytes are valid.
         create_test_image(&dir.path().join("real.png"), 100, 100);
         generate_thumbnail(&dir.path().join("real.png"), &thumb, 240).unwrap();
-        assert!(!is_thumb_fresh(&thumb, &source, &block, &vault));
-
-        // PNG thumb — correct format, considered fresh.
-        generate_text_thumbnail(Some("pure"), "body", &thumb).unwrap();
         assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
-    }
 
-    #[test]
-    fn is_thumb_fresh_decodable_image_rejects_legacy_png() {
-        // Mirror: image block with JPEG media must have JPEG thumb.
-        // Legacy PNG thumb (from old code that wrote placeholders for
-        // everything) triggers auto-regeneration.
-        let dir = tempfile::tempdir().unwrap();
-        let vault = make_vault(dir.path());
-        let source = dir.path().join("photo.md");
-        std::fs::write(&source, "# Source\n").unwrap();
-
-        // Real JPEG media file on disk
-        let media = vault.media_path("photo", "jpg");
-        create_test_image(&dir.path().join("src.png"), 80, 80);
-        generate_thumbnail(&dir.path().join("src.png"), &media, 240).unwrap();
-
-        use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
-        let block = Block {
-            slug: "photo".into(),
-            frontmatter: Frontmatter {
-                block_type: BlockType::Image,
-                title: None,
-                description: None,
-                url: None,
-                file: Some("photo.jpg".into()),
-                thumbnail: None,
-                tags: vec![],
-                saved_at: DateTime::new("2026-01-15T12:00:00Z").unwrap(),
-                source: None,
-                width: None,
-                height: None,
-                author: None,
-                position: None,
-                color: None,
-                icon: None,
-            },
-            body: String::new(),
-        };
-
-        let thumb = vault.thumb_path("photo");
-        // Stale PNG thumb for a block that should have JPEG
-        generate_text_thumbnail(Some("photo"), "x", &thumb).unwrap();
-        assert!(!is_thumb_fresh(&thumb, &source, &block, &vault));
-
-        // Real JPEG thumb — considered fresh
-        generate_thumbnail(&dir.path().join("src.png"), &thumb, 240).unwrap();
+        // PNG thumb — also accepted.
+        generate_text_thumbnail(Some("pure"), "body", &thumb).unwrap();
         assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
     }
 

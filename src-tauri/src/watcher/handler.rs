@@ -402,6 +402,11 @@ fn spawn_thumb_jobs_worker(
                         continue;
                     }
 
+                    log::info!(
+                        "thumb-gen({label}): regenerating {} (type={:?})",
+                        job.block.slug,
+                        job.block.frontmatter.block_type
+                    );
                     let source = thumbnails::generate_for_block(&job.block, &vault);
                     if let Some(ref conn) = metadata_conn {
                         match index::sync_thumb_metadata(
