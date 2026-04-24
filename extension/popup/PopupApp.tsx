@@ -42,34 +42,65 @@ export function PopupApp() {
     }
   }, [clipper.save, closeClipper]);
 
-  // Cmd+Enter to save, Esc to close, Tab to cycle Content → Screenshot → Link
+  // Cmd+Enter to save, Esc to close, Tab to cycle Content → Screenshot → Link.
+  // Listener on window in CAPTURE phase so page scripts cannot swallow Tab
+  // before we see it (apple.com, medium, etc. commonly attach keydown
+  // handlers on document/window in bubble phase). In capture phase we get
+  // the event first, then decide whether to handle.
+  //
+  // Activation rule: handle the event only when focus is already inside
+  // the clipper overlay (or when the page body itself has focus — i.e. no
+  // explicit text-input engagement on the host page). This avoids hijacking
+  // Tab navigation when the user is typing in an input on the underlying
+  // page. The ergonomic consequence: the moment the overlay is visible and
+  // the user has not actively clicked into a page field, Tab cycles clipper
+  // tabs — no clicks on the overlay required.
   useEffect(() => {
+    function activeIsTextField(): boolean {
+      // Walk shadow roots so that an input inside a nested shadow (either
+      // ours or the page's) is correctly detected. document.activeElement
+      // retargets to the shadow host, so we descend until we reach the
+      // true leaf focused element.
+      let el: Element | null = document.activeElement;
+      while (el) {
+        const tag = el.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return true;
+        if ((el as HTMLElement).isContentEditable) return true;
+        const shadow = (el as HTMLElement & { shadowRoot?: ShadowRoot | null })
+          .shadowRoot;
+        if (shadow && shadow.activeElement) {
+          el = shadow.activeElement;
+        } else {
+          break;
+        }
+      }
+      return false;
+    }
     function onKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
         handleSave();
+        return;
       }
       if (e.key === "Escape") {
         closeClipper();
+        return;
       }
       if (e.key === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        // Skip when focus is in a text input — native tab nav wins there.
-        const target = e.target as HTMLElement | null;
-        const tag = target?.tagName;
-        const editable = target?.isContentEditable;
-        if (tag === "INPUT" || tag === "TEXTAREA" || editable) return;
-        // Image mode hides TypeSwitcher — nothing to cycle.
+        if (activeIsTextField()) return;
         if (clipper.metadata?.detectedType === "image") return;
         e.preventDefault();
+        e.stopPropagation();
         const order = ["content", "screenshot", "link"] as const;
         const idx = order.indexOf(clipper.currentType as typeof order[number]);
         const step = e.shiftKey ? -1 : 1;
-        const next = order[((idx < 0 ? 0 : idx) + step + order.length) % order.length]!;
+        const next =
+          order[((idx < 0 ? 0 : idx) + step + order.length) % order.length]!;
         clipper.setCurrentType(next);
       }
     }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
   }, [handleSave, closeClipper, clipper.currentType, clipper.setCurrentType, clipper.metadata?.detectedType]);
 
   if (clipper.state === "loading") {
