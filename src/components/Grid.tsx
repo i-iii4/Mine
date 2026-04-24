@@ -663,11 +663,13 @@ export function Grid({
 
       {menuBlock && (
         <CardTagMenu
-          blockSlug={menuBlock.slug}
+          block={menuBlock}
+          vaultPath={vaultPath}
           tags={tags}
           currentTag={currentTag}
           onToggleTag={onToggleTag}
           onCreateAndAssign={onCreateAndAssign}
+          onRequestRename={onRequestRename}
           onRequestDelete={(slug) => setBlockToDelete(slug)}
         />
       )}
