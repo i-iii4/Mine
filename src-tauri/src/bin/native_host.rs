@@ -412,6 +412,21 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         Err(e) => return send_error(&format!("failed to create timestamp: {e}")),
     };
 
+    // Reject image blocks without a resolved media file. A prior clipper
+    // bug let a user switch type-to-image after uploading a screenshot,
+    // at which point the save path no longer forwarded pre_uploaded_file
+    // or image_url — the native host silently wrote a frontmatter with
+    // neither `file:` nor `thumbnail:`, producing an orphaned .md that
+    // never rendered a card. Fail loudly here so the clipper can show
+    // a retry prompt instead of persisting an inconsistent block.
+    if matches!(bt, BlockType::Image) && media_file.is_none() && thumbnail_file.is_none() {
+        return send_error(
+            warning
+                .as_deref()
+                .unwrap_or("image block requires a media file or thumbnail"),
+        );
+    }
+
     let block = Block {
         slug: slug.clone(),
         frontmatter: Frontmatter {

@@ -633,20 +633,27 @@ export function useClipperState() {
     }
 
     if (currentType === "screenshot") {
+      // On any screenshot-path failure we return an inline error instead
+      // of calling showError: the popup stays in "main" state, the status
+      // bar surfaces the message, and the user can press Save again
+      // (or Retake) without losing the captured screenshot, the tags
+      // they already picked, or the selected vault. Prior behaviour
+      // toggled `state = "error"` which replaced the entire UI with
+      // ErrorState and forced a reopen.
       if (!screenshotDataUrl) {
         setSaving(false);
-        showError("Screenshot not captured yet");
-        return;
+        return { ok: false as const, error: "Screenshot not captured yet" };
       }
       if (!screenshotUploadId) {
         setSaving(false);
-        showError("Screenshot upload expired. Retake the screenshot and try again.");
-        return;
+        return {
+          ok: false as const,
+          error: "Screenshot upload expired. Retake the screenshot and try again.",
+        };
       }
       if (!uploadPortRef.current || !uploadTokenRef.current) {
         setSaving(false);
-        showError("Upload server not configured");
-        return;
+        return { ok: false as const, error: "Upload server not configured" };
       }
       try {
         const blob = await fetch(screenshotDataUrl).then((r) => r.blob());
@@ -662,16 +669,34 @@ export function useClipperState() {
           payload.pre_uploaded_file = uploadResult.filename;
         } else {
           setSaving(false);
-          showError(`Upload failed: ${uploadResult.error ?? "unknown"}`);
-          return;
+          return {
+            ok: false as const,
+            error: `Upload failed: ${uploadResult.error ?? "unknown"}`,
+          };
         }
       } catch (e) {
         setSaving(false);
-        showError(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
-        return;
+        return {
+          ok: false as const,
+          error: `Upload failed: ${e instanceof Error ? e.message : String(e)}`,
+        };
       }
-    } else if (currentType === "image" && metadata.imageToSave) {
-      payload.image_url = metadata.imageToSave;
+    } else if (currentType === "image") {
+      // Image block requires a media source. Prefer the curated
+      // imageToSave (content script picked it from the page's best
+      // candidate), fall back to the og:image the preview already
+      // shows, otherwise refuse the save to prevent a frontmatter
+      // without `file:` / `image_url` — which previously created an
+      // orphaned .md that never rendered in the feed.
+      const imageUrl = metadata.imageToSave ?? metadata.image ?? null;
+      if (!imageUrl) {
+        setSaving(false);
+        return {
+          ok: false as const,
+          error: "No image available — pick another type or capture a screenshot.",
+        };
+      }
+      payload.image_url = imageUrl;
       payload.width = metadata.imageWidth ?? null;
       payload.height = metadata.imageHeight ?? null;
     } else if (metadata.image && (currentType === "link" || metadata.detectedType === "video")) {
