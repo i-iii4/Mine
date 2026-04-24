@@ -1,5 +1,43 @@
 # Devlog
 
+## 24.04.2026 [primary] — Clipper: Tab-cycling в overlay не работает без предварительного клика — unresolved
+
+### Symptom
+
+После [1594cbf3](https://github.com/i-iii4/local-arena/commit/1594cbf3) (reorder tabs + добавление Tab/Shift+Tab cycling) появилось наблюдение: открываешь клиппер через иконку расширения (или Alt+A) на странице — например [apple.com/la/ipad-mini](https://www.apple.com/la/ipad-mini/) — нажимаешь Tab, **ничего не происходит**. После любого клика мышью внутрь overlay Tab начинает циклить Content → Screenshot → Link нормально.
+
+Это регресс относительно ожидаемого UX: Tab должен работать с момента открытия клиппера, как любой modal keyboard shortcut.
+
+### What I tried and why it did not work
+
+1. **[73fe854f](https://github.com/i-iii4/local-arena/commit/73fe854f) autofocus overlay root on mount** ([OverlayShell.tsx](file:///Users/i_iii/Проекты/local-arena/extension/popup/OverlayShell.tsx)). Гипотеза: overlay монтируется в closed shadow DOM с `pointer-events: none` на host, keyboard focus остаётся на странице. `.focus({preventScroll:true})` на корневой div с `tabIndex=-1` должен был затянуть focus внутрь overlay. Не сработал. Гипотеза: либо `.focus()` из content-script isolated world в shadow DOM не передаёт keyboard focus реально, либо страница сразу отбирает focus обратно.
+
+2. **[0bea2c75](https://github.com/i-iii4/local-arena/commit/0bea2c75) window capture-phase listener + shadow-aware activeElement walk**. Гипотеза: document bubble-phase listener теряет Tab page-скриптам (apple.com/medium могут вешать свои keydown handlers в capture phase). Перенос на `window.addEventListener("keydown", ..., { capture: true })` должен был гарантировать, что мы видим событие первыми. Не сработал.
+
+3. **[f71a84db](https://github.com/i-iii4/local-arena/commit/f71a84db) icon click → detached popup window вместо overlay**. Гипотеза: после клика по иконке в тулбаре keyboard focus на Chrome chrome UI, а не на странице — content-script listener вообще не получает keydown. Detached popup window браузер фокусит автоматически. **Сработал бы технически, но откатил [architectural decision b29ec7b6](https://github.com/i-iii4/local-arena/commit/b29ec7b6)** (migrate primary UI to in-page overlay) и все последующие фиксы, которые на нём строились (Safari loopback routing через background, screenshot cache, show/resume split). **Revert: [7057d73a](https://github.com/i-iii4/local-arena/commit/7057d73a)**.
+
+4. **[b1efc9b4](https://github.com/i-iii4/local-arena/commit/b1efc9b4) filter только на overlay-owned text fields**. Гипотеза: apple.com автофокусит свой hidden search input, мой прежний `activeIsTextField()` ходил по `document.activeElement` и bail'ился на любом page input'e. Фикс: defer native Tab **только** если focused leaf внутри нашего `[data-mine-clipper-overlay]` host. Архитектурно корректно (инвариант «modal UI → modal keyboard capture»). **Не сработал** — значит apple.com НЕ автофокусит text field, причина в другом.
+
+### Where I stopped guessing
+
+Три провальные попытки подряд = я гадаю. Остановился. Следующий шаг — не очередная гипотеза, а **диагностический overlay**: видимый блок с `activeElement.tagName/id`, `composedPath length`, счётчиком keydown, счётчиком Tab'ов. Открыть клиппер на apple.com, **не кликая** нажать Tab, посмотреть что видно. Только после этого делать конкретный фикс.
+
+### Known-correct code that stays
+
+- [b1efc9b4](https://github.com/i-iii4/local-arena/commit/b1efc9b4) фикс filter'а — архитектурно правильный инвариант, остаётся в коде независимо от того что найдёт диагностика.
+- [73fe854f](https://github.com/i-iii4/local-arena/commit/73fe854f) autofocus — не вредит, косметический focus ring на mount.
+- [0bea2c75](https://github.com/i-iii4/local-arena/commit/0bea2c75) window capture — защита от page-scripts, не вредит.
+
+### Architectural decision that must not be undone
+
+Primary clipper UI = content-script overlay in shadow DOM ([b29ec7b6](https://github.com/i-iii4/local-arena/commit/b29ec7b6)). Detached popup window = fallback только для service pages (chrome://, view-source:, CSP-restricted). Последующие фиксы (Safari loopback через background, screenshot cache routing, fresh-vs-resume show split, overlay-only dedup) строились поверх этой архитектуры. При любой следующей попытке фикса Tab-проблемы — **не откатывать overlay-first**.
+
+### Lessons learned
+
+- Перед любым изменением архитектурного choice — `git log --all --grep="<area>"` чтобы увидеть, не было ли этого решения принято сознательно ранее.
+- Когда три гипотезы подряд не подтверждаются — остановиться, добавить видимый debug, не писать четвёртую.
+- "Modal UI captures keyboard" — правильный инвариант, но его применение не гарантирует фикс, если событие не доходит до handler'а вовсе. Диагностика должна различать «событие приходит, filter bails» vs «событие не приходит» — это два разных bug'а.
+
 ## 24.04.2026 [primary] — Clipper: parallel inline-media downloads + action-aware native-messaging timeouts
 
 ### Goal
