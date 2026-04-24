@@ -9,6 +9,7 @@ import { SaveButton } from "./components/SaveButton";
 import { ScreenshotPreview } from "./components/ScreenshotPreview";
 import { StatusBar } from "./components/StatusBar";
 import { VaultSelect } from "./components/VaultSelect";
+import { cn } from "@/lib/utils";
 
 export function PopupApp() {
   const clipper = useClipperState();
@@ -90,10 +91,10 @@ export function PopupApp() {
           <div className="space-y-1.5 rounded-1 border border-border p-2">
             {ogImage && (
               <div className="rounded-1 bg-accent">
-                <img
+                <PreviewImage
                   src={ogImage}
-                  alt=""
                   className="mx-auto block max-h-[120px] w-auto max-w-full rounded-1 object-contain"
+                  minHeight={120}
                 />
               </div>
             )}
@@ -109,10 +110,10 @@ export function PopupApp() {
           <div className="max-h-[280px] overflow-y-auto rounded-1 border border-border p-2">
             {metadata?.detectedType === "video" && ogImage && (
               <div className="rounded-1 bg-accent">
-                <img
+                <PreviewImage
                   src={ogImage}
-                  alt=""
                   className="mx-auto block max-h-[120px] w-auto max-w-full rounded-1 object-contain"
+                  minHeight={120}
                 />
               </div>
             )}
@@ -157,10 +158,10 @@ export function PopupApp() {
 
         {clipper.currentType === "image" && ogImage && (
           <div className="rounded-1 border border-border bg-accent">
-            <img
+            <PreviewImage
               src={ogImage}
-              alt=""
               className="mx-auto block max-h-[220px] w-auto max-w-full rounded-1 object-contain"
+              minHeight={220}
             />
           </div>
         )}
@@ -196,6 +197,60 @@ export function PopupApp() {
 }
 
 // --- Helpers ---
+
+/** Remote preview image (og:image, link/video/image clip).
+ *
+ *  Shows a skeleton while the browser fetches the upstream URL and a
+ *  compact "Preview unavailable" label if the image 404s or the CDN
+ *  strips the hotlink. The host `src` can come from slow CDNs or
+ *  regions where the first-byte latency is seconds — rendering the
+ *  naked <img> in that window left a broken-image icon where the
+ *  preview should be. */
+function PreviewImage({
+  src,
+  alt = "",
+  className,
+  containerClassName,
+  /** Matches the visible height the loaded image will occupy so the
+   *  skeleton does not cause layout shift. */
+  minHeight = 120,
+}: {
+  src: string;
+  alt?: string;
+  className?: string;
+  containerClassName?: string;
+  minHeight?: number;
+}) {
+  const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
+
+  useEffect(() => {
+    setStatus("loading");
+  }, [src]);
+
+  return (
+    <div className={cn("relative flex items-center justify-center", containerClassName)}>
+      {status !== "loaded" && (
+        <div
+          className="flex w-full items-center justify-center"
+          style={{ minHeight }}
+        >
+          {status === "loading" ? (
+            <div className="size-4 animate-spin rounded-round border-[1.5px] border-border border-t-foreground" />
+          ) : (
+            <span className="text-sm text-muted-foreground">Preview unavailable</span>
+          )}
+        </div>
+      )}
+      <img
+        src={src}
+        alt={alt}
+        onLoad={() => setStatus("loaded")}
+        onError={() => setStatus("error")}
+        className={cn(className, status !== "loaded" && "hidden")}
+      />
+    </div>
+  );
+}
 
 function LoadingState() {
   return (

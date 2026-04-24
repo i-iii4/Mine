@@ -1,5 +1,34 @@
 # Devlog
 
+## 24.04.2026 [primary] — Clipper save hardening: no orphan .md, inline errors, preview loader
+
+### Goal
+После переноса upload в background (см. предыдущую запись) остались два отдельных режима отказа клиппера: (1) type=image сейв без фактического источника картинки тихо создавал `.md` без `file:`/`thumbnail:`, блок появлялся в SQLite, но никогда не рендерил карточку в ленте; (2) любая неудача screenshot-save (timeout, expired cache, PNA prompt dismissed) уводила popup в ErrorState, пользователь терял выбранные теги и не мог нажать Save ещё раз без полного реоткрытия клиппера. Плюс визуальный шум — наш naked `<img>` для og:image показывал broken-image икону на медленных CDN, пока upstream URL ещё не пришёл.
+
+### Actually completed
+
+**Image-блок не может быть записан без media** (`extension/popup/hooks/useClipperState.ts`, `src-tauri/src/bin/native_host.rs`)
+- popup при `type=image` выбирает `metadata.imageToSave ?? metadata.image` и только тогда заполняет `image_url`; без хоть какого-то источника — inline error, блок не создаётся
+- native host отказывает `save_block` c `block_type=image`, если ни `media_file`, ни `thumbnail` не разрешились — defence-in-depth против любого будущего клиппер-regression
+
+**Inline error для screenshot save path вместо ErrorState** (`extension/popup/hooks/useClipperState.ts`)
+- все ветки «upload expired», «upload timeout», «PNA dismissed», «server not configured» теперь возвращают `{ ok: false, error }` — PopupApp прокидывает в StatusBar, main UI остаётся с превью/тегами/Retake
+- раньше `showError` ставил `state = "error"` и полностью перерисовывал popup в ErrorState → пользователю оставалось только закрыть и открыть клиппер заново
+
+**Preview loader для og:image** (`extension/popup/PopupApp.tsx`)
+- локальный `PreviewImage` компонент: скелетон со спиннером пока `onLoad`, «Preview unavailable» на `onError`
+- `minHeight` фиксирован, поэтому при появлении реальной картинки нет layout shift
+- применён к link/content-video/image preview слотам; screenshot-preview не затронут (он грузит data URL мгновенно)
+
+### Push
+- [0e57b4a1 fix: never persist an image block without media, keep popup retry-able](https://github.com/i-iii4/local-arena/commit/0e57b4a1)
+- (loader — текущий коммит, ссылка обновится после push)
+
+### Decisions and lessons learned
+- Clipper состояние (tags, preview) должно переживать rpc ошибку от native host. `showError` годится только для init-ошибок (`get_status` failed, `list_known_vaults` failed), когда нечего показывать.
+- Двухуровневая защита против orphan `.md`: popup (UX) + native host (invariant enforcement). Если один уровень пропустит будущий regression, второй поймает.
+- Remote img без loader делает «broken icon» default placeholder — пользователь читает это как сломанный клиппер. Skeleton со spinner + minHeight убирает layout shift и даёт ясный signal «грузится».
+
 ## 24.04.2026 [primary] — Screenshot upload moved behind background-owned cache
 
 ### Goal
