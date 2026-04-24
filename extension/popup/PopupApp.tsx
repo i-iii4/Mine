@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Play } from "lucide-react";
 import { useClipperState } from "./hooks/useClipperState";
 import { resolveContentBody } from "./lib/resolveContentBody";
 import { TypeSwitcher } from "./components/TypeSwitcher";
@@ -9,6 +10,41 @@ import { SaveButton } from "./components/SaveButton";
 import { ScreenshotPreview } from "./components/ScreenshotPreview";
 import { StatusBar } from "./components/StatusBar";
 import { VaultSelect } from "./components/VaultSelect";
+
+function isVideoUrl(src: string | null | undefined): boolean {
+  return /\.(mp4|webm|m4v|mov)(\?|#|$)/i.test(src ?? "");
+}
+
+function VideoPosterPreview({
+  posterUrl,
+  title,
+}: {
+  posterUrl: string | null;
+  title: string;
+}) {
+  return (
+    <div className="relative overflow-hidden rounded-1 bg-accent">
+      {posterUrl ? (
+        <img
+          src={posterUrl}
+          alt=""
+          loading="lazy"
+          className="mx-auto block max-h-[120px] w-auto max-w-full rounded-1 object-contain"
+        />
+      ) : (
+        <div className="h-[120px] w-full bg-muted" />
+      )}
+      <div className="absolute inset-0 grid place-items-center bg-black/10">
+        <div
+          className="grid size-9 place-items-center rounded-round bg-background/90 text-foreground shadow-[0_2px_10px_rgba(0,0,0,0.22)]"
+          aria-label={title}
+        >
+          <Play className="ml-0.5 size-4 fill-current" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function PopupApp() {
   const clipper = useClipperState();
@@ -137,6 +173,8 @@ export function PopupApp() {
   const ogImage = clipper.currentType === "image"
     ? metadata?.imageToSave ?? metadata?.image ?? null
     : metadata?.image ?? null;
+  const embeddedVideoPreviews =
+    metadata?.detectedType === "video" ? [] : articleData?.embeddedVideos ?? [];
 
   return (
     <div className="flex flex-col gap-2 p-3">
@@ -175,12 +213,17 @@ export function PopupApp() {
         {clipper.currentType === "content" && (
           <div className="max-h-[280px] overflow-y-auto rounded-1 border border-border p-2">
             {metadata?.detectedType === "video" && ogImage && (
-              <div className="rounded-1 bg-accent">
-                <img
-                  src={ogImage}
-                  alt=""
-                  className="mx-auto block max-h-[120px] w-auto max-w-full rounded-1 object-contain"
-                />
+              <VideoPosterPreview posterUrl={ogImage} title="Video preview" />
+            )}
+            {embeddedVideoPreviews.length > 0 && (
+              <div className="space-y-1.5">
+                {embeddedVideoPreviews.map((video, index) => (
+                  <VideoPosterPreview
+                    key={`${video.src ?? video.poster ?? "video"}-${index}`}
+                    posterUrl={video.poster ?? ogImage}
+                    title={video.title || "Video preview"}
+                  />
+                ))}
               </div>
             )}
             <p className="mt-1.5 truncate text-sm font-semibold">{clipper.title}</p>
@@ -204,8 +247,13 @@ export function PopupApp() {
                   remarkPlugins={[remarkGfm]}
                   components={{
                     img: ({ src, alt, ...props }) => {
-                      if (/\.mp4(\?|$)|\.webm(\?|$)/i.test(src ?? "")) {
-                        return <video src={src} autoPlay loop muted playsInline />;
+                      if (isVideoUrl(src)) {
+                        return (
+                          <VideoPosterPreview
+                            posterUrl={ogImage}
+                            title={alt ? `Video preview: ${alt}` : "Video preview"}
+                          />
+                        );
                       }
                       return <img src={src} alt={alt ?? ""} loading="lazy" {...props} />;
                     },
@@ -283,4 +331,3 @@ function ErrorState({ message }: { message: string }) {
     </div>
   );
 }
-

@@ -16,7 +16,7 @@ import { OverlayShell } from "./OverlayShell";
 interface OverlayHandle {
   host: HTMLDivElement;
   root: Root;
-  onDocClick: (e: MouseEvent) => void;
+  onOutsidePointer: (e: MouseEvent | PointerEvent) => void;
 }
 
 let current: OverlayHandle | null = null;
@@ -150,25 +150,40 @@ async function mount(): Promise<OverlayHandle> {
 
   document.body.appendChild(host);
 
-  // Click-outside-to-close: pointer-events:none on host means the real
-  // target of outside clicks is the underlying page element (the event
-  // still bubbles on window). We listen in capture phase on the window
-  // and check composedPath() for the overlay host.
-  function onDocClick(e: MouseEvent) {
+  // Click-outside-to-close: use pointer/mouse down and a geometry check
+  // against the actual panel. Relying only on `click` + composedPath is
+  // fragile on host pages that intercept click events or when the full-page
+  // shadow host is pointer-transparent.
+  function isInsidePanel(e: MouseEvent | PointerEvent): boolean {
+    const panel = shadow.querySelector("[data-mine-clipper-panel]");
+    if (panel instanceof HTMLElement) {
+      const rect = panel.getBoundingClientRect();
+      return (
+        e.clientX >= rect.left &&
+        e.clientX <= rect.right &&
+        e.clientY >= rect.top &&
+        e.clientY <= rect.bottom
+      );
+    }
     const path = e.composedPath?.() ?? [];
-    if (path.includes(host)) return; // inside overlay
+    return path.includes(host);
+  }
+
+  function onOutsidePointer(e: MouseEvent | PointerEvent) {
+    if (isInsidePanel(e)) return;
     closeClipperOverlay();
   }
   // Defer listener registration by one frame so the click that OPENED
   // the overlay doesn't immediately close it.
   setTimeout(() => {
-    window.addEventListener("click", onDocClick, { capture: true });
+    window.addEventListener("pointerdown", onOutsidePointer, { capture: true });
+    window.addEventListener("mousedown", onOutsidePointer, { capture: true });
   }, 0);
 
   const reactRoot = createRoot(root);
   reactRoot.render(<OverlayShell />);
 
-  return { host, root: reactRoot, onDocClick };
+  return { host, root: reactRoot, onOutsidePointer };
 }
 
 /// Fresh invocation: context menu / toolbar icon / extension icon.
@@ -203,7 +218,8 @@ export function hideClipperOverlay(): void {
 
 export function closeClipperOverlay(): void {
   if (!current) return;
-  window.removeEventListener("click", current.onDocClick, { capture: true });
+  window.removeEventListener("pointerdown", current.onOutsidePointer, { capture: true });
+  window.removeEventListener("mousedown", current.onOutsidePointer, { capture: true });
   current.root.unmount();
   current.host.remove();
   current = null;

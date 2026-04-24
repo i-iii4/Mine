@@ -1,5 +1,58 @@
 # Devlog
 
+## 24.04.2026 [primary] — Clipper overlay outside-click close regression
+
+### Goal
+
+Вернуть ожидаемое modal-поведение overlay: клик за пределами окна клиппера
+закрывает окно и не оставляет страницу заблокированной до Escape/manual close.
+
+### Completed
+
+- `OverlayShell` помечает реальную панель атрибутом
+  `data-mine-clipper-panel`.
+- `overlay-entry` больше не полагается только на `window.click` +
+  `composedPath()` вокруг full-viewport pointer-transparent shadow host.
+- Outside close теперь срабатывает на `pointerdown` / `mousedown` capture и
+  проверяет координаты события относительно `getBoundingClientRect()` панели.
+- Обработчик не вызывает `preventDefault` / `stopPropagation`: внешний клик
+  закрывает overlay, но остаётся настоящим кликом страницы.
+
+### Verification
+
+- `npm run build:extension`
+- `npm run build`
+- `git diff --check`
+
+## 24.04.2026 [primary] — Clipper Content video preview without playback
+
+### Goal
+
+Показывать в Content/article preview визуальный превью-блок для материалов с
+inline video, но не тормозить клиппер загрузкой/декодированием самого видео.
+
+### Completed
+
+- `PopupApp` больше не рендерит markdown video URLs (`.mp4`, `.webm`, `.m4v`,
+  `.mov`) как настоящий `<video autoPlay>`.
+- `content.js` теперь передаёт lightweight `embeddedVideos` в popup из трёх
+  источников: social extractors (Twitter/X syndication, Instagram media API),
+  DOM scan (`<video>`, YouTube/Vimeo `<iframe>`) и meta fallback (`og:video`,
+  `twitter:player:stream`).
+- `useClipperState` применяет async article result, если пришёл `content` или
+  хотя бы один `embeddedVideos` candidate. Это закрывает регресс, где
+  preview-only media терялась до React state.
+- Inline/embedded video теперь показывается как lightweight poster: `poster`
+  / YouTube thumbnail / `og:image` + play badge.
+- Save path не изменён: video URL остаётся в markdown body и локализуется
+  native host'ом как раньше.
+- YouTube/video page Content preview также получил play badge поверх poster.
+
+### Verification
+
+- `npm run build`
+- `npm run build:extension`
+
 ## 24.04.2026 [primary] — Clipper startup: non-blocking article extraction + live channel refresh
 
 ### Goal

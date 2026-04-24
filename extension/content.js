@@ -41,6 +41,102 @@
     return imageUrl;
   }
 
+  function absoluteUrl(url) {
+    if (!url) return null;
+    try {
+      return new URL(url, document.baseURI).href;
+    } catch {
+      return url;
+    }
+  }
+
+  function youtubeIdFromUrl(url) {
+    if (!url) return null;
+    try {
+      const parsed = new URL(url, document.baseURI);
+      if (parsed.hostname.includes("youtu.be")) {
+        return parsed.pathname.split("/").filter(Boolean)[0] || null;
+      }
+      if (parsed.hostname.includes("youtube.com")) {
+        if (parsed.pathname === "/watch") return parsed.searchParams.get("v");
+        const embed = parsed.pathname.match(/\/(?:embed|shorts)\/([\w-]+)/);
+        if (embed) return embed[1];
+      }
+    } catch {}
+    return null;
+  }
+
+  function youtubePosterFromUrl(url) {
+    const id = youtubeIdFromUrl(url);
+    return id ? `https://i.ytimg.com/vi/${id}/maxresdefault.jpg` : null;
+  }
+
+  function pushUniqueVideo(out, video) {
+    if (!video || (!video.src && !video.poster)) return;
+    const key = video.src || video.poster;
+    if (out.some((item) => (item.src || item.poster) === key)) return;
+    out.push(video);
+  }
+
+  function isInlineVideoUrl(url) {
+    return /\.(mp4|webm|m4v|mov)(\?|#|$)/i.test(url || "");
+  }
+
+  function pushVideoUrlPreview(out, src, poster, title) {
+    const absoluteSrc = absoluteUrl(src);
+    if (!absoluteSrc || !isInlineVideoUrl(absoluteSrc)) return;
+    pushUniqueVideo(out, {
+      src: absoluteSrc,
+      poster: absoluteUrl(poster) || getMeta("og:image") || getMeta("twitter:image") || null,
+      title: title || "",
+    });
+  }
+
+  function extractEmbeddedVideoPreviews() {
+    const root = document.querySelector("article") || document.body;
+    if (!root) return [];
+
+    const out = [];
+    for (const video of root.querySelectorAll("video")) {
+      const src = absoluteUrl(
+        video.currentSrc ||
+        video.getAttribute("src") ||
+        video.querySelector("source[src]")?.getAttribute("src"),
+      );
+      const poster = absoluteUrl(video.getAttribute("poster"));
+      pushUniqueVideo(out, {
+        src,
+        poster,
+        title: video.getAttribute("aria-label") || video.getAttribute("title") || "",
+      });
+      if (out.length >= 3) return out;
+    }
+
+    for (const iframe of root.querySelectorAll("iframe")) {
+      const rawSrc = iframe.getAttribute("src") || iframe.getAttribute("data-src");
+      const src = absoluteUrl(rawSrc);
+      if (!src) continue;
+      const lower = src.toLowerCase();
+      const isKnownVideo =
+        lower.includes("youtube.com/") ||
+        lower.includes("youtu.be/") ||
+        lower.includes("vimeo.com/") ||
+        lower.includes("player.vimeo.com/");
+      if (!isKnownVideo) continue;
+      pushUniqueVideo(out, {
+        src,
+        poster: youtubePosterFromUrl(src),
+        title: iframe.getAttribute("title") || "",
+      });
+      if (out.length >= 3) return out;
+    }
+
+    pushVideoUrlPreview(out, getMeta("og:video") || getMeta("og:video:url"), getMeta("og:image"), "");
+    pushVideoUrlPreview(out, getMeta("twitter:player:stream"), getMeta("twitter:image"), "");
+
+    return out;
+  }
+
   function extractMetadata() {
     const sel = window.getSelection();
     const selectionText = sel.toString().trim();
@@ -208,27 +304,35 @@
    * Returns array of direct URLs (photos, GIFs as MP4, videos as MP4 highest bitrate).
    * More reliable than DOM parsing — doesn't depend on lazy-loaded elements.
    */
-  async function fetchTweetMedia(tweetId) {
+  async function fetchTweetMediaDetails(tweetId) {
     try {
       const resp = await fetch(
         `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&token=0`
       );
       if (!resp.ok) return [];
       const data = await resp.json();
-      const urls = [];
+      const media = [];
       for (const m of (data.mediaDetails || [])) {
         if (m.type === "photo" && m.media_url_https) {
-          urls.push(m.media_url_https + "?name=large");
+          media.push({
+            kind: "image",
+            url: m.media_url_https + "?name=large",
+            poster: m.media_url_https,
+          });
         } else if (m.type === "video" || m.type === "animated_gif") {
           const variants = (m.video_info?.variants || [])
             .filter(v => v.content_type === "video/mp4" && v.bitrate != null)
             .sort((a, b) => b.bitrate - a.bitrate);
           if (variants.length > 0) {
-            urls.push(variants[0].url);
+            media.push({
+              kind: "video",
+              url: variants[0].url,
+              poster: m.media_url_https || null,
+            });
           }
         }
       }
-      return urls;
+      return media;
     } catch {
       return [];
     }
@@ -248,10 +352,11 @@
     if (articles.length === 0) return null;
 
     // Fetch media from syndication API (includes videos that DOM can't capture)
-    let apiMedia = [];
+    let apiMediaDetails = [];
     if (tweetId) {
-      apiMedia = await fetchTweetMedia(tweetId);
+      apiMediaDetails = await fetchTweetMediaDetails(tweetId);
     }
+    const apiMedia = apiMediaDetails.map((m) => m.url);
 
     const tweets = [];
     let foundAuthorTweet = false;
@@ -299,12 +404,27 @@
 
     const firstText = (tweets[0]?.text || "").replace(/\n/g, " ").trim();
     const tweetTitle = firstText.slice(0, 80) || `@${authorHandle}`;
+    const embeddedVideos = [];
+    for (const media of apiMediaDetails) {
+      if (media.kind === "video") {
+        pushVideoUrlPreview(embeddedVideos, media.url, media.poster, "Tweet video preview");
+      }
+    }
+    for (const tweet of tweets) {
+      for (const src of (tweet.media || [])) {
+        pushVideoUrlPreview(embeddedVideos, src, null, "Tweet video preview");
+      }
+    }
+    for (const video of extractEmbeddedVideoPreviews()) {
+      pushUniqueVideo(embeddedVideos, video);
+    }
 
     return {
       title: tweetTitle,
       content: parts.join("\n\n"),
       byline: `@${authorHandle}`,
       excerpt: firstText.slice(0, 200),
+      embeddedVideos,
     };
   }
 
@@ -372,23 +492,26 @@
       const author = item.user?.username || "";
 
       // Media URLs (carousel or single)
-      const mediaUrls = [];
+      const mediaEntries = [];
       const carousel = item.carousel_media || [];
       if (carousel.length > 0) {
         for (const slide of carousel) {
+          const poster = slide.image_versions2?.candidates?.[0]?.url || null;
           if (slide.video_versions?.length > 0) {
-            mediaUrls.push(slide.video_versions[0].url);
+            mediaEntries.push({ kind: "video", url: slide.video_versions[0].url, poster });
           } else if (slide.image_versions2?.candidates?.length > 0) {
-            mediaUrls.push(slide.image_versions2.candidates[0].url);
+            mediaEntries.push({ kind: "image", url: slide.image_versions2.candidates[0].url, poster });
           }
         }
       } else {
+        const poster = item.image_versions2?.candidates?.[0]?.url || null;
         if (item.video_versions?.length > 0) {
-          mediaUrls.push(item.video_versions[0].url);
+          mediaEntries.push({ kind: "video", url: item.video_versions[0].url, poster });
         } else if (item.image_versions2?.candidates?.length > 0) {
-          mediaUrls.push(item.image_versions2.candidates[0].url);
+          mediaEntries.push({ kind: "image", url: item.image_versions2.candidates[0].url, poster });
         }
       }
+      const mediaUrls = mediaEntries.map((entry) => entry.url);
 
       // Build markdown body
       const parts = [];
@@ -398,12 +521,22 @@
       }
 
       const titleText = caption.replace(/\n/g, " ").trim().slice(0, 80) || `@${author}`;
+      const embeddedVideos = [];
+      for (const entry of mediaEntries) {
+        if (entry.kind === "video") {
+          pushVideoUrlPreview(embeddedVideos, entry.url, entry.poster, "Instagram video preview");
+        }
+      }
+      for (const video of extractEmbeddedVideoPreviews()) {
+        pushUniqueVideo(embeddedVideos, video);
+      }
 
       return {
         title: titleText,
         content: parts.join("\n\n"),
         byline: author ? `@${author}` : null,
         excerpt: caption.slice(0, 200),
+        embeddedVideos,
       };
     } catch (e) {
       console.error("[Mine] Instagram extraction failed:", e);
@@ -470,21 +603,30 @@
         const caption = item.caption?.text || "";
         const author = item.user?.username || "";
 
-        const mediaUrls = [];
+        const mediaEntries = [];
         const carousel = item.carousel_media || [];
         if (carousel.length > 0) {
           for (const slide of carousel) {
+            const poster = slide.image_versions2?.candidates?.[0]?.url || null;
             if (slide.video_versions?.length > 0) {
-              mediaUrls.push(slide.video_versions[0].url);
+              mediaEntries.push({ kind: "video", url: slide.video_versions[0].url, poster });
             } else if (slide.image_versions2?.candidates?.length > 0) {
-              mediaUrls.push(slide.image_versions2.candidates[0].url);
+              mediaEntries.push({ kind: "image", url: slide.image_versions2.candidates[0].url, poster });
             }
           }
         } else {
+          const poster = item.image_versions2?.candidates?.[0]?.url || null;
           if (item.video_versions?.length > 0) {
-            mediaUrls.push(item.video_versions[0].url);
+            mediaEntries.push({ kind: "video", url: item.video_versions[0].url, poster });
           } else if (item.image_versions2?.candidates?.length > 0) {
-            mediaUrls.push(item.image_versions2.candidates[0].url);
+            mediaEntries.push({ kind: "image", url: item.image_versions2.candidates[0].url, poster });
+          }
+        }
+        const mediaUrls = mediaEntries.map((entry) => entry.url);
+        const embeddedVideos = [];
+        for (const entry of mediaEntries) {
+          if (entry.kind === "video") {
+            pushVideoUrlPreview(embeddedVideos, entry.url, entry.poster, "Instagram video preview");
           }
         }
 
@@ -516,6 +658,7 @@
             content: parts.join("\n\n"),
             byline: `@${author}`,
             excerpt: caption.slice(0, 200),
+            embeddedVideos,
           },
         };
 
@@ -574,12 +717,12 @@
   function extractArticle() {
     // Twitter/X: async only (extractTwitterThread uses syndication API)
     if (isTwitterUrl(window.location.href)) {
-      return { title: document.title, content: "", byline: null, excerpt: "" };
+      return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
 
     // Instagram: async only (GraphQL API)
     if (isInstagramPostUrl(window.location.href)) {
-      return { title: document.title, content: "", byline: null, excerpt: "" };
+      return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
 
     // YouTube: skip Defuddle sync (transcript comes from async path)
@@ -590,11 +733,12 @@
         html: "",
         byline: null,
         excerpt: getMeta("og:description") || "",
+        embeddedVideos: extractEmbeddedVideoPreviews(),
       };
     }
 
     if (typeof Defuddle === "undefined") {
-      return { title: document.title, content: "", byline: null, excerpt: "" };
+      return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
     try {
       const result = new Defuddle(document, {
@@ -611,9 +755,10 @@
         html: result.content || "",
         byline: result.author || null,
         excerpt: result.description || "",
+        embeddedVideos: extractEmbeddedVideoPreviews(),
       };
     } catch {
-      return { title: document.title, content: "", byline: null, excerpt: "" };
+      return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
   }
 
@@ -621,20 +766,20 @@
   async function extractArticleAsync() {
     if (isTwitterUrl(window.location.href)) {
       return (await extractTwitterThread()) ||
-        { title: document.title, content: "", byline: null, excerpt: "" };
+        { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
 
     // Instagram: GraphQL API (same-origin, needs browser cookies)
     if (isInstagramPostUrl(window.location.href)) {
       return (await extractInstagramPost()) ||
-        { title: document.title, content: "", byline: null, excerpt: "" };
+        { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
 
     // YouTube: Defuddle parseAsync extracts transcript via InnerTube API (needs browser cookies).
     // Key: read result.variables.transcript (not contentMarkdown, which is an iframe embed).
     if (isVideoUrl(window.location.href)) {
       if (typeof Defuddle === "undefined") {
-        return { title: document.title, content: "", byline: null, excerpt: "" };
+        return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
       }
       try {
         const result = await new Defuddle(document, { separateMarkdown: true }).parseAsync();
@@ -644,15 +789,16 @@
           html: "",
           byline: result?.author || null,
           excerpt: result?.description || getMeta("og:description") || "",
+          embeddedVideos: extractEmbeddedVideoPreviews(),
         };
       } catch {
-        return { title: getMeta("og:title") || document.title || "", content: "", byline: null, excerpt: "" };
+        return { title: getMeta("og:title") || document.title || "", content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
       }
     }
 
     // Other pages: use Defuddle
     if (typeof Defuddle === "undefined") {
-      return { title: document.title, content: "", byline: null, excerpt: "" };
+      return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
     try {
       const result = await new Defuddle(document, {
@@ -660,7 +806,7 @@
       }).parseAsync();
 
       if (!result || !result.content) {
-        return { title: document.title, content: "", byline: null, excerpt: "" };
+        return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
       }
 
       return {
@@ -669,9 +815,10 @@
         html: result.content || "",
         byline: result.author || null,
         excerpt: result.description || "",
+        embeddedVideos: extractEmbeddedVideoPreviews(),
       };
     } catch {
-      return { title: document.title, content: "", byline: null, excerpt: "" };
+      return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
   }
 

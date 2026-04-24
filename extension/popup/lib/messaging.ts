@@ -101,6 +101,13 @@ export interface ArticleData {
   html?: string;
   byline: string | null;
   excerpt: string;
+  embeddedVideos?: EmbeddedVideoPreview[];
+}
+
+export interface EmbeddedVideoPreview {
+  src: string | null;
+  poster: string | null;
+  title: string;
 }
 
 // Extractors work in two contexts:

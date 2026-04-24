@@ -249,7 +249,17 @@ Popup/overlay init не ждёт тяжёлый article extraction. Старто
 
 Если пользователь переключился в Content и article body ещё грузится, Save не должен записывать пустую статью: UI возвращает inline error и остаётся открытым до завершения загрузки.
 
+### Content video preview
+
+Content preview не воспроизводит и не декодирует видео. Content script передаёт в popup `articleData.embeddedVideos` с `src`, `poster`, `title`. Источники, по приоритету: social extractors, которые уже получают media candidates (Twitter/X syndication API, Instagram media API); DOM fallback (`<video>`, YouTube/Vimeo `<iframe>`); meta fallback (`og:video`, `twitter:player:stream`, poster из `og:image` / `twitter:image`). Для YouTube poster вычисляется из video id (`i.ytimg.com/vi/.../maxresdefault.jpg`); для `<video>` берётся `poster` attribute. Если extracted markdown содержит inline video URL (`.mp4`, `.webm`, `.m4v`, `.mov`) в image syntax, popup также рендерит lightweight poster preview: `metadata.image` / `og:image` как картинка + play badge. Сам video URL остаётся в markdown/save payload без изменений.
+
+`useClipperState` обязан применять async extraction result, если пришёл `content` **или** `embeddedVideos.length > 0`. Preview-only media не должна отбрасываться только потому, что body text пустой или уже был показан раньше.
+
+Инвариант: предпросмотр видео в клиппере — чисто визуальный affordance, не playback surface. Он не должен запускать `<video>`, делать дополнительный media fetch или блокировать сохранение.
+
 Пользователь переключает тип через TypeSwitcher кликом. Tab/Shift+Tab циклит Content → Screenshot → Link **только** когда keyboard focus уже внутри overlay (после клика по overlay) — это known limitation, см. DEVLOG `24.04.2026 — Clipper: Tab-cycling` и решение не дорабатывать. Основной сценарий переключения — клик по табам.
+
+Click-outside close для in-page overlay не должен зависеть только от `click` и `composedPath()` вокруг full-viewport shadow host. `OverlayShell` обязан маркировать реальную панель `data-mine-clipper-panel`, а `overlay-entry` закрывает overlay на `pointerdown` / `mousedown` capture, если координаты события лежат вне `getBoundingClientRect()` панели. Outside-close handler не вызывает `preventDefault` и `stopPropagation`, чтобы клик оставался кликом страницы после закрытия overlay.
 
 ## Popup UI
 

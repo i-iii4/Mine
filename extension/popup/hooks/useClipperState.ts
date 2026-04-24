@@ -486,8 +486,12 @@ export function useClipperState() {
       if (shouldLoadArticle && !deferredArticleRef.current) {
         setArticleLoading(true);
         extractArticleAsync(tabId).then((asyncArticle) => {
-          if (asyncArticle.content) {
-            asyncArticle.content = deduplicateImages(asyncArticle.content);
+          const hasContent = asyncArticle.content.length > 0;
+          const hasEmbeddedVideos = (asyncArticle.embeddedVideos?.length ?? 0) > 0;
+          if (hasContent || hasEmbeddedVideos) {
+            if (hasContent) {
+              asyncArticle.content = deduplicateImages(asyncArticle.content);
+            }
             setArticleData(asyncArticle);
             // Update title from async data (Twitter/Instagram return better titles than og:title)
             if (asyncArticle.title) {
