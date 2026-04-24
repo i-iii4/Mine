@@ -45,6 +45,43 @@ pub struct IndexedBlock {
     pub tags: Vec<String>,
 }
 
+impl IndexedBlock {
+    /// Project this DB snapshot back into a `domain::Block` suitable for
+    /// thumb-pipeline consumers (`is_thumb_fresh`, `generate_for_block`,
+    /// `preview_dependency_paths`).
+    ///
+    /// Channel-only frontmatter fields (`position`, `color`, `icon`) are
+    /// not part of the `blocks` projection — they belong to channel docs
+    /// which the thumb pipeline does not consult — so they default to
+    /// `None`. Returns an error only when `saved_at` fails ISO-8601
+    /// validation, which should not happen for rows written by this
+    /// codebase but is guarded defensively.
+    pub fn to_domain_block(&self) -> Result<Block, crate::domain::block::BlockError> {
+        let saved_at = DateTime::new(&self.saved_at)?;
+        Ok(Block {
+            slug: self.slug.clone(),
+            frontmatter: Frontmatter {
+                block_type: self.block_type,
+                title: self.title.clone(),
+                description: self.description.clone(),
+                url: self.url.clone(),
+                file: self.media_file.clone(),
+                thumbnail: self.thumbnail.clone(),
+                tags: self.tags.clone(),
+                saved_at,
+                source: self.source.clone(),
+                width: self.width,
+                height: self.height,
+                author: self.author.clone(),
+                position: None,
+                color: None,
+                icon: None,
+            },
+            body: self.body.clone(),
+        })
+    }
+}
+
 /// A lightweight block for list/grid views. Body is truncated (max 500 chars),
 /// description is omitted, source is omitted.
 #[derive(Debug, Clone, PartialEq, Serialize)]

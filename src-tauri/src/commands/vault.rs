@@ -232,26 +232,52 @@ pub fn rebuild_index(
 /// construct a `Block` for `is_thumb_fresh`, and only regenerates the
 /// thumbs that are actually stale. Each regeneration fires
 /// `thumb:updated`, which the frontend cache-busts through rAF.
+///
+/// Concurrent invocations are suppressed at the command boundary via
+/// `AppState::try_start_sweep`: if a sweep is already running this
+/// returns `0` without starting another worker. The guard is released
+/// either by the done-callback when the worker finishes or by the
+/// dropped closure if spawning the worker thread failed.
 #[tauri::command]
 pub fn sweep_vault_thumbnails(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<usize, CommandError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    let Some(guard) = state.try_start_sweep() else {
+        log::debug!("sweep_vault_thumbnails: already in progress, skipping");
+        return Ok(0);
+    };
 
-    let vault = vs.vault.clone();
-    let vault_root_str = vault.root().to_string_lossy().into_owned();
-    drop(vault_state); // release the lock before the sweep parses .md files
+    // Open a fresh SQLite connection for the sweep so we can release the
+    // AppState mutex immediately — list_blocks on the sweep's own handle
+    // keeps other IPC commands responsive while the pass runs.
+    let (vault, vault_root_str, db_path) = {
+        let vault_state = state
+            .vault_state
+            .lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+        (
+            vs.vault.clone(),
+            vs.vault.root().to_string_lossy().into_owned(),
+            vs.vault.index_db_path(),
+        )
+    };
 
-    let count = handler::thumb_sweep(
-        &vault,
-        Some(app.clone()),
-        Some(thumbs_done_cb(app, vault_root_str)),
-    )?;
+    let conn = db::open_or_create(&db_path)
+        .map_err(|e| CommandError::Internal(format!("open sweep db: {e:#}")))?;
+
+    // Wrap the done callback so the guard rides with the closure: when
+    // the worker finishes, the closure is invoked and `guard` drops; if
+    // the worker never runs (spawn failure, zero jobs), the closure is
+    // dropped without firing and the guard still releases through Drop.
+    let original_done = thumbs_done_cb(app.clone(), vault_root_str);
+    let done = Box::new(move || {
+        original_done();
+        drop(guard);
+    }) as Box<dyn FnOnce() + Send>;
+
+    let count = handler::thumb_sweep(&conn, &vault, Some(app), Some(done))?;
     log::info!("thumb_sweep: queued {count} blocks for freshness check");
     Ok(count)
 }
@@ -781,6 +807,7 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                     // incremental_scan correctly skips but that would
                     // otherwise leave the sidebar showing a stale version.
                     match handler::thumb_sweep(
+                        &conn,
                         &vault,
                         Some(app_for_thread.clone()),
                         Some(thumbs_done_cb(

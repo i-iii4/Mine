@@ -10,7 +10,8 @@ use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
@@ -45,6 +46,32 @@ pub struct AppState {
     /// such as in-app rename. Prevents the watcher from racing the command's
     /// own source-of-truth update path.
     pub suppressed_paths: Mutex<HashMap<PathBuf, Instant>>,
+    /// Serialize thumb-cache sweeps so the IPC command cannot spawn a
+    /// second worker while the previous one is still walking the vault.
+    /// The 10-second frontend throttle is a soft guard; this is the
+    /// hard guard at the command boundary. Held as `Arc<AtomicBool>`
+    /// so a `SweepGuard` can RAII-release it from whatever owns the
+    /// final `FnOnce` — including the background thread's done-cb or
+    /// a dropped closure if spawn itself failed.
+    pub sweep_in_progress: Arc<AtomicBool>,
+}
+
+/// RAII token for the `sweep_in_progress` flag.
+///
+/// Obtained via `AppState::try_start_sweep()` — which performs the
+/// compare_exchange so only one caller at a time holds the flag — and
+/// released automatically on Drop. Moving the guard into the thumb
+/// worker's on-done closure ensures the flag is cleared both when the
+/// worker finishes normally *and* when the closure is dropped without
+/// firing (e.g. `thread::spawn` failed and nothing ever invoked it).
+pub struct SweepGuard {
+    flag: Arc<AtomicBool>,
+}
+
+impl Drop for SweepGuard {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
 }
 
 impl AppState {
@@ -55,6 +82,23 @@ impl AppState {
             instance_guard: Mutex::new(None),
             sync_tracker: Mutex::new(SyncTracker::default()),
             suppressed_paths: Mutex::new(HashMap::new()),
+            sweep_in_progress: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Acquire the sweep flag. Returns `None` if a sweep is already
+    /// running; callers should skip the redundant work in that case.
+    pub fn try_start_sweep(&self) -> Option<SweepGuard> {
+        match self.sweep_in_progress.compare_exchange(
+            false,
+            true,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => Some(SweepGuard {
+                flag: Arc::clone(&self.sweep_in_progress),
+            }),
+            Err(_) => None,
         }
     }
 
