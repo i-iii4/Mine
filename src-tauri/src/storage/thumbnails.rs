@@ -22,6 +22,70 @@ const COMPOSITE_TILE_LIMIT: usize = 4;
 
 const JPEG_QUALITY: u8 = 85;
 
+/// Write a thumbnail to `dest` atomically: encode into a per-process,
+/// per-call temp file in the same directory, then rename onto the final
+/// path. Same-directory rename is atomic on every filesystem we target
+/// (APFS, HFS+, iCloud's overlay), so concurrent readers never observe
+/// a partial file and concurrent writers cannot leave a half-encoded
+/// JPEG/PNG behind if both call sites race to regenerate the same slug.
+///
+/// Used by every path that produces a thumb on disk (single-image,
+/// composite, text, video). `save_thumb` already has its own atomic
+/// rename path because it predates this helper; both patterns are
+/// equivalent.
+fn write_thumb_atomically<F>(dest: &Path, write_fn: F) -> Result<()>
+where
+    F: FnOnce(&mut std::io::BufWriter<std::fs::File>) -> Result<()>,
+{
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+    }
+
+    let file_name = dest
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("thumb");
+    let tmp = dest.with_file_name(format!(
+        "{file_name}.tmp.{}.{}",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    let file = std::fs::File::create(&tmp)
+        .with_context(|| format!("failed to create temp thumb: {}", tmp.display()))?;
+    let mut writer = std::io::BufWriter::new(file);
+
+    let write_result = write_fn(&mut writer);
+    if let Err(err) = write_result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err);
+    }
+
+    let file = writer.into_inner().map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        anyhow::anyhow!("failed to flush temp thumb {}: {}", tmp.display(), e.error())
+    })?;
+    if let Err(err) = file.sync_all() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(anyhow::Error::from(err)
+            .context(format!("failed to fsync temp thumb {}", tmp.display())));
+    }
+    drop(file);
+
+    std::fs::rename(&tmp, dest).with_context(|| {
+        format!(
+            "failed to rename temp thumb {} -> {}",
+            tmp.display(),
+            dest.display()
+        )
+    })?;
+    Ok(())
+}
+
 // ─── Freshness check ────────────────────────────────────────────────────────
 
 /// JPEG magic bytes: `FF D8 FF`.
@@ -258,19 +322,13 @@ pub fn generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<(
     };
 
     let (rw, rh) = resized.dimensions();
-
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
-    }
-
     let rgb = resized.to_rgb8();
-    let file = std::fs::File::create(dest)
-        .with_context(|| format!("failed to create thumbnail file: {}", dest.display()))?;
-    let mut writer = std::io::BufWriter::new(file);
-    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, JPEG_QUALITY);
-    rgb.write_with_encoder(encoder)
-        .with_context(|| format!("failed to encode thumbnail: {}", dest.display()))?;
+
+    write_thumb_atomically(dest, |writer| {
+        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, JPEG_QUALITY);
+        rgb.write_with_encoder(encoder)
+            .with_context(|| format!("failed to encode thumbnail: {}", dest.display()))
+    })?;
 
     Ok((rw, rh))
 }
@@ -345,16 +403,12 @@ pub fn generate_composite_thumbnail(
     }
 
     let rgb = DynamicImage::ImageRgba8(canvas).to_rgb8();
-    let file = std::fs::File::create(dest).with_context(|| {
-        format!(
-            "failed to create composite thumbnail file: {}",
-            dest.display()
-        )
+
+    write_thumb_atomically(dest, |writer| {
+        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, JPEG_QUALITY);
+        rgb.write_with_encoder(encoder)
+            .with_context(|| format!("failed to encode composite thumbnail: {}", dest.display()))
     })?;
-    let mut writer = std::io::BufWriter::new(file);
-    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, JPEG_QUALITY);
-    rgb.write_with_encoder(encoder)
-        .with_context(|| format!("failed to encode composite thumbnail: {}", dest.display()))?;
 
     Ok((max_size, max_size))
 }
@@ -452,17 +506,11 @@ pub fn generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> 
 
     // Save as PNG (transparent background, theme-adaptive via CSS).
     // File may have .jpg extension — browsers detect format from content, not extension.
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
-    }
-
-    let file = std::fs::File::create(dest)
-        .with_context(|| format!("failed to create text thumbnail: {}", dest.display()))?;
-    let mut writer = std::io::BufWriter::new(file);
-    let encoder = image::codecs::png::PngEncoder::new(&mut writer);
-    img.write_with_encoder(encoder)
-        .with_context(|| format!("failed to encode text thumbnail: {}", dest.display()))?;
+    write_thumb_atomically(dest, |writer| {
+        let encoder = image::codecs::png::PngEncoder::new(writer);
+        img.write_with_encoder(encoder)
+            .with_context(|| format!("failed to encode text thumbnail: {}", dest.display()))
+    })?;
 
     Ok((size, size))
 }
@@ -613,18 +661,13 @@ pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Re
 
     let (rw, rh) = resized.dimensions();
 
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
-    }
-
     let rgb = resized.to_rgb8();
-    let file = std::fs::File::create(dest)
-        .with_context(|| format!("failed to create video thumbnail: {}", dest.display()))?;
-    let mut writer = std::io::BufWriter::new(file);
-    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, JPEG_QUALITY);
-    rgb.write_with_encoder(encoder)
-        .with_context(|| format!("failed to encode video thumbnail: {}", dest.display()))?;
+
+    write_thumb_atomically(dest, |writer| {
+        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, JPEG_QUALITY);
+        rgb.write_with_encoder(encoder)
+            .with_context(|| format!("failed to encode video thumbnail: {}", dest.display()))
+    })?;
 
     Ok((rw, rh))
 }
