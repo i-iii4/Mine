@@ -235,7 +235,7 @@ Context-menu клики переопределяют этот выбор в `app
 2. Image-режим (ПКМ на картинке) не показывает TypeSwitcher вообще — пользователь не переключает типы, только сохраняет.
 3. Default для «всего остального» — именно Screenshot, не Link. При открытии popup без явного типа расширение сразу делает capture и показывает превью.
 
-Пользователь всегда может переключить тип через TypeSwitcher (клик) или клавиатурой — **Tab** / **Shift+Tab** циклит Content → Screenshot → Link. Tab игнорируется, когда фокус внутри input/textarea/contenteditable и когда TypeSwitcher скрыт (image-режим).
+Пользователь переключает тип через TypeSwitcher кликом. Tab/Shift+Tab циклит Content → Screenshot → Link **только** когда keyboard focus уже внутри overlay (после клика по overlay) — это known limitation, см. DEVLOG `24.04.2026 — Clipper: Tab-cycling` и решение не дорабатывать. Основной сценарий переключения — клик по табам.
 
 ## Popup UI
 
@@ -258,7 +258,7 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 ```
 ┌──────────────────────────────────────┐
 │ ┌────────┐ ┌────────┐               │
-│ │Content │ │Screens.│ │ Link │       │ ← TypeSwitcher (Tab/Shift+Tab циклит)
+│ │Content │ │Screens.│ │ Link │       │ ← TypeSwitcher (клик)
 │ └────────┘ └────────┘               │
 ├──────────────────────────────────────┤
 │                                      │
@@ -275,7 +275,7 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 │    │ + Create "new-tag"          │   │
 │    └─────────────────────────────┘   │
 │                                      │
-│  [Save to Mine        ⌘⏎]    │
+│  [Save to Mine                    ]  │
 │                                      │
 │  ─ Status: Saving... / ✓ / Error ─  │
 └──────────────────────────────────────┘
@@ -291,7 +291,7 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 | PreviewCard | `components/PreviewCard.tsx` | `<Input>` | Thumbnail + редактируемый title + домен |
 | TypeSwitcher | `components/TypeSwitcher.tsx` | `<Button variant="ghost" size="xs">` | Content / Link / Image / Video |
 | ChannelList | `components/ChannelList.tsx` | `<Input>`, `<ScrollArea>` | Поиск + список каналов с чекбоксами, создание нового |
-| SaveButton | `components/SaveButton.tsx` | `<Button variant="default">` | Полная ширина, `<kbd>` подсказка |
+| SaveButton | `components/SaveButton.tsx` | `<Button variant="default">` | Полная ширина, без kbd-подсказки (Cmd+Enter handler есть, но не всегда срабатывает из overlay — см. DEVLOG `24.04.2026 — Clipper: Tab-cycling`) |
 | StatusBar | `components/StatusBar.tsx` | — | Статус: success (зелёный) / error (красный) |
 
 ### Хуки и адаптеры
@@ -328,10 +328,12 @@ Background service worker регистрирует 4 пункта:
 | Shortcut | Context | Action |
 |---|---|---|
 | `Option+A` | Глобальный (настраиваемый через chrome://extensions/shortcuts) | Открыть popup |
-| `Cmd+Enter` | Popup | Сохранить |
+| `Cmd+Enter` | Popup | Сохранить (best-effort — из overlay срабатывает не всегда) |
 | `Escape` | Popup | Закрыть без сохранения |
 | `Up/Down` | Popup, фокус на ChannelPicker | Навигация по каналам |
 | `Enter` | Popup, фокус на ChannelPicker | Выбрать/снять канал |
+
+**Known limitation**: keyboard shortcuts работают только когда focus уже внутри overlay. В content-script overlay host (shadow DOM, isolated world) keyboard focus остаётся на странице до явного клика по overlay — это не фиксим, см. DEVLOG `24.04.2026 — Clipper: Tab-cycling в overlay не работает без предварительного клика — won't fix`. Поэтому kbd-подсказки в UI не показываем, чтобы не обещать того, что стабильно не работает.
 
 ## Metadata Extraction (Content Script)
 

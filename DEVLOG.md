@@ -33,7 +33,27 @@
 - live smoke-test: Obsidian-style files render, wikilink embed path works,
   move-to-collection writes expected frontmatter.
 
-## 24.04.2026 [primary] — Clipper: Tab-cycling в overlay не работает без предварительного клика — unresolved
+## 24.04.2026 [primary] — Clipper: Tab-cycling в overlay не работает без предварительного клика — won't fix
+
+### Decision
+
+Приняли решение **не дорабатывать** keyboard-навигацию в overlay. Причина: четыре архитектурные попытки (autofocus, window-capture, detached popup, modal-filter) не дали наблюдаемого результата, а пятая — launcher popup для focus-handoff — ломает overlay-first UX (visible flash + магический focus-timeout). Цена дальнейшего расследования не окупается — Tab-циклинг ускоряет переключение между тремя табами на единицы секунд, клик по TypeSwitcher работает надёжно.
+
+### What we actually ship
+
+- kbd-подсказка `⌘⏎` **убрана** с кнопки Save ([SaveButton.tsx](file:///Users/i_iii/Проекты/local-arena/extension/popup/components/SaveButton.tsx)) — не обещаем пользователю шорткат, который стабильно не срабатывает из overlay без предварительного клика.
+- Keydown-handler в [PopupApp.tsx](file:///Users/i_iii/Проекты/local-arena/extension/popup/PopupApp.tsx) **оставляем** — работает после клика внутрь overlay, вредить не может, чинить не надо.
+- SPEC_CLIPPER.md обновлён: keyboard shortcuts помечены как best-effort, переключение табов описано как клик.
+
+### Why not launcher-popup
+
+Предложение: tiny default_popup, который отправляет сообщение в background и сразу закрывается → browser handoff focus → open overlay. Архитектурно чисто (использует native focus lifecycle), но:
+
+- Visible popup flash ~25×25px при каждом открытии — нарушает «overlay появляется без мигания браузерного chrome».
+- `chrome.windows.onFocusChanged` или магический `setTimeout(80)` для определения момента closing popup'а — любой вариант добавляет race/магию.
+- Чтобы получить гарантированный keyboard focus внутри overlay, всё равно нужен `.focus()` хук — то есть та же дисциплина, что уже была в [73fe854f](https://github.com/i-iii4/local-arena/commit/73fe854f), плюс launcher-ярус сверху.
+
+Отложено в backlog. Если пользовательских запросов на «верни Tab» больше одного за квартал — вернёмся.
 
 ### Symptom
 

@@ -25,7 +25,6 @@ export function SaveButton({ count, saving, onClick }: SaveButtonProps) {
   return (
     <Button onClick={onClick} className="w-full">
       <span>{label}</span>
-      <kbd className="text-sm opacity-60">{"\u2318\u23CE"}</kbd>
     </Button>
   );
 }
