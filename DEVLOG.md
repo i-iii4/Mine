@@ -1,5 +1,40 @@
 # Devlog
 
+## 24.04.2026 [primary] — Grid source-first + finalize dedupe; clipper loader experiments reverted
+
+### Goal
+После восстановления клиппера (см. предыдущую запись) оставались две проблемы, которые пользователь видел в самом приложении при обычном сохранении скриншота:
+
+1. **Broken-image flash в Grid.** Блок индексировался и появлялся в ленте раньше, чем фоновый поток генерировал thumb в `.arena/cache/thumbs/`. `<img>` уходил в 404, после `onError` карточка схлопывалась в text-placeholder с `ImageOff` иконкой — хотя реальный source image уже лежал в vault рядом с `.md`.
+2. **Сохранение второго скриншота с той же страницы падало** с ошибкой `cannot finalize staged upload: target already exists`. Title страницы → slug → media-filename тот же, `finalize_uploaded_filename` отказывал вместо того, чтобы добавить `(2)`-суффикс.
+
+### Actually completed
+
+**Source-first preview cascade для ImageCard** (`src/components/Card.tsx`)
+- Порядок источников: `asset://<vault>/<media_file>` → `asset://<thumbs>/<slug>.jpg` → text-плюс-иконка fallback.
+- Source в vault гарантированно на диске в момент `block:added` (native host пишет файл до того, как watcher фаерит event), поэтому thumb-gap закрывается даром.
+- `<img key={currentSrc}>` — React remount'ит элемент на каждый fallback, браузер не кэширует 404.
+- Loading state не добавляется: на локальном vault декод source-файла незаметен (микросекунды). Skeleton имеет смысл только для 10+ MB картинок или iCloud-placeholder'ов, которые ещё не материализованы — отложено до конкретного наблюдаемого случая.
+
+**Auto-dedup `(N)` в `finalize_uploaded_filename`** (`src-tauri/src/bin/native_host.rs`)
+- На коллизии обходим Obsidian-style суффиксом: `iPad mini.jpg` → `iPad mini (2).jpg` → `...(3)`.
+- Выравнивает наименование media и `.md` файлов (для того же блока `.md` уже получает `(2)` через `resolve_slug_conflict` Phase 18.D).
+- Старый тест `finalize_errors_when_target_exists_to_avoid_overwrite` переписан в `finalize_appends_counter_suffix_when_target_exists` + добавлен multi-collision walk.
+
+**Reverted clipper loader experiments** (коммиты `fbc3f868`, `9aaace0e`, `85e0509b`)
+- Skeleton-оверлеи (`PreviewImage`, capturing placeholder, imgLoaded gate в ScreenshotPreview) давали регресс в клиппере — бесконечный спиннер в happy path. Root cause до конца не диагностирован, гипотеза — `hidden` class через twMerge конфликтует с `block`, браузер не декодирует `display:none` `<img>`, onLoad не фаерит.
+- Оставлены только инварианты: image-блок без media не пишется (popup + native host reject).
+
+### Push
+- [2d0bf244 fix: dedupe staged upload filename with (N) suffix instead of failing](https://github.com/i-iii4/local-arena/commit/2d0bf244)
+- [dc75eeb5 fix: ImageCard tries vault source before thumbnail to avoid broken-image flash](https://github.com/i-iii4/local-arena/commit/dc75eeb5)
+- [85e0509b revert: remove PreviewImage loader — clipper happy-path was faster without it](https://github.com/i-iii4/local-arena/commit/85e0509b)
+
+### Decisions and lessons learned
+- **Source-first как принцип:** thumb — это оптимизация размера для sidebar, не единственный источник. Если у блока есть реальный media-файл в vault, Grid-карточка должна в первую очередь идти через него. Thumb fallback для случаев, когда source не декодируется браузером (HEIC, VP8X) или ещё не подгружен (iCloud).
+- **Loader только по нужде.** Добавление skeleton-оверлея без конкретного наблюдаемого кейса (видимая задержка при декоде) привело к регрессу: хуки loading state в React сложны, легко попасть в infinite loader при unrelated re-render. Доказанный путь — сначала устранить причину задержки (source-first), потом проверить есть ли остаточная боль, и только тогда накладывать UI-state.
+- **Native host обновляется отдельно от desktop app.** `cargo tauri dev` не пересобирает и не переустанавливает `native-host` binary. После правок в `src-tauri/src/bin/native_host.rs` обязательно: `cargo build --bin native-host` + копия в `~/Library/Application Support/LocalArena/native-host`. Иначе все fixes в source невидимы клиппер-workflow.
+
 ## 24.04.2026 [primary] — Clipper save hardening: no orphan .md, inline errors (loader experiments reverted)
 
 ### Goal
