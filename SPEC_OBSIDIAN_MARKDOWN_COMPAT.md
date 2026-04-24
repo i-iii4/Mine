@@ -17,8 +17,8 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 - Не превращать каждый Markdown-файл в полноценный Mine-owned block с
   агрессивными write/cleanup semantics.
 - Не менять canonical wikilink syntax из `SPEC_OBSIDIAN_WIKILINKS.md`.
-- Не делать папки каналами. Каналы по-прежнему tags/collections, а не
-  filesystem directories.
+- Не делать папки каналами. Mine collections остаются frontmatter metadata, а
+  не filesystem directories.
 - Не делать H1 приоритетнее имени файла в v1. Filename-first остаётся
   контрактом identity/display fallback; H1 остаётся частью body.
 
@@ -51,6 +51,8 @@ title: Example
 saved_at: 2026-04-24T12:00:00Z
 tags:
   - design
+Mine Collections:
+  - Research
 ---
 
 Body.
@@ -82,6 +84,8 @@ Body.
 ---
 tags:
   - design
+Mine Collections:
+  - Research
 ---
 
 # Example
@@ -104,7 +108,8 @@ Indexer строит `Block` из `.md` файла через двухступе
 | `type` | known Mine `frontmatter.type` | `article` |
 | `title` | `frontmatter.title` | filename stem |
 | `saved_at` | `frontmatter.saved_at` | filesystem creation time → modified time |
-| `tags` | `frontmatter.tags` | empty list |
+| Mine collections | `frontmatter["Mine Collections"]` | legacy Mine `frontmatter.tags` for pre-migration files, otherwise empty list |
+| Obsidian tags | `frontmatter.tags` | empty list |
 | `url` | `frontmatter.url` | `null` |
 | `description` | `frontmatter.description` | `null` |
 | `file` | `frontmatter.file` | `null` |
@@ -122,8 +127,14 @@ Rules:
   timestamps.
 - If `frontmatter.saved_at` exists but is invalid, Mine falls back to
   filesystem date with an index warning and preserves the original YAML.
-- If `frontmatter.tags` exists, it is normalized by the tag compatibility
-  rules below. Unrecognized tag shapes are warnings, not hard parse errors.
+- If `frontmatter["Mine Collections"]` exists, it is normalized as Mine-owned
+  collection membership.
+- If `frontmatter.tags` exists, Mine treats it as user-owned Obsidian tags.
+  It may be indexed for search/filtering later, but collection writes must not
+  mutate it.
+- During the transition, old Mine-authored files without `Mine Collections`
+  may still read `frontmatter.tags` as legacy Mine collections for backward
+  compatibility. New writes must not create or update `tags` for collections.
 - Missing optional fields stay missing; Mine does not synthesize `url`,
   `file`, `thumbnail`, `author`, `width`, or `height`.
 
@@ -179,7 +190,32 @@ Obsidian wikilinks and embeds are handled by the existing dual-syntax read path:
 - `![[image.jpg|alt]]`
 - `![alt](image.jpg)`
 
-### Tag Compatibility
+### Collections And Obsidian Tags
+
+Mine-owned collection membership is stored in a human-readable YAML field:
+
+```yaml
+Mine Collections:
+  - Аркада
+  - Research
+```
+
+This is intentionally not `tags`. In Obsidian, `tags` is a common user/plugin
+field with its own meaning. Mine must not overload it as the canonical
+collection field.
+
+Rules:
+
+- New Mine collection writes use `Mine Collections`.
+- Existing `tags` values are preserved byte-for-byte unless the user explicitly
+  edits Obsidian tags.
+- Old Mine-authored files may read `tags` as legacy collections only when
+  `Mine Collections` is absent. This fallback exists for migration, not as the
+  long-term source format.
+- If both fields exist, `Mine Collections` wins for Mine sidebar/collection
+  membership. `tags` remains user-owned Obsidian metadata.
+
+### Obsidian Tag Compatibility
 
 Obsidian-compatible tag parsing is best-effort and fail-open:
 
@@ -194,7 +230,7 @@ Obsidian-compatible tag parsing is best-effort and fail-open:
 - Inline body tags such as `#typography` and `#design/typography` remain body
   text in v1. They may participate in full-text search, but they are not
   promoted into frontmatter tags and assigning/removing Mine collections must
-  not rewrite body inline tags.
+  not rewrite body inline tags or `frontmatter.tags`.
 
 If `tags` has an unsupported YAML shape, Mine indexes the file with the tags it
 can safely read, records an `index_warning`, and leaves the original YAML
@@ -256,7 +292,9 @@ For an indexed Markdown file:
 - `thumbnail` = null;
 - `body` = full markdown for foreign/malformed Markdown; text after closing
   fence for valid partial/Mine frontmatter;
-- `tags` = compatible frontmatter tags if present, otherwise empty;
+- Mine collections = compatible `Mine Collections` if present, otherwise
+  legacy `tags` fallback for pre-migration Mine files, otherwise empty;
+- Obsidian tags = compatible `tags` if present, otherwise empty;
 - `first_image`, `media_urls`, `preview_manifest`, `media_dimensions` are
   derived from body exactly like article blocks with frontmatter.
 
@@ -308,14 +346,14 @@ and rendering feed must never add frontmatter to foreign Markdown.
 Mine writes frontmatter only when a user action requires persisted Mine
 metadata. Examples:
 
-- assign to collection/tag;
+- assign to Mine collection;
 - rename through Mine if the operation also rewrites links/media;
 - change type explicitly;
 - attach source URL or other Mine-specific metadata.
 
 The first Mine write to foreign Markdown does not show a prompt in v1. The
-user action itself, such as assigning a tag or collection, is treated as intent
-to persist the minimal metadata required for that action.
+user action itself, such as assigning a collection, is treated as intent to
+persist the minimal metadata required for that action.
 
 When frontmatter is added to a foreign Markdown file, Mine must preserve body
 byte-for-byte except for inserting the frontmatter block at the top.
@@ -324,11 +362,9 @@ Minimal adoption on assigning to a collection:
 
 ```md
 ---
-tags:
-  - design
+Mine Collections:
+  - Design
 ---
-
-# Existing Obsidian Note
 
 Body.
 ```
@@ -342,15 +378,18 @@ must not imply that it originally saved an old user-owned file.
 
 ### Partial Frontmatter Update
 
-If a file already has frontmatter but lacks `type` / `saved_at`, updating tags
-must preserve that partial frontmatter and add only the needed field:
+If a file already has frontmatter but lacks `type` / `saved_at`, updating Mine
+collections must preserve that partial frontmatter and add only the needed
+field:
 
 ```md
 ---
 aliases:
   - Example
 tags:
-  - design
+  - user/obsidian-tag
+Mine Collections:
+  - Design
 ---
 ```
 
@@ -365,9 +404,10 @@ compatibility writes.
 
 For v1, the conservative contract is:
 
-- patch only the field required by the user action, usually `tags`;
-- preserve existing scalar tag style when safely patching scalar frontmatter
-  such as `tags: "design typography"` or `tags: design typography`;
+- patch only the field required by the user action, usually
+  `Mine Collections`;
+- preserve existing `tags` scalar/list style when reading or displaying
+  Obsidian tags; collection writes must not rewrite `tags`;
 - preserve every byte outside the patched field range, including comments,
   unknown fields, ordering, scalar style, literal/folded strings, anchors, and
   aliases;
@@ -388,12 +428,12 @@ Foreign Markdown is safe to read and index. Mutations require care:
 |---|---|
 | Read/list/search/detail | allowed, no write |
 | Generate thumbnail/preview | allowed, derived cache only |
-| Assign tag/collection | allowed, patch/add frontmatter tags only |
-| Remove tag/collection | allowed if tags are in frontmatter; remove only Mine tag entry |
+| Assign collection | allowed, patch/add `Mine Collections` only |
+| Remove collection | allowed if collection is in `Mine Collections`; during migration, legacy `tags` removal requires the manual migration tool |
 | Rename in Mine | allowed only if rename path preserves Obsidian links and unknown frontmatter |
 | Delete block | allowed only after existing delete confirmation |
 | Media cleanup | must not delete embedded media solely because no `file:` exists; media referenced by body wikilinks such as `![[name.jpg]]` is protected |
-| Web clipper save | unchanged; clipper continues writing Mine frontmatter |
+| Web clipper save | unchanged as a Mine-owned write path; collection metadata uses `Mine Collections` |
 
 ## Directory / Import Scenarios
 
@@ -408,12 +448,13 @@ manually placed in the vault. No conversion on import.
 
 ### User Assigns A File To A Collection
 
-Mine writes or patches frontmatter with `tags`. The file remains ordinary
-Markdown with optional YAML metadata, compatible with Obsidian.
+Mine writes or patches frontmatter with `Mine Collections`. The file remains
+ordinary Markdown with optional YAML metadata, compatible with Obsidian.
 
 Once Mine inserts a frontmatter fence, the file is classified as partial
-frontmatter on subsequent reads. Removing all Mine tags does not automatically
-strip the empty fence; `---\n---\n<body>` remains valid partial frontmatter.
+frontmatter on subsequent reads. Removing all Mine collections does not
+automatically strip the empty fence; `---\n---\n<body>` remains valid partial
+frontmatter.
 
 ### User Moves File Outside Vault
 
@@ -431,8 +472,62 @@ source `.md` no longer exists in the vault.
 | `.md` has unknown explicit `type` | valid implicit article with `index_warning`; original value preserved |
 | `.md` has invalid explicit `saved_at` | valid article with filesystem date fallback and `index_warning` |
 | `.md` has unsupported `tags` shape | valid article with best-effort tags and `index_warning` |
+| `.md` has both `tags` and `Mine Collections` | `Mine Collections` drives Mine collections; `tags` remains Obsidian metadata |
+| legacy Mine `.md` has `tags` but no `Mine Collections` | read `tags` as legacy Mine collections until manual migration |
 | embedded media file missing | article still indexes; preview falls back to next media or text |
 | filesystem date unavailable | use modified time |
+
+## Migration To `Mine Collections`
+
+The move from `tags` to `Mine Collections` is a source-format migration, not an
+automatic startup repair. Mine must avoid mass rewriting user notes without a
+deliberate migration step.
+
+### Target Format
+
+```yaml
+---
+tags:
+  - user/obsidian-tag
+Mine Collections:
+  - Аркада
+  - Research
+---
+```
+
+`tags` belongs to the user and Obsidian ecosystem. `Mine Collections` belongs
+to Mine.
+
+### Transition Rules
+
+1. Read both fields.
+2. If `Mine Collections` exists, it is the only source for Mine collection
+   membership.
+3. If `Mine Collections` is absent, legacy Mine-authored files may read
+   `tags` as collections for backward compatibility.
+4. New writes and clipper saves must write `Mine Collections`, not `tags`.
+5. Assigning/removing a collection must patch only `Mine Collections`.
+6. A manual migration tool may copy legacy `tags` into `Mine Collections`, but
+   must preserve `tags` unless the user explicitly chooses to remove it.
+
+### Manual Migration Workflow
+
+1. Inventory all `.md` files that contain `tags` and do not contain
+   `Mine Collections`.
+2. Produce a dry-run report: filename, current `tags`, proposed
+   `Mine Collections`, and whether the file looks Mine-authored or foreign.
+3. User reviews the report and decides which files to migrate.
+4. Create a timestamped backup of every file that will be rewritten.
+5. Patch selected files surgically:
+   - add `Mine Collections` with the proposed values;
+   - preserve `tags` byte-for-byte by default;
+   - preserve comments, unknown fields, field order, scalar/list style, and
+     body bytes outside the inserted field.
+6. Rebuild the index and compare collection counts before/after migration.
+7. Only after manual verification may a later cleanup remove obsolete legacy
+   `tags` from files where the user confirms those tags were Mine-only.
+
+Rollback is file-level: restore the timestamped backup and rebuild the index.
 
 ## Testing Plan
 
@@ -477,13 +572,17 @@ source `.md` no longer exists in the vault.
 
 ### Write Path
 
-- assigning tag to foreign Markdown inserts minimal frontmatter with `tags`.
-- assigning tag to partial Obsidian frontmatter preserves unknown fields.
-- assigning tag to scalar Obsidian `tags` preserves scalar style when safe.
-- assigning tag preserves `aliases`, `cssclasses`, comments, field ordering,
+- assigning collection to foreign Markdown inserts minimal frontmatter with
+  `Mine Collections`.
+- assigning collection to partial Obsidian frontmatter preserves unknown fields
+  and does not modify `tags`.
+- assigning collection preserves `aliases`, `cssclasses`, comments, field ordering,
   multiline scalars, and unrelated custom YAML bytes.
-- removing tag from partial frontmatter removes only that tag.
-- removing the last Mine tag does not auto-strip an existing frontmatter fence.
+- removing collection from partial frontmatter removes only that collection.
+- removing the last Mine collection does not auto-strip an existing
+  frontmatter fence.
+- manual migration dry-run reports legacy `tags` → `Mine Collections` changes
+  before writing.
 - media cleanup never deletes files referenced by body wikilinks.
 
 ## Acceptance Criteria
@@ -492,6 +591,8 @@ source `.md` no longer exists in the vault.
 - A plain Obsidian `.md` with `![[image.jpg]]` uses that image as preview.
 - Rebuilding the local index keeps those files visible.
 - Opening Mine does not rewrite Obsidian files.
-- Assigning a collection writes only the necessary tags metadata.
+- Assigning a collection writes only the necessary `Mine Collections` metadata.
+- Obsidian `tags` are not rewritten by collection assignment.
+- Legacy Mine files using `tags` remain readable until manual migration.
 - Existing Mine-authored blocks with full frontmatter continue to behave
   exactly as before.

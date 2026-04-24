@@ -159,8 +159,25 @@ Goal: устранить две подтверждённые архитекту�
 - **Obsidian Markdown compatibility.**
   - Plain Obsidian `.md` files without Mine frontmatter should be indexed as implicit articles instead of parse errors.
   - Read path must be non-invasive: opening/rebuilding Mine must not write frontmatter into user-authored notes.
-  - Mine frontmatter becomes an optional metadata overlay for explicit Mine fields (`tags`, `type`, `url`, `file`) rather than a hard requirement for displaying Markdown.
-  - Scope is specified in `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`; implementation remains pending.
+  - Mine frontmatter becomes an optional metadata overlay for explicit Mine fields (`Mine Collections`, `type`, `url`, `file`) rather than a hard requirement for displaying Markdown.
+  - `tags` is user/Obsidian-owned metadata, not the canonical Mine collection field.
+  - New collection writes must use human-readable `Mine Collections`; legacy `tags` remains a backward-compat read fallback until manual migration.
+  - Scope and migration workflow are specified in `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`.
+
+### Current planned migration — `tags` → `Mine Collections`
+
+This migration must be deliberate and manually reviewable because existing
+Obsidian users often use `tags` for their own systems.
+
+| # | Step | Status | Deliverables |
+|---|------|--------|--------------|
+| MC1 | Dual-read model | [ ] | Parse `Mine Collections`; if absent, read legacy Mine `tags` as collections; keep Obsidian `tags` separate |
+| MC2 | Write-path switch | [ ] | `add_tag` / remove / rename / drag-to-collection / clipper save write `Mine Collections`, never `tags` |
+| MC3 | Index/UI compatibility | [ ] | Sidebar/feed still use Mine collections; optional Obsidian tags remain non-destructive metadata |
+| MC4 | Manual migration dry-run | [ ] | Report files with legacy `tags`, proposed `Mine Collections`, Mine-authored vs foreign confidence |
+| MC5 | Manual migration apply | [ ] | Timestamped backups, surgical YAML patcher, preserve `tags` by default, rebuild index after apply |
+| MC6 | Live vault verification | [ ] | Compare collection counts before/after, inspect sample files in Obsidian and Mine |
+| MC7 | Legacy cleanup decision | [ ] | Only after verification, optional user-approved removal of truly Mine-only legacy `tags` |
 
 ### Current known blocker before phase completion
 
