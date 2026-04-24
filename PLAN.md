@@ -171,9 +171,9 @@ Obsidian users often use `tags` for their own systems.
 
 | # | Step | Status | Deliverables |
 |---|------|--------|--------------|
-| MC1 | Dual-read model | [ ] | Parse `Mine Collections`; if absent, read legacy Mine `tags` as collections; keep Obsidian `tags` separate |
-| MC2 | Write-path switch | [ ] | `add_tag` / remove / rename / drag-to-collection / clipper save write `Mine Collections`, never `tags` |
-| MC3 | Index/UI compatibility | [ ] | Sidebar/feed still use Mine collections; optional Obsidian tags remain non-destructive metadata |
+| MC1 | Dual-read model | [x] | Parse `Mine Collections`; if absent, read legacy Mine `tags` as collections; keep Obsidian `tags` separate |
+| MC2 | Write-path switch | [x] | `add_tag` / remove / rename / drag-to-collection / clipper save write `Mine Collections`, never `tags` |
+| MC3 | Index/UI compatibility | [x] | Sidebar/feed still use Mine collections; optional Obsidian tags remain non-destructive metadata |
 | MC4 | Manual migration dry-run | [ ] | Report files with legacy `tags`, proposed `Mine Collections`, Mine-authored vs foreign confidence |
 | MC5 | Manual migration apply | [ ] | Timestamped backups, surgical YAML patcher, preserve `tags` by default, rebuild index after apply |
 | MC6 | Live vault verification | [ ] | Compare collection counts before/after, inspect sample files in Obsidian and Mine |

@@ -11,6 +11,8 @@ use crate::storage::index::TagCount;
 use crate::storage::{db, files, index};
 use crate::util::append_startup_trace;
 
+const MINE_COLLECTIONS_FIELD: &str = "Mine Collections";
+
 // ─── Commands ───────────────────────────────────────────────────────────────
 
 /// List all tags with their block counts.
@@ -58,7 +60,7 @@ pub fn add_tag(state: State<'_, AppState>, slug: String, tag: String) -> Result<
         block.frontmatter.tags.push(normalized);
     }
 
-    let content = patch_tags_frontmatter(&content, &block.frontmatter.tags)
+    let content = patch_collections_frontmatter(&content, &block.frontmatter.tags)
         .map_err(CommandError::Internal)?;
     std::fs::write(&path, content)
         .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
@@ -95,7 +97,7 @@ pub fn remove_tag(
     let normalized = normalize_tag(&tag);
     block.frontmatter.tags.retain(|t| t != &normalized);
 
-    let content = patch_tags_frontmatter(&content, &block.frontmatter.tags)
+    let content = patch_collections_frontmatter(&content, &block.frontmatter.tags)
         .map_err(CommandError::Internal)?;
     std::fs::write(&path, content)
         .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
@@ -149,7 +151,7 @@ pub fn rename_tag(
             block.frontmatter.tags.push(normalized_new.clone());
         }
 
-        let serialized = patch_tags_frontmatter(&content, &block.frontmatter.tags)
+        let serialized = patch_collections_frontmatter(&content, &block.frontmatter.tags)
             .map_err(CommandError::Internal)?;
         std::fs::write(&path, serialized)
             .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
@@ -190,7 +192,7 @@ pub fn delete_tag_from_all(state: State<'_, AppState>, tag: String) -> Result<()
 
         block.frontmatter.tags.retain(|t| t != &normalized);
 
-        let serialized = patch_tags_frontmatter(&content, &block.frontmatter.tags)
+        let serialized = patch_collections_frontmatter(&content, &block.frontmatter.tags)
             .map_err(CommandError::Internal)?;
         std::fs::write(&path, serialized)
             .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
@@ -215,16 +217,23 @@ fn file_saved_at(path: &std::path::Path) -> DateTime {
         .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
 }
 
-fn patch_tags_frontmatter(content: &str, tags: &[String]) -> Result<String, String> {
+pub(crate) fn patch_collections_frontmatter(
+    content: &str,
+    collections: &[String],
+) -> Result<String, String> {
     match frontmatter_bounds(content) {
         FrontmatterBounds::None => {
-            if tags.is_empty() {
+            if collections.is_empty() {
                 return Ok(content.to_string());
             }
-            Ok(format!("---\n{}---\n{}", render_tags(tags), content))
+            Ok(format!(
+                "---\n{}---\n{}",
+                render_collections(collections),
+                content
+            ))
         }
         FrontmatterBounds::Malformed => {
-            Err("cannot safely patch tags: malformed frontmatter".to_string())
+            Err("cannot safely patch collections: malformed frontmatter".to_string())
         }
         FrontmatterBounds::Valid {
             yaml_start,
@@ -233,9 +242,9 @@ fn patch_tags_frontmatter(content: &str, tags: &[String]) -> Result<String, Stri
         } => {
             let yaml = &content[yaml_start..yaml_end];
             if !yaml.trim().is_empty() && serde_yaml::from_str::<serde_yaml::Value>(yaml).is_err() {
-                return Err("cannot safely patch tags: malformed frontmatter".to_string());
+                return Err("cannot safely patch collections: malformed frontmatter".to_string());
             }
-            let patched_yaml = patch_tags_yaml(yaml, tags)?;
+            let patched_yaml = patch_collections_yaml(yaml, collections)?;
             let mut out = String::with_capacity(content.len() + patched_yaml.len());
             out.push_str(&content[..yaml_start]);
             out.push_str(&patched_yaml);
@@ -285,29 +294,40 @@ fn frontmatter_bounds(content: &str) -> FrontmatterBounds {
     FrontmatterBounds::None
 }
 
-fn patch_tags_yaml(yaml: &str, tags: &[String]) -> Result<String, String> {
+fn patch_collections_yaml(yaml: &str, collections: &[String]) -> Result<String, String> {
     let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
     let mut start = None;
+    let mut has_legacy_tags = false;
     for (idx, line) in lines.iter().enumerate() {
-        if is_top_level_tags_key(line) {
+        if is_top_level_collection_key(line) {
             start = Some(idx);
             break;
+        }
+        if is_top_level_legacy_tags_key(line) {
+            has_legacy_tags = true;
         }
     }
 
     let Some(start_idx) = start else {
-        if tags.is_empty() {
+        if collections.is_empty() {
+            if has_legacy_tags {
+                let mut out = yaml.to_string();
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str(&render_collections(collections));
+                return Ok(out);
+            }
             return Ok(yaml.to_string());
         }
         let mut out = yaml.to_string();
         if !out.is_empty() && !out.ends_with('\n') {
             out.push('\n');
         }
-        out.push_str(&render_tags(tags));
+        out.push_str(&render_collections(collections));
         return Ok(out);
     };
 
-    let render_style = detect_tags_render_style(lines[start_idx]);
     let mut end_idx = start_idx + 1;
     while end_idx < lines.len() {
         let line = lines[end_idx];
@@ -321,10 +341,13 @@ fn patch_tags_yaml(yaml: &str, tags: &[String]) -> Result<String, String> {
 
     let mut out = String::new();
     for line in &lines[..start_idx] {
+        if is_top_level_legacy_tags_key(line) {
+            has_legacy_tags = true;
+        }
         out.push_str(line);
     }
-    if !tags.is_empty() {
-        out.push_str(&render_tags_with_style(tags, render_style));
+    if !collections.is_empty() || has_legacy_tags {
+        out.push_str(&render_collections(collections));
     }
     for line in &lines[end_idx..] {
         out.push_str(line);
@@ -332,7 +355,16 @@ fn patch_tags_yaml(yaml: &str, tags: &[String]) -> Result<String, String> {
     Ok(out)
 }
 
-fn is_top_level_tags_key(line: &str) -> bool {
+fn is_top_level_collection_key(line: &str) -> bool {
+    let line = line.trim_end_matches(['\r', '\n']);
+    if line.starts_with(' ') || line.starts_with('\t') {
+        return false;
+    }
+    line == format!("{MINE_COLLECTIONS_FIELD}:")
+        || line.starts_with(&format!("{MINE_COLLECTIONS_FIELD}: "))
+}
+
+fn is_top_level_legacy_tags_key(line: &str) -> bool {
     let line = line.trim_end_matches(['\r', '\n']);
     if line.starts_with(' ') || line.starts_with('\t') {
         return false;
@@ -340,49 +372,12 @@ fn is_top_level_tags_key(line: &str) -> bool {
     line == "tags:" || line.starts_with("tags: ")
 }
 
-#[derive(Clone, Copy)]
-enum TagsRenderStyle {
-    BlockList,
-    ScalarDoubleQuoted,
-    ScalarSingleQuoted,
-    ScalarPlain,
-}
-
-fn detect_tags_render_style(line: &str) -> TagsRenderStyle {
-    let line = line.trim_end_matches(['\r', '\n']);
-    let Some(value) = line.strip_prefix("tags:") else {
-        return TagsRenderStyle::BlockList;
-    };
-    let value = value.trim();
-    if value.is_empty() || value.starts_with('[') {
-        return TagsRenderStyle::BlockList;
+fn render_collections(collections: &[String]) -> String {
+    if collections.is_empty() {
+        return format!("{MINE_COLLECTIONS_FIELD}: []\n");
     }
-    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
-        return TagsRenderStyle::ScalarDoubleQuoted;
-    }
-    if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
-        return TagsRenderStyle::ScalarSingleQuoted;
-    }
-    TagsRenderStyle::ScalarPlain
-}
-
-fn render_tags_with_style(tags: &[String], style: TagsRenderStyle) -> String {
-    match style {
-        TagsRenderStyle::BlockList => render_tags(tags),
-        TagsRenderStyle::ScalarDoubleQuoted => format!(
-            "tags: \"{}\"\n",
-            tags.join(" ").replace('\\', "\\\\").replace('"', "\\\"")
-        ),
-        TagsRenderStyle::ScalarSingleQuoted => {
-            format!("tags: '{}'\n", tags.join(" ").replace('\'', "''"))
-        }
-        TagsRenderStyle::ScalarPlain => format!("tags: {}\n", tags.join(" ")),
-    }
-}
-
-fn render_tags(tags: &[String]) -> String {
-    let mut out = String::from("tags:\n");
-    for tag in tags {
+    let mut out = format!("{MINE_COLLECTIONS_FIELD}:\n");
+    for tag in collections {
         out.push_str("  - ");
         out.push_str(&yaml_quote_tag(tag));
         out.push('\n');
@@ -406,26 +401,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn patch_tags_frontmatter_inserts_minimal_frontmatter_for_foreign_markdown() {
+    fn patch_collections_frontmatter_inserts_minimal_frontmatter_for_foreign_markdown() {
         let input = "# Note\n\nBody";
-        let output = patch_tags_frontmatter(input, &["design".to_string()]).unwrap();
-        assert_eq!(output, "---\ntags:\n  - design\n---\n# Note\n\nBody");
-    }
-
-    #[test]
-    fn patch_tags_frontmatter_preserves_unknown_fields() {
-        let input = "---\naliases:\n  - A\n# keep me\ntags:\n  - old\ncssclasses: wide\n---\nBody";
-        let output = patch_tags_frontmatter(input, &["design/typography".to_string()]).unwrap();
+        let output = patch_collections_frontmatter(input, &["design".to_string()]).unwrap();
         assert_eq!(
             output,
-            "---\naliases:\n  - A\n# keep me\ntags:\n  - design/typography\ncssclasses: wide\n---\nBody"
+            "---\nMine Collections:\n  - design\n---\n# Note\n\nBody"
         );
     }
 
     #[test]
-    fn patch_tags_frontmatter_preserves_double_quoted_scalar_tags_style() {
+    fn patch_collections_frontmatter_preserves_unknown_fields_and_obsidian_tags() {
+        let input = "---\naliases:\n  - A\n# keep me\ntags:\n  - old\ncssclasses: wide\n---\nBody";
+        let output =
+            patch_collections_frontmatter(input, &["design/typography".to_string()]).unwrap();
+        assert_eq!(
+            output,
+            "---\naliases:\n  - A\n# keep me\ntags:\n  - old\ncssclasses: wide\nMine Collections:\n  - design/typography\n---\nBody"
+        );
+    }
+
+    #[test]
+    fn patch_collections_frontmatter_preserves_scalar_obsidian_tags() {
         let input = "---\ntype: meeting\ntags: \"design typography\"\n---\nBody";
-        let output = patch_tags_frontmatter(
+        let output = patch_collections_frontmatter(
             input,
             &[
                 "design".to_string(),
@@ -436,14 +435,14 @@ mod tests {
         .unwrap();
         assert_eq!(
             output,
-            "---\ntype: meeting\ntags: \"design typography аркада\"\n---\nBody"
+            "---\ntype: meeting\ntags: \"design typography\"\nMine Collections:\n  - design\n  - typography\n  - аркада\n---\nBody"
         );
     }
 
     #[test]
-    fn patch_tags_frontmatter_preserves_plain_scalar_tags_style() {
-        let input = "---\ntags: design typography\n---\nBody";
-        let output = patch_tags_frontmatter(
+    fn patch_collections_frontmatter_updates_existing_mine_collections() {
+        let input = "---\ntags: design typography\nMine Collections:\n  - old\n---\nBody";
+        let output = patch_collections_frontmatter(
             input,
             &[
                 "design".to_string(),
@@ -454,28 +453,44 @@ mod tests {
         .unwrap();
         assert_eq!(
             output,
-            "---\ntags: design typography local-first\n---\nBody"
+            "---\ntags: design typography\nMine Collections:\n  - design\n  - typography\n  - local-first\n---\nBody"
         );
     }
 
     #[test]
-    fn patch_tags_frontmatter_removes_tags_but_keeps_empty_fence() {
+    fn patch_collections_frontmatter_removes_collections_but_preserves_obsidian_tags() {
+        let input = "---\ntags:\n  - old\nMine Collections:\n  - design\n---\nBody";
+        let output = patch_collections_frontmatter(input, &[]).unwrap();
+        assert_eq!(
+            output,
+            "---\ntags:\n  - old\nMine Collections: []\n---\nBody"
+        );
+    }
+
+    #[test]
+    fn patch_collections_frontmatter_writes_empty_override_for_legacy_tags() {
         let input = "---\ntags:\n  - old\n---\nBody";
-        let output = patch_tags_frontmatter(input, &[]).unwrap();
-        assert_eq!(output, "---\n---\nBody");
+        let output = patch_collections_frontmatter(input, &[]).unwrap();
+        assert_eq!(
+            output,
+            "---\ntags:\n  - old\nMine Collections: []\n---\nBody"
+        );
     }
 
     #[test]
-    fn patch_tags_frontmatter_treats_unclosed_fence_as_body() {
+    fn patch_collections_frontmatter_treats_unclosed_fence_as_body() {
         let input = "---\ntags:\n  - old";
-        let output = patch_tags_frontmatter(input, &["new".to_string()]).unwrap();
-        assert_eq!(output, "---\ntags:\n  - new\n---\n---\ntags:\n  - old");
+        let output = patch_collections_frontmatter(input, &["new".to_string()]).unwrap();
+        assert_eq!(
+            output,
+            "---\nMine Collections:\n  - new\n---\n---\ntags:\n  - old"
+        );
     }
 
     #[test]
-    fn patch_tags_frontmatter_rejects_invalid_yaml_inside_fence() {
+    fn patch_collections_frontmatter_rejects_invalid_yaml_inside_fence() {
         let input = "---\ntype: article\n\tbad\n---\nBody";
-        let err = patch_tags_frontmatter(input, &["new".to_string()]).unwrap_err();
+        let err = patch_collections_frontmatter(input, &["new".to_string()]).unwrap_err();
         assert!(err.contains("malformed frontmatter"));
     }
 }

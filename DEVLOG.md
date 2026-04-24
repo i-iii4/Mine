@@ -1,5 +1,35 @@
 # Devlog
 
+## 24.04.2026 [primary] — Mine Collections source format: dual-read + new writes
+
+### Goal
+
+Развести пользовательские Obsidian `tags` и Mine-owned collections. `tags`
+часто используются Obsidian-плагинами и личными системами пользователя, поэтому
+Mine больше не должен писать туда свои коллекции.
+
+### Completed
+
+- `domain/block` читает коллекции с приоритетом:
+  `Mine Collections` → legacy `tags` fallback → empty.
+- `serialize_frontmatter` пишет коллекции как human-readable
+  `Mine Collections`, не `tags`.
+- `commands/tags` теперь patch'ит только `Mine Collections` и сохраняет
+  существующий `tags` byte-for-byte.
+- `rename_channel` переведён с full serialize на permissive parser +
+  surgical `Mine Collections` patch, чтобы partial/foreign Markdown не терял
+  unknown YAML fields.
+- Clipper/native-host save path автоматически пишет новый формат через общий
+  `serialize_block`.
+
+### Verification
+
+- `cargo test parse_markdown_document --quiet`
+- `cargo test patch_collections_frontmatter --quiet`
+- `cargo test parse_frontmatter --quiet`
+- `cargo test serialize_frontmatter --quiet`
+- `cargo test write_and_read_roundtrip --quiet`
+
 ## 24.04.2026 [primary] — Obsidian compat follow-up: scalar tags + visible index warnings
 
 ### Goal

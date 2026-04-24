@@ -7,7 +7,10 @@ use std::collections::HashMap;
 use tauri::{AppHandle, State};
 
 use crate::commands::state::{current_vault_layout, AppState, CommandError};
-use crate::domain::block::{parse_block, serialize_block, Block, BlockType, DateTime, Frontmatter};
+use crate::commands::tags::patch_collections_frontmatter;
+use crate::domain::block::{
+    parse_block, parse_markdown_document, serialize_block, Block, BlockType, DateTime, Frontmatter,
+};
 use crate::domain::channel::Channel;
 use crate::domain::tag::normalize_tag;
 use crate::storage::{db, files, index};
@@ -292,10 +295,12 @@ pub fn rename_channel(
                 )));
             }
         };
-        let mut block = parse_block(&indexed_block.slug, &content).map_err(|e| {
+        let parsed = parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path))
+            .map_err(|e| {
             vs.conn.execute("ROLLBACK", []).ok();
             CommandError::Internal(e.to_string())
         })?;
+        let mut block = parsed.block;
 
         // Replace old tag with new tag (compare normalized to handle legacy non-normalized tags)
         block
@@ -306,12 +311,22 @@ pub fn rename_channel(
             block.frontmatter.tags.push(normalized_new.clone());
         }
 
-        let serialized = serialize_block(&block);
+        let serialized =
+            patch_collections_frontmatter(&content, &block.frontmatter.tags).map_err(|e| {
+                vs.conn.execute("ROLLBACK", []).ok();
+                CommandError::Internal(e)
+            })?;
         if let Err(e) = std::fs::write(&path, serialized) {
             vs.conn.execute("ROLLBACK", []).ok();
             return Err(CommandError::Internal(format!("failed to write: {}", e)));
         }
-        index::upsert_block(&vs.conn, &block, Some(vs.vault.root()))?;
+        index::upsert_block_with_diagnostics(
+            &vs.conn,
+            &block,
+            Some(vs.vault.root()),
+            Some(parsed.origin.as_str()),
+            parsed.index_warning.as_deref(),
+        )?;
     }
 
     // Create new channel with same metadata
@@ -353,6 +368,15 @@ pub fn rename_channel(
         .map(|t| t.count)
         .unwrap_or(0);
     Ok(ChannelDto::from_channel(&new_channel, count))
+}
+
+fn file_saved_at(path: &std::path::Path) -> DateTime {
+    let time = std::fs::metadata(path)
+        .ok()
+        .and_then(|metadata| metadata.created().ok().or_else(|| metadata.modified().ok()))
+        .unwrap_or_else(std::time::SystemTime::now);
+    DateTime::new(&crate::util::system_time_to_iso8601(time))
+        .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
 }
 
 /// Sidebar preview: slug + whether it's a text-only thumbnail (for dark mode invert).

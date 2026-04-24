@@ -14,6 +14,7 @@ use serde_yaml::Value;
 use thiserror::Error;
 
 const FRONTMATTER_SCAN_LIMIT_LINES: usize = 20;
+const MINE_COLLECTIONS_FIELD: &str = "Mine Collections";
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
@@ -215,8 +216,8 @@ pub fn parse_frontmatter(yaml: &str) -> Result<Frontmatter, BlockError> {
     let color = get_opt_string(&value, "color");
     let icon = get_opt_string(&value, "icon");
 
-    // Tags (optional, defaults to empty vec)
-    let tags = parse_tags(&value)?;
+    // Mine collections (optional, legacy fallback to `tags`)
+    let tags = parse_collections(&value)?;
 
     Ok(Frontmatter {
         block_type,
@@ -331,7 +332,7 @@ pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
     let mut lines = Vec::new();
 
     // Field order per spec: type, title, description, url, file, thumbnail,
-    // tags, saved_at, source, width, height, author.
+    // Mine Collections, saved_at, source, width, height, author.
     lines.push(format!("type: {}", frontmatter.block_type.as_str()));
 
     if let Some(ref v) = frontmatter.title {
@@ -350,7 +351,7 @@ pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
         lines.push(format!("thumbnail: {}", yaml_quote(v)));
     }
     if !frontmatter.tags.is_empty() {
-        lines.push("tags:".to_string());
+        lines.push(format!("{MINE_COLLECTIONS_FIELD}:"));
         for tag in &frontmatter.tags {
             lines.push(format!("  - {}", yaml_quote(tag)));
         }
@@ -637,8 +638,11 @@ fn get_opt_u64(parent: &Value, key: &str) -> Option<u64> {
     parent.get(key).and_then(|v| v.as_u64())
 }
 
-fn parse_tags(parent: &Value) -> Result<Vec<String>, BlockError> {
-    let Some(tags_val) = parent.get("tags") else {
+fn parse_collections(parent: &Value) -> Result<Vec<String>, BlockError> {
+    let Some(tags_val) = parent
+        .get(MINE_COLLECTIONS_FIELD)
+        .or_else(|| parent.get("tags"))
+    else {
         return Ok(vec![]);
     };
 
@@ -757,7 +761,7 @@ fn parse_frontmatter_compat(
         })
         .unwrap_or(fallback_saved_at);
 
-    let (tags, tag_warning) = parse_tags_compat(&value);
+    let (tags, tag_warning) = parse_collections_compat(&value);
     if tag_warning {
         warning.get_or_insert_with(|| "unsupported_tag_shape".to_string());
     }
@@ -784,11 +788,18 @@ fn parse_frontmatter_compat(
     ))
 }
 
-fn parse_tags_compat(parent: &Value) -> (Vec<String>, bool) {
-    let Some(tags_val) = parent.get("tags") else {
+fn parse_collections_compat(parent: &Value) -> (Vec<String>, bool) {
+    let Some(tags_val) = parent
+        .get(MINE_COLLECTIONS_FIELD)
+        .or_else(|| parent.get("tags"))
+    else {
         return (Vec::new(), false);
     };
 
+    parse_tag_like_value_compat(tags_val)
+}
+
+fn parse_tag_like_value_compat(tags_val: &Value) -> (Vec<String>, bool) {
     let mut warning = false;
     let raw_tags: Vec<String> = match tags_val {
         Value::Sequence(seq) => seq.iter().filter_map(yaml_value_to_string).collect(),
@@ -1207,7 +1218,7 @@ mod tests {
 
     #[test]
     fn parse_markdown_document_unknown_type_downgrades_to_article_with_warning() {
-        let input = "---\ntype: meeting\ntags: [design/typography]\n---\nBody";
+        let input = "---\ntype: meeting\nMine Collections: [design/typography]\n---\nBody";
         let parsed = parse_markdown_document("meeting-note", input, fallback_dt()).unwrap();
         assert_eq!(parsed.index_warning.as_deref(), Some("unknown_type"));
         assert_eq!(parsed.block.frontmatter.block_type, BlockType::Article);
@@ -1242,6 +1253,13 @@ mod tests {
         let input = "---\ntags: \"#design typography\"\n---\nBody";
         let parsed = parse_markdown_document("tags", input, fallback_dt()).unwrap();
         assert_eq!(parsed.block.frontmatter.tags, vec!["design", "typography"]);
+    }
+
+    #[test]
+    fn parse_markdown_document_mine_collections_override_obsidian_tags() {
+        let input = "---\ntags: \"#design typography\"\nMine Collections:\n  - Аркада\n---\nBody";
+        let parsed = parse_markdown_document("tags", input, fallback_dt()).unwrap();
+        assert_eq!(parsed.block.frontmatter.tags, vec!["аркада"]);
     }
 
     #[test]
@@ -1321,9 +1339,16 @@ mod tests {
     #[test]
     fn parse_frontmatter_tags_numeric_coerced_to_string() {
         // YAML parses bare `1` as integer. Tag parser must coerce to "1".
-        let yaml = "type: link\nsaved_at: 2026-02-26T14:30:00Z\ntags:\n  - design\n  - 1\n  - 42";
+        let yaml = "type: link\nsaved_at: 2026-02-26T14:30:00Z\nMine Collections:\n  - design\n  - 1\n  - 42";
         let fm = parse_frontmatter(yaml).unwrap();
         assert_eq!(fm.tags, vec!["design", "1", "42"]);
+    }
+
+    #[test]
+    fn parse_frontmatter_mine_collections_override_legacy_tags() {
+        let yaml = "type: link\nsaved_at: 2026-02-26T14:30:00Z\ntags:\n  - obsidian\nMine Collections:\n  - mine";
+        let fm = parse_frontmatter(yaml).unwrap();
+        assert_eq!(fm.tags, vec!["mine"]);
     }
 
     #[test]
@@ -1452,8 +1477,9 @@ mod tests {
         // None fields must not appear.
         assert!(!yaml.contains("title:"));
         assert!(!yaml.contains("description:"));
-        // Empty tags must not appear.
+        // Empty collections must not appear.
         assert!(!yaml.contains("tags:"));
+        assert!(!yaml.contains("Mine Collections:"));
     }
 
     #[test]
@@ -1478,7 +1504,8 @@ mod tests {
         let yaml = serialize_frontmatter(&fm);
         assert!(yaml.contains("type: article"));
         assert!(yaml.contains("title: My Title"));
-        assert!(yaml.contains("tags:"));
+        assert!(yaml.contains("Mine Collections:"));
+        assert!(!yaml.contains("tags:"));
         assert!(yaml.contains("- tag1"));
         assert!(yaml.contains("- tag2"));
         assert!(yaml.contains("author: Author"));
@@ -1504,15 +1531,15 @@ mod tests {
             icon: None,
         };
         let yaml = serialize_frontmatter(&fm);
-        // Per spec: type, title, description, url, file, thumbnail, tags,
-        // saved_at, source, width, height, author.
+        // Per spec: type, title, description, url, file, thumbnail,
+        // Mine Collections, saved_at, source, width, height, author.
         let pos_type = yaml.find("type:").unwrap();
         let pos_title = yaml.find("title:").unwrap();
         let pos_desc = yaml.find("description:").unwrap();
         let pos_url = yaml.find("url:").unwrap();
         let pos_file = yaml.find("file:").unwrap();
         let pos_thumb = yaml.find("thumbnail:").unwrap();
-        let pos_tags = yaml.find("tags:").unwrap();
+        let pos_tags = yaml.find("Mine Collections:").unwrap();
         let pos_saved = yaml.find("saved_at:").unwrap();
         let pos_source = yaml.find("source:").unwrap();
         let pos_width = yaml.find("width:").unwrap();
