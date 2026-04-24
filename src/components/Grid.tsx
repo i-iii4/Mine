@@ -619,7 +619,7 @@ export function Grid({
         <div
           ref={parentRef}
           onContextMenu={handleContextMenu}
-          className="h-full overflow-x-hidden overflow-y-auto pb-8 pt-16"
+          className="h-full overflow-x-hidden overflow-y-auto pb-8 pt-20"
           style={{
             paddingLeft: sidebarCollapsed ? 72 : 32,
             paddingRight: sidebarCollapsed ? 72 : 32,
@@ -642,7 +642,7 @@ export function Grid({
           )}
           {parentWidth > 0 && blocks.length > 0 && phase !== "committed" && (
             <>
-              <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex justify-center">
+              <div className="pointer-events-none absolute inset-x-0 top-20 z-10 flex justify-center">
                 <p className="rounded-1 border border-border bg-background/90 px-3 py-1 text-sm text-muted-foreground backdrop-blur">
                   Refining layout…
                 </p>
