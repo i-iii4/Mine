@@ -439,6 +439,8 @@ Response:
 
 Native host скачивает `image_url`, сохраняет файл, генерирует thumbnail.
 
+Инвариант для `block_type=image`: блок не может быть записан без разрешённого media. Save считается успешным только если native host получил `media_file` через `image_url` / data URL / `pre_uploaded_file` либо валидный `thumbnail`. Если источник отсутствует или скачивание/финализация media не удались, native host возвращает `ok:false`, а `.md` не создаётся. Это защищает vault от orphan image-записей без `file:`.
+
 #### `create_channel`
 
 Создание нового канала.
@@ -498,6 +500,8 @@ Chrome ограничивает отдельное native messaging-сообще
 
 После успешного upload попап передаёт полученное имя в `save_block` через поле `pre_uploaded_file`. Native host проверяет, что файл существует в vault, и использует его как `media_file` блока — без повторного скачивания через `image_url`.
 
+Если screenshot upload не удался (`Screenshot upload expired`, timeout, PNA/loopback отказ, сервер upload не настроен), popup показывает inline error через `StatusBar` и остаётся в основном UI: превью, выбранные теги, title, vault и кнопки `Save` / `Retake` сохраняются. Такие ошибки не переводят popup в full-screen `ErrorState`, потому что пользователь должен иметь возможность повторить сохранение без повторного сбора контекста.
+
 ### Browser-origin boundary
 
 В overlay-режиме UI клиппера выполняется внутри content-script context текущей страницы. Поэтому popup/overlay **не делает** `fetch("http://127.0.0.1:...")` напрямую: в Safari такой запрос считается loopback-доступом со стороны origin страницы (`store.epicgames.com`, `example.com`, и т.д.) и вызывает per-site prompt `Allow <site> to access your loopback network?`.
@@ -534,7 +538,7 @@ Chrome ограничивает отдельное native messaging-сообще
 
 | OS | Path |
 |---|---|
-| macOS | `~/Library/Application Support/Mine/native-host` |
+| macOS | `~/Library/Application Support/com.mine.app/clipper/native-host` |
 
 ### Manifest (Chrome)
 
@@ -544,7 +548,7 @@ Chrome ограничивает отдельное native messaging-сообще
 {
   "name": "com.localarena.clipper",
   "description": "Mine Web Clipper",
-  "path": "~/Library/Application Support/Mine/native-host",
+  "path": "~/Library/Application Support/com.mine.app/clipper/native-host",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://<extension-id>/"
@@ -577,10 +581,10 @@ Native host — отдельный Rust-бинарник (не Tauri). Пере�
 Native host читает путь к vault из файла конфигурации основного приложения:
 
 ```
-~/Library/Application Support/com.localarena.app/vault_path.txt
+~/Library/Application Support/com.mine.app/config.json
 ```
 
-Этот файл создаётся основным приложением при select_vault. Содержит абсолютный путь к vault.
+Этот файл создаётся основным приложением при select_vault. Поле `vault_path` содержит абсолютный путь к текущему vault; `known_vaults` используется для выбора vault из popup. Если конфиг отсутствует, standalone fallback — `~/Mine`.
 
 ### Конкурентный доступ к SQLite
 
@@ -595,7 +599,10 @@ Native host читает путь к vault из файла конфигурац�
 |---|---|
 | Vault not configured | Response: `{"ok": false, "error": "Vault not configured"}`. Popup показывает сообщение |
 | Native host not found | Chrome показывает ошибку подключения. Popup показывает «Native host not installed» |
-| Media download failed | Блок создаётся без медиафайла (type остаётся, media_file = null). Предупреждение в response |
+| Image media source missing | `block_type=image` не создаётся. Popup показывает inline error, main UI остаётся открытым |
+| Image media download/upload/finalize failed | Response: `{"ok": false, "error": "..."}`. `.md` не создаётся, чтобы не получить orphan image block без `file:` |
+| Link/video thumbnail download failed | Блок может быть создан без thumbnail; media failure для preview не ломает сохранение самой ссылки/видео |
+| Screenshot upload failed | Popup показывает inline error в `StatusBar` и сохраняет preview/tags/title для retry |
 | SQLite locked | Retry через 100мс, до 3 попыток. Затем ошибка |
 | Disk full | Ошибка записи файла. Response: `{"ok": false, "error": "Failed to write file: ..."}` |
 | Invalid URL | Блок создаётся, URL сохраняется as-is |

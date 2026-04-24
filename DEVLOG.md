@@ -1,9 +1,9 @@
 # Devlog
 
-## 24.04.2026 [primary] — Clipper save hardening: no orphan .md, inline errors, preview loader
+## 24.04.2026 [primary] — Clipper save hardening: no orphan .md, inline errors (loader experiments reverted)
 
 ### Goal
-После переноса upload в background (см. предыдущую запись) остались два отдельных режима отказа клиппера: (1) type=image сейв без фактического источника картинки тихо создавал `.md` без `file:`/`thumbnail:`, блок появлялся в SQLite, но никогда не рендерил карточку в ленте; (2) любая неудача screenshot-save (timeout, expired cache, PNA prompt dismissed) уводила popup в ErrorState, пользователь терял выбранные теги и не мог нажать Save ещё раз без полного реоткрытия клиппера. Плюс визуальный шум — наш naked `<img>` для og:image показывал broken-image икону на медленных CDN, пока upstream URL ещё не пришёл.
+После переноса upload в background (см. предыдущую запись) остались два отдельных режима отказа клиппера: (1) type=image сейв без фактического источника картинки тихо создавал `.md` без `file:`/`thumbnail:`, блок появлялся в SQLite, но никогда не рендерил карточку в ленте; (2) любая неудача screenshot-save (timeout, expired cache, PNA prompt dismissed) уводила popup в ErrorState, пользователь терял выбранные теги и не мог нажать Save ещё раз без полного реоткрытия клиппера.
 
 ### Actually completed
 
@@ -15,19 +15,18 @@
 - все ветки «upload expired», «upload timeout», «PNA dismissed», «server not configured» теперь возвращают `{ ok: false, error }` — PopupApp прокидывает в StatusBar, main UI остаётся с превью/тегами/Retake
 - раньше `showError` ставил `state = "error"` и полностью перерисовывал popup в ErrorState → пользователю оставалось только закрыть и открыть клиппер заново
 
-**Preview loader для og:image** (`extension/popup/PopupApp.tsx`)
-- локальный `PreviewImage` компонент: скелетон со спиннером пока `onLoad`, «Preview unavailable» на `onError`
-- `minHeight` фиксирован, поэтому при появлении реальной картинки нет layout shift
-- применён к link/content-video/image preview слотам; screenshot-preview не затронут (он грузит data URL мгновенно)
+**Reverted: skeleton loaders for preview & screenshot** (`e0c4816f`, `2401e8bc`, `6d681f74` — все откатаны в `fbc3f868`, `9aaace0e`, и manual revert e0c4816f)
+- добавленные UX-loaders (PreviewImage для og:image, capturing placeholder для screenshot, imgLoaded gate в ScreenshotPreview) создавали регресс: клиппер вис на бесконечном спиннере в часто-используемом happy path
+- корневая причина до конца не исследована (гипотезы: `hidden` class конфликт с `block` через twMerge, отложенный decode hidden `<img>`, или stale state в capturing flag)
+- решение: откатить до состояния где `<img>` рендерится сразу — пользователь видит либо картинку, либо browser-native broken-icon; клиппер работает моментально как раньше
 
 ### Push
 - [0e57b4a1 fix: never persist an image block without media, keep popup retry-able](https://github.com/i-iii4/local-arena/commit/0e57b4a1)
-- (loader — текущий коммит, ссылка обновится после push)
 
 ### Decisions and lessons learned
 - Clipper состояние (tags, preview) должно переживать rpc ошибку от native host. `showError` годится только для init-ошибок (`get_status` failed, `list_known_vaults` failed), когда нечего показывать.
 - Двухуровневая защита против orphan `.md`: popup (UX) + native host (invariant enforcement). Если один уровень пропустит будущий regression, второй поймает.
-- Remote img без loader делает «broken icon» default placeholder — пользователь читает это как сломанный клиппер. Skeleton со spinner + minHeight убирает layout shift и даёт ясный signal «грузится».
+- UX-loaders на клиппере нельзя вводить без live-тестирования на реальных страницах. В `popup` происходит много paint flushes (overlay hide/show, rAF, chrome.runtime round-trips), и `display: none` на `<img>` может отложить decode или вообще не триггерить `onLoad` в MV3 service worker сценарии. Возвращаемся к naked `<img>` и ждём конкретный симптом прежде чем добавлять loader снова.
 
 ## 24.04.2026 [primary] — Screenshot upload moved behind background-owned cache
 
