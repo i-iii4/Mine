@@ -733,14 +733,22 @@
     // architecture the React state is still live — we just toggle the
     // host's display:none, no rehydrate needed, no toast needed.
     if (window.__mineOverlay) {
-      window.__mineOverlay.show();
-      // Tell the overlay to accept the new cropped screenshot via a
-      // custom event dispatched on its isolated-world window.
       if (payload.status === "done" && payload.dataUrl) {
-        window.dispatchEvent(new CustomEvent("mine-crop-result", {
-          detail: { dataUrl: payload.dataUrl },
-        }));
+        chrome.runtime.sendMessage(
+          { target: "background", action: "cacheScreenshotUpload", dataUrl: payload.dataUrl },
+          (resp) => {
+            window.__mineOverlay.show();
+            window.dispatchEvent(new CustomEvent("mine-crop-result", {
+              detail: {
+                dataUrl: payload.dataUrl,
+                screenshotId: resp?.ok ? resp.screenshotId : null,
+              },
+            }));
+          },
+        );
+        return;
       }
+      window.__mineOverlay.show();
       return;
     }
     // Fallback path (detached window): persist result + show toast so

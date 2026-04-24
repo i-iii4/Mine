@@ -160,7 +160,7 @@ Popup и save() используют одну чистую функцию — `r
 
 ### 7. Screenshot (скриншот viewport)
 
-Пользователь вручную переключается в режим Screenshot из TypeSwitcher. Расширение захватывает видимую область вкладки через `chrome.tabs.captureVisibleTab({ format: "jpeg", quality: 85 })`, показывает превью в popup и загружает файл в vault через локальный HTTP-сервер native host (см. Upload Server).
+Пользователь вручную переключается в режим Screenshot из TypeSwitcher. Расширение захватывает видимую область вкладки через `chrome.tabs.captureVisibleTab({ format: "jpeg", quality: 85 })`, показывает превью в popup и загружает файл в vault через background-owned upload bridge к локальному HTTP-серверу native host (см. Upload Server).
 
 | Field | Source |
 |---|---|
@@ -184,8 +184,8 @@ Popup и save() используют одну чистую функцию — `r
    - Content script просит background захватить viewport через `chrome.tabs.captureVisibleTab({format:'jpeg',quality:95})`.
    - Получает dataUrl, грузит его в `Image`, кропит на `OffscreenCanvas` размером `width × height × devicePixelRatio`, конвертирует результат в JPEG q=0.9.
    - Отправляет background сообщение `cropDone` с обрезанным dataUrl.
-6. Background пишет `{status:"done", dataUrl}` в `chrome.storage.session.cropResult` и вызывает `chrome.action.openPopup()`.
-7. Popup при init обнаруживает `cropPendingState + cropResult`, восстанавливает состояние и заменяет превью на обрезанный скриншот. Выбранные теги, title, канал — всё на месте.
+6. Background кладёт cropped dataUrl в screenshot upload cache, пишет `{status:"done", dataUrl, screenshotId}` в `chrome.storage.session.cropResult` и вызывает `chrome.action.openPopup()`.
+7. Popup при init обнаруживает `cropPendingState + cropResult`, восстанавливает состояние и заменяет превью на обрезанный скриншот. Выбранные теги, title, канал и `screenshotId` — всё на месте.
 
 Отмена (Esc до или во время drag'а): content script убивает overlay, пишет `cropResult = {status:"cancelled"}`, background переоткрывает popup. Popup восстанавливает прежний (не кропнутый) скриншот из persisted state.
 
@@ -498,6 +498,19 @@ Chrome ограничивает отдельное native messaging-сообще
 
 После успешного upload попап передаёт полученное имя в `save_block` через поле `pre_uploaded_file`. Native host проверяет, что файл существует в vault, и использует его как `media_file` блока — без повторного скачивания через `image_url`.
 
+### Browser-origin boundary
+
+В overlay-режиме UI клиппера выполняется внутри content-script context текущей страницы. Поэтому popup/overlay **не делает** `fetch("http://127.0.0.1:...")` напрямую: в Safari такой запрос считается loopback-доступом со стороны origin страницы (`store.epicgames.com`, `example.com`, и т.д.) и вызывает per-site prompt `Allow <site> to access your loopback network?`.
+
+Правильный contract:
+
+1. `background.js` владеет in-memory screenshot upload cache и выдаёт popup/overlay короткий `screenshotId`;
+2. popup/overlay может держать `dataUrl` только для preview, но save-path передаёт в background только `screenshotId`, имя файла, порт и token;
+3. `background.js` как trusted extension context делает единственный HTTP `POST /upload` на `127.0.0.1`;
+4. content/page origin не участвует в loopback request path;
+5. пользователь не должен подтверждать loopback-доступ для каждого нового сайта при сохранении скриншотов;
+6. большой screenshot не должен повторно передаваться из popup/overlay в background при нажатии Save.
+
 ```json
 {
   "action": "save_block",
@@ -513,7 +526,7 @@ Chrome ограничивает отдельное native messaging-сообще
 - Слушает только `127.0.0.1`, не доступен извне.
 - Одноразовый токен, сгенерированный при каждом запуске, — защита от локальных процессов, которые не знают токен.
 - Имена файлов санируются (запрещены `..`, `/`, `\`).
-- Расширение получает `host_permissions: ["http://127.0.0.1/*"]` в manifest — без этого fetch до localhost блокируется CORS.
+- Расширение получает `host_permissions: ["http://127.0.0.1/*"]` в manifest — этим правом пользуется background/service worker, а не content-script overlay.
 
 ## Native Host Binary
 

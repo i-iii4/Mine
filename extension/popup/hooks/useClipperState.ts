@@ -99,6 +99,7 @@ export function useClipperState() {
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
   const [selectedVault, setSelectedVault] = useState<string | null>(null);
   const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
+  const [screenshotUploadId, setScreenshotUploadId] = useState<string | null>(null);
   const [cropSupported, setCropSupported] = useState<boolean>(false);
   const uploadPortRef = useRef<number | null>(null);
   const uploadTokenRef = useRef<string | null>(null);
@@ -139,8 +140,16 @@ export function useClipperState() {
                 showError(`Screenshot failed: ${chrome.runtime.lastError.message}`);
                 return;
               }
-              if (resp?.ok && resp.dataUrl) setScreenshotDataUrl(resp.dataUrl);
-              else showError(resp?.error ?? "Screenshot capture failed");
+              if (resp?.ok && resp.dataUrl) {
+                setScreenshotDataUrl(resp.dataUrl);
+                if (resp.screenshotId) {
+                  setScreenshotUploadId(resp.screenshotId);
+                } else {
+                  cacheCapturedScreenshot(resp.dataUrl);
+                }
+              } else {
+                showError(resp?.error ?? "Screenshot capture failed");
+              }
             },
           );
         });
@@ -155,7 +164,9 @@ export function useClipperState() {
           showError(`Screenshot failed: ${chrome.runtime.lastError.message}`);
           return;
         }
-        if (dataUrl) setScreenshotDataUrl(dataUrl);
+        if (!dataUrl) return;
+        setScreenshotDataUrl(dataUrl);
+        cacheCapturedScreenshot(dataUrl);
       },
     );
   }, []);
@@ -170,6 +181,19 @@ export function useClipperState() {
   const retakeScreenshot = useCallback(() => {
     captureScreenshot();
   }, [captureScreenshot]);
+
+  function cacheCapturedScreenshot(dataUrl: string) {
+    chrome.runtime.sendMessage(
+      { target: "background", action: "cacheScreenshotUpload", dataUrl },
+      (resp) => {
+        if (chrome.runtime.lastError) {
+          setScreenshotUploadId(null);
+          return;
+        }
+        setScreenshotUploadId(resp?.ok && resp.screenshotId ? resp.screenshotId : null);
+      },
+    );
+  }
 
   const startCropMode = useCallback(async () => {
     if (!cropSupported || tabIdRef.current === null) return;
@@ -201,6 +225,7 @@ export function useClipperState() {
         currentType,
         selectedVault: vaultRef.current,
         screenshotDataUrl,
+        screenshotUploadId,
       },
     });
 
@@ -237,14 +262,18 @@ export function useClipperState() {
     title,
     currentType,
     screenshotDataUrl,
+    screenshotUploadId,
   ]);
 
   // Overlay context: listen for crop result event dispatched by content.js
   useEffect(() => {
     if (!IS_CONTENT_SCRIPT_CONTEXT) return;
     function onCropResult(e: Event) {
-      const { detail } = e as CustomEvent<{ dataUrl?: string }>;
-      if (detail?.dataUrl) setScreenshotDataUrl(detail.dataUrl);
+      const { detail } = e as CustomEvent<{ dataUrl?: string; screenshotId?: string | null }>;
+      if (detail?.dataUrl && detail.screenshotId) {
+        setScreenshotDataUrl(detail.dataUrl);
+        setScreenshotUploadId(detail.screenshotId);
+      }
     }
     window.addEventListener("mine-crop-result", onCropResult);
     return () => window.removeEventListener("mine-crop-result", onCropResult);
@@ -316,8 +345,13 @@ export function useClipperState() {
           currentType: ClipType;
           selectedVault: string | null;
           screenshotDataUrl: string | null;
+          screenshotUploadId: string | null;
         };
-        const result = cropData.cropResult as { status: "done" | "cancelled"; dataUrl?: string };
+        const result = cropData.cropResult as {
+          status: "done" | "cancelled";
+          dataUrl?: string;
+          screenshotId?: string;
+        };
 
         chrome.storage.session.remove(["cropPendingState", "cropResult"]);
 
@@ -333,9 +367,11 @@ export function useClipperState() {
 
         if (result.status === "done" && result.dataUrl) {
           setScreenshotDataUrl(result.dataUrl);
+          setScreenshotUploadId(result.screenshotId ?? null);
         } else {
           // Cancelled — keep previous (un-cropped) screenshot
           setScreenshotDataUrl(pending.screenshotDataUrl);
+          setScreenshotUploadId(pending.screenshotUploadId);
         }
 
         // Re-check crop capability for the same tab (window-entry only —
@@ -602,6 +638,11 @@ export function useClipperState() {
         showError("Screenshot not captured yet");
         return;
       }
+      if (!screenshotUploadId) {
+        setSaving(false);
+        showError("Screenshot upload expired. Retake the screenshot and try again.");
+        return;
+      }
       if (!uploadPortRef.current || !uploadTokenRef.current) {
         setSaving(false);
         showError("Upload server not configured");
@@ -611,7 +652,12 @@ export function useClipperState() {
         const blob = await fetch(screenshotDataUrl).then((r) => r.blob());
         const ext = blob.type === "image/png" ? "png" : "jpg";
         const filename = `${(title || "screenshot").replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 60)}.${ext}`;
-        const uploadResult = await uploadFile(uploadPortRef.current, uploadTokenRef.current, filename, blob);
+        const uploadResult = await uploadFile(
+          uploadPortRef.current,
+          uploadTokenRef.current,
+          filename,
+          screenshotUploadId,
+        );
         if (uploadResult.ok && uploadResult.filename) {
           payload.pre_uploaded_file = uploadResult.filename;
         } else {
@@ -648,7 +694,17 @@ export function useClipperState() {
       return { ok: true as const };
     }
     return { ok: false as const, error: result.error ?? "Failed to save" };
-  }, [metadata, articleData, currentType, title, selectedTags, recentTags, saving, screenshotDataUrl]);
+  }, [
+    metadata,
+    articleData,
+    currentType,
+    title,
+    selectedTags,
+    recentTags,
+    saving,
+    screenshotDataUrl,
+    screenshotUploadId,
+  ]);
 
   const switchVault = useCallback(async (vaultPath: string) => {
     setSelectedVault(vaultPath);

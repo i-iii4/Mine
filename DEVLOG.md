@@ -1,5 +1,24 @@
 # Devlog
 
+## 24.04.2026 [primary] — Screenshot upload moved behind background-owned cache
+
+### Goal
+Убрать Safari loopback permission prompt при сохранении скриншотов из overlay-клиппера. Симптом: Safari показывал `Allow <site> to access your loopback network?` для каждого нового сайта, потому что HTTP upload на `127.0.0.1` выполнялся из content-script overlay context текущей страницы.
+
+### Actually completed
+
+**Loopback upload больше не инициируется page origin** (`extension/background.js`, `extension/content.js`, `extension/popup/lib/messaging.ts`, `extension/popup/hooks/useClipperState.ts`)
+- `background.js` теперь владеет in-memory screenshot upload cache и выдаёт popup/overlay короткий `screenshotId`
+- preview по-прежнему использует captured `dataUrl`, но save-path передаёт в background только `screenshotId`, filename, port и token
+- единственный `fetch(http://127.0.0.1:<port>/upload...)` выполняется в trusted extension background/service worker
+- overlay/page origin больше не участвует в loopback request path, поэтому Safari не должен спрашивать разрешение отдельно для `store.epicgames.com`, `example.com` и других сайтов
+- большой screenshot больше не передаётся повторно из popup/overlay в background при нажатии Save
+
+**SPEC_CLIPPER.md обновлён**
+- зафиксирован browser-origin boundary
+- явно запрещён direct localhost fetch из popup/overlay content context
+- `host_permissions` теперь описан как право background/service worker, а upload cache — как владелец binary upload boundary
+
 ## 23.04.2026 12:04 [primary] — Unified feed-video poster contract and measuring-safe autoplay
 
 ### Goal

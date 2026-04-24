@@ -213,6 +213,32 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 let nativePort = null;
 const pendingCallbacks = new Map();
 let messageId = 0;
+const screenshotUploads = new Map();
+let screenshotUploadId = 0;
+
+function cacheScreenshotUpload(dataUrl) {
+  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
+    return { ok: false, error: "Missing screenshot data" };
+  }
+
+  const id = `shot-${Date.now()}-${++screenshotUploadId}`;
+  const mimeMatch = /^data:([^;,]+)/.exec(dataUrl);
+  screenshotUploads.set(id, {
+    dataUrl,
+    contentType: mimeMatch?.[1] ?? "image/jpeg",
+    createdAt: Date.now(),
+  });
+
+  // Keep the cache bounded to live clipper interactions.
+  if (screenshotUploads.size > 8) {
+    const oldest = [...screenshotUploads.entries()]
+      .sort(([, a], [, b]) => a.createdAt - b.createdAt)
+      .slice(0, screenshotUploads.size - 8);
+    for (const [oldId] of oldest) screenshotUploads.delete(oldId);
+  }
+
+  return { ok: true, screenshotId: id };
+}
 
 function getNativePort() {
   if (nativePort) return nativePort;
@@ -282,6 +308,47 @@ function sendNativeMessage(message) {
   });
 }
 
+async function uploadFileToNativeHost({ port, token, filename, screenshotId }) {
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    return { ok: false, error: "Invalid upload port" };
+  }
+  if (typeof token !== "string" || token.length === 0) {
+    return { ok: false, error: "Missing upload token" };
+  }
+  if (typeof filename !== "string" || filename.length === 0) {
+    return { ok: false, error: "Missing upload filename" };
+  }
+  if (typeof screenshotId !== "string" || screenshotId.length === 0) {
+    return { ok: false, error: "Missing screenshot id" };
+  }
+
+  const cached = screenshotUploads.get(screenshotId);
+  if (!cached) {
+    return { ok: false, error: "Screenshot upload expired" };
+  }
+
+  try {
+    const blob = await fetch(cached.dataUrl).then((response) => response.blob());
+    const resp = await fetch(
+      `http://127.0.0.1:${port}/upload?filename=${encodeURIComponent(filename)}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": cached.contentType || blob.type || "application/octet-stream",
+        },
+        body: blob,
+      },
+    );
+    if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
+    const result = await resp.json();
+    if (result?.ok) screenshotUploads.delete(screenshotId);
+    return result;
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
 // ── Message handler (from popup) ──────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -290,6 +357,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "nativeMessage") {
     sendNativeMessage(msg.payload).then(sendResponse);
     return true; // async response
+  }
+
+  if (msg.action === "uploadFile") {
+    uploadFileToNativeHost(msg.payload ?? {}).then(sendResponse);
+    return true;
+  }
+
+  if (msg.action === "cacheScreenshotUpload") {
+    sendResponse(cacheScreenshotUpload(msg.dataUrl));
+    return true;
   }
 
   // Content script asks background to inject the overlay bundle into its
@@ -354,7 +431,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false, error: chrome.runtime.lastError?.message ?? "Capture failed" });
         return;
       }
-      sendResponse({ ok: true, dataUrl });
+      const cached = cacheScreenshotUpload(dataUrl);
+      if (!cached.ok) {
+        sendResponse(cached);
+        return;
+      }
+      sendResponse({ ok: true, dataUrl, screenshotId: cached.screenshotId });
     });
     return true;
   }
@@ -366,9 +448,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // shows an on-page toast asking the user to click the extension icon; popup
   // will rehydrate from chrome.storage.session on next open.
   if (msg.action === "cropDone") {
-    const result = msg.status === "done"
-      ? { status: "done", dataUrl: msg.dataUrl }
-      : { status: "cancelled" };
+    let result = { status: "cancelled" };
+    if (msg.status === "done") {
+      const cached = cacheScreenshotUpload(msg.dataUrl);
+      result = cached.ok
+        ? { status: "done", dataUrl: msg.dataUrl, screenshotId: cached.screenshotId }
+        : { status: "cancelled", error: cached.error };
+    }
     chrome.storage.session.set({ cropResult: result }).then(() => {
       // Badge the extension icon so the user sees something changed
       if (msg.status === "done") {

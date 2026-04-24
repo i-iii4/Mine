@@ -198,25 +198,37 @@ export async function uploadFile(
   port: number,
   token: string,
   filename: string,
-  blob: Blob,
+  screenshotId: string,
 ): Promise<{ ok: boolean; filename?: string; error?: string }> {
-  try {
-    const resp = await fetch(
-      `http://127.0.0.1:${port}/upload?filename=${encodeURIComponent(filename)}`,
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve({ ok: false, error: "Upload timeout" });
+    }, 30_000);
+
+    chrome.runtime.sendMessage(
       {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": blob.type || "application/octet-stream",
+        target: "background",
+        action: "uploadFile",
+        payload: {
+          port,
+          token,
+          filename,
+          screenshotId,
         },
-        body: blob,
+      },
+      (response) => {
+        clearTimeout(timer);
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve((response as { ok: boolean; filename?: string; error?: string }) ?? {
+          ok: false,
+          error: "No upload response",
+        });
       },
     );
-    if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
-    return await resp.json();
-  } catch (e) {
-    return { ok: false, error: String(e) };
-  }
+  });
 }
 
 export async function getImageInfo(
