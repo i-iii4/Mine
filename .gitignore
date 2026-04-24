@@ -33,3 +33,8 @@ src-tauri/gen/
 
 # Vault cache (user data, not project files)
 .arena/
+
+# Clipper/native-host generated local compatibility artifacts
+extension/generated/
+safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/generated/
+safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/clipperHostCompatibility.js
