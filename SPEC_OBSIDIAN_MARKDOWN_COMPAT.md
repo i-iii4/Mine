@@ -289,11 +289,12 @@ Foreign Markdown displays as article/note:
 - detail renders full markdown body through existing wikilink preprocessing;
 - local embeds render from vault media files;
 - metadata panel may show filename and derived date, but should not imply that
-  `saved_at` exists in source frontmatter.
+  `saved_at` exists in source frontmatter;
+- metadata panel surfaces `index_warning` as a quiet diagnostic field when
+  the parser had to downgrade or ignore source metadata.
 
-No special feed badge or detail warning is required for v1. `index_warning`
-is stored for diagnostics and future UI, but normal reading surfaces should not
-add warning chrome in the first implementation.
+No special feed badge is required for v1. Feed remains a normal reading
+surface; detailed diagnostics live in Detail metadata.
 
 ## Write Model
 
@@ -365,6 +366,8 @@ compatibility writes.
 For v1, the conservative contract is:
 
 - patch only the field required by the user action, usually `tags`;
+- preserve existing scalar tag style when safely patching scalar frontmatter
+  such as `tags: "design typography"` or `tags: design typography`;
 - preserve every byte outside the patched field range, including comments,
   unknown fields, ordering, scalar style, literal/folded strings, anchors, and
   aliases;
@@ -469,13 +472,14 @@ source `.md` no longer exists in the vault.
 - feed renders implicit article card.
 - detail renders Obsidian embed from implicit article body.
 - metadata panel handles derived title/date without source frontmatter fields.
-- `index_warning` is persisted for diagnostics, but not surfaced in normal v1
-  UI.
+- metadata panel surfaces `index_warning` for malformed frontmatter, unknown
+  type, invalid date, or unsupported tag shape.
 
 ### Write Path
 
 - assigning tag to foreign Markdown inserts minimal frontmatter with `tags`.
 - assigning tag to partial Obsidian frontmatter preserves unknown fields.
+- assigning tag to scalar Obsidian `tags` preserves scalar style when safe.
 - assigning tag preserves `aliases`, `cssclasses`, comments, field ordering,
   multiline scalars, and unrelated custom YAML bytes.
 - removing tag from partial frontmatter removes only that tag.

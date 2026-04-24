@@ -307,6 +307,7 @@ fn patch_tags_yaml(yaml: &str, tags: &[String]) -> Result<String, String> {
         return Ok(out);
     };
 
+    let render_style = detect_tags_render_style(lines[start_idx]);
     let mut end_idx = start_idx + 1;
     while end_idx < lines.len() {
         let line = lines[end_idx];
@@ -323,7 +324,7 @@ fn patch_tags_yaml(yaml: &str, tags: &[String]) -> Result<String, String> {
         out.push_str(line);
     }
     if !tags.is_empty() {
-        out.push_str(&render_tags(tags));
+        out.push_str(&render_tags_with_style(tags, render_style));
     }
     for line in &lines[end_idx..] {
         out.push_str(line);
@@ -337,6 +338,46 @@ fn is_top_level_tags_key(line: &str) -> bool {
         return false;
     }
     line == "tags:" || line.starts_with("tags: ")
+}
+
+#[derive(Clone, Copy)]
+enum TagsRenderStyle {
+    BlockList,
+    ScalarDoubleQuoted,
+    ScalarSingleQuoted,
+    ScalarPlain,
+}
+
+fn detect_tags_render_style(line: &str) -> TagsRenderStyle {
+    let line = line.trim_end_matches(['\r', '\n']);
+    let Some(value) = line.strip_prefix("tags:") else {
+        return TagsRenderStyle::BlockList;
+    };
+    let value = value.trim();
+    if value.is_empty() || value.starts_with('[') {
+        return TagsRenderStyle::BlockList;
+    }
+    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
+        return TagsRenderStyle::ScalarDoubleQuoted;
+    }
+    if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
+        return TagsRenderStyle::ScalarSingleQuoted;
+    }
+    TagsRenderStyle::ScalarPlain
+}
+
+fn render_tags_with_style(tags: &[String], style: TagsRenderStyle) -> String {
+    match style {
+        TagsRenderStyle::BlockList => render_tags(tags),
+        TagsRenderStyle::ScalarDoubleQuoted => format!(
+            "tags: \"{}\"\n",
+            tags.join(" ").replace('\\', "\\\\").replace('"', "\\\"")
+        ),
+        TagsRenderStyle::ScalarSingleQuoted => {
+            format!("tags: '{}'\n", tags.join(" ").replace('\'', "''"))
+        }
+        TagsRenderStyle::ScalarPlain => format!("tags: {}\n", tags.join(" ")),
+    }
 }
 
 fn render_tags(tags: &[String]) -> String {
@@ -378,6 +419,42 @@ mod tests {
         assert_eq!(
             output,
             "---\naliases:\n  - A\n# keep me\ntags:\n  - design/typography\ncssclasses: wide\n---\nBody"
+        );
+    }
+
+    #[test]
+    fn patch_tags_frontmatter_preserves_double_quoted_scalar_tags_style() {
+        let input = "---\ntype: meeting\ntags: \"design typography\"\n---\nBody";
+        let output = patch_tags_frontmatter(
+            input,
+            &[
+                "design".to_string(),
+                "typography".to_string(),
+                "аркада".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            output,
+            "---\ntype: meeting\ntags: \"design typography аркада\"\n---\nBody"
+        );
+    }
+
+    #[test]
+    fn patch_tags_frontmatter_preserves_plain_scalar_tags_style() {
+        let input = "---\ntags: design typography\n---\nBody";
+        let output = patch_tags_frontmatter(
+            input,
+            &[
+                "design".to_string(),
+                "typography".to_string(),
+                "local-first".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            output,
+            "---\ntags: design typography local-first\n---\nBody"
         );
     }
 

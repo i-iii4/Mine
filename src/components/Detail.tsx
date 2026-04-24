@@ -220,6 +220,7 @@ function MetadataPanel({
   onRequestRename,
 }: MetadataPanelProps) {
   const displayBlock = fullBlock ?? block;
+  const indexWarning = getIndexWarning(displayBlock);
   return (
     <div className="flex flex-col gap-5 font-mono">
       <ArticleAudioControls
@@ -240,6 +241,10 @@ function MetadataPanel({
       <MetadataField label="DATE" value={formattedDate} />
 
       <MetadataField label="TYPE" value={displayBlock.block_type.toUpperCase()} />
+
+      {indexWarning && (
+        <MetadataField label="WARNING" value={formatIndexWarning(indexWarning)} />
+      )}
 
       {displayBlock.url && isSafeUrl(displayBlock.url) && (
         <div>
@@ -307,6 +312,25 @@ function MetadataField({ label, value }: { label: string; value: string }) {
       <div className="mt-1 text-sm text-foreground">{value}</div>
     </div>
   );
+}
+
+function getIndexWarning(block: LightBlock | IndexedBlock): string | null {
+  return "index_warning" in block ? block.index_warning ?? null : null;
+}
+
+function formatIndexWarning(warning: string): string {
+  switch (warning) {
+    case "malformed_frontmatter":
+      return "Malformed frontmatter, shown as Markdown";
+    case "unknown_type":
+      return "Unknown type, shown as article";
+    case "invalid_saved_at":
+      return "Invalid date, using file date";
+    case "unsupported_tag_shape":
+      return "Some tags ignored";
+    default:
+      return warning.replaceAll("_", " ");
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

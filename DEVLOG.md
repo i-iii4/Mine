@@ -1,5 +1,38 @@
 # Devlog
 
+## 24.04.2026 [primary] — Obsidian compat follow-up: scalar tags + visible index warnings
+
+### Goal
+
+После live smoke-test обычные Obsidian `.md` файлы без Mine frontmatter уже
+индексируются, отображаются и получают minimal `tags` frontmatter при
+перемещении в коллекцию. Оставались две полировки совместимости: не
+переписывать пользовательский scalar-style `tags` в YAML-list без нужды и
+сделать parser warnings видимыми в Detail.
+
+### Completed
+
+- `tags` patcher сохраняет scalar style при безопасном обновлении:
+  `tags: "design typography"` остаётся scalar string, а
+  `tags: design typography` остаётся plain scalar.
+- Foreign Markdown без frontmatter по-прежнему получает минимальный list-style
+  frontmatter при первом Mine write, потому что там нет исходного стиля,
+  который нужно сохранять.
+- Detail metadata показывает quiet `WARNING` для `index_warning`
+  (`malformed_frontmatter`, `unknown_type`, `invalid_saved_at`,
+  `unsupported_tag_shape`), не добавляя warning chrome в feed.
+- Добавлены ручные smoke-файлы в Mine vault:
+  `Obsidian Compat 07 Raw Wikilink.md` и
+  `Obsidian Compat 08 Scalar Tags.md`.
+
+### Verification
+
+- `cargo test patch_tags_frontmatter --quiet`
+- `cargo test --quiet -- --test-threads=1`
+- `npm run build`
+- live smoke-test: Obsidian-style files render, wikilink embed path works,
+  move-to-collection writes expected frontmatter.
+
 ## 24.04.2026 [primary] — Clipper: Tab-cycling в overlay не работает без предварительного клика — unresolved
 
 ### Symptom
