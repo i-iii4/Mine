@@ -64,14 +64,35 @@ describe("Card", () => {
 
   // ── Image card ────────────────────────────────────────────────────────
 
-  it("renders image card from the generated preview thumbnail", () => {
+  it("prefers the source media file over the cached thumbnail", () => {
+    // Source-first cascade: the vault-side media file is always on disk
+    // by the time a block is indexed, while the thumb may still be in
+    // background generation. Using source first avoids the
+    // broken-image flash that used to appear between save and
+    // thumb-ready.
     const b = block({
       block_type: "image",
       media_file: "sunset.jpg",
     });
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const img = screen.getByRole("img");
-    expect(img).toHaveAttribute("src", expect.stringContaining("/.arena/cache/thumbs/test-block.jpg"));
+    expect(img).toHaveAttribute("src", expect.stringContaining("sunset.jpg"));
+    expect(img).not.toHaveAttribute("src", expect.stringContaining("/.arena/cache/thumbs/"));
+  });
+
+  it("falls through to the cached thumbnail when the source media load fails", () => {
+    const b = block({
+      block_type: "image",
+      media_file: "sunset.jpg",
+    });
+    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const img = screen.getByRole("img");
+    fireEvent.error(img);
+    const fallback = screen.getByRole("img");
+    expect(fallback).toHaveAttribute(
+      "src",
+      expect.stringContaining("/.arena/cache/thumbs/test-block.jpg"),
+    );
   });
 
   it("renders image card alt text from the title", () => {
@@ -80,16 +101,18 @@ describe("Card", () => {
     expect(screen.getByRole("img")).toHaveAttribute("alt", "Sunset");
   });
 
-  it("renders broken image fallback on error", () => {
+  it("renders broken image fallback after every source in the cascade fails", () => {
+    // Exhaust the whole cascade: source → thumb → fallback text card.
+    // Each onError bumps the internal index; once every candidate is
+    // spent the text-plus-icon placeholder takes over.
     const b = block({
       block_type: "image",
       media_file: "missing.jpg",
       title: "Missing Image",
     });
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    const img = screen.getByRole("img");
-    fireEvent.error(img);
-    // After error, the fallback should show the title
+    fireEvent.error(screen.getByRole("img"));
+    fireEvent.error(screen.getByRole("img"));
     expect(screen.getByText("Missing Image")).toBeInTheDocument();
   });
 

@@ -191,7 +191,7 @@ export function CardContent({
   const content = (() => {
     switch (descriptor.variant) {
       case "image":
-        return <ImageCard block={block} descriptor={descriptor} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
+        return <ImageCard block={block} descriptor={descriptor} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
       case "link":
         return <LinkCard block={block} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
       case "article-text":
@@ -347,27 +347,62 @@ function GalleryTiles({
 const ImageCard = memo(function ImageCard({
   block,
   descriptor,
+  vaultPath,
   thumbsRootPath,
   measurementMode = false,
 }: {
   block: LightBlock;
   descriptor: CardLayoutDescriptor;
+  vaultPath: string;
   thumbsRootPath: string;
   measurementMode?: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
-  const [error, setError] = useState(false);
-  const src = thumbnailUrl(thumbsRootPath, block.slug);
 
-  // Retry failed loads when vault data refreshes (e.g. iCloud files downloaded)
+  // Preview source cascade, in order:
+  // 1. the actual media file in the vault (always present the moment
+  //    the .md is indexed — the clipper / native host writes the file
+  //    before the block row lands),
+  // 2. the cached thumbnail at <thumbs>/<slug>.jpg (may not exist yet
+  //    while background thumb-gen is still running),
+  // 3. a text fallback card with the title and an "image off" icon.
+  //
+  // Prior behaviour went straight to (2) and skipped to (3) on any
+  // error, so a block that landed faster than its thumb (common after
+  // clipper save) flashed the browser's broken-image icon or collapsed
+  // into the "image off" card even though its source was already on
+  // disk and visible in Finder. The cascade closes that gap without
+  // any loader state — the <img> element just walks through the
+  // candidate list via onError.
+  const sources = useMemo(() => {
+    const list: string[] = [];
+    if (block.media_file) list.push(mediaUrl(vaultPath, block.media_file));
+    list.push(thumbnailUrl(thumbsRootPath, block.slug));
+    return list;
+  }, [block.media_file, block.slug, vaultPath, thumbsRootPath]);
+
+  const [sourceIndex, setSourceIndex] = useState(0);
+  const sourcesKey = sources.join("|");
+
+  // Reset the cascade when the input set changes (new block, vault
+  // switch, iCloud refresh). Intentionally does NOT reset on every
+  // re-render — the clipper regression taught us that resetting a
+  // loading state during unrelated renders produces visible flicker
+  // and, in extreme cases, infinite loaders.
   useEffect(() => {
-    if (!error) return;
-    const handler = () => setError(false);
+    setSourceIndex(0);
+  }, [sourcesKey]);
+
+  useEffect(() => {
+    if (sourceIndex < sources.length) return;
+    const handler = () => setSourceIndex(0);
     window.addEventListener("vault-refreshed", handler);
     return () => window.removeEventListener("vault-refreshed", handler);
-  }, [error]);
+  }, [sourceIndex, sources.length]);
 
-  if (error) {
+  const currentSrc = sources[sourceIndex] ?? null;
+
+  if (currentSrc === null) {
     return (
       <div className="flex aspect-square items-center justify-center bg-accent">
         <div className="text-center">
@@ -395,11 +430,15 @@ const ImageCard = memo(function ImageCard({
     >
       {!measurementMode && (
         <img
-          src={src}
+          // Keyed by src so React remounts the element when we fall
+          // through to the next candidate. Without the key the browser
+          // would reuse the failed request entry and never re-request.
+          key={currentSrc}
+          src={currentSrc}
           alt={block.title ?? block.slug}
           className="absolute inset-0 h-full w-full object-cover"
           loading={imgLoading}
-          onError={() => setError(true)}
+          onError={() => setSourceIndex((i) => i + 1)}
         />
       )}
     </div>
