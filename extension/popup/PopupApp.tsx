@@ -166,34 +166,13 @@ export function PopupApp() {
           </div>
         )}
 
-        {clipper.currentType === "screenshot" && (
-          clipper.screenshotDataUrl ? (
-            <ScreenshotPreview
-              dataUrl={clipper.screenshotDataUrl}
-              onRetake={clipper.retakeScreenshot}
-              onCrop={clipper.startCropMode}
-              cropSupported={clipper.cropSupported}
-            />
-          ) : (
-            // Skeleton for the capture window. captureVisibleTab is
-            // typically sub-second but can drag to a few seconds when
-            // the MV3 service worker was idle and needs to spin up, or
-            // when the page is heavy and the post-hide paint takes a
-            // frame or two. Before this placeholder the area was empty
-            // and the user had no signal that anything was happening.
-            <div
-              className="flex items-center justify-center rounded-1 border border-border bg-accent"
-              style={{ minHeight: 220 }}
-              role="status"
-              aria-live="polite"
-              aria-label={clipper.screenshotCapturing ? "Capturing screenshot" : "Preparing screenshot"}
-            >
-              <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
-                <div className="size-4 animate-spin rounded-round border-[1.5px] border-border border-t-foreground" />
-                <span>Capturing screenshot…</span>
-              </div>
-            </div>
-          )
+        {clipper.currentType === "screenshot" && clipper.screenshotDataUrl && (
+          <ScreenshotPreview
+            dataUrl={clipper.screenshotDataUrl}
+            onRetake={clipper.retakeScreenshot}
+            onCrop={clipper.startCropMode}
+            cropSupported={clipper.cropSupported}
+          />
         )}
       </div>
 
