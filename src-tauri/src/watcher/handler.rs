@@ -312,6 +312,18 @@ pub fn thumb_sweep(
 
     let mut jobs: Vec<ThumbJob> = Vec::with_capacity(indexed.len());
     for row in indexed {
+        // Defensive: a row with a slug that cannot form a valid block
+        // path (empty, path traversal, separator) would panic
+        // `block_path`'s debug_assert. Such rows should not exist in
+        // steady state but can survive legacy imports or a partially
+        // rolled-back migration. Skip them instead of tanking the sweep.
+        if crate::domain::vault::validate_slug(&row.slug).is_err() {
+            log::warn!(
+                "thumb_sweep: skipping block with invalid slug {:?}",
+                row.slug
+            );
+            continue;
+        }
         match row.to_domain_block() {
             Ok(block) => {
                 let source_path = vault.block_path(&block.slug);
