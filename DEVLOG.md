@@ -1,5 +1,38 @@
 # Devlog
 
+## 24.04.2026 [primary] — Clipper: parallel inline-media downloads + action-aware native-messaging timeouts
+
+### Goal
+Пользователь сохранял `https://www.apple.com/la/ipad-mini/` (15+ inline картинок) — popup показывал `Native host timeout`, но `.md` всё равно появлялся в Mine через ~минуту. Native host работал последовательно: 15 × 2с + 300мс sleep между каждой = 30+с, popup-таймаут жёстко 30с в [background.js](file:///Users/i_iii/Проекты/local-arena/extension/background.js) и 10с в [popup/lib/messaging.ts](file:///Users/i_iii/Проекты/local-arena/extension/popup/lib/messaging.ts) — гарантированно срабатывал на любой средней статье.
+
+Требование пользователя — **синхронный Clipper** без зависимости от Mine: после успешного ответа popup'у `.md` уже полностью локализован, Obsidian видит готовую статью.
+
+### Actually completed
+
+**Three-phase localize_body_images** ([src-tauri/src/bin/native_host.rs](file:///Users/i_iii/Проекты/local-arena/src-tauri/src/bin/native_host.rs))
+- Phase A — `scan_inline_tasks`: проход по body, парсинг `![alt](url)`, расчёт детерминистичных per-kind индексов (image/video/file), формирование `Vec<InlineTask>` с уже посчитанными `dest_name`/`dest_path`/`host`. Cap `MAX_INLINE_IMAGES = 30` сохранён.
+- Phase B — `run_parallel_downloads`: фиксированный пул из `MAX_PARALLEL_DOWNLOADS = 3` worker-thread'ов на shared `VecDeque`-queue. Per-domain ограничение `MAX_PER_DOMAIN = 2` через `DomainLimiter` (Mutex+Condvar) — защита от 429 на CDN типа `pbs.twimg.com`. Per-request `INLINE_REQUEST_TIMEOUT = 15s`.
+- Phase C — `apply_rewrites`: dedup через `files_identical` byte-comparison (оставляем самый ранний); rewrite-specs строятся против оригинального body, применяются в **обратном порядке offset'ов**. Failed downloads оставляют remote URL в body — рендерится через CSP `img-src https:`.
+- Архитектурный инвариант сохранён: `.md` записывается одним атомарным write **после** Phase C. Промежуточного «.md есть, картинки качаются» нет.
+
+**Action-aware native-messaging timeouts** ([extension/background.js](file:///Users/i_iii/Проекты/local-arena/extension/background.js), [extension/popup/lib/messaging.ts](file:///Users/i_iii/Проекты/local-arena/extension/popup/lib/messaging.ts))
+- `timeoutForAction(action)`: `save_block` → `180_000ms`, остальное оставлено как было (`30_000ms` в bg.js, `10_000ms` в popup messaging).
+- Worst case: 30 inline × 15с per-request × 3 retry / 3 параллели ≈ 150с, 180с — буфер. Лёгкие RPC (`get_status`, `list_channels`) не страдают.
+
+**42 unit-теста** в `bin/native_host.rs` (новых 9): `host_from_url_*`, `scan_*` (skip data/relative URL, per-kind indices, cap, malformed brackets), `apply_rewrites_*` (success/failed/dedup-with-caption/zero-tasks/reverse-offset), `domain_limiter_*` (blocks above cap, releases on Drop, different hosts don't block). `cargo test --bin native-host` зелёный.
+
+### Architecture decisions and rejected alternatives
+- **Heartbeat-протокол** (native_host шлёт `_kind: "progress"` пинги, popup сбрасывает таймаут) — отвергнут как over-engineering: добавляет новый message type, обработку в bg.js, обратную совместимость; делает то же что простой bump таймаута, но дороже.
+- **Detached daemon** (native_host форкает background-процесс, моментально отвечает popup'у) — отвергнут: нарушает инвариант «полностью локализованная .md в момент закрытия popup'а» (daemon отвечает с remote URL в body); тащит lifecycle/lockfile/launchd/log-rotation сложность; не даёт реального выигрыша при наличии inline-media downloads.
+- **Tauri-side worker** (write fast в native_host, localize в Tauri через watcher) — отвергнут: требует Mine быть открытым, а пользователь явно требует автономного Clipper'а.
+- **Параллель внутри одной задачи (concurrent retry attempts)** — out of scope: внутри одного task'а retry остаётся последовательным, экономия минимальная.
+
+### Lessons learned
+- Per-domain throttling через Mutex+Condvar — простой паттерн без новых зависимостей. `std::sync::mpsc` + `std::thread` + shared `VecDeque<usize>` достаточно для 3-worker pool, не нужен `tokio`/`rayon`/`crossbeam`.
+- Two-phase алгоритм (compute specs against original / apply in reverse) — стандартный приём для безопасной mutate-in-place параллельной обработки. Делает dedup-логику с line-extension'ами тривиально безопасной: offsets валидны, бо они вычисляются до любых правок.
+- Action-aware таймауты лучше единого: лёгкие RPC не должны висеть 180с при отказе native host'а.
+- Native host обновляется отдельно: после `cargo build --release --bin native-host` обязательно `cp target/release/native-host ~/Library/Application\ Support/LocalArena/native-host`. `cargo tauri dev` этого не делает.
+
 ## 24.04.2026 [primary] — Grid source-first + finalize dedupe; clipper loader experiments reverted
 
 ### Goal

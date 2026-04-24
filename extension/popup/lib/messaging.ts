@@ -19,13 +19,18 @@ export interface ChannelInfo {
   block_count: number;
 }
 
-const TIMEOUT_MS = 10_000;
+// save_block в native_host синхронно качает inline-картинки статьи —
+// must mirror background.js timeoutForAction(). Остальные actions —
+// быстрый read-only IPC через bg.js port.
+function timeoutForAction(action: string): number {
+  return action === "save_block" ? 180_000 : 10_000;
+}
 
 export async function sendToNative(payload: NativeRequest): Promise<NativeResponse> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       resolve({ ok: false, error: "Native host timeout" });
-    }, TIMEOUT_MS);
+    }, timeoutForAction(payload.action));
 
     chrome.runtime.sendMessage(
       { target: "background", action: "nativeMessage", payload },

@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md)
 
 ## Goal
 
@@ -153,6 +153,14 @@ Goal: устранить две подтверждённые архитекту�
     - `heavy` clips остаются консервативными: одновременно autoplay'ит только один committed heavy clip, при этом in-viewport heavy имеет приоритет над off-screen lingering candidate;
     - autoplay больше не сбрасывается на всём `measuring`; уже committed prefix может продолжать и начинать playback, пока нижняя часть grid ещё догоняет layout;
   - `C5` остаётся `[~]` до ручной приёмки пользователем: autoplay dedicated video, autoplay single-video previews, preview-only multi-media, no blank square on failures.
+
+### Current known product compatibility gap
+
+- **Obsidian Markdown compatibility.**
+  - Plain Obsidian `.md` files without Mine frontmatter should be indexed as implicit articles instead of parse errors.
+  - Read path must be non-invasive: opening/rebuilding Mine must not write frontmatter into user-authored notes.
+  - Mine frontmatter becomes an optional metadata overlay for explicit Mine fields (`tags`, `type`, `url`, `file`) rather than a hard requirement for displaying Markdown.
+  - Scope is specified in `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`; implementation remains pending.
 
 ### Current known blocker before phase completion
 
@@ -894,9 +902,22 @@ Goal: довести filename-first rename до законченного про�
 | 19.4 | Frontend rename UX | [x] | `Rename…` в overflow `…` menu и `Detail`, единый `RenameBlockDialog`, typed error rendering, `block:renamed` retargeting для open detail/grid state. |
 | 19.5 | Specs + tests | [x] | Rust tests на rewrite/media/audio/name collisions, frontend tests на dialog и `block:renamed` state sync, обновление SPEC/PLAN/DEVLOG. |
 
+### Phase 20 — Clipper inline-media parallelization [COMPLETE]
+
+Goal: убрать `Native host timeout` на статьях с многими inline-картинками (apple.com/ipad-mini etc.). Сохранить инвариант синхронного клиппера — `.md` записывается одним атомарным write с уже локализованной body, Obsidian видит готовое состояние, Mine-приложение не требуется.
+
+| # | Slice | Status | Scope |
+|---|-------|--------|-------|
+| 20.1 | Three-phase localize_body_images | [x] | `scan_inline_tasks` (Phase A) → `run_parallel_downloads` (Phase B, pool из 3 thread'ов + `DomainLimiter` 2/host) → `apply_rewrites` (Phase C, dedup + reverse-offset). Cap `MAX_INLINE_IMAGES = 30` сохранён. |
+| 20.2 | Per-request ureq timeout | [x] | `INLINE_REQUEST_TIMEOUT = 15s` на каждый `ureq.call()` в `download_file` — один зависший CDN не монополизирует worker slot. |
+| 20.3 | Action-aware native-messaging timeout | [x] | `timeoutForAction(action)` в [extension/background.js](file:///Users/i_iii/Проекты/local-arena/extension/background.js) и [popup/lib/messaging.ts](file:///Users/i_iii/Проекты/local-arena/extension/popup/lib/messaging.ts): `save_block` → 180s, остальное как было. |
+| 20.4 | Unit tests | [x] | 9 новых тестов: `host_from_url_*`, `scan_*` (skip data/relative, indices, cap, malformed), `apply_rewrites_*` (success/failed/dedup/zero/reverse), `domain_limiter_*` (cap/release/per-host). 42/42 зелёных. |
+| 20.5 | Docs | [x] | [SPEC_CLIPPER.md](file:///Users/i_iii/Проекты/local-arena/SPEC_CLIPPER.md) § Article inline-media pipeline, [DEVLOG.md](file:///Users/i_iii/Проекты/local-arena/DEVLOG.md) entry с rejected alternatives (heartbeat / daemon / Tauri-worker). |
+
 ### Backlog
 
 | Task | Description |
 |---|---|
 | Validate vault | Команда проверки целостности vault: валидация frontmatter, осиротевшие медиа, консистентность индекса, автоисправление |
 | Conflict diff view | Опциональный side-by-side diff base ↔ conflict перед `dismiss_for_manual_merge`. См. [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) § Conflict resolution. |
+| Tight per-kind numbering после dedup/failed | После Phase C индексы могут содержать gap'ы (`image 1, image 3`). Renumber + rename файлов на диске для консистентности с пользовательским ожиданием. UX-only, не функционально. |

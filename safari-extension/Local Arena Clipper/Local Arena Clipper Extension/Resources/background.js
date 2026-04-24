@@ -282,6 +282,13 @@ function getNativePort() {
   return nativePort;
 }
 
+// save_block может последовательно/параллельно качать до 30 inline-картинок.
+// Worst case: ureq retry × 15s × per-domain ограничения ≈ 150s. 180s — буфер.
+// Остальные actions (get_status, list_channels, …) — мгновенные read-only.
+function timeoutForAction(action) {
+  return action === "save_block" ? 180_000 : 30_000;
+}
+
 function sendNativeMessage(message) {
   return new Promise((resolve) => {
     const port = getNativePort();
@@ -300,7 +307,7 @@ function sendNativeMessage(message) {
         pendingCallbacks.delete(id);
         resolve({ ok: false, error: "Native host timeout" });
       }
-    }, 30000);
+    }, timeoutForAction(message?.action));
 
     pendingCallbacks.set(id, { resolve, timeout });
 

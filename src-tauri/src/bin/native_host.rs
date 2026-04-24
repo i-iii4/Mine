@@ -11,9 +11,11 @@
 //
 // Contract: SPEC_CLIPPER.md
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use mine_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use mine_lib::domain::vault::{resolve_slug_conflict, VaultLayout};
@@ -701,6 +703,11 @@ fn validate_fetch_url(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Per-request timeout for inline-media downloads. ureq 2.x default is
+/// 30s — too long for one stuck CDN to monopolize a worker slot when
+/// the parallel pool only has 3 workers serving 15+ images.
+const INLINE_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Download a file from URL to local path.
 /// `referer` should be the page URL (not the image URL) — CDNs validate this.
 /// Retries up to 3 times with backoff.
@@ -712,6 +719,7 @@ fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Re
             std::thread::sleep(std::time::Duration::from_millis(500 * attempt));
         }
         match ureq::get(url)
+            .timeout(INLINE_REQUEST_TIMEOUT)
             .set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .set("Referer", referer)
             .set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
@@ -842,155 +850,353 @@ fn build_inline_media_name(slug: &str, kind: InlineMediaKind, idx: u32, ext: &st
 /// Download inline images from Markdown body, replacing external URLs with local filenames.
 /// Images that fail to download keep their original URL.
 const MAX_INLINE_IMAGES: u32 = 30;
+const MAX_PARALLEL_DOWNLOADS: usize = 3;
+const MAX_PER_DOMAIN: usize = 2;
 
-fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &str) -> String {
-    let mut result = body.to_string();
-    let mut total_count: u32 = 0;
+/// One inline `![alt](url)` occurrence parsed from the body, with its
+/// destination filename precomputed. Phase A produces a Vec<InlineTask>;
+/// Phase B downloads in parallel; Phase C dedups + rewrites the body.
+#[derive(Debug, Clone)]
+struct InlineTask {
+    img_start: usize,        // offset of '!' in '![alt](url)'
+    paren_end: usize,        // offset of ')' (inclusive)
+    alt: String,             // raw alt text between '[' and ']'
+    url: String,
+    host: String,            // for per-domain throttling
+    #[allow(dead_code)] // diagnostic only after Phase A
+    kind: InlineMediaKind,
+    dest_name: String,       // e.g. "Title (image 1).jpg"
+    dest_path: PathBuf,
+}
+
+/// Counting semaphore keyed by hostname. Used by the download pool to
+/// avoid hitting one CDN with more than MAX_PER_DOMAIN concurrent
+/// requests (Twitter/X 429s, Apple sometimes throttles).
+struct DomainLimiter {
+    state: Mutex<HashMap<String, usize>>,
+    cv: Condvar,
+    max_per_domain: usize,
+}
+
+impl DomainLimiter {
+    fn new(max_per_domain: usize) -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(HashMap::new()),
+            cv: Condvar::new(),
+            max_per_domain,
+        })
+    }
+
+    /// Block until a slot for this host is available, then increment and
+    /// return a permit. Permit decrements on Drop.
+    fn acquire(self: &Arc<Self>, host: String) -> DomainPermit {
+        let mut state = self.state.lock().expect("DomainLimiter poisoned");
+        loop {
+            let count = state.entry(host.clone()).or_insert(0);
+            if *count < self.max_per_domain {
+                *count += 1;
+                return DomainPermit {
+                    limiter: Arc::clone(self),
+                    host,
+                };
+            }
+            state = self
+                .cv
+                .wait(state)
+                .expect("DomainLimiter wait poisoned");
+        }
+    }
+}
+
+struct DomainPermit {
+    limiter: Arc<DomainLimiter>,
+    host: String,
+}
+
+impl Drop for DomainPermit {
+    fn drop(&mut self) {
+        let mut state = self.limiter.state.lock().expect("DomainLimiter poisoned");
+        if let Some(c) = state.get_mut(&self.host) {
+            *c = c.saturating_sub(1);
+        }
+        drop(state);
+        self.limiter.cv.notify_all();
+    }
+}
+
+/// Extract the lowercase hostname from an `http(s)://host[:port]/...` URL.
+/// Returns empty string if the URL is malformed (caller treats it as a
+/// fresh per-task domain — equivalent to no throttling for that task).
+fn host_from_url(url: &str) -> String {
+    let after_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or("");
+    after_scheme
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+}
+
+/// Phase A: scan the body, build the list of inline-media tasks with
+/// deterministic per-kind indices. Stops at MAX_INLINE_IMAGES successful
+/// http(s) matches; non-http URLs and malformed `![alt](...)` patterns
+/// are skipped without consuming the cap.
+fn scan_inline_tasks(body: &str, vault: &VaultLayout, slug: &str) -> Vec<InlineTask> {
+    let mut tasks = Vec::new();
     let mut image_idx: u32 = 0;
     let mut video_idx: u32 = 0;
     let mut file_idx: u32 = 0;
     let mut search_from = 0;
-    // Track downloaded files for deduplication
-    let mut downloaded: Vec<(PathBuf, String)> = Vec::new();
 
-    loop {
-        if total_count >= MAX_INLINE_IMAGES {
-            break;
-        }
-
-        // Find next ![
-        let Some(offset) = result[search_from..].find("![") else {
+    while tasks.len() < MAX_INLINE_IMAGES as usize {
+        let Some(offset) = body[search_from..].find("![") else {
             break;
         };
         let img_start = search_from + offset;
         let alt_start = img_start + 2;
 
-        // Find ]( after ![
-        let Some(offset) = result[alt_start..].find("](") else {
+        let Some(offset) = body[alt_start..].find("](") else {
             search_from = alt_start;
             continue;
         };
         let bracket_pos = alt_start + offset;
 
-        // Find closing )
         let url_start = bracket_pos + 2;
-        let Some(offset) = result[url_start..].find(')') else {
+        let Some(offset) = body[url_start..].find(')') else {
             search_from = url_start;
             continue;
         };
         let paren_end = url_start + offset;
 
-        let url = result[url_start..paren_end].to_string();
-
-        if url.starts_with("http://") || url.starts_with("https://") {
-            let ext = ext_from_url(&url);
-            let kind = inline_media_kind_from_ext(ext);
-            let idx = match kind {
-                InlineMediaKind::Image => {
-                    image_idx += 1;
-                    image_idx
-                }
-                InlineMediaKind::Video => {
-                    video_idx += 1;
-                    video_idx
-                }
-                InlineMediaKind::File => {
-                    file_idx += 1;
-                    file_idx
-                }
-            };
-
-            let img_name = build_inline_media_name(slug, kind, idx, ext);
-            let dest = vault.root().join(&img_name);
-
-            if download_file(&url, &dest, page_url).is_ok() {
-                // Check for duplicate by byte comparison
-                let dup = downloaded.iter().find(|(p, _)| files_identical(p, &dest));
-                if let Some((_, existing_name)) = dup {
-                    let existing_name = existing_name.clone();
-                    // Duplicate — remove this image line, delete the file
-                    let _ = std::fs::remove_file(&dest);
-                    // Remove the entire ![...](...) and surrounding whitespace
-                    let remove_end = paren_end + 1;
-                    let mut line_start = img_start;
-                    while line_start > 0 && result.as_bytes().get(line_start - 1) == Some(&b'\n') {
-                        line_start -= 1;
-                    }
-                    let mut line_end = remove_end;
-                    while line_end < result.len() && result.as_bytes().get(line_end) == Some(&b'\n')
-                    {
-                        line_end += 1;
-                    }
-                    // Also remove caption line if it matches alt text
-                    let alt = result[alt_start..bracket_pos].trim().to_string();
-                    if !alt.is_empty() && line_end < result.len() {
-                        let next_newline = result[line_end..]
-                            .find('\n')
-                            .map(|p| line_end + p)
-                            .unwrap_or(result.len());
-                        let next_line = result[line_end..next_newline].trim();
-                        if next_line == alt {
-                            line_end = next_newline;
-                            while line_end < result.len()
-                                && result.as_bytes().get(line_end) == Some(&b'\n')
-                            {
-                                line_end += 1;
-                            }
-                        }
-                    }
-                    result = result[..line_start].to_string() + &result[line_end..];
-                    search_from = line_start;
-                    // Roll back per-kind counter: this index was reserved but
-                    // consumed by a duplicate that was removed. The next
-                    // unique inline of the same kind should reuse it so the
-                    // user-visible numbering stays tight (1, 2, 3, ...).
-                    match kind {
-                        InlineMediaKind::Image => image_idx -= 1,
-                        InlineMediaKind::Video => video_idx -= 1,
-                        InlineMediaKind::File => file_idx -= 1,
-                    }
-                    log::info!(
-                        "deduplicated image: {} is identical to {}",
-                        img_name,
-                        existing_name
-                    );
-                    continue;
-                }
-
-                downloaded.push((dest, img_name.clone()));
-                let alt = result[alt_start..bracket_pos].to_string();
-                // Phase 18.H.1: write downloaded local media as Obsidian
-                // wikilink `![[name|alt]]`. The `]]` delimiter does not
-                // collide with filename characters, so no encoding is
-                // required. URL in body now equals filename on disk,
-                // restoring the invariant the whole codebase assumes.
-                //
-                // Alt text preserved via `|` separator when present so
-                // accessibility/captions survive the rewrite.
-                let new_markup = build_inline_wikilink(&img_name, alt.trim());
-                let new_len = new_markup.len();
-                result = result[..img_start].to_string() + &new_markup + &result[paren_end + 1..];
-                total_count += 1;
-                // Delay between downloads to avoid CDN rate-limiting
-                if total_count < MAX_INLINE_IMAGES {
-                    std::thread::sleep(std::time::Duration::from_millis(300));
-                }
-                search_from = img_start + new_len;
-                continue;
-            } else {
-                // Download failed: roll back the per-kind counter so the next
-                // successful inline of the same kind reuses the skipped index.
-                match kind {
-                    InlineMediaKind::Image => image_idx -= 1,
-                    InlineMediaKind::Video => video_idx -= 1,
-                    InlineMediaKind::File => file_idx -= 1,
-                }
-            }
+        let url = &body[url_start..paren_end];
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            search_from = paren_end + 1;
+            continue;
         }
 
+        let ext = ext_from_url(url);
+        let kind = inline_media_kind_from_ext(ext);
+        let idx = match kind {
+            InlineMediaKind::Image => {
+                image_idx += 1;
+                image_idx
+            }
+            InlineMediaKind::Video => {
+                video_idx += 1;
+                video_idx
+            }
+            InlineMediaKind::File => {
+                file_idx += 1;
+                file_idx
+            }
+        };
+        let dest_name = build_inline_media_name(slug, kind, idx, ext);
+        let dest_path = vault.root().join(&dest_name);
+        let host = host_from_url(url);
+        let alt = body[alt_start..bracket_pos].to_string();
+
+        tasks.push(InlineTask {
+            img_start,
+            paren_end,
+            alt,
+            url: url.to_string(),
+            host,
+            kind,
+            dest_name,
+            dest_path,
+        });
         search_from = paren_end + 1;
     }
+    tasks
+}
 
+/// Phase B: spawn a fixed worker pool, drain a shared queue of task
+/// indices, throttle per-domain via `DomainLimiter`. Returns one
+/// `Result<(), String>` per task, indexed identically to `tasks`.
+fn run_parallel_downloads(tasks: &[InlineTask], page_url: &str) -> Vec<Result<(), String>> {
+    if tasks.is_empty() {
+        return Vec::new();
+    }
+
+    let limiter = DomainLimiter::new(MAX_PER_DOMAIN);
+    let queue: Arc<Mutex<VecDeque<usize>>> =
+        Arc::new(Mutex::new((0..tasks.len()).collect()));
+    let tasks_shared: Arc<Vec<InlineTask>> = Arc::new(tasks.to_vec());
+    let (result_tx, result_rx) = std::sync::mpsc::channel::<(usize, Result<(), String>)>();
+
+    let worker_count = MAX_PARALLEL_DOWNLOADS.min(tasks.len());
+    let mut handles = Vec::with_capacity(worker_count);
+    for _ in 0..worker_count {
+        let queue = Arc::clone(&queue);
+        let limiter = Arc::clone(&limiter);
+        let tasks_shared = Arc::clone(&tasks_shared);
+        let result_tx = result_tx.clone();
+        let page_url = page_url.to_string();
+        handles.push(std::thread::spawn(move || loop {
+            let task_idx = {
+                let mut q = queue.lock().expect("download queue poisoned");
+                match q.pop_front() {
+                    Some(i) => i,
+                    None => break,
+                }
+            };
+            let task = &tasks_shared[task_idx];
+            let _permit = limiter.acquire(task.host.clone());
+            let result =
+                download_file(&task.url, &task.dest_path, &page_url).map_err(|e| e.to_string());
+            let _ = result_tx.send((task_idx, result));
+        }));
+    }
+    drop(result_tx);
+
+    let mut results: Vec<Option<Result<(), String>>> = (0..tasks.len()).map(|_| None).collect();
+    while let Ok((idx, res)) = result_rx.recv() {
+        results[idx] = Some(res);
+    }
+    for h in handles {
+        let _ = h.join();
+    }
+
+    results
+        .into_iter()
+        .map(|opt| opt.unwrap_or_else(|| Err("worker panicked or task lost".to_string())))
+        .collect()
+}
+
+/// One body-rewrite to apply at the end of localize. Computed against
+/// the ORIGINAL body so all ranges remain valid; applied in reverse
+/// offset order to preserve earlier offsets.
+struct RewriteSpec {
+    range: std::ops::Range<usize>, // [start, end) bytes in original body
+    replacement: String,
+}
+
+/// Phase C: dedup by byte comparison among successful downloads, build
+/// rewrite specs, apply in reverse offset order, return new body.
+fn apply_rewrites(body: &str, tasks: &[InlineTask], outcomes: &[Result<(), String>]) -> String {
+    debug_assert_eq!(tasks.len(), outcomes.len());
+
+    // Dedup: pair each successful task with the earliest other successful
+    // task whose downloaded file is byte-identical. Removed duplicates
+    // get their dest_file unlinked and trigger line-removal rewrites.
+    let mut dedup_target: Vec<Option<usize>> = vec![None; tasks.len()];
+    for j in 0..tasks.len() {
+        if outcomes[j].is_err() {
+            continue;
+        }
+        for i in 0..j {
+            if outcomes[i].is_err() || dedup_target[i].is_some() {
+                continue;
+            }
+            if files_identical(&tasks[i].dest_path, &tasks[j].dest_path) {
+                dedup_target[j] = Some(i);
+                let _ = std::fs::remove_file(&tasks[j].dest_path);
+                log::info!(
+                    "inline-media: dedup {} == {}",
+                    tasks[j].dest_name,
+                    tasks[i].dest_name
+                );
+                break;
+            }
+        }
+    }
+
+    // Build rewrite specs against the ORIGINAL body so offsets stay valid.
+    let mut specs: Vec<RewriteSpec> = Vec::new();
+    for (i, task) in tasks.iter().enumerate() {
+        match (&outcomes[i], dedup_target[i]) {
+            (Err(_), _) => {
+                // Failed download: leave the remote URL in place. Renderer
+                // will load it from network (CSP allows http(s) img-src).
+            }
+            (Ok(()), None) => {
+                // Successful unique: replace `![alt](url)` with wikilink.
+                let replacement = build_inline_wikilink(&task.dest_name, task.alt.trim());
+                specs.push(RewriteSpec {
+                    range: task.img_start..task.paren_end + 1,
+                    replacement,
+                });
+            }
+            (Ok(()), Some(_)) => {
+                // Duplicate: remove the entire `![...](...)` plus
+                // surrounding blank lines and matching caption line.
+                let bytes = body.as_bytes();
+                let remove_end = task.paren_end + 1;
+                let mut line_start = task.img_start;
+                while line_start > 0 && bytes.get(line_start - 1) == Some(&b'\n') {
+                    line_start -= 1;
+                }
+                let mut line_end = remove_end;
+                while line_end < body.len() && bytes.get(line_end) == Some(&b'\n') {
+                    line_end += 1;
+                }
+                let alt_trim = task.alt.trim();
+                if !alt_trim.is_empty() && line_end < body.len() {
+                    let next_newline = body[line_end..]
+                        .find('\n')
+                        .map(|p| line_end + p)
+                        .unwrap_or(body.len());
+                    let next_line = body[line_end..next_newline].trim();
+                    if next_line == alt_trim {
+                        line_end = next_newline;
+                        while line_end < body.len() && bytes.get(line_end) == Some(&b'\n') {
+                            line_end += 1;
+                        }
+                    }
+                }
+                specs.push(RewriteSpec {
+                    range: line_start..line_end,
+                    replacement: String::new(),
+                });
+            }
+        }
+    }
+
+    // Apply in reverse offset order so earlier ranges stay valid.
+    specs.sort_by(|a, b| b.range.start.cmp(&a.range.start));
+    let mut result = body.to_string();
+    for spec in specs {
+        // Defensive: ranges must lie within result. Skip pathological
+        // overlaps with later (already-applied) specs.
+        if spec.range.end > result.len() || spec.range.start > spec.range.end {
+            continue;
+        }
+        result.replace_range(spec.range, &spec.replacement);
+    }
+    result
+}
+
+fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &str) -> String {
+    let tasks = scan_inline_tasks(body, vault, slug);
+    if tasks.is_empty() {
+        return body.to_string();
+    }
+    let started = std::time::Instant::now();
+    log::info!(
+        "inline-media: {} tasks, parallel downloads start (limit={}/{}per-domain)",
+        tasks.len(),
+        MAX_PARALLEL_DOWNLOADS,
+        MAX_PER_DOMAIN,
+    );
+    let outcomes = run_parallel_downloads(&tasks, page_url);
+    let ok = outcomes.iter().filter(|r| r.is_ok()).count();
+    for (task, outcome) in tasks.iter().zip(outcomes.iter()) {
+        if let Err(e) = outcome {
+            log::warn!("inline-media: download failed url={} err={}", task.url, e);
+        }
+    }
+    let result = apply_rewrites(body, &tasks, &outcomes);
+    log::info!(
+        "inline-media: done in {:?}, {}/{} ok",
+        started.elapsed(),
+        ok,
+        tasks.len()
+    );
     result
 }
 
@@ -1604,5 +1810,154 @@ mod tests {
             build_inline_wikilink("f.jpg", ""),
             "![[f.jpg]]"
         );
+    }
+
+    // ─── localize_body_images: scan + apply_rewrites ──────────────────
+
+    fn vault_at(dir: &std::path::Path) -> VaultLayout {
+        VaultLayout::new(dir.to_path_buf())
+    }
+
+    #[test]
+    fn host_from_url_extracts_lowercase_host_only() {
+        assert_eq!(host_from_url("https://Example.com/a/b"), "example.com");
+        assert_eq!(host_from_url("http://pbs.twimg.com:443/x.jpg"), "pbs.twimg.com");
+        assert_eq!(host_from_url("ftp://nope"), "");
+        assert_eq!(host_from_url("not-a-url"), "");
+    }
+
+    #[test]
+    fn scan_skips_relative_and_data_urls() {
+        let tmp = TempDir::new().unwrap();
+        let body = "intro ![a](relative.jpg) and ![b](data:image/png;base64,xx) end";
+        let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "Slug");
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn scan_assigns_per_kind_indices_in_source_order() {
+        let tmp = TempDir::new().unwrap();
+        let body = "![a](https://h.com/1.jpg)\n\
+                    ![b](https://h.com/v.mp4)\n\
+                    ![c](https://h.com/2.png)\n\
+                    ![d](https://h.com/v2.webm)";
+        let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "Title");
+        assert_eq!(tasks.len(), 4);
+        assert_eq!(tasks[0].dest_name, "Title (image 1).jpg");
+        assert_eq!(tasks[1].dest_name, "Title (video 1).mp4");
+        assert_eq!(tasks[2].dest_name, "Title (image 2).png");
+        assert_eq!(tasks[3].dest_name, "Title (video 2).webm");
+        assert_eq!(tasks[0].host, "h.com");
+    }
+
+    #[test]
+    fn scan_caps_at_max_inline_images() {
+        let tmp = TempDir::new().unwrap();
+        let mut body = String::new();
+        for i in 0..50 {
+            body.push_str(&format!("![x](https://h.com/{i}.jpg)\n"));
+        }
+        let tasks = scan_inline_tasks(&body, &vault_at(tmp.path()), "S");
+        assert_eq!(tasks.len(), MAX_INLINE_IMAGES as usize);
+    }
+
+    #[test]
+    fn scan_handles_malformed_image_brackets_without_panic() {
+        let tmp = TempDir::new().unwrap();
+        // Unclosed `](` — must not loop forever.
+        let body = "![a](https://h.com/x.jpg) and ![broken( and ![c](https://h.com/y.jpg)";
+        let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
+        assert_eq!(tasks.len(), 2);
+    }
+
+    #[test]
+    fn apply_rewrites_replaces_successful_with_wikilinks() {
+        let tmp = TempDir::new().unwrap();
+        let body = "intro\n![cap](https://h.com/a.jpg)\nmore";
+        let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "Slug");
+        let outcomes = vec![Ok(())];
+        let rewritten = apply_rewrites(body, &tasks, &outcomes);
+        assert_eq!(rewritten, "intro\n![[Slug (image 1).jpg|cap]]\nmore");
+    }
+
+    #[test]
+    fn apply_rewrites_leaves_failed_url_in_place() {
+        let tmp = TempDir::new().unwrap();
+        let body = "x ![a](https://h.com/x.jpg) y";
+        let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
+        let outcomes = vec![Err("404".to_string())];
+        assert_eq!(apply_rewrites(body, &tasks, &outcomes), body);
+    }
+
+    #[test]
+    fn apply_rewrites_in_reverse_keeps_offsets_valid() {
+        let tmp = TempDir::new().unwrap();
+        let body = "![a](https://h.com/1.jpg)\n\n![b](https://h.com/2.jpg)";
+        let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
+        let outcomes = vec![Ok(()), Ok(())];
+        let rewritten = apply_rewrites(body, &tasks, &outcomes);
+        assert_eq!(
+            rewritten,
+            "![[S (image 1).jpg|a]]\n\n![[S (image 2).jpg|b]]"
+        );
+    }
+
+    #[test]
+    fn apply_rewrites_dedup_removes_caption_line() {
+        // Two tasks point at byte-identical files: the second is dropped
+        // along with its caption-only follow-up line.
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("S (image 1).jpg"), b"PIXELS").unwrap();
+        std::fs::write(tmp.path().join("S (image 2).jpg"), b"PIXELS").unwrap();
+        let body = "intro\n![first](https://h.com/1.jpg)\nfirst\n\n\
+                    ![second](https://h.com/2.jpg)\nsecond\n\nend";
+        let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
+        assert_eq!(tasks.len(), 2);
+        let outcomes = vec![Ok(()), Ok(())];
+        let rewritten = apply_rewrites(body, &tasks, &outcomes);
+        // First image kept (with wikilink), second pair removed entirely.
+        assert!(rewritten.contains("![[S (image 1).jpg|first]]"));
+        assert!(!rewritten.contains("S (image 2).jpg"));
+        assert!(!rewritten.contains("second"));
+        // Dup file deleted from disk.
+        assert!(!tmp.path().join("S (image 2).jpg").exists());
+        assert!(tmp.path().join("S (image 1).jpg").exists());
+    }
+
+    #[test]
+    fn apply_rewrites_zero_tasks_returns_body_unchanged() {
+        let tmp = TempDir::new().unwrap();
+        let body = "no images here";
+        assert_eq!(apply_rewrites(body, &[], &[]), body);
+        assert_eq!(localize_body_images(body, &vault_at(tmp.path()), "S", ""), body);
+    }
+
+    #[test]
+    fn domain_limiter_blocks_above_cap_and_releases_on_drop() {
+        let limiter = DomainLimiter::new(2);
+        let _p1 = limiter.acquire("h.com".into());
+        let _p2 = limiter.acquire("h.com".into());
+        // Third acquire on same host must wait — verify by spawning and
+        // observing that it doesn't return until we drop one permit.
+        let limiter_clone = Arc::clone(&limiter);
+        let acquired = Arc::new(Mutex::new(false));
+        let acquired_clone = Arc::clone(&acquired);
+        let handle = std::thread::spawn(move || {
+            let _p3 = limiter_clone.acquire("h.com".into());
+            *acquired_clone.lock().unwrap() = true;
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(!*acquired.lock().unwrap(), "third should still be blocked");
+        drop(_p1);
+        handle.join().unwrap();
+        assert!(*acquired.lock().unwrap());
+    }
+
+    #[test]
+    fn domain_limiter_different_hosts_dont_block() {
+        let limiter = DomainLimiter::new(1);
+        let _p1 = limiter.acquire("a.com".into());
+        let _p2 = limiter.acquire("b.com".into());
+        // No deadlock — both acquired immediately.
     }
 }

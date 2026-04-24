@@ -462,6 +462,20 @@ Native host скачивает `image_url`, сохраняет файл, ген�
 
 Инвариант для `block_type=image`: блок не может быть записан без разрешённого media. Save считается успешным только если native host получил `media_file` через `image_url` / data URL / `pre_uploaded_file` либо валидный `thumbnail`. Если источник отсутствует или скачивание/финализация media не удались, native host возвращает `ok:false`, а `.md` не создаётся. Это защищает vault от orphan image-записей без `file:`.
 
+##### Article inline-media pipeline
+
+`block_type=article` со `body`, содержащим `![alt](https://...)` — тяжёлая операция: native host скачивает каждую inline-картинку и переписывает body на Obsidian-wikilink `![[name|alt]]`. Реализовано как **three-phase алгоритм** в `localize_body_images` ([src-tauri/src/bin/native_host.rs](file:///Users/i_iii/Проекты/local-arena/src-tauri/src/bin/native_host.rs)):
+
+1. **Phase A — scan_inline_tasks**: проход по body, парсинг каждого `![alt](url)`, расчёт детерминистичного per-kind индекса (image/video/file), формирование `Vec<InlineTask>`. Cap: `MAX_INLINE_IMAGES = 30`. Не делает сетевых вызовов.
+2. **Phase B — run_parallel_downloads**: фиксированный пул из `MAX_PARALLEL_DOWNLOADS = 3` worker-thread'ов скачивает задачи через shared `VecDeque` queue. Per-domain ограничение `MAX_PER_DOMAIN = 2` через `DomainLimiter` (Mutex+Condvar) — защита от 429 при инлайне с одного CDN. Per-request `INLINE_REQUEST_TIMEOUT = 15s` на каждый `ureq.call()`.
+3. **Phase C — apply_rewrites**: dedup через `files_identical` byte-comparison (оставляем самый ранний по порядку, второй удаляем с диска); rewrite-specs строятся против оригинального body (range + replacement) и применяются в **обратном порядке offset'ов**, чтобы не сбивать смещения. Failed downloads оставляют remote URL в body (рендерится через CSP `img-src https:`).
+
+Архитектурный инвариант: `.md` записывается **одним атомарным write** после Phase C — Obsidian видит либо ничего, либо полностью локализованную статью. Промежуточного состояния «.md существует, но картинки ещё качаются» **нет**.
+
+Native messaging timeout — action-aware: `save_block = 180_000ms`, остальные actions = `30_000ms` ([extension/background.js:285](file:///Users/i_iii/Проекты/local-arena/extension/background.js)). Зеркально в [popup/lib/messaging.ts:22](file:///Users/i_iii/Проекты/local-arena/extension/popup/lib/messaging.ts) (`save_block = 180_000`, остальное = `10_000`). Worst case: 30 inline × 15s × 3 retry / 3 параллели ≈ 150s, 180s — буфер.
+
+Per-kind индексы могут содержать gap'ы при failed/dup (например, `image 1, image 3`) — функционально допустимо, UX-вопрос (tight numbering — backlog).
+
 #### `create_channel`
 
 Создание нового канала.
