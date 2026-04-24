@@ -18,6 +18,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use mine_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
+use mine_lib::domain::channel::Channel;
 use mine_lib::domain::vault::{resolve_slug_conflict, VaultLayout};
 use mine_lib::storage::{db, files, index, thumbnails};
 use mine_lib::util::now_iso8601;
@@ -43,7 +44,7 @@ struct StatusResponse {
     upload_token: Option<String>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
 struct ChannelInfo {
     tag: String,
     title: String,
@@ -246,33 +247,52 @@ fn handle_list_channels(vault: &VaultLayout) {
         Err(e) => return send_error(&format!("failed to list tags: {e}")),
     };
 
-    // Get promoted channels for title overrides
+    // Get promoted channels. Empty promoted channels must still be visible
+    // in the clipper: the user can create a channel in one tab and then
+    // select it before any block has been saved into it.
     let channels = index::list_channels(&conn).unwrap_or_default();
-    let channel_titles: std::collections::HashMap<&str, &str> = channels
-        .iter()
-        .map(|c| (c.tag.as_str(), c.title.as_str()))
-        .collect();
-
-    // Merge: every tag becomes a channel entry, promoted channels get their title
-    let channel_infos: Vec<ChannelInfo> = tags
-        .into_iter()
-        .map(|t| {
-            let title = channel_titles
-                .get(t.tag.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| capitalize_tag(&t.tag));
-            ChannelInfo {
-                tag: t.tag,
-                title,
-                block_count: t.count,
-            }
-        })
-        .collect();
+    let channel_infos = merge_channels_and_tags(channels, tags);
 
     send_response(&ChannelsResponse {
         ok: true,
         channels: channel_infos,
     });
+}
+
+fn merge_channels_and_tags(
+    channels: Vec<Channel>,
+    tags: Vec<index::TagCount>,
+) -> Vec<ChannelInfo> {
+    let counts: HashMap<String, usize> = tags
+        .iter()
+        .map(|tag| (tag.tag.clone(), tag.count))
+        .collect();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut infos = Vec::with_capacity(channels.len() + tags.len());
+
+    for channel in channels {
+        let tag = channel.tag;
+        let block_count = counts.get(&tag).copied().unwrap_or(0);
+        seen.insert(tag.clone());
+        infos.push(ChannelInfo {
+            tag,
+            title: channel.title,
+            block_count,
+        });
+    }
+
+    for tag in tags {
+        if seen.contains(&tag.tag) {
+            continue;
+        }
+        infos.push(ChannelInfo {
+            title: capitalize_tag(&tag.tag),
+            tag: tag.tag,
+            block_count: tag.count,
+        });
+    }
+
+    infos
 }
 
 /// Generate a human-readable title from a kebab-case tag.
@@ -495,50 +515,18 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         Err(e) => return send_error(&format!("failed to open database: {e}")),
     };
 
-    let title = p.title.unwrap_or_else(|| {
-        p.tag
-            .replace('-', " ")
-            .split_whitespace()
-            .map(capitalize_first)
-            .collect::<Vec<_>>()
-            .join(" ")
-    });
+    let created_at = match DateTime::new(&now_iso8601()) {
+        Ok(dt) => dt,
+        Err(e) => return send_error(&format!("failed to create timestamp: {e}")),
+    };
+    let title = p.title.or_else(|| Some(title_from_raw_channel_tag(&p.tag)));
 
-    let channel = mine_lib::domain::channel::Channel {
-        tag: p.tag.clone(),
-        title,
-        description: None,
-        color: None,
-        icon: None,
-        position: 0,
-        created_at: match mine_lib::domain::block::DateTime::new(&now_iso8601()) {
-            Ok(dt) => dt,
-            Err(e) => return send_error(&format!("failed to create timestamp: {e}")),
-        },
+    let channel = match Channel::new(&p.tag, title.as_deref(), created_at) {
+        Ok(channel) => channel,
+        Err(e) => return send_error(&format!("invalid channel: {e}")),
     };
 
-    // Write channel .md file (source of truth)
-    let block = mine_lib::domain::block::Block {
-        slug: channel.tag.clone(),
-        frontmatter: mine_lib::domain::block::Frontmatter {
-            block_type: mine_lib::domain::block::BlockType::Channel,
-            title: Some(channel.title.clone()),
-            description: None,
-            url: None,
-            file: None,
-            thumbnail: None,
-            tags: Vec::new(),
-            saved_at: channel.created_at.clone(),
-            source: None,
-            width: None,
-            height: None,
-            author: None,
-            position: Some(channel.position),
-            color: None,
-            icon: None,
-        },
-        body: String::new(),
-    };
+    let block = channel_to_block(&channel);
     if let Err(e) = files::write_block_file(vault, &block) {
         return send_error(&format!("failed to write channel file: {e}"));
     }
@@ -549,8 +537,41 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
 
     send_response(&CreateChannelResponse {
         ok: true,
-        tag: p.tag,
+        tag: channel.tag,
     });
+}
+
+fn channel_to_block(channel: &Channel) -> Block {
+    Block {
+        slug: channel.tag.clone(),
+        frontmatter: Frontmatter {
+            block_type: BlockType::Channel,
+            title: Some(channel.title.clone()),
+            description: channel.description.clone(),
+            url: None,
+            file: None,
+            thumbnail: None,
+            tags: Vec::new(),
+            saved_at: channel.created_at.clone(),
+            source: None,
+            width: None,
+            height: None,
+            author: None,
+            position: Some(channel.position),
+            color: channel.color.clone(),
+            icon: channel.icon.clone(),
+        },
+        body: String::new(),
+    }
+}
+
+fn title_from_raw_channel_tag(tag: &str) -> String {
+    tag
+        .replace('-', " ")
+        .split_whitespace()
+        .map(capitalize_first)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -1530,6 +1551,84 @@ mod tests {
         let path = dir.join(name);
         std::fs::write(&path, bytes).unwrap();
         path
+    }
+
+    fn test_dt() -> DateTime {
+        DateTime::new("2026-04-24T12:00:00Z").unwrap()
+    }
+
+    fn test_channel(tag: &str, title: &str) -> Channel {
+        Channel::new(tag, Some(title), test_dt()).unwrap()
+    }
+
+    #[test]
+    fn merge_channels_and_tags_includes_empty_promoted_channel() {
+        let infos = merge_channels_and_tags(
+            vec![test_channel("empty-channel", "Empty Channel")],
+            vec![],
+        );
+
+        assert_eq!(
+            infos,
+            vec![ChannelInfo {
+                tag: "empty-channel".to_string(),
+                title: "Empty Channel".to_string(),
+                block_count: 0,
+            }]
+        );
+    }
+
+    #[test]
+    fn merge_channels_and_tags_uses_promoted_title_and_tag_count() {
+        let infos = merge_channels_and_tags(
+            vec![test_channel("design", "Design System")],
+            vec![index::TagCount {
+                tag: "design".to_string(),
+                count: 3,
+            }],
+        );
+
+        assert_eq!(
+            infos,
+            vec![ChannelInfo {
+                tag: "design".to_string(),
+                title: "Design System".to_string(),
+                block_count: 3,
+            }]
+        );
+    }
+
+    #[test]
+    fn merge_channels_and_tags_keeps_unpromoted_used_tags() {
+        let infos = merge_channels_and_tags(
+            vec![test_channel("design", "Design")],
+            vec![
+                index::TagCount {
+                    tag: "design".to_string(),
+                    count: 1,
+                },
+                index::TagCount {
+                    tag: "local-first".to_string(),
+                    count: 2,
+                },
+            ],
+        );
+
+        assert_eq!(
+            infos,
+            vec![
+                ChannelInfo {
+                    tag: "design".to_string(),
+                    title: "Design".to_string(),
+                    block_count: 1,
+                },
+                ChannelInfo {
+                    tag: "local-first".to_string(),
+                    title: "Local first".to_string(),
+                    block_count: 2,
+                },
+            ]
+        );
     }
 
     #[test]

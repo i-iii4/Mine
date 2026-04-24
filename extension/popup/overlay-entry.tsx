@@ -29,10 +29,10 @@ async function loadCss(): Promise<string> {
     const raw = await fetch(url).then((r) => r.text());
     // Tailwind v4 + shadcn emit all color custom properties on :root only.
     // Inside Shadow DOM, :root matches nothing — no variables, no styles.
-    // Rewrite :root{ to :root,:host{ so the same declarations apply to
+    // Rewrite :root { ... } to :root,:host { ... } so the same declarations apply to
     // the shadow host. Rules already using `:root, :host` (font vars
-    // from @theme) are not matched by the narrower `:root{` pattern.
-    cachedCss = raw.replace(/:root\{/g, ":root,:host{");
+    // from @theme) are not matched by the narrower `:root(?=\s*\{)` pattern.
+    cachedCss = raw.replace(/:root(?=\s*\{)/g, ":root,:host");
   } catch (e) {
     console.error("[Mine] failed to load popup.css:", e);
     cachedCss = "";
@@ -75,7 +75,7 @@ async function mount(): Promise<OverlayHandle> {
 
   const host = document.createElement("div");
   host.setAttribute("data-mine-clipper-overlay", "");
-  host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;";
+  host.style.cssText = "all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;";
 
   // Open mode: event.composedPath() inside capture-phase window
   // listeners reveals full path into the shadow tree. Closed mode
@@ -91,7 +91,40 @@ async function mount(): Promise<OverlayHandle> {
       all: initial;
       display: block;
       font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
+      line-height: 20px;
+      color: var(--foreground);
       color-scheme: dark light;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-size-adjust: 100%;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    #root {
+      all: initial;
+      display: block;
+      min-height: 100vh;
+      font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
+      line-height: 20px;
+      color: var(--foreground);
+      color-scheme: dark light;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-size-adjust: 100%;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    #root *, #root *::before, #root *::after {
+      box-sizing: border-box;
+    }
+
+    #root button,
+    #root input,
+    #root textarea,
+    #root select {
+      font: inherit;
     }
 
     /* Tailwind v4 uses CSS @property rules (initial-value: solid) for

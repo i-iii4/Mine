@@ -235,6 +235,20 @@ Context-menu клики переопределяют этот выбор в `app
 2. Image-режим (ПКМ на картинке) не показывает TypeSwitcher вообще — пользователь не переключает типы, только сохраняет.
 3. Default для «всего остального» — именно Screenshot, не Link. При открытии popup без явного типа расширение сразу делает capture и показывает превью.
 
+### Startup performance contract
+
+Popup/overlay init не ждёт тяжёлый article extraction. Стартовый путь делает только дешёвые операции, необходимые для первого usable paint:
+
+1. `get_status`
+2. metadata extraction (`extractMetadata`)
+3. context-menu override, если есть
+4. выбор default tab + первый screenshot capture для default `Screenshot`
+5. `setState("main")`
+
+`extractArticleAsync` запускается только после первого paint и только для типов, которым нужен body: `selection`, `article`, `content`, `video`. Для обычных страниц, которые по эвристике становятся `link` → default `Screenshot`, Defuddle/readability extraction не запускается на старте. Это защищает overlay от долгого открытия на DOM-heavy сайтах.
+
+Если пользователь переключился в Content и article body ещё грузится, Save не должен записывать пустую статью: UI возвращает inline error и остаётся открытым до завершения загрузки.
+
 Пользователь переключает тип через TypeSwitcher кликом. Tab/Shift+Tab циклит Content → Screenshot → Link **только** когда keyboard focus уже внутри overlay (после клика по overlay) — это known limitation, см. DEVLOG `24.04.2026 — Clipper: Tab-cycling` и решение не дорабатывать. Основной сценарий переключения — клик по табам.
 
 ## Popup UI
@@ -399,7 +413,12 @@ Response:
 
 #### `list_channels`
 
-Список каналов (тегов) из vault.
+Список коллекций из vault. Ответ строится как union двух источников:
+
+- promoted channel documents (`type: channel`) из таблицы `channels`;
+- unpromoted tags/collections, которые уже используются non-channel блоками.
+
+Пустой promoted channel обязан возвращаться с `block_count: 0`: channel document сам по себе является достаточным источником истины для списка коллекций, даже если watcher ещё не успел посчитать блоки.
 
 ```json
 {
@@ -417,6 +436,15 @@ Response:
   ]
 }
 ```
+
+Channel list refresh не является одноразовым init-state. Popup грузит список каналов асинхронно, не блокируя первый paint. Если любой открытый clipper context создаёт канал через `create_channel` или сохраняет блок с `tags` через `save_block`, background рассылает event `mineChannelsChanged`, и остальные открытые overlays повторно вызывают `list_channels`.
+
+Доставка события идёт двумя путями:
+
+- `chrome.runtime.sendMessage` — для detached extension windows;
+- `chrome.tabs.sendMessage` — для in-page overlays, потому что overlay живёт как content script внутри вкладки.
+
+`create_channel` обязан возвращать нормализованный `tag`, и popup обязан выбирать именно response tag, а не raw user input. Иначе `create_channel("My Channel")` и `save_block(tags:["My Channel"])` могут разойтись: save path нормализует tags в `my-channel`.
 
 #### `save_block`
 

@@ -47,7 +47,6 @@ import {
   uploadFile,
   getContextMenuData,
   extractMetadata,
-  extractArticle,
   extractArticleAsync,
   getImageInfo,
   detectTwitterLightbox,
@@ -195,6 +194,26 @@ export function useClipperState() {
     );
   }
 
+  const refreshChannels = useCallback(async (vaultPath = vaultRef.current) => {
+    const chResult = await sendToNative({
+      action: "list_channels",
+      vault_path: vaultPath,
+    });
+    if (chResult.ok && chResult.channels) {
+      setChannels(chResult.channels);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onMessage = (msg: { action?: string }) => {
+      if (msg?.action === "mineChannelsChanged") {
+        void refreshChannels();
+      }
+    };
+    chrome.runtime.onMessage.addListener(onMessage);
+    return () => chrome.runtime.onMessage.removeListener(onMessage);
+  }, [refreshChannels]);
+
   const startCropMode = useCallback(async () => {
     if (!cropSupported || tabIdRef.current === null) return;
 
@@ -305,18 +324,17 @@ export function useClipperState() {
       uploadPortRef.current = (status.upload_port as number) ?? null;
       uploadTokenRef.current = (status.upload_token as string) ?? null;
 
-      // Load known vaults
-      const vaultsResult = await listKnownVaults();
-      if (vaultsResult.ok) {
-        setKnownVaults(vaultsResult.vaults);
-        setSelectedVault(vaultsResult.current);
-        vaultRef.current = vaultsResult.current;
-      }
-
-      const chResult = await sendToNative({ action: "list_channels" });
-      if (chResult.ok && chResult.channels) {
-        setChannels(chResult.channels);
-      }
+      // Taxonomy and vault list are useful, but they must not block the
+      // first paint of the clipper. Open overlays refresh again when another
+      // tab creates a channel.
+      void listKnownVaults().then((vaultsResult) => {
+        if (vaultsResult.ok) {
+          setKnownVaults(vaultsResult.vaults);
+          setSelectedVault(vaultsResult.current);
+          vaultRef.current = vaultsResult.current;
+        }
+      });
+      void refreshChannels();
 
       // Check for pre-loaded data (from Instagram feed button)
       const preloaded = await chrome.storage.session.get("preloadedClipData");
@@ -413,10 +431,8 @@ export function useClipperState() {
       tabIdRef.current = tabId;
       applyCropCapability(tabUrl ?? null);
 
-      let [meta, article] = await Promise.all([
-        extractMetadata(tabId),
-        extractArticle(tabId),
-      ]);
+      let meta = await extractMetadata(tabId);
+      let article: ArticleData = { title: "", content: "", byline: null, excerpt: "" };
 
       // Apply tab fallbacks
       if (!meta.url && tabUrl) meta.url = tabUrl;
@@ -425,11 +441,6 @@ export function useClipperState() {
       // Apply context menu overrides
       if (ctxData) {
         await applyContextMenu(ctxData, meta, tabId);
-      }
-
-      // Deduplicate images with identical alt text (e.g. OG hero + same image in body)
-      if (article.content) {
-        article.content = deduplicateImages(article.content);
       }
 
       setMetadata(meta);
@@ -464,13 +475,19 @@ export function useClipperState() {
 
       setState("main");
 
-      // Background: fetch async article for video (YouTube transcript) and Twitter (syndication API)
-      const needsAsync = meta.detectedType === "video"
-        || (meta.detectedType === "article" && !article.content);
-      if (needsAsync) {
+      // Background: content extraction can be expensive on DOM-heavy pages.
+      // Never block initial popup paint on Defuddle; hydrate the preview/body
+      // after the clipper is already usable.
+      const shouldLoadArticle =
+        meta.detectedType === "selection" ||
+        meta.detectedType === "article" ||
+        meta.detectedType === "content" ||
+        meta.detectedType === "video";
+      if (shouldLoadArticle && !deferredArticleRef.current) {
         setArticleLoading(true);
         extractArticleAsync(tabId).then((asyncArticle) => {
           if (asyncArticle.content) {
+            asyncArticle.content = deduplicateImages(asyncArticle.content);
             setArticleData(asyncArticle);
             // Update title from async data (Twitter/Instagram return better titles than og:title)
             if (asyncArticle.title) {
@@ -589,13 +606,31 @@ export function useClipperState() {
   }, []);
 
   const createChannel = useCallback(async (name: string) => {
-    await sendToNative({ action: "create_channel", tag: name, title: name, vault_path: vaultRef.current });
-    setChannels((prev) => [...prev, { tag: name, title: name, block_count: 0 }]);
-    setSelectedTags((prev) => [...prev, name]);
-  }, []);
+    const result = await sendToNative({ action: "create_channel", tag: name, title: name, vault_path: vaultRef.current });
+    if (!result.ok) {
+      showError(result.error ?? "Failed to create channel");
+      return;
+    }
+    const tag = typeof result.tag === "string" ? result.tag : name;
+    await refreshChannels();
+    setSelectedTags((prev) => (prev.includes(tag) ? prev : [...prev, tag]));
+  }, [refreshChannels]);
 
   const save = useCallback(async () => {
     if (!metadata || saving) return;
+
+    if (
+      currentType === "content" &&
+      articleLoading &&
+      metadata.detectedType !== "video" &&
+      !metadata.selection?.length &&
+      !articleData?.content
+    ) {
+      return {
+        ok: false as const,
+        error: "Content is still loading. Try again in a moment.",
+      };
+    }
 
     setSaving(true);
 
@@ -735,6 +770,7 @@ export function useClipperState() {
     selectedTags,
     recentTags,
     saving,
+    articleLoading,
     screenshotDataUrl,
     screenshotUploadId,
   ]);
@@ -743,12 +779,9 @@ export function useClipperState() {
     setSelectedVault(vaultPath);
     vaultRef.current = vaultPath;
     // Reload channels for new vault
-    const chResult = await sendToNative({ action: "list_channels", vault_path: vaultPath });
-    if (chResult.ok && chResult.channels) {
-      setChannels(chResult.channels);
-    }
+    await refreshChannels(vaultPath);
     setSelectedTags([]);
-  }, []);
+  }, [refreshChannels]);
 
   return {
     state,

@@ -315,6 +315,33 @@ function sendNativeMessage(message) {
   });
 }
 
+async function broadcastChannelsChanged(tag) {
+  const message = {
+    action: "mineChannelsChanged",
+    tag: tag ?? null,
+  };
+
+  // Detached popup windows are extension pages, so runtime messaging reaches
+  // them. In-page overlays are content scripts; Chrome requires tabs messaging
+  // for those contexts.
+  try {
+    const runtimeSend = chrome.runtime.sendMessage(message);
+    if (runtimeSend && typeof runtimeSend.catch === "function") {
+      runtimeSend.catch(() => {});
+    }
+  } catch {}
+
+  try {
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+      if (!tab.id || !isContentScriptCompatible(tab.url)) continue;
+      chrome.tabs.sendMessage(tab.id, message, () => {
+        void chrome.runtime.lastError;
+      });
+    }
+  } catch {}
+}
+
 async function uploadFileToNativeHost({ port, token, filename, screenshotId }) {
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     return { ok: false, error: "Invalid upload port" };
@@ -362,7 +389,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target !== "background") return false;
 
   if (msg.action === "nativeMessage") {
-    sendNativeMessage(msg.payload).then(sendResponse);
+    sendNativeMessage(msg.payload).then((response) => {
+      if (response?.ok && msg.payload?.action === "create_channel") {
+        void broadcastChannelsChanged(response.tag ?? msg.payload?.tag ?? null);
+      } else if (response?.ok && msg.payload?.action === "save_block" && msg.payload?.tags) {
+        void broadcastChannelsChanged(null);
+      }
+      sendResponse(response);
+    });
     return true; // async response
   }
 

@@ -1,5 +1,53 @@
 # Devlog
 
+## 24.04.2026 [primary] — Clipper startup: non-blocking article extraction + live channel refresh
+
+### Goal
+
+Убрать регресс долгого открытия клиппера на DOM-heavy страницах
+(`https://getwellsoon.labr.io/`) и stale channel list между двумя уже открытыми
+overlays: канал, созданный в одной вкладке, должен появляться в соседней без
+переоткрытия клиппера.
+
+### Completed
+
+- `useClipperState.init()` больше не ждёт Defuddle/article extraction до
+  `setState("main")`; первый usable paint строится из metadata + выбранного
+  default tab.
+- `extractArticleAsync` теперь запускается после первого paint и только для
+  типов, которым нужен body: `selection`, `article`, `content`, `video`.
+- Для обычных страниц, которые становятся `link` → default `Screenshot`,
+  article extraction на старте не запускается вообще.
+- `listKnownVaults()` и `list_channels` больше не блокируют первый paint.
+- Native host `list_channels` теперь возвращает union promoted channels +
+  used tags. Это дополнительная защита: promoted channel виден даже если
+  watcher ещё не успел посчитать блоки.
+- `create_channel` в native host теперь нормализует tag через тот же
+  `Channel::new`, что и desktop command path; popup выбирает tag из response,
+  а не raw input. Это убирает расхождение `My Channel` vs `my-channel`.
+- `create_channel` и `save_block` после успешного native response рассылают
+  `mineChannelsChanged`.
+- Broadcast доставляется двумя каналами: `runtime.sendMessage` для detached
+  extension windows и `tabs.sendMessage` для in-page overlays/content scripts.
+  Предыдущий вариант через один `runtime.sendMessage` не был надёжной
+  доставкой в соседние overlays.
+- Другие открытые overlays обновляют список каналов через `list_channels`.
+- `createChannel()` в popup перечитывает каналы из native host вместо локального
+  append, чтобы не расходиться с нормализацией/индексом.
+- Content save защищён от пустой записи, если article body ещё грузится.
+- Overlay получает явный host/root reset (`all: initial`, font/line-height,
+  box-sizing, form font inheritance), чтобы вид клиппера не зависел от страницы.
+
+### Verification
+
+- `npm run build`
+- `npm run build:extension`
+- `cargo test --bin native-host merge_channels_and_tags --quiet`
+- `cargo test --bin native-host --quiet`
+- `cargo build --bin native-host`
+- installed updated native host to
+  `~/Library/Application Support/LocalArena/native-host`
+
 ## 24.04.2026 [primary] — Mine Collections source format: dual-read + new writes
 
 ### Goal
