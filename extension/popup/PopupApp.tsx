@@ -56,25 +56,46 @@ export function PopupApp() {
   // the user has not actively clicked into a page field, Tab cycles clipper
   // tabs — no clicks on the overlay required.
   useEffect(() => {
-    function activeIsTextField(): boolean {
-      // Walk shadow roots so that an input inside a nested shadow (either
-      // ours or the page's) is correctly detected. document.activeElement
-      // retargets to the shadow host, so we descend until we reach the
-      // true leaf focused element.
-      let el: Element | null = document.activeElement;
-      while (el) {
+    // Architectural principle: while the clipper overlay is mounted it is
+    // a modal UI — Tab is a clipper shortcut, not page navigation. The
+    // ONLY reason to defer Tab to native behavior is when the user is
+    // typing inside a text field OWNED BY OVERLAY (title input, channel
+    // search). Page-level focus is irrelevant to us: even if apple.com
+    // autofocused one of its search fields, Tab while our overlay is
+    // visible should cycle clipper tabs.
+    //
+    // On the detached-popup fallback path (service pages) the overlay
+    // host doesn't exist — the entire document IS our UI — and the
+    // generic text-field check is correct.
+    function activeIsOverlayTextField(): boolean {
+      const host = document.querySelector("[data-mine-clipper-overlay]");
+      // Walk shadow roots: activeElement retargets to the shadow host,
+      // so we descend until we reach the true leaf focused element.
+      function drillToLeaf(start: Element | null): Element | null {
+        let el = start;
+        while (el) {
+          const shadow = (el as HTMLElement & {
+            shadowRoot?: ShadowRoot | null;
+          }).shadowRoot;
+          if (shadow?.activeElement) el = shadow.activeElement;
+          else return el;
+        }
+        return null;
+      }
+      function isText(el: Element | null): boolean {
+        if (!el) return false;
         const tag = el.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA") return true;
         if ((el as HTMLElement).isContentEditable) return true;
-        const shadow = (el as HTMLElement & { shadowRoot?: ShadowRoot | null })
-          .shadowRoot;
-        if (shadow && shadow.activeElement) {
-          el = shadow.activeElement;
-        } else {
-          break;
-        }
+        return false;
       }
-      return false;
+      if (!host) {
+        // Detached-popup path: entire document is ours.
+        return isText(drillToLeaf(document.activeElement));
+      }
+      // Overlay path: defer only if focus is inside our host.
+      if (!host.contains(document.activeElement)) return false;
+      return isText(drillToLeaf(document.activeElement));
     }
     function onKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -87,7 +108,7 @@ export function PopupApp() {
         return;
       }
       if (e.key === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        if (activeIsTextField()) return;
+        if (activeIsOverlayTextField()) return;
         if (clipper.metadata?.detectedType === "image") return;
         e.preventDefault();
         e.stopPropagation();
