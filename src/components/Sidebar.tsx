@@ -5,6 +5,12 @@ import { CSS } from "@dnd-kit/utilities";
 import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -315,17 +321,19 @@ const TagNavItem = memo(function TagNavItem({
 
   return (
     <>
-      <div
-        ref={setNodeRef}
-        style={style}
-        {...attributes}
-        {...listeners}
-        className={cn(
-          "group relative rounded-1",
-          isDragging && "opacity-30",
-          isOver && !isDragging && isCardDragging && "ring-2 ring-ring ring-inset",
-        )}
-      >
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            ref={setNodeRef}
+            style={style}
+            {...attributes}
+            {...listeners}
+            className={cn(
+              "group relative rounded-1",
+              isDragging && "opacity-30",
+              isOver && !isDragging && isCardDragging && "ring-2 ring-ring ring-inset",
+            )}
+          >
         <NavLink
           to={to}
           draggable="false"
@@ -408,7 +416,19 @@ const TagNavItem = memo(function TagNavItem({
             </div>
           </div>
         </NavLink>
-      </div>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem onSelect={onDoubleClick}>
+            <Pencil className="size-3" />
+            Rename
+          </ContextMenuItem>
+          <ContextMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
+            <Trash2 className="size-3" />
+            Delete
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent size="sm">
