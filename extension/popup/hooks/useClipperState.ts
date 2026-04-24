@@ -442,17 +442,25 @@ export function useClipperState() {
       setArticleData(article);
       setTitle(meta.title ?? "");
 
-      // Map detected type
-      let detected: ClipType = "link";
+      // Map detected type. Precedence (see SPEC_CLIPPER.md § Auto-detection):
+      //   selection  → Content (quote takes over the preview via resolveContentBody)
+      //   image      → Image-only view (TypeSwitcher hidden in PopupApp)
+      //   article    → Content
+      //   video      → Content (video block, transcript in body)
+      //   link/other → Screenshot (default visual clip for everything else)
+      let detected: ClipType;
       const dt = meta.detectedType;
-      if (dt === "article" || dt === "selection" || dt === "content") {
+      if (dt === "selection" || dt === "article" || dt === "content" || dt === "video") {
         detected = "content";
       } else if (dt === "image") {
         detected = "image";
-      } else if (dt === "video") {
-        detected = "content";
+      } else {
+        detected = "screenshot";
       }
       setCurrentType(detected);
+      if (detected === "screenshot") {
+        captureScreenshot();
+      }
 
       setState("main");
 

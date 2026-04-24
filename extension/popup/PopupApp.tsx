@@ -42,7 +42,7 @@ export function PopupApp() {
     }
   }, [clipper.save, closeClipper]);
 
-  // Cmd+Enter to save, Esc to close
+  // Cmd+Enter to save, Esc to close, Tab to cycle Content → Screenshot → Link
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -52,10 +52,25 @@ export function PopupApp() {
       if (e.key === "Escape") {
         closeClipper();
       }
+      if (e.key === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        // Skip when focus is in a text input — native tab nav wins there.
+        const target = e.target as HTMLElement | null;
+        const tag = target?.tagName;
+        const editable = target?.isContentEditable;
+        if (tag === "INPUT" || tag === "TEXTAREA" || editable) return;
+        // Image mode hides TypeSwitcher — nothing to cycle.
+        if (clipper.metadata?.detectedType === "image") return;
+        e.preventDefault();
+        const order = ["content", "screenshot", "link"] as const;
+        const idx = order.indexOf(clipper.currentType as typeof order[number]);
+        const step = e.shiftKey ? -1 : 1;
+        const next = order[((idx < 0 ? 0 : idx) + step + order.length) % order.length]!;
+        clipper.setCurrentType(next);
+      }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [handleSave, closeClipper]);
+  }, [handleSave, closeClipper, clipper.currentType, clipper.setCurrentType, clipper.metadata?.detectedType]);
 
   if (clipper.state === "loading") {
     return <LoadingState />;

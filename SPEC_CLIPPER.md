@@ -199,22 +199,43 @@ Popup и save() используют одну чистую функцию — `r
 
 ## Auto-detection Heuristic
 
-При открытии popup расширение определяет тип страницы:
+Popup выбирает таб по умолчанию в два шага: сначала content script вычисляет `detectedType` страницы, затем popup маппит его в таб TypeSwitcher'а.
+
+### Шаг 1 — `detectedType` (content.js `detectType`)
 
 ```
-1. Если есть выделенный текст → Selection
-2. Если URL содержит youtube.com/watch, vimeo.com, youtu.be → Video
-3. Если URL оканчивается на .pdf, .zip, .dmg, .exe → File
-4. Если выполняется ≥2 из:
-   - <article> элемент существует
-   - og:type === "article"
-   - Readability.isProbablyReaderable() === true
-   - Текстовый контент > 500 символов
-   → Article
-5. Иначе → Link
+1. Есть непустой selection (window.getSelection)  → "selection"
+2. URL — YouTube / Vimeo / youtu.be               → "video"
+3. URL — Twitter/X                                → "article"
+4. URL — Instagram post                           → "article"
+5. isArticlePage (≥2 сигналов: <article>, og:type=article, text>2000) → "article"
+6. Иначе                                          → "link"
 ```
 
-Пользователь всегда может переключить тип через сегментированный контрол.
+Context-menu клики переопределяют этот выбор в `applyContextMenu` (см. раздел «Context Menu»):
+- `save-image`       → `detectedType = "image"`
+- `save-selection`   → `detectedType = "selection"`
+- `save-link` на твит → `detectedType = "article"`
+- `save-link` иначе  → `detectedType = "link"`
+- `save-page` + открытый Twitter lightbox → `detectedType = "image"`
+
+### Шаг 2 — Default tab (useClipperState init)
+
+| `detectedType` | Таб по умолчанию | Поведение |
+|---|---|---|
+| `selection` | **Content** | В превью цитата выделенного текста (см. § Selection) — не потерять этот сценарий |
+| `article` | **Content** | Статья / твит / Instagram-пост |
+| `video` | **Content** | Видеоблок, транскрипт в body |
+| `content` | **Content** | Явный выбор из context menu |
+| `image` | **(image-only)** | TypeSwitcher **скрыт**, показывается только превью картинки |
+| `link` / всё остальное | **Screenshot** | Автоматически вызывается `captureScreenshot()` при открытии popup |
+
+**Инварианты, которые нельзя потерять:**
+1. Selection → Content с цитатой. Проверяется сценарием: выделить текст на странице → нажать иконку расширения → должен открыться Content-таб с цитатой в превью, а не Screenshot.
+2. Image-режим (ПКМ на картинке) не показывает TypeSwitcher вообще — пользователь не переключает типы, только сохраняет.
+3. Default для «всего остального» — именно Screenshot, не Link. При открытии popup без явного типа расширение сразу делает capture и показывает превью.
+
+Пользователь всегда может переключить тип через TypeSwitcher (клик) или клавиатурой — **Tab** / **Shift+Tab** циклит Content → Screenshot → Link. Tab игнорируется, когда фокус внутри input/textarea/contenteditable и когда TypeSwitcher скрыт (image-режим).
 
 ## Popup UI
 
@@ -237,7 +258,7 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 ```
 ┌──────────────────────────────────────┐
 │ ┌────────┐ ┌────────┐               │
-│ │Content │ │  Link  │               │ ← TypeSwitcher (Content / Link)
+│ │Content │ │Screens.│ │ Link │       │ ← TypeSwitcher (Tab/Shift+Tab циклит)
 │ └────────┘ └────────┘               │
 ├──────────────────────────────────────┤
 │                                      │
