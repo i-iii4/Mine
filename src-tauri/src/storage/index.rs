@@ -42,6 +42,8 @@ pub struct IndexedBlock {
     pub media_dimensions: Option<String>,
     pub preview_manifest: Option<String>,
     pub feed_playback: Option<String>,
+    pub origin: Option<String>,
+    pub index_warning: Option<String>,
     pub tags: Vec<String>,
 }
 
@@ -830,12 +832,22 @@ fn row_to_preview_block(
 /// in which case the dimensions column is left NULL and the frontend
 /// falls back to a fixed aspect ratio.
 pub fn upsert_block(conn: &Connection, block: &Block, vault_root: Option<&Path>) -> Result<i64> {
+    upsert_block_with_diagnostics(conn, block, vault_root, None, None)
+}
+
+pub fn upsert_block_with_diagnostics(
+    conn: &Connection,
+    block: &Block,
+    vault_root: Option<&Path>,
+    origin: Option<&str>,
+    index_warning: Option<&str>,
+) -> Result<i64> {
     // Use SAVEPOINT via raw SQL for nestability — this works both standalone
     // and inside an outer transaction (e.g. full_scan).
     conn.execute_batch("SAVEPOINT upsert_block")
         .context("failed to begin savepoint for upsert_block")?;
 
-    let result = upsert_block_inner(conn, block, vault_root);
+    let result = upsert_block_inner(conn, block, vault_root, origin, index_warning);
 
     match &result {
         Ok(_) => {
@@ -851,7 +863,13 @@ pub fn upsert_block(conn: &Connection, block: &Block, vault_root: Option<&Path>)
     result
 }
 
-fn upsert_block_inner(conn: &Connection, block: &Block, vault_root: Option<&Path>) -> Result<i64> {
+fn upsert_block_inner(
+    conn: &Connection,
+    block: &Block,
+    vault_root: Option<&Path>,
+    origin: Option<&str>,
+    index_warning: Option<&str>,
+) -> Result<i64> {
     let first_image = extract_first_image(&block.body);
     let media_urls = extract_media_urls(&block.body);
     let media_dimensions = vault_root.and_then(|root| {
@@ -930,8 +948,9 @@ fn upsert_block_inner(conn: &Connection, block: &Block, vault_root: Option<&Path
     conn.execute(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body, first_image,
-            media_urls, media_dimensions, preview_manifest, feed_playback, body_hash)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+            media_urls, media_dimensions, preview_manifest, feed_playback, body_hash,
+            origin, index_warning)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
             title = excluded.title,
@@ -951,6 +970,8 @@ fn upsert_block_inner(conn: &Connection, block: &Block, vault_root: Option<&Path
             preview_manifest = excluded.preview_manifest,
             feed_playback = excluded.feed_playback,
             body_hash = excluded.body_hash,
+            origin = excluded.origin,
+            index_warning = excluded.index_warning,
             indexed_at = datetime('now')",
         params![
             block.slug,
@@ -972,6 +993,8 @@ fn upsert_block_inner(conn: &Connection, block: &Block, vault_root: Option<&Path
             preview_manifest,
             feed_playback,
             body_hash,
+            origin,
+            index_warning,
         ],
     )
     .context("failed to upsert block")?;
@@ -1393,10 +1416,7 @@ pub fn rename_slug(conn: &Connection, old_slug: &str, new_slug: &str) -> Result<
         .optional()
         .context("failed to check target slug availability")?;
     if existing.is_some() {
-        anyhow::bail!(
-            "rename target slug '{}' already exists in index",
-            new_slug
-        );
+        anyhow::bail!("rename target slug '{}' already exists in index", new_slug);
     }
 
     let affected = conn
@@ -1453,11 +1473,7 @@ pub fn list_vault_conflicts(conn: &Connection) -> Result<Vec<VaultConflict>> {
 }
 
 /// Clear a single conflict entry after user resolution.
-pub fn clear_vault_conflict(
-    conn: &Connection,
-    base_slug: &str,
-    conflict_slug: &str,
-) -> Result<()> {
+pub fn clear_vault_conflict(conn: &Connection, base_slug: &str, conflict_slug: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM vault_conflicts
          WHERE base_slug = ?1 AND conflict_slug = ?2",
@@ -1725,7 +1741,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
     let mut stmt = conn
         .prepare(
             "SELECT id, slug, block_type, title, description, url, media_file,
-                    thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback
+                    thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, origin, index_warning
              FROM blocks WHERE slug = ?1",
         )
         .context("failed to prepare get_block")?;
@@ -1744,7 +1760,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
 pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, description, url, media_file,
-                thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback
+                thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, origin, index_warning
          FROM blocks ORDER BY saved_at DESC",
     )?;
     collect_blocks(conn, &mut stmt, &[] as &[&dyn rusqlite::types::ToSql])
@@ -1755,7 +1771,7 @@ pub fn list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlo
     let mut stmt = conn.prepare(
         "SELECT b.id, b.slug, b.block_type, b.title, b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback
+                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.origin, b.index_warning
          FROM blocks b
          JOIN block_tags bt ON bt.block_id = b.id
          WHERE bt.tag = ?1
@@ -1828,7 +1844,7 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
     let mut sql = String::from(
         "SELECT DISTINCT b.id, b.slug, b.block_type, b.title, b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback
+                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.origin, b.index_warning
          FROM blocks b",
     );
 
@@ -2000,6 +2016,8 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
         media_dimensions: row.get(14)?,
         preview_manifest: row.get(15)?,
         feed_playback: row.get(16)?,
+        origin: row.get(17)?,
+        index_warning: row.get(18)?,
         tags: Vec::new(), // filled by caller
     })
 }
@@ -3182,19 +3200,13 @@ mod tests {
     #[test]
     fn normalize_url_decodes_local_percent_encoded_parens_and_spaces() {
         let encoded = "Title%20%28image%201%29.jpg";
-        assert_eq!(
-            normalize_local_markdown_url(encoded),
-            "Title (image 1).jpg"
-        );
+        assert_eq!(normalize_local_markdown_url(encoded), "Title (image 1).jpg");
     }
 
     #[test]
     fn normalize_url_decodes_cyrillic_names() {
         let encoded = "Закат%20%28image%201%29.jpg";
-        assert_eq!(
-            normalize_local_markdown_url(encoded),
-            "Закат (image 1).jpg"
-        );
+        assert_eq!(normalize_local_markdown_url(encoded), "Закат (image 1).jpg");
     }
 
     #[test]
@@ -3207,10 +3219,7 @@ mod tests {
 
     #[test]
     fn normalize_url_is_noop_for_plain_ascii_names() {
-        assert_eq!(
-            normalize_local_markdown_url("photo.jpg"),
-            "photo.jpg"
-        );
+        assert_eq!(normalize_local_markdown_url("photo.jpg"), "photo.jpg");
     }
 
     #[test]
@@ -3218,10 +3227,7 @@ mod tests {
         let body = "![](Title%20%28image%201%29.jpg)\n\nsome text\n\n\
                     ![](Other%20%28video%201%29.mp4)";
         let json = extract_media_urls(body).unwrap();
-        assert_eq!(
-            json,
-            "[\"Title (image 1).jpg\",\"Other (video 1).mp4\"]"
-        );
+        assert_eq!(json, "[\"Title (image 1).jpg\",\"Other (video 1).mp4\"]");
     }
 
     #[test]

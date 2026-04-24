@@ -59,7 +59,7 @@ pub fn normalize_tag(raw: &str) -> String {
     let mut prev_dash = false;
 
     for c in lower.chars() {
-        if c.is_alphanumeric() {
+        if c.is_alphanumeric() || c == '/' {
             result.push(c);
             prev_dash = false;
         } else if (c == '-' || c == ' ' || c == '_') && !prev_dash && !result.is_empty() {
@@ -111,6 +111,11 @@ mod tests {
     #[test]
     fn normalize_underscores() {
         assert_eq!(normalize_tag("distributed_systems"), "distributed-systems");
+    }
+
+    #[test]
+    fn normalize_obsidian_nested_tag_preserves_slash() {
+        assert_eq!(normalize_tag("Design/Typography"), "design/typography");
     }
 
     #[test]

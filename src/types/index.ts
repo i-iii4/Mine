@@ -28,6 +28,8 @@ export interface IndexedBlock {
   media_dimensions: string | null;
   preview_manifest: string | null;
   feed_playback: string | null;
+  origin?: string | null;
+  index_warning?: string | null;
   tags: string[];
 }
 

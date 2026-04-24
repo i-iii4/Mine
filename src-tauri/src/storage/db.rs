@@ -84,6 +84,8 @@ fn create_schema(conn: &Connection) -> Result<()> {
             author TEXT,
             body TEXT DEFAULT '',
             body_hash TEXT,
+            origin TEXT,
+            index_warning TEXT,
             preview_manifest TEXT,
             feed_playback TEXT,
             thumb_format TEXT,
@@ -159,6 +161,8 @@ fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN feed_playback TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_format TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_mtime INTEGER");
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN origin TEXT");
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN index_warning TEXT");
 
     // Migration: add body_hash column. SHA-256 over the block body, used by
     // Phase 18.G watcher rename detection to match a Remove+Create event

@@ -68,7 +68,12 @@ fn acquire_single_instance_at(addr: SocketAddrV4) -> io::Result<SingleInstanceAc
 
 /// Current UTC time as ISO 8601 string (without chrono dependency).
 pub fn now_iso8601() -> String {
-    let now = std::time::SystemTime::now()
+    system_time_to_iso8601(std::time::SystemTime::now())
+}
+
+/// Convert a SystemTime to UTC ISO 8601 string (without chrono dependency).
+pub fn system_time_to_iso8601(time: std::time::SystemTime) -> String {
+    let now = time
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock is set before Unix epoch")
         .as_secs();

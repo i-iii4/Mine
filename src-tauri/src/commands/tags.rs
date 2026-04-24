@@ -5,8 +5,7 @@
 use tauri::{AppHandle, State};
 
 use crate::commands::state::{current_vault_layout, AppState, CommandError};
-use crate::domain::block::parse_block;
-use crate::domain::block::serialize_block;
+use crate::domain::block::{parse_markdown_document, DateTime};
 use crate::domain::tag::normalize_tag;
 use crate::storage::index::TagCount;
 use crate::storage::{db, files, index};
@@ -44,8 +43,9 @@ pub fn add_tag(state: State<'_, AppState>, slug: String, tag: String) -> Result<
 
     let path = vs.vault.block_path(&slug);
     let (_, content) = files::read_block_file(&path)?;
-    let mut block =
-        parse_block(&slug, &content).map_err(|e| CommandError::Internal(e.to_string()))?;
+    let parsed = parse_markdown_document(&slug, &content, file_saved_at(&path))
+        .map_err(|e| CommandError::Internal(e.to_string()))?;
+    let mut block = parsed.block;
 
     let normalized = normalize_tag(&tag);
     if normalized.is_empty() {
@@ -58,11 +58,17 @@ pub fn add_tag(state: State<'_, AppState>, slug: String, tag: String) -> Result<
         block.frontmatter.tags.push(normalized);
     }
 
-    // Write updated .md and re-index
-    let content = serialize_block(&block);
+    let content = patch_tags_frontmatter(&content, &block.frontmatter.tags)
+        .map_err(CommandError::Internal)?;
     std::fs::write(&path, content)
         .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
-    index::upsert_block(&vs.conn, &block, Some(vs.vault.root()))?;
+    index::upsert_block_with_diagnostics(
+        &vs.conn,
+        &block,
+        Some(vs.vault.root()),
+        Some(parsed.origin.as_str()),
+        parsed.index_warning.as_deref(),
+    )?;
 
     Ok(())
 }
@@ -82,16 +88,24 @@ pub fn remove_tag(
 
     let path = vs.vault.block_path(&slug);
     let (_, content) = files::read_block_file(&path)?;
-    let mut block =
-        parse_block(&slug, &content).map_err(|e| CommandError::Internal(e.to_string()))?;
+    let parsed = parse_markdown_document(&slug, &content, file_saved_at(&path))
+        .map_err(|e| CommandError::Internal(e.to_string()))?;
+    let mut block = parsed.block;
 
     let normalized = normalize_tag(&tag);
     block.frontmatter.tags.retain(|t| t != &normalized);
 
-    let content = serialize_block(&block);
+    let content = patch_tags_frontmatter(&content, &block.frontmatter.tags)
+        .map_err(CommandError::Internal)?;
     std::fs::write(&path, content)
         .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
-    index::upsert_block(&vs.conn, &block, Some(vs.vault.root()))?;
+    index::upsert_block_with_diagnostics(
+        &vs.conn,
+        &block,
+        Some(vs.vault.root()),
+        Some(parsed.origin.as_str()),
+        parsed.index_warning.as_deref(),
+    )?;
 
     Ok(())
 }
@@ -126,18 +140,26 @@ pub fn rename_tag(
     for indexed_block in &affected_blocks {
         let path = vs.vault.block_path(&indexed_block.slug);
         let (_, content) = files::read_block_file(&path)?;
-        let mut block = parse_block(&indexed_block.slug, &content)
+        let parsed = parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path))
             .map_err(|e| CommandError::Internal(e.to_string()))?;
+        let mut block = parsed.block;
 
         block.frontmatter.tags.retain(|t| t != &normalized_old);
         if !block.frontmatter.tags.contains(&normalized_new) {
             block.frontmatter.tags.push(normalized_new.clone());
         }
 
-        let serialized = serialize_block(&block);
+        let serialized = patch_tags_frontmatter(&content, &block.frontmatter.tags)
+            .map_err(CommandError::Internal)?;
         std::fs::write(&path, serialized)
             .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
-        index::upsert_block(&vs.conn, &block, Some(vs.vault.root()))?;
+        index::upsert_block_with_diagnostics(
+            &vs.conn,
+            &block,
+            Some(vs.vault.root()),
+            Some(parsed.origin.as_str()),
+            parsed.index_warning.as_deref(),
+        )?;
     }
 
     Ok(())
@@ -162,16 +184,221 @@ pub fn delete_tag_from_all(state: State<'_, AppState>, tag: String) -> Result<()
     for indexed_block in &affected_blocks {
         let path = vs.vault.block_path(&indexed_block.slug);
         let (_, content) = files::read_block_file(&path)?;
-        let mut block = parse_block(&indexed_block.slug, &content)
+        let parsed = parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path))
             .map_err(|e| CommandError::Internal(e.to_string()))?;
+        let mut block = parsed.block;
 
         block.frontmatter.tags.retain(|t| t != &normalized);
 
-        let serialized = serialize_block(&block);
+        let serialized = patch_tags_frontmatter(&content, &block.frontmatter.tags)
+            .map_err(CommandError::Internal)?;
         std::fs::write(&path, serialized)
             .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
-        index::upsert_block(&vs.conn, &block, Some(vs.vault.root()))?;
+        index::upsert_block_with_diagnostics(
+            &vs.conn,
+            &block,
+            Some(vs.vault.root()),
+            Some(parsed.origin.as_str()),
+            parsed.index_warning.as_deref(),
+        )?;
     }
 
     Ok(())
+}
+
+fn file_saved_at(path: &std::path::Path) -> DateTime {
+    let time = std::fs::metadata(path)
+        .ok()
+        .and_then(|metadata| metadata.created().ok().or_else(|| metadata.modified().ok()))
+        .unwrap_or_else(std::time::SystemTime::now);
+    DateTime::new(&crate::util::system_time_to_iso8601(time))
+        .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
+}
+
+fn patch_tags_frontmatter(content: &str, tags: &[String]) -> Result<String, String> {
+    match frontmatter_bounds(content) {
+        FrontmatterBounds::None => {
+            if tags.is_empty() {
+                return Ok(content.to_string());
+            }
+            Ok(format!("---\n{}---\n{}", render_tags(tags), content))
+        }
+        FrontmatterBounds::Malformed => {
+            Err("cannot safely patch tags: malformed frontmatter".to_string())
+        }
+        FrontmatterBounds::Valid {
+            yaml_start,
+            yaml_end,
+            closing_start,
+        } => {
+            let yaml = &content[yaml_start..yaml_end];
+            if !yaml.trim().is_empty() && serde_yaml::from_str::<serde_yaml::Value>(yaml).is_err() {
+                return Err("cannot safely patch tags: malformed frontmatter".to_string());
+            }
+            let patched_yaml = patch_tags_yaml(yaml, tags)?;
+            let mut out = String::with_capacity(content.len() + patched_yaml.len());
+            out.push_str(&content[..yaml_start]);
+            out.push_str(&patched_yaml);
+            out.push_str(&content[closing_start..]);
+            Ok(out)
+        }
+    }
+}
+
+enum FrontmatterBounds {
+    None,
+    Malformed,
+    Valid {
+        yaml_start: usize,
+        yaml_end: usize,
+        closing_start: usize,
+    },
+}
+
+fn frontmatter_bounds(content: &str) -> FrontmatterBounds {
+    let Some(first_line_end) = content.find('\n') else {
+        return if content.trim_end_matches('\r') == "---" {
+            FrontmatterBounds::Malformed
+        } else {
+            FrontmatterBounds::None
+        };
+    };
+    if content[..first_line_end].trim_end_matches('\r') != "---" {
+        return FrontmatterBounds::None;
+    }
+
+    let yaml_start = first_line_end + 1;
+    let mut cursor = yaml_start;
+    for (idx, line) in content[yaml_start..].split_inclusive('\n').enumerate() {
+        if idx >= 20 {
+            return FrontmatterBounds::None;
+        }
+        if line.trim_end_matches(['\r', '\n']) == "---" {
+            return FrontmatterBounds::Valid {
+                yaml_start,
+                yaml_end: cursor,
+                closing_start: cursor,
+            };
+        }
+        cursor += line.len();
+    }
+    FrontmatterBounds::None
+}
+
+fn patch_tags_yaml(yaml: &str, tags: &[String]) -> Result<String, String> {
+    let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
+    let mut start = None;
+    for (idx, line) in lines.iter().enumerate() {
+        if is_top_level_tags_key(line) {
+            start = Some(idx);
+            break;
+        }
+    }
+
+    let Some(start_idx) = start else {
+        if tags.is_empty() {
+            return Ok(yaml.to_string());
+        }
+        let mut out = yaml.to_string();
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&render_tags(tags));
+        return Ok(out);
+    };
+
+    let mut end_idx = start_idx + 1;
+    while end_idx < lines.len() {
+        let line = lines[end_idx];
+        let trimmed = line.trim();
+        if trimmed.is_empty() || line.starts_with(' ') || line.starts_with('\t') {
+            end_idx += 1;
+            continue;
+        }
+        break;
+    }
+
+    let mut out = String::new();
+    for line in &lines[..start_idx] {
+        out.push_str(line);
+    }
+    if !tags.is_empty() {
+        out.push_str(&render_tags(tags));
+    }
+    for line in &lines[end_idx..] {
+        out.push_str(line);
+    }
+    Ok(out)
+}
+
+fn is_top_level_tags_key(line: &str) -> bool {
+    let line = line.trim_end_matches(['\r', '\n']);
+    if line.starts_with(' ') || line.starts_with('\t') {
+        return false;
+    }
+    line == "tags:" || line.starts_with("tags: ")
+}
+
+fn render_tags(tags: &[String]) -> String {
+    let mut out = String::from("tags:\n");
+    for tag in tags {
+        out.push_str("  - ");
+        out.push_str(&yaml_quote_tag(tag));
+        out.push('\n');
+    }
+    out
+}
+
+fn yaml_quote_tag(tag: &str) -> String {
+    if tag
+        .chars()
+        .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '/'))
+    {
+        tag.to_string()
+    } else {
+        format!("\"{}\"", tag.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn patch_tags_frontmatter_inserts_minimal_frontmatter_for_foreign_markdown() {
+        let input = "# Note\n\nBody";
+        let output = patch_tags_frontmatter(input, &["design".to_string()]).unwrap();
+        assert_eq!(output, "---\ntags:\n  - design\n---\n# Note\n\nBody");
+    }
+
+    #[test]
+    fn patch_tags_frontmatter_preserves_unknown_fields() {
+        let input = "---\naliases:\n  - A\n# keep me\ntags:\n  - old\ncssclasses: wide\n---\nBody";
+        let output = patch_tags_frontmatter(input, &["design/typography".to_string()]).unwrap();
+        assert_eq!(
+            output,
+            "---\naliases:\n  - A\n# keep me\ntags:\n  - design/typography\ncssclasses: wide\n---\nBody"
+        );
+    }
+
+    #[test]
+    fn patch_tags_frontmatter_removes_tags_but_keeps_empty_fence() {
+        let input = "---\ntags:\n  - old\n---\nBody";
+        let output = patch_tags_frontmatter(input, &[]).unwrap();
+        assert_eq!(output, "---\n---\nBody");
+    }
+
+    #[test]
+    fn patch_tags_frontmatter_treats_unclosed_fence_as_body() {
+        let input = "---\ntags:\n  - old";
+        let output = patch_tags_frontmatter(input, &["new".to_string()]).unwrap();
+        assert_eq!(output, "---\ntags:\n  - new\n---\n---\ntags:\n  - old");
+    }
+
+    #[test]
+    fn patch_tags_frontmatter_rejects_invalid_yaml_inside_fence() {
+        let input = "---\ntype: article\n\tbad\n---\nBody";
+        let err = patch_tags_frontmatter(input, &["new".to_string()]).unwrap_err();
+        assert!(err.contains("malformed frontmatter"));
+    }
 }

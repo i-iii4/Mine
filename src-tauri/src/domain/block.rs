@@ -13,6 +13,8 @@ use serde::Serialize;
 use serde_yaml::Value;
 use thiserror::Error;
 
+const FRONTMATTER_SCAN_LIMIT_LINES: usize = 20;
+
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]
@@ -161,6 +163,14 @@ pub struct Block {
     pub body: String,
 }
 
+/// Compatibility metadata returned by the permissive Markdown parser.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedMarkdownBlock {
+    pub block: Block,
+    pub origin: String,
+    pub index_warning: Option<String>,
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /// Parse a YAML string into a Frontmatter struct.
@@ -268,6 +278,52 @@ pub fn parse_block(slug: &str, content: &str) -> Result<Block, BlockError> {
         frontmatter,
         body,
     })
+}
+
+/// Parse Markdown for indexing, accepting ordinary Obsidian files without
+/// Mine frontmatter. This is intentionally fail-open for read paths; keep
+/// `parse_block` strict for Mine-owned serialization roundtrips.
+pub fn parse_markdown_document(
+    slug: &str,
+    content: &str,
+    fallback_saved_at: DateTime,
+) -> Result<ParsedMarkdownBlock, BlockError> {
+    if slug.is_empty() {
+        return Err(BlockError::EmptySlug);
+    }
+
+    let Some((yaml, body, has_fence)) = split_frontmatter_candidate(content) else {
+        return Ok(ParsedMarkdownBlock {
+            block: implicit_article_block(slug, content.to_string(), fallback_saved_at),
+            origin: "foreign_markdown".to_string(),
+            index_warning: None,
+        });
+    };
+
+    if !has_fence {
+        return Ok(ParsedMarkdownBlock {
+            block: implicit_article_block(slug, content.to_string(), fallback_saved_at),
+            origin: "foreign_markdown".to_string(),
+            index_warning: None,
+        });
+    }
+
+    match parse_frontmatter_compat(slug, yaml, fallback_saved_at.clone()) {
+        Ok((frontmatter, warning)) => Ok(ParsedMarkdownBlock {
+            block: Block {
+                slug: slug.to_string(),
+                frontmatter,
+                body: body.to_string(),
+            },
+            origin: "partial_frontmatter".to_string(),
+            index_warning: warning,
+        }),
+        Err(_) => Ok(ParsedMarkdownBlock {
+            block: implicit_article_block(slug, content.to_string(), fallback_saved_at),
+            origin: "malformed_frontmatter".to_string(),
+            index_warning: Some("malformed_frontmatter".to_string()),
+        }),
+    }
 }
 
 /// Serialize a Frontmatter struct back to a YAML string.
@@ -423,7 +479,9 @@ pub fn iter_inline_media_sources(body: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < body.len() {
-        let Some(rel) = body[i..].find("![") else { break };
+        let Some(rel) = body[i..].find("![") else {
+            break;
+        };
         let excl = i + rel;
         let after_excl = excl + 2;
         if after_excl >= body.len() {
@@ -606,6 +664,158 @@ fn parse_tags(parent: &Value) -> Result<Vec<String>, BlockError> {
     }
 
     Ok(tags)
+}
+
+fn split_frontmatter_candidate(content: &str) -> Option<(&str, &str, bool)> {
+    let mut iter = content.split_inclusive('\n');
+    let first = iter.next()?;
+    let first_trimmed = first.trim_end_matches(['\r', '\n']);
+    if first_trimmed != "---" {
+        return None;
+    }
+
+    let mut yaml_start = first.len();
+    let mut cursor = first.len();
+    for (idx, line) in iter.enumerate() {
+        if idx >= FRONTMATTER_SCAN_LIMIT_LINES {
+            break;
+        }
+        let line_body = line.trim_end_matches(['\r', '\n']);
+        if line_body == "---" {
+            let yaml = &content[yaml_start..cursor];
+            let body_start = cursor + line.len();
+            let body = content.get(body_start..).unwrap_or("");
+            return Some((yaml, body, true));
+        }
+        cursor += line.len();
+    }
+
+    // Leading `---` without a bounded closing fence is treated as body
+    // (Markdown horizontal rule), not an indexing error.
+    yaml_start = 0;
+    Some((&content[yaml_start..], "", false))
+}
+
+fn implicit_article_block(slug: &str, body: String, saved_at: DateTime) -> Block {
+    Block {
+        slug: slug.to_string(),
+        frontmatter: Frontmatter {
+            block_type: BlockType::Article,
+            title: Some(slug.to_string()),
+            description: None,
+            url: None,
+            file: None,
+            thumbnail: None,
+            tags: Vec::new(),
+            saved_at,
+            source: None,
+            width: None,
+            height: None,
+            author: None,
+            position: None,
+            color: None,
+            icon: None,
+        },
+        body,
+    }
+}
+
+fn parse_frontmatter_compat(
+    slug: &str,
+    yaml: &str,
+    fallback_saved_at: DateTime,
+) -> Result<(Frontmatter, Option<String>), BlockError> {
+    let value: Value = if yaml.trim().is_empty() {
+        Value::Mapping(Default::default())
+    } else {
+        serde_yaml::from_str(yaml)?
+    };
+
+    let mut warning = None;
+
+    let block_type = value
+        .get("type")
+        .and_then(yaml_value_to_string)
+        .and_then(|raw| match BlockType::from_str(&raw) {
+            Ok(bt) => Some(bt),
+            Err(_) => {
+                warning.get_or_insert_with(|| "unknown_type".to_string());
+                None
+            }
+        })
+        .unwrap_or(BlockType::Article);
+
+    let saved_at = value
+        .get("saved_at")
+        .and_then(yaml_value_to_string)
+        .and_then(|raw| match DateTime::new(&raw) {
+            Ok(dt) => Some(dt),
+            Err(_) => {
+                warning.get_or_insert_with(|| "invalid_saved_at".to_string());
+                None
+            }
+        })
+        .unwrap_or(fallback_saved_at);
+
+    let (tags, tag_warning) = parse_tags_compat(&value);
+    if tag_warning {
+        warning.get_or_insert_with(|| "unsupported_tag_shape".to_string());
+    }
+
+    Ok((
+        Frontmatter {
+            block_type,
+            title: get_opt_string(&value, "title").or_else(|| Some(slug.to_string())),
+            description: get_opt_string(&value, "description"),
+            url: get_opt_string(&value, "url"),
+            file: get_opt_string(&value, "file"),
+            thumbnail: get_opt_string(&value, "thumbnail"),
+            tags,
+            saved_at,
+            source: get_opt_string(&value, "source"),
+            width: get_opt_u64(&value, "width").map(|n| n as u32),
+            height: get_opt_u64(&value, "height").map(|n| n as u32),
+            author: get_opt_string(&value, "author"),
+            position: get_opt_u64(&value, "position").map(|n| n as u32),
+            color: get_opt_string(&value, "color"),
+            icon: get_opt_string(&value, "icon"),
+        },
+        warning,
+    ))
+}
+
+fn parse_tags_compat(parent: &Value) -> (Vec<String>, bool) {
+    let Some(tags_val) = parent.get("tags") else {
+        return (Vec::new(), false);
+    };
+
+    let mut warning = false;
+    let raw_tags: Vec<String> = match tags_val {
+        Value::Sequence(seq) => seq.iter().filter_map(yaml_value_to_string).collect(),
+        Value::String(s) => split_obsidian_tag_string(s),
+        Value::Number(_) | Value::Bool(_) | Value::Tagged(_) => yaml_value_to_string(tags_val)
+            .map(|s| split_obsidian_tag_string(&s))
+            .unwrap_or_default(),
+        _ => {
+            warning = true;
+            Vec::new()
+        }
+    };
+
+    let mut tags = Vec::new();
+    for raw in raw_tags {
+        let stripped = raw.trim().trim_start_matches('#');
+        let normalized = crate::domain::tag::normalize_tag(stripped);
+        if !normalized.is_empty() && !tags.contains(&normalized) {
+            tags.push(normalized);
+        }
+    }
+
+    (tags, warning)
+}
+
+fn split_obsidian_tag_string(s: &str) -> Vec<String> {
+    s.split_whitespace().map(str::to_string).collect()
 }
 
 /// Validate an ISO 8601 date or datetime string.
@@ -860,6 +1070,10 @@ mod tests {
         }
     }
 
+    fn fallback_dt() -> DateTime {
+        DateTime::new("2026-04-24T00:00:00Z").unwrap()
+    }
+
     // ── BlockType ───────────────────────────────────────────────────────
 
     #[test]
@@ -967,6 +1181,74 @@ mod tests {
         assert_eq!(fm.width, Some(1920));
         assert_eq!(fm.height, Some(1080));
         assert_eq!(fm.author.as_deref(), Some("Test Author"));
+    }
+
+    #[test]
+    fn parse_markdown_document_no_frontmatter_defaults_article() {
+        let parsed =
+            parse_markdown_document("Plain Note", "# Heading\n\nBody", fallback_dt()).unwrap();
+        assert_eq!(parsed.origin, "foreign_markdown");
+        assert!(parsed.index_warning.is_none());
+        assert_eq!(parsed.block.frontmatter.block_type, BlockType::Article);
+        assert_eq!(
+            parsed.block.frontmatter.title.as_deref(),
+            Some("Plain Note")
+        );
+        assert_eq!(parsed.block.body, "# Heading\n\nBody");
+    }
+
+    #[test]
+    fn parse_markdown_document_hr_at_top_without_closing_fence_is_foreign() {
+        let parsed =
+            parse_markdown_document("hr", "---\n\n# Header\n\nBody", fallback_dt()).unwrap();
+        assert_eq!(parsed.origin, "foreign_markdown");
+        assert_eq!(parsed.block.body, "---\n\n# Header\n\nBody");
+    }
+
+    #[test]
+    fn parse_markdown_document_unknown_type_downgrades_to_article_with_warning() {
+        let input = "---\ntype: meeting\ntags: [design/typography]\n---\nBody";
+        let parsed = parse_markdown_document("meeting-note", input, fallback_dt()).unwrap();
+        assert_eq!(parsed.index_warning.as_deref(), Some("unknown_type"));
+        assert_eq!(parsed.block.frontmatter.block_type, BlockType::Article);
+        assert_eq!(parsed.block.frontmatter.tags, vec!["design/typography"]);
+    }
+
+    #[test]
+    fn parse_markdown_document_invalid_saved_at_uses_fallback_with_warning() {
+        let input = "---\ntype: article\nsaved_at: not-a-date\n---\nBody";
+        let parsed = parse_markdown_document("bad-date", input, fallback_dt()).unwrap();
+        assert_eq!(parsed.index_warning.as_deref(), Some("invalid_saved_at"));
+        assert_eq!(
+            parsed.block.frontmatter.saved_at.as_str(),
+            "2026-04-24T00:00:00Z"
+        );
+    }
+
+    #[test]
+    fn parse_markdown_document_malformed_yaml_indexes_whole_file_with_warning() {
+        let input = "---\ntype: article\n\tsaved_at: broken\n---\nBody";
+        let parsed = parse_markdown_document("bad-yaml", input, fallback_dt()).unwrap();
+        assert_eq!(parsed.origin, "malformed_frontmatter");
+        assert_eq!(
+            parsed.index_warning.as_deref(),
+            Some("malformed_frontmatter")
+        );
+        assert_eq!(parsed.block.body, input);
+    }
+
+    #[test]
+    fn parse_markdown_document_tags_scalar_string_supported() {
+        let input = "---\ntags: \"#design typography\"\n---\nBody";
+        let parsed = parse_markdown_document("tags", input, fallback_dt()).unwrap();
+        assert_eq!(parsed.block.frontmatter.tags, vec!["design", "typography"]);
+    }
+
+    #[test]
+    fn parse_markdown_document_inline_body_tag_does_not_mutate_tags() {
+        let parsed = parse_markdown_document("inline", "Body #typography", fallback_dt()).unwrap();
+        assert!(parsed.block.frontmatter.tags.is_empty());
+        assert_eq!(parsed.block.body, "Body #typography");
     }
 
     #[test]

@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::article_audio::{prepare_article_speech, PreparedArticleSpeech};
-use crate::domain::block::{parse_block, Block, BlockType};
+use crate::domain::block::{parse_markdown_document, Block, BlockType, DateTime};
 use crate::domain::vault::VaultLayout;
 use crate::storage::files;
 
@@ -79,12 +79,14 @@ pub fn load_block_for_audio(vault: &VaultLayout, slug: &str) -> Result<Block> {
             block_path.display()
         )
     })?;
-    parse_block(&read_slug, &content).with_context(|| {
-        format!(
-            "failed to parse article source file: {}",
-            block_path.display()
-        )
-    })
+    let parsed = parse_markdown_document(&read_slug, &content, file_saved_at(&block_path))
+        .with_context(|| {
+            format!(
+                "failed to parse article source file: {}",
+                block_path.display()
+            )
+        })?;
+    Ok(parsed.block)
 }
 
 pub fn resolve_state_for_block(vault: &VaultLayout, block: &Block) -> Result<ArticleAudioState> {
@@ -324,6 +326,15 @@ pub fn article_audio_extensions() -> &'static [&'static str] {
     ARTICLE_AUDIO_FILE_EXTENSIONS
 }
 
+fn file_saved_at(path: &std::path::Path) -> DateTime {
+    let time = std::fs::metadata(path)
+        .ok()
+        .and_then(|metadata| metadata.created().ok().or_else(|| metadata.modified().ok()))
+        .unwrap_or_else(std::time::SystemTime::now);
+    DateTime::new(&crate::util::system_time_to_iso8601(time))
+        .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
+}
+
 fn read_stored_state(vault: &VaultLayout, slug: &str) -> Result<Option<StoredArticleAudioState>> {
     let path = vault.article_audio_state_path(slug);
     if !path.exists() {
@@ -379,7 +390,7 @@ pub(crate) fn write_test_state_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::block::{DateTime, Frontmatter};
+    use crate::domain::block::Frontmatter;
 
     fn vault() -> VaultLayout {
         let root = tempfile::tempdir().unwrap();
@@ -409,6 +420,18 @@ mod tests {
             },
             body: body.to_string(),
         }
+    }
+
+    #[test]
+    fn load_block_for_audio_accepts_foreign_markdown_without_frontmatter() {
+        let vault = vault();
+        std::fs::write(vault.block_path("foreign"), "Plain article body").unwrap();
+
+        let block = load_block_for_audio(&vault, "foreign").unwrap();
+
+        assert_eq!(block.frontmatter.block_type, BlockType::Article);
+        assert_eq!(block.frontmatter.title.as_deref(), Some("foreign"));
+        assert_eq!(block.body, "Plain article body");
     }
 
     #[test]

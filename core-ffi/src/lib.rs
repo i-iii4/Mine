@@ -5,8 +5,8 @@
 
 uniffi::setup_scaffolding!();
 
-use mine_lib::domain::block::parse_block;
 use mine_lib::domain::article_audio::prepare_article_speech;
+use mine_lib::domain::block::{parse_markdown_document, DateTime};
 use mine_lib::storage::{db, index};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -81,8 +81,8 @@ impl ArenaVault {
             .conn
             .lock()
             .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
-        let blocks = index::list_blocks(&conn)
-            .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
+        let blocks =
+            index::list_blocks(&conn).map_err(|e| ArenaError::Database { msg: e.to_string() })?;
         Ok(blocks.into_iter().map(light_block_to_ffi).collect())
     }
 
@@ -105,8 +105,13 @@ impl ArenaVault {
                 continue;
             }
             if let Ok((slug, content)) = mine_lib::storage::files::read_block_file(&path) {
-                match mine_lib::domain::block::parse_block(&slug, &content) {
-                    Ok(block) => {
+                match mine_lib::domain::block::parse_markdown_document(
+                    &slug,
+                    &content,
+                    file_saved_at(&path),
+                ) {
+                    Ok(parsed) => {
+                        let block = parsed.block;
                         if block.frontmatter.block_type
                             == mine_lib::domain::block::BlockType::Channel
                         {
@@ -152,8 +157,13 @@ impl ArenaVault {
 /// Parse a .md file content into a block. Useful for testing and direct file reads.
 #[uniffi::export]
 fn parse_block_file(slug: String, content: String) -> Result<FfiLightBlock, ArenaError> {
-    let block =
-        parse_block(&slug, &content).map_err(|e| ArenaError::Parse { msg: e.to_string() })?;
+    let parsed = parse_markdown_document(
+        &slug,
+        &content,
+        DateTime::new("1970-01-01T00:00:00Z").unwrap(),
+    )
+    .map_err(|e| ArenaError::Parse { msg: e.to_string() })?;
+    let block = parsed.block;
     Ok(FfiLightBlock {
         id: 0,
         slug: block.slug,
@@ -169,6 +179,15 @@ fn parse_block_file(slug: String, content: String) -> Result<FfiLightBlock, Aren
         media_urls: None,
         tags: block.frontmatter.tags,
     })
+}
+
+fn file_saved_at(path: &std::path::Path) -> DateTime {
+    let time = std::fs::metadata(path)
+        .ok()
+        .and_then(|metadata| metadata.created().ok().or_else(|| metadata.modified().ok()))
+        .unwrap_or_else(std::time::SystemTime::now);
+    DateTime::new(&mine_lib::util::system_time_to_iso8601(time))
+        .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
 }
 
 // ─── Internal helpers ───────────────────────────────────────────────────────

@@ -13,7 +13,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
-use crate::domain::block::{compute_body_hash, parse_block, Block, BlockType};
+use crate::domain::block::{
+    compute_body_hash, parse_block, parse_markdown_document, Block, BlockType, DateTime,
+};
 use crate::domain::vault::{normalize_filename_stem, VaultLayout};
 use crate::storage::{article_audio, db, files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
@@ -154,7 +156,11 @@ pub fn full_scan(
     // conflict stems themselves don't count as real blocks.
     let live_slugs: std::collections::HashSet<String> = paths
         .iter()
-        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(normalize_filename_stem))
+        .filter_map(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .map(normalize_filename_stem)
+        })
         .filter(|stem| crate::domain::vault::detect_icloud_conflict(stem).is_none())
         .collect();
     let all_indexed = index::list_blocks_light(&tx).unwrap_or_default();
@@ -185,7 +191,13 @@ pub fn full_scan(
         .context("failed to commit full_scan transaction")?;
 
     // Spawn background thread for thumbnail generation
-    spawn_thumb_jobs_worker(thumb_jobs, vault.clone(), app.clone(), on_thumbs_done, "full");
+    spawn_thumb_jobs_worker(
+        thumb_jobs,
+        vault.clone(),
+        app.clone(),
+        on_thumbs_done,
+        "full",
+    );
 
     Ok(ScanResult { indexed, errors })
 }
@@ -275,7 +287,13 @@ pub fn incremental_scan(
     tx.commit()
         .context("failed to commit incremental_scan transaction")?;
 
-    spawn_thumb_jobs_worker(thumb_jobs, vault.clone(), app.clone(), on_thumbs_done, "incremental");
+    spawn_thumb_jobs_worker(
+        thumb_jobs,
+        vault.clone(),
+        app.clone(),
+        on_thumbs_done,
+        "incremental",
+    );
 
     Ok(ScanResult { indexed, errors })
 }
@@ -478,11 +496,7 @@ pub fn index_md_file(
     {
         if let Some(base_slug) = crate::domain::vault::detect_icloud_conflict(&stem) {
             if let Err(e) = index::record_vault_conflict(conn, &base_slug, &stem) {
-                log::warn!(
-                    "failed to record vault conflict for {}: {}",
-                    stem,
-                    e
-                );
+                log::warn!("failed to record vault conflict for {}: {}", stem, e);
             } else {
                 log::info!(
                     "iCloud conflict detected: {} (base slug: {})",
@@ -699,8 +713,9 @@ fn index_md_file_inner(
     let (slug, content) =
         files::read_block_file(path).with_context(|| format!("reading {}", path.display()))?;
 
-    let block =
-        parse_block(&slug, &content).with_context(|| format!("parsing {}", path.display()))?;
+    let parsed = parse_markdown_document(&slug, &content, file_saved_at(path))
+        .with_context(|| format!("parsing {}", path.display()))?;
+    let block = parsed.block;
 
     // Channel files → index as channel, no thumbnail
     if block.frontmatter.block_type == BlockType::Channel {
@@ -714,8 +729,14 @@ fn index_md_file_inner(
         });
     }
 
-    index::upsert_block(conn, &block, Some(vault.root()))
-        .with_context(|| format!("indexing {}", path.display()))?;
+    index::upsert_block_with_diagnostics(
+        conn,
+        &block,
+        Some(vault.root()),
+        Some(parsed.origin.as_str()),
+        parsed.index_warning.as_deref(),
+    )
+    .with_context(|| format!("indexing {}", path.display()))?;
     let audio_invalidated = article_audio::invalidate_for_block(vault, &block)?;
 
     Ok(IndexMdOutcome {
@@ -956,10 +977,7 @@ pub fn handle_event(
             // body matches a recently-deferred removal, migrate identity
             // instead of creating a second row.
             if let Some(new_slug) = path_to_slug(path) {
-                let already_indexed = index::get_block(conn, &new_slug)
-                    .ok()
-                    .flatten()
-                    .is_some();
+                let already_indexed = index::get_block(conn, &new_slug).ok().flatten().is_some();
                 if !already_indexed {
                     if let Ok(body_hash) = read_body_hash_from_md(path) {
                         if let Some(pending) = take_pending_by_hash(&body_hash) {
@@ -980,9 +998,7 @@ pub fn handle_event(
                 // expired drain can emit block:removed with the right
                 // channel list. The DB row itself is NOT removed yet —
                 // rename_slug on match would fail if we pre-deleted.
-                let body_hash = index::lookup_body_hash(conn, &slug)
-                    .ok()
-                    .flatten();
+                let body_hash = index::lookup_body_hash(conn, &slug).ok().flatten();
                 let tags = index::get_block(conn, &slug)
                     .ok()
                     .flatten()
@@ -1074,6 +1090,15 @@ fn file_mtime_secs(path: &Path) -> Option<u64> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .map(|duration| duration.as_secs())
+}
+
+fn file_saved_at(path: &Path) -> DateTime {
+    let time = std::fs::metadata(path)
+        .ok()
+        .and_then(|metadata| metadata.created().ok().or_else(|| metadata.modified().ok()))
+        .unwrap_or_else(std::time::SystemTime::now);
+    DateTime::new(&crate::util::system_time_to_iso8601(time))
+        .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
 }
 
 fn emit_article_audio_updated(app: &AppHandle, slug: &str) {
@@ -1177,18 +1202,18 @@ mod tests {
     }
 
     #[test]
-    fn full_scan_counts_errors() {
+    fn full_scan_indexes_foreign_markdown_without_errors() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
 
         write_md_file(&vault, "good", "image", &[]);
-        // Write an invalid .md file (no frontmatter)
+        // No frontmatter is valid Obsidian/foreign Markdown.
         std::fs::write(vault.block_path("bad"), "not a valid block").unwrap();
 
         let result = full_scan(&conn, &vault, None, None).unwrap();
-        assert_eq!(result.indexed, 1);
-        assert_eq!(result.errors, 1);
+        assert_eq!(result.indexed, 2);
+        assert_eq!(result.errors, 0);
     }
 
     // ── index_md_file ────────────────────────────────────────────────────
@@ -1209,14 +1234,16 @@ mod tests {
     }
 
     #[test]
-    fn index_invalid_file_returns_error() {
+    fn index_foreign_markdown_file_succeeds() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
 
         std::fs::write(vault.block_path("bad"), "garbage").unwrap();
         let path = vault.block_path("bad");
-        assert!(index_md_file(&conn, &vault, &path, None).is_err());
+        assert!(index_md_file(&conn, &vault, &path, None).unwrap());
+        let block = index::get_block(&conn, "bad").unwrap().unwrap();
+        assert_eq!(block.block_type, BlockType::Article);
     }
 
     // ── handle_event ─────────────────────────────────────────────────────
@@ -1227,7 +1254,7 @@ mod tests {
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
 
-        write_md_file(&vault, "note", "link", &[]);
+        write_md_file_with_body(&vault, "note", "link", &[], "unique-delete-body");
         let path = vault.block_path("note");
         handle_event(&conn, &vault, &VaultEvent::BlockChanged(path), None).unwrap();
 
@@ -1239,6 +1266,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
+        flush_pending_for_test(&conn, &vault, None);
 
         // First index a block
         write_md_file(&vault, "note", "link", &[]);
@@ -1257,6 +1285,7 @@ mod tests {
 
         flush_pending_for_test(&conn, &vault, None);
         assert!(index::get_block(&conn, "note").unwrap().is_none());
+        flush_pending_for_test(&conn, &vault, None);
     }
 
     #[test]
@@ -1340,13 +1369,7 @@ mod tests {
 
         write_md_file_with_body(&vault, "new-name", "article", &[], &unique_body);
         let new_path = vault.block_path("new-name");
-        handle_event(
-            &conn,
-            &vault,
-            &VaultEvent::BlockChanged(new_path),
-            None,
-        )
-        .unwrap();
+        handle_event(&conn, &vault, &VaultEvent::BlockChanged(new_path), None).unwrap();
 
         let (_, reference_content) = files::read_block_file(&reference_path).unwrap();
         let reference_block = parse_block("reference", &reference_content).unwrap();
@@ -1410,15 +1433,18 @@ mod tests {
         );
         let conflict_path = vault.block_path("Hello World (conflicted copy)");
 
-        handle_event(&conn, &vault, &VaultEvent::BlockChanged(conflict_path), None)
-            .unwrap();
+        handle_event(
+            &conn,
+            &vault,
+            &VaultEvent::BlockChanged(conflict_path),
+            None,
+        )
+        .unwrap();
 
         // Conflict file must NOT be indexed as a separate block
-        assert!(
-            index::get_block(&conn, "Hello World (conflicted copy)")
-                .unwrap()
-                .is_none()
-        );
+        assert!(index::get_block(&conn, "Hello World (conflicted copy)")
+            .unwrap()
+            .is_none());
         // Original remains untouched
         assert!(index::get_block(&conn, "Hello World").unwrap().is_some());
 
@@ -1441,11 +1467,9 @@ mod tests {
         full_scan(&conn, &vault, None, None).unwrap();
 
         assert!(index::get_block(&conn, "Doc").unwrap().is_some());
-        assert!(
-            index::get_block(&conn, "Doc (conflicted copy)")
-                .unwrap()
-                .is_none()
-        );
+        assert!(index::get_block(&conn, "Doc (conflicted copy)")
+            .unwrap()
+            .is_none());
         assert_eq!(index::list_vault_conflicts(&conn).unwrap().len(), 1);
     }
 

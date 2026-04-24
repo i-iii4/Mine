@@ -20,6 +20,7 @@
 - `SPEC_ARTICLE_AUDIO.md` — спецификация manual article audio renditions: speech prep, derived audio state, desktop/iOS controls
 - `SPEC_IDENTITY_ROBUSTNESS.md` — спецификация filename-first identity: rename, conflicts, NFC
 - `SPEC_OBSIDIAN_WIKILINKS.md` — спецификация inline media через Obsidian wikilinks
+- `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md` — обычные Obsidian `.md` без Mine frontmatter как implicit articles, optional metadata overlay, no rewrite on read
 - `SPEC_CLIPPER.md` — спецификация веб-клиппера: типы клипов, popup, native messaging
 - `SPEC_MOBILE.md` — спецификация iOS-приложения: SwiftUI + Rust UniFFI, iCloud sync, Share Extension
 - `DESIGN_SYSTEM_IOS.md` — дизайн-система iOS: цвета, типографика, компоненты, жесты
