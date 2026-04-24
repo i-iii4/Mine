@@ -34,6 +34,20 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.primaryAspectRatio).toBeCloseTo(1600 / 900);
   });
 
+  it("prefers media_dimensions over stale image frontmatter dimensions", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "image",
+        media_file: "wide-screenshot.jpg",
+        width: 4036,
+        height: 2578,
+        media_dimensions: "{\"wide-screenshot.jpg\":[2880,980]}",
+      }),
+    );
+    expect(descriptor.variant).toBe("image");
+    expect(descriptor.primaryAspectRatio).toBeCloseTo(2880 / 980);
+  });
+
   it("classifies article with first image as article-media", () => {
     const descriptor = deriveCardLayoutDescriptor(
       makeBlock({

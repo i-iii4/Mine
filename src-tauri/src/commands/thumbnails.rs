@@ -234,28 +234,36 @@ fn resolve_upgrade_media(
         }
     }
 
-    // 3. First local `![](...)` image in body — article branch
-    if let Some(ref first_image) = block.first_image {
-        let ext = first_image.rsplit('.').next().unwrap_or("").to_lowercase();
-        if thumbnails::is_image_ext(&ext) {
-            let media_path = vault.root().join(first_image);
-            if media_path.exists() {
-                return Some((media_path, "image"));
-            }
-        }
-    }
-
-    // 4. First local video from indexed media_urls — article branch.
+    // 3. First local media from indexed media_urls in markdown order —
+    //    article branch. Video-first social posts must upgrade the same
+    //    source that the feed playback uses, even when later images exist.
     if let Some(ref media_urls) = block.media_urls {
         if let Ok(urls) = serde_json::from_str::<Vec<String>>(media_urls) {
             for url in urls {
                 let ext = url.rsplit('.').next().unwrap_or("").to_lowercase();
+                if thumbnails::is_image_ext(&ext) {
+                    let media_path = vault.root().join(&url);
+                    if media_path.exists() {
+                        return Some((media_path, "image"));
+                    }
+                }
                 if thumbnails::is_video_ext(&ext) {
                     let media_path = vault.root().join(&url);
                     if media_path.exists() {
                         return Some((media_path, "video"));
                     }
                 }
+            }
+        }
+    }
+
+    // 4. Legacy indexes may only have first_image populated.
+    if let Some(ref first_image) = block.first_image {
+        let ext = first_image.rsplit('.').next().unwrap_or("").to_lowercase();
+        if thumbnails::is_image_ext(&ext) {
+            let media_path = vault.root().join(first_image);
+            if media_path.exists() {
+                return Some((media_path, "image"));
             }
         }
     }
@@ -419,6 +427,29 @@ mod tests {
         let target = light.iter().find(|b| b.slug == "clip").unwrap();
 
         let (path, kind) = resolve_upgrade_media(&vault, target).unwrap();
+        assert_eq!(kind, "video");
+        assert_eq!(path, video);
+    }
+
+    #[test]
+    fn resolve_upgrade_media_preserves_media_urls_order_for_video_first_article() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+
+        let video = dir.path().join("clip.mp4");
+        let image = dir.path().join("later.jpg");
+        std::fs::write(&video, b"fake mp4").unwrap();
+        create_test_image(&image, 100, 100);
+
+        let block = index::PendingThumbUpgradeBlock {
+            slug: "clip".into(),
+            media_file: None,
+            thumbnail: None,
+            first_image: Some("later.jpg".into()),
+            media_urls: Some(r#"["clip.mp4","later.jpg"]"#.into()),
+        };
+
+        let (path, kind) = resolve_upgrade_media(&vault, &block).unwrap();
         assert_eq!(kind, "video");
         assert_eq!(path, video);
     }

@@ -1,11 +1,65 @@
 # Devlog
 
+## 24.04.2026 [primary] — Feed video poster stays visible until playback
+
+### Goal
+
+Закрыть регресс, где video card с локально загруженным `.mp4` показывала
+пустой чёрный preview surface с play button вместо poster, особенно для
+article/social body вида `video -> image`.
+Заодно вернуть для screenshot/image blocks корректную геометрию в ленте:
+сохранённые скриншоты с текстом не должны резаться по краям и не должны
+получать искусственный letterboxing.
+
+### Completed
+
+- `FeedVideoSurface` теперь держит poster layer поверх mounted `<video>` до
+  фактической фазы `playing_*`; loading `<video>` остаётся прозрачным и не
+  может перекрыть poster чёрным первым кадром.
+- `heavy` autoplay больше не self-timeout'ится через короткий direct timer:
+  такие клипы остаются direct-only и без blob fallback, но могут дождаться
+  `playing`, пока Grid держит их единственным active heavy candidate.
+- `storage::thumbnails` выбирает первый existing embedded media в markdown
+  order: если article начинается с video, block-level poster и freshness
+  dependency идут от video, даже если ниже есть картинки.
+- `storage::index` больше не публикует derived tile preview вроде
+  `clip.jpg` для inline video, потому что такой per-video thumb не
+  генерируется; video tiles используют block-level poster fallback.
+- `Card` игнорирует legacy `preview_path` у video gallery tiles и сразу берёт
+  block poster fallback, чтобы старые индексы не давали пустую tile surface.
+- `ImageCard` сохраняет `object-cover`, но его wrapper ratio теперь берётся из
+  фактических `media_dimensions[media_file]` перед устаревшими
+  `preview_manifest.width/height` и `frontmatter.width/height`. При верном
+  ratio `object-cover` не режет края и не добавляет поля.
+- `storage::index` для dedicated image preview manifest тоже предпочитает
+  фактические `media_dimensions[frontmatter.file]`, чтобы новые и
+  переиндексированные записи не несли stale geometry.
+- Phase 2 thumbnail upgrade paths (`commands/thumbnails`,
+  `watcher/handler`) используют тот же video-first order, чтобы WebView
+  upgrade не выбирал более позднюю картинку для video-first social clips.
+- Добавлены regression tests на poster/video layer order и video-first
+  embedded media order.
+
+### Verification
+
+- `npm test -- FeedVideoSurface`
+- `npm test -- Card FeedVideoSurface`
+- `cargo test article_video_first_preview_depends_on_video_before_later_images`
+- `cargo test find_first_local_media_any_preserves_video_first_order`
+- `cargo test resolve_upgrade_media_preserves_media_urls_order_for_video_first_article`
+- `cargo test resolve_upgrade_media_for_block_preserves_video_first_body_order`
+- `cargo test list_blocks_light_persists_social_video_preview_manifest`
+- `cargo test list_blocks_light_keeps_feed_playback_null_for_multi_media_social_preview`
+- `npm run build`
+
 ## 24.04.2026 [primary] — Clipper overlay outside-click close regression
 
 ### Goal
 
 Вернуть ожидаемое modal-поведение overlay: клик за пределами окна клиппера
 закрывает окно и не оставляет страницу заблокированной до Escape/manual close.
+Не сломать при этом transient-hide сценарии (`captureScreenshot`, Crop Area),
+где overlay должен быть невидимым, но React state обязан жить до результата.
 
 ### Completed
 
@@ -17,6 +71,14 @@
   проверяет координаты события относительно `getBoundingClientRect()` панели.
 - Обработчик не вызывает `preventDefault` / `stopPropagation`: внешний клик
   закрывает overlay, но остаётся настоящим кликом страницы.
+- Если overlay находится в `display:none` после `hideClipperOverlay()`,
+  outside-close handler игнорирует pointer events страницы. Это защищает Crop
+  Area: drag по странице больше не размонтирует popup state до прихода
+  `mine-crop-result`, поэтому cropped screenshot заменяет старый full-page
+  screenshot и в preview, и в save payload.
+- Crop overlay теперь скрывает selection rectangle и size label перед
+  `captureVisibleTab`, чтобы измерительная плашка (`1440 x 490`) не попадала
+  в сохранённый screenshot.
 
 ### Verification
 

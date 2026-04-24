@@ -1116,6 +1116,9 @@
       }
 
       const finalRect = { ...rect };
+      selection.classList.remove("visible");
+      sizeLabel.classList.remove("visible");
+      dim.classList.remove("active");
       cleanup();
       performCrop(finalRect);
     }

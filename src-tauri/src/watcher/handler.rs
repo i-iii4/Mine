@@ -664,21 +664,11 @@ fn resolve_upgrade_media_for_block(
         }
     }
 
-    // 3. First body image / 4. first body video
-    if let Some(first_image) =
-        thumbnails::find_first_local_media(&block.body, thumbnails::is_image_ext)
-    {
-        let media_path = vault.root().join(&first_image);
+    // 3. First embedded body media in markdown order.
+    if let Some((media_name, media_kind)) = thumbnails::find_first_local_media_any(&block.body) {
+        let media_path = vault.root().join(&media_name);
         if media_path.exists() {
-            return Some((media_path, "image"));
-        }
-    }
-    if let Some(first_video) =
-        thumbnails::find_first_local_media(&block.body, thumbnails::is_video_ext)
-    {
-        let media_path = vault.root().join(&first_video);
-        if media_path.exists() {
-            return Some((media_path, "video"));
+            return Some((media_path, media_kind));
         }
     }
 
@@ -1513,6 +1503,30 @@ mod tests {
         let (media_path, kind) = resolve_upgrade_media_for_block(&vault, &block).unwrap();
         assert_eq!(kind, "image");
         assert_eq!(media_path, vault.root().join(image_name));
+    }
+
+    #[test]
+    fn resolve_upgrade_media_for_block_preserves_video_first_body_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+
+        std::fs::write(vault.root().join("clip.mp4"), b"fake mp4").unwrap();
+        std::fs::write(vault.root().join("later.jpg"), b"fake image bytes").unwrap();
+        write_md_file_with_body(
+            &vault,
+            "Video First",
+            "article",
+            &[],
+            "![[clip.mp4]]\n\n![[later.jpg]]",
+        );
+
+        let path = vault.block_path("Video First");
+        let (slug, content) = files::read_block_file(&path).unwrap();
+        let block = parse_block(&slug, &content).unwrap();
+
+        let (media_path, kind) = resolve_upgrade_media_for_block(&vault, &block).unwrap();
+        assert_eq!(kind, "video");
+        assert_eq!(media_path, vault.root().join("clip.mp4"));
     }
 
     // ── helpers ──────────────────────────────────────────────────────────

@@ -5,10 +5,10 @@
 //
 // Card templates use `getMediaAspectRatio(block, filename, fallback)` to get
 // a deterministic aspect-ratio value for a wrapper div. When dimensions are
-// known, the wrapper sizes itself to the exact image ratio — `object-contain`
-// then renders the image at its natural shape without cropping. When unknown
-// (block not yet re-indexed, remote URL, corrupt file), the caller passes a
-// sensible fallback ratio.
+// known, the wrapper sizes itself to the exact media ratio so `object-cover`
+// can fill the card without cropping or letterboxing. When unknown (block not
+// yet re-indexed, remote URL, corrupt file), the caller passes a sensible
+// fallback ratio.
 
 import type { LightBlock, IndexedBlock } from "@/types";
 

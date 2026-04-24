@@ -170,6 +170,11 @@ async function mount(): Promise<OverlayHandle> {
   }
 
   function onOutsidePointer(e: MouseEvent | PointerEvent) {
+    // `hideClipperOverlay()` is a transient state used while Chrome captures
+    // screenshots and while the page-level crop overlay is active. The React
+    // overlay must keep its state alive during that period; page pointer
+    // events belong to the crop/capture flow, not to click-outside close.
+    if (host.style.display === "none") return;
     if (isInsidePanel(e)) return;
     closeClipperOverlay();
   }

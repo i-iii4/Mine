@@ -90,8 +90,11 @@ type FeedPlaybackDescriptor = {
   - feed surface использует `direct -> blob -> poster-only`
 - `heavy`
   - larger, но всё ещё допустимые single-video clips
-  - feed surface использует longer `direct -> poster-only`
+  - feed surface использует `direct -> poster-only on media/playback error`
   - blob fallback не используется, чтобы не тащить тяжёлый source целиком в память
+  - direct-loading не обрывается по короткому таймеру: активным может быть
+    только один `heavy` clip, поэтому он может дождаться первого playable
+    frame, пока карточка остаётся active playback candidate
 
 ### Policy thresholds v1
 
@@ -158,9 +161,12 @@ Autoplay semantics в descriptor не кодируются.
 
 - poster рендерится сразу
 - poster остаётся на экране, пока playback не подтверждён через `loadeddata` или `playing`
+- mounted `<video>` остаётся визуально прозрачным и ниже poster layer до
+  `playing_*`; loading video frame не должен перекрывать poster чёрным
+  прямоугольником
 - `FeedVideoSurface` принимает optional `posterCandidates`; если они переданы, poster branch использует общий candidate chain вместо single hardcoded poster URL
 - `standard`: direct timeout/error => blob fallback
-- `heavy`: direct timeout/error => permanent poster-only
+- `heavy`: direct error / play rejection => permanent poster-only; no blob fallback
 - blob timeout/error => permanent poster-only
 - пустой `<video>` без `src` запрещён
 
@@ -168,7 +174,7 @@ Autoplay semantics в descriptor не кодируются.
 
 - `FEED_VIDEO_DIRECT_TIMEOUT_MS = 1200`
 - `FEED_VIDEO_BLOB_TIMEOUT_MS = 1800`
-- `FEED_VIDEO_HEAVY_DIRECT_TIMEOUT_MS = 3500`
+- `heavy` direct-loading does not use a short self-timeout
 
 ## Poster contract
 
@@ -189,6 +195,12 @@ Poster source резолвится в таком порядке:
 - dedicated `video`, single-video `article` и single-video `social` не имеют отдельных poster source-of-truth
 - autoplay ineligible / delayed / disabled card остаётся visual-video-card с постером и `PlayBadge`
 - при `img` load failure runtime пробует следующий candidate, а не схлопывается сразу в blank/black card
+- inline video tiles не должны полагаться на derived `video-stem.jpg`, если
+  backend не создал такой asset; tile UI обязан fallback'иться на block-level
+  poster
+- если article/social body начинается с local video, а позже содержит images,
+  block-level poster и Phase 2 upgrade source выбираются из первого video, а
+  не из более поздней картинки
 
 ## Remaining architectural direction
 

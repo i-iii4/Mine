@@ -306,7 +306,11 @@ fn media_tile(
     let dims_entry = dims.get(src).copied();
     FeedPreviewTile {
         source_path: src.to_string(),
-        preview_path: tile_preview_path(src),
+        preview_path: if is_video {
+            None
+        } else {
+            tile_preview_path(src)
+        },
         width: dims_entry.map(|[w, _]| w),
         height: dims_entry.map(|[_, h]| h),
         is_video,
@@ -316,6 +320,18 @@ fn media_tile(
 
 fn primary_preview_path(slug: &str) -> String {
     format!("{slug}.jpg")
+}
+
+fn dimensions_for_src(
+    dims: &std::collections::HashMap<String, [u32; 2]>,
+    src: Option<&str>,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> (Option<u32>, Option<u32>) {
+    if let Some([w, h]) = src.and_then(|s| dims.get(s)).copied() {
+        return (Some(w), Some(h));
+    }
+    (width, height)
 }
 
 fn tile_preview_path(src: &str) -> Option<String> {
@@ -409,14 +425,22 @@ fn serialize_feed_preview_manifest(
     let dims = parse_media_dimensions_json(media_dimensions);
 
     let manifest = match block.frontmatter.block_type {
-        BlockType::Image => FeedPreviewManifest {
-            kind: FeedPreviewKind::Image,
-            primary_preview_path: Some(primary_preview_path(&block.slug)),
-            width,
-            height,
-            tiles: Vec::new(),
-            overflow_count: 0,
-        },
+        BlockType::Image => {
+            let (preview_width, preview_height) = dimensions_for_src(
+                &dims,
+                block.frontmatter.file.as_deref(),
+                width,
+                height,
+            );
+            FeedPreviewManifest {
+                kind: FeedPreviewKind::Image,
+                primary_preview_path: Some(primary_preview_path(&block.slug)),
+                width: preview_width,
+                height: preview_height,
+                tiles: Vec::new(),
+                overflow_count: 0,
+            }
+        }
         BlockType::Link => FeedPreviewManifest {
             kind: if block.frontmatter.thumbnail.is_some() {
                 FeedPreviewKind::Image
@@ -2130,6 +2154,11 @@ mod tests {
         std::fs::write(vault.root().join(name), vec![0u8; size_bytes]).unwrap();
     }
 
+    fn write_test_image(vault: &VaultLayout, name: &str, width: u32, height: u32) {
+        let img = image::RgbImage::from_pixel(width, height, image::Rgb([120, 180, 200]));
+        img.save(vault.root().join(name)).unwrap();
+    }
+
     // ── upsert_block ─────────────────────────────────────────────────────
 
     #[test]
@@ -2559,6 +2588,33 @@ mod tests {
     }
 
     #[test]
+    fn image_preview_manifest_prefers_media_dimensions_over_stale_frontmatter_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        write_test_image(&vault, "wide-screenshot.jpg", 2880, 980);
+
+        let mut block = make_block_full(
+            "wide-screenshot",
+            "image",
+            Some("Wide Screenshot"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.file = Some("wide-screenshot.jpg".to_string());
+        block.frontmatter.width = Some(4036);
+        block.frontmatter.height = Some(2578);
+        upsert_block(&conn, &block, Some(vault.root())).unwrap();
+
+        let light = list_blocks_light(&conn).unwrap();
+        let manifest: FeedPreviewManifest =
+            serde_json::from_str(light[0].preview_manifest.as_deref().unwrap()).unwrap();
+        assert_eq!(manifest.width, Some(2880));
+        assert_eq!(manifest.height, Some(980));
+    }
+
+    #[test]
     fn list_blocks_light_persists_article_preview_manifest() {
         let conn = test_conn();
         let block = make_block_full(
@@ -2604,6 +2660,7 @@ mod tests {
         assert_eq!(manifest.tiles.len(), 1);
         assert!(manifest.tiles[0].is_video);
         assert!(manifest.tiles[0].is_video_poster);
+        assert_eq!(manifest.tiles[0].preview_path, None);
     }
 
     #[test]
@@ -2717,6 +2774,11 @@ mod tests {
         sync_test_jpeg_thumb(&conn, "tweet-gallery");
 
         let light = list_blocks_light(&conn).unwrap();
+        let manifest: FeedPreviewManifest =
+            serde_json::from_str(light[0].preview_manifest.as_deref().unwrap()).unwrap();
+        assert_eq!(manifest.tiles.len(), 2);
+        assert!(manifest.tiles[0].is_video);
+        assert_eq!(manifest.tiles[0].preview_path, None);
         assert_eq!(light[0].feed_playback, None);
     }
 

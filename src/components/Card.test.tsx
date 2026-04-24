@@ -101,6 +101,19 @@ describe("Card", () => {
     expect(screen.getByRole("img")).toHaveAttribute("alt", "Sunset");
   });
 
+  it("sizes image cards from media_dimensions without letterboxing", () => {
+    const b = block({
+      block_type: "image",
+      title: "Wide Screenshot",
+      media_file: "wide-screenshot.jpg",
+      width: 4036,
+      height: 2578,
+      media_dimensions: "{\"wide-screenshot.jpg\":[2880,980]}",
+    });
+    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(screen.getByRole("img")).toHaveClass("object-cover");
+  });
+
   it("renders broken image fallback after every source in the cascade fails", () => {
     // Exhaust the whole cascade: source → thumb → fallback text card.
     // Each onError bumps the internal index; once every candidate is
@@ -527,7 +540,7 @@ describe("Card", () => {
     expect(container.querySelector("svg path[d]")).toBeNull();
   });
 
-  it("keeps gallery video tiles preview-only and never mounts live video", () => {
+  it("keeps gallery video tiles preview-only and uses block poster fallback", () => {
     const b = block({
       block_type: "article",
       title: "Mixed Gallery",
@@ -549,7 +562,7 @@ describe("Card", () => {
     expect(container.querySelector("video")).toBeNull();
     const images = Array.from(container.querySelectorAll("img"));
     expect(images).toHaveLength(2);
-    expect(images[0]?.getAttribute("src")).toContain("/clip.jpg");
+    expect(images[0]?.getAttribute("src")).toContain("/test-block.jpg");
     expect(images[1]?.getAttribute("src")).toContain("/still.jpg");
   });
 

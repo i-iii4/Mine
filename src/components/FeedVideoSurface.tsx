@@ -5,7 +5,6 @@ import { FeedVideoPoster } from "./FeedVideoPoster";
 
 export const FEED_VIDEO_DIRECT_TIMEOUT_MS = 1200;
 export const FEED_VIDEO_BLOB_TIMEOUT_MS = 1800;
-export const FEED_VIDEO_HEAVY_DIRECT_TIMEOUT_MS = 3500;
 
 export type FeedVideoPhase =
   | "poster"
@@ -52,11 +51,6 @@ export function FeedVideoSurface({
   const usesBlobFallback = playback.profile === "standard";
   const directFailurePhase: "loading_blob" | "failed_poster_only" =
     usesBlobFallback ? "loading_blob" : "failed_poster_only";
-  const directTimeoutMs =
-    playback.profile === "heavy"
-      ? FEED_VIDEO_HEAVY_DIRECT_TIMEOUT_MS
-      : FEED_VIDEO_DIRECT_TIMEOUT_MS;
-
   useEffect(() => {
     setPhase(allowPlayback ? "loading_direct" : "poster");
     setBlobUrl(null);
@@ -116,13 +110,16 @@ export function FeedVideoSurface({
       "playing_direct",
       directFailurePhase,
     );
+    if (playback.profile === "heavy") {
+      return;
+    }
     const timer = window.setTimeout(() => {
       setPhase((current) =>
         current === "loading_direct" ? directFailurePhase : current,
       );
-    }, directTimeoutMs);
+    }, FEED_VIDEO_DIRECT_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
-  }, [attemptPlay, directFailurePhase, directTimeoutMs, phase]);
+  }, [attemptPlay, directFailurePhase, phase, playback.profile]);
 
   useEffect(() => {
     if (phase !== "loading_blob") return;
@@ -173,6 +170,8 @@ export function FeedVideoSurface({
 
   const posterVisible =
     phase !== "playing_direct" && phase !== "playing_blob";
+  const directVideoVisible = phase === "playing_direct";
+  const blobVideoVisible = phase === "playing_blob";
 
   return (
     <div
@@ -184,7 +183,7 @@ export function FeedVideoSurface({
         candidateUrls={resolvedPosterCandidates}
         alt=""
         className={`${className ?? "h-full w-full object-cover"} absolute inset-0 transition-opacity ${
-          posterVisible ? "opacity-100" : "opacity-0"
+          posterVisible ? "z-10 opacity-100" : "z-0 opacity-0"
         }`}
         loading="eager"
       />
@@ -193,7 +192,9 @@ export function FeedVideoSurface({
         <video
           ref={directVideoRef}
           src={directSrc}
-          className={className}
+          className={`${className ?? "h-full w-full object-cover"} absolute inset-0 z-0 transition-opacity ${
+            directVideoVisible ? "opacity-100" : "opacity-0"
+          }`}
           autoPlay
           loop
           muted
@@ -235,7 +236,9 @@ export function FeedVideoSurface({
         <video
           ref={blobVideoRef}
           src={blobUrl}
-          className={className}
+          className={`${className ?? "h-full w-full object-cover"} absolute inset-0 z-0 transition-opacity ${
+            blobVideoVisible ? "opacity-100" : "opacity-0"
+          }`}
           autoPlay
           loop
           muted

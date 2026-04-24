@@ -161,8 +161,19 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
         }
     }
 
-    // 3. Article body: first image.
+    // 3. Article body: first embedded media in markdown order. If the
+    //    article starts with a video and later includes images, the feed
+    //    poster must still be derived from the video source.
     if block.frontmatter.block_type == BlockType::Article {
+        if let Some((_media_name, media_path, media_kind)) =
+            find_first_existing_article_media(block, vault)
+        {
+            if media_kind == "video" {
+                return ExpectedThumb::Either;
+            }
+            debug_assert!(media_path.exists());
+        }
+
         let article_images = collect_article_preview_images(block, vault, COMPOSITE_TILE_LIMIT);
         if article_images.len() >= 2 {
             return ExpectedThumb::OnlyJpeg;
@@ -203,6 +214,14 @@ fn preview_dependency_paths(block: &Block, vault: &VaultLayout) -> Vec<std::path
     }
 
     if block.frontmatter.block_type == BlockType::Article {
+        if let Some((_media_name, media_path, media_kind)) =
+            find_first_existing_article_media(block, vault)
+        {
+            if media_kind == "video" {
+                return vec![media_path];
+            }
+        }
+
         let article_images = collect_article_preview_images(block, vault, COMPOSITE_TILE_LIMIT);
         if article_images.len() >= 2 {
             return article_images;
@@ -983,10 +1002,27 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
         }
     }
 
-    // 3-5. Scan body for embedded image/video previews (articles). Multi-image
-    //      articles/social posts prefer a composite JPEG preview; otherwise we
-    //      fall back to the first decodable image or first video frame.
+    // 3-5. Scan body for embedded image/video previews (articles). If the
+    //      first existing embedded media is a video, use its frame as the
+    //      poster even when later images exist. Otherwise multi-image
+    //      articles/social posts prefer a composite JPEG preview; then a
+    //      single image; then a later video frame.
     if block.frontmatter.block_type == BlockType::Article {
+        if let Some((_media_name, media_path, media_kind)) =
+            find_first_existing_article_media(block, vault)
+        {
+            if media_kind == "video" {
+                match generate_video_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
+                    Ok(_) => return ThumbSource::Video,
+                    Err(e) => log::warn!(
+                        "first-video thumb failed for {}, falling back through article media cascade: {}",
+                        slug,
+                        e
+                    ),
+                }
+            }
+        }
+
         let article_images = collect_article_preview_images(block, vault, COMPOSITE_TILE_LIMIT);
         if article_images.len() >= 2 {
             match generate_composite_thumbnail(&article_images, &thumb_path, DEFAULT_MAX_SIZE) {
@@ -1051,6 +1087,22 @@ pub fn find_first_local_media(body: &str, ext_predicate: fn(&str) -> bool) -> Op
     find_local_media(body, ext_predicate, 1).into_iter().next()
 }
 
+pub fn find_first_local_media_any(body: &str) -> Option<(String, &'static str)> {
+    for src in iter_inline_media_sources(body) {
+        if src.is_empty() || src.starts_with("http://") || src.starts_with("https://") {
+            continue;
+        }
+        let ext = ext_lower(&src);
+        if is_image_ext(&ext) {
+            return Some((src, "image"));
+        }
+        if is_video_ext(&ext) {
+            return Some((src, "video"));
+        }
+    }
+    None
+}
+
 fn find_local_media(body: &str, ext_predicate: fn(&str) -> bool, limit: usize) -> Vec<String> {
     if limit == 0 {
         return Vec::new();
@@ -1070,6 +1122,33 @@ fn find_local_media(body: &str, ext_predicate: fn(&str) -> bool, limit: usize) -
         }
     }
     results
+}
+
+fn find_first_existing_article_media(
+    block: &Block,
+    vault: &VaultLayout,
+) -> Option<(String, std::path::PathBuf, &'static str)> {
+    if block.frontmatter.block_type != BlockType::Article {
+        return None;
+    }
+    for src in iter_inline_media_sources(&block.body) {
+        if src.is_empty() || src.starts_with("http://") || src.starts_with("https://") {
+            continue;
+        }
+        let ext = ext_lower(&src);
+        let kind = if is_image_ext(&ext) {
+            "image"
+        } else if is_video_ext(&ext) {
+            "video"
+        } else {
+            continue;
+        };
+        let path = vault.root().join(&src);
+        if path.exists() {
+            return Some((src, path, kind));
+        }
+    }
+    None
 }
 
 fn collect_article_preview_images(
@@ -1324,6 +1403,22 @@ mod tests {
         assert!(left[0] > left[1] && left[0] > left[2]);
         assert!(right_top[1] > right_top[0] && right_top[1] > right_top[2]);
         assert!(right_bottom[2] > right_bottom[0] && right_bottom[2] > right_bottom[1]);
+    }
+
+    #[test]
+    fn article_video_first_preview_depends_on_video_before_later_images() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+
+        let video = dir.path().join("clip.mp4");
+        let image = dir.path().join("later.jpg");
+        std::fs::write(&video, b"fake mp4").unwrap();
+        create_test_image(&image, 120, 80);
+
+        let block = make_article("video-first", "![](clip.mp4)\n\n![](later.jpg)\n");
+
+        assert_eq!(expected_thumb(&block, &vault), ExpectedThumb::Either);
+        assert_eq!(preview_dependency_paths(&block, &vault), vec![video]);
     }
 
     #[test]
@@ -1621,6 +1716,15 @@ mod tests {
         assert_eq!(
             find_first_local_media(body, is_image_ext),
             Some("legacy.png".to_string())
+        );
+    }
+
+    #[test]
+    fn find_first_local_media_any_preserves_video_first_order() {
+        let body = "![[Title (video 1).mp4]]\n\n![[Title (image 1).jpg]]";
+        assert_eq!(
+            find_first_local_media_any(body),
+            Some(("Title (video 1).mp4".to_string(), "video"))
         );
     }
 

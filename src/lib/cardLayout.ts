@@ -221,8 +221,11 @@ export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescrip
 
   switch (block.block_type) {
     case "image": {
+      const dims = parseMediaDimensions(block);
       const primaryAspectRatio =
-        aspectRatioFromDimensions(previewManifest?.width ?? block.width, previewManifest?.height ?? block.height) ?? 1;
+        parseAspectRatio(dims, block.media_file)
+        ?? aspectRatioFromDimensions(previewManifest?.width ?? block.width, previewManifest?.height ?? block.height)
+        ?? 1;
       return {
         variant: "image",
         titleText,

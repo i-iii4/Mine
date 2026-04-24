@@ -233,7 +233,7 @@ function GalleryTileImage({
   allowSourceFallback: boolean;
   loading: "eager" | "lazy";
 }) {
-  const previewSrc = item.previewPath
+  const previewSrc = item.previewPath && !item.isVideo
     ? previewAssetUrl(thumbsRootPath, item.previewPath)
     : null;
   const sourceSrc = allowSourceFallback

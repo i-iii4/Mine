@@ -181,6 +181,7 @@ Popup и save() используют одну чистую функцию — `r
 3. Content script инжектит Shadow DOM overlay: полупрозрачное затемнение на всю страницу, crosshair-курсор, плавающая плашка `Click and drag to select area • Esc to cancel`.
 4. Пользователь тянет мышью прямоугольник. Подсветка выделенной области — через трюк `box-shadow: 0 0 0 9999px rgba(0,0,0,0.55)` на самой рамке (одна рамка = «окно в темноту», без четырёх div'ов вокруг).
 5. На mouseup при размере ≥ 20×20 px:
+   - Content script скрывает selection rectangle и size label до вызова `captureVisibleTab`, чтобы UI самого crop-инструмента не попал в итоговый JPEG.
    - Content script просит background захватить viewport через `chrome.tabs.captureVisibleTab({format:'jpeg',quality:95})`.
    - Получает dataUrl, грузит его в `Image`, кропит на `OffscreenCanvas` размером `width × height × devicePixelRatio`, конвертирует результат в JPEG q=0.9.
    - Отправляет background сообщение `cropDone` с обрезанным dataUrl.
@@ -260,6 +261,8 @@ Content preview не воспроизводит и не декодирует в�
 Пользователь переключает тип через TypeSwitcher кликом. Tab/Shift+Tab циклит Content → Screenshot → Link **только** когда keyboard focus уже внутри overlay (после клика по overlay) — это known limitation, см. DEVLOG `24.04.2026 — Clipper: Tab-cycling` и решение не дорабатывать. Основной сценарий переключения — клик по табам.
 
 Click-outside close для in-page overlay не должен зависеть только от `click` и `composedPath()` вокруг full-viewport shadow host. `OverlayShell` обязан маркировать реальную панель `data-mine-clipper-panel`, а `overlay-entry` закрывает overlay на `pointerdown` / `mousedown` capture, если координаты события лежат вне `getBoundingClientRect()` панели. Outside-close handler не вызывает `preventDefault` и `stopPropagation`, чтобы клик оставался кликом страницы после закрытия overlay.
+
+Исключение: если overlay временно скрыт через `hideClipperOverlay()` для screenshot capture или Crop Area, outside-close handler не должен закрывать / размонтировать React overlay. Crop drag происходит на странице и обязан вернуться в тот же live state, чтобы cropped `dataUrl` и новый `screenshotId` заменили прежний full-page screenshot перед Save.
 
 ## Popup UI
 

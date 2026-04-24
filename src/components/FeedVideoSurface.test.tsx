@@ -2,7 +2,6 @@ import { act, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FEED_VIDEO_DIRECT_TIMEOUT_MS,
-  FEED_VIDEO_HEAVY_DIRECT_TIMEOUT_MS,
   FeedVideoSurface,
 } from "./FeedVideoSurface";
 
@@ -74,6 +73,25 @@ describe("FeedVideoSurface", () => {
 
     expect(fetch).not.toHaveBeenCalled();
     expect(container.querySelector("[data-feed-video-phase='playing_direct']")).toBeTruthy();
+  });
+
+  it("keeps the poster visually above video while direct playback is loading", () => {
+    playSpy.mockImplementationOnce(() => new Promise(() => {}));
+
+    const { container } = render(
+      <FeedVideoSurface
+        playback={PLAYBACK}
+        allowPlayback
+        vaultPath="/tmp/vault"
+        thumbsRootPath="/tmp/thumbs"
+        className="h-full w-full object-cover"
+      />,
+    );
+
+    const poster = container.querySelector("img");
+    const video = container.querySelector("video");
+    expect(poster).toHaveClass("z-10", "opacity-100");
+    expect(video).toHaveClass("z-0", "opacity-0");
   });
 
   it("falls back to blob video after a direct playback error", async () => {
@@ -164,7 +182,7 @@ describe("FeedVideoSurface", () => {
     expect(container.querySelector("[data-feed-video-phase='failed_poster_only']")).toBeTruthy();
   });
 
-  it("uses a heavy direct-only policy for heavy autoplay clips", async () => {
+  it("keeps heavy direct playback mounted while it is still loading", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     playSpy.mockImplementationOnce(() => new Promise(() => {}));
@@ -180,14 +198,31 @@ describe("FeedVideoSurface", () => {
     );
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(FEED_VIDEO_DIRECT_TIMEOUT_MS + 50);
+      await vi.advanceTimersByTimeAsync(FEED_VIDEO_DIRECT_TIMEOUT_MS * 5);
     });
+
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(container.querySelector("video")).toBeInTheDocument();
+    expect(container.querySelector("[data-feed-video-phase='loading_direct']")).toBeTruthy();
+  });
+
+  it("keeps heavy clips direct-only on playback errors", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(
+      <FeedVideoSurface
+        playback={{ ...PLAYBACK, profile: "heavy" }}
+        allowPlayback
+        vaultPath="/tmp/vault"
+        thumbsRootPath="/tmp/thumbs"
+        className="h-full w-full object-cover"
+      />,
+    );
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(
-        FEED_VIDEO_HEAVY_DIRECT_TIMEOUT_MS - FEED_VIDEO_DIRECT_TIMEOUT_MS + 50,
-      );
+      fireEvent.error(container.querySelector("video")!);
+      await Promise.resolve();
     });
 
     expect(fetchMock).not.toHaveBeenCalled();
