@@ -44,21 +44,54 @@ function isContentScriptCompatible(url) {
   return url.startsWith("http://") || url.startsWith("https://") || url.startsWith("file://");
 }
 
+function prepareTabForViewportCapture(tabId, callback) {
+  if (typeof tabId !== "number") {
+    callback();
+    return;
+  }
+
+  chrome.tabs.sendMessage(tabId, { action: "prepareViewportCapture" }, () => {
+    // Best-effort only. If the page cannot be reached, capture still proceeds:
+    // detached-window fallback and service pages have no content-script overlay.
+    void chrome.runtime.lastError;
+    callback();
+  });
+}
+
+function showExistingClipperOverlay(tabId) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { action: "showClipperOverlay" }, (resp) => {
+      if (chrome.runtime.lastError) {
+        resolve(false);
+        return;
+      }
+      resolve(Boolean(resp?.ok));
+    });
+  });
+}
+
 async function openClipperUi(tab) {
   const tabId = tab?.id;
   const tabUrl = tab?.url;
 
   if (tabId && isContentScriptCompatible(tabUrl)) {
     try {
+      if (await showExistingClipperOverlay(tabId)) {
+        return;
+      }
+
       // Inject the overlay bundle into the tab's isolated world.
-      // Re-executing is safe — overlay-entry has a single-instance guard
-      // that re-focuses the existing overlay instead of re-mounting.
+      // Only inject when no overlay listener is already present. Re-injecting
+      // while an overlay is open creates an independent module scope, leaving
+      // the old host visible and unowned during screenshot capture.
       await chrome.scripting.executeScript({
         target: { tabId },
         files: ["dist/overlay.js"],
       });
-      await chrome.tabs.sendMessage(tabId, { action: "showClipperOverlay" });
-      return;
+      if (await showExistingClipperOverlay(tabId)) {
+        return;
+      }
+      throw new Error("overlay injected but did not acknowledge show");
     } catch (err) {
       console.warn("[Mine] overlay injection failed, falling back to window", err);
       // fallthrough to detached window
@@ -463,21 +496,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Content script asks background to capture the viewport (content scripts
   // cannot call chrome.tabs.captureVisibleTab directly).
   if (msg.action === "captureForCrop") {
+    const tabId = sender.tab?.id;
     const windowId = sender.tab?.windowId;
     const capture = windowId !== undefined
       ? (cb) => chrome.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 95 }, cb)
       : (cb) => chrome.tabs.captureVisibleTab({ format: "jpeg", quality: 95 }, cb);
-    capture((dataUrl) => {
-      if (chrome.runtime.lastError || !dataUrl) {
-        sendResponse({ ok: false, error: chrome.runtime.lastError?.message ?? "Capture failed" });
-        return;
-      }
-      const cached = cacheScreenshotUpload(dataUrl);
-      if (!cached.ok) {
-        sendResponse(cached);
-        return;
-      }
-      sendResponse({ ok: true, dataUrl, screenshotId: cached.screenshotId });
+    prepareTabForViewportCapture(tabId, () => {
+      capture((dataUrl) => {
+        if (chrome.runtime.lastError || !dataUrl) {
+          sendResponse({ ok: false, error: chrome.runtime.lastError?.message ?? "Capture failed" });
+          return;
+        }
+        const cached = cacheScreenshotUpload(dataUrl);
+        if (!cached.ok) {
+          sendResponse(cached);
+          return;
+        }
+        sendResponse({ ok: true, dataUrl, screenshotId: cached.screenshotId });
+      });
     });
     return true;
   }

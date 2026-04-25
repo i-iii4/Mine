@@ -248,18 +248,26 @@ const api: MineOverlayApi = {
 };
 (globalThis as unknown as { __mineOverlay: MineOverlayApi }).__mineOverlay = api;
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.action === "showClipperOverlay") {
+function onRuntimeMessage(msg: unknown) {
+  if (typeof msg !== "object" || msg === null) return false;
+  const action = (msg as { action?: unknown }).action;
+  if (action === "showClipperOverlay") {
     void showClipperOverlay();
-    return false;
+    return true;
   }
-  if (msg?.action === "hideClipperOverlay") {
+  if (action === "hideClipperOverlay") {
     hideClipperOverlay();
     return false;
   }
-  if (msg?.action === "closeClipperOverlay") {
+  if (action === "closeClipperOverlay") {
     closeClipperOverlay();
     return false;
   }
+  return false;
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  const handled = onRuntimeMessage(msg);
+  if (handled) sendResponse({ ok: true });
   return false;
 });

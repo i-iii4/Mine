@@ -225,6 +225,11 @@ export function useClipperState() {
       // again, and dispatches a mine-crop-result event we listen to.
       const overlay = (globalThis as unknown as { __mineOverlay?: { hide: () => void } }).__mineOverlay;
       overlay?.hide();
+      const crop = (globalThis as unknown as { __mineCrop?: { start: () => void } }).__mineCrop;
+      if (crop) {
+        crop.start();
+        return;
+      }
       chrome.runtime.sendMessage(
         { target: "background", action: "startCropMode", tabId: tabIdRef.current },
         () => void chrome.runtime.lastError,

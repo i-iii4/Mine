@@ -834,6 +834,42 @@
   let cropOverlayHost = null;
   let cropToastHost = null;
 
+  function afterViewportPaint(callback) {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      callback();
+    };
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTimeout(finish, 0);
+      });
+    });
+    setTimeout(finish, 120);
+  }
+
+  function prepareViewportCapture(sendResponse) {
+    // Hide every Mine-owned UI layer before background calls
+    // captureVisibleTab. DOM mutations are not enough: Chrome can capture the
+    // previous compositor frame, so we acknowledge only after a clean paint.
+    if (window.__mineOverlay) {
+      window.__mineOverlay.hide();
+    }
+    for (const host of document.querySelectorAll("[data-mine-clipper-overlay]")) {
+      host.style.display = "none";
+    }
+    if (cropOverlayHost) {
+      cropOverlayHost.style.visibility = "hidden";
+    }
+    if (cropToastHost) {
+      cropToastHost.style.visibility = "hidden";
+    }
+
+    afterViewportPaint(() => sendResponse({ ok: true }));
+  }
+
   function destroyCropOverlay() {
     if (cropOverlayHost) {
       cropOverlayHost.remove();
@@ -1137,9 +1173,18 @@
     window.addEventListener("keydown", onKeyDown, true);
   }
 
+  window.__mineCrop = {
+    start: startCropOverlay,
+  };
+
   // ── Message handler ─────────────────────────────────────────────────────
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.action === "prepareViewportCapture") {
+      prepareViewportCapture(sendResponse);
+      return true;
+    }
+
     if (msg.action === "startCropOverlay") {
       try {
         startCropOverlay();

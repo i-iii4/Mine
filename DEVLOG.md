@@ -1,5 +1,43 @@
 # Devlog
 
+## 25.04.2026 [primary] — Clipper: clean-paint gate before viewport capture
+
+### Goal
+
+Закрыть регресс, где в некоторых сценариях сам in-page clipper overlay попадал
+в сохраняемый screenshot. Симптом: пользователь сохраняет статью/скриншот, а в
+итоговом изображении видна панель Mine.
+
+### Completed
+
+- `background.captureForCrop` теперь не вызывает `captureVisibleTab` напрямую.
+  Перед capture он отправляет активному content script сообщение
+  `prepareViewportCapture`.
+- `content.js` на `prepareViewportCapture` скрывает все Mine-owned UI layers:
+  React overlay (`window.__mineOverlay.hide()`), crop overlay и crop toast.
+- Ответ на `prepareViewportCapture` отправляется только после clean-paint
+  handshake: два `requestAnimationFrame` плюс timeout fallback. Это убирает
+  race, где DOM уже скрыт, но браузер ещё отдаёт предыдущий compositor frame.
+- Обычный Screenshot и Crop Area теперь проходят через один background-owned
+  capture gate, поэтому будущие capture-сценарии наследуют тот же инвариант.
+- `openClipperUi` сначала пробует отправить `showClipperOverlay` уже живому
+  overlay listener и инжектит `overlay.js` только если listener не ответил.
+  Это закрывает повторный клик по иконке при открытом клиппере: больше не
+  создаётся второй независимый module scope со старым видимым overlay host.
+- `prepareViewportCapture` дополнительно скрывает все DOM-хосты
+  `[data-mine-clipper-overlay]`, а не только текущий `window.__mineOverlay`,
+  чтобы stale overlay host из старой сессии тоже не попал в кадр.
+- Overlay-context `Crop Area` запускает crop overlay напрямую через
+  `window.__mineCrop.start()`. Background `startCropMode` остаётся fallback для
+  detached/window path, но основной overlay больше не зависит от message
+  arbitration между `content.js` и `overlay.js` listeners в одной вкладке.
+
+### Verification
+
+- `npm run build:extension`
+- `git diff --check`
+- Manual: user confirmed repeated-open screenshot and Crop Area scenarios are fixed.
+
 ## 24.04.2026 [primary] — Feed video poster stays visible until playback
 
 ### Goal

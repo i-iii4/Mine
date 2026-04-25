@@ -160,7 +160,13 @@ Popup и save() используют одну чистую функцию — `r
 
 ### 7. Screenshot (скриншот viewport)
 
-Пользователь вручную переключается в режим Screenshot из TypeSwitcher. Расширение захватывает видимую область вкладки через `chrome.tabs.captureVisibleTab({ format: "jpeg", quality: 85 })`, показывает превью в popup и загружает файл в vault через background-owned upload bridge к локальному HTTP-серверу native host (см. Upload Server).
+Пользователь вручную переключается в режим Screenshot из TypeSwitcher. Расширение захватывает видимую область вкладки через background-owned `captureForCrop` pipeline, показывает превью в popup и загружает файл в vault через background-owned upload bridge к локальному HTTP-серверу native host (см. Upload Server).
+
+Перед каждым реальным `chrome.tabs.captureVisibleTab(...)` background отправляет content script сообщение `prepareViewportCapture`. Content script скрывает все Mine-owned UI layers (`__mineOverlay`, crop overlay, crop toast) и отвечает только после clean-paint handshake (`requestAnimationFrame` ×2 + timeout fallback). Это обязательный инвариант: ни обычный Screenshot, ни Crop Area не должны вызывать `captureVisibleTab` сразу после `display:none` / DOM removal, потому что браузер может вернуть предыдущий compositor frame с видимым клиппером.
+
+Повторный клик по extension icon при уже открытом overlay не должен заново инжектить `overlay.js`. Background сначала отправляет `showClipperOverlay` существующему listener'у и ждёт `{ok:true}`; новая инъекция разрешена только если listener не отвечает. Иначе в одной вкладке появляются два независимых module scope, и старый overlay host может остаться видимым во время capture.
+
+В overlay-context кнопка `Crop Area` запускает page-level crop overlay напрямую через `window.__mineCrop.start()`, который экспортируется из `content.js` в той же isolated world. Background `startCropMode` остаётся fallback для detached/window path. Основной overlay не должен зависеть от того, какой из нескольких `chrome.runtime.onMessage` listeners в вкладке первым обработает `startCropOverlay`.
 
 | Field | Source |
 |---|---|
@@ -181,8 +187,8 @@ Popup и save() используют одну чистую функцию — `r
 3. Content script инжектит Shadow DOM overlay: полупрозрачное затемнение на всю страницу, crosshair-курсор, плавающая плашка `Click and drag to select area • Esc to cancel`.
 4. Пользователь тянет мышью прямоугольник. Подсветка выделенной области — через трюк `box-shadow: 0 0 0 9999px rgba(0,0,0,0.55)` на самой рамке (одна рамка = «окно в темноту», без четырёх div'ов вокруг).
 5. На mouseup при размере ≥ 20×20 px:
-   - Content script скрывает selection rectangle и size label до вызова `captureVisibleTab`, чтобы UI самого crop-инструмента не попал в итоговый JPEG.
-   - Content script просит background захватить viewport через `chrome.tabs.captureVisibleTab({format:'jpeg',quality:95})`.
+   - Content script скрывает selection rectangle и size label до capture request, чтобы UI самого crop-инструмента не попал в итоговый JPEG.
+   - Content script просит background захватить viewport; background перед `captureVisibleTab({format:'jpeg',quality:95})` заново выполняет `prepareViewportCapture`.
    - Получает dataUrl, грузит его в `Image`, кропит на `OffscreenCanvas` размером `width × height × devicePixelRatio`, конвертирует результат в JPEG q=0.9.
    - Отправляет background сообщение `cropDone` с обрезанным dataUrl.
 6. Background кладёт cropped dataUrl в screenshot upload cache, пишет `{status:"done", dataUrl, screenshotId}` в `chrome.storage.session.cropResult` и вызывает `chrome.action.openPopup()`.
