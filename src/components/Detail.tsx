@@ -520,9 +520,19 @@ function ArticleBody({
       img: ({ src, alt, ...props }) => {
         const decodedSrc = decodeLocalMarkdownUrl(src ?? "");
         const originalSrc = resolveImageSrc(decodedSrc, vaultPath);
-        // Video/GIF (downloaded MP4) — render as inline video with controls
+        // Video/GIF (downloaded MP4) — render as inline autoplay video with controls.
+        // Autoplay must stay muted to satisfy browser/WebView media policies.
         if (/\.mp4(\?|$)|\.webm(\?|$)/i.test(decodedSrc)) {
-          return <VideoFromBlob src={originalSrc} controls className="rounded-0" />;
+          return (
+            <VideoFromBlob
+              src={originalSrc}
+              controls
+              autoPlay
+              muted
+              loop
+              className="rounded-0"
+            />
+          );
         }
         const previewTile = findPreviewTileForSource(previewManifest, decodedSrc);
         const previewSrc = previewTile?.previewPath

@@ -26,6 +26,7 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 - full-fidelity playback
 - original media, controls, existing `VideoFromBlob` path
+- embedded article videos autoplay muted + loop with controls; this is Detail-only behavior and does not affect feed autoplay eligibility
 - не зависит от feed autoplay contract
 
 ### 4. Measurement surface

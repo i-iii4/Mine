@@ -37,6 +37,7 @@ export function VideoFromBlob({
   const [directReady, setDirectReady] = useState(false);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const preload = autoPlay ? "auto" : "metadata";
 
   useEffect(() => {
     setMode("direct");
@@ -87,7 +88,7 @@ export function VideoFromBlob({
         loop={loop}
         muted={muted}
         playsInline
-        preload="metadata"
+        preload={preload}
         onLoadedData={() => {
           setDirectReady(true);
           setError(null);
@@ -102,7 +103,7 @@ export function VideoFromBlob({
   }
 
   if (error || !blobUrl) {
-    return <video className={className} controls={controls} playsInline preload="metadata" />;
+    return <video className={className} controls={controls} playsInline preload={preload} />;
   }
 
   return (
@@ -114,7 +115,7 @@ export function VideoFromBlob({
       loop={loop}
       muted={muted}
       playsInline
-      preload="metadata"
+      preload={preload}
     />
   );
 }

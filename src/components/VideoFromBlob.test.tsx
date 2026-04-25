@@ -25,6 +25,7 @@ describe("VideoFromBlob", () => {
     const video = container.querySelector("video");
     expect(video).not.toBeNull();
     expect(video).toHaveAttribute("src", "asset://localhost//vault/demo.mp4");
+    expect(video).toHaveAttribute("preload", "auto");
 
     fireEvent.loadedData(video!);
     await vi.advanceTimersByTimeAsync(3000);

@@ -13,7 +13,28 @@ vi.mock("./ArticleAudioControls", () => ({
 }));
 
 vi.mock("./VideoFromBlob", () => ({
-  VideoFromBlob: ({ src }: { src: string }) => <div data-src={src} data-testid="video-from-blob" />,
+  VideoFromBlob: ({
+    src,
+    controls,
+    autoPlay,
+    muted,
+    loop,
+  }: {
+    src: string;
+    controls?: boolean;
+    autoPlay?: boolean;
+    muted?: boolean;
+    loop?: boolean;
+  }) => (
+    <div
+      data-src={src}
+      data-controls={controls ? "true" : "false"}
+      data-autoplay={autoPlay ? "true" : "false"}
+      data-muted={muted ? "true" : "false"}
+      data-loop={loop ? "true" : "false"}
+      data-testid="video-from-blob"
+    />
+  ),
 }));
 
 function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
@@ -101,5 +122,9 @@ describe("Detail", () => {
       "data-src",
       "asset://localhost//tmp/test-vault/Clip (video 1).mp4",
     );
+    expect(screen.getByTestId("video-from-blob")).toHaveAttribute("data-controls", "true");
+    expect(screen.getByTestId("video-from-blob")).toHaveAttribute("data-autoplay", "true");
+    expect(screen.getByTestId("video-from-blob")).toHaveAttribute("data-muted", "true");
+    expect(screen.getByTestId("video-from-blob")).toHaveAttribute("data-loop", "true");
   });
 });

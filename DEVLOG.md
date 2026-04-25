@@ -1,5 +1,27 @@
 # Devlog
 
+## 25.04.2026 [primary] — Detail: autoplay embedded article videos
+
+### Goal
+
+Внутри открытой статьи embedded video должно начинать воспроизведение
+автоматически, не меняя feed autoplay contract.
+
+### Completed
+
+- `ArticleBody` теперь рендерит local `.mp4` / `.webm` embeds через
+  `VideoFromBlob` с `autoPlay`, `muted`, `loop` и `controls`.
+- `VideoFromBlob` использует `preload="auto"` при `autoPlay`, чтобы detail
+  video не оставался в metadata-only загрузке.
+- `SPEC_FEED_VIDEO.md` уточняет, что autoplay embedded article videos —
+  Detail-only поведение и не влияет на feed eligibility.
+
+### Verification
+
+- `npm test -- Detail VideoFromBlob`
+- `npm run build`
+- `git diff --check`
+
 ## 25.04.2026 [primary] — Clipper: clean-paint gate before viewport capture
 
 ### Goal
