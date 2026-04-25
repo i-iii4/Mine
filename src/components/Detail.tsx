@@ -154,7 +154,7 @@ export function Detail({
       </Button>
 
       {/* Layer 1: Scrollable content + invisible spacer */}
-      <div ref={panelRef} tabIndex={-1} className="h-full w-full overflow-y-auto outline-none">
+      <div ref={panelRef} tabIndex={-1} className="h-full w-full overflow-y-auto outline-none" data-detail-scroll>
         <div className={LAYOUT_CLASSES}>
           <div className="min-w-0 flex-1">
             <BlockContent
@@ -172,7 +172,7 @@ export function Detail({
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className={LAYOUT_CLASSES}>
           <div className="flex-1" />
-          <div className="pointer-events-auto w-56 shrink-0 overflow-y-auto">
+          <div className="pointer-events-auto w-56 shrink-0 overflow-y-auto" data-metadata-scroll>
             <MetadataPanel
               block={block}
               fullBlock={fullBlock}

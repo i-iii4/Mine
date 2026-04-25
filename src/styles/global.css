@@ -70,11 +70,35 @@ body.sidebar-resizing * {
   display: none;
 }
 
-/* Prevent overscroll bounce on the body (native app feel) */
-body {
+/* Native app scroll contract:
+   the document itself never scrolls; only explicit app panes do. This blocks
+   macOS/WebKit rubber-band bounce on the root surface and prevents horizontal
+   edge pull when a nested pane reaches its limit. */
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
   overscroll-behavior: none;
+}
+
+body {
+  position: fixed;
+  inset: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+[data-grid-scroll],
+[data-sidebar-scroll],
+[data-detail-scroll],
+[data-metadata-scroll],
+[data-design-scroll] {
+  overscroll-behavior: none;
+  overscroll-behavior-x: none;
+  overscroll-behavior-y: none;
+  -webkit-overflow-scrolling: auto;
 }
 
 @theme inline {

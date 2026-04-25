@@ -1374,7 +1374,7 @@ export function AppWithVault({
         </Routes>
 
         {designSystemOpen && (
-          <div className="absolute inset-0 z-40 overflow-y-auto bg-background">
+          <div className="absolute inset-0 z-40 overflow-y-auto bg-background" data-design-scroll>
             <Suspense fallback={null}>
               <ComponentTestBench />
             </Suspense>
