@@ -254,6 +254,8 @@ mod tests {
                 file: Some(format!("{}.jpg", slug)),
                 thumbnail: None,
                 tags: vec!["test".to_string()],
+                related_notes: Vec::new(),
+                source_media: None,
                 saved_at: DateTime::new("2026-01-15T12:00:00Z").unwrap(),
                 source: None,
                 width: Some(1920),

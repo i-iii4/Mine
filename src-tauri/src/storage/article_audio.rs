@@ -409,6 +409,8 @@ mod tests {
                 file: None,
                 thumbnail: None,
                 tags: vec![],
+                related_notes: Vec::new(),
+                source_media: None,
                 saved_at: DateTime::new("2026-04-19T00:00:00Z").unwrap(),
                 source: None,
                 width: None,

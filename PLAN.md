@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md)
 
 ## Goal
 
@@ -930,6 +930,22 @@ Goal: убрать `Native host timeout` на статьях с многими i
 | 20.3 | Action-aware native-messaging timeout | [x] | `timeoutForAction(action)` в [extension/background.js](file:///Users/i_iii/Проекты/local-arena/extension/background.js) и [popup/lib/messaging.ts](file:///Users/i_iii/Проекты/local-arena/extension/popup/lib/messaging.ts): `save_block` → 180s, остальное как было. |
 | 20.4 | Unit tests | [x] | 9 новых тестов: `host_from_url_*`, `scan_*` (skip data/relative, indices, cap, malformed), `apply_rewrites_*` (success/failed/dedup/zero/reverse), `domain_limiter_*` (cap/release/per-host). 42/42 зелёных. |
 | 20.5 | Docs | [x] | [SPEC_CLIPPER.md](file:///Users/i_iii/Проекты/local-arena/SPEC_CLIPPER.md) § Article inline-media pipeline, [DEVLOG.md](file:///Users/i_iii/Проекты/local-arena/DEVLOG.md) entry с rejected alternatives (heartbeat / daemon / Tauri-worker). |
+
+### Phase 21 — Inline Media Extraction [SPEC]
+
+Цель: позволить пользователю вытащить конкретное inline-изображение из открытой статьи в отдельный image-блок через перетаскивание на коллекцию в sidebar. Новый блок владеет копией медиафайла, содержит URL источника и одностороннюю связь на исходную заметку. Исходная статья не переписывается.
+
+Спецификация: [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md).
+
+| # | Slice | Status | Scope |
+|---|-------|--------|-------|
+| 21.1 | Related-note frontmatter | [ ] | `Mine Related Notes`, `Mine Source Media`, parse/serialize, rename rewrite |
+| 21.2 | Storage/index support | [ ] | `related_notes` column, wikilinks insertion, `IndexedBlock.related_notes` |
+| 21.3 | Backend extract command | [ ] | `extract_inline_media`, local media validation, copy-owned-media semantics, thumbnail generation |
+| 21.4 | Detail drag payload | [ ] | `type: "inline_media"`, local image-only activation, media drag overlay |
+| 21.5 | Sidebar drop routing | [ ] | Drop `inline_media` on `tag:<tag>` calls extraction command, not `addTag` |
+| 21.6 | Metadata UI | [ ] | `RELATED NOTES` in Detail metadata with links to source notes |
+| 21.7 | Manual QA | [ ] | Real vault extraction, Obsidian source check, source article unchanged, rename source note updates relation |
 
 ### Backlog
 

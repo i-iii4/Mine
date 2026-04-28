@@ -488,6 +488,8 @@ fn channel_to_block(channel: &Channel) -> Block {
             file: None,
             thumbnail: None,
             tags: Vec::new(),
+            related_notes: Vec::new(),
+            source_media: None,
             saved_at: channel.created_at.clone(),
             source: None,
             width: None,

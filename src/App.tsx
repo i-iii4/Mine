@@ -61,6 +61,7 @@ import {
   removeTag,
   deleteBlock,
   getBlock,
+  extractInlineMedia,
   sweepVaultThumbnails,
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
@@ -133,6 +134,20 @@ interface BlockAddedEvent {
   tags: string[];
   is_text: boolean;
 }
+
+type InlineMediaDragPayload = {
+  type: "inline_media";
+  sourceSlug: string;
+  mediaRef: string;
+  mediaKind: "image";
+  title: string | null;
+  imageSrc?: string;
+};
+
+type InlineMediaDragPreview = {
+  src: string;
+  title: string | null;
+};
 
 interface BlockRemovedEvent {
   slug: string;
@@ -283,6 +298,7 @@ export function AppWithVault({
   const [scrollToTopSignal, setScrollToTopSignal] = useState(0);
   const [activeDragBlock, setActiveDragBlock] = useState<LightBlock | null>(null);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
+  const [activeDragInlineMedia, setActiveDragInlineMedia] = useState<InlineMediaDragPreview | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const themeMenuRef = useRef<ThemeMenuHandle>(null);
   const gridColumnCountRef = useRef(1);
@@ -1030,6 +1046,15 @@ export function AppWithVault({
     storeDetailTopMenuMode(mode);
   }, []);
 
+  const handleOpenRelatedNote = useCallback((slug: string) => {
+    void getBlock(slug).then((block) => {
+      if (block) {
+        setFocusedBlockId(null);
+        setSelectedBlock(block);
+      }
+    });
+  }, []);
+
   // ── Tag management ──────────────────────────────────────────────────────
 
   const handleRenameTag = useCallback(
@@ -1180,18 +1205,45 @@ export function AppWithVault({
     [reloadAllSnapshots, selectedBlock?.slug],
   );
 
+  const handleInlineMediaDrop = useCallback(
+    async (payload: InlineMediaDragPayload, tag: string) => {
+      try {
+        await extractInlineMedia({
+          source_slug: payload.sourceSlug,
+          media_ref: payload.mediaRef,
+          target_tag: tag,
+          title: payload.title,
+        });
+      } catch (err) {
+        console.error("Failed to extract inline media:", err);
+      }
+      await reloadAllSnapshots();
+    },
+    [reloadAllSnapshots],
+  );
+
   const handleDndStart = useCallback(
     (event: DragStartEvent) => {
       const id = String(event.active.id);
+      const data = event.active.data.current as ({
+        type?: string;
+        slug?: string;
+        block?: LightBlock;
+      } & Partial<InlineMediaDragPayload>) | undefined;
+      if (data?.type === "inline_media") {
+        setActiveDragInlineMedia({
+          src: data.imageSrc ?? "",
+          title: data.title ?? null,
+        });
+        setActiveDragBlock(null);
+        setActiveDragTag(null);
+        return;
+      }
       if (id.startsWith("tag:")) {
         setActiveDragTag(id.slice(4));
         setActiveDragBlock(null);
+        setActiveDragInlineMedia(null);
       } else {
-        const data = event.active.data.current as {
-          type?: string;
-          slug?: string;
-          block?: LightBlock;
-        } | undefined;
         const slug = data?.type === "block" && data.slug
           ? data.slug
           : id.startsWith("detail:")
@@ -1202,6 +1254,7 @@ export function AppWithVault({
           : blocks.find((b) => b.slug === slug);
         if (block) setActiveDragBlock(block);
         setActiveDragTag(null);
+        setActiveDragInlineMedia(null);
       }
     },
     [blocks],
@@ -1211,15 +1264,22 @@ export function AppWithVault({
     (event: DragEndEvent) => {
       setActiveDragBlock(null);
       setActiveDragTag(null);
+      setActiveDragInlineMedia(null);
       const { active, over } = event;
       if (!over) return;
 
       const activeId = String(active.id);
       const overId = String(over.id);
-      const activeData = active.data.current as {
+      const activeData = active.data.current as ({
         type?: string;
         slug?: string;
-      } | undefined;
+      } & Partial<InlineMediaDragPayload>) | undefined;
+      if (activeData?.type === "inline_media") {
+        if (overId.startsWith("tag:")) {
+          handleInlineMediaDrop(activeData as InlineMediaDragPayload, overId.slice(4));
+        }
+        return;
+      }
       const activeIsTag = activeId.startsWith("tag:");
       const activeSlug = activeData?.type === "block" && activeData.slug
         ? activeData.slug
@@ -1238,12 +1298,13 @@ export function AppWithVault({
         handleCardDrop(activeSlug, overId.slice(4));
       }
     },
-    [handleCardDrop, handleReorderTag],
+    [handleCardDrop, handleInlineMediaDrop, handleReorderTag],
   );
 
   const handleDndCancel = useCallback(() => {
     setActiveDragBlock(null);
     setActiveDragTag(null);
+    setActiveDragInlineMedia(null);
   }, []);
 
   // ── Card tag management (context menu) ───────────────────────────────────
@@ -1507,6 +1568,7 @@ export function AppWithVault({
               onCreateAndAssign={handleCreateTagFromMenu}
               onRequestRename={setRenamingBlock}
               onRequestDelete={handleDeleteBlock}
+              onOpenRelatedNote={handleOpenRelatedNote}
               onTagsChanged={() => {
                 void reloadAllSnapshots();
               }}
@@ -1607,6 +1669,16 @@ export function AppWithVault({
           vaultPath={vaultPath}
           thumbsRootPath={thumbsRootPath ?? undefined}
         />
+      )}
+      {activeDragInlineMedia && activeDragInlineMedia.src && (
+        <div className="pointer-events-none max-h-48 max-w-64 overflow-hidden rounded-1 border border-border bg-background shadow-lg">
+          <img
+            src={activeDragInlineMedia.src}
+            alt={activeDragInlineMedia.title ?? ""}
+            className="max-h-48 max-w-64 object-contain"
+            draggable={false}
+          />
+        </div>
       )}
       {activeDragTag && (
         <div className="pointer-events-none rounded-1 bg-secondary px-3 py-1.5 text-base font-semibold shadow-lg">

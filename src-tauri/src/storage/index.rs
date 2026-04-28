@@ -42,6 +42,7 @@ pub struct IndexedBlock {
     pub media_dimensions: Option<String>,
     pub preview_manifest: Option<String>,
     pub feed_playback: Option<String>,
+    pub related_notes: Vec<String>,
     pub origin: Option<String>,
     pub index_warning: Option<String>,
     pub tags: Vec<String>,
@@ -70,6 +71,8 @@ impl IndexedBlock {
                 file: self.media_file.clone(),
                 thumbnail: self.thumbnail.clone(),
                 tags: self.tags.clone(),
+                related_notes: self.related_notes.clone(),
+                source_media: None,
                 saved_at,
                 source: self.source.clone(),
                 width: self.width,
@@ -239,6 +242,19 @@ fn extract_media_urls(body: &str) -> Option<String> {
     } else {
         serde_json::to_string(&urls).ok()
     }
+}
+
+fn serialize_related_notes(related_notes: &[String]) -> Option<String> {
+    if related_notes.is_empty() {
+        None
+    } else {
+        serde_json::to_string(related_notes).ok()
+    }
+}
+
+fn parse_related_notes_json(raw: Option<String>) -> Vec<String> {
+    raw.and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
+        .unwrap_or_default()
 }
 
 fn is_social_url(url: Option<&str>) -> bool {
@@ -602,6 +618,8 @@ fn serialize_feed_preview_manifest_from_index_row(
             file: media_file.map(str::to_string),
             thumbnail: thumbnail.map(str::to_string),
             tags: Vec::new(),
+            related_notes: Vec::new(),
+            source_media: None,
             saved_at: DateTime::new("1970-01-01T00:00:00Z").ok()?,
             source: None,
             width,
@@ -946,6 +964,7 @@ fn upsert_block_inner(
         preview_manifest.as_deref(),
         existing_thumb_format,
     );
+    let related_notes = serialize_related_notes(&block.frontmatter.related_notes);
 
     // Compute body hash at index time so watcher rename detection
     // (Phase 18.G) can match Remove+Create events without reading the
@@ -955,9 +974,9 @@ fn upsert_block_inner(
     conn.execute(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body, first_image,
-            media_urls, media_dimensions, preview_manifest, feed_playback, body_hash,
+            media_urls, media_dimensions, preview_manifest, feed_playback, related_notes, body_hash,
             origin, index_warning)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
             title = excluded.title,
@@ -976,6 +995,7 @@ fn upsert_block_inner(
             media_dimensions = excluded.media_dimensions,
             preview_manifest = excluded.preview_manifest,
             feed_playback = excluded.feed_playback,
+            related_notes = excluded.related_notes,
             body_hash = excluded.body_hash,
             origin = excluded.origin,
             index_warning = excluded.index_warning,
@@ -999,6 +1019,7 @@ fn upsert_block_inner(
             media_dimensions,
             preview_manifest,
             feed_playback,
+            related_notes,
             body_hash,
             origin,
             index_warning,
@@ -1028,7 +1049,12 @@ fn upsert_block_inner(
     // Replace wikilinks: delete old, insert new.
     conn.execute("DELETE FROM wikilinks WHERE source_id = ?1", [block_id])
         .context("failed to delete old wikilinks")?;
-    let links = extract_wikilinks(&block.body);
+    let mut links = extract_wikilinks(&block.body);
+    for note in &block.frontmatter.related_notes {
+        if !links.contains(note) {
+            links.push(note.clone());
+        }
+    }
     for link in &links {
         conn.execute(
             "INSERT OR IGNORE INTO wikilinks (source_id, target_slug) VALUES (?1, ?2)",
@@ -1748,7 +1774,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
     let mut stmt = conn
         .prepare(
             "SELECT id, slug, block_type, title, description, url, media_file,
-                    thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, origin, index_warning
+                    thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, related_notes, origin, index_warning
              FROM blocks WHERE slug = ?1",
         )
         .context("failed to prepare get_block")?;
@@ -1767,7 +1793,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
 pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, description, url, media_file,
-                thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, origin, index_warning
+                thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, related_notes, origin, index_warning
          FROM blocks ORDER BY saved_at DESC",
     )?;
     collect_blocks(conn, &mut stmt, &[] as &[&dyn rusqlite::types::ToSql])
@@ -1778,7 +1804,7 @@ pub fn list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlo
     let mut stmt = conn.prepare(
         "SELECT b.id, b.slug, b.block_type, b.title, b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.origin, b.index_warning
+                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.related_notes, b.origin, b.index_warning
          FROM blocks b
          JOIN block_tags bt ON bt.block_id = b.id
          WHERE bt.tag = ?1
@@ -1851,7 +1877,7 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
     let mut sql = String::from(
         "SELECT DISTINCT b.id, b.slug, b.block_type, b.title, b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.origin, b.index_warning
+                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.related_notes, b.origin, b.index_warning
          FROM blocks b",
     );
 
@@ -2023,8 +2049,9 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
         media_dimensions: row.get(14)?,
         preview_manifest: row.get(15)?,
         feed_playback: row.get(16)?,
-        origin: row.get(17)?,
-        index_warning: row.get(18)?,
+        related_notes: parse_related_notes_json(row.get(17)?),
+        origin: row.get(18)?,
+        index_warning: row.get(19)?,
         tags: Vec::new(), // filled by caller
     })
 }
@@ -2113,6 +2140,8 @@ mod tests {
                 file: None,
                 thumbnail: None,
                 tags: tags.iter().map(|t| t.to_string()).collect(),
+                related_notes: Vec::new(),
+                source_media: None,
                 saved_at: DateTime::new(saved_at).unwrap(),
                 source: None,
                 width: None,
@@ -2232,6 +2261,38 @@ mod tests {
             .query_row("SELECT count(*) FROM wikilinks", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count2, 2);
+    }
+
+    #[test]
+    fn upsert_indexes_related_notes_as_wikilinks() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "extracted",
+            "image",
+            Some("Extracted"),
+            "2026-01-01T00:00:00Z",
+            &["inspiration"],
+            "![[extracted.jpg]]",
+        );
+        block.frontmatter.related_notes = vec!["Source Article".to_string()];
+        upsert_block(&conn, &block, None).unwrap();
+
+        let got = get_block(&conn, "extracted").unwrap().unwrap();
+        assert_eq!(got.related_notes, vec!["Source Article"]);
+
+        let targets = conn
+            .prepare(
+                "SELECT target_slug FROM wikilinks
+                 JOIN blocks ON blocks.id = wikilinks.source_id
+                 WHERE blocks.slug = ?1
+                 ORDER BY target_slug",
+            )
+            .unwrap()
+            .query_map(["extracted"], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(targets, vec!["Source Article", "extracted.jpg"]);
     }
 
     // ── remove_block ─────────────────────────────────────────────────────

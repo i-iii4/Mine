@@ -557,6 +557,8 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
                 .map(|t| mine_lib::domain::tag::normalize_tag(t))
                 .filter(|t| !t.is_empty())
                 .collect(),
+            related_notes: Vec::new(),
+            source_media: None,
             saved_at,
             source: Some("web-clipper".to_string()),
             width: p.width,
@@ -644,6 +646,8 @@ fn channel_to_block(channel: &Channel) -> Block {
             file: None,
             thumbnail: None,
             tags: Vec::new(),
+            related_notes: Vec::new(),
+            source_media: None,
             saved_at: channel.created_at.clone(),
             source: None,
             width: None,

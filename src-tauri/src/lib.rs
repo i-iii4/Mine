@@ -38,6 +38,7 @@ pub fn run() {
             commands::blocks::list_grid_blocks,
             commands::blocks::get_block,
             commands::blocks::create_block,
+            commands::blocks::extract_inline_media,
             commands::blocks::rename_block_file,
             commands::blocks::delete_block,
             commands::tags::list_tags,

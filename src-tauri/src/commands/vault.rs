@@ -1082,6 +1082,8 @@ fn migrate_channels_to_files(conn: &Connection, vault: &VaultLayout) {
                 file: None,
                 thumbnail: None,
                 tags: Vec::new(),
+                related_notes: Vec::new(),
+                source_media: None,
                 saved_at: ch.created_at,
                 source: None,
                 width: None,

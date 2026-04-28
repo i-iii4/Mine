@@ -15,6 +15,8 @@ use thiserror::Error;
 
 const FRONTMATTER_SCAN_LIMIT_LINES: usize = 20;
 const MINE_COLLECTIONS_FIELD: &str = "Mine Collections";
+const MINE_RELATED_NOTES_FIELD: &str = "Mine Related Notes";
+const MINE_SOURCE_MEDIA_FIELD: &str = "Mine Source Media";
 const MAX_FILENAME_STEM_CHARS: usize = 100;
 const MAX_FILENAME_STEM_NFD_BYTES: usize = 220;
 
@@ -144,6 +146,8 @@ pub struct Frontmatter {
     pub file: Option<String>,
     pub thumbnail: Option<String>,
     pub tags: Vec<String>,
+    pub related_notes: Vec<String>,
+    pub source_media: Option<String>,
     pub saved_at: DateTime,
     pub source: Option<String>,
     pub width: Option<u32>,
@@ -220,6 +224,8 @@ pub fn parse_frontmatter(yaml: &str) -> Result<Frontmatter, BlockError> {
 
     // Mine collections (optional, legacy fallback to `tags`)
     let tags = parse_collections(&value)?;
+    let related_notes = parse_related_notes(&value);
+    let source_media = get_opt_string(&value, MINE_SOURCE_MEDIA_FIELD);
 
     Ok(Frontmatter {
         block_type,
@@ -229,6 +235,8 @@ pub fn parse_frontmatter(yaml: &str) -> Result<Frontmatter, BlockError> {
         file,
         thumbnail,
         tags,
+        related_notes,
+        source_media,
         saved_at,
         source,
         width,
@@ -334,7 +342,8 @@ pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
     let mut lines = Vec::new();
 
     // Field order per spec: type, title, description, url, file, thumbnail,
-    // Mine Collections, saved_at, source, width, height, author.
+    // Mine Collections, Mine Related Notes, Mine Source Media, saved_at,
+    // source, width, height, author.
     lines.push(format!("type: {}", frontmatter.block_type.as_str()));
 
     if let Some(ref v) = frontmatter.title {
@@ -357,6 +366,15 @@ pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
         for tag in &frontmatter.tags {
             lines.push(format!("  - {}", yaml_quote(tag)));
         }
+    }
+    if !frontmatter.related_notes.is_empty() {
+        lines.push(format!("{MINE_RELATED_NOTES_FIELD}:"));
+        for note in &frontmatter.related_notes {
+            lines.push(format!("  - {}", yaml_quote(&format!("[[{note}]]"))));
+        }
+    }
+    if let Some(ref v) = frontmatter.source_media {
+        lines.push(format!("{MINE_SOURCE_MEDIA_FIELD}: {}", yaml_quote(v)));
     }
     lines.push(format!("saved_at: {}", frontmatter.saved_at.as_str()));
     if let Some(ref v) = frontmatter.source {
@@ -672,6 +690,36 @@ fn parse_collections(parent: &Value) -> Result<Vec<String>, BlockError> {
     Ok(tags)
 }
 
+fn parse_related_notes(parent: &Value) -> Vec<String> {
+    let Some(value) = parent.get(MINE_RELATED_NOTES_FIELD) else {
+        return Vec::new();
+    };
+    let Some(seq) = value.as_sequence() else {
+        return Vec::new();
+    };
+
+    let mut notes = Vec::with_capacity(seq.len());
+    for item in seq {
+        let Some(raw) = item.as_str() else {
+            continue;
+        };
+        let normalized = normalize_related_note(raw);
+        if !normalized.is_empty() && !notes.contains(&normalized) {
+            notes.push(normalized);
+        }
+    }
+    notes
+}
+
+fn normalize_related_note(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let inner = trimmed
+        .strip_prefix("[[")
+        .and_then(|value| value.strip_suffix("]]"))
+        .unwrap_or(trimmed);
+    inner.split('|').next().unwrap_or("").trim().to_string()
+}
+
 fn split_frontmatter_candidate(content: &str) -> Option<(&str, &str, bool)> {
     let mut iter = content.split_inclusive('\n');
     let first = iter.next()?;
@@ -713,6 +761,8 @@ fn implicit_article_block(slug: &str, body: String, saved_at: DateTime) -> Block
             file: None,
             thumbnail: None,
             tags: Vec::new(),
+            related_notes: Vec::new(),
+            source_media: None,
             saved_at,
             source: None,
             width: None,
@@ -777,6 +827,8 @@ fn parse_frontmatter_compat(
             file: get_opt_string(&value, "file"),
             thumbnail: get_opt_string(&value, "thumbnail"),
             tags,
+            related_notes: parse_related_notes(&value),
+            source_media: get_opt_string(&value, MINE_SOURCE_MEDIA_FIELD),
             saved_at,
             source: get_opt_string(&value, "source"),
             width: get_opt_u64(&value, "width").map(|n| n as u32),
@@ -1375,6 +1427,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_frontmatter_related_notes_normalizes_wikilinks() {
+        let yaml = "type: image\nsaved_at: 2026-02-26T14:30:00Z\nMine Related Notes:\n  - \"[[Source Note]]\"\n  - \"[[Aliased Note|display]]\"\n  - Raw Note\n  - 42\nMine Source Media: Source Note (image 1).jpg";
+        let fm = parse_frontmatter(yaml).unwrap();
+        assert_eq!(
+            fm.related_notes,
+            vec!["Source Note", "Aliased Note", "Raw Note"]
+        );
+        assert_eq!(
+            fm.source_media.as_deref(),
+            Some("Source Note (image 1).jpg")
+        );
+    }
+
+    #[test]
+    fn serialize_frontmatter_related_notes_as_wikilinks() {
+        let yaml = "type: image\nsaved_at: 2026-02-26T14:30:00Z\nMine Related Notes:\n  - Source Note\nMine Source Media: source.jpg";
+        let fm = parse_frontmatter(yaml).unwrap();
+        let serialized = serialize_frontmatter(&fm);
+        assert!(serialized.contains("Mine Related Notes:\n  - \"[[Source Note]]\""));
+        assert!(serialized.contains("Mine Source Media: source.jpg"));
+    }
+
+    #[test]
     fn parse_frontmatter_unknown_fields_ignored() {
         // E10: unknown fields are silently ignored (forward compatibility).
         let yaml =
@@ -1484,6 +1559,8 @@ mod tests {
             file: None,
             thumbnail: None,
             tags: vec![],
+            related_notes: Vec::new(),
+            source_media: None,
             saved_at: DateTime::new("2026-02-26T14:30:00Z").unwrap(),
             source: None,
             width: None,
@@ -1515,6 +1592,8 @@ mod tests {
             file: None,
             thumbnail: None,
             tags: vec!["tag1".to_string(), "tag2".to_string()],
+            related_notes: Vec::new(),
+            source_media: None,
             saved_at: DateTime::new("2026-02-26T14:30:00Z").unwrap(),
             source: Some("manual".to_string()),
             width: None,
@@ -1544,6 +1623,8 @@ mod tests {
             file: Some("F".to_string()),
             thumbnail: Some("TH".to_string()),
             tags: vec!["tag".to_string()],
+            related_notes: vec!["Related".to_string()],
+            source_media: Some("Source (image 1).jpg".to_string()),
             saved_at: DateTime::new("2026-02-26").unwrap(),
             source: Some("S".to_string()),
             width: Some(100),
@@ -1555,7 +1636,8 @@ mod tests {
         };
         let yaml = serialize_frontmatter(&fm);
         // Per spec: type, title, description, url, file, thumbnail,
-        // Mine Collections, saved_at, source, width, height, author.
+        // Mine Collections, Mine Related Notes, Mine Source Media, saved_at,
+        // source, width, height, author.
         let pos_type = yaml.find("type:").unwrap();
         let pos_title = yaml.find("title:").unwrap();
         let pos_desc = yaml.find("description:").unwrap();
@@ -1563,6 +1645,8 @@ mod tests {
         let pos_file = yaml.find("file:").unwrap();
         let pos_thumb = yaml.find("thumbnail:").unwrap();
         let pos_tags = yaml.find("Mine Collections:").unwrap();
+        let pos_related = yaml.find("Mine Related Notes:").unwrap();
+        let pos_source_media = yaml.find("Mine Source Media:").unwrap();
         let pos_saved = yaml.find("saved_at:").unwrap();
         let pos_source = yaml.find("source:").unwrap();
         let pos_width = yaml.find("width:").unwrap();
@@ -1575,7 +1659,9 @@ mod tests {
         assert!(pos_url < pos_file);
         assert!(pos_file < pos_thumb);
         assert!(pos_thumb < pos_tags);
-        assert!(pos_tags < pos_saved);
+        assert!(pos_tags < pos_related);
+        assert!(pos_related < pos_source_media);
+        assert!(pos_source_media < pos_saved);
         assert!(pos_saved < pos_source);
         assert!(pos_source < pos_width);
         assert!(pos_width < pos_height);
@@ -1596,6 +1682,8 @@ mod tests {
                 file: None,
                 thumbnail: None,
                 tags: vec![],
+                related_notes: Vec::new(),
+                source_media: None,
                 saved_at: DateTime::new("2026-02-26T14:30:00Z").unwrap(),
                 source: None,
                 width: None,
@@ -1624,6 +1712,8 @@ mod tests {
                 file: None,
                 thumbnail: None,
                 tags: vec![],
+                related_notes: Vec::new(),
+                source_media: None,
                 saved_at: DateTime::new("2026-02-26T14:30:00Z").unwrap(),
                 source: None,
                 width: None,

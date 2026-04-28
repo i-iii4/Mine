@@ -176,6 +176,8 @@ fn import_single_block(
             file: media_file,
             thumbnail,
             tags: vec![tag.to_string()],
+            related_notes: Vec::new(),
+            source_media: None,
             saved_at,
             source: Some("arena-import".to_string()),
             width: None,

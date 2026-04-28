@@ -46,7 +46,14 @@ interface DetailProps {
   onTagsChanged: () => void;
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
   onRequestDelete: (slug: string) => void;
+  onOpenRelatedNote: (slug: string) => void;
 }
+
+type DetailInlineMediaExtraction = {
+  sourceSlug: string;
+  mediaRef: string;
+  title: string | null;
+};
 
 function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock {
   return "tags" in block;
@@ -65,6 +72,7 @@ export function Detail({
   onCreateAndAssign,
   onRequestRename,
   onRequestDelete,
+  onOpenRelatedNote,
 }: DetailProps) {
   const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
     isIndexedBlock(block) ? block : null,
@@ -259,6 +267,7 @@ export function Detail({
                 block={block}
                 fullBlock={fullBlock}
                 formattedDate={formattedDate}
+                onOpenRelatedNote={onOpenRelatedNote}
               />
             </div>
           </div>
@@ -274,15 +283,42 @@ interface MetadataPanelProps {
   block: LightBlock | IndexedBlock;
   fullBlock: IndexedBlock | null;
   formattedDate: string;
+  onOpenRelatedNote: (slug: string) => void;
 }
 
 function MetadataPanel({
   block,
   fullBlock,
   formattedDate,
+  onOpenRelatedNote,
 }: MetadataPanelProps) {
   const displayBlock = fullBlock ?? block;
   const indexWarning = getIndexWarning(displayBlock);
+  const relatedNotes = useMemo(
+    () => isIndexedBlock(displayBlock) ? displayBlock.related_notes : [],
+    [displayBlock],
+  );
+  const relatedNotesKey = relatedNotes.join("\u0000");
+  const [availableRelatedNotes, setAvailableRelatedNotes] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    if (relatedNotes.length === 0) {
+      setAvailableRelatedNotes(null);
+      return;
+    }
+    let cancelled = false;
+    setAvailableRelatedNotes(null);
+    void Promise.all(
+      relatedNotes.map(async (slug) => ({ slug, block: await getBlock(slug) })),
+    ).then((results) => {
+      if (cancelled) return;
+      setAvailableRelatedNotes(new Set(results.filter((item) => item.block).map((item) => item.slug)));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [relatedNotes, relatedNotesKey]);
+
   return (
     <div className="flex flex-col gap-5 font-mono">
       <ArticleAudioControls
@@ -318,6 +354,32 @@ function MetadataPanel({
 
       {displayBlock.author && (
         <MetadataField label="AUTHOR" value={displayBlock.author} />
+      )}
+
+      {relatedNotes.length > 0 && (
+        <div>
+          <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+            RELATED NOTES
+          </div>
+          <div className="mt-1 flex flex-col items-start gap-1">
+            {relatedNotes.map((slug) => {
+              const isAvailable = availableRelatedNotes?.has(slug) ?? false;
+              return isAvailable ? (
+                <button
+                  key={slug}
+                  onClick={() => onOpenRelatedNote(slug)}
+                  className="block text-left text-sm text-foreground hover:underline"
+                >
+                  {slug}
+                </button>
+              ) : (
+                <span key={slug} className="text-sm text-muted-foreground">
+                  {slug}
+                </span>
+              );
+            })}
+          </div>
+        </div>
       )}
 
     </div>
@@ -464,6 +526,7 @@ function BlockContent({
             vaultPath={vaultPath}
             thumbsRootPath={resolvedThumbsRoot}
             previewManifest={previewManifest}
+            sourceSlug={block.slug}
           />
         </div>
       );
@@ -530,11 +593,13 @@ function ArticleBody({
   vaultPath,
   thumbsRootPath,
   previewManifest,
+  sourceSlug,
 }: {
   body: string;
   vaultPath: string;
   thumbsRootPath: string;
   previewManifest: ReturnType<typeof normalizeFeedPreviewManifest>;
+  sourceSlug?: string;
 }) {
   const components: Components = useMemo(
     () => ({
@@ -559,11 +624,19 @@ function ArticleBody({
         const previewSrc = previewTile?.previewPath
           ? previewAssetUrl(thumbsRootPath, previewTile.previewPath)
           : null;
+        const extraction = sourceSlug && isExtractableLocalImage(decodedSrc)
+          ? {
+              sourceSlug,
+              mediaRef: decodedSrc,
+              title: alt?.trim() ? alt.trim() : null,
+            }
+          : null;
         return (
           <DetailImage
             src={originalSrc}
             previewSrc={previewSrc}
             alt={alt ?? ""}
+            extraction={extraction}
             className="rounded-0"
             {...props}
           />
@@ -602,27 +675,60 @@ function DetailImage({
   src,
   previewSrc,
   alt,
+  extraction,
   className,
   ...imgProps
 }: {
   src: string;
   previewSrc: string | null;
   alt: string;
+  extraction: DetailInlineMediaExtraction | null;
 } & React.ImgHTMLAttributes<HTMLImageElement>) {
   const [originalReady, setOriginalReady] = useState(false);
+  const {
+    attributes: dragAttributes,
+    listeners: dragListeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
+    id: extraction
+      ? `inline-media:${extraction.sourceSlug}:${extraction.mediaRef}`
+      : `inline-media-disabled:${src}`,
+    disabled: extraction === null,
+    data: extraction
+      ? {
+          type: "inline_media",
+          sourceSlug: extraction.sourceSlug,
+          mediaRef: extraction.mediaRef,
+          mediaKind: "image",
+          title: extraction.title,
+          imageSrc: previewSrc ?? src,
+        }
+      : undefined,
+  });
 
   useEffect(() => {
     setOriginalReady(false);
   }, [src]);
 
   return (
-    <div className="relative overflow-hidden">
+    <div
+      ref={setDragRef}
+      {...(extraction ? dragAttributes : {})}
+      {...(extraction ? dragListeners : {})}
+      className={cn(
+        "relative overflow-hidden",
+        extraction && "cursor-grab active:cursor-grabbing",
+        isDragging && "opacity-40",
+      )}
+    >
       {previewSrc && !originalReady && (
         <img
           src={previewSrc}
           alt=""
           className={cn("rounded-0", className)}
           loading="eager"
+          draggable={false}
           aria-hidden="true"
         />
       )}
@@ -631,6 +737,7 @@ function DetailImage({
         alt={alt}
         className={cn("rounded-0", className, previewSrc && !originalReady && "absolute inset-0")}
         loading="lazy"
+        draggable={false}
         {...imgProps}
         onLoad={() => setOriginalReady(true)}
         onError={(e) => {
@@ -650,4 +757,11 @@ function resolveImageSrc(src: string, vaultPath: string): string {
     return src;
   }
   return mediaUrl(vaultPath, src);
+}
+
+function isExtractableLocalImage(src: string): boolean {
+  if (src.startsWith("http://") || src.startsWith("https://")) {
+    return false;
+  }
+  return /\.(avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)$/i.test(src);
 }

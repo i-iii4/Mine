@@ -1136,6 +1136,8 @@ mod tests {
                 file: None,
                 thumbnail: None,
                 tags: tags.iter().map(|t| t.to_string()).collect(),
+                related_notes: Vec::new(),
+                source_media: None,
                 saved_at: DateTime::new("2026-01-15T12:00:00Z").unwrap(),
                 source: None,
                 width: None,

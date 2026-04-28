@@ -17,6 +17,8 @@ import type {
   ImportChannelRequest,
   ImportChannelResult,
   ArticleAudioState,
+  ExtractInlineMediaParams,
+  InlineMediaExtractError,
 } from "@/types";
 
 // Vault
@@ -73,6 +75,27 @@ export const getBlock = (slug: string) =>
 
 export const createBlock = (params: CreateBlockParams) =>
   invoke<IndexedBlock>("create_block", { ...params });
+
+function normalizeInlineMediaExtractError(error: unknown): InlineMediaExtractError {
+  if (error && typeof error === "object" && "kind" in error) {
+    return error as InlineMediaExtractError;
+  }
+  if (typeof error === "string") {
+    return { kind: "internal", message: error };
+  }
+  if (error instanceof Error) {
+    return { kind: "internal", message: error.message };
+  }
+  return { kind: "internal", message: String(error) };
+}
+
+export const extractInlineMedia = async (params: ExtractInlineMediaParams) => {
+  try {
+    return await invoke<IndexedBlock>("extract_inline_media", { ...params });
+  } catch (error) {
+    throw normalizeInlineMediaExtractError(error);
+  }
+};
 
 function normalizeRenameBlockError(error: unknown): RenameBlockError {
   if (error && typeof error === "object" && "kind" in error) {

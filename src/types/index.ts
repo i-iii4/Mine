@@ -28,6 +28,7 @@ export interface IndexedBlock {
   media_dimensions: string | null;
   preview_manifest: string | null;
   feed_playback: string | null;
+  related_notes: string[];
   origin?: string | null;
   index_warning?: string | null;
   tags: string[];
@@ -115,6 +116,23 @@ export type RenameBlockError =
   | { kind: "block_not_found"; slug: string }
   | { kind: "invalid_filename"; reason: string }
   | { kind: "name_taken"; requested: string }
+  | { kind: "internal"; message: string };
+
+export interface ExtractInlineMediaParams {
+  source_slug: string;
+  media_ref: string;
+  target_tag: string;
+  title?: string | null;
+}
+
+export type InlineMediaExtractError =
+  | { kind: "no_vault" }
+  | { kind: "source_not_found"; source_slug: string }
+  | { kind: "source_not_article"; source_slug: string; block_type: string }
+  | { kind: "invalid_media_ref"; reason: string }
+  | { kind: "media_not_referenced"; media_ref: string; source_slug: string }
+  | { kind: "media_not_found"; media_ref: string }
+  | { kind: "unsupported_media_type"; media_ref: string }
   | { kind: "internal"; message: string };
 
 export interface TagCount {

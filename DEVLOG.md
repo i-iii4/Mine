@@ -1,5 +1,73 @@
 # Devlog
 
+## 28.04.2026 [primary] — Inline image extraction from article detail
+
+### Goal
+
+Сделать первый законченный contract для перетаскивания локального inline-изображения
+из открытой article-заметки в sidebar-канал: перетаскивание должно создать отдельный
+image-блок с собственной копией media-файла и односторонней связью на исходную
+заметку, не меняя исходную статью.
+
+### Completed
+
+- Создан `SPEC_INLINE_MEDIA_EXTRACTION.md`: зафиксированы v1-scope, модель данных,
+  drag payload, IPC contract, frontmatter-поля, ошибки и сценарии проверки.
+- `AGENTS.md`, `CLAUDE.md`, `ARCHITECTURE.md` и `PLAN.md` обновлены так, чтобы новая
+  спецификация была частью обязательного project contract и Phase 21.
+- `Frontmatter` расширен полями `related_notes` и `source_media`; сериализация пишет
+  `Mine Related Notes` как wikilink-list и `Mine Source Media` как provenance string.
+- Парсер frontmatter нормализует `Mine Related Notes`: принимает `[[Note]]`,
+  `[[Note|alias]]` и raw string, убирает дубли, не ломает неизвестные поля.
+- SQLite schema получила `blocks.related_notes TEXT`; индекс хранит related notes как
+  JSON и добавляет их в `wikilinks`, чтобы связь участвовала в общем графе ссылок.
+- Все конструкторы `Block` в backend, тестах, импорте, vault migration, thumbnail и
+  article-audio путях обновлены под новые поля `Frontmatter`.
+- Добавлена Tauri-команда `extract_inline_media`, зарегистрированная в `lib.rs`.
+- Backend extraction валидирует source slug, local leaf media ref, target tag, наличие
+  source article, наличие ссылки на media в body, существование media-файла и image
+  extension.
+- Extraction создаёт новый `image` block, копирует исходный media-файл в файл нового
+  блока, пишет body `![[<copied-media-file>]]`, наследует `url` исходной статьи,
+  ставит `source: inline-media-extraction`, `Mine Related Notes` и `Mine Source Media`.
+- Extraction генерирует thumbnail, синхронизирует thumbnail metadata, индексирует новый
+  block и эмитит `block:added` плюс `thumb:updated`.
+- `rename_block_file` теперь переписывает `frontmatter.related_notes` при rename
+  исходной заметки, сохраняя одностороннюю связь на новый slug.
+- Frontend типы расширены `IndexedBlock.related_notes`, `ExtractInlineMediaParams` и
+  типизированным `InlineMediaExtractError`.
+- `commands.ts` получил wrapper `extractInlineMedia` с нормализацией typed errors.
+- `Detail` делает локальные inline image embeds draggable через dnd-kit с отдельным
+  payload `type: "inline_media"`; native browser image drag отключён через
+  `draggable={false}`.
+- `App` отличает drag целого блока от inline-media drag, показывает image overlay и при
+  drop на `tag:<tag>` вызывает `extractInlineMedia`; drop на `Everything` ничего не
+  создаёт.
+- Metadata panel `Detail` показывает `RELATED NOTES`, проверяет наличие связанных
+  заметок через `getBlock` и открывает существующую related note кликом.
+- Добавлены регрессионные тесты на backend extraction: копирование image, запись
+  `related_notes`, `source_media`, неизменность source article и отказ для
+  unreferenced media.
+- Rename-тест расширен проверкой, что `Mine Related Notes` обновляется при
+  переименовании исходной заметки.
+
+### Verification
+
+- `cargo check`
+- `cargo test extract_inline_media_inner`
+- `cargo test rename_block_file_rewrites_links_and_inline_media`
+- `cargo test --lib`
+- `bunx eslint src/App.tsx src/components/Detail.tsx src/lib/commands.ts src/types/index.ts`
+- `bun run build`
+- `git diff --check`
+
+### Notes
+
+- Ручная дымовая проверка интерфейса в реальном vault не запускалась, чтобы не
+  создавать новые пользовательские блоки без отдельного подтверждения.
+- Полный `bun run lint` ранее остаётся заблокирован посторонним шумом линтера вне
+  изменённых файлов фронтенда.
+
 ## 28.04.2026 [primary] — Detail toolbar and clipper channel index parity
 
 ### Goal
