@@ -16,15 +16,25 @@
 
 - Detail получил `h-8` top menu: filename слева, shared `CardMoreMenu` и close
   action справа.
+- Верхнее меню Detail теперь имеет два режима в Settings: `Classic` и `Island`.
+  Экспериментальный split-variant с двумя островками удалён; старое stored
+  значение `islands` фолбэчится в `island`.
+- В обоих режимах Detail menu имеет постоянную divider/border line и
+  `bg-accent`, чтобы visual surface совпадал с нижним action bar приложения.
 - Metadata rail оставлен только для content metadata: AUDIO, WARNING,
   RESOLUTION, DATE, TYPE, SOURCE, AUTHOR. Labels остаются `font-mono text-sm
   text-muted-foreground`, values — `font-mono text-sm text-foreground`.
-- Detail content сохранил общий visual top offset: menu `32px` + content
-  padding `48px` = `80px`.
-- Верхняя divider line в Detail появляется только после того, как scroll
-  content доехал до зоны меню, а не при первом пикселе scroll.
+- Detail content сохраняет общий visual top offset: classic menu `32px` +
+  content padding `48px` = `80px`; island mode использует `pt-20`, чтобы первая
+  строка контента совпадала с sidebar/feed baseline.
 - `CardMoreMenu` вынесен из hover-only карточки в shared component, чтобы
   Detail и feed вызывали один и тот же rename/delete/source/channel workflow.
+- Filename в верхнем меню Detail стал drag handle: перетаскивание открытой
+  статьи в sidebar использует тот же `block -> tag` dnd-kit contract, что
+  карточка в ленте.
+- `DragOverlay` для block drag теперь рендерит реальный feed-card preview
+  (`DragCardPreview`) на ширине колонки, а не текстовую плашку, чтобы drag из
+  Detail и drag из feed выглядели одинаково.
 - Native host теперь резолвит vault layout так же, как desktop app:
   `<vault>/.arena/vault-id` → `~/Library/Application Support/com.mine.app/vaults/<id>/index.db`.
 - Legacy `<vault>/.arena/index.db` используется только как bootstrap source,
@@ -37,6 +47,7 @@
 ### Verification
 
 - `npm test -- Detail CardHoverMenu`
+- `npm test -- Card`
 - `cargo test --manifest-path src-tauri/Cargo.toml --bin native-host merge_channels_and_tags`
 - `cargo build --manifest-path src-tauri/Cargo.toml --release --bin native-host`
 - `npm run build`

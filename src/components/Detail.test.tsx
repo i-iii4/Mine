@@ -63,6 +63,32 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
 }
 
 describe("Detail", () => {
+  it("renders the selected top menu mode", () => {
+    const props = {
+      block: block(),
+      vaultPath: "/tmp/test-vault",
+      thumbsRootPath: "/tmp/thumbs",
+      onClose: vi.fn(),
+      onNavigate: vi.fn(),
+      tags: [],
+      onToggleTag: vi.fn(),
+      onCreateAndAssign: vi.fn(),
+      onTagsChanged: vi.fn(),
+      onRequestRename: vi.fn(),
+      onRequestDelete: vi.fn(),
+    };
+
+    const { container, rerender } = render(
+      <Detail {...props} detailTopMenuMode="classic" />,
+    );
+
+    expect(container.querySelector('[data-detail-top-menu="classic"]')).not.toBeNull();
+
+    rerender(<Detail {...props} detailTopMenuMode="island" />);
+
+    expect(container.querySelector('[data-detail-top-menu="island"]')).not.toBeNull();
+  });
+
   it("decodes local wikilink image paths for original media and preview lookup", () => {
     const b = block({
       body: "![[Title (image 1).jpg]]",

@@ -343,12 +343,12 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.8 | Исправление сброса прокрутки Grid: blocksFingerprint вместо ссылки на массив + отображение ошибок в DropZone | [x] |
 | 7.9 | Бэкенд: команда rename_channel (обновление тега во всех .md + индексе) | [x] |
 | 7.10 | Теги в сайдбаре: отображение всех уникальных тегов из frontmatter, контекстное меню (переименовать/удалить), inline-редактирование | [x] |
-| 7.11 | Drag-and-drop карточки на тег (dnd-kit + PointerSensor): pointerWithin коллизия, autoScroll сайдбара, DragOverlay с snapToCursor | [x] |
+| 7.11 | Drag-and-drop карточки / открытого Detail на тег (dnd-kit + PointerSensor): pointerWithin коллизия, autoScroll сайдбара, shared block payload | [x] |
 | 7.12 | Контекстное меню карточки (правый клик): теги с чекбоксами, поиск, создание нового тега, удаление с подтверждением | [x] |
 | 7.13 | Drag-and-drop каналов: @dnd-kit/sortable, SortableContext, reorder_channels с автосозданием записей, кнопка «New channel» | [x] |
 | 7.14 | Багфиксы drop-зоны: тег текущего канала при file drop, защита от дублирования, isCardDragging для синего кольца, удаление канала при удалении тега, Unicode в slugifyTag | [x] |
 | 7.15 | Качество thumbnail: 240→480px (Retina 2x), JPEG quality 80→85, единая константа DEFAULT_MAX_SIZE | [x] |
-| 7.16 | DragOverlay: курсор «держит» карточку за левый верхний угол вместо центра | [x] |
+| 7.16 | DragOverlay: курсор «держит» карточку за левый верхний угол вместо центра; block overlay рендерит feed-card preview, а не текстовую плашку | [x] |
 | 7.17 | Меню каналов: скрытие Delete при поиске, создание канала при отсутствии совпадений, MRU-ранжирование (localStorage), единообразие с клиппером | [x] |
 | 7.18 | Дизайн-система: shadcn/ui (токены, `cn()`, ThemeProvider, миграция оболочки App+Sidebar на семантические токены) | [x] |
 | 7.19 | Миграция всех компонентов на семантические токены: замена neutral-*/dark: на bg-card/text-foreground/border-border/bg-muted и т.д. | [x] |
@@ -356,7 +356,7 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.21 | Grid: делегирование ContextMenu (O(N)→O(1)) + синхронный сброс visibleCount + исправление скролла контекстного меню + hover сайдбара | [x] |
 | 7.22 | Визуальная стилизация: overlay titlebar + drag region, Geist Sans (UI) + Geist Mono (карточки, метаданные), острые карточки без заливки, GAP 32px, sidebar без заголовка с градиентным fade | [x] |
 | 7.23 | Иконки каналов в sidebar: стопка из 1–3 мини-карточек с реальными превью, веерная анимация при ховере | [x] |
-| 7.24 | Fullscreen Detail: двухслойный layout (scroll + fixed metadata), Geist Mono, drag region | [x] |
+| 7.24 | Fullscreen Detail: двухслойный layout (scroll + fixed metadata), Geist Mono, top menu modes (`Classic` / `Island`), filename drag handle в sidebar | [x] |
 | 7.25 | Single-instance guard для desktop app: повторный запуск должен фокусировать существующее окно, а не создавать вторую инстанцию | [ ] |
 
 ### Phase 8 — Веб-клиппер (браузерное расширение) [COMPLETED]

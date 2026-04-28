@@ -82,6 +82,11 @@ export function MeasuredCardFrame({
 export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFocused, priority, allowPlayback = true, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
+    data: {
+      type: "block",
+      slug: block.slug,
+      block,
+    },
   });
 
   const handleClick = () => onClick(block);
@@ -124,6 +129,32 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
     </CardFrame>
   );
 });
+
+export function DragCardPreview({
+  block,
+  vaultPath,
+  thumbsRootPath,
+  width = 240,
+}: {
+  block: LightBlock;
+  vaultPath: string;
+  thumbsRootPath?: string;
+  width?: number;
+}) {
+  return (
+    <CardFrame
+      className="pointer-events-none shadow-lg"
+      style={{ width }}
+    >
+      <CardContent
+        block={block}
+        vaultPath={vaultPath}
+        thumbsRootPath={thumbsRootPath}
+        allowPlayback={false}
+      />
+    </CardFrame>
+  );
+}
 
 export const CardSkeleton = memo(function CardSkeleton({
   block,

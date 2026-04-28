@@ -66,6 +66,11 @@ import {
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
 import { findBlockElement } from "@/lib/domSelectors";
+import {
+  getStoredDetailTopMenuMode,
+  storeDetailTopMenuMode,
+  type DetailTopMenuMode,
+} from "@/lib/appPreferences";
 import { pushRecentTag } from "@/lib/recentTags";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
@@ -76,6 +81,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { VaultConflictsBanner } from "@/components/VaultConflictsBanner";
 import { Grid } from "@/components/Grid";
+import { DragCardPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
@@ -269,6 +275,9 @@ export function AppWithVault({
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
+  const [detailTopMenuMode, setDetailTopMenuMode] = useState<DetailTopMenuMode>(
+    getStoredDetailTopMenuMode,
+  );
   const [focusedBlockId, setFocusedBlockId] = useState<number | null>(null);
   const [scrollToTopSignal, setScrollToTopSignal] = useState(0);
   const [activeDragBlock, setActiveDragBlock] = useState<LightBlock | null>(null);
@@ -992,6 +1001,11 @@ export function AppWithVault({
     [selectedBlock, activeBlocks],
   );
 
+  const handleDetailTopMenuModeChange = useCallback((mode: DetailTopMenuMode) => {
+    setDetailTopMenuMode(mode);
+    storeDetailTopMenuMode(mode);
+  }, []);
+
   // ── Tag management ──────────────────────────────────────────────────────
 
   const handleRenameTag = useCallback(
@@ -1136,7 +1150,19 @@ export function AppWithVault({
         setActiveDragTag(id.slice(4));
         setActiveDragBlock(null);
       } else {
-        const block = blocks.find((b) => b.slug === id);
+        const data = event.active.data.current as {
+          type?: string;
+          slug?: string;
+          block?: LightBlock;
+        } | undefined;
+        const slug = data?.type === "block" && data.slug
+          ? data.slug
+          : id.startsWith("detail:")
+            ? id.slice("detail:".length)
+            : id;
+        const block = data?.type === "block" && data.block
+          ? data.block
+          : blocks.find((b) => b.slug === slug);
         if (block) setActiveDragBlock(block);
         setActiveDragTag(null);
       }
@@ -1153,16 +1179,26 @@ export function AppWithVault({
 
       const activeId = String(active.id);
       const overId = String(over.id);
+      const activeData = active.data.current as {
+        type?: string;
+        slug?: string;
+      } | undefined;
+      const activeIsTag = activeId.startsWith("tag:");
+      const activeSlug = activeData?.type === "block" && activeData.slug
+        ? activeData.slug
+        : activeId.startsWith("detail:")
+          ? activeId.slice("detail:".length)
+          : activeId;
 
       // Tag reorder in sidebar
-      if (activeId.startsWith("tag:") && overId.startsWith("tag:")) {
+      if (activeIsTag && overId.startsWith("tag:")) {
         handleReorderTag(activeId.slice(4), overId.slice(4));
         return;
       }
 
       // Card dropped on tag
-      if (!activeId.startsWith("tag:") && overId.startsWith("tag:")) {
-        handleCardDrop(activeId, overId.slice(4));
+      if (!activeIsTag && overId.startsWith("tag:")) {
+        handleCardDrop(activeSlug, overId.slice(4));
       }
     },
     [handleCardDrop, handleReorderTag],
@@ -1389,6 +1425,7 @@ export function AppWithVault({
               thumbsRootPath={thumbsRootPath ?? undefined}
               onClose={handleDetailClose}
               onNavigate={handleDetailNavigate}
+              detailTopMenuMode={detailTopMenuMode}
               tags={tags}
               currentTag={currentTag}
               onToggleTag={handleToggleTag}
@@ -1458,7 +1495,11 @@ export function AppWithVault({
         <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>
           New Channel
         </ActionButton>
-        <ThemeMenuButton ref={themeMenuRef} />
+        <ThemeMenuButton
+          ref={themeMenuRef}
+          detailTopMenuMode={detailTopMenuMode}
+          onDetailTopMenuModeChange={handleDetailTopMenuModeChange}
+        />
         <ActionButton
           onClick={() => setDesignSystemOpen((v) => !v)}
           isSelected={designSystemOpen}
@@ -1486,9 +1527,11 @@ export function AppWithVault({
 
     <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
       {activeDragBlock && (
-        <div className="pointer-events-none rounded-1 border border-border bg-card px-3 py-2 text-base shadow-lg">
-          {activeDragBlock.title ?? activeDragBlock.slug}
-        </div>
+        <DragCardPreview
+          block={activeDragBlock}
+          vaultPath={vaultPath}
+          thumbsRootPath={thumbsRootPath ?? undefined}
+        />
       )}
       {activeDragTag && (
         <div className="pointer-events-none rounded-1 bg-secondary px-3 py-1.5 text-base font-semibold shadow-lg">

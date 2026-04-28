@@ -611,6 +611,18 @@ Rationale: masonry-раскладка с round-robin распределение�
 
 Rationale: Tauri `data-tauri-drag-region` перехватывает события указателя на нативном уровне (до CSS). Radix Dialog порталит контент за пределы `<main>`, что делает невозможным управление z-index относительно drag region. Plain div внутри `<main>` с `isolation: isolate` решает обе проблемы.
 
+Detail top menu имеет два runtime режима: `classic` и `island`. Оба режима
+используют тот же content baseline, что feed/sidebar, постоянную divider/border
+line и `bg-accent` surface, matching нижний action bar. `islands` был
+экспериментальным split-variant и не является частью contract; если старое
+значение осталось в `localStorage`, frontend должен fallback'иться в `island`.
+
+Filename в Detail top menu является block drag handle. DnD payload всегда
+передаёт `{ type: "block", slug, block }`; обычная feed card и Detail menu
+попадают в один `handleCardDrop(slug, tag)` path. Drag overlay для block drag
+рендерит feed-card preview фиксированной column width, а не строковый label,
+чтобы размер и визуальная модель совпадали с лентой.
+
 ### 008: Thumbnail-превью фильтруются на бэкенде
 
 | Approach | Problem |

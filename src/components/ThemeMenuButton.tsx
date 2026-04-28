@@ -3,9 +3,11 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ActionButton } from "@/components/ActionButton";
+import { DETAIL_TOP_MENU_MODES, type DetailTopMenuMode } from "@/lib/appPreferences";
 
 type ThemeMode = "system" | "light" | "dark";
 
@@ -30,7 +32,15 @@ export interface ThemeMenuHandle {
   toggle: () => void;
 }
 
-export const ThemeMenuButton = forwardRef<ThemeMenuHandle>(function ThemeMenuButton(_, ref) {
+interface ThemeMenuButtonProps {
+  detailTopMenuMode: DetailTopMenuMode;
+  onDetailTopMenuModeChange: (mode: DetailTopMenuMode) => void;
+}
+
+export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>(function ThemeMenuButton({
+  detailTopMenuMode,
+  onDetailTopMenuModeChange,
+}, ref) {
   const [theme, setTheme] = useState<ThemeMode>(getStoredTheme);
   const [open, setOpen] = useState(false);
 
@@ -46,6 +56,10 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle>(function ThemeMenuBut
     system: "System",
     light: "Light",
     dark: "Dark",
+  };
+  const detailTopMenuLabels: Record<DetailTopMenuMode, string> = {
+    classic: "Article menu: Classic",
+    island: "Article menu: Island",
   };
 
   return (
@@ -68,6 +82,16 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle>(function ThemeMenuBut
             className={theme === mode ? "bg-accent" : ""}
           >
             {labels[mode]}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        {DETAIL_TOP_MENU_MODES.map((mode) => (
+          <DropdownMenuItem
+            key={mode}
+            onSelect={() => onDetailTopMenuModeChange(mode)}
+            className={detailTopMenuMode === mode ? "bg-accent" : ""}
+          >
+            {detailTopMenuLabels[mode]}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

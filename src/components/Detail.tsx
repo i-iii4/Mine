@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "react";
+import { useDraggable } from "@dnd-kit/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
@@ -18,6 +19,7 @@ import {
 } from "@/lib/assets";
 import { cn } from "@/lib/utils";
 import { getBlock } from "@/lib/commands";
+import type { DetailTopMenuMode } from "@/lib/appPreferences";
 import {
   findPreviewTileForSource,
   normalizeFeedPreviewManifest,
@@ -27,13 +29,14 @@ import { ArticleAudioControls } from "./ArticleAudioControls";
 import { CardMoreMenu } from "./CardHoverMenu";
 
 // Layout constants — shared between scroll layer and metadata layer
-const LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-12";
-const DETAIL_CONTENT_TOP_PADDING_PX = 48;
+const CLASSIC_LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-12";
+const ISLANDS_LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-20";
 
 interface DetailProps {
   block: LightBlock | IndexedBlock;
   vaultPath: string;
   thumbsRootPath?: string;
+  detailTopMenuMode?: DetailTopMenuMode;
   onClose: () => void;
   onNavigate: (direction: "prev" | "next" | "up" | "down") => void;
   tags: TagCount[];
@@ -53,6 +56,7 @@ export function Detail({
   block,
   vaultPath,
   thumbsRootPath,
+  detailTopMenuMode = "island",
   onClose,
   onNavigate,
   tags,
@@ -65,12 +69,25 @@ export function Detail({
   const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
     isIndexedBlock(block) ? block : null,
   );
-  const [contentScrolled, setContentScrolled] = useState(false);
   const displayBlock = fullBlock ?? block;
+  const isFloatingTopMenu = detailTopMenuMode !== "classic";
+  const layoutClasses = isFloatingTopMenu ? ISLANDS_LAYOUT_CLASSES : CLASSIC_LAYOUT_CLASSES;
+  const {
+    attributes: dragAttributes,
+    listeners: dragListeners,
+    setNodeRef: setDragHandleRef,
+    isDragging,
+  } = useDraggable({
+    id: `detail:${displayBlock.slug}`,
+    data: {
+      type: "block",
+      slug: displayBlock.slug,
+      block: displayBlock,
+    },
+  });
 
   useEffect(() => {
     setFullBlock(isIndexedBlock(block) ? block : null);
-    setContentScrolled(false);
   }, [block]);
 
   useEffect(() => {
@@ -119,53 +136,108 @@ export function Detail({
 
   return (
     <div
-      className="absolute inset-0 z-10 flex flex-col bg-background outline-none"
+      className={cn(
+        "absolute inset-0 z-10 bg-background outline-none",
+        !isFloatingTopMenu && "flex flex-col",
+      )}
       role="dialog"
       aria-modal="false"
     >
-      <header className={cn(
-        "flex h-8 shrink-0 items-center gap-3 border-b px-3",
-        contentScrolled ? "border-border" : "border-transparent",
-      )}>
-        <div
-          className="min-w-0 flex-1 truncate font-mono text-sm text-muted-foreground"
-          title={filename}
+      {isFloatingTopMenu ? (
+        <header
+          data-detail-top-menu={detailTopMenuMode}
+          className={cn(
+            "absolute left-1/2 top-4 z-20 flex h-8 w-[calc(100%-3rem)] max-w-[58rem] -translate-x-1/2 items-center",
+            "gap-3 rounded-1 border border-border bg-accent px-3",
+          )}
         >
-          {filename}
-        </div>
-        <CardMoreMenu
-          block={displayBlock}
-          vaultPath={vaultPath}
-          tags={tags}
-          currentTag={currentTag}
-          onToggleTag={onToggleTag}
-          onCreateAndAssign={onCreateAndAssign}
-          onRequestRename={onRequestRename}
-          onRequestDelete={onRequestDelete}
-          triggerVariant="ghost"
-          className="shrink-0 text-muted-foreground hover:text-foreground"
-        />
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          className="text-muted-foreground hover:text-foreground"
+          <div
+            ref={setDragHandleRef}
+            {...dragAttributes}
+            {...dragListeners}
+            className={cn(
+              "min-w-0 flex-1 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
+              isDragging && "opacity-30",
+            )}
+            data-detail-drag-handle
+            title={filename}
+          >
+            {filename}
+          </div>
+          <div className="flex h-8 shrink-0 items-center gap-1">
+            <CardMoreMenu
+              block={displayBlock}
+              vaultPath={vaultPath}
+              tags={tags}
+              currentTag={currentTag}
+              onToggleTag={onToggleTag}
+              onCreateAndAssign={onCreateAndAssign}
+              onRequestRename={onRequestRename}
+              onRequestDelete={onRequestDelete}
+              triggerVariant="ghost"
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-4" />
+              <span className="sr-only">Close</span>
+            </Button>
+          </div>
+        </header>
+      ) : (
+        <header
+          className="flex h-8 shrink-0 items-center gap-3 border-b border-border bg-accent px-3"
+          data-detail-top-menu="classic"
         >
-          <X className="size-4" />
-          <span className="sr-only">Close</span>
-        </Button>
-      </header>
-
-      <div className="relative min-h-0 flex-1">
+          <div
+            ref={setDragHandleRef}
+            {...dragAttributes}
+            {...dragListeners}
+            className={cn(
+              "min-w-0 flex-1 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
+              isDragging && "opacity-30",
+            )}
+            data-detail-drag-handle
+            title={filename}
+          >
+            {filename}
+          </div>
+          <CardMoreMenu
+            block={displayBlock}
+            vaultPath={vaultPath}
+            tags={tags}
+            currentTag={currentTag}
+            onToggleTag={onToggleTag}
+            onCreateAndAssign={onCreateAndAssign}
+            onRequestRename={onRequestRename}
+            onRequestDelete={onRequestDelete}
+            triggerVariant="ghost"
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <X className="size-4" />
+            <span className="sr-only">Close</span>
+          </Button>
+        </header>
+      )}
+      <div className={cn("relative min-h-0", isFloatingTopMenu ? "h-full" : "flex-1")}>
         {/* Layer 1: Scrollable content + invisible spacer */}
         <div
           ref={panelRef}
           tabIndex={-1}
           className="h-full w-full overflow-y-auto outline-none"
           data-detail-scroll
-          onScroll={(event) => setContentScrolled(event.currentTarget.scrollTop >= DETAIL_CONTENT_TOP_PADDING_PX)}
         >
-          <div className={LAYOUT_CLASSES}>
+          <div className={layoutClasses}>
             <div className="min-w-0 flex-1">
               <BlockContent
                 block={block}
@@ -180,7 +252,7 @@ export function Detail({
 
         {/* Layer 2: Fixed metadata (same layout, doesn't scroll) */}
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          <div className={LAYOUT_CLASSES}>
+          <div className={layoutClasses}>
             <div className="flex-1" />
             <div className="pointer-events-auto w-56 shrink-0 overflow-y-auto" data-metadata-scroll>
               <MetadataPanel
