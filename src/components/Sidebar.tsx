@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, useEffect, memo } from "react";
-import { useDroppable } from "@dnd-kit/core";
-import { NavLink, useLocation, useNavigate } from "react-router";
+import { NavLink, useLocation } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
@@ -158,29 +157,13 @@ export function Sidebar({
           onSameClick={isLinkingBlock ? onNavClick : onScrollToTop}
         />
 
-        {isLinkingBlock ? (
-          <>
-            {visibleTags.map((tc) => (
-              <AssociationTagItem
-                key={tc.tag}
-                label={titleFromTag(tc.tag)}
-                tag={tc.tag}
-                count={tc.count}
-                cards={channelPreviews.get(tc.tag) ?? []}
-                compact={compact}
-                isCardDragging={isCardDragging}
-                checked={linkedTagSet.has(tc.tag)}
-                onToggle={() => onToggleLinkedTag(linkedBlockSlug, tc.tag, linkedTagSet.has(tc.tag))}
-                onNavigate={onNavClick}
-              />
-            ))}
-          </>
-        ) : (
-          <SortableContext
-            items={orderedTags.map((tc) => `tag:${tc.tag}`)}
-            strategy={verticalListSortingStrategy}
-          >
-            {orderedTags.map((tc) => (
+        <SortableContext
+          items={visibleTags.map((tc) => `tag:${tc.tag}`)}
+          strategy={verticalListSortingStrategy}
+        >
+          {visibleTags.map((tc) => {
+            const checked = linkedTagSet.has(tc.tag);
+            return (
               <TagNavItem
                 key={tc.tag}
                 to={`/channel/${encodeURIComponent(tc.tag)}`}
@@ -190,17 +173,21 @@ export function Sidebar({
                 cards={channelPreviews.get(tc.tag) ?? []}
                 compact={compact}
                 isCardDragging={isCardDragging}
-                isEditing={editingTag === tc.tag}
+                isEditing={!isLinkingBlock && editingTag === tc.tag}
+                linkEditor={isLinkingBlock ? {
+                  checked,
+                  onToggle: () => onToggleLinkedTag(linkedBlockSlug, tc.tag, checked),
+                } : undefined}
                 onDoubleClick={() => setEditingTag(tc.tag)}
                 onRenameSubmit={(v) => handleRename(tc.tag, v)}
                 onRenameCancel={() => setEditingTag(null)}
                 onDelete={() => onDeleteTag(tc.tag)}
                 onClick={onNavClick}
-                onSameClick={onScrollToTop}
+                onSameClick={isLinkingBlock ? undefined : onScrollToTop}
               />
-            ))}
-          </SortableContext>
-        )}
+            );
+          })}
+        </SortableContext>
 
         {isCreatingChannel && (
           <InlineInput
@@ -401,117 +388,6 @@ const NavItem = memo(function NavItem({
   );
 });
 
-const AssociationTagItem = memo(function AssociationTagItem({
-  label,
-  tag,
-  count,
-  cards,
-  compact,
-  isCardDragging,
-  checked,
-  onToggle,
-  onNavigate,
-}: {
-  label: string;
-  tag: string;
-  count: number;
-  cards: PreviewCard[];
-  compact?: boolean;
-  isCardDragging: boolean;
-  checked: boolean;
-  onToggle: () => void;
-  onNavigate?: () => void;
-}) {
-  const { setNodeRef, isOver } = useDroppable({ id: `tag:${tag}` });
-  const navigate = useNavigate();
-  const location = useLocation();
-  const to = `/channel/${encodeURIComponent(tag)}`;
-  const isActive = location.pathname === to || location.pathname.startsWith(to + "/");
-
-  const handleNavigate = () => {
-    if (isCardDragging) return;
-    navigate(to);
-    onNavigate?.();
-  };
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      handleNavigate();
-    }
-  };
-
-  return (
-    <div
-      ref={setNodeRef}
-      role="link"
-      tabIndex={0}
-      onClick={handleNavigate}
-      onKeyDown={handleKeyDown}
-      className={cn(
-        "group",
-        compact
-          ? "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 text-base"
-          : "flex w-full items-center gap-2 border-b border-sidebar-border px-3 py-1 font-mono text-base",
-        isActive
-          ? "bg-sidebar-accent text-sidebar-accent-foreground"
-          : compact
-            ? "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            : "text-muted-foreground hover:bg-accent",
-        isOver && isCardDragging && "ring-2 ring-ring ring-inset",
-      )}
-    >
-      <span className={compact ? "flex-1 truncate text-left" : "min-w-[100px] max-w-[150px] flex-1 truncate text-left"}>{label}</span>
-      {!compact && (
-        <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
-          {cards.map((card, i) => !card.hasThumb ? (
-            <div key={i} className="size-8 shrink-0 bg-accent" />
-          ) : card.text ? (
-            <div key={i} className="size-8 shrink-0 bg-accent">
-              <img src={card.url} className="size-8 object-cover dark:invert" loading="lazy" />
-            </div>
-          ) : (
-            <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" loading="lazy" />
-          ))}
-        </div>
-      )}
-      <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
-        <span
-          className={cn(
-            "text-sm text-muted-foreground",
-            checked ? "opacity-0" : "group-hover:opacity-0 group-focus-within:opacity-0",
-          )}
-        >
-          {count || ""}
-        </span>
-        <div
-          data-sidebar-link-checkbox-hit-area
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggle();
-          }}
-          onPointerDown={(event) => event.stopPropagation()}
-          className={cn(
-            "absolute inset-0 flex cursor-pointer items-center justify-end",
-            checked
-              ? "opacity-100 pointer-events-auto"
-              : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
-          )}
-        >
-          <Checkbox
-            checked={checked}
-            onCheckedChange={onToggle}
-            onClick={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
-            onKeyDown={(event) => event.stopPropagation()}
-            aria-label={`${checked ? "Remove from" : "Add to"} ${label}`}
-          />
-        </div>
-      </div>
-    </div>
-  );
-});
-
 const TagNavItem = memo(function TagNavItem({
   to,
   label,
@@ -521,6 +397,7 @@ const TagNavItem = memo(function TagNavItem({
   compact,
   isCardDragging,
   isEditing,
+  linkEditor,
   onDoubleClick,
   onRenameSubmit,
   onRenameCancel,
@@ -536,6 +413,10 @@ const TagNavItem = memo(function TagNavItem({
   compact?: boolean;
   isCardDragging: boolean;
   isEditing: boolean;
+  linkEditor?: {
+    checked: boolean;
+    onToggle: () => void;
+  };
   onDoubleClick: () => void;
   onRenameSubmit: (value: string) => void;
   onRenameCancel: () => void;
@@ -546,6 +427,7 @@ const TagNavItem = memo(function TagNavItem({
   const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const isLinkEditor = !!linkEditor;
 
   const {
     setNodeRef,
@@ -601,8 +483,8 @@ const TagNavItem = memo(function TagNavItem({
           <div
             ref={setNodeRef}
             style={style}
-            {...attributes}
-            {...listeners}
+            {...(!isLinkEditor ? attributes : {})}
+            {...(!isLinkEditor ? listeners : {})}
             className={cn(
               "group relative rounded-1",
               isDragging && "opacity-30",
@@ -626,6 +508,7 @@ const TagNavItem = memo(function TagNavItem({
             }
           }}
           onDoubleClick={(e) => {
+            if (isLinkEditor) return;
             e.preventDefault();
             onDoubleClick();
           }}
@@ -661,36 +544,78 @@ const TagNavItem = memo(function TagNavItem({
               </div>
             </>
           )}
-          <div className="relative w-8 shrink-0 text-right">
-            <span className={cn("text-sm text-muted-foreground group-hover:opacity-0", menuOpen && "opacity-0")}>{count || ""}</span>
-            <div className={cn("absolute inset-0 flex items-center justify-end opacity-0 group-hover:opacity-100", menuOpen && "opacity-100")}>
-              <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        data-sidebar-tag-menu-trigger
-                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                        onPointerDown={(e) => { e.stopPropagation(); }}
-                        className="flex size-8 items-center justify-end text-muted-foreground hover:text-foreground"
-                      >
-                        <MoreHorizontal className="size-3" />
-                      </button>
-                    </DropdownMenuTrigger>
-                <DropdownMenuContent side="right" align="start">
-              <DropdownMenuItem onSelect={onDoubleClick}>
-                <Pencil className="size-3" />
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                variant="destructive"
-                onSelect={() => setDeleteOpen(true)}
+          {isLinkEditor ? (
+            <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
+              <span
+                className={cn(
+                  "text-sm text-muted-foreground",
+                  linkEditor.checked
+                    ? "opacity-0"
+                    : "group-hover:opacity-0 group-focus-within:opacity-0",
+                )}
               >
-                <Trash2 className="size-3" />
-                Delete
-              </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                {count || ""}
+              </span>
+              <div
+                data-sidebar-link-checkbox-hit-area
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  linkEditor.onToggle();
+                }}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                className={cn(
+                  "absolute inset-0 flex cursor-pointer items-center justify-end",
+                  linkEditor.checked
+                    ? "opacity-100 pointer-events-auto"
+                    : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+                )}
+              >
+                <Checkbox
+                  checked={linkEditor.checked}
+                  onCheckedChange={linkEditor.onToggle}
+                  onClick={(event) => event.stopPropagation()}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  aria-label={`${linkEditor.checked ? "Remove from" : "Add to"} ${label}`}
+                />
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="relative w-8 shrink-0 text-right">
+              <span className={cn("text-sm text-muted-foreground group-hover:opacity-0", menuOpen && "opacity-0")}>{count || ""}</span>
+              <div className={cn("absolute inset-0 flex items-center justify-end opacity-0 group-hover:opacity-100", menuOpen && "opacity-100")}>
+                <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      data-sidebar-tag-menu-trigger
+                      onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                      onPointerDown={(e) => { e.stopPropagation(); }}
+                      className="flex size-8 items-center justify-end text-muted-foreground hover:text-foreground"
+                    >
+                      <MoreHorizontal className="size-3" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent side="right" align="start">
+                    <DropdownMenuItem onSelect={onDoubleClick}>
+                      <Pencil className="size-3" />
+                      Rename
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onSelect={() => setDeleteOpen(true)}
+                    >
+                      <Trash2 className="size-3" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+          )}
         </NavLink>
           </div>
         </ContextMenuTrigger>

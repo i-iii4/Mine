@@ -648,6 +648,12 @@ membership меняется только прямым click/key на checkbox. O
 синхронизирует открытую карточку сразу, затем `reloadAllSnapshots()` обновляет
 grid/sidebar snapshots.
 
+Sidebar rows не меняют identity при открытии Detail: обычный режим и
+link-editor используют общий `TagNavItem`, а checkbox/more menu являются
+вариантами только правого action slot. Thumbnail strip остаётся стабильным DOM,
+поэтому WebKit не получает новую пачку `<img>` и не мигает при открытии
+карточки.
+
 ### 008: Thumbnail-превью фильтруются на бэкенде
 
 | Approach | Problem |

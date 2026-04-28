@@ -485,6 +485,12 @@ hover/focus, а checkbox проявляется через `group-hover/group-fo
 (32×32). Клик по этой hit area toggles membership и не должен вызывать
 навигацию строки.
 
+Stable preview invariant: обычный sidebar и link-editor используют один и тот
+же row component и один thumbnail strip. При открытии карточки нельзя
+размонтировать строки каналов или `<img>` thumbnail'ы; меняется только правый
+row-action slot (`count/menu` ↔ `checkbox`). Это убирает blink превью при
+переключении в Detail.
+
 ### Сетка
 
 Masonry с round-robin распределением по колонкам. Gap: 32px (`--spacing-s5`). Минимальная ширина колонки: 240px. Ленивая подгрузка через IntersectionObserver.

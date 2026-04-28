@@ -25,16 +25,20 @@ const defaultProps = {
   onCreateChannel: vi.fn(),
 };
 
-function renderSidebar(props = defaultProps) {
-  return render(
+function sidebarTree(props = defaultProps) {
+  return (
     <MemoryRouter>
       <TooltipProvider>
         <DndContext>
           <Sidebar {...props} />
         </DndContext>
       </TooltipProvider>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
+}
+
+function renderSidebar(props = defaultProps) {
+  return render(sidebarTree(props));
 }
 
 describe("Sidebar", () => {
@@ -127,6 +131,29 @@ describe("Sidebar", () => {
 
     fireEvent.click(screen.getByRole("checkbox", { name: /Add to Beta/ }));
     expect(onToggleLinkedTag).toHaveBeenCalledWith("open-block", "beta", false);
+  });
+
+  it("keeps preview images mounted when switching to the open-card link editor", () => {
+    const previews = new Map([
+      ["alpha", [{ url: "asset://localhost/thumbs/alpha-a.jpg", text: false, hasThumb: true }]],
+      ["beta", [{ url: "asset://localhost/thumbs/beta-a.jpg", text: false, hasThumb: true }]],
+    ]);
+    const props = {
+      ...defaultProps,
+      channelPreviews: previews,
+    };
+    const { container, rerender } = renderSidebar(props);
+    const before = container.querySelector('img[src="asset://localhost/thumbs/alpha-a.jpg"]');
+
+    rerender(sidebarTree({
+      ...props,
+      linkedBlockSlug: "open-block",
+      linkedTags: ["alpha"],
+      onToggleLinkedTag: vi.fn(),
+    }));
+
+    const after = container.querySelector('img[src="asset://localhost/thumbs/alpha-a.jpg"]');
+    expect(after).toBe(before);
   });
 
   it("filters link editor to linked channels", () => {

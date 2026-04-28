@@ -43,6 +43,10 @@
 - Sidebar row-actions приведены к одному hit-area contract: checkbox в
   link-editor и hover-многоточие обычного sidebar используют 32×32 hit area,
   даже если визуальная иконка/галочка меньше.
+- Обычный sidebar и Detail link-editor теперь используют один `TagNavItem`:
+  при открытии карточки меняется только правый action slot, а thumbnail strip
+  остаётся тем же DOM-поддеревом. Это убирает blink sidebar thumbnails из-за
+  remount `<img>`.
 - Карточечный hover action для связи с каналами называется `Connect`, не
   `Channel`; то же имя используется в shared overflow/context menus.
 - Island-версия `Channels:` selector — абсолютный top overlay без фоновой
@@ -111,6 +115,7 @@
 - `npm test -- Card`
 - `npm test -- Sidebar Detail`
 - `npm test -- Sidebar Grid Detail Card`
+- `npm test -- Sidebar`
 - `cargo test --manifest-path src-tauri/Cargo.toml --bin native-host merge_channels_and_tags`
 - `cargo test upload_query`
 - `cargo test upload_filename`

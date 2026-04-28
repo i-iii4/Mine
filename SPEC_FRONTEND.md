@@ -159,6 +159,11 @@ Vault-пикер — не маршрут, а состояние: если `vault
    счётчик. Если канал не связан, checkbox появляется только на hover/focus.
 7. Визуальный checkbox остаётся 16×16, но кликабельная область равна правому
    row-action slot: 32×32. Клик по этой области не должен вызывать навигацию.
+8. Строки каналов должны сохранять stable row identity при переключении
+   ordinary sidebar ↔ Detail link-editor. Нельзя менять весь row component tree
+   только ради checkbox: thumbnail strip остаётся тем же DOM-поддеревом, меняется
+   только правый action slot. Это предотвращает remount `<img>` и blink превью
+   при открытии карточки.
 
 Geometry зависит от Detail top menu mode. В `classic` selector живёт в
 полноширинном `h-8 bg-accent border-b` баре. В `island` selector живёт в
