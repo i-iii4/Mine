@@ -21,6 +21,9 @@
   значение `islands` фолбэчится в `island`.
 - В обоих режимах Detail menu имеет постоянную divider/border line и
   `bg-accent`, чтобы visual surface совпадал с нижним action bar приложения.
+- Island Detail menu использует оптическую компенсацию правого края:
+  `pl-3 pr-1`. Кнопки остаются `size-8`, но визуальный отступ до иконки
+  совпадает с левым текстовым отступом filename.
 - Metadata rail оставлен только для content metadata: AUDIO, WARNING,
   RESOLUTION, DATE, TYPE, SOURCE, AUTHOR. Labels остаются `font-mono text-sm
   text-muted-foreground`, values — `font-mono text-sm text-foreground`.
@@ -32,9 +35,23 @@
 - Filename в верхнем меню Detail стал drag handle: перетаскивание открытой
   статьи в sidebar использует тот же `block -> tag` dnd-kit contract, что
   карточка в ленте.
+- Когда Detail открыт, sidebar переходит в режим редактирования связей
+  открытой карточки с каналами. Верхняя surface содержит `Channels:` и selector
+  `All / Connected`; в `Connected` показываются только связанные каналы.
+  Клик по строке канала навигирует как раньше, а добавление/удаление связи
+  работает только прямым кликом по checkbox.
+- Island-версия `Channels:` selector — абсолютный top overlay без фоновой
+  плашки; surface совпадает с Detail island (`bg-accent`, `rounded-1`,
+  `border`). Hover у island-selector меняет только яркость текста, без
+  дополнительной заливки control.
+- Автоподскрол активного пункта sidebar стал padding-aware: активная строка не
+  подтягивается под top inset и не обрезается под island overlay.
 - `DragOverlay` для block drag теперь рендерит реальный feed-card preview
   (`DragCardPreview`) на ширине колонки, а не текстовую плашку, чтобы drag из
   Detail и drag из feed выглядели одинаково.
+- Grid top inset перенесён из padding scrollport в `marginTop` внутреннего
+  virtual layout. Это убирает белую защитную плашку над лентой, но сохраняет
+  первый baseline на 80px.
 - Native host теперь резолвит vault layout так же, как desktop app:
   `<vault>/.arena/vault-id` → `~/Library/Application Support/com.mine.app/vaults/<id>/index.db`.
 - Legacy `<vault>/.arena/index.db` используется только как bootstrap source,
@@ -42,12 +59,15 @@
 - `list_channels` нормализует channel/tag keys перед merge, чтобы старые
   alias-дубли (`Красивый веб` vs `красивый-веб`) не давали пустой счётчик или
   вторую строку в clipper.
-- `SPEC_FRONTEND.md` и `SPEC_CLIPPER.md` обновлены под текущий contract.
+- `SPEC_FRONTEND.md`, `SPEC_CLIPPER.md`, `ARCHITECTURE.md` и
+  `DESIGN_SYSTEM.md` обновлены под текущий contract.
 
 ### Verification
 
 - `npm test -- Detail CardHoverMenu`
 - `npm test -- Card`
+- `npm test -- Sidebar Detail`
+- `npm test -- Sidebar Grid Detail Card`
 - `cargo test --manifest-path src-tauri/Cargo.toml --bin native-host merge_channels_and_tags`
 - `cargo build --manifest-path src-tauri/Cargo.toml --release --bin native-host`
 - `npm run build`

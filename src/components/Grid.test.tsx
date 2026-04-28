@@ -401,6 +401,24 @@ describe("Grid — no collapse after add / revisit", () => {
     assertPositionsMatchFreshLayout(initialBlocks, positions, 1200);
   });
 
+  it("keeps the top feed inset inside the scroll content, not on the scrollport", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(8001), makeBlock(8002)];
+    setBlockHeight(8001, 200);
+    setBlockHeight(8002, 220);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="top-inset" />);
+    await flushAsync();
+
+    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
+    const layoutEl = document.querySelector("[data-grid-layout]") as HTMLElement | null;
+    expect(scrollEl).toBeTruthy();
+    expect(layoutEl).toBeTruthy();
+    expect(scrollEl).not.toHaveClass("pt-20");
+    expect(layoutEl?.style.marginTop).toBe("80px");
+  });
+
   it("keeps the first paint skeleton-only until the current generation is measured", async () => {
     vi.useFakeTimers();
 

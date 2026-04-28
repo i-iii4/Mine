@@ -63,6 +63,7 @@ const INITIAL_COMMIT_BLOCKS = 24;
 const COMMIT_LOOKAHEAD_BLOCKS = 24;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
+const GRID_TOP_INSET_PX = 80;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -619,7 +620,7 @@ export function Grid({
         <div
           ref={parentRef}
           onContextMenu={handleContextMenu}
-          className="h-full overflow-x-hidden overflow-y-auto pb-8 pt-20"
+          className="h-full overflow-x-hidden overflow-y-auto pb-8"
           style={{
             paddingLeft: sidebarCollapsed ? 72 : 32,
             paddingRight: sidebarCollapsed ? 72 : 32,
@@ -723,7 +724,11 @@ function VirtualMasonryLayout({
   context: GridContext;
 }) {
   return (
-    <div className="relative" style={{ height: totalHeight || 1 }}>
+    <div
+      className="relative"
+      style={{ height: totalHeight || 1, marginTop: GRID_TOP_INSET_PX }}
+      data-grid-layout
+    >
       {visibleItems.map((item) => {
         const block = blocks[item.index];
         if (!block) return null;

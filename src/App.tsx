@@ -275,6 +275,7 @@ export function AppWithVault({
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
+  const [selectedBlockTags, setSelectedBlockTags] = useState<string[]>([]);
   const [detailTopMenuMode, setDetailTopMenuMode] = useState<DetailTopMenuMode>(
     getStoredDetailTopMenuMode,
   );
@@ -563,6 +564,29 @@ export function AppWithVault({
   const loadTaxonomySnapshotRef = useRef(loadTaxonomySnapshotState);
   loadTaxonomySnapshotRef.current = loadTaxonomySnapshotState;
   const initialRouteLoadDoneRef = useRef(false);
+
+  useEffect(() => {
+    if (!selectedBlock) {
+      setSelectedBlockTags([]);
+      return;
+    }
+
+    if ("tags" in selectedBlock) {
+      setSelectedBlockTags(selectedBlock.tags);
+      return;
+    }
+
+    let cancelled = false;
+    setSelectedBlockTags([]);
+    void getBlock(selectedBlock.slug).then((full) => {
+      if (!cancelled && full) {
+        setSelectedBlockTags(full.tags);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBlock]);
 
   const flushRefreshQueue = useCallback(async () => {
     if (!vaultReady || refreshInFlightRef.current) {
@@ -1135,12 +1159,25 @@ export function AppWithVault({
     async (slug: string, tag: string) => {
       try {
         await addTag(slug, tag);
+        if (selectedBlock?.slug === slug) {
+          setSelectedBlockTags((current) => (
+            current.includes(tag) ? current : [...current, tag]
+          ));
+          setSelectedBlock((current) => (
+            current && current.slug === slug && "tags" in current
+              ? {
+                  ...current,
+                  tags: current.tags.includes(tag) ? current.tags : [...current.tags, tag],
+                }
+              : current
+          ));
+        }
       } catch (err) {
         console.error("Failed to add tag:", err);
       }
       await reloadAllSnapshots();
     },
-    [reloadAllSnapshots],
+    [reloadAllSnapshots, selectedBlock?.slug],
   );
 
   const handleDndStart = useCallback(
@@ -1216,16 +1253,37 @@ export function AppWithVault({
       try {
         if (hasTag) {
           await removeTag(slug, tag);
+          if (selectedBlock?.slug === slug) {
+            setSelectedBlockTags((current) => current.filter((item) => item !== tag));
+            setSelectedBlock((current) => (
+              current && current.slug === slug && "tags" in current
+                ? { ...current, tags: current.tags.filter((item) => item !== tag) }
+                : current
+            ));
+          }
         } else {
           await addTag(slug, tag);
           pushRecentTag(tag);
+          if (selectedBlock?.slug === slug) {
+            setSelectedBlockTags((current) => (
+              current.includes(tag) ? current : [...current, tag]
+            ));
+            setSelectedBlock((current) => (
+              current && current.slug === slug && "tags" in current
+                ? {
+                    ...current,
+                    tags: current.tags.includes(tag) ? current.tags : [...current.tags, tag],
+                  }
+                : current
+            ));
+          }
         }
       } catch (err) {
         console.error("Failed to toggle tag:", err);
       }
       await reloadAllSnapshots();
     },
-    [reloadAllSnapshots],
+    [reloadAllSnapshots, selectedBlock?.slug],
   );
 
   const handleCreateTagFromMenu = useCallback(
@@ -1233,12 +1291,25 @@ export function AppWithVault({
       try {
         await addTag(blockSlug, tag);
         pushRecentTag(tag);
+        if (selectedBlock?.slug === blockSlug) {
+          setSelectedBlockTags((current) => (
+            current.includes(tag) ? current : [...current, tag]
+          ));
+          setSelectedBlock((current) => (
+            current && current.slug === blockSlug && "tags" in current
+              ? {
+                  ...current,
+                  tags: current.tags.includes(tag) ? current.tags : [...current.tags, tag],
+                }
+              : current
+          ));
+        }
       } catch (err) {
         console.error("Failed to create tag:", err);
       }
       await reloadAllSnapshots();
     },
-    [reloadAllSnapshots],
+    [reloadAllSnapshots, selectedBlock?.slug],
   );
 
   const handleDeleteBlock = useCallback(
@@ -1349,6 +1420,10 @@ export function AppWithVault({
         onNavClick={handleDetailClose}
         onScrollToTop={handleScrollToTop}
         headerSlot={<VaultConflictsBanner vaultReady={vaultReady} />}
+        linkedBlockSlug={selectedBlock?.slug ?? null}
+        linkedTags={selectedBlockTags}
+        onToggleLinkedTag={handleToggleTag}
+        detailTopMenuMode={detailTopMenuMode}
       />
 
       <SidebarResizeHandle

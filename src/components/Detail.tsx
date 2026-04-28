@@ -148,7 +148,7 @@ export function Detail({
           data-detail-top-menu={detailTopMenuMode}
           className={cn(
             "absolute left-1/2 top-4 z-20 flex h-8 w-[calc(100%-3rem)] max-w-[58rem] -translate-x-1/2 items-center",
-            "gap-3 rounded-1 border border-border bg-accent px-3",
+            "gap-3 rounded-1 border border-border bg-accent pl-3 pr-1",
           )}
         >
           <div
@@ -190,7 +190,7 @@ export function Detail({
         </header>
       ) : (
         <header
-          className="flex h-8 shrink-0 items-center gap-3 border-b border-border bg-accent px-3"
+          className="flex h-8 shrink-0 items-center gap-3 border-b border-border bg-accent px-8"
           data-detail-top-menu="classic"
         >
           <div

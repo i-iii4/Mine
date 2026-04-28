@@ -616,12 +616,25 @@ Detail top menu имеет два runtime режима: `classic` и `island`. �
 line и `bg-accent` surface, matching нижний action bar. `islands` был
 экспериментальным split-variant и не является частью contract; если старое
 значение осталось в `localStorage`, frontend должен fallback'иться в `island`.
+Island surface компенсирует правый optical inset (`pl-3 pr-1`), потому что
+иконки живут внутри `size-8` hit area: hit target остаётся 32px, а визуальный
+край совпадает с текстовым краем filename.
 
 Filename в Detail top menu является block drag handle. DnD payload всегда
 передаёт `{ type: "block", slug, block }`; обычная feed card и Detail menu
 попадают в один `handleCardDrop(slug, tag)` path. Drag overlay для block drag
 рендерит feed-card preview фиксированной column width, а не строковый label,
 чтобы размер и визуальная модель совпадали с лентой.
+
+Когда Detail открыт, sidebar становится link-editor для открытого блока:
+`App.tsx` передаёт `linkedBlockSlug`, текущие `linkedTags` и
+`onToggleLinkedTag`. Если выбранный блок пришёл из лёгкого grid DTO без tags,
+полные tags догружаются через `get_block(slug)`. Верхняя surface sidebar
+показывает `Channels:` + selector `All / Connected`; `Connected` фильтрует
+список до связанных каналов. Строка канала сохраняет обычную навигацию, а
+membership меняется только прямым click/key на checkbox. Optimistic local update
+синхронизирует открытую карточку сразу, затем `reloadAllSnapshots()` обновляет
+grid/sidebar snapshots.
 
 ### 008: Thumbnail-превью фильтруются на бэкенде
 

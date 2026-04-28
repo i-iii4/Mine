@@ -445,6 +445,29 @@ SubContent (подменю) — та же тень.
 
 Действия: на hover счётчик скрывается, появляется иконка многоточия (DropdownMenu, `modal={false}`, `side="right"`). Dropdown содержит Rename и Delete.
 
+#### Link-editor режим (Detail открыт)
+
+Когда открыта карточка, sidebar превращается в редактор связей этой карточки с
+каналами. Список строк использует ту же геометрию, что обычный sidebar, но
+правая колонка содержит checkbox вместо счётчика.
+
+Верхняя surface:
+
+| Режим Detail menu | Geometry |
+|---|---|
+| `classic` | `h-8 border-b border-border bg-accent px-8 gap-2` |
+| `island` | absolute `top-4`, centered, без фоновой плашки; pill `h-8 rounded-1 border border-border bg-accent pl-3 pr-[2px] gap-2` |
+
+Содержимое surface: `Channels:` + selector `All / Connected`. `Channels:`
+использует `font-mono text-sm text-muted-foreground`. Selector повторяет
+ActionButton geometry: outer `h-6 p-[2px] rounded-1`, segments `h-5
+px-[1ch] rounded-[2px]`. В `island` hover не заливает outer control; меняется
+только яркость текста segment (`hover:text-foreground`).
+
+Checkbox behaviour: только прямой click/key на checkbox меняет membership.
+Клик по строке канала навигирует как обычный sidebar item. Невыбранный checkbox
+имеет `opacity-0` и проявляется через `group-hover/group-focus-within`.
+
 ### Сетка
 
 Masonry с round-robin распределением по колонкам. Gap: 32px (`--spacing-s5`). Минимальная ширина колонки: 240px. Ленивая подгрузка через IntersectionObserver.

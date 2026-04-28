@@ -137,15 +137,28 @@ Vault-пикер — не маршрут, а состояние: если `vault
 
 ### Sidebar
 
-Содержимое:
-1. Заголовок «Mine»
-2. Пункт «All» — навигация на `/`
-3. Список каналов (из `listChannels()`) — навигация на `/channel/:tag`
-4. Каждый канал: название + счётчик блоков + до 10 превью-карточек (thumbnails)
-5. Разделитель
-6. Кнопка «Cmd+K» — открытие поиска
+Обычный режим:
+1. Пункт `Everything` — навигация на `/`
+2. Список каналов (из `listChannels()`) — навигация на `/channel/:tag`
+3. Каждый канал: название + счётчик блоков + до 20 превью-карточек
+   (thumbnails)
 
 Активный пункт подсвечивается. Каналы отсортированы по `position`.
+
+Режим открытого Detail:
+1. `Everything` скрывается.
+2. Верхняя surface sidebar показывает `Channels:` и selector `All / Connected`.
+3. `All` показывает все каналы; `Connected` показывает только каналы, связанные
+   с открытым блоком.
+4. Строка канала продолжает работать как навигация на `/channel/:tag`.
+5. Checkbox справа — единственный control, который добавляет/удаляет открытый
+   блок из канала. Нажатие на строку без checkbox не меняет membership.
+6. Невыбранный checkbox виден только на hover/focus строки.
+
+Geometry зависит от Detail top menu mode. В `classic` selector живёт в
+полноширинном `h-8 bg-accent border-b` баре. В `island` selector живёт в
+абсолютной top-пуле (`top-4`, `bg-accent`, `rounded-1`, `border`) без фоновой
+защитной плашки; список сохраняет top inset `pt-20`.
 
 **Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время drag (`isCardDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию. `SortableContext` получает полный список channels IDs независимо от видимости.
 

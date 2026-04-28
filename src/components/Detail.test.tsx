@@ -86,7 +86,10 @@ describe("Detail", () => {
 
     rerender(<Detail {...props} detailTopMenuMode="island" />);
 
-    expect(container.querySelector('[data-detail-top-menu="island"]')).not.toBeNull();
+    const islandMenu = container.querySelector('[data-detail-top-menu="island"]');
+    expect(islandMenu).not.toBeNull();
+    expect(islandMenu).toHaveClass("pl-3");
+    expect(islandMenu).toHaveClass("pr-1");
   });
 
   it("decodes local wikilink image paths for original media and preview lookup", () => {

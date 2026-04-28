@@ -143,7 +143,7 @@ export function DragCardPreview({
 }) {
   return (
     <CardFrame
-      className="pointer-events-none shadow-lg"
+      className="pointer-events-none rounded-1 shadow-lg"
       style={{ width }}
     >
       <CardContent
