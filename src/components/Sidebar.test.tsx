@@ -69,6 +69,21 @@ describe("Sidebar", () => {
     });
   });
 
+  it("keeps the main sidebar top inset on the scroll container without a fixed empty header slot", () => {
+    function EmptySlot() {
+      return null;
+    }
+
+    const { container } = renderSidebar({
+      ...defaultProps,
+      headerSlot: <EmptySlot />,
+    });
+
+    const nav = container.querySelector("[data-sidebar-scroll]");
+    expect(nav).toHaveClass("pt-20");
+    expect(container.querySelector("aside")?.firstElementChild).toBe(nav);
+  });
+
   it("applies collapsed width via style", () => {
     const { container } = renderSidebar({ ...defaultProps, width: 0, collapsed: true });
     const aside = container.querySelector("aside");

@@ -60,6 +60,19 @@
 - Grid top inset перенесён из padding scrollport в `marginTop` внутреннего
   virtual layout. Это убирает белую защитную плашку над лентой, но сохраняет
   первый baseline на 80px.
+- Sidebar больше не создаёт отдельную пустую header-плашку под optional
+  `VaultConflictsBanner`: banner рендерится внутри scroll-list и возвращает
+  `null` без layout footprint. Top inset главного sidebar живёт на
+  `data-sidebar-scroll` (`pt-20`), поэтому строки не обрезаются под белым
+  fixed-блоком.
+- Custom `asset://` protocol теперь sniff'ит image MIME по magic bytes для
+  image-paths. Это чинит text thumbnails, которые лежат по стабильному пути
+  `<slug>.jpg`, но содержат PNG с прозрачностью: WKWebView больше не получает
+  PNG-body как `image/jpeg` и не рисует broken-image `?`.
+- `preview_manifest.tiles[].preview_path` больше не получает synthetic
+  `<source-stem>.jpg`, если отдельный tile preview не существует в thumbs
+  cache. Backend пишет `null`, frontend нормализует такие legacy paths в
+  `null` и сразу рендерит `source_path`, без 404 и broken-image flash.
 - Native host теперь резолвит vault layout так же, как desktop app:
   `<vault>/.arena/vault-id` → `~/Library/Application Support/com.mine.app/vaults/<id>/index.db`.
 - Legacy `<vault>/.arena/index.db` используется только как bootstrap source,
@@ -67,8 +80,30 @@
 - `list_channels` нормализует channel/tag keys перед merge, чтобы старые
   alias-дубли (`Красивый веб` vs `красивый-веб`) не давали пустой счётчик или
   вторую строку в clipper.
-- `SPEC_FRONTEND.md`, `SPEC_CLIPPER.md`, `ARCHITECTURE.md` и
-  `DESIGN_SYSTEM.md` обновлены под текущий contract.
+- Screenshot save теперь переживает `Screenshot upload expired`: если MV3
+  background service worker потерял in-memory screenshot cache между capture и
+  Save, popup ре-кэширует тот же `dataUrl` и один раз повторяет upload без
+  повторного screenshot capture.
+- HTTP upload bridge теперь передаёт `vault_path` в `/upload`, а native host
+  пишет staging-файл именно в этот vault. Это закрывает рассинхрон, где upload
+  мог попасть в ранее активное пространство, а `save_block` затем искал
+  `pre_uploaded_file` в другом vault.
+- Native host декодирует form-url query параметры upload endpoint и сводит
+  `filename` к leaf-name перед записью staging file.
+- Upload endpoint больше не перезаписывает существующий staging/media файл:
+  если requested `filename` уже занят, native host пишет в `name (N).ext` и
+  возвращает это имя в response. Это сохраняет уже существующие primary media
+  при повторном screenshot save с тем же title.
+- `domain::block::suggest_slug` получил filesystem byte budget: после
+  human-readable Unicode/NFC sanitizing stem ограничивается не только `100`
+  символами, но и `220` NFD bytes. Это закрывает кейс длинных Japanese/CJK
+  заголовков на macOS/iCloud, где frontmatter мог ссылаться на имя media длиннее
+  фактически допустимого файлового компонента.
+- Восстановлена конкретная orphan image-запись для X-поста
+  `1024225866568482816`: `.md` пересоздан рядом с существующим валидным JPG
+  `2380×3368`, а `frontmatter.file` указывает на реальное имя файла на диске.
+- `SPEC_FRONTEND.md`, `SPEC_CLIPPER.md`, `SPEC_BLOCK.md`, `SPEC_STORAGE.md`,
+  `ARCHITECTURE.md` и `DESIGN_SYSTEM.md` обновлены под текущий contract.
 
 ### Verification
 
@@ -77,6 +112,10 @@
 - `npm test -- Sidebar Detail`
 - `npm test -- Sidebar Grid Detail Card`
 - `cargo test --manifest-path src-tauri/Cargo.toml --bin native-host merge_channels_and_tags`
+- `cargo test upload_query`
+- `cargo test upload_filename`
+- `cargo test upload_staging_filename`
+- `cargo test slug_truncated`
 - `cargo build --manifest-path src-tauri/Cargo.toml --release --bin native-host`
 - `npm run build`
 - `git diff --check`

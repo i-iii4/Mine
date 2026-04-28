@@ -56,7 +56,7 @@ describe("feedPreview", () => {
     expect(manifest?.tiles[0]?.previewPath).toBe("clip-poster.jpg");
   });
 
-  it("matches preview tiles against encoded local markdown paths", () => {
+  it("normalizes legacy synthetic tile preview paths to source fallback", () => {
     const manifest = normalizeFeedPreviewManifest(
       JSON.stringify({
         kind: "image",
@@ -77,8 +77,32 @@ describe("feedPreview", () => {
       }),
     );
 
-    expect(findPreviewTileForSource(manifest, "Title%20%28image%201%29.jpg")?.previewPath).toBe(
-      "Title (image 1).jpg",
+    const tile = findPreviewTileForSource(manifest, "Title%20%28image%201%29.jpg");
+    expect(tile?.sourcePath).toBe("Title (image 1).jpg");
+    expect(tile?.previewPath).toBeNull();
+  });
+
+  it("keeps explicit cache preview paths when they are not synthetic", () => {
+    const manifest = normalizeFeedPreviewManifest(
+      JSON.stringify({
+        kind: "image",
+        primary_preview_path: "Title.jpg",
+        width: 1,
+        height: 1,
+        tiles: [
+          {
+            source_path: "Title (image 1).webp",
+            preview_path: "Title (image 1)-preview.jpg",
+            width: 800,
+            height: 600,
+            is_video: false,
+            is_video_poster: false,
+          },
+        ],
+        overflow_count: 0,
+      }),
     );
+
+    expect(manifest?.tiles[0]?.previewPath).toBe("Title (image 1)-preview.jpg");
   });
 });

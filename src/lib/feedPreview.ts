@@ -35,6 +35,19 @@ function asBoolean(value: unknown): boolean {
   return value === true;
 }
 
+function isRemoteMediaPath(value: string): boolean {
+  return value.startsWith("http://") || value.startsWith("https://");
+}
+
+function legacySyntheticTilePreviewPath(sourcePath: string): string | null {
+  if (isRemoteMediaPath(sourcePath)) return null;
+  const clean = decodeLocalMarkdownUrl(sourcePath).split("?")[0] ?? sourcePath;
+  const fileName = clean.split(/[\\/]/).pop() ?? clean;
+  const dotIndex = fileName.lastIndexOf(".");
+  if (dotIndex <= 0) return null;
+  return `${fileName.slice(0, dotIndex)}.jpg`;
+}
+
 export function normalizeFeedPreviewManifest(
   raw: string | null | undefined,
 ): NormalizedFeedPreviewManifest | null {
@@ -88,6 +101,15 @@ export function normalizeFeedPreviewManifest(
           let previewPath = asString(tile.preview_path);
           const isVideo = asBoolean(tile.is_video);
           const isVideoPoster = asBoolean(tile.is_video_poster);
+
+          const legacySyntheticPreview = legacySyntheticTilePreviewPath(sourcePath);
+          if (
+            previewPath
+            && legacySyntheticPreview
+            && decodeLocalMarkdownUrl(previewPath) === legacySyntheticPreview
+          ) {
+            previewPath = null;
+          }
 
           if (!previewPath && isVideoPoster) {
             previewPath = primaryPreviewPath;

@@ -193,11 +193,12 @@ fn suggest_slug(title: Option<&str>, url: Option<&str>) -> String
 ```
 
 **Поведение:**
-- Из title: `"Как устроен CRDT"` → `"kak-ustroen-crdt"` (транслитерация + kebab-case)
-- Из URL (если title нет): `"https://stripe.com/blog/api"` → `"stripe-com-blog-api"`
-- Нет ни title, ни URL → `"untitled"`
-- Максимальная длина slug: 80 символов (обрезается по границе слова)
-- Допустимые символы: `[a-z0-9-]`. Все остальные заменяются на `-`, множественные `-` схлопываются
+- Из title: `"Как устроен CRDT"` → `"Как устроен CRDT"`
+- Из URL (если title нет): `"https://stripe.com/blog/api"` → `"stripe.com blog api"`
+- Нет ни title, ни URL → `"Untitled"`
+- Unicode сохраняется; NFC-normalization применяется на boundary.
+- Filesystem-hostile символы (`/`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, `\`, NUL) заменяются пробелом, whitespace runs схлопываются.
+- Максимальная длина filename stem: `100` Unicode scalar chars и `220` bytes в NFD-представлении. Byte budget важнее char budget для macOS/iCloud: длинные CJK/Japanese имена должны обрезаться до безопасного файлового компонента, чтобы `.md` и `frontmatter.file` не расходились с фактически созданным media-файлом.
 
 ---
 

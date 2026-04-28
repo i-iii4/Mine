@@ -424,7 +424,11 @@ SubContent (подменю) — та же тень.
 | Центральная | Превью-карточки | `flex-1 min-w-0`, `h-8 overflow-hidden` |
 | Правая | Счётчик + действия | `w-8 text-right` |
 
-Шрифт: `font-mono text-base` (14px). Строки разделены `border-b border-sidebar-border`. Паддинги навигации: `px-8 pt-16`.
+Шрифт: `font-mono text-base` (14px). Строки разделены `border-b border-sidebar-border`. Паддинги навигации: `px-8 pt-20`.
+Top inset должен жить на scroll-container (`data-sidebar-scroll`), а не в
+отдельной фиксированной header-плашке: если header slot (например iCloud
+conflict banner) ничего не рендерит, он не должен оставлять пустой блок над
+списком.
 
 Превью-карточки: `size-8 object-cover`, `gap-1` (4px). Градиентная маска (`mask-image: linear-gradient(to right, black 70%, transparent 100%)`). Текстовые thumbnail (PNG с прозрачным фоном) обёрнуты в `bg-accent` + `dark:invert`. Видео-блоки показывают первый кадр (H.264 декодирование через OpenH264).
 

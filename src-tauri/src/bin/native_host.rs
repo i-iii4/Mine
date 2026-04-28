@@ -22,6 +22,7 @@ use mine_lib::domain::channel::Channel;
 use mine_lib::domain::vault::{resolve_slug_conflict, VaultLayout};
 use mine_lib::storage::{db, files, index, thumbnails};
 use mine_lib::util::now_iso8601;
+use percent_encoding::percent_decode_str;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -342,10 +343,7 @@ fn handle_list_channels(vault: &VaultLayout) {
     });
 }
 
-fn merge_channels_and_tags(
-    channels: Vec<Channel>,
-    tags: Vec<index::TagCount>,
-) -> Vec<ChannelInfo> {
+fn merge_channels_and_tags(channels: Vec<Channel>, tags: Vec<index::TagCount>) -> Vec<ChannelInfo> {
     let mut counts: HashMap<String, usize> = HashMap::new();
     for tag in &tags {
         let normalized = mine_lib::domain::tag::normalize_tag(&tag.tag);
@@ -660,8 +658,7 @@ fn channel_to_block(channel: &Channel) -> Block {
 }
 
 fn title_from_raw_channel_tag(tag: &str) -> String {
-    tag
-        .replace('-', " ")
+    tag.replace('-', " ")
         .split_whitespace()
         .map(capitalize_first)
         .collect::<Vec<_>>()
@@ -950,7 +947,12 @@ fn inline_media_kind_from_ext(ext: &str) -> InlineMediaKind {
 /// 2 videos produces `(image 1/2/3)` and `(video 1/2)` independently.
 fn build_inline_media_name(slug: &str, kind: InlineMediaKind, idx: u32, ext: &str) -> String {
     if ext.is_empty() {
-        format!("{slug} ({label} {idx})", slug = slug, label = kind.label(), idx = idx)
+        format!(
+            "{slug} ({label} {idx})",
+            slug = slug,
+            label = kind.label(),
+            idx = idx
+        )
     } else {
         format!(
             "{slug} ({label} {idx}).{ext}",
@@ -973,14 +975,14 @@ const MAX_PER_DOMAIN: usize = 2;
 /// Phase B downloads in parallel; Phase C dedups + rewrites the body.
 #[derive(Debug, Clone)]
 struct InlineTask {
-    img_start: usize,        // offset of '!' in '![alt](url)'
-    paren_end: usize,        // offset of ')' (inclusive)
-    alt: String,             // raw alt text between '[' and ']'
+    img_start: usize, // offset of '!' in '![alt](url)'
+    paren_end: usize, // offset of ')' (inclusive)
+    alt: String,      // raw alt text between '[' and ']'
     url: String,
-    host: String,            // for per-domain throttling
+    host: String, // for per-domain throttling
     #[allow(dead_code)] // diagnostic only after Phase A
     kind: InlineMediaKind,
-    dest_name: String,       // e.g. "Title (image 1).jpg"
+    dest_name: String, // e.g. "Title (image 1).jpg"
     dest_path: PathBuf,
 }
 
@@ -1015,10 +1017,7 @@ impl DomainLimiter {
                     host,
                 };
             }
-            state = self
-                .cv
-                .wait(state)
-                .expect("DomainLimiter wait poisoned");
+            state = self.cv.wait(state).expect("DomainLimiter wait poisoned");
         }
     }
 }
@@ -1139,8 +1138,7 @@ fn run_parallel_downloads(tasks: &[InlineTask], page_url: &str) -> Vec<Result<()
     }
 
     let limiter = DomainLimiter::new(MAX_PER_DOMAIN);
-    let queue: Arc<Mutex<VecDeque<usize>>> =
-        Arc::new(Mutex::new((0..tasks.len()).collect()));
+    let queue: Arc<Mutex<VecDeque<usize>>> = Arc::new(Mutex::new((0..tasks.len()).collect()));
     let tasks_shared: Arc<Vec<InlineTask>> = Arc::new(tasks.to_vec());
     let (result_tx, result_rx) = std::sync::mpsc::channel::<(usize, Result<(), String>)>();
 
@@ -1443,6 +1441,71 @@ fn start_upload_server() -> Option<UploadServer> {
 
 static UPLOAD_VAULT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+fn form_url_decode(value: &str) -> String {
+    let value = value.replace('+', " ");
+    percent_decode_str(&value).decode_utf8_lossy().into_owned()
+}
+
+fn query_param(url: &str, key: &str) -> Option<String> {
+    let query = url.split_once('?')?.1;
+    for pair in query.split('&') {
+        let (raw_key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
+        if form_url_decode(raw_key) == key {
+            let value = form_url_decode(raw_value);
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+fn upload_filename_from_url(url: &str) -> String {
+    let raw = query_param(url, "filename").unwrap_or_else(|| "upload.jpg".to_string());
+    let normalized = raw.replace('\\', "/");
+    std::path::Path::new(&normalized)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("upload.jpg")
+        .to_string()
+}
+
+fn dedupe_upload_staging_filename(
+    vault_root: &std::path::Path,
+    requested: &str,
+) -> Result<String, String> {
+    if !vault_root.join(requested).exists() {
+        return Ok(requested.to_string());
+    }
+
+    let path = std::path::Path::new(requested);
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(requested);
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let build = |counter: u32| -> String {
+        if ext.is_empty() {
+            format!("{stem} ({counter})")
+        } else {
+            format!("{stem} ({counter}).{ext}")
+        }
+    };
+
+    let mut counter: u32 = 2;
+    loop {
+        let candidate = build(counter);
+        if !vault_root.join(&candidate).exists() {
+            return Ok(candidate);
+        }
+        counter = counter
+            .checked_add(1)
+            .ok_or_else(|| "ran out of upload staging suffixes".to_string())?;
+    }
+}
+
 fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     // CORS preflight
     if *request.method() == "OPTIONS".parse::<tiny_http::Method>().unwrap() {
@@ -1498,18 +1561,15 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
         return;
     }
 
-    // Extract filename from query: /upload?filename=screenshot.jpg
-    let filename = request
-        .url()
-        .split('?')
-        .nth(1)
-        .and_then(|q| q.split('&').find(|p| p.starts_with("filename=")))
-        .map(|p| {
-            p.strip_prefix("filename=")
-                .unwrap_or("upload.jpg")
-                .to_string()
-        })
-        .unwrap_or_else(|| "upload.jpg".to_string());
+    // Extract upload destination from query:
+    // /upload?filename=screenshot.jpg&vault_path=/path/to/vault
+    //
+    // `vault_path` keeps the HTTP upload and the following save_block on
+    // the same vault. The global fallback exists for older extension builds,
+    // but it is intentionally no longer the primary routing mechanism.
+    let filename = upload_filename_from_url(request.url());
+    let vault_path = query_param(request.url(), "vault_path")
+        .or_else(|| UPLOAD_VAULT.lock().ok().and_then(|v| v.clone()));
 
     // Read body
     let mut body = Vec::new();
@@ -1526,7 +1586,6 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     }
 
     // Write to vault
-    let vault_path = UPLOAD_VAULT.lock().ok().and_then(|v| v.clone());
     let Some(vp) = vault_path else {
         let response = tiny_http::Response::from_string("Vault not configured")
             .with_status_code(500)
@@ -1539,7 +1598,22 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
         return;
     };
 
-    let dest = PathBuf::from(&vp).join(&filename);
+    let vault_root = PathBuf::from(&vp);
+    let filename = match dedupe_upload_staging_filename(&vault_root, &filename) {
+        Ok(filename) => filename,
+        Err(e) => {
+            let response = tiny_http::Response::from_string(e)
+                .with_status_code(500)
+                .with_header(
+                    "Access-Control-Allow-Origin: *"
+                        .parse::<tiny_http::Header>()
+                        .unwrap(),
+                );
+            let _ = request.respond(response);
+            return;
+        }
+    };
+    let dest = vault_root.join(&filename);
     if let Err(e) = std::fs::write(&dest, &body) {
         let response = tiny_http::Response::from_string(format!("Write error: {e}"))
             .with_status_code(500)
@@ -1603,6 +1677,11 @@ fn main() {
 
         // Load vault: prefer per-request vault_path, fallback to config
         let vault_path = req.vault_path.clone().or_else(|| load_vault_path());
+        if let Some(ref vp) = vault_path {
+            if let Ok(mut v) = UPLOAD_VAULT.lock() {
+                *v = Some(vp.clone());
+            }
+        }
 
         match req.action.as_str() {
             "get_status" => handle_get_status_with_upload(&upload_server),
@@ -1663,10 +1742,8 @@ mod tests {
 
     #[test]
     fn merge_channels_and_tags_includes_empty_promoted_channel() {
-        let infos = merge_channels_and_tags(
-            vec![test_channel("empty-channel", "Empty Channel")],
-            vec![],
-        );
+        let infos =
+            merge_channels_and_tags(vec![test_channel("empty-channel", "Empty Channel")], vec![]);
 
         assert_eq!(
             infos,
@@ -1798,8 +1875,7 @@ mod tests {
     fn finalize_preserves_unicode_slug() {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "upload.jpg", b"x");
-        let result =
-            finalize_uploaded_filename(tmp.path(), "upload.jpg", "Закат в Токио");
+        let result = finalize_uploaded_filename(tmp.path(), "upload.jpg", "Закат в Токио");
         assert_eq!(result, Ok("Закат в Токио.jpg".to_string()));
         assert!(tmp.path().join("Закат в Токио.jpg").exists());
     }
@@ -1834,9 +1910,15 @@ mod tests {
         let result = finalize_uploaded_filename(tmp.path(), "upload.jpg", "Hello");
         assert_eq!(result, Ok("Hello (2).jpg".to_string()));
         // Original is left intact.
-        assert_eq!(std::fs::read(tmp.path().join("Hello.jpg")).unwrap(), b"existing");
+        assert_eq!(
+            std::fs::read(tmp.path().join("Hello.jpg")).unwrap(),
+            b"existing"
+        );
         // Staged upload moved onto the deduped name.
-        assert_eq!(std::fs::read(tmp.path().join("Hello (2).jpg")).unwrap(), b"new");
+        assert_eq!(
+            std::fs::read(tmp.path().join("Hello (2).jpg")).unwrap(),
+            b"new"
+        );
         assert!(!tmp.path().join("upload.jpg").exists());
     }
 
@@ -1858,6 +1940,55 @@ mod tests {
         let result = finalize_uploaded_filename(tmp.path(), "upload", "Plain");
         assert_eq!(result, Ok("Plain".to_string()));
         assert!(tmp.path().join("Plain").exists());
+    }
+
+    #[test]
+    fn upload_query_decodes_filename_and_vault_path() {
+        let url =
+            "/upload?filename=Cindy-Te.jpg&vault_path=%2FUsers%2Fi_iii%2FMobile+Documents%2FMine";
+
+        assert_eq!(upload_filename_from_url(url), "Cindy-Te.jpg");
+        assert_eq!(
+            query_param(url, "vault_path"),
+            Some("/Users/i_iii/Mobile Documents/Mine".to_string())
+        );
+    }
+
+    #[test]
+    fn upload_filename_is_reduced_to_leaf_name() {
+        assert_eq!(
+            upload_filename_from_url("/upload?filename=..%2F..%2Fevil.jpg"),
+            "evil.jpg"
+        );
+        assert_eq!(
+            upload_filename_from_url("/upload?filename=folder%5Cevil.jpg"),
+            "evil.jpg"
+        );
+    }
+
+    #[test]
+    fn upload_staging_filename_dedupes_existing_file_before_write() {
+        let tmp = TempDir::new().unwrap();
+        make_staging(tmp.path(), "Cindy-Te.jpg", b"existing");
+
+        let result = dedupe_upload_staging_filename(tmp.path(), "Cindy-Te.jpg");
+
+        assert_eq!(result, Ok("Cindy-Te (2).jpg".to_string()));
+        assert_eq!(
+            std::fs::read(tmp.path().join("Cindy-Te.jpg")).unwrap(),
+            b"existing"
+        );
+    }
+
+    #[test]
+    fn upload_staging_filename_walks_existing_suffixes() {
+        let tmp = TempDir::new().unwrap();
+        make_staging(tmp.path(), "Cindy-Te.jpg", b"x");
+        make_staging(tmp.path(), "Cindy-Te (2).jpg", b"x");
+
+        let result = dedupe_upload_staging_filename(tmp.path(), "Cindy-Te.jpg");
+
+        assert_eq!(result, Ok("Cindy-Te (3).jpg".to_string()));
     }
 
     // ── Inline media naming (18.F) ──────────────────────────────────────
@@ -2048,10 +2179,7 @@ mod tests {
     fn wikilink_omits_alt_when_only_whitespace() {
         // An alt that is whitespace-only should behave like empty alt
         // (caller passes `alt.trim()` — this mirrors that).
-        assert_eq!(
-            build_inline_wikilink("f.jpg", ""),
-            "![[f.jpg]]"
-        );
+        assert_eq!(build_inline_wikilink("f.jpg", ""), "![[f.jpg]]");
     }
 
     // ─── localize_body_images: scan + apply_rewrites ──────────────────
@@ -2063,7 +2191,10 @@ mod tests {
     #[test]
     fn host_from_url_extracts_lowercase_host_only() {
         assert_eq!(host_from_url("https://Example.com/a/b"), "example.com");
-        assert_eq!(host_from_url("http://pbs.twimg.com:443/x.jpg"), "pbs.twimg.com");
+        assert_eq!(
+            host_from_url("http://pbs.twimg.com:443/x.jpg"),
+            "pbs.twimg.com"
+        );
         assert_eq!(host_from_url("ftp://nope"), "");
         assert_eq!(host_from_url("not-a-url"), "");
     }
@@ -2171,7 +2302,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let body = "no images here";
         assert_eq!(apply_rewrites(body, &[], &[]), body);
-        assert_eq!(localize_body_images(body, &vault_at(tmp.path()), "S", ""), body);
+        assert_eq!(
+            localize_body_images(body, &vault_at(tmp.path()), "S", ""),
+            body
+        );
     }
 
     #[test]

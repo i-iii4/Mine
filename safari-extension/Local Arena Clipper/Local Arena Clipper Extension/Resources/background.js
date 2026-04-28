@@ -375,7 +375,7 @@ async function broadcastChannelsChanged(tag) {
   } catch {}
 }
 
-async function uploadFileToNativeHost({ port, token, filename, screenshotId }) {
+async function uploadFileToNativeHost({ port, token, filename, screenshotId, vaultPath }) {
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     return { ok: false, error: "Invalid upload port" };
   }
@@ -396,8 +396,12 @@ async function uploadFileToNativeHost({ port, token, filename, screenshotId }) {
 
   try {
     const blob = await fetch(cached.dataUrl).then((response) => response.blob());
+    const params = new URLSearchParams({ filename });
+    if (typeof vaultPath === "string" && vaultPath.length > 0) {
+      params.set("vault_path", vaultPath);
+    }
     const resp = await fetch(
-      `http://127.0.0.1:${port}/upload?filename=${encodeURIComponent(filename)}`,
+      `http://127.0.0.1:${port}/upload?${params.toString()}`,
       {
         method: "POST",
         headers: {

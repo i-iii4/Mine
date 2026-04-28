@@ -15,6 +15,8 @@ use thiserror::Error;
 
 const FRONTMATTER_SCAN_LIMIT_LINES: usize = 20;
 const MINE_COLLECTIONS_FIELD: &str = "Mine Collections";
+const MAX_FILENAME_STEM_CHARS: usize = 100;
+const MAX_FILENAME_STEM_NFD_BYTES: usize = 220;
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
@@ -907,7 +909,7 @@ fn validate_iso8601(s: &str) -> bool {
 /// - Strip control characters entirely
 /// - Collapse whitespace runs
 /// - Trim leading/trailing spaces and dots
-/// - Cap at 100 chars (char count; not bytes); trim again post-truncate
+/// - Cap at 100 chars and 220 NFD bytes; trim again post-truncate
 /// - Fall back to "Untitled" on empty result
 fn sanitize_for_filename(raw: &str) -> String {
     use unicode_normalization::UnicodeNormalization;
@@ -945,18 +947,39 @@ fn sanitize_for_filename(raw: &str) -> String {
     // Trim spaces and trailing dots (Windows rejects trailing dots/spaces).
     let trimmed = result.trim_matches(|c: char| c == ' ' || c == '.');
 
-    // Char-count truncation (not bytes) to keep multi-byte chars intact.
-    const MAX_CHARS: usize = 100;
-    let truncated: String = trimmed.chars().take(MAX_CHARS).collect();
-    let truncated = truncated
-        .trim_end_matches(|c: char| c == ' ' || c == '.')
-        .to_string();
+    let truncated = truncate_filename_stem(trimmed);
 
     if truncated.is_empty() {
         "Untitled".to_string()
     } else {
         truncated
     }
+}
+
+fn truncate_filename_stem(stem: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+
+    let mut truncated = String::new();
+    let mut used_nfd_bytes = 0usize;
+
+    for c in stem.chars().take(MAX_FILENAME_STEM_CHARS) {
+        let mut char_nfd_bytes = 0usize;
+        let mut buf = [0u8; 4];
+        for decomposed in c.encode_utf8(&mut buf).nfd() {
+            char_nfd_bytes += decomposed.len_utf8();
+        }
+
+        if used_nfd_bytes + char_nfd_bytes > MAX_FILENAME_STEM_NFD_BYTES {
+            break;
+        }
+
+        truncated.push(c);
+        used_nfd_bytes += char_nfd_bytes;
+    }
+
+    truncated
+        .trim_end_matches(|c: char| c == ' ' || c == '.')
+        .to_string()
 }
 
 #[allow(dead_code)]
@@ -1814,11 +1837,27 @@ mod tests {
     }
 
     #[test]
-    fn slug_truncation_preserves_unicode_boundaries() {
-        // Multi-byte Unicode; byte count would overflow 100 but char count stops at 100.
+    fn slug_truncated_to_filesystem_byte_budget_for_cjk() {
+        use unicode_normalization::UnicodeNormalization;
+
         let long_title: String = "日".repeat(200);
         let slug = suggest_slug(Some(&long_title), None);
-        assert_eq!(slug.chars().count(), 100);
+
+        assert!(slug.chars().count() < 100);
+        assert!(slug.nfd().map(|c| c.len_utf8()).sum::<usize>() <= MAX_FILENAME_STEM_NFD_BYTES);
+        assert!(slug.ends_with('日'));
+    }
+
+    #[test]
+    fn slug_truncation_preserves_unicode_boundaries() {
+        use unicode_normalization::UnicodeNormalization;
+
+        let long_title = "到着時刻に変更しました。その他、駅名の誤植とJRの管轄が違うとのことで２箇所修正しました。"
+            .repeat(20);
+        let slug = suggest_slug(Some(&long_title), None);
+
+        assert!(slug.nfd().map(|c| c.len_utf8()).sum::<usize>() <= MAX_FILENAME_STEM_NFD_BYTES);
+        assert!(!slug.ends_with('\u{fffd}'));
     }
 
     #[test]

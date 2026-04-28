@@ -584,6 +584,7 @@ Chrome ограничивает отдельное native messaging-сообще
 - `Authorization: Bearer {token}` — обязательный заголовок, несовпадение → `403`
 - `Content-Type` — MIME-тип файла (`image/jpeg`, `image/png`, и т.д.)
 - Query `?filename=<name.ext>` — имя файла (используется санитайзер на стороне хоста)
+- Query `&vault_path=<absolute path>` — целевой vault для staging upload. Обязателен для новых extension builds: HTTP upload и последующий `save_block` должны работать с одним и тем же vault, даже если пользователь переключал пространство или native host был запущен до переключения.
 - Body — сырые байты файла (не base64)
 
 Успешный ответ:
@@ -591,13 +592,13 @@ Chrome ограничивает отдельное native messaging-сообще
 { "ok": true, "filename": "page-screenshot.jpg" }
 ```
 
-Файл сохраняется в корень vault. Имя дедуплицируется при конфликте (`name-2.jpg`).
+Файл сохраняется в корень указанного vault под staging-именем. Upload endpoint не перезаписывает существующий файл: если requested staging name уже занят, native host добавляет Obsidian-style suffix ` (N)` и возвращает фактически записанное имя. Финальное имя media определяет `save_block`: native host переименовывает staging-файл в `<slug>.<ext>` и дедуплицирует конфликт тем же suffix-правилом.
 
 ### Интеграция с `save_block`
 
 После успешного upload попап передаёт полученное имя в `save_block` через поле `pre_uploaded_file`. Native host проверяет, что файл существует в vault, и использует его как `media_file` блока — без повторного скачивания через `image_url`.
 
-Если screenshot upload не удался (`Screenshot upload expired`, timeout, PNA/loopback отказ, сервер upload не настроен), popup показывает inline error через `StatusBar` и остаётся в основном UI: превью, выбранные теги, title, vault и кнопки `Save` / `Retake` сохраняются. Такие ошибки не переводят popup в full-screen `ErrorState`, потому что пользователь должен иметь возможность повторить сохранение без повторного сбора контекста.
+Если background service worker потерял in-memory cache и upload вернул `Screenshot upload expired`, popup ре-кэширует уже имеющийся `dataUrl` и один раз повторяет upload без нового screenshot capture. Остальные upload-ошибки (`timeout`, PNA/loopback отказ, сервер upload не настроен) показываются inline через `StatusBar`; popup остаётся в основном UI, а превью, выбранные теги, title, vault и кнопки `Save` / `Retake` сохраняются. Такие ошибки не переводят popup в full-screen `ErrorState`, потому что пользователь должен иметь возможность повторить сохранение без повторного сбора контекста.
 
 ### Browser-origin boundary
 
@@ -605,12 +606,12 @@ Chrome ограничивает отдельное native messaging-сообще
 
 Правильный contract:
 
-1. `background.js` владеет in-memory screenshot upload cache и выдаёт popup/overlay короткий `screenshotId`;
-2. popup/overlay может держать `dataUrl` только для preview, но save-path передаёт в background только `screenshotId`, имя файла, порт и token;
-3. `background.js` как trusted extension context делает единственный HTTP `POST /upload` на `127.0.0.1`;
+1. `background.js` владеет transient in-memory screenshot upload cache и выдаёт popup/overlay короткий `screenshotId`;
+2. popup/overlay держит `dataUrl` для preview; happy-path save передаёт в background только `screenshotId`, имя файла, vault path, порт и token;
+3. `background.js` как trusted extension context делает единственный HTTP `POST /upload` на `127.0.0.1` и указывает `vault_path` в query;
 4. content/page origin не участвует в loopback request path;
 5. пользователь не должен подтверждать loopback-доступ для каждого нового сайта при сохранении скриншотов;
-6. большой screenshot не должен повторно передаваться из popup/overlay в background при нажатии Save.
+6. большой screenshot не передаётся повторно из popup/overlay в background на happy path; исключение — один retry после `Screenshot upload expired`, потому что MV3 service worker может быть перезапущен браузером между capture и Save.
 
 ```json
 {

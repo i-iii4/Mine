@@ -45,10 +45,7 @@ where
             .with_context(|| format!("failed to create directory: {}", parent.display()))?;
     }
 
-    let file_name = dest
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("thumb");
+    let file_name = dest.file_name().and_then(|n| n.to_str()).unwrap_or("thumb");
     let tmp = dest.with_file_name(format!(
         "{file_name}.tmp.{}.{}",
         std::process::id(),
@@ -67,7 +64,11 @@ where
 
     let file = writer.into_inner().map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        anyhow::anyhow!("failed to flush temp thumb {}: {}", tmp.display(), e.error())
+        anyhow::anyhow!(
+            "failed to flush temp thumb {}: {}",
+            tmp.display(),
+            e.error()
+        )
     })?;
     if let Err(err) = file.sync_all() {
         let _ = std::fs::remove_file(&tmp);
@@ -503,7 +504,8 @@ const TITLE_COLOR: Rgba<u8> = Rgba([51, 51, 51, 255]);
 /// - Creates a 480x480 PNG with **transparent background**
 /// - Renders title in larger text, then body lines below
 /// - Strips markdown formatting before rendering
-/// - Saves as PNG (browser reads format from content, not extension)
+/// - Saves as PNG; the app asset protocol sniffs image magic bytes because
+///   the stable thumbnail path is still `<slug>.jpg`
 /// - Sidebar wraps in `bg-background` div + `dark:invert` for theme adaptation
 pub fn generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> Result<(u32, u32)> {
     let font = &*FONT;
@@ -559,8 +561,9 @@ pub fn generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> 
         y += line_step;
     }
 
-    // Save as PNG (transparent background, theme-adaptive via CSS).
-    // File may have .jpg extension — browsers detect format from content, not extension.
+    // Save as PNG (transparent background, theme-adaptive via CSS). The file
+    // may have a .jpg extension; the app asset protocol serves the MIME type
+    // from content magic bytes, not the extension.
     write_thumb_atomically(dest, |writer| {
         let encoder = image::codecs::png::PngEncoder::new(writer);
         img.write_with_encoder(encoder)

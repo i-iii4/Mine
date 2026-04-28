@@ -95,7 +95,7 @@ export function VaultConflictsBanner({ vaultReady }: VaultConflictsBannerProps) 
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex w-full items-center gap-2 rounded-1 border border-destructive/40 bg-destructive/10 px-3 py-2 text-left text-sm text-destructive-foreground hover:bg-destructive/15"
+        className="mb-4 flex w-full items-center gap-2 rounded-1 border border-destructive/40 bg-destructive/10 px-3 py-2 text-left text-sm text-destructive-foreground hover:bg-destructive/15"
       >
         <AlertTriangle className="size-4 shrink-0" />
         <span className="flex-1 truncate">

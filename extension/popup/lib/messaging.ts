@@ -211,6 +211,7 @@ export async function uploadFile(
   token: string,
   filename: string,
   screenshotId: string,
+  vaultPath?: string | null,
 ): Promise<{ ok: boolean; filename?: string; error?: string }> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
@@ -226,6 +227,7 @@ export async function uploadFile(
           token,
           filename,
           screenshotId,
+          vaultPath: vaultPath ?? null,
         },
       },
       (response) => {
@@ -238,6 +240,21 @@ export async function uploadFile(
           ok: false,
           error: "No upload response",
         });
+      },
+    );
+  });
+}
+
+export async function cacheScreenshotUpload(dataUrl: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { target: "background", action: "cacheScreenshotUpload", dataUrl },
+      (resp) => {
+        if (chrome.runtime.lastError) {
+          resolve(null);
+          return;
+        }
+        resolve(resp?.ok && resp.screenshotId ? resp.screenshotId : null);
       },
     );
   });

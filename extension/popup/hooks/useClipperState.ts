@@ -45,6 +45,7 @@ import {
   sendToNative,
   listKnownVaults,
   uploadFile,
+  cacheScreenshotUpload,
   getContextMenuData,
   extractMetadata,
   extractArticleAsync,
@@ -182,16 +183,7 @@ export function useClipperState() {
   }, [captureScreenshot]);
 
   function cacheCapturedScreenshot(dataUrl: string) {
-    chrome.runtime.sendMessage(
-      { target: "background", action: "cacheScreenshotUpload", dataUrl },
-      (resp) => {
-        if (chrome.runtime.lastError) {
-          setScreenshotUploadId(null);
-          return;
-        }
-        setScreenshotUploadId(resp?.ok && resp.screenshotId ? resp.screenshotId : null);
-      },
-    );
+    void cacheScreenshotUpload(dataUrl).then((id) => setScreenshotUploadId(id));
   }
 
   const refreshChannels = useCallback(async (vaultPath = vaultRef.current) => {
@@ -696,7 +688,12 @@ export function useClipperState() {
         setSaving(false);
         return { ok: false as const, error: "Screenshot not captured yet" };
       }
-      if (!screenshotUploadId) {
+      let uploadId = screenshotUploadId;
+      if (!uploadId) {
+        uploadId = await cacheScreenshotUpload(screenshotDataUrl);
+        setScreenshotUploadId(uploadId);
+      }
+      if (!uploadId) {
         setSaving(false);
         return {
           ok: false as const,
@@ -711,12 +708,26 @@ export function useClipperState() {
         const blob = await fetch(screenshotDataUrl).then((r) => r.blob());
         const ext = blob.type === "image/png" ? "png" : "jpg";
         const filename = `${(title || "screenshot").replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 60)}.${ext}`;
-        const uploadResult = await uploadFile(
+        let uploadResult = await uploadFile(
           uploadPortRef.current,
           uploadTokenRef.current,
           filename,
-          screenshotUploadId,
+          uploadId,
+          vaultRef.current,
         );
+        if (!uploadResult.ok && uploadResult.error === "Screenshot upload expired") {
+          const refreshedUploadId = await cacheScreenshotUpload(screenshotDataUrl);
+          setScreenshotUploadId(refreshedUploadId);
+          if (refreshedUploadId) {
+            uploadResult = await uploadFile(
+              uploadPortRef.current,
+              uploadTokenRef.current,
+              filename,
+              refreshedUploadId,
+              vaultRef.current,
+            );
+          }
+        }
         if (uploadResult.ok && uploadResult.filename) {
           payload.pre_uploaded_file = uploadResult.filename;
         } else {

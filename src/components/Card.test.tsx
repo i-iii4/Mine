@@ -247,9 +247,9 @@ describe("Card", () => {
     const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const images = Array.from(container.querySelectorAll("img"));
     expect(images).toHaveLength(3);
-    expect(images[0]?.getAttribute("src")).toContain("/a.jpg");
-    expect(images[1]?.getAttribute("src")).toContain("/b.jpg");
-    expect(images[2]?.getAttribute("src")).toContain("/c.jpg");
+    expect(images[0]?.getAttribute("src")).toContain("/a.webp");
+    expect(images[1]?.getAttribute("src")).toContain("/b.png");
+    expect(images[2]?.getAttribute("src")).toContain("/c.heic");
     expect(screen.queryByText("+2")).not.toBeInTheDocument();
   });
 
@@ -319,7 +319,7 @@ describe("Card", () => {
     expect(preview.compareDocumentPosition(author) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("renders social single-image cards from the tile preview and falls back to the source image", () => {
+  it("renders social single-image cards from the source image when preview path is synthetic", () => {
     const b = block({
       block_type: "article",
       slug: "tweet-block",
@@ -347,11 +347,6 @@ describe("Card", () => {
     const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const img = container.querySelector("img");
     expect(img).toBeTruthy();
-    expect(img).toHaveAttribute(
-      "src",
-      expect.stringContaining(`${VAULT}/.arena/cache/thumbs/tweet-photo.jpg`),
-    );
-    fireEvent.error(img!);
     expect(img).toHaveAttribute(
       "src",
       expect.stringContaining(`${VAULT}/tweet-photo.jpg`),

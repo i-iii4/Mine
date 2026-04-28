@@ -424,6 +424,11 @@ iOS UI contract:
 - **CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`, картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки картинки — нет layout shift.
 - `computeCardHeight()` остаётся heuristic для scheduling / placeholder geometry, но не имеет права клампить live content. Hard clamp `height + overflow hidden` валиден только внутри exact committed prefix текущего generation.
 - Gallery fallback contract: если у multi-image карточки нет подтверждённого tile preview asset, feed больше не размножает один block-level thumb на все tiles. Gallery tile падает в свой `source_path`, а block-level `slug.jpg` остаётся только single-preview fallback.
+- Tile-level `preview_path` должен означать реально существующий derived asset
+  в thumbs cache. Synthetic paths вида `<source-stem>.jpg` запрещены: если
+  отдельный tile preview не создан, manifest оставляет `preview_path = null`,
+  а frontend сразу рендерит `source_path` из vault. Legacy manifests с таким
+  synthetic path frontend нормализует в `null`.
 - Single-image social fallback contract: `social-single-media` больше не имеет права жёстко рендерить block-level `slug.jpg`. Для single-image X/Twitter/Instagram preview frontend сначала берёт tile-level `previewPath`, потом `source_path`, и использует `slug.jpg` только как последний fallback. Это выравнивает single-image path с `preview_manifest` contract и устраняет серый baked-text preview поверх валидной локальной картинки.
 - Gallery aspect contract: composite/media-grid previews with `3+` items используют квадратный wrapper, а gallery ровно из `2` изображений использует `2:1` wrapper, чтобы две tiles оставались почти квадратными и не деградировали в узкий `1:2` crop.
 - Legacy article fallback contract: если у article-карточки есть `media_urls` / `first_image`, но для строки ещё нет `preview_manifest`, feed всё равно обязан строить реальный tile set из source images. `imageCount > 1` без `mediaItems` больше не допускается, иначе карточка деградирует в пустой серый gallery wrapper.
@@ -433,6 +438,10 @@ iOS UI contract:
 - Sidebar previews больше не строятся через полный `list_blocks_light()` с фильтрацией по всем тегам в памяти. Бэкенд отдаёт top-N preview rows отдельными SQL-запросами: один для `__all__`, один window-function запрос для `top N per tag`.
 - Frontend считает previews производным состоянием сервера: `useChannelPreviewsEvents` делает initial refresh и затем коалесцирует `block:added`, `block:removed`, `thumb:updated`, `vault-changed` в повторный `list_channel_previews`, вместо локального patch-state.
 - Таблица `blocks` хранит `thumb_format` (`jpeg` / `png`) и `thumb_mtime`. Эти поля синхронизируются в точках записи thumb (`generate_for_block`, `save_thumb`, direct create path) и позволяют `list_channel_previews` отвечать без filesystem syscall-ов на горячем пути.
+- Thumbnail path остаётся стабильным `<slug>.jpg`, но content может быть JPEG
+  или PNG. Custom `asset://` protocol обязан выставлять MIME по magic bytes,
+  а не только по расширению, иначе transparent text thumbnails отдаются как
+  `image/jpeg` и WKWebView показывает broken-image `?`.
 - Legacy vault compatibility: если в `.arena/cache/thumbs/` уже лежат `.jpg`, а `thumb_format/thumb_mtime` в SQLite ещё не заполнены, `open_vault()` запускает фоновый backfill metadata и после него шлёт `vault-changed`. Это восстанавливает sidebar previews без полного rebuild index.
 - Startup backlog planner для Phase 2 (`list_pending_thumb_upgrades`) тоже больше не читает thumb-файлы на main thread. Он работает через отдельный SQLite connection в `spawn_blocking`, выбирает только `thumb_format = 'png'` и восстанавливает media source из индексированных `media_file / thumbnail / first_image / media_urls`.
 - Watcher больше не индексирует те же `.md` параллельно с `full_scan()` для того же vault. Пока `syncing_vaults` содержит текущий путь, `watcher/watch.rs` пропускает notify-события; это убирает `database is locked` storm и лишние `vault-changed` во время раннего startup sync.

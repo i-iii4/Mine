@@ -193,6 +193,7 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
 - Сериализует Block через domain::block::serialize_block
 - Записывает в `vault/slug.md`
 - Создаёт директории при необходимости
+- `slug` должен приходить из `domain::block::suggest_slug`: human-readable Unicode stem, NFC-normalized, bounded by `100` chars и `220` NFD bytes. Storage не должен повторно обрезать имя или строить media path из title: source media references берутся из `frontmatter.file`.
 
 ### Поведение scan_md_files
 
@@ -205,6 +206,8 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
 
 - Переименовывает только local derived artifacts, не source vault:
   - block-level thumbnail `thumbs/<slug>.jpg`
+    - stable path/key; file content may be JPEG or PNG
+    - app `asset://` protocol must serve MIME by magic bytes, not extension
   - article audio artifacts и sidecar через `storage::article_audio::rename_all_artifacts`
 - Используется и watcher external rename path, и explicit in-app rename command
 - Если higher-level rename flow меняет speakable article text, audio может быть дополнительно инвалидирован поверх этого helper'а

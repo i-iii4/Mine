@@ -135,22 +135,18 @@ export function Sidebar({
         />
       )}
 
-      {headerSlot && !isLinkingBlock && (
-        <div className={cn("pt-16", compact ? "px-2" : "px-8")}>
-          {headerSlot}
-        </div>
-      )}
-
       {/* Navigation */}
       <nav
         ref={navRef}
         className={cn(
           "flex-1 overflow-y-auto",
-          isLinkingBlock ? linkEditorNavPadding : headerSlot ? "pt-4" : "pt-16",
+          isLinkingBlock ? linkEditorNavPadding : "pt-20",
           compact ? "px-2" : "px-8",
         )}
         data-sidebar-scroll
       >
+        {!isLinkingBlock && headerSlot}
+
         <NavItem
           to="/"
           label="Everything"

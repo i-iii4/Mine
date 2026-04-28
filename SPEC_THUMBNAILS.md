@@ -121,13 +121,22 @@ Pipeline — two-phase:
 │           └── <slug>.jpg     # Thumb file, always .jpg extension
 ```
 
-Thumb file extension **всегда** `.jpg` независимо от actual content. Браузер sniff'ит content-type по magic bytes, не по extension — any image format рендерится корректно.
+Thumb file extension **всегда** `.jpg` независимо от actual content. App
+`asset://` protocol sniff'ит response MIME по magic bytes, не по extension —
+иначе WKWebView может получить PNG body как `image/jpeg` и показать
+broken-image placeholder.
 
 Actual content варианты:
 - **JPEG** (magic `FF D8 FF`): image blocks (image thumbnail) или image upgrade от Phase 2
 - **PNG** (magic `89 50 4E`): text-baked thumbnails для pure-text article fallback (PNG with RGBA transparency для dark-mode `invert` CSS trick)
 
 `is_thumb_fresh` валидирует оба формата через magic bytes check (см. SPEC_STORAGE.md `storage/thumbnails`).
+
+Tile-level `preview_path` в `preview_manifest.tiles[]` разрешён только если
+он указывает на реально существующий derived preview в thumbs cache. Если
+отдельный tile preview не создавался, `preview_path = null`, а consumer
+использует `source_path` из vault. Synthetic `<source-stem>.jpg` paths
+запрещены: они создают 404 в `asset://.../cache/thumbs/` и broken-image flash.
 
 ### In-memory state (Rust side)
 

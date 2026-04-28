@@ -306,11 +306,7 @@ fn media_tile(
     let dims_entry = dims.get(src).copied();
     FeedPreviewTile {
         source_path: src.to_string(),
-        preview_path: if is_video {
-            None
-        } else {
-            tile_preview_path(src)
-        },
+        preview_path: None,
         width: dims_entry.map(|[w, _]| w),
         height: dims_entry.map(|[_, h]| h),
         is_video,
@@ -332,15 +328,6 @@ fn dimensions_for_src(
         return (Some(w), Some(h));
     }
     (width, height)
-}
-
-fn tile_preview_path(src: &str) -> Option<String> {
-    if is_remote_media(src) {
-        return None;
-    }
-    let clean = src.split('?').next().unwrap_or(src);
-    let stem = Path::new(clean).file_stem()?.to_str()?;
-    Some(format!("{stem}.jpg"))
 }
 
 /// Parse a single inline-media reference from one markdown line.
@@ -426,12 +413,8 @@ fn serialize_feed_preview_manifest(
 
     let manifest = match block.frontmatter.block_type {
         BlockType::Image => {
-            let (preview_width, preview_height) = dimensions_for_src(
-                &dims,
-                block.frontmatter.file.as_deref(),
-                width,
-                height,
-            );
+            let (preview_width, preview_height) =
+                dimensions_for_src(&dims, block.frontmatter.file.as_deref(), width, height);
             FeedPreviewManifest {
                 kind: FeedPreviewKind::Image,
                 primary_preview_path: Some(primary_preview_path(&block.slug)),

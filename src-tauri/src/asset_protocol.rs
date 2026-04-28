@@ -12,11 +12,11 @@ use http_range::HttpRange;
 #[cfg(feature = "desktop")]
 use percent_encoding::percent_decode_str;
 #[cfg(feature = "desktop")]
-use unicode_normalization::UnicodeNormalization;
-#[cfg(feature = "desktop")]
 use tauri::http::{header::*, Method, Request, Response, StatusCode};
 #[cfg(feature = "desktop")]
 use tauri::{Manager, Runtime};
+#[cfg(feature = "desktop")]
+use unicode_normalization::UnicodeNormalization;
 
 #[cfg(feature = "desktop")]
 const MAX_RANGE_LEN: u64 = 1000 * 1024;
@@ -66,7 +66,7 @@ fn build_asset_response<R: Runtime>(
     };
 
     let len = meta.len();
-    let mime_type = mime_type_for_path(&path);
+    let mime_type = mime_type_for_file(&path);
     resp = resp.header(CONTENT_TYPE, mime_type);
 
     if request.method() == Method::HEAD {
@@ -229,6 +229,62 @@ fn multipart_boundary() -> String {
 }
 
 #[cfg(feature = "desktop")]
+fn mime_type_for_file(path: &Path) -> &'static str {
+    if should_sniff_image_content(path) {
+        if let Some(mime) = mime_type_from_magic(path) {
+            return mime;
+        }
+    }
+    mime_type_for_path(path)
+}
+
+#[cfg(feature = "desktop")]
+fn should_sniff_image_content(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(str::to_lowercase)
+            .as_deref(),
+        Some("jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "heic" | "heif")
+    )
+}
+
+#[cfg(feature = "desktop")]
+fn mime_type_from_magic(path: &Path) -> Option<&'static str> {
+    let mut file = File::open(path).ok()?;
+    let mut buf = [0u8; 16];
+    let n = file.read(&mut buf).ok()?;
+    let bytes = &buf[..n];
+
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("image/png");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+        let brand = &bytes[8..12];
+        if matches!(brand, b"avif" | b"avis") {
+            return Some("image/avif");
+        }
+        if matches!(
+            brand,
+            b"heic" | b"heix" | b"hevc" | b"hevx" | b"mif1" | b"msf1"
+        ) {
+            return Some("image/heic");
+        }
+    }
+
+    None
+}
+
+#[cfg(feature = "desktop")]
 fn mime_type_for_path(path: &Path) -> &'static str {
     match path
         .extension()
@@ -252,5 +308,41 @@ fn mime_type_for_path(path: &Path) -> &'static str {
         Some("json") => "application/json",
         Some("pdf") => "application/pdf",
         _ => "application/octet-stream",
+    }
+}
+
+#[cfg(all(test, feature = "desktop"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mime_type_sniffs_png_saved_under_jpg_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("text-thumb.jpg");
+        std::fs::write(
+            &path,
+            [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0],
+        )
+        .unwrap();
+
+        assert_eq!(mime_type_for_file(&path), "image/png");
+    }
+
+    #[test]
+    fn mime_type_sniffs_jpeg_saved_under_png_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("photo.png");
+        std::fs::write(&path, [0xFF, 0xD8, 0xFF, 0x00]).unwrap();
+
+        assert_eq!(mime_type_for_file(&path), "image/jpeg");
+    }
+
+    #[test]
+    fn mime_type_falls_back_to_extension_when_magic_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("maybe.jpg");
+        std::fs::write(&path, b"not enough image magic").unwrap();
+
+        assert_eq!(mime_type_for_file(&path), "image/jpeg");
     }
 }
