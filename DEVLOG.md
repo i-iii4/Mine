@@ -1,5 +1,75 @@
 # Devlog
 
+## 28.04.2026 [primary] — Detail toolbar and clipper channel index parity
+
+### Goal
+
+Закрыть два UI/runtime расхождения:
+
+- Detail должен иметь отдельное верхнее меню с filename и тем же overflow
+  action menu, что и карточка в ленте, без дублирующего `FILENAME` /
+  `Rename…` / `TAGS` в metadata panel.
+- Clipper должен видеть те же каналы и счётчики, что desktop app, после
+  переезда desktop index из vault `.arena/index.db` в local derived store.
+
+### Completed
+
+- Detail получил `h-8` top menu: filename слева, shared `CardMoreMenu` и close
+  action справа.
+- Metadata rail оставлен только для content metadata: AUDIO, WARNING,
+  RESOLUTION, DATE, TYPE, SOURCE, AUTHOR. Labels остаются `font-mono text-sm
+  text-muted-foreground`, values — `font-mono text-sm text-foreground`.
+- Detail content сохранил общий visual top offset: menu `32px` + content
+  padding `48px` = `80px`.
+- Верхняя divider line в Detail появляется только после того, как scroll
+  content доехал до зоны меню, а не при первом пикселе scroll.
+- `CardMoreMenu` вынесен из hover-only карточки в shared component, чтобы
+  Detail и feed вызывали один и тот же rename/delete/source/channel workflow.
+- Native host теперь резолвит vault layout так же, как desktop app:
+  `<vault>/.arena/vault-id` → `~/Library/Application Support/com.mine.app/vaults/<id>/index.db`.
+- Legacy `<vault>/.arena/index.db` используется только как bootstrap source,
+  если local derived index ещё отсутствует.
+- `list_channels` нормализует channel/tag keys перед merge, чтобы старые
+  alias-дубли (`Красивый веб` vs `красивый-веб`) не давали пустой счётчик или
+  вторую строку в clipper.
+- `SPEC_FRONTEND.md` и `SPEC_CLIPPER.md` обновлены под текущий contract.
+
+### Verification
+
+- `npm test -- Detail CardHoverMenu`
+- `cargo test --manifest-path src-tauri/Cargo.toml --bin native-host merge_channels_and_tags`
+- `cargo build --manifest-path src-tauri/Cargo.toml --release --bin native-host`
+- `npm run build`
+- `git diff --check`
+
+## 27.04.2026 [primary] — Feed: blob fallback for active heavy videos
+
+### Goal
+
+Сделать autoplay в ленте надёжным для больших, но допустимых single-video
+карточек (`profile: "heavy"`), например локального H.264 MP4 около 48 MB /
+3840×2156, который индексируется как eligible, но direct `asset://` playback
+может не стартовать в WebView.
+
+### Completed
+
+- `FeedVideoSurface` теперь переводит heavy direct playback failure в
+  `loading_blob`, как и standard profile.
+- Short `FEED_VIDEO_BLOB_TIMEOUT_MS` применяется только к `standard`.
+  Для `heavy` blob fallback ждёт без короткого таймера и отменяется
+  unmount/inactive cleanup'ом.
+- Memory bound сохраняется на уровне Grid contract: одновременно active
+  максимум один `heavy` clip, поэтому heavy blob fallback может держать в
+  памяти только один heavy source.
+- `SPEC_FEED_VIDEO.md` обновлён: heavy runtime policy теперь
+  `direct -> blob -> poster-only`, а не `direct -> poster-only`.
+
+### Verification
+
+- `npm test -- FeedVideoSurface Grid`
+- `npm run build`
+- `git diff --check`
+
 ## 25.04.2026 [primary] — Detail: autoplay embedded article videos
 
 ### Goal

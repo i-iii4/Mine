@@ -1389,7 +1389,12 @@ export function AppWithVault({
               thumbsRootPath={thumbsRootPath ?? undefined}
               onClose={handleDetailClose}
               onNavigate={handleDetailNavigate}
+              tags={tags}
+              currentTag={currentTag}
+              onToggleTag={handleToggleTag}
+              onCreateAndAssign={handleCreateTagFromMenu}
               onRequestRename={setRenamingBlock}
+              onRequestDelete={handleDeleteBlock}
               onTagsChanged={() => {
                 void reloadAllSnapshots();
               }}

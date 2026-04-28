@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import type { ComponentProps } from "react";
 import { MoreHorizontal, Trash2, Plus, ExternalLink, FolderOpen, Copy, Pencil } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
@@ -13,23 +14,140 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import type { LightBlock, TagCount } from "@/types";
+import type { IndexedBlock, LightBlock, TagCount } from "@/types";
 import { getBlock } from "@/lib/commands";
 import { CollectionPicker, titleFromTag } from "./CollectionPicker";
 
-interface CardHoverMenuProps {
-  block: LightBlock;
+interface CardMenuActionsProps<TBlock extends LightBlock | IndexedBlock> {
+  block: TBlock;
   vaultPath: string;
   tags: TagCount[];
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
-  onRequestRename: (block: LightBlock) => void;
+  onRequestRename: (block: TBlock) => void;
   onRequestDelete: (slug: string) => void;
 }
 
+interface CardMoreMenuProps<TBlock extends LightBlock | IndexedBlock> extends CardMenuActionsProps<TBlock> {
+  className?: string;
+  onOpenChange?: (open: boolean) => void;
+  triggerVariant?: ComponentProps<typeof Button>["variant"];
+}
+
+type CardHoverMenuProps = CardMenuActionsProps<LightBlock>;
+
 function stopProp(e: React.MouseEvent | React.PointerEvent) {
   e.stopPropagation();
+}
+
+export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
+  block,
+  vaultPath,
+  tags,
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
+  className,
+  onOpenChange,
+  triggerVariant = "default",
+}: CardMoreMenuProps<TBlock>) {
+  const hasUrl = !!block.url;
+  const filePath = `${vaultPath}/${block.slug}.md`;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    let cancelled = false;
+    void getBlock(block.slug).then((full) => {
+      if (!cancelled) {
+        setSelectedTags(full?.tags ?? []);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [block.slug, menuOpen]);
+
+  return (
+    <DropdownMenu
+      onOpenChange={(open) => {
+        setMenuOpen(open);
+        onOpenChange?.(open);
+      }}
+      modal={false}
+    >
+      <DropdownMenuTrigger asChild>
+        <Button variant={triggerVariant} size="icon" className={className}>
+          <MoreHorizontal className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Plus className="size-3" />
+            Channel
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
+            <CollectionPicker
+              blockSlug={block.slug}
+              selectedTags={selectedTags}
+              tags={tags}
+              currentTag={currentTag}
+              onToggleTag={onToggleTag}
+              onCreateAndAssign={onCreateAndAssign}
+              stopKeyPropagation
+            />
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+
+        {hasUrl && (
+          <DropdownMenuItem onSelect={() => openUrl(block.url!)}>
+            <ExternalLink className="size-3" />
+            Source
+          </DropdownMenuItem>
+        )}
+
+        <DropdownMenuSeparator />
+
+        <DropdownMenuItem onSelect={() => revealItemInDir(filePath)}>
+          <FolderOpen className="size-3" />
+          Reveal in Finder
+        </DropdownMenuItem>
+
+        <DropdownMenuItem onSelect={() => navigator.clipboard.writeText(filePath)}>
+          <Copy className="size-3" />
+          Copy Path
+        </DropdownMenuItem>
+
+        <DropdownMenuSeparator />
+
+        <DropdownMenuItem onSelect={() => onRequestRename(block)}>
+          <Pencil className="size-3" />
+          Rename…
+        </DropdownMenuItem>
+
+        {currentTag && selectedTags.includes(currentTag) && (
+          <DropdownMenuItem
+            onSelect={() => onToggleTag(block.slug, currentTag, true)}
+          >
+            Remove from &ldquo;{titleFromTag(currentTag)}&rdquo;
+          </DropdownMenuItem>
+        )}
+
+        <DropdownMenuItem
+          variant="destructive"
+          onSelect={() => onRequestDelete(block.slug)}
+        >
+          <Trash2 className="size-3" />
+          Delete
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 export const CardHoverMenu = memo(function CardHoverMenu({
@@ -43,7 +161,6 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   onRequestDelete,
 }: CardHoverMenuProps) {
   const hasUrl = !!block.url;
-  const filePath = `${vaultPath}/${block.slug}.md`;
   const [menuOpen, setMenuOpen] = useState(false);
   const [channelOpen, setChannelOpen] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -75,74 +192,17 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         onClick={stopProp}
         onPointerDown={stopProp}
       >
-        <DropdownMenu onOpenChange={setMenuOpen} modal={false}>
-          <DropdownMenuTrigger asChild>
-            <Button variant="default" size="icon">
-              <MoreHorizontal className="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <Plus className="size-3" />
-                Channel
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
-                <CollectionPicker
-                  blockSlug={block.slug}
-                  selectedTags={selectedTags}
-                  tags={tags}
-                  currentTag={currentTag}
-                  onToggleTag={onToggleTag}
-                  onCreateAndAssign={onCreateAndAssign}
-                  stopKeyPropagation
-                />
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-
-            {hasUrl && (
-              <DropdownMenuItem onSelect={() => openUrl(block.url!)}>
-                <ExternalLink className="size-3" />
-                Source
-              </DropdownMenuItem>
-            )}
-
-            <DropdownMenuSeparator />
-
-            <DropdownMenuItem onSelect={() => revealItemInDir(filePath)}>
-              <FolderOpen className="size-3" />
-              Reveal in Finder
-            </DropdownMenuItem>
-
-            <DropdownMenuItem onSelect={() => navigator.clipboard.writeText(filePath)}>
-              <Copy className="size-3" />
-              Copy Path
-            </DropdownMenuItem>
-
-            <DropdownMenuSeparator />
-
-            <DropdownMenuItem onSelect={() => onRequestRename(block)}>
-              <Pencil className="size-3" />
-              Rename…
-            </DropdownMenuItem>
-
-            {currentTag && selectedTags.includes(currentTag) && (
-              <DropdownMenuItem
-                onSelect={() => onToggleTag(block.slug, currentTag, true)}
-              >
-                Remove from &ldquo;{titleFromTag(currentTag)}&rdquo;
-              </DropdownMenuItem>
-            )}
-
-            <DropdownMenuItem
-              variant="destructive"
-              onSelect={() => onRequestDelete(block.slug)}
-            >
-              <Trash2 className="size-3" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <CardMoreMenu
+          block={block}
+          vaultPath={vaultPath}
+          tags={tags}
+          currentTag={currentTag}
+          onToggleTag={onToggleTag}
+          onCreateAndAssign={onCreateAndAssign}
+          onRequestRename={onRequestRename}
+          onRequestDelete={onRequestDelete}
+          onOpenChange={setMenuOpen}
+        />
       </div>
 
       {/* Нижний ряд: Source (лево) + Channel (право) */}

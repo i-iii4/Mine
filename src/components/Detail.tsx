@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import type { IndexedBlock, LightBlock } from "@/types";
+import type { IndexedBlock, LightBlock, TagCount } from "@/types";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { preprocessWikilinks } from "@/lib/markdownWikilinks";
 import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
@@ -19,16 +17,18 @@ import {
   legacyThumbsRoot,
 } from "@/lib/assets";
 import { cn } from "@/lib/utils";
-import { addTag, removeTag, getBlock } from "@/lib/commands";
+import { getBlock } from "@/lib/commands";
 import {
   findPreviewTileForSource,
   normalizeFeedPreviewManifest,
 } from "@/lib/feedPreview";
 import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
+import { CardMoreMenu } from "./CardHoverMenu";
 
 // Layout constants — shared between scroll layer and metadata layer
-const LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-16";
+const LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-12";
+const DETAIL_CONTENT_TOP_PADDING_PX = 48;
 
 interface DetailProps {
   block: LightBlock | IndexedBlock;
@@ -36,8 +36,13 @@ interface DetailProps {
   thumbsRootPath?: string;
   onClose: () => void;
   onNavigate: (direction: "prev" | "next" | "up" | "down") => void;
+  tags: TagCount[];
+  currentTag?: string;
+  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onTagsChanged: () => void;
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
+  onRequestDelete: (slug: string) => void;
 }
 
 function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock {
@@ -50,20 +55,22 @@ export function Detail({
   thumbsRootPath,
   onClose,
   onNavigate,
-  onTagsChanged,
+  tags,
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
   onRequestRename,
+  onRequestDelete,
 }: DetailProps) {
   const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
     isIndexedBlock(block) ? block : null,
   );
+  const [contentScrolled, setContentScrolled] = useState(false);
   const displayBlock = fullBlock ?? block;
-  const [tags, setTags] = useState<string[]>(fullBlock?.tags ?? []);
-  const [tagInput, setTagInput] = useState("");
 
   useEffect(() => {
     setFullBlock(isIndexedBlock(block) ? block : null);
-    setTags(isIndexedBlock(block) ? block.tags : []);
-    setTagInput("");
+    setContentScrolled(false);
   }, [block]);
 
   useEffect(() => {
@@ -72,39 +79,12 @@ export function Detail({
     void getBlock(block.slug).then((full) => {
       if (!cancelled && full) {
         setFullBlock(full);
-        setTags(full.tags);
       }
     });
     return () => {
       cancelled = true;
     };
   }, [block]);
-
-  const handleAddTag = useCallback(async () => {
-    const tag = tagInput.trim();
-    if (!tag || tags.includes(tag)) return;
-    try {
-      await addTag(block.slug, tag);
-      setTags((prev) => [...prev, tag]);
-      setTagInput("");
-      onTagsChanged();
-    } catch (err) {
-      console.error("Failed to add tag:", err);
-    }
-  }, [tagInput, tags, block.slug, onTagsChanged]);
-
-  const handleRemoveTag = useCallback(
-    async (tag: string) => {
-      try {
-        await removeTag(block.slug, tag);
-        setTags((prev) => prev.filter((t) => t !== tag));
-        onTagsChanged();
-      } catch (err) {
-        console.error("Failed to remove tag:", err);
-      }
-    },
-    [block.slug, onTagsChanged],
-  );
 
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -139,52 +119,76 @@ export function Detail({
 
   return (
     <div
-      className="absolute inset-0 z-10 flex bg-background outline-none"
+      className="absolute inset-0 z-10 flex flex-col bg-background outline-none"
       role="dialog"
       aria-modal="false"
     >
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onClose}
-        className="absolute top-10 right-4 text-muted-foreground hover:text-foreground"
-      >
-        <X className="size-4" />
-        <span className="sr-only">Close</span>
-      </Button>
-
-      {/* Layer 1: Scrollable content + invisible spacer */}
-      <div ref={panelRef} tabIndex={-1} className="h-full w-full overflow-y-auto outline-none" data-detail-scroll>
-        <div className={LAYOUT_CLASSES}>
-          <div className="min-w-0 flex-1">
-            <BlockContent
-              block={block}
-              fullBlock={fullBlock}
-              vaultPath={vaultPath}
-              thumbsRootPath={thumbsRootPath}
-            />
-          </div>
-          <div className="w-56 shrink-0" aria-hidden="true" />
+      <header className={cn(
+        "flex h-8 shrink-0 items-center gap-3 border-b px-3",
+        contentScrolled ? "border-border" : "border-transparent",
+      )}>
+        <div
+          className="min-w-0 flex-1 truncate font-mono text-sm text-muted-foreground"
+          title={filename}
+        >
+          {filename}
         </div>
-      </div>
+        <CardMoreMenu
+          block={displayBlock}
+          vaultPath={vaultPath}
+          tags={tags}
+          currentTag={currentTag}
+          onToggleTag={onToggleTag}
+          onCreateAndAssign={onCreateAndAssign}
+          onRequestRename={onRequestRename}
+          onRequestDelete={onRequestDelete}
+          triggerVariant="ghost"
+          className="shrink-0 text-muted-foreground hover:text-foreground"
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <X className="size-4" />
+          <span className="sr-only">Close</span>
+        </Button>
+      </header>
 
-      {/* Layer 2: Fixed metadata (same layout, doesn't scroll) */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className={LAYOUT_CLASSES}>
-          <div className="flex-1" />
-          <div className="pointer-events-auto w-56 shrink-0 overflow-y-auto" data-metadata-scroll>
-            <MetadataPanel
-              block={block}
-              fullBlock={fullBlock}
-              filename={filename}
-              formattedDate={formattedDate}
-              tags={tags}
-              tagInput={tagInput}
-              onTagInputChange={setTagInput}
-              onAddTag={handleAddTag}
-              onRemoveTag={handleRemoveTag}
-              onRequestRename={() => onRequestRename(displayBlock)}
-            />
+      <div className="relative min-h-0 flex-1">
+        {/* Layer 1: Scrollable content + invisible spacer */}
+        <div
+          ref={panelRef}
+          tabIndex={-1}
+          className="h-full w-full overflow-y-auto outline-none"
+          data-detail-scroll
+          onScroll={(event) => setContentScrolled(event.currentTarget.scrollTop >= DETAIL_CONTENT_TOP_PADDING_PX)}
+        >
+          <div className={LAYOUT_CLASSES}>
+            <div className="min-w-0 flex-1">
+              <BlockContent
+                block={block}
+                fullBlock={fullBlock}
+                vaultPath={vaultPath}
+                thumbsRootPath={thumbsRootPath}
+              />
+            </div>
+            <div className="w-56 shrink-0" aria-hidden="true" />
+          </div>
+        </div>
+
+        {/* Layer 2: Fixed metadata (same layout, doesn't scroll) */}
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className={LAYOUT_CLASSES}>
+            <div className="flex-1" />
+            <div className="pointer-events-auto w-56 shrink-0 overflow-y-auto" data-metadata-scroll>
+              <MetadataPanel
+                block={block}
+                fullBlock={fullBlock}
+                formattedDate={formattedDate}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -197,27 +201,13 @@ export function Detail({
 interface MetadataPanelProps {
   block: LightBlock | IndexedBlock;
   fullBlock: IndexedBlock | null;
-  filename: string;
   formattedDate: string;
-  tags: string[];
-  tagInput: string;
-  onTagInputChange: (value: string) => void;
-  onAddTag: () => void;
-  onRemoveTag: (tag: string) => void;
-  onRequestRename: () => void;
 }
 
 function MetadataPanel({
   block,
   fullBlock,
-  filename,
   formattedDate,
-  tags,
-  tagInput,
-  onTagInputChange,
-  onAddTag,
-  onRemoveTag,
-  onRequestRename,
 }: MetadataPanelProps) {
   const displayBlock = fullBlock ?? block;
   const indexWarning = getIndexWarning(displayBlock);
@@ -232,12 +222,6 @@ function MetadataPanel({
       {displayBlock.width != null && displayBlock.height != null && (
         <MetadataField label="RESOLUTION" value={`${displayBlock.width} \u00d7 ${displayBlock.height}`} />
       )}
-
-      <MetadataField label="FILENAME" value={filename} />
-      <Button variant="ghost" size="default" className="h-auto w-fit px-0 py-0 font-mono text-sm" onClick={onRequestRename}>
-        Rename…
-      </Button>
-
       <MetadataField label="DATE" value={formattedDate} />
 
       <MetadataField label="TYPE" value={displayBlock.block_type.toUpperCase()} />
@@ -264,41 +248,6 @@ function MetadataPanel({
         <MetadataField label="AUTHOR" value={displayBlock.author} />
       )}
 
-      {/* Tags */}
-      <div>
-        <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-          TAGS
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {tags.map((tag) => (
-            <Badge
-              key={tag}
-              variant="secondary"
-              className="group gap-1 font-mono text-muted-foreground"
-            >
-              {tag}
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => onRemoveTag(tag)}
-                className="size-3.5 opacity-0 group-hover:opacity-100"
-              >
-                <X className="size-2.5" />
-              </Button>
-            </Badge>
-          ))}
-          <Input
-            type="text"
-            value={tagInput}
-            onChange={(e) => onTagInputChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") onAddTag();
-            }}
-            placeholder="+ tag"
-            className="h-auto w-20 border-none bg-transparent px-0 py-0 font-mono text-sm shadow-none focus-visible:ring-0"
-          />
-        </div>
-      </div>
     </div>
   );
 }

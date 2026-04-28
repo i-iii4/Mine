@@ -205,6 +205,89 @@ fn load_known_vaults() -> Vec<String> {
     }
 }
 
+fn resolve_native_vault_layout(root: PathBuf) -> Result<VaultLayout, String> {
+    let base = VaultLayout::new(root.clone());
+    std::fs::create_dir_all(base.arena_dir())
+        .map_err(|e| format!("failed to create arena dir: {e}"))?;
+
+    let vault_id = ensure_native_vault_id(&base)?;
+    let derived_root = native_app_data_dir()?.join("vaults").join(vault_id);
+    let layout = VaultLayout::with_derived_root(root, derived_root);
+
+    bootstrap_native_index_from_legacy(&layout)?;
+    Ok(layout)
+}
+
+fn native_app_data_dir() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    Ok(PathBuf::from(home).join("Library/Application Support/com.mine.app"))
+}
+
+fn ensure_native_vault_id(vault: &VaultLayout) -> Result<String, String> {
+    let path = vault.vault_id_path();
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let trimmed = existing.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    let new_id = generate_native_vault_id()?;
+    std::fs::write(&path, format!("{new_id}\n"))
+        .map_err(|e| format!("failed to write vault-id: {e}"))?;
+    Ok(new_id)
+}
+
+fn generate_native_vault_id() -> Result<String, String> {
+    let mut bytes = [0u8; 16];
+    match std::fs::File::open("/dev/urandom") {
+        Ok(mut file) => file
+            .read_exact(&mut bytes)
+            .map_err(|e| format!("failed to read /dev/urandom: {e}"))?,
+        Err(_) => {
+            return Ok(format!(
+                "{:016x}{:08x}{:08x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| format!("system time before epoch: {e}"))?
+                    .as_nanos(),
+                std::process::id(),
+                0x5A17_u32,
+            ));
+        }
+    }
+
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Ok(format!(
+        "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11],
+        bytes[12], bytes[13], bytes[14], bytes[15],
+    ))
+}
+
+fn bootstrap_native_index_from_legacy(vault: &VaultLayout) -> Result<(), String> {
+    let target = vault.index_db_path();
+    if target.exists() {
+        return Ok(());
+    }
+
+    let source = vault.legacy_index_db_path();
+    if !source.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create local derived dir: {e}"))?;
+    }
+    std::fs::copy(&source, &target)
+        .map_err(|e| format!("failed to bootstrap local index from legacy: {e}"))?;
+    Ok(())
+}
+
 // ─── Action handlers ────────────────────────────────────────────────────────
 
 fn handle_list_known_vaults() {
@@ -263,15 +346,23 @@ fn merge_channels_and_tags(
     channels: Vec<Channel>,
     tags: Vec<index::TagCount>,
 ) -> Vec<ChannelInfo> {
-    let counts: HashMap<String, usize> = tags
-        .iter()
-        .map(|tag| (tag.tag.clone(), tag.count))
-        .collect();
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for tag in &tags {
+        let normalized = mine_lib::domain::tag::normalize_tag(&tag.tag);
+        if normalized.is_empty() {
+            continue;
+        }
+        *counts.entry(normalized).or_insert(0) += tag.count;
+    }
+
     let mut seen: HashSet<String> = HashSet::new();
     let mut infos = Vec::with_capacity(channels.len() + tags.len());
 
     for channel in channels {
-        let tag = channel.tag;
+        let tag = mine_lib::domain::tag::normalize_tag(&channel.tag);
+        if tag.is_empty() || seen.contains(&tag) {
+            continue;
+        }
         let block_count = counts.get(&tag).copied().unwrap_or(0);
         seen.insert(tag.clone());
         infos.push(ChannelInfo {
@@ -282,14 +373,17 @@ fn merge_channels_and_tags(
     }
 
     for tag in tags {
-        if seen.contains(&tag.tag) {
+        let normalized = mine_lib::domain::tag::normalize_tag(&tag.tag);
+        if normalized.is_empty() || seen.contains(&normalized) {
             continue;
         }
+        let block_count = counts.get(&normalized).copied().unwrap_or(tag.count);
         infos.push(ChannelInfo {
-            title: capitalize_tag(&tag.tag),
-            tag: tag.tag,
-            block_count: tag.count,
+            title: capitalize_tag(&normalized),
+            tag: normalized.clone(),
+            block_count,
         });
+        seen.insert(normalized);
     }
 
     infos
@@ -1527,7 +1621,13 @@ fn main() {
                         continue;
                     }
                 }
-                let vault = VaultLayout::new(path);
+                let vault = match resolve_native_vault_layout(path) {
+                    Ok(vault) => vault,
+                    Err(e) => {
+                        send_error(&e);
+                        continue;
+                    }
+                };
 
                 match req.action.as_str() {
                     "list_channels" => handle_list_channels(&vault),
@@ -1594,6 +1694,49 @@ mod tests {
                 tag: "design".to_string(),
                 title: "Design System".to_string(),
                 block_count: 3,
+            }]
+        );
+    }
+
+    #[test]
+    fn merge_channels_and_tags_normalizes_promoted_channel_before_count_lookup() {
+        let infos = merge_channels_and_tags(
+            vec![test_channel("Красивый веб", "Красивый веб")],
+            vec![index::TagCount {
+                tag: "красивый-веб".to_string(),
+                count: 4,
+            }],
+        );
+
+        assert_eq!(
+            infos,
+            vec![ChannelInfo {
+                tag: "красивый-веб".to_string(),
+                title: "Красивый веб".to_string(),
+                block_count: 4,
+            }]
+        );
+    }
+
+    #[test]
+    fn merge_channels_and_tags_deduplicates_promoted_channel_aliases() {
+        let infos = merge_channels_and_tags(
+            vec![
+                test_channel("Красивый веб", "Красивый веб"),
+                test_channel("красивый-веб", "Красивый веб"),
+            ],
+            vec![index::TagCount {
+                tag: "красивый-веб".to_string(),
+                count: 4,
+            }],
+        );
+
+        assert_eq!(
+            infos,
+            vec![ChannelInfo {
+                tag: "красивый-веб".to_string(),
+                title: "Красивый веб".to_string(),
+                block_count: 4,
             }]
         );
     }

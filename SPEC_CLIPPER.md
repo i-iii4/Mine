@@ -465,6 +465,19 @@ Channel list refresh не является одноразовым init-state. Po
 
 `create_channel` обязан возвращать нормализованный `tag`, и popup обязан выбирать именно response tag, а не raw user input. Иначе `create_channel("My Channel")` и `save_block(tags:["My Channel"])` могут разойтись: save path нормализует tags в `my-channel`.
 
+Native host обязан открывать тот же local derived index, что и desktop app:
+`~/Library/Application Support/com.mine.app/vaults/<vault-id>/index.db`.
+`<vault-id>` читается из `<vault>/.arena/vault-id`; если local derived index
+ещё не существует, host может один раз bootstrap'нуть его из legacy
+`<vault>/.arena/index.db`. Runtime reads/writes не должны продолжать работать
+с legacy `.arena/index.db`, иначе clipper видит stale channels по сравнению с
+desktop app.
+
+`list_channels` возвращает promoted channels + used tags из одного индекса.
+Перед merge channel/tag keys нормализуются через общий tag normalizer. Это
+защищает от старых alias-дублей вроде `Красивый веб` и `красивый-веб`: в popup
+должна быть одна строка с нормализованным `tag` и корректным `block_count`.
+
 #### `save_block`
 
 Сохранение блока в vault.
@@ -622,7 +635,7 @@ Chrome ограничивает отдельное native messaging-сообще
 
 | OS | Path |
 |---|---|
-| macOS | `~/Library/Application Support/com.mine.app/clipper/native-host` |
+| macOS | `~/Library/Application Support/LocalArena/native-host` |
 
 ### Manifest (Chrome)
 
@@ -632,7 +645,7 @@ Chrome ограничивает отдельное native messaging-сообще
 {
   "name": "com.localarena.clipper",
   "description": "Mine Web Clipper",
-  "path": "~/Library/Application Support/com.mine.app/clipper/native-host",
+  "path": "~/Library/Application Support/LocalArena/native-host",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://<extension-id>/"

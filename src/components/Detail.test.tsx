@@ -6,6 +6,7 @@ import type { IndexedBlock } from "@/types";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
+  revealItemInDir: vi.fn(),
 }));
 
 vi.mock("./ArticleAudioControls", () => ({
@@ -91,8 +92,12 @@ describe("Detail", () => {
         thumbsRootPath="/tmp/thumbs"
         onClose={vi.fn()}
         onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
       />,
     );
 
@@ -113,8 +118,12 @@ describe("Detail", () => {
         thumbsRootPath="/tmp/thumbs"
         onClose={vi.fn()}
         onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
       />,
     );
 

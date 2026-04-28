@@ -218,19 +218,24 @@ Thumbnail отображается через `convertFileSrc(vaultPath + "/.are
 
 ### Detail (fullscreen overlay)
 
-Полноэкранный оверлей (справа от sidebar) при клике на карточку:
-- Занимает всю область: `fixed inset-y-0 right-0 left-[240px]`
-- Overlay затемняет только область справа от sidebar
-- Анимация: zoom-in-95 / zoom-out-95
+Полноэкранный detail layer при клике на карточку:
+- Занимает app content area: `absolute inset-0 z-10`
+- Не использует отдельный dim/blur overlay; это полноценный режим просмотра внутри приложения
+- Верхнее меню detail имеет фиксированную высоту `h-8`
+- В верхнем меню показывается filename (`media_file`, иначе `${slug}.md`) в `font-mono text-sm text-muted-foreground`
+- Справа в верхнем меню находятся shared overflow menu (`CardMoreMenu`) и close button
+- Разделительная линия верхнего меню прозрачна в начале и становится видимой только когда scroll content доезжает до её зоны
 - Двухслойный layout: scroll-слой (контент + невидимый спейсер) и fixed-слой (метаданные)
 - Оба слоя используют общий `LAYOUT_CLASSES` для идентичного позиционирования
 - Контент центрирован горизонтально (`mx-auto max-w-[58rem]`)
-- Метаданные (Geist Mono): RESOLUTION, FILENAME, DATE, TYPE, SOURCE, AUTHOR, TAGS
-- В секции `FILENAME` есть action `Rename…`
+- Scroll/content top padding: `pt-12`; вместе с верхним меню `h-8` это сохраняет общий 80px visual top offset
+- Метаданные справа (Geist Mono): AUDIO, WARNING, RESOLUTION, DATE, TYPE, SOURCE, AUTHOR
+- Metadata labels используют `text-sm text-muted-foreground`; значения — `text-sm text-foreground`
+- `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel; rename/delete/source/channel actions живут в shared overflow menu
 - После успешного rename Detail продолжает показывать тот же блок уже под новым slug и новым visible title
-- Кнопка X справа вверху (ниже 32px drag region), Esc для закрытия
+- Кнопка X справа вверху, Esc для закрытия
 - Стрелки влево/вправо — линейная навигация между блоками
-- Detail — plain div с `absolute inset-0 z-10` (не Radix Dialog), внутри `<main>` со стекинг-контекстом `isolation: isolate`
+- Detail — plain div с `absolute inset-0 z-10` (не Radix Dialog)
 
 ### Клавиатурная навигация
 

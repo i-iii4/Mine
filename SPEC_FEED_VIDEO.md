@@ -91,8 +91,9 @@ type FeedPlaybackDescriptor = {
   - feed surface использует `direct -> blob -> poster-only`
 - `heavy`
   - larger, но всё ещё допустимые single-video clips
-  - feed surface использует `direct -> poster-only on media/playback error`
-  - blob fallback не используется, чтобы не тащить тяжёлый source целиком в память
+  - feed surface использует `direct -> blob -> poster-only`
+  - blob fallback разрешён только для active heavy surface; Grid гарантирует
+    максимум один active `heavy` clip, поэтому память bounded одним source
   - direct-loading не обрывается по короткому таймеру: активным может быть
     только один `heavy` clip, поэтому он может дождаться первого playable
     frame, пока карточка остаётся active playback candidate
@@ -167,7 +168,7 @@ Autoplay semantics в descriptor не кодируются.
   прямоугольником
 - `FeedVideoSurface` принимает optional `posterCandidates`; если они переданы, poster branch использует общий candidate chain вместо single hardcoded poster URL
 - `standard`: direct timeout/error => blob fallback
-- `heavy`: direct error / play rejection => permanent poster-only; no blob fallback
+- `heavy`: direct error / play rejection => blob fallback; blob failure => poster-only
 - blob timeout/error => permanent poster-only
 - пустой `<video>` без `src` запрещён
 
@@ -176,6 +177,8 @@ Autoplay semantics в descriptor не кодируются.
 - `FEED_VIDEO_DIRECT_TIMEOUT_MS = 1200`
 - `FEED_VIDEO_BLOB_TIMEOUT_MS = 1800`
 - `heavy` direct-loading does not use a short self-timeout
+- `heavy` blob-loading also does not use the short blob timeout; it is aborted
+  by unmount/inactive state instead
 
 ## Poster contract
 

@@ -206,8 +206,11 @@ describe("FeedVideoSurface", () => {
     expect(container.querySelector("[data-feed-video-phase='loading_direct']")).toBeTruthy();
   });
 
-  it("keeps heavy clips direct-only on playback errors", async () => {
-    const fetchMock = vi.fn();
+  it("falls back to blob for active heavy clips on playback errors", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(new Blob(["video"], { type: "video/mp4" })),
+    } as Response);
     vi.stubGlobal("fetch", fetchMock);
 
     const { container } = render(
@@ -225,8 +228,34 @@ describe("FeedVideoSurface", () => {
       await Promise.resolve();
     });
 
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(container.querySelector("video")).toBeNull();
-    expect(container.querySelector("[data-feed-video-phase='failed_poster_only']")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "asset://localhost//tmp/vault/demo.mp4",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(container.querySelector("video")).toHaveAttribute("src", "blob:feed-video");
+  });
+
+  it("does not apply the short blob timeout to heavy fallback", async () => {
+    const fetchMock = vi.fn().mockReturnValue(new Promise(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(
+      <FeedVideoSurface
+        playback={{ ...PLAYBACK, profile: "heavy" }}
+        allowPlayback
+        vaultPath="/tmp/vault"
+        thumbsRootPath="/tmp/thumbs"
+        className="h-full w-full object-cover"
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.error(container.querySelector("video")!);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(FEED_VIDEO_DIRECT_TIMEOUT_MS * 5);
+    });
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(container.querySelector("[data-feed-video-phase='loading_blob']")).toBeTruthy();
   });
 });

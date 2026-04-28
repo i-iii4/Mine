@@ -48,9 +48,8 @@ export function FeedVideoSurface({
     () => (posterCandidates && posterCandidates.length > 0 ? posterCandidates : [posterSrc]),
     [posterCandidates, posterSrc],
   );
-  const usesBlobFallback = playback.profile === "standard";
-  const directFailurePhase: "loading_blob" | "failed_poster_only" =
-    usesBlobFallback ? "loading_blob" : "failed_poster_only";
+  const usesBlobTimeout = playback.profile === "standard";
+  const directFailurePhase: "loading_blob" = "loading_blob";
   useEffect(() => {
     setPhase(allowPlayback ? "loading_direct" : "poster");
     setBlobUrl(null);
@@ -129,11 +128,13 @@ export function FeedVideoSurface({
       "playing_blob",
       "failed_poster_only",
     );
-    const timeoutId = window.setTimeout(() => {
-      setPhase((current) =>
-        current === "loading_blob" ? "failed_poster_only" : current,
-      );
-    }, FEED_VIDEO_BLOB_TIMEOUT_MS);
+    const timeoutId = usesBlobTimeout
+      ? window.setTimeout(() => {
+        setPhase((current) =>
+          current === "loading_blob" ? "failed_poster_only" : current,
+        );
+      }, FEED_VIDEO_BLOB_TIMEOUT_MS)
+      : null;
 
     const controller = new AbortController();
     let cancelled = false;
@@ -164,9 +165,9 @@ export function FeedVideoSurface({
     return () => {
       cancelled = true;
       controller.abort();
-      window.clearTimeout(timeoutId);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [attemptPlay, directSrc, phase]);
+  }, [attemptPlay, directSrc, phase, usesBlobTimeout]);
 
   const posterVisible =
     phase !== "playing_direct" && phase !== "playing_blob";
