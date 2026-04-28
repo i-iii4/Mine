@@ -612,10 +612,13 @@ Rationale: masonry-раскладка с round-robin распределение�
 Rationale: Tauri `data-tauri-drag-region` перехватывает события указателя на нативном уровне (до CSS). Radix Dialog порталит контент за пределы `<main>`, что делает невозможным управление z-index относительно drag region. Plain div внутри `<main>` с `isolation: isolate` решает обе проблемы.
 
 Detail top menu имеет два runtime режима: `classic` и `island`. Оба режима
-используют тот же content baseline, что feed/sidebar, постоянную divider/border
-line и `bg-accent` surface, matching нижний action bar. `islands` был
-экспериментальным split-variant и не является частью contract; если старое
-значение осталось в `localStorage`, frontend должен fallback'иться в `island`.
+используют тот же content baseline, что feed/sidebar. `classic` использует
+постоянную divider line и solid `bg-accent` surface, matching нижний action
+bar. `island` использует тот же border/radius contract, но поверх контента
+получает лёгкий glass surface: `bg-accent/80 backdrop-blur-sm
+backdrop-saturate-150`, без тени и градиента. `islands` был экспериментальным
+split-variant и не является частью contract; если старое значение осталось в
+`localStorage`, frontend должен fallback'иться в `island`.
 Island surface компенсирует правый optical inset (`pl-3 pr-1`), потому что
 иконки живут внутри `size-8` hit area: hit target остаётся 32px, а визуальный
 край совпадает с текстовым краем filename.

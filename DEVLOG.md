@@ -46,9 +46,12 @@
 - Карточечный hover action для связи с каналами называется `Connect`, не
   `Channel`; то же имя используется в shared overflow/context menus.
 - Island-версия `Channels:` selector — абсолютный top overlay без фоновой
-  плашки; surface совпадает с Detail island (`bg-accent`, `rounded-1`,
-  `border`). Hover у island-selector меняет только яркость текста, без
-  дополнительной заливки control.
+  плашки; surface совпадает с Detail island (`bg-accent/80`, `rounded-1`,
+  `border`, `backdrop-blur-sm`, `backdrop-saturate-150`). Hover у
+  island-selector меняет только яркость текста, без дополнительной заливки
+  control.
+- Island surfaces получили лёгкий glass effect только на маленьких `h-8`
+  поверхностях. Classic bars и большие overlay остаются solid, без blur.
 - Автоподскрол активного пункта sidebar стал padding-aware: активная строка не
   подтягивается под top inset и не обрезается под island overlay.
 - `DragOverlay` для block drag теперь рендерит реальный feed-card preview

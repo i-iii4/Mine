@@ -88,6 +88,9 @@ describe("Detail", () => {
 
     const islandMenu = container.querySelector('[data-detail-top-menu="island"]');
     expect(islandMenu).not.toBeNull();
+    expect(islandMenu).toHaveClass("bg-accent/80");
+    expect(islandMenu).toHaveClass("backdrop-blur-sm");
+    expect(islandMenu).toHaveClass("backdrop-saturate-150");
     expect(islandMenu).toHaveClass("pl-3");
     expect(islandMenu).toHaveClass("pr-1");
   });

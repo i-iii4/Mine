@@ -163,7 +163,9 @@ describe("Sidebar", () => {
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("w-fit");
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("rounded-1");
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("pointer-events-auto");
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("bg-accent");
+    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("bg-accent/80");
+    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("backdrop-blur-sm");
+    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("backdrop-saturate-150");
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("gap-2");
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("pl-3");
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("pr-[2px]");

@@ -324,7 +324,7 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
       data-sidebar-link-mode-bar
     >
       <div
-        className="pointer-events-auto flex h-8 w-fit items-center gap-2 rounded-1 border border-border bg-accent pl-3 pr-[2px]"
+        className="pointer-events-auto flex h-8 w-fit items-center gap-2 rounded-1 border border-border bg-accent/80 pl-3 pr-[2px] backdrop-blur-sm backdrop-saturate-150"
         data-sidebar-link-mode-pill
       >
         {label}

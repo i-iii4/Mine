@@ -459,13 +459,18 @@ sidebar.
 | Режим Detail menu | Geometry |
 |---|---|
 | `classic` | `h-8 border-b border-border bg-accent px-8 gap-2` |
-| `island` | absolute `top-4`, centered, без фоновой плашки; pill `h-8 rounded-1 border border-border bg-accent pl-3 pr-[2px] gap-2` |
+| `island` | absolute `top-4`, centered, без фоновой плашки; pill `h-8 rounded-1 border border-border bg-accent/80 backdrop-blur-sm backdrop-saturate-150 pl-3 pr-[2px] gap-2` |
 
 Содержимое surface: `Channels:` + selector `All / Connected`. `Channels:`
 использует `font-mono text-sm text-muted-foreground`. Selector повторяет
 ActionButton geometry: outer `h-6 p-[2px] rounded-1`, segments `h-5
 px-[1ch] rounded-[2px]`. В `island` hover не заливает outer control; меняется
 только яркость текста segment (`hover:text-foreground`).
+
+Island surfaces используют только лёгкий glass effect: `bg-accent/80
+backdrop-blur-sm backdrop-saturate-150`, без теней и градиентов. Эффект
+разрешён только для маленьких fixed-height island surfaces (`h-8`), не для
+полноширинных classic bars и не для больших overlay.
 
 Checkbox behaviour: только прямой click/key на checkbox меняет membership.
 Клик по строке канала навигирует как обычный sidebar item. Правый слот канала

@@ -162,8 +162,9 @@ Vault-пикер — не маршрут, а состояние: если `vault
 
 Geometry зависит от Detail top menu mode. В `classic` selector живёт в
 полноширинном `h-8 bg-accent border-b` баре. В `island` selector живёт в
-абсолютной top-пуле (`top-4`, `bg-accent`, `rounded-1`, `border`) без фоновой
-защитной плашки; список сохраняет top inset `pt-20`.
+абсолютной top-пуле (`top-4`, `bg-accent/80`, `backdrop-blur-sm`,
+`backdrop-saturate-150`, `rounded-1`, `border`) без фоновой защитной плашки;
+список сохраняет top inset `pt-20`.
 
 **Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время drag (`isCardDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию. `SortableContext` получает полный список channels IDs независимо от видимости.
 
@@ -301,7 +302,7 @@ const mediaUrl = convertFileSrc(vaultPath + "/" + mediaFile);
 
 ## Ограничения WebKit (Tauri на macOS)
 
-- Нет `backdrop-filter: blur()` с хорошей производительностью на старых macOS — использовать сплошной фон для оверлеев
+- `backdrop-filter` использовать только на маленьких fixed-height island surfaces (`h-8`); для больших оверлеев и полноширинных баров использовать сплошной фон
 - `scrollbar-width: none` не поддерживается — использовать `::-webkit-scrollbar { display: none }`
 - `gap` в flexbox/grid — поддерживается с Safari 14.1+, безопасно
 
