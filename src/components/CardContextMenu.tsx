@@ -61,7 +61,7 @@ export function CardTagMenu({
       <ContextMenuSub>
         <ContextMenuSubTrigger>
           <Plus className="size-3" />
-          Channel
+          Connect
         </ContextMenuSubTrigger>
         <ContextMenuSubContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
           <CollectionPicker

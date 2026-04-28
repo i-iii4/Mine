@@ -307,15 +307,15 @@ Content: `rounded-1 border bg-popover p-1`, тень — единая для в�
 **Расположение:**
 - **More** (`MoreHorizontal`, `size="icon"` 32px) — верхний правый угол (`absolute right-2 top-2`)
 - **Source** (`ExternalLink`, `size="default"` 32px, текст «Source») — нижний левый угол
-- **Collect** (`FolderPlus`, `size="default"` 32px, текст «Collect») — нижний правый угол
+- **Connect** (`Plus`, `size="default"` 32px, текст «Connect») — нижний правый угол
 
 **Появление:** `opacity-0 group-hover:opacity-100 transition-opacity`
 
 **Поведение:**
 - `stopPropagation` на контейнере — клик по кнопкам не открывает Detail
 - Source: `window.open(url)`. Disabled если `block.url` нет
-- Collect: `DropdownMenu` со списком коллекций (`CollectionPicker`)
-- More: `DropdownMenu` — Collect (подменю), Source, Remove from collection, Delete
+- Connect: `DropdownMenu` со списком каналов (`CollectionPicker`)
+- More: `DropdownMenu` — Connect (подменю), Source, Remove from collection, Delete
 
 ### Checkbox
 
@@ -444,12 +444,15 @@ SubContent (подменю) — та же тень.
 Ширина по умолчанию: 300px. Диапазон ресайза: 220–600px. Порог сворачивания: 100px. Паддинг строки: `py-1` (4px).
 
 Действия: на hover счётчик скрывается, появляется иконка многоточия (DropdownMenu, `modal={false}`, `side="right"`). Dropdown содержит Rename и Delete.
+Hit area многоточия — `size-8` (32×32), даже если визуальная иконка `size-3`.
+Правая колонка строки (`w-8`) является минимальной кликабельной зоной row-action.
 
 #### Link-editor режим (Detail открыт)
 
 Когда открыта карточка, sidebar превращается в редактор связей этой карточки с
-каналами. Список строк использует ту же геометрию, что обычный sidebar, но
-правая колонка содержит checkbox вместо счётчика.
+каналами. `Everything` остаётся обычным пунктом навигации с общим счётчиком и
+без checkbox. Список строк каналов использует ту же геометрию, что обычный
+sidebar.
 
 Верхняя surface:
 
@@ -465,8 +468,13 @@ px-[1ch] rounded-[2px]`. В `island` hover не заливает outer control; 
 только яркость текста segment (`hover:text-foreground`).
 
 Checkbox behaviour: только прямой click/key на checkbox меняет membership.
-Клик по строке канала навигирует как обычный sidebar item. Невыбранный checkbox
-имеет `opacity-0` и проявляется через `group-hover/group-focus-within`.
+Клик по строке канала навигирует как обычный sidebar item. Правый слот канала
+по умолчанию показывает count. Для уже связанного канала checkbox виден всегда
+и count получает `opacity-0`. Для несвязанного канала count скрывается на
+hover/focus, а checkbox проявляется через `group-hover/group-focus-within`.
+Визуальный checkbox остаётся `size-4` (16×16), но его row hit area — `h-8 w-8`
+(32×32). Клик по этой hit area toggles membership и не должен вызывать
+навигацию строки.
 
 ### Сетка
 

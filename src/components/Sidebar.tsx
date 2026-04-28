@@ -151,9 +151,16 @@ export function Sidebar({
         )}
         data-sidebar-scroll
       >
-        {!isLinkingBlock && (
-          <NavItem to="/" label="Everything" count={totalBlocks} cards={channelPreviews.get("__all__") ?? []} compact={compact} end onClick={onNavClick} onSameClick={onScrollToTop} />
-        )}
+        <NavItem
+          to="/"
+          label="Everything"
+          count={totalBlocks}
+          cards={channelPreviews.get("__all__") ?? []}
+          compact={compact}
+          end
+          onClick={onNavClick}
+          onSameClick={isLinkingBlock ? onNavClick : onScrollToTop}
+        />
 
         {isLinkingBlock ? (
           <>
@@ -162,6 +169,7 @@ export function Sidebar({
                 key={tc.tag}
                 label={titleFromTag(tc.tag)}
                 tag={tc.tag}
+                count={tc.count}
                 cards={channelPreviews.get(tc.tag) ?? []}
                 compact={compact}
                 isCardDragging={isCardDragging}
@@ -400,6 +408,7 @@ const NavItem = memo(function NavItem({
 const AssociationTagItem = memo(function AssociationTagItem({
   label,
   tag,
+  count,
   cards,
   compact,
   isCardDragging,
@@ -409,6 +418,7 @@ const AssociationTagItem = memo(function AssociationTagItem({
 }: {
   label: string;
   tag: string;
+  count: number;
   cards: PreviewCard[];
   compact?: boolean;
   isCardDragging: boolean;
@@ -469,18 +479,39 @@ const AssociationTagItem = memo(function AssociationTagItem({
           ))}
         </div>
       )}
-      <Checkbox
-        checked={checked}
-        onCheckedChange={onToggle}
-        onClick={(event) => event.stopPropagation()}
-        onPointerDown={(event) => event.stopPropagation()}
-        onKeyDown={(event) => event.stopPropagation()}
-        className={cn(
-          "ml-auto",
-          !checked && "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-        )}
-        aria-label={`${checked ? "Remove from" : "Add to"} ${label}`}
-      />
+      <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
+        <span
+          className={cn(
+            "text-sm text-muted-foreground",
+            checked ? "opacity-0" : "group-hover:opacity-0 group-focus-within:opacity-0",
+          )}
+        >
+          {count || ""}
+        </span>
+        <div
+          data-sidebar-link-checkbox-hit-area
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle();
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          className={cn(
+            "absolute inset-0 flex cursor-pointer items-center justify-end",
+            checked
+              ? "opacity-100 pointer-events-auto"
+              : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+          )}
+        >
+          <Checkbox
+            checked={checked}
+            onCheckedChange={onToggle}
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+            aria-label={`${checked ? "Remove from" : "Add to"} ${label}`}
+          />
+        </div>
+      </div>
     </div>
   );
 });
@@ -640,9 +671,10 @@ const TagNavItem = memo(function TagNavItem({
               <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
                     <DropdownMenuTrigger asChild>
                       <button
+                        data-sidebar-tag-menu-trigger
                         onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
                         onPointerDown={(e) => { e.stopPropagation(); }}
-                        className="text-muted-foreground hover:text-foreground"
+                        className="flex size-8 items-center justify-end text-muted-foreground hover:text-foreground"
                       >
                         <MoreHorizontal className="size-3" />
                       </button>

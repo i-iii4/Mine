@@ -89,7 +89,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
         <DropdownMenuSub>
           <DropdownMenuSubTrigger>
             <Plus className="size-3" />
-            Channel
+            Connect
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
             <CollectionPicker
@@ -205,7 +205,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         />
       </div>
 
-      {/* Нижний ряд: Source (лево) + Channel (право) */}
+      {/* Нижний ряд: Source (лево) + Connect (право) */}
       <div
         className={cn("absolute bottom-2 left-2 right-2 z-[5] flex gap-2 transition-opacity group-hover:opacity-100", anyOpen ? "opacity-100" : "opacity-0")}
         onClick={stopProp}
@@ -224,11 +224,11 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           </Button>
         )}
 
-        {/* Channel — низ право */}
+        {/* Connect — низ право */}
         <DropdownMenu onOpenChange={setChannelOpen} modal={false}>
           <DropdownMenuTrigger asChild>
             <Button variant="default" size="default" className="flex-1">
-              Channel
+              Connect
               <Plus className="size-3" />
             </Button>
           </DropdownMenuTrigger>

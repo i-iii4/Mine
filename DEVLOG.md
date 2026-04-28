@@ -40,6 +40,11 @@
   `All / Connected`; в `Connected` показываются только связанные каналы.
   Клик по строке канала навигирует как раньше, а добавление/удаление связи
   работает только прямым кликом по checkbox.
+- Sidebar row-actions приведены к одному hit-area contract: checkbox в
+  link-editor и hover-многоточие обычного sidebar используют 32×32 hit area,
+  даже если визуальная иконка/галочка меньше.
+- Карточечный hover action для связи с каналами называется `Connect`, не
+  `Channel`; то же имя используется в shared overflow/context menus.
 - Island-версия `Channels:` selector — абсолютный top overlay без фоновой
   плашки; surface совпадает с Detail island (`bg-accent`, `rounded-1`,
   `border`). Hover у island-selector меняет только яркость текста, без

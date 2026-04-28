@@ -146,14 +146,19 @@ Vault-пикер — не маршрут, а состояние: если `vault
 Активный пункт подсвечивается. Каналы отсортированы по `position`.
 
 Режим открытого Detail:
-1. `Everything` скрывается.
+1. `Everything` остаётся обычным пунктом навигации на `/` с общим счётчиком и
+   без checkbox.
 2. Верхняя surface sidebar показывает `Channels:` и selector `All / Connected`.
 3. `All` показывает все каналы; `Connected` показывает только каналы, связанные
    с открытым блоком.
 4. Строка канала продолжает работать как навигация на `/channel/:tag`.
 5. Checkbox справа — единственный control, который добавляет/удаляет открытый
    блок из канала. Нажатие на строку без checkbox не меняет membership.
-6. Невыбранный checkbox виден только на hover/focus строки.
+6. Правый слот строки повторяет обычный sidebar: без hover виден счётчик.
+   Если канал уже связан с открытым блоком, checkbox виден всегда и замещает
+   счётчик. Если канал не связан, checkbox появляется только на hover/focus.
+7. Визуальный checkbox остаётся 16×16, но кликабельная область равна правому
+   row-action slot: 32×32. Клик по этой области не должен вызывать навигацию.
 
 Geometry зависит от Detail top menu mode. В `classic` selector живёт в
 полноширинном `h-8 bg-accent border-b` баре. В `island` selector живёт в
@@ -205,7 +210,9 @@ Thumbnail отображается через `convertFileSrc(vaultPath + "/.are
 
 ### CardHoverMenu
 
-- Overflow `…` menu содержит action `Rename…`
+- Hover overlay содержит `Source` и `Connect`; `Connect` открывает
+  `CollectionPicker` для связи карточки с каналами.
+- Overflow `…` menu содержит action `Rename…` и тот же `Connect` submenu.
 - Открывает единый rename dialog для выбранного блока
 - Rename не делает silent auto-fix: занятое имя и invalid stem показываются как явные ошибки
 

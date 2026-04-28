@@ -61,6 +61,14 @@ describe("Sidebar", () => {
     expect(screen.getByText("5")).toBeInTheDocument();
   });
 
+  it("keeps sidebar row action targets at row-control size", () => {
+    const { container } = renderSidebar();
+
+    container.querySelectorAll("[data-sidebar-tag-menu-trigger]").forEach((trigger) => {
+      expect(trigger).toHaveClass("size-8");
+    });
+  });
+
   it("applies collapsed width via style", () => {
     const { container } = renderSidebar({ ...defaultProps, width: 0, collapsed: true });
     const aside = container.querySelector("aside");
@@ -78,12 +86,25 @@ describe("Sidebar", () => {
       onNavClick,
     });
 
-    expect(screen.queryByRole("link", { name: /Everything/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Everything/ })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Everything/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connected" })).toBeInTheDocument();
+    expect(screen.getByText("10")).toHaveClass("opacity-0");
+    expect(screen.getByText("5")).not.toHaveClass("opacity-0");
     expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement).toHaveClass("opacity-100");
+    expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement).toHaveClass("pointer-events-auto");
+    expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement?.parentElement).toHaveClass("h-8");
+    expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement?.parentElement).toHaveClass("w-8");
     expect(screen.getByRole("checkbox", { name: /Add to Beta/ })).not.toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /Add to Beta/ })).toHaveClass("opacity-0");
+    expect(screen.getByRole("checkbox", { name: /Add to Beta/ }).parentElement).toHaveClass("opacity-0");
+    expect(screen.getByRole("checkbox", { name: /Add to Beta/ }).parentElement).toHaveClass("pointer-events-none");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement!);
+    expect(onToggleLinkedTag).toHaveBeenCalledWith("open-block", "alpha", true);
+    expect(onNavClick).not.toHaveBeenCalled();
+    onToggleLinkedTag.mockClear();
 
     fireEvent.click(screen.getByRole("link", { name: /Beta/ }));
     expect(onNavClick).toHaveBeenCalledOnce();
@@ -103,6 +124,7 @@ describe("Sidebar", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Connected" }));
 
+    expect(screen.getByText("Everything")).toBeInTheDocument();
     expect(screen.getByText("Alpha")).toBeInTheDocument();
     expect(screen.queryByText("Beta")).not.toBeInTheDocument();
   });
