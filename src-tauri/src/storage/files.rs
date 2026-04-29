@@ -225,6 +225,28 @@ pub fn persist_new_block(
         .ok_or_else(|| anyhow::anyhow!("block not found after creation"))
 }
 
+/// Persist a new block whose `frontmatter.file` already points to a media file
+/// in the vault. This intentionally does not copy or take ownership of the
+/// referenced media; only the `.md`, derived thumbnail, and index row are new.
+pub fn persist_new_reference_block(
+    conn: &Connection,
+    vault: &VaultLayout,
+    block: &Block,
+) -> Result<index::IndexedBlock> {
+    write_block_file(vault, block)?;
+    let _ = thumbnails::generate_for_block(block, vault);
+    index::upsert_block(conn, block, Some(vault.root()))?;
+    let _ = index::sync_thumb_metadata(
+        conn,
+        &block.slug,
+        &vault.thumb_path(&block.slug),
+        Some(vault.root()),
+    );
+
+    index::get_block(conn, &block.slug)?
+        .ok_or_else(|| anyhow::anyhow!("block not found after creation"))
+}
+
 fn is_image_ext(ext: &str) -> bool {
     matches!(
         ext.to_lowercase().as_str(),

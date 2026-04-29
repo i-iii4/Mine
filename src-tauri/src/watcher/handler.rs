@@ -14,8 +14,10 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::domain::block::{
-    compute_body_hash, parse_block, parse_markdown_document, Block, BlockType, DateTime,
+    compute_body_hash, parse_block, parse_markdown_document, serialize_block, Block, BlockType,
+    DateTime,
 };
+use crate::domain::tag::normalize_tag;
 use crate::domain::vault::{normalize_filename_stem, VaultLayout};
 use crate::storage::{article_audio, db, files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
@@ -95,7 +97,7 @@ pub fn full_scan(
     on_thumbs_done: Option<Box<dyn FnOnce() + Send>>,
     app: Option<AppHandle>,
 ) -> Result<ScanResult> {
-    let paths = files::scan_md_files(vault)?;
+    let paths = canonicalize_channel_scan_paths(vault, files::scan_md_files(vault)?)?;
     let mut indexed = 0;
     let mut errors = 0;
 
@@ -211,7 +213,7 @@ pub fn incremental_scan(
     on_thumbs_done: Option<Box<dyn FnOnce() + Send>>,
     app: Option<AppHandle>,
 ) -> Result<ScanResult> {
-    let paths = files::scan_md_files(vault)?;
+    let paths = canonicalize_channel_scan_paths(vault, files::scan_md_files(vault)?)?;
     let indexed_at_map = index::get_block_indexed_at_map(conn)?;
     let mut indexed = 0;
     let mut errors = 0;
@@ -485,6 +487,8 @@ pub fn index_md_file(
     path: &Path,
     app: Option<&AppHandle>,
 ) -> Result<bool> {
+    let path = canonicalize_channel_file(vault, path)?;
+
     // Divert iCloud sync-conflict files into the vault_conflicts surface
     // instead of indexing them as independent blocks. Phase 18.G.3: the
     // UI surfaces unresolved conflicts; the user picks a resolution
@@ -517,7 +521,7 @@ pub fn index_md_file(
         }
     }
 
-    let outcome = index_md_file_inner(conn, vault, path)?;
+    let outcome = index_md_file_inner(conn, vault, &path)?;
 
     if outcome.audio_invalidated {
         if let Some(app) = app {
@@ -691,6 +695,195 @@ struct IndexMdOutcome {
     slug: String,
     thumb_job: Option<ThumbJob>,
     audio_invalidated: bool,
+}
+
+fn canonicalize_channel_scan_paths(
+    vault: &VaultLayout,
+    paths: Vec<PathBuf>,
+) -> Result<Vec<PathBuf>> {
+    let mut changed = false;
+    for path in &paths {
+        let canonical_path = canonicalize_channel_file(vault, path)?;
+        if canonical_path != *path {
+            changed = true;
+        }
+    }
+
+    if changed {
+        files::scan_md_files(vault)
+    } else {
+        Ok(paths)
+    }
+}
+
+fn canonicalize_channel_file(vault: &VaultLayout, path: &Path) -> Result<PathBuf> {
+    let (slug, content) =
+        files::read_block_file(path).with_context(|| format!("reading {}", path.display()))?;
+    if crate::domain::vault::detect_icloud_conflict(&slug).is_some() {
+        return Ok(path.to_path_buf());
+    }
+
+    let parsed = parse_markdown_document(&slug, &content, file_saved_at(path))
+        .with_context(|| format!("parsing {}", path.display()))?;
+    let block = parsed.block;
+    if block.frontmatter.block_type != BlockType::Channel {
+        return Ok(path.to_path_buf());
+    }
+
+    let canonical_slug = normalize_tag(&block.slug);
+    if canonical_slug.is_empty() || canonical_slug == block.slug {
+        return Ok(path.to_path_buf());
+    }
+
+    let canonical_path = vault.block_path(&canonical_slug);
+    if paths_refer_to_same_file(path, &canonical_path) {
+        rename_channel_file(path, &canonical_path)?;
+        return Ok(canonical_path);
+    }
+
+    if !canonical_path.exists() {
+        rename_channel_file(path, &canonical_path)?;
+        return Ok(canonical_path);
+    }
+
+    let (canonical_slug_on_disk, canonical_content) = files::read_block_file(&canonical_path)
+        .with_context(|| format!("reading {}", canonical_path.display()))?;
+    let canonical_parsed = parse_markdown_document(
+        &canonical_slug_on_disk,
+        &canonical_content,
+        file_saved_at(&canonical_path),
+    )
+    .with_context(|| format!("parsing {}", canonical_path.display()))?;
+    if canonical_parsed.block.frontmatter.block_type != BlockType::Channel {
+        log::warn!(
+            "channel canonicalization skipped: {} targets non-channel file {}",
+            path.display(),
+            canonical_path.display()
+        );
+        return Ok(path.to_path_buf());
+    }
+
+    if let Some(merged) = merge_channel_alias_into_canonical(&block, canonical_parsed.block) {
+        std::fs::write(&canonical_path, serialize_block(&merged)).with_context(|| {
+            format!(
+                "failed to merge channel alias {} into {}",
+                path.display(),
+                canonical_path.display()
+            )
+        })?;
+    }
+
+    std::fs::remove_file(path)
+        .with_context(|| format!("failed to remove legacy channel alias {}", path.display()))?;
+    Ok(canonical_path)
+}
+
+fn merge_channel_alias_into_canonical(alias: &Block, mut canonical: Block) -> Option<Block> {
+    let mut changed = false;
+
+    if canonical.frontmatter.title.is_none() && alias.frontmatter.title.is_some() {
+        canonical.frontmatter.title = alias.frontmatter.title.clone();
+        changed = true;
+    }
+    if canonical.frontmatter.description.is_none() && alias.frontmatter.description.is_some() {
+        canonical.frontmatter.description = alias.frontmatter.description.clone();
+        changed = true;
+    }
+    if canonical.frontmatter.color.is_none() && alias.frontmatter.color.is_some() {
+        canonical.frontmatter.color = alias.frontmatter.color.clone();
+        changed = true;
+    }
+    if canonical.frontmatter.icon.is_none() && alias.frontmatter.icon.is_some() {
+        canonical.frontmatter.icon = alias.frontmatter.icon.clone();
+        changed = true;
+    }
+    if canonical.frontmatter.position.is_none() && alias.frontmatter.position.is_some() {
+        canonical.frontmatter.position = alias.frontmatter.position;
+        changed = true;
+    }
+    if canonical.body.trim().is_empty() && !alias.body.trim().is_empty() {
+        canonical.body = alias.body.clone();
+        changed = true;
+    }
+
+    changed.then_some(canonical)
+}
+
+fn rename_channel_file(source: &Path, target: &Path) -> Result<()> {
+    if source == target {
+        return Ok(());
+    }
+
+    if paths_refer_to_same_file(source, target) {
+        let temp = unique_channel_rename_temp_path(target)?;
+        std::fs::rename(source, &temp).with_context(|| {
+            format!(
+                "failed to stage channel rename {} -> {}",
+                source.display(),
+                temp.display()
+            )
+        })?;
+        std::fs::rename(&temp, target).with_context(|| {
+            format!(
+                "failed to finish channel rename {} -> {}",
+                temp.display(),
+                target.display()
+            )
+        })?;
+        return Ok(());
+    }
+
+    std::fs::rename(source, target).with_context(|| {
+        format!(
+            "failed to rename channel {} -> {}",
+            source.display(),
+            target.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn unique_channel_rename_temp_path(target: &Path) -> Result<PathBuf> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("channel target has no parent: {}", target.display()))?;
+    let stem = target
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("channel");
+    for idx in 0..1000 {
+        let candidate = parent.join(format!(
+            ".mine-channel-canonicalize-{}-{}-{}.tmp",
+            std::process::id(),
+            stem,
+            idx
+        ));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!(
+        "failed to find temporary path for channel rename: {}",
+        target.display()
+    );
+}
+
+#[cfg(unix)]
+fn paths_refer_to_same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    let Ok(a_meta) = std::fs::metadata(a) else {
+        return false;
+    };
+    let Ok(b_meta) = std::fs::metadata(b) else {
+        return false;
+    };
+    a_meta.dev() == b_meta.dev() && a_meta.ino() == b_meta.ino()
+}
+
+#[cfg(not(unix))]
+fn paths_refer_to_same_file(_a: &Path, _b: &Path) -> bool {
+    false
 }
 
 /// Core indexing logic: parse + upsert. Returns a ThumbJob if a thumbnail
@@ -1208,6 +1401,61 @@ mod tests {
         assert_eq!(result.errors, 0);
     }
 
+    #[test]
+    fn full_scan_canonicalizes_channel_filename_to_normalized_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+
+        write_md_file(&vault, "Красивый веб", "channel", &[]);
+
+        let result = full_scan(&conn, &vault, None, None).unwrap();
+        assert_eq!(result.indexed, 1);
+        assert_eq!(result.errors, 0);
+        assert!(!vault.block_path("Красивый веб").exists());
+        assert!(vault.block_path("красивый-веб").exists());
+
+        let channels = index::list_channels(&conn).unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].tag, "красивый-веб");
+        assert_eq!(channels[0].title, "Красивый веб");
+    }
+
+    #[test]
+    fn full_scan_removes_legacy_channel_alias_when_canonical_file_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+
+        write_md_file(&vault, "Красивый веб", "channel", &[]);
+        write_md_file(&vault, "красивый-веб", "channel", &[]);
+
+        let result = full_scan(&conn, &vault, None, None).unwrap();
+        assert_eq!(result.indexed, 1);
+        assert_eq!(result.errors, 0);
+        assert!(!vault.block_path("Красивый веб").exists());
+        assert!(vault.block_path("красивый-веб").exists());
+
+        let channels = index::list_channels(&conn).unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].tag, "красивый-веб");
+    }
+
+    #[test]
+    fn full_scan_does_not_canonicalize_human_named_articles() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+
+        write_md_file(&vault, "Красивый веб", "article", &[]);
+
+        let result = full_scan(&conn, &vault, None, None).unwrap();
+        assert_eq!(result.indexed, 1);
+        assert_eq!(result.errors, 0);
+        assert!(vault.block_path("Красивый веб").exists());
+        assert!(!vault.block_path("красивый-веб").exists());
+    }
+
     // ── index_md_file ────────────────────────────────────────────────────
 
     #[test]
@@ -1223,6 +1471,24 @@ mod tests {
         let block = index::get_block(&conn, "note").unwrap().unwrap();
         assert_eq!(block.block_type, BlockType::Article);
         assert_eq!(block.tags, vec!["design"]);
+    }
+
+    #[test]
+    fn index_single_file_canonicalizes_channel_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+
+        write_md_file(&vault, "Красивый веб", "channel", &[]);
+        let path = vault.block_path("Красивый веб");
+        index_md_file(&conn, &vault, &path, None).unwrap();
+
+        assert!(!vault.block_path("Красивый веб").exists());
+        assert!(vault.block_path("красивый-веб").exists());
+
+        let channels = index::list_channels(&conn).unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].tag, "красивый-веб");
     }
 
     #[test]

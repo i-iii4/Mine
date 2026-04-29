@@ -14,6 +14,7 @@ const commandMocks = vi.hoisted(() => ({
   listTaxonomySnapshot: vi.fn<() => Promise<TaxonomySnapshot>>(),
   renameBlockFile: vi.fn(),
   getBlock: vi.fn(),
+  extractInlineMedia: vi.fn(),
 }));
 
 vi.mock("@/lib/commands", () => ({
@@ -33,6 +34,7 @@ vi.mock("@/lib/commands", () => ({
   removeTag: vi.fn(),
   deleteBlock: vi.fn(),
   getBlock: commandMocks.getBlock,
+  extractInlineMedia: commandMocks.extractInlineMedia,
 }));
 
 vi.mock("@/lib/articleAudioDesktopGateway", () => ({
@@ -311,6 +313,56 @@ describe("AppWithVault", () => {
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
     expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(4, undefined, 0, 200);
+  });
+
+  it("keeps sidebar channel order from channel positions when tag counts change", async () => {
+    commandMocks.listTaxonomySnapshot.mockResolvedValue({
+      tags: [
+        { tag: "beta", count: 9 },
+        { tag: "loose", count: 5 },
+        { tag: "alpha", count: 1 },
+      ],
+      channels: [
+        {
+          tag: "alpha",
+          title: "Alpha",
+          description: null,
+          color: null,
+          icon: null,
+          position: 0,
+          created_at: "2026-04-17T00:00:00Z",
+          block_count: 1,
+        },
+        {
+          tag: "beta",
+          title: "Beta",
+          description: null,
+          color: null,
+          icon: null,
+          position: 1,
+          created_at: "2026-04-17T00:00:00Z",
+          block_count: 9,
+        },
+      ],
+      total_blocks: 2,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "alpha" })).toBeInTheDocument();
+    });
+
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "Everything 2",
+      "alpha",
+      "beta",
+      "loose",
+    ]);
   });
 
   it("shows migration overlay until the first sync finishes for a fresh derived store", async () => {

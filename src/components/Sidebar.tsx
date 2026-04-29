@@ -46,7 +46,7 @@ interface SidebarProps {
   orderedTags: TagCount[];
   channelPreviews: Map<string, PreviewCard[]>;
   totalBlocks: number;
-  isCardDragging: boolean;
+  isDropDragging: boolean;
   isCreatingChannel: boolean;
   onSetCreatingChannel: (v: boolean) => void;
   onDeleteTag: (tag: string) => void;
@@ -69,7 +69,7 @@ export function Sidebar({
   orderedTags,
   channelPreviews,
   totalBlocks,
-  isCardDragging,
+  isDropDragging,
   isCreatingChannel,
   onSetCreatingChannel,
   onDeleteTag,
@@ -172,7 +172,7 @@ export function Sidebar({
                 tag={tc.tag}
                 cards={channelPreviews.get(tc.tag) ?? []}
                 compact={compact}
-                isCardDragging={isCardDragging}
+                isDropDragging={isDropDragging}
                 isEditing={!isLinkingBlock && editingTag === tc.tag}
                 linkEditor={isLinkingBlock ? {
                   checked,
@@ -395,7 +395,7 @@ const TagNavItem = memo(function TagNavItem({
   tag,
   cards,
   compact,
-  isCardDragging,
+  isDropDragging,
   isEditing,
   linkEditor,
   onDoubleClick,
@@ -411,7 +411,7 @@ const TagNavItem = memo(function TagNavItem({
   tag: string;
   cards: PreviewCard[];
   compact?: boolean;
-  isCardDragging: boolean;
+  isDropDragging: boolean;
   isEditing: boolean;
   linkEditor?: {
     checked: boolean;
@@ -451,13 +451,13 @@ const TagNavItem = memo(function TagNavItem({
   // over-estimate — slight scrollbar drift is preferable to the browser
   // shrinking the row and jumping scroll position after materialization.
   //
-  // Disabled while dragging (`isCardDragging`) so dnd-kit's
+  // Disabled while dragging onto tags so dnd-kit's
   // getBoundingClientRect calls on drop targets always return real
   // geometry instead of the intrinsic placeholder.
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    ...(!isCardDragging && !isDragging
+    ...(!isDropDragging && !isDragging
       ? {
           contentVisibility: "auto" as const,
           containIntrinsicSize: "auto 42px",
@@ -488,14 +488,14 @@ const TagNavItem = memo(function TagNavItem({
             className={cn(
               "group relative rounded-1",
               isDragging && "opacity-30",
-              isOver && !isDragging && isCardDragging && "ring-2 ring-ring ring-inset",
+              isOver && !isDragging && isDropDragging && "ring-2 ring-ring ring-inset",
             )}
           >
         <NavLink
           to={to}
           draggable="false"
           onClick={(e) => {
-            if (isDragging || isCardDragging) {
+            if (isDragging || isDropDragging) {
               e.preventDefault();
               return;
             }

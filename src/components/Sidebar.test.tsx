@@ -17,7 +17,7 @@ const defaultProps = {
   orderedTags: [tag("alpha", 10), tag("beta", 5)],
   channelPreviews: new Map(),
   totalBlocks: 17,
-  isCardDragging: false,
+  isDropDragging: false,
   isCreatingChannel: false,
   onSetCreatingChannel: vi.fn(),
   onDeleteTag: vi.fn(),

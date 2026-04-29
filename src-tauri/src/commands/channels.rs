@@ -125,7 +125,7 @@ pub fn create_channel(
     let now = crate::commands::state::now_iso8601();
     let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
 
-    let channel = Channel::new(&tag, title.as_deref(), dt)
+    let mut channel = Channel::new(&tag, title.as_deref(), dt)
         .map_err(|e| CommandError::Internal(e.to_string()))?;
 
     // Check uniqueness after normalization
@@ -136,6 +136,7 @@ pub fn create_channel(
             channel.tag
         )));
     }
+    channel.position = index::next_channel_position(&vs.conn)?;
 
     // Write channel .md file (source of truth)
     let block = channel_to_block(&channel);

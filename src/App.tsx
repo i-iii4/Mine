@@ -643,6 +643,7 @@ export function AppWithVault({
       previews?: boolean;
     },
     delayMs = 2000,
+    options: { force?: boolean } = {},
   ) => {
     if (!vaultReady) {
       return;
@@ -650,6 +651,10 @@ export function AppWithVault({
     if (flags.grid) pendingRefreshRef.current.grid = true;
     if (flags.taxonomy) pendingRefreshRef.current.taxonomy = true;
     if (flags.previews) pendingRefreshRef.current.previews = true;
+    if (options.force && refreshTimerRef.current !== null) {
+      window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
     if (refreshInFlightRef.current || refreshTimerRef.current !== null) {
       return;
     }
@@ -1094,30 +1099,22 @@ export function AppWithVault({
   // ── Ordered tags: channels by position, then remaining alphabetically ──
 
   const orderedTags = useMemo(() => {
-    const channelPositions = new Map(channels.map((c) => [c.tag, c.position]));
-    const withPos: (TagCount & { pos: number })[] = [];
-    const noPos: TagCount[] = [];
-
-    for (const tc of tags) {
-      const pos = channelPositions.get(tc.tag);
-      if (pos !== undefined) {
-        withPos.push({ ...tc, pos });
-      } else {
-        noPos.push(tc);
-      }
-    }
-
-    // Channels that exist but have no blocks yet
-    for (const ch of channels) {
-      if (!tags.some((tc) => tc.tag === ch.tag)) {
-        withPos.push({ tag: ch.tag, count: 0, pos: ch.position });
-      }
-    }
-
-    withPos.sort((a, b) => a.pos - b.pos);
+    const tagCounts = new Map(tags.map((tc) => [tc.tag, tc.count]));
+    const channelTags = new Set(channels.map((ch) => ch.tag));
+    const withPos = [...channels]
+      .sort((a, b) => (
+        a.position - b.position
+        || a.title.localeCompare(b.title)
+        || a.tag.localeCompare(b.tag)
+      ))
+      .map((ch) => ({
+        tag: ch.tag,
+        count: tagCounts.get(ch.tag) ?? ch.block_count,
+      }));
+    const noPos = tags.filter((tc) => !channelTags.has(tc.tag));
     noPos.sort((a, b) => a.tag.localeCompare(b.tag));
 
-    return [...withPos, ...noPos].map(({ tag, count }) => ({ tag, count }));
+    return [...withPos, ...noPos];
   }, [tags, channels]);
 
   // ── Opt+Cmd+Up/Down — switch channels ─────────────────────────────────
@@ -1208,18 +1205,23 @@ export function AppWithVault({
   const handleInlineMediaDrop = useCallback(
     async (payload: InlineMediaDragPayload, tag: string) => {
       try {
-        await extractInlineMedia({
+        const block = await extractInlineMedia({
           source_slug: payload.sourceSlug,
           media_ref: payload.mediaRef,
           target_tag: tag,
           title: payload.title,
         });
+        invalidateRoutesForTags(block.tags);
+        scheduleRefresh({
+          grid: currentTagRef.current === undefined || block.tags.includes(currentTagRef.current),
+          taxonomy: true,
+          previews: true,
+        }, 0, { force: true });
       } catch (err) {
         console.error("Failed to extract inline media:", err);
       }
-      await reloadAllSnapshots();
     },
-    [reloadAllSnapshots],
+    [invalidateRoutesForTags, scheduleRefresh],
   );
 
   const handleDndStart = useCallback(
@@ -1276,7 +1278,7 @@ export function AppWithVault({
       } & Partial<InlineMediaDragPayload>) | undefined;
       if (activeData?.type === "inline_media") {
         if (overId.startsWith("tag:")) {
-          handleInlineMediaDrop(activeData as InlineMediaDragPayload, overId.slice(4));
+          void handleInlineMediaDrop(activeData as InlineMediaDragPayload, overId.slice(4));
         }
         return;
       }
@@ -1472,7 +1474,7 @@ export function AppWithVault({
         orderedTags={orderedTags}
         channelPreviews={channelPreviews}
         totalBlocks={totalBlocks}
-        isCardDragging={activeDragBlock !== null}
+        isDropDragging={activeDragBlock !== null || activeDragInlineMedia !== null}
         isCreatingChannel={isCreatingChannel}
         onSetCreatingChannel={setIsCreatingChannel}
         onDeleteTag={handleDeleteTagFromAll}
@@ -1489,7 +1491,7 @@ export function AppWithVault({
 
       <SidebarResizeHandle
         isResizing={sidebarResizing}
-        disabled={activeDragBlock !== null || activeDragTag !== null}
+        disabled={activeDragBlock !== null || activeDragInlineMedia !== null || activeDragTag !== null}
         onResizeStart={startResize}
         onResizeUpdate={updateResize}
         onResizeEnd={endResize}

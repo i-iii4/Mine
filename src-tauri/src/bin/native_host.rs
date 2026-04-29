@@ -615,9 +615,13 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
     };
     let title = p.title.or_else(|| Some(title_from_raw_channel_tag(&p.tag)));
 
-    let channel = match Channel::new(&p.tag, title.as_deref(), created_at) {
+    let mut channel = match Channel::new(&p.tag, title.as_deref(), created_at) {
         Ok(channel) => channel,
         Err(e) => return send_error(&format!("invalid channel: {e}")),
+    };
+    channel.position = match index::next_channel_position(&conn) {
+        Ok(position) => position,
+        Err(e) => return send_error(&format!("failed to resolve channel position: {e}")),
     };
 
     let block = channel_to_block(&channel);

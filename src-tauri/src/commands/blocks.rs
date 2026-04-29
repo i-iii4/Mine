@@ -270,7 +270,7 @@ pub fn create_block(
 
 /// Extract a local inline image from an article body into a new image block.
 #[tauri::command(rename_all = "snake_case")]
-pub fn extract_inline_media(
+pub async fn extract_inline_media(
     app: AppHandle,
     state: State<'_, AppState>,
     source_slug: String,
@@ -278,24 +278,28 @@ pub fn extract_inline_media(
     target_tag: String,
     title: Option<String>,
 ) -> Result<IndexedBlock, InlineMediaExtractError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| InlineMediaExtractError::Internal {
-            message: "vault state mutex poisoned".into(),
-        })?;
-    let vs = vault_state
-        .as_ref()
-        .ok_or(InlineMediaExtractError::NoVault)?;
+    let vault = {
+        let vault_state =
+            state
+                .vault_state
+                .lock()
+                .map_err(|_| InlineMediaExtractError::Internal {
+                    message: "vault state mutex poisoned".into(),
+                })?;
+        let vs = vault_state
+            .as_ref()
+            .ok_or(InlineMediaExtractError::NoVault)?;
+        vs.vault.clone()
+    };
 
-    let indexed = extract_inline_media_inner(
-        &vs.conn,
-        &vs.vault,
-        source_slug,
-        media_ref,
-        target_tag,
-        title,
-    )?;
+    let indexed = tauri::async_runtime::spawn_blocking(move || {
+        let conn = db::open_or_create(&vault.index_db_path()).map_err(internal_extract_error)?;
+        extract_inline_media_inner(&conn, &vault, source_slug, media_ref, target_tag, title)
+    })
+    .await
+    .map_err(|e| InlineMediaExtractError::Internal {
+        message: format!("inline media extraction worker failed: {e}"),
+    })??;
 
     let slug = indexed.slug.clone();
     let tags = indexed.tags.clone();
@@ -393,7 +397,7 @@ fn extract_inline_media_inner(
     let raw_slug = suggest_slug(Some(&resolved_title), None);
     let slug = resolve_unique_extraction_slug(conn, vault, &raw_slug, &source_ext)
         .map_err(internal_extract_error)?;
-    let media_file = format!("{slug}.{source_ext}");
+    let media_file = media_ref.clone();
     let now = crate::commands::state::now_iso8601();
     let saved_at = DateTime::new(&now).map_err(|e| InlineMediaExtractError::Internal {
         message: e.to_string(),
@@ -423,20 +427,8 @@ fn extract_inline_media_inner(
         body: format!("![[{media_file}]]"),
     };
 
-    files::persist_new_block(conn, vault, &block, Some(&source_media_path))
-        .map_err(internal_extract_error)?;
-    let _ = thumbnails::generate_for_block(&block, vault);
-    let _ = index::sync_thumb_metadata(
-        conn,
-        &block.slug,
-        &vault.thumb_path(&block.slug),
-        Some(vault.root()),
-    );
-    let indexed = index::get_block(conn, &block.slug)
-        .map_err(internal_extract_error)?
-        .ok_or_else(|| InlineMediaExtractError::Internal {
-            message: "block not found after extraction".to_string(),
-        })?;
+    let indexed =
+        files::persist_new_reference_block(conn, vault, &block).map_err(internal_extract_error)?;
     Ok(indexed)
 }
 
@@ -1029,7 +1021,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_inline_media_inner_copies_image_and_indexes_related_note() {
+    fn extract_inline_media_inner_references_existing_image_and_indexes_related_note() {
         let (_root, _derived, vault, conn) = make_vault();
         let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
         persist_block(&conn, &vault, &source);
@@ -1049,14 +1041,15 @@ mod tests {
         assert_eq!(indexed.block_type, BlockType::Image);
         assert_eq!(indexed.title.as_deref(), Some("Pulled Frame"));
         assert_eq!(indexed.url.as_deref(), Some("https://example.com/article"));
-        assert_eq!(indexed.media_file.as_deref(), Some("Pulled Frame.png"));
+        assert_eq!(indexed.media_file.as_deref(), Some("photo.png"));
         assert_eq!(indexed.tags, vec!["mood-board".to_string()]);
         assert_eq!(indexed.related_notes, vec!["Source Article".to_string()]);
         assert_eq!(indexed.source.as_deref(), Some("inline-media-extraction"));
         assert_eq!(
-            std::fs::read(vault.root().join("Pulled Frame.png")).unwrap(),
+            std::fs::read(vault.root().join("photo.png")).unwrap(),
             b"image-bytes"
         );
+        assert!(!vault.root().join("Pulled Frame.png").exists());
 
         let (_, extracted_content) =
             files::read_block_file(&vault.block_path("Pulled Frame")).unwrap();
@@ -1070,11 +1063,38 @@ mod tests {
             extracted.frontmatter.source_media.as_deref(),
             Some("photo.png")
         );
-        assert_eq!(extracted.body, "![[Pulled Frame.png]]");
+        assert_eq!(extracted.body, "![[photo.png]]");
 
         let (_, source_content) =
             files::read_block_file(&vault.block_path("Source Article")).unwrap();
         assert!(source_content.contains("![[photo.png]]"));
+    }
+
+    #[test]
+    fn extract_inline_media_inner_avoids_owned_filename_collision_for_shared_media() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
+        persist_block(&conn, &vault, &source);
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let indexed = extract_inline_media_inner(
+            &conn,
+            &vault,
+            "Source Article".to_string(),
+            "photo.png".to_string(),
+            "Mood Board".to_string(),
+            Some("photo".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(indexed.slug, "photo (2)");
+        assert_eq!(indexed.media_file.as_deref(), Some("photo.png"));
+
+        files::delete_block_files(&vault, &indexed.slug, Some("png")).unwrap();
+        assert_eq!(
+            std::fs::read(vault.root().join("photo.png")).unwrap(),
+            b"image-bytes"
+        );
     }
 
     #[test]

@@ -143,7 +143,10 @@ Vault-пикер — не маршрут, а состояние: если `vault
 3. Каждый канал: название + счётчик блоков + до 20 превью-карточек
    (thumbnails)
 
-Активный пункт подсвечивается. Каналы отсортированы по `position`.
+Активный пункт подсвечивается. Каналы отсортированы по `channels.position`.
+`channels` является source of truth для порядка; `tags` используется только как
+источник счётчиков и списка неповышенных тегов. Изменение количества карточек в
+канале не должно менять порядок каналов в sidebar.
 
 Режим открытого Detail:
 1. `Everything` остаётся обычным пунктом навигации на `/` с общим счётчиком и
@@ -171,7 +174,7 @@ Geometry зависит от Detail top menu mode. В `classic` selector жив�
 `backdrop-saturate-150`, `rounded-1`, `border`) без фоновой защитной плашки;
 список сохраняет top inset `pt-20`.
 
-**Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время drag (`isCardDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию. `SortableContext` получает полный список channels IDs независимо от видимости.
+**Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время любого drag-to-channel (`isDropDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию и hover-ring работал одинаково для карточек и inline-media. `SortableContext` получает полный список channels IDs независимо от видимости.
 
 **Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`), а не через polling `listChannelPreviews`. Initial state грузится один раз при mount через `listChannelPreviews(20)`, потом инкрементально патчится `useChannelPreviewsEvents` hook'ом. Latency add block → visible in sidebar: ~110ms (native host write + watcher debounce + IPC event + React update). Cache-bust: initial load использует `?m=<mtime>` (unix timestamp thumb-файла из Rust `stat()`), real-time updates используют `?v=<counter>` (per-slug version counter, инкрементируется на `thumb:updated`). Два механизма дополняют друг друга: `?m=` покрывает межсессионные изменения (Phase 2 worker перезаписал PNG→JPEG), `?v=` покрывает live-обновления внутри сессии.
 

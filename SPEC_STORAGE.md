@@ -145,6 +145,7 @@ rename_slug(conn: &Connection, old_slug: &str, new_slug: &str) -> Result<bool>
 search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<IndexedBlock>>
 upsert_channel(conn: &Connection, channel: &Channel) -> Result<i64>
 list_channels(conn: &Connection) -> Result<Vec<Channel>>
+next_channel_position(conn: &Connection) -> Result<u32>
 remove_channel(conn: &Connection, tag: &str) -> Result<bool>
 ```
 
@@ -162,6 +163,24 @@ remove_channel(conn: &Connection, tag: &str) -> Result<bool>
 - Не делает silent conflict resolution: target slug должен быть свободен
 - Не переписывает другие `.md` файлы и не трогает source vault
 - Используется как low-level primitive для watcher-based external rename; in-app rename поверх него дополнительно переписывает vault refs и source media
+
+### Поведение list_channels / next_channel_position
+
+- `list_channels` возвращает каналы в порядке `position ASC`, затем стабильный title/tag tie-breaker.
+- `list_channels` нормализует channel identity через tag-normalization и дедуплицирует legacy alias rows. Если в index есть одновременно raw filename tag (`Красивый веб`) и canonical tag (`красивый-веб`), наружу возвращается один canonical channel; canonical DB row выигрывает у alias row.
+- `next_channel_position` возвращает `max(position) + 1`, либо `0` для пустого списка.
+- Новые каналы должны получать append-position через `next_channel_position`; `position = 0` допустим только для первого канала или explicit reorder.
+- `upsert_channel_from_block` нормализует slug channel-файла в tag перед записью в `channels` и удаляет legacy raw alias row, если он отличается от canonical tag.
+
+### Canonical filenames для channel-файлов
+
+- Для `type: channel` filename является stable id и должен быть canonical normalized tag: `Красивый веб.md` → `красивый-веб.md`.
+- `title` остаётся человекочитаемым display name в frontmatter: `title: Красивый веб`.
+- Watcher выполняет canonicalization перед `full_scan`, `incremental_scan` и single-file `index_md_file`.
+- Если canonical-файла ещё нет, legacy channel-файл переименовывается.
+- Если canonical-файл уже есть и он тоже `type: channel`, legacy alias удаляется; canonical file остаётся source of truth.
+- Если canonical path занят не-channel файлом, alias не удаляется и не перезаписывает чужой файл.
+- Обычные Obsidian/article/image/link файлы с human filename не canonicalize-ятся.
 
 ### Поведение search_blocks
 
@@ -185,6 +204,7 @@ scan_md_files(vault: &VaultLayout) -> Result<Vec<PathBuf>>
 copy_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Result<PathBuf>
 delete_block_files(vault: &VaultLayout, slug: &str, media_ext: Option<&str>) -> Result<()>
 persist_new_block(conn: &Connection, vault: &VaultLayout, block: &Block, source_file: Option<&Path>) -> Result<IndexedBlock>
+persist_new_reference_block(conn: &Connection, vault: &VaultLayout, block: &Block) -> Result<IndexedBlock>
 rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) -> Result<()>
 ```
 
@@ -211,6 +231,14 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
   - article audio artifacts и sidecar через `storage::article_audio::rename_all_artifacts`
 - Используется и watcher external rename path, и explicit in-app rename command
 - Если higher-level rename flow меняет speakable article text, audio может быть дополнительно инвалидирован поверх этого helper'а
+
+### Поведение persist_new_reference_block
+
+- Записывает только новый `.md` файл.
+- Не копирует media-файл и не объявляет новый блок владельцем `frontmatter.file`.
+- Генерирует thumbnail через общий `generate_for_block`, то есть из уже существующего файла, на который указывает `frontmatter.file`.
+- Индексирует блок и синхронизирует thumbnail metadata так же, как `persist_new_block`.
+- Используется для inline-media extraction: новый блок копирует ссылку на media из исходной статьи, а не бинарный файл.
 
 ---
 

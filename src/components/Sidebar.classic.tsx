@@ -45,7 +45,7 @@ interface SidebarProps {
   orderedTags: TagCount[];
   channelPreviews: Map<string, PreviewCard[]>;
   totalBlocks: number;
-  isCardDragging: boolean;
+  isDropDragging: boolean;
   onDeleteTag: (tag: string) => void;
   onRenameTag: (oldTag: string, newTag: string) => void;
   onCreateChannel: (tag: string) => void;
@@ -58,7 +58,7 @@ export function Sidebar({
   orderedTags,
   channelPreviews,
   totalBlocks,
-  isCardDragging,
+  isDropDragging,
   onDeleteTag,
   onRenameTag,
   onCreateChannel,
@@ -117,7 +117,7 @@ export function Sidebar({
               count={tc.count}
               tag={tc.tag}
               cards={channelPreviews.get(tc.tag) ?? []}
-              isCardDragging={isCardDragging}
+              isDropDragging={isDropDragging}
               isEditing={editingTag === tc.tag}
               onDoubleClick={() => setEditingTag(tc.tag)}
               onRenameSubmit={(v) => handleRename(tc.tag, v)}
@@ -192,7 +192,7 @@ function TagNavItem({
   count,
   tag,
   cards,
-  isCardDragging,
+  isDropDragging,
   isEditing,
   onDoubleClick,
   onRenameSubmit,
@@ -204,7 +204,7 @@ function TagNavItem({
   count: number;
   tag: string;
   cards: PreviewCard[];
-  isCardDragging: boolean;
+  isDropDragging: boolean;
   isEditing: boolean;
   onDoubleClick: () => void;
   onRenameSubmit: (value: string) => void;
@@ -252,7 +252,7 @@ function TagNavItem({
         className={cn(
           "group relative rounded-1",
           isDragging && "opacity-30",
-          isOver && !isDragging && isCardDragging && "ring-2 ring-ring ring-inset",
+          isOver && !isDragging && isDropDragging && "ring-2 ring-ring ring-inset",
         )}
       >
         <NavLink
@@ -378,4 +378,3 @@ function InlineInput({
     />
   );
 }
-

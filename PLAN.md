@@ -933,7 +933,7 @@ Goal: убрать `Native host timeout` на статьях с многими i
 
 ### Phase 21 — Inline Media Extraction [SPEC]
 
-Цель: позволить пользователю вытащить конкретное inline-изображение из открытой статьи в отдельный image-блок через перетаскивание на коллекцию в sidebar. Новый блок владеет копией медиафайла, содержит URL источника и одностороннюю связь на исходную заметку. Исходная статья не переписывается.
+Цель: позволить пользователю вытащить конкретное inline-изображение из открытой статьи в отдельный image-блок через перетаскивание на коллекцию в sidebar. Новый блок копирует ссылку на тот же media-файл, содержит URL источника и одностороннюю связь на исходную заметку. Исходная статья не переписывается.
 
 Спецификация: [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md).
 
@@ -941,7 +941,7 @@ Goal: убрать `Native host timeout` на статьях с многими i
 |---|-------|--------|-------|
 | 21.1 | Related-note frontmatter | [ ] | `Mine Related Notes`, `Mine Source Media`, parse/serialize, rename rewrite |
 | 21.2 | Storage/index support | [ ] | `related_notes` column, wikilinks insertion, `IndexedBlock.related_notes` |
-| 21.3 | Backend extract command | [ ] | `extract_inline_media`, local media validation, copy-owned-media semantics, thumbnail generation |
+| 21.3 | Backend extract command | [ ] | `extract_inline_media`, local media validation, shared-media-reference semantics, thumbnail generation |
 | 21.4 | Detail drag payload | [ ] | `type: "inline_media"`, local image-only activation, media drag overlay |
 | 21.5 | Sidebar drop routing | [ ] | Drop `inline_media` on `tag:<tag>` calls extraction command, not `addTag` |
 | 21.6 | Metadata UI | [ ] | `RELATED NOTES` in Detail metadata with links to source notes |

@@ -1,5 +1,94 @@
 # Devlog
 
+## 29.04.2026 [primary] — Channel aliases canonicalize to normalized filenames
+
+### Goal
+
+Убрать дубль коллекции в sidebar, когда в vault одновременно лежат legacy
+channel-файлы с human filename (`Красивый веб.md`) и canonical normalized filename
+(`красивый-веб.md`). В UI они превращались в один normalized route и поэтому
+выделялись одновременно.
+
+### Completed
+
+- `list_channels` теперь дедуплицирует channel rows после tag-normalization.
+  Если legacy alias row и canonical row нормализуются в один tag, наружу отдаётся
+  один channel; canonical DB row выигрывает у alias row.
+- `upsert_channel_from_block` больше не пишет raw filename stem как channel tag.
+  Channel-файлы индексируются через normalized tag, а stale raw alias row удаляется.
+- Watcher canonicalization добавлен на `full_scan`, `incremental_scan` и single-file
+  `index_md_file`: `type: channel` файл с human filename переезжает в canonical
+  filename (`Красивый веб.md` → `красивый-веб.md`). Если canonical-файл уже есть,
+  legacy alias удаляется после безопасной проверки, что canonical target тоже
+  `type: channel`.
+- Обычные article/image/link файлы с human filename не canonicalize-ятся; правило
+  применяется только к `type: channel`.
+- Добавлены regression tests на legacy alias rows и normalizing channel-file upsert.
+- `SPEC_STORAGE.md` обновлён: channel identity для storage API — normalized tag.
+
+### Verification
+
+- `cargo test list_channels_dedupes_legacy_alias_rows_by_normalized_tag`
+- `cargo test upsert_channel_from_block_normalizes_filename_alias_tag`
+- `cargo test canonicalizes_channel_filename`
+- `cargo test full_scan_removes_legacy_channel_alias_when_canonical_file_exists`
+- `cargo test full_scan_does_not_canonicalize_human_named_articles`
+- `cargo test channels_ordered_by_position`
+- `cargo check`
+- `cargo test --lib`
+
+## 28.04.2026 [primary] — Inline media extraction uses shared media references
+
+### Goal
+
+Исправить архитектурный contract inline-media extraction: перетаскивание изображения
+из статьи в канал должно создавать новый `.md` image-block, который ссылается на тот
+же media-файл, а не физически копирует бинарник в `<new-slug>.<ext>`.
+
+### Completed
+
+- `SPEC_INLINE_MEDIA_EXTRACTION.md` обновлён: выбранная модель теперь
+  shared-media-reference semantics. Новый блок пишет `file: <media_ref>` и body
+  `![[<media_ref>]]`; `Mine Source Media` остаётся provenance-полем.
+- `PLAN.md` и `SPEC_STORAGE.md` обновлены под новый contract.
+- Добавлен `storage::files::persist_new_reference_block`: он пишет новый `.md`,
+  генерирует thumbnail из уже существующего `frontmatter.file`, индексирует блок и
+  не копирует media-файл.
+- `extract_inline_media` переведён с `persist_new_block(..., Some(source_media))`
+  на reference-only persist path. Физическая копия media больше не создаётся.
+- Slug resolution сохраняет проверку `<candidate>.<ext>`: extracted block не должен
+  получить slug, который совпадает с shared media stem, иначе legacy delete cleanup
+  мог бы принять shared media за owned primary media.
+- Frontend drop handler больше не вызывает полный `reloadAllSnapshots()` после
+  успешного extraction. Обновление UI идёт через уже существующие `block:added` и
+  `thumb:updated` events, без дублирующего refresh.
+- Drop handler для user-initiated extraction сбрасывает стандартный 2-секундный
+  debounce и запускает refresh сразу. Отложенное coalescing окно остаётся для
+  watcher/background events, но не применяется к прямому drag-and-drop действию.
+- `extract_inline_media` стал async IPC-командой: тяжёлая часть parse/write/thumb/index
+  выполняется в blocking worker с короткоживущим SQLite connection, без удержания
+  `AppState.vault_state` mutex во время работы с filesystem.
+- Sidebar получил общий `isDropDragging` contract: hover-ring и отключение
+  `content-visibility` теперь работают одинаково для drag карточек и drag
+  inline-media.
+- Sidebar order больше не зависит от `tags` order. `orderedTags` строится от
+  `channels.position`, а `tags` используются только как source счётчиков и
+  неповышенных тегов. Поэтому изменение count после drop не переставляет каналы.
+- Новые каналы в desktop command и native host получают append-position через
+  `next_channel_position`, а не дефолтный `0`, чтобы не плодить дубли позиций.
+- Backend regression tests обновлены: extracted block ссылается на исходный media,
+  copied media не появляется, удаление extracted block не удаляет shared media.
+
+### Verification
+
+- `cargo test next_channel_position`
+- `cargo test extract_inline_media_inner`
+- `cargo check`
+- `bun run test -- src/components/Sidebar.test.tsx src/App.test.tsx`
+- `bun run build`
+- `cargo test --lib`
+- `git diff --check`
+
 ## 28.04.2026 [primary] — Inline image extraction from article detail
 
 ### Goal

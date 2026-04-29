@@ -24,7 +24,7 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 | Область | Решение |
 |---|---|
-| Удалять изображение из исходной статьи | Нет. Извлечение означает копирование, а не перенос |
+| Удалять изображение из исходной статьи | Нет. Извлечение означает копирование ссылки на медиа, а не перенос |
 | Добавлять backlink в исходную статью | Нет. Связь строго односторонняя |
 | Remote images | Нет. v1 принимает только локальные медиа-ссылки внутри vault |
 | Multi-select media drag | Нет. Одно перетаскивание создаёт один блок |
@@ -41,7 +41,7 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 ---
 type: image
 title: Source Article image 1
-file: Source Article image 1.jpg
+file: Source Article (image 1).jpg
 url: https://example.com/source-article
 Mine Collections:
   - inspiration
@@ -52,7 +52,7 @@ saved_at: 2026-04-28T12:00:00Z
 source: inline-media-extraction
 ---
 
-![[Source Article image 1.jpg]]
+![[Source Article (image 1).jpg]]
 ```
 
 ### Поля
@@ -61,7 +61,7 @@ source: inline-media-extraction
 |---|---:|---|
 | `type` | да | `image` для v1 |
 | `title` | да | Alt-текст, если он есть, иначе stem исходного media-файла |
-| `file` | да | Имя скопированного media-файла, которым владеет новый блок |
+| `file` | да | Та же локальная media-ссылка, которая была извлечена из исходной статьи |
 | `url` | нет | URL источника, скопированный из исходного блока |
 | `Mine Collections` | да | Целевая коллекция из drop на sidebar |
 | `Mine Related Notes` | да | Односторонняя связь на исходную заметку как Obsidian wikilink |
@@ -71,34 +71,35 @@ source: inline-media-extraction
 
 ### Тело заметки
 
-Тело содержит ровно один media embed, указывающий на новый media-файл, которым владеет созданный блок:
+Тело содержит ровно один media embed, указывающий на тот же media-файл, что и исходная статья:
 
 ```markdown
-![[<copied-media-file>]]
+![[<source-media-ref>]]
 ```
 
 Без текста статьи, подписи и обратной ссылки отдельным абзацем. Связь с исходной заметкой живёт во frontmatter, поэтому тело остаётся самим извлечённым медиа.
 
-`Mine Source Media` — строка происхождения, а не живой указатель на файл. Она фиксирует, какая media-ссылка была извлечена при создании блока. Если исходную статью позже переименовали и её собственное семейство медиафайлов получило новые имена, связь в `Mine Related Notes` обновляется, но `Mine Source Media` может остаться историческим исходным значением.
+`frontmatter.file` и body wikilink — живые ссылки на существующий media-файл в vault. `Mine Source Media` — строка происхождения: она фиксирует, какая media-ссылка была извлечена при создании блока. Если исходную статью позже переименовали и её собственное семейство медиафайлов получило новые имена, `frontmatter.file` и body wikilink обновляются через общий rename path, а `Mine Source Media` может остаться историческим исходным значением.
 
 ## Модель владения
 
-Извлечение копирует исходный media-файл в новый файл, которым владеет созданный блок. Нельзя создавать второй блок, который указывает на media-файл исходной статьи.
+Извлечение копирует ссылку на исходный media-файл, а не сам бинарный файл. Новый блок является самостоятельным `.md`, но не становится владельцем media-файла исходной статьи.
 
 Причины:
 
 | Подход | Проблема |
 |---|---|
-| Reuse source media file | Deleting or renaming either block can break the other block |
-| Copy media into new block-owned filename | Extra bytes, but lifecycle is correct and local-first semantics stay simple |
+| Copy media into new block-owned filename | Создаёт лишний бинарник и ломает пользовательское ожидание: это выглядит как перенос/дубликат медиа, а не извлечение карточки из существующей статьи |
+| Reuse source media file | Требует явного lifecycle-контракта, но сохраняет Obsidian-readable структуру и не плодит невидимые копии |
 
 Выбранное поведение:
 
 1. Source file stays in place.
-2. New media file is copied to `<new-slug>.<ext>`.
-3. New block `frontmatter.file` and body wikilink both point to the copied file.
-4. Deleting the new image block deletes only its copied media and derived artifacts.
-5. Renaming the new image block uses the existing smart rename path for its own media family only.
+2. No new media file is copied.
+3. New block `frontmatter.file` and body wikilink both point to the original `media_ref`.
+4. Deleting the new image block deletes only its `.md` and derived artifacts; it must not delete the shared media file.
+5. New block slug generation must avoid `<shared-media-stem>.<ext>` ownership collisions, because legacy primary-media cleanup is slug-based.
+6. Renaming the new image block does not rename the shared media file unless the media is rewritten by a separate source-note rename map.
 
 ## Контракт связи
 
@@ -130,7 +131,7 @@ Mine Related Notes:
 
 ```rust
 #[tauri::command(rename_all = "snake_case")]
-extract_inline_media(
+async extract_inline_media(
     state: State<'_, AppState>,
     source_slug: String,
     media_ref: String,
@@ -165,11 +166,11 @@ extract_inline_media(
 2. Verify `media_ref` belongs to source body.
 3. Resolve source media file under vault root.
 4. Determine `title`: explicit title, then alt text, then media stem.
-5. Generate unique slug through `suggest_slug` and `resolve_unique_slug`.
-6. Copy source media into block-owned file `<new-slug>.<ext>`.
+5. Generate unique slug through `suggest_slug` and `resolve_unique_slug`, while rejecting candidates whose `<slug>.<ext>` path already exists as the shared media file.
+6. Do not copy source media.
 7. Create new image block with fields from `Source Format`.
-8. Write `.md` with body `![[<new-media-file>]]`.
-9. Generate thumbnail from copied media.
+8. Write `.md` with `file: <media_ref>` and body `![[<media_ref>]]`.
+9. Generate thumbnail from the existing referenced media file.
 10. Index block, including `Mine Collections`, `Mine Related Notes`, media dimensions and preview manifest.
 11. Emit `block:added` and `thumb:updated` through existing event paths.
 12. Return `IndexedBlock` for immediate UI update.
@@ -246,10 +247,12 @@ Remote-изображения рендерятся как обычно, но н�
 
 После успешного извлечения:
 
-1. `reloadAllSnapshots()` refreshes grid, sidebar counts and previews.
-2. If current route equals target collection, the new block appears in the current grid after snapshot refresh.
-3. Detail remains open on the source article.
-4. The source article's selected tags and body are unchanged.
+1. Backend emits `block:added` and `thumb:updated`.
+2. Frontend relies on the existing event-driven refresh path for grid, sidebar counts and previews; it must not force a full `reloadAllSnapshots()` from the drop handler.
+3. If current route equals target collection, the new block appears in the current grid after the immediate event refresh.
+4. Detail remains open on the source article.
+5. The source article's selected tags and body are unchanged.
+6. User-initiated extraction clears the default debounce and schedules this refresh immediately. The 2-second coalescing window is for watcher/background events, not for a direct drop interaction.
 
 ## Изменения бэкенда
 
@@ -289,6 +292,10 @@ source_media: Option<String>,
 
 Добавить `extract_inline_media` рядом с `create_block`, потому что операции нужны валидация исходного блока и metadata связи. Не перегружать `create_block`: его текущий контракт — общий импорт файла.
 
+Команда должна быть async на IPC boundary и выполнять parse/write/thumbnail/index в blocking worker с короткоживущим SQLite connection. Она не должна держать `AppState.vault_state` mutex во время filesystem/thumbnail работы: из shared state берётся только `VaultLayout`, затем работа продолжается вне UI-facing command path.
+
+Sidebar drop targets use the same hover contract for card drags and inline-media drags: `TagNavItem` disables `content-visibility` during any tag-drop drag and shows the same `isOver` ring for both payload types.
+
 ## Совместимость с Obsidian
 
 Извлечённый блок должен быть полезен как обычный Markdown-файл:
@@ -307,7 +314,7 @@ source_media: Option<String>,
 |---|---|
 | `domain/block` | parse/serialize `Mine Related Notes`, raw slug input, wikilink input, malformed list |
 | `storage/index` | related notes stored on block, inserted into `wikilinks`, returned by `get_block` |
-| `commands/blocks` | successful image extraction, source article untouched, copied media name, related notes, unsupported remote media, missing media, non-referenced media |
+| `commands/blocks` | successful image extraction, source article untouched, shared media reference, no copied media file, delete extracted block leaves shared media, related notes, unsupported remote media, missing media, non-referenced media |
 | rename | in-app rename source note rewrites `Mine Related Notes` in extracted block |
 
 ### Frontend tests
@@ -325,7 +332,7 @@ source_media: Option<String>,
 1. Open article with local inline image.
 2. Drag image to a sidebar collection.
 3. Verify new card appears in that collection.
-4. Open new card and verify it displays the copied image.
+4. Open new card and verify it displays the same image file as the source article.
 5. Open new `.md` in Obsidian and verify body contains exactly one media embed.
 6. Verify frontmatter contains `Mine Related Notes` with source wikilink.
 7. Verify original article file is byte-for-byte unchanged.
@@ -335,8 +342,8 @@ source_media: Option<String>,
 
 - [ ] Local inline image in Detail can be dragged independently from the source article block.
 - [ ] Dropping on sidebar collection creates a new image block in that collection.
-- [ ] New block owns a copied media file and does not point to the source article media file.
-- [ ] New block body contains only `![[copied-media-file]]`.
+- [ ] New block references the same media file as the source article; no copied media file is created.
+- [ ] New block body contains only `![[source-media-ref]]`.
 - [ ] New block frontmatter contains source URL if available.
 - [ ] New block frontmatter contains one-way `Mine Related Notes` link to source article.
 - [ ] Source article `.md` is not modified.
@@ -350,7 +357,7 @@ source_media: Option<String>,
 |---|---|---|
 | 21.1 | Domain/frontmatter support for related notes and source media | Rust unit tests |
 | 21.2 | Storage/index schema and wikilink indexing for related notes | Rust storage tests |
-| 21.3 | `extract_inline_media` command with copy-owned-media semantics | Rust command tests |
+| 21.3 | `extract_inline_media` command with shared-media-reference semantics | Rust command tests |
 | 21.4 | Detail image drag payload and media drag overlay | Frontend component tests |
 | 21.5 | App drop routing and snapshot refresh | Frontend integration tests |
 | 21.6 | Metadata UI for `RELATED NOTES` | Frontend component tests |

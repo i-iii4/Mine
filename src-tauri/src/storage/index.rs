@@ -1931,27 +1931,30 @@ pub fn upsert_channel(conn: &Connection, channel: &Channel) -> Result<i64> {
 /// Index a channel from a parsed Block with type: channel.
 /// Maps frontmatter fields to Channel struct and upserts.
 pub fn upsert_channel_from_block(conn: &Connection, block: &Block) -> Result<i64> {
-    let channel = Channel {
-        tag: block.slug.clone(),
-        title: block
-            .frontmatter
-            .title
-            .clone()
-            .unwrap_or_else(|| block.slug.clone()),
-        description: block.frontmatter.description.clone(),
-        color: block.frontmatter.color.clone(),
-        icon: block.frontmatter.icon.clone(),
-        position: block.frontmatter.position.unwrap_or(0),
-        created_at: block.frontmatter.saved_at.clone(),
-    };
-    upsert_channel(conn, &channel)
+    let raw_tag = block.slug.clone();
+    let mut channel = Channel::new(
+        &raw_tag,
+        block.frontmatter.title.as_deref(),
+        block.frontmatter.saved_at.clone(),
+    )
+    .map_err(|e| anyhow::anyhow!("invalid channel from block: {}", e))?;
+    channel.description = block.frontmatter.description.clone();
+    channel.color = block.frontmatter.color.clone();
+    channel.icon = block.frontmatter.icon.clone();
+    channel.position = block.frontmatter.position.unwrap_or(0);
+
+    let id = upsert_channel(conn, &channel)?;
+    if raw_tag != channel.tag {
+        remove_channel(conn, &raw_tag)?;
+    }
+    Ok(id)
 }
 
 /// List all channels ordered by position, then title.
 pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
     let mut stmt = conn.prepare(
         "SELECT tag, title, description, color, icon, position, created_at
-         FROM channels ORDER BY position ASC, title ASC",
+         FROM channels ORDER BY position ASC, title ASC, tag ASC",
     )?;
     let rows = stmt
         .query_map([], |row| {
@@ -1967,21 +1970,48 @@ pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    rows.into_iter()
-        .map(
-            |(tag, title, description, color, icon, position, created_at)| {
-                let dt = DateTime::new(&created_at)
-                    .map_err(|e| anyhow::anyhow!("invalid datetime in channel: {}", e))?;
-                let mut ch = Channel::new(&tag, Some(&title), dt)
-                    .map_err(|e| anyhow::anyhow!("invalid channel from db: {}", e))?;
-                ch.description = description;
-                ch.color = color;
-                ch.icon = icon;
-                ch.position = position as u32;
-                Ok(ch)
-            },
-        )
-        .collect()
+    let mut merged: Vec<(String, Channel)> = Vec::new();
+    for (raw_tag, title, description, color, icon, position, created_at) in rows {
+        let dt = DateTime::new(&created_at)
+            .map_err(|e| anyhow::anyhow!("invalid datetime in channel: {}", e))?;
+        let mut ch = Channel::new(&raw_tag, Some(&title), dt)
+            .map_err(|e| anyhow::anyhow!("invalid channel from db: {}", e))?;
+        ch.description = description;
+        ch.color = color;
+        ch.icon = icon;
+        ch.position = position as u32;
+
+        if let Some(idx) = merged
+            .iter()
+            .position(|(_, existing)| existing.tag == ch.tag)
+        {
+            let existing_is_canonical = merged[idx].0 == merged[idx].1.tag;
+            let candidate_is_canonical = raw_tag == ch.tag;
+            if candidate_is_canonical && !existing_is_canonical {
+                merged[idx] = (raw_tag, ch);
+            }
+        } else {
+            merged.push((raw_tag, ch));
+        }
+    }
+
+    let mut channels: Vec<Channel> = merged.into_iter().map(|(_, channel)| channel).collect();
+    channels.sort_by(|a, b| {
+        a.position
+            .cmp(&b.position)
+            .then_with(|| a.title.cmp(&b.title))
+            .then_with(|| a.tag.cmp(&b.tag))
+    });
+    Ok(channels)
+}
+
+/// Return the next append position for a newly-created channel.
+pub fn next_channel_position(conn: &Connection) -> Result<u32> {
+    let max_position: Option<i64> =
+        conn.query_row("SELECT MAX(position) FROM channels", [], |row| row.get(0))?;
+    Ok(max_position
+        .and_then(|value| u32::try_from(value).ok())
+        .map_or(0, |value| value.saturating_add(1)))
 }
 
 /// Batch-update channel positions. Each pair is (tag, new_position).
@@ -3475,6 +3505,66 @@ mod tests {
     }
 
     #[test]
+    fn list_channels_dedupes_legacy_alias_rows_by_normalized_tag() {
+        let conn = test_conn();
+        conn.execute(
+            "INSERT INTO channels (tag, title, description, color, icon, position, created_at)
+             VALUES (?1, ?2, NULL, NULL, NULL, ?3, ?4)",
+            params!["Красивый веб", "Legacy Alias", 0i64, "2026-01-01T00:00:00Z"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO channels (tag, title, description, color, icon, position, created_at)
+             VALUES (?1, ?2, NULL, NULL, NULL, ?3, ?4)",
+            params!["красивый-веб", "Canonical", 5i64, "2026-01-01T00:00:00Z"],
+        )
+        .unwrap();
+
+        let channels = list_channels(&conn).unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].tag, "красивый-веб");
+        assert_eq!(channels[0].title, "Canonical");
+        assert_eq!(channels[0].position, 5);
+    }
+
+    #[test]
+    fn upsert_channel_from_block_normalizes_filename_alias_tag() {
+        let conn = test_conn();
+        conn.execute(
+            "INSERT INTO channels (tag, title, description, color, icon, position, created_at)
+             VALUES (?1, ?2, NULL, NULL, NULL, ?3, ?4)",
+            params!["Красивый веб", "Legacy Alias", 0i64, "2026-01-01T00:00:00Z"],
+        )
+        .unwrap();
+
+        let mut block = make_block_full(
+            "Красивый веб",
+            "channel",
+            Some("Красивый веб"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.position = Some(3);
+        upsert_channel_from_block(&conn, &block).unwrap();
+
+        let channels = list_channels(&conn).unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].tag, "красивый-веб");
+        assert_eq!(channels[0].title, "Красивый веб");
+        assert_eq!(channels[0].position, 3);
+
+        let raw_alias_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM channels WHERE tag = ?1",
+                ["Красивый веб"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw_alias_count, 0);
+    }
+
+    #[test]
     fn remove_channel_existing() {
         let conn = test_conn();
         let dt = DateTime::new("2026-01-01T00:00:00Z").unwrap();
@@ -3510,5 +3600,22 @@ mod tests {
         let channels = list_channels(&conn).unwrap();
         let tags: Vec<&str> = channels.iter().map(|c| c.tag.as_str()).collect();
         assert_eq!(tags, vec!["gamma", "alpha", "beta"]);
+    }
+
+    #[test]
+    fn next_channel_position_appends_after_current_max() {
+        let conn = test_conn();
+        assert_eq!(next_channel_position(&conn).unwrap(), 0);
+
+        let dt = DateTime::new("2026-01-01T00:00:00Z").unwrap();
+        let mut ch_a = Channel::new("alpha", None, dt.clone()).unwrap();
+        ch_a.position = 4;
+        upsert_channel(&conn, &ch_a).unwrap();
+
+        let mut ch_b = Channel::new("beta", None, dt).unwrap();
+        ch_b.position = 9;
+        upsert_channel(&conn, &ch_b).unwrap();
+
+        assert_eq!(next_channel_position(&conn).unwrap(), 10);
     }
 }
