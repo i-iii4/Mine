@@ -39,6 +39,7 @@ CREATE TABLE blocks (
     body TEXT DEFAULT '',
     preview_text TEXT,
     preview_text_cap INTEGER,
+    media_index_version INTEGER,
     body_hash TEXT,
     indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -143,6 +144,13 @@ the frontend's widest single-column article card: 8 preview lines × ~478px
 inner text width ÷ conservative ~5px average glyph width. The indexed value is
 a bounded buffer for layout and IPC, while CSS line-clamp remains the final
 visual cutoff.
+
+`media_index_version` is the version marker for media-derived read-model
+columns (`first_image`, `media_urls`, `media_dimensions`, `preview_manifest`,
+`feed_playback`). When Obsidian embed resolution changes, startup backfill
+rebuilds those cached columns from `body` and `media_file` without rewriting
+source Markdown. Bulk backfill uses a cached basename resolver so vault-wide
+attachment lookup is built once per pass, not once per note.
 
 ### Функции
 

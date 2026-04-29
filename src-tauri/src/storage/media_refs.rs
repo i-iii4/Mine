@@ -4,10 +4,94 @@
 // Obsidian embeds additionally support basename lookup through the vault.
 
 use std::cmp::Reverse;
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 use crate::domain::block::{InlineMediaReference, InlineMediaSyntax};
 use crate::domain::vault::VaultLayout;
+
+/// Cached resolver for bulk index migrations.
+///
+/// Single-block indexing can use the stateless helpers below. Backfills may
+/// resolve hundreds of Obsidian basename embeds, so this resolver builds the
+/// vault basename index lazily once and reuses it for every row in the pass.
+pub struct MediaResolver<'a> {
+    vault: &'a VaultLayout,
+    basename_index: Option<HashMap<String, Vec<PathBuf>>>,
+}
+
+impl<'a> MediaResolver<'a> {
+    pub fn new(vault: &'a VaultLayout) -> Self {
+        Self {
+            vault,
+            basename_index: None,
+        }
+    }
+
+    pub fn resolve_inline_media(
+        &mut self,
+        block_slug: &str,
+        reference: &InlineMediaReference,
+    ) -> Option<PathBuf> {
+        match reference.syntax {
+            InlineMediaSyntax::MarkdownImage => {
+                resolve_frontmatter_media(self.vault, block_slug, &reference.source)
+            }
+            InlineMediaSyntax::ObsidianEmbed => {
+                self.resolve_obsidian_embed(block_slug, &reference.source)
+            }
+        }
+    }
+
+    pub fn resolve_inline_media_root_relative(
+        &mut self,
+        block_slug: &str,
+        reference: &InlineMediaReference,
+    ) -> Option<String> {
+        self.resolve_inline_media(block_slug, reference)
+            .and_then(|path| self.vault.root_relative_reference(&path))
+    }
+
+    fn resolve_obsidian_embed(&mut self, block_slug: &str, reference: &str) -> Option<PathBuf> {
+        if reference.is_empty()
+            || reference.starts_with("http://")
+            || reference.starts_with("https://")
+            || reference.contains('\0')
+        {
+            return None;
+        }
+
+        if let Some(path) = resolve_frontmatter_media(self.vault, block_slug, reference) {
+            return Some(path);
+        }
+
+        if has_path_separator(reference) {
+            return resolve_root_relative(self.vault, reference);
+        }
+
+        self.resolve_by_basename(block_slug, reference)
+    }
+
+    fn resolve_by_basename(&mut self, block_slug: &str, file_name: &str) -> Option<PathBuf> {
+        let block_path = self.vault.block_path(block_slug);
+        let block_parent = block_path.parent().unwrap_or(self.vault.root());
+        let mut candidates = self.basename_index().get(file_name)?.clone();
+        candidates.sort_by(|a, b| {
+            let a_key = candidate_rank(self.vault.root(), block_parent, a);
+            let b_key = candidate_rank(self.vault.root(), block_parent, b);
+            a_key.cmp(&b_key)
+        });
+        candidates.into_iter().next()
+    }
+
+    fn basename_index(&mut self) -> &HashMap<String, Vec<PathBuf>> {
+        self.basename_index.get_or_insert_with(|| {
+            let mut index = HashMap::new();
+            collect_all_basename_matches(self.vault.root(), &mut index);
+            index
+        })
+    }
+}
 
 /// Resolve a frontmatter media field as a normal local path.
 pub fn resolve_frontmatter_media(
@@ -130,6 +214,30 @@ fn collect_basename_matches(dir: &Path, file_name: &str, candidates: &mut Vec<Pa
                 .is_some_and(|name| name == file_name)
         {
             candidates.push(path);
+        }
+    }
+}
+
+fn collect_all_basename_matches(dir: &Path, index: &mut HashMap<String, Vec<PathBuf>>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            if is_ignored_media_search_dir(&path) {
+                continue;
+            }
+            collect_all_basename_matches(&path, index);
+            continue;
+        }
+        if file_type.is_file() {
+            if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                index.entry(name.to_string()).or_default().push(path);
+            }
         }
     }
 }
@@ -292,5 +400,29 @@ mod tests {
         );
 
         assert_eq!(got, Some(nearby));
+    }
+
+    #[test]
+    fn cached_resolver_finds_attachment_by_basename() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(dir.path().join("Журнал")).unwrap();
+        std::fs::create_dir_all(dir.path().join("Медиафайлы")).unwrap();
+        std::fs::write(dir.path().join("Журнал/04.12.2025.md"), "").unwrap();
+        let image = dir
+            .path()
+            .join("Медиафайлы/telegram-cloud-photo-size-2-5298783204590424341-x.jpg");
+        std::fs::write(&image, b"img").unwrap();
+
+        let mut resolver = MediaResolver::new(&vault);
+        let got = resolver.resolve_inline_media(
+            "Журнал/04.12.2025",
+            &reference(
+                "telegram-cloud-photo-size-2-5298783204590424341-x.jpg",
+                InlineMediaSyntax::ObsidianEmbed,
+            ),
+        );
+
+        assert_eq!(got, Some(image));
     }
 }

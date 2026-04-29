@@ -19,10 +19,14 @@ use crate::domain::block::{
 use crate::domain::channel::Channel;
 use crate::domain::search::{SearchFilter, SearchQuery};
 use crate::domain::vault::VaultLayout;
-use crate::storage::media_dimensions::build_media_dimensions_json;
+use crate::storage::media_dimensions::{
+    build_media_dimensions_json, build_media_dimensions_json_from_sources,
+};
 use crate::storage::media_refs;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
+
+const MEDIA_INDEX_VERSION: i64 = 2;
 
 /// A block as read from the database index.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -240,11 +244,7 @@ fn extract_first_image(block: &Block, vault_root: Option<&Path>) -> Option<Strin
 /// Extract all inline media references from body text as a JSON array.
 fn extract_media_urls(block: &Block, vault_root: Option<&Path>) -> Option<String> {
     let urls = extract_media_sources(block, vault_root);
-    if urls.is_empty() {
-        None
-    } else {
-        serde_json::to_string(&urls).ok()
-    }
+    media_urls_from_sources(&urls)
 }
 
 fn extract_media_sources(block: &Block, vault_root: Option<&Path>) -> Vec<String> {
@@ -252,6 +252,32 @@ fn extract_media_sources(block: &Block, vault_root: Option<&Path>) -> Vec<String
         .into_iter()
         .map(|reference| resolve_index_media_source(block, vault_root, &reference))
         .collect()
+}
+
+fn extract_media_sources_with_resolver(
+    block: &Block,
+    resolver: &mut media_refs::MediaResolver<'_>,
+) -> Vec<String> {
+    iter_inline_media_references(&block.body)
+        .into_iter()
+        .map(|reference| {
+            if is_remote_media(&reference.source) {
+                reference.source.clone()
+            } else {
+                resolver
+                    .resolve_inline_media_root_relative(&block.slug, &reference)
+                    .unwrap_or(reference.source)
+            }
+        })
+        .collect()
+}
+
+fn media_urls_from_sources(sources: &[String]) -> Option<String> {
+    if sources.is_empty() {
+        None
+    } else {
+        serde_json::to_string(sources).ok()
+    }
 }
 
 fn resolve_index_media_source(
@@ -1011,8 +1037,8 @@ fn upsert_block_inner(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body, first_image,
             media_urls, media_dimensions, preview_manifest, feed_playback, related_notes, preview_text, preview_text_cap,
-            body_hash, origin, index_warning)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+            body_hash, origin, index_warning, media_index_version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
             title = excluded.title,
@@ -1037,6 +1063,7 @@ fn upsert_block_inner(
             body_hash = excluded.body_hash,
             origin = excluded.origin,
             index_warning = excluded.index_warning,
+            media_index_version = excluded.media_index_version,
             indexed_at = datetime('now')",
         params![
             block.slug,
@@ -1063,6 +1090,7 @@ fn upsert_block_inner(
             body_hash,
             origin,
             index_warning,
+            MEDIA_INDEX_VERSION,
         ],
     )
     .context("failed to upsert block")?;
@@ -1216,6 +1244,122 @@ pub fn backfill_missing_thumb_metadata(conn: &Connection, vault: &VaultLayout) -
         if sync_thumb_metadata(conn, &slug, &vault.thumb_path(&slug), Some(vault.root()))? {
             updated += 1;
         }
+    }
+
+    Ok(updated)
+}
+
+/// Rebuild media-derived read-model columns after media resolution rules
+/// change. Source Markdown stays untouched; only the SQLite cache is updated.
+///
+/// This is versioned because fields such as `media_urls` and
+/// `preview_manifest` may be non-null but stale after a resolver migration.
+pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, thumb_format
+         FROM blocks
+         WHERE slug != ''
+           AND block_type != 'channel'
+           AND (media_index_version IS NULL OR media_index_version < ?1)
+           AND (media_file IS NOT NULL
+                OR thumbnail IS NOT NULL
+                OR body LIKE '%![%')",
+    )?;
+
+    let rows = stmt
+        .query_map([MEDIA_INDEX_VERSION], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<i64>>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, Option<String>>(8)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    let mut resolver = media_refs::MediaResolver::new(vault);
+    let mut updated = 0usize;
+
+    for (slug, raw_type, url, media_file, thumbnail, width, height, body, raw_thumb_format) in rows
+    {
+        let block_type = BlockType::from_str(&raw_type)
+            .with_context(|| format!("unknown block_type in media index backfill: {raw_type}"))?;
+        let width = width.map(|value| value as u32);
+        let height = height.map(|value| value as u32);
+        let block = Block {
+            slug: slug.clone(),
+            frontmatter: Frontmatter {
+                block_type,
+                title: None,
+                description: None,
+                url,
+                file: media_file,
+                thumbnail,
+                tags: Vec::new(),
+                related_notes: Vec::new(),
+                source_media: None,
+                saved_at: DateTime::new("1970-01-01T00:00:00Z")?,
+                source: None,
+                width,
+                height,
+                author: None,
+                position: None,
+                color: None,
+                icon: None,
+            },
+            body,
+        };
+        let media_sources = extract_media_sources_with_resolver(&block, &mut resolver);
+        let first_image = media_sources.first().cloned();
+        let media_urls = media_urls_from_sources(&media_sources);
+        let media_dimensions = build_media_dimensions_json_from_sources(
+            vault.root(),
+            block.frontmatter.file.as_deref(),
+            &media_sources,
+        );
+        let preview_manifest = serialize_feed_preview_manifest(
+            &block,
+            width,
+            height,
+            media_dimensions.as_deref(),
+            media_urls.as_deref(),
+        );
+        let thumb_format = raw_thumb_format.as_deref().and_then(ThumbFormat::from_db);
+        let feed_playback = serialize_feed_playback(
+            Some(vault.root()),
+            block.frontmatter.block_type,
+            block.frontmatter.file.as_deref(),
+            width,
+            height,
+            preview_manifest.as_deref(),
+            thumb_format,
+        );
+
+        updated += conn.execute(
+            "UPDATE blocks
+             SET first_image = ?2,
+                 media_urls = ?3,
+                 media_dimensions = ?4,
+                 preview_manifest = ?5,
+                 feed_playback = ?6,
+                 media_index_version = ?7
+             WHERE slug = ?1",
+            params![
+                slug,
+                first_image,
+                media_urls,
+                media_dimensions,
+                preview_manifest,
+                feed_playback,
+                MEDIA_INDEX_VERSION,
+            ],
+        )?;
     }
 
     Ok(updated)
@@ -3170,6 +3314,85 @@ mod tests {
         assert_eq!(manifest.kind, FeedPreviewKind::VideoPoster);
         assert_eq!(manifest.tiles.len(), 1);
         assert!(manifest.tiles[0].is_video);
+    }
+
+    #[test]
+    fn backfill_media_index_rebuilds_stale_obsidian_attachment_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(vault.root().join("Журнал")).unwrap();
+        std::fs::create_dir_all(vault.root().join("Медиафайлы")).unwrap();
+        write_test_image(
+            &vault,
+            "Медиафайлы/telegram-cloud-photo-size-2-5298783204590424341-x.jpg",
+            388,
+            340,
+        );
+
+        let conn = test_conn();
+        conn.execute(
+            "INSERT INTO blocks (slug, block_type, title, saved_at, body, first_image, media_urls, preview_manifest)
+             VALUES (?1, 'article', '04.12.2025', '2025-12-04T00:00:00Z', ?2, ?3, ?4, ?5)",
+            params![
+                "Журнал/04.12.2025",
+                "![[telegram-cloud-photo-size-2-5298783204590424341-x.jpg]]",
+                "Журнал/telegram-cloud-photo-size-2-5298783204590424341-x.jpg",
+                "[\"Журнал/telegram-cloud-photo-size-2-5298783204590424341-x.jpg\"]",
+                "{\"kind\":\"image\",\"primary_preview_path\":\"Журнал/04.12.2025.jpg\",\"width\":null,\"height\":null,\"tiles\":[{\"source_path\":\"Журнал/telegram-cloud-photo-size-2-5298783204590424341-x.jpg\",\"preview_path\":null,\"width\":null,\"height\":null,\"is_video\":false,\"is_video_poster\":false}],\"overflow_count\":0}",
+            ],
+        )
+        .unwrap();
+
+        let updated = backfill_media_index(&conn, &vault).unwrap();
+        assert_eq!(updated, 1);
+
+        let (first_image, media_urls, media_dimensions, preview_manifest, media_index_version): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+        ) = conn
+            .query_row(
+                "SELECT first_image, media_urls, media_dimensions, preview_manifest, media_index_version
+                 FROM blocks WHERE slug = 'Журнал/04.12.2025'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            first_image.as_deref(),
+            Some("Медиафайлы/telegram-cloud-photo-size-2-5298783204590424341-x.jpg")
+        );
+        assert_eq!(
+            media_urls.as_deref(),
+            Some("[\"Медиафайлы/telegram-cloud-photo-size-2-5298783204590424341-x.jpg\"]")
+        );
+        assert_eq!(
+            media_dimensions.as_deref(),
+            Some(
+                "{\"Медиафайлы/telegram-cloud-photo-size-2-5298783204590424341-x.jpg\":[388,340]}"
+            )
+        );
+        let manifest: FeedPreviewManifest =
+            serde_json::from_str(preview_manifest.as_deref().unwrap()).unwrap();
+        assert_eq!(manifest.kind, FeedPreviewKind::Image);
+        assert_eq!(
+            manifest.tiles[0].source_path,
+            "Медиафайлы/telegram-cloud-photo-size-2-5298783204590424341-x.jpg"
+        );
+        assert_eq!(manifest.tiles[0].width, Some(388));
+        assert_eq!(manifest.tiles[0].height, Some(340));
+        assert_eq!(media_index_version, Some(MEDIA_INDEX_VERSION));
     }
 
     #[test]

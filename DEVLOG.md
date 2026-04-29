@@ -1,5 +1,39 @@
 # Devlog
 
+## 29.04.2026 [primary] — Versioned media index backfill for Obsidian embeds
+
+### Goal
+
+Исправить stale media read-model после перехода на Obsidian-style attachment
+resolution: старые строки могли продолжать ссылаться на несуществующий
+note-relative путь вроде `Журнал/image.jpg`, хотя реальный файл лежит в
+`Медиафайлы/image.jpg`.
+
+### Completed
+
+- Добавлен `blocks.media_index_version`.
+- `upsert_block` пишет текущую media index version вместе с media-derived
+  полями.
+- Добавлен `backfill_media_index`: пересобирает `first_image`, `media_urls`,
+  `media_dimensions`, `preview_manifest`, `feed_playback` для старых строк без
+  изменения исходных `.md` файлов.
+- Для bulk backfill добавлен cached `MediaResolver`, который строит basename
+  index vault один раз за проход.
+- Добавлен регрессионный тест для `![[image.jpg]]`, когда заметка лежит в
+  `Журнал/`, а файл находится в `Медиафайлы/`.
+- Обновлены `SPEC_STORAGE.md` и `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib media_refs -- --test-threads=1`
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib backfill_media_index -- --test-threads=1`
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib --quiet -- --test-threads=1`
+- `npm run build`
+- `git diff --check`
+- Live DB check for `Журнал/04.12.2025`: `media_index_version = 2`,
+  `first_image = Медиафайлы/telegram-cloud-photo-size-2-5298783204590424341-x.jpg`,
+  dimensions `[388,340]`.
+
 ## 29.04.2026 [primary] — Feed article preview buffer is geometry-derived
 
 ### Goal

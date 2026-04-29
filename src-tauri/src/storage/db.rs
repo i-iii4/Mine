@@ -90,6 +90,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
             index_warning TEXT,
             preview_manifest TEXT,
             feed_playback TEXT,
+            media_index_version INTEGER,
             related_notes TEXT,
             thumb_format TEXT,
             thumb_mtime INTEGER,
@@ -164,6 +165,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_text_cap INTEGER");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_manifest TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN feed_playback TEXT");
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_index_version INTEGER");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN related_notes TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_format TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_mtime INTEGER");

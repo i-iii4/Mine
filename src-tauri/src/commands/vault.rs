@@ -567,6 +567,18 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                 }
             };
 
+            let media_updated = match index::backfill_media_index(&conn, &vault) {
+                Ok(updated) => updated,
+                Err(err) => {
+                    log::warn!("media index backfill failed for {}: {:#}", path_for_thread, err);
+                    append_startup_trace(
+                        &app_for_thread,
+                        "index_metadata_backfill",
+                        &format!("media_failed path={} err={:#}", path_for_thread, err),
+                    );
+                    return;
+                }
+            };
             let preview_updated = match index::backfill_missing_preview_manifest(&conn) {
                 Ok(updated) => updated,
                 Err(err) => {
@@ -632,8 +644,11 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                 }
             };
 
-            let total_updated =
-                preview_updated + thumb_updated + playback_updated + preview_text_updated;
+            let total_updated = media_updated
+                + preview_updated
+                + thumb_updated
+                + playback_updated
+                + preview_text_updated;
             if total_updated == 0 {
                 append_startup_trace(
                     &app_for_thread,
@@ -644,7 +659,8 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
             }
 
             log::info!(
-                "index metadata backfill: preview={} thumb={} playback={} preview_text={} for {}",
+                "index metadata backfill: media={} preview={} thumb={} playback={} preview_text={} for {}",
+                media_updated,
                 preview_updated,
                 thumb_updated,
                 playback_updated,
@@ -655,8 +671,9 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                 &app_for_thread,
                 "index_metadata_backfill",
                 &format!(
-                    "updated path={} preview={} thumb={} playback={} preview_text={}",
+                    "updated path={} media={} preview={} thumb={} playback={} preview_text={}",
                     path_for_thread,
+                    media_updated,
                     preview_updated,
                     thumb_updated,
                     playback_updated,

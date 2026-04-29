@@ -78,10 +78,33 @@ pub fn build_media_dimensions_json(
     primary_media: Option<&str>,
     body: &str,
 ) -> Option<String> {
+    let vault = VaultLayout::new(vault_root.to_path_buf());
+    let media_sources = iter_inline_media_references(body)
+        .into_iter()
+        .filter_map(|reference| {
+            if reference.source.starts_with("http://") || reference.source.starts_with("https://") {
+                return None;
+            }
+            Some(
+                media_refs::resolve_inline_media_root_relative(&vault, block_slug, &reference)
+                    .unwrap_or(reference.source),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    build_media_dimensions_json_from_sources(vault_root, primary_media, &media_sources)
+}
+
+/// Build the `media_dimensions` JSON string from already-resolved
+/// vault-root-relative media sources. Used by bulk index backfills so the
+/// expensive Obsidian basename lookup can be cached once outside this module.
+pub fn build_media_dimensions_json_from_sources(
+    vault_root: &Path,
+    primary_media: Option<&str>,
+    media_sources: &[String],
+) -> Option<String> {
     let mut filenames: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    let vault = VaultLayout::new(vault_root.to_path_buf());
-
     if let Some(name) = primary_media {
         if !name.is_empty()
             && (is_image_extension(name) || is_video_extension(name))
@@ -90,17 +113,12 @@ pub fn build_media_dimensions_json(
             filenames.push(name.to_string());
         }
     }
-    for reference in iter_inline_media_references(body) {
-        if reference.source.starts_with("http://") || reference.source.starts_with("https://") {
-            continue;
-        }
-        let name = media_refs::resolve_inline_media_root_relative(&vault, block_slug, &reference)
-            .unwrap_or(reference.source);
+    for name in media_sources {
         if !is_image_extension(&name) && !is_video_extension(&name) {
             continue;
         }
         if seen.insert(name.clone()) {
-            filenames.push(name);
+            filenames.push(name.clone());
         }
     }
 

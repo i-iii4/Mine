@@ -207,6 +207,10 @@ Resolution rules are syntax-specific:
 - Source `.md` is never rewritten during read/index. `media_urls`,
   `preview_manifest`, `media_dimensions`, thumbnails, and Detail rendering use
   the resolved vault-root-relative path as derived state.
+- Media-derived derived state is versioned with `media_index_version`. If a
+  resolver rule changes, startup backfill rebuilds stale `first_image`,
+  `media_urls`, `media_dimensions`, `preview_manifest`, and `feed_playback`
+  from the unchanged Markdown body.
 
 ### Collections And Obsidian Tags
 
