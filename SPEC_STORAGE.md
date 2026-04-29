@@ -1,6 +1,6 @@
 # SPEC: storage layer
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 Персистентный слой: SQLite-индекс, файловые операции, thumbnail-генерация.
 Зависит от domain/ для типов. Не зависит от commands/ и watcher/.
@@ -37,6 +37,8 @@ CREATE TABLE blocks (
     height INTEGER,
     author TEXT,
     body TEXT DEFAULT '',
+    preview_text TEXT,
+    preview_text_cap INTEGER,
     body_hash TEXT,
     indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -106,7 +108,13 @@ struct IndexedBlock {
     tags: Vec<String>,
 }
 
-/// Облегчённый блок для списков — без description и source, body обрезан до 500 символов.
+/// Облегчённый блок для списков — без description и source.
+/// `preview_text` — indexed read-model for feed cards: Markdown stripped,
+/// whitespace normalized, and truncated on a word boundary to a backend
+/// buffer, not to the final visual card height. `preview_text_cap` stores the
+/// buffer version used to build it, so startup backfill can rebuild stale
+/// rows exactly once after the cap changes. `body` remains a small legacy
+/// excerpt for media fallback/detail lazy-load heuristics.
 struct LightBlock {
     id: i64,
     slug: String,
@@ -119,7 +127,8 @@ struct LightBlock {
     width: Option<u32>,
     height: Option<u32>,
     author: Option<String>,
-    body: String,       // SUBSTR(body, 1, 500)
+    body: String,
+    preview_text: Option<String>,
     tags: Vec<String>,
 }
 
@@ -128,6 +137,12 @@ struct TagCount {
     count: usize,
 }
 ```
+
+`preview_text_cap` is currently `768` characters. The number is derived from
+the frontend's widest single-column article card: 8 preview lines × ~478px
+inner text width ÷ conservative ~5px average glyph width. The indexed value is
+a bounded buffer for layout and IPC, while CSS line-clamp remains the final
+visual cutoff.
 
 ### Функции
 
@@ -166,21 +181,30 @@ remove_channel(conn: &Connection, tag: &str) -> Result<bool>
 
 ### Поведение list_channels / next_channel_position
 
-- `list_channels` возвращает каналы в порядке `position ASC`, затем стабильный title/tag tie-breaker.
-- `list_channels` нормализует channel identity через tag-normalization и дедуплицирует legacy alias rows. Если в index есть одновременно raw filename tag (`Красивый веб`) и canonical tag (`красивый-веб`), наружу возвращается один canonical channel; canonical DB row выигрывает у alias row.
+- `list_channels` возвращает каналы в порядке `position ASC`, затем стабильный title/ref tie-breaker.
 - `next_channel_position` возвращает `max(position) + 1`, либо `0` для пустого списка.
 - Новые каналы должны получать append-position через `next_channel_position`; `position = 0` допустим только для первого канала или explicit reorder.
-- `upsert_channel_from_block` нормализует slug channel-файла в tag перед записью в `channels` и удаляет legacy raw alias row, если он отличается от canonical tag.
 
-### Canonical filenames для channel-файлов
+The implementation still uses `channels.tag` and `block_tags.tag` physical
+column names for compatibility, but their semantic value is now
+`CollectionRef`: the Obsidian wikilink target stored in `Mine Collections`, not
+a normalized tag. Legacy normalized values are migration inputs only.
 
-- Для `type: channel` filename является stable id и должен быть canonical normalized tag: `Красивый веб.md` → `красивый-веб.md`.
-- `title` остаётся человекочитаемым display name в frontmatter: `title: Красивый веб`.
-- Watcher выполняет canonicalization перед `full_scan`, `incremental_scan` и single-file `index_md_file`.
-- Если canonical-файла ещё нет, legacy channel-файл переименовывается.
-- Если canonical-файл уже есть и он тоже `type: channel`, legacy alias удаляется; canonical file остаётся source of truth.
-- Если canonical path занят не-channel файлом, alias не удаляется и не перезаписывает чужой файл.
-- Обычные Obsidian/article/image/link файлы с human filename не canonicalize-ятся.
+### Collection filenames
+
+- Collection pages are `.md` files with `type: channel`.
+- Canonical source format uses human-readable filenames:
+  `Красивый веб.md`, not `красивый-веб.md`.
+- `title` may mirror filename for display, but it is not a machine id.
+- Watcher must not canonicalize collection filenames by lowercasing,
+  kebab-casing, or tag-normalizing them.
+- Legacy normalized channel files are migration inputs. The
+  `migrate-collections-to-wikilinks` tool may rename them to human filenames
+  after dry-run, backup, and conflict checks.
+- If a target human filename already exists and differs materially, migration
+  must stop and report the conflict instead of deleting or merging files.
+- Ordinary Obsidian/article/image/link files with human filenames are never
+  canonicalized.
 
 ### Поведение search_blocks
 
@@ -217,10 +241,25 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
 
 ### Поведение scan_md_files
 
-- Возвращает пути всех `.md` файлов в корне vault (не рекурсивно)
-- Игнорирует `.arena/` директорию
+- Возвращает пути всех `.md` файлов в vault recursively.
+- Игнорирует hidden/service/build директории: `.arena/`, `.obsidian/`,
+  `.trash/`, `.git/`, `node_modules/`, `target/`, `__pycache__/`.
 - Игнорирует файлы, не являющиеся `.md`
 - NFC-normalizes filename boundary перед возвратом в indexing/watcher pipeline
+
+### Поведение media reference resolution
+
+- `storage::media_refs` is the single backend resolver for local media
+  references used by index, thumbnails, media dimensions, thumb upgrades, and
+  inline-media extraction.
+- `![alt](path)` follows Markdown semantics: `path` is note-relative only.
+- `![[name.ext]]` follows Obsidian attachment semantics: same-directory path
+  first, then basename lookup through the vault, excluding hidden/service/build
+  dirs.
+- `![[folder/name.ext]]` uses the explicit path, checked note-relative and then
+  vault-root-relative.
+- Derived DB fields store resolved vault-root-relative paths when the file is
+  found. Source Markdown is not rewritten on read.
 
 ### Поведение rename_derived_artifacts
 

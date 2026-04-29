@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 
 use crate::domain::block::{serialize_block, Block, BlockType};
-use crate::domain::vault::{normalize_filename_stem, VaultLayout};
-use crate::storage::{article_audio, index, thumbnails};
+use crate::domain::vault::VaultLayout;
+use crate::storage::{article_audio, index, media_refs, thumbnails};
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -33,48 +33,81 @@ pub fn write_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Read a .md file and return (slug, raw_content).
-/// The slug is derived from the file name (without .md extension) and
-/// normalized to Unicode NFC form so that HFS+/APFS filesystem variants
-/// of the same logical filename resolve to a single identity.
-pub fn read_block_file(path: &Path) -> Result<(String, String)> {
-    let slug = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .map(normalize_filename_stem)
-        .with_context(|| format!("invalid file name: {}", path.display()))?;
-
+/// Read a .md file and return (path-based slug, raw_content).
+pub fn read_block_file(vault: &VaultLayout, path: &Path) -> Result<(String, String)> {
+    let slug = vault
+        .slug_for_path(path)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
+        .with_context(|| format!("invalid vault-relative file path: {}", path.display()))?;
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read file: {}", path.display()))?;
 
     Ok((slug, content))
 }
 
-/// Scan the vault root for all .md files (non-recursive).
-/// Ignores the .arena/ directory and non-.md files.
+/// Scan the vault for all .md files recursively.
+/// Ignores hidden/service directories (`.arena`, `.obsidian`, `.git`,
+/// `.mine-migration-backup`) and non-.md files.
 /// Returns paths sorted alphabetically.
 pub fn scan_md_files(vault: &VaultLayout) -> Result<Vec<PathBuf>> {
     let root = vault.root();
     let mut paths = Vec::new();
-
-    let entries = std::fs::read_dir(root)
+    scan_md_files_inner(root, &mut paths)
         .with_context(|| format!("failed to read vault directory: {}", root.display()))?;
-
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.is_dir() {
-            continue;
-        }
-
-        if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            paths.push(path);
-        }
-    }
 
     paths.sort();
     Ok(paths)
+}
+
+fn scan_md_files_inner(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            if is_ignored_vault_dir(&path) {
+                continue;
+            }
+            scan_md_files_inner(&path, paths)?;
+            continue;
+        }
+        if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+            paths.push(path);
+        }
+    }
+    Ok(())
+}
+
+pub fn is_ignored_vault_dir(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.starts_with('.') || matches!(name, "node_modules" | "target" | "__pycache__")
+        })
+}
+
+/// Normalize local frontmatter/body media refs for indexing.
+///
+/// Obsidian interprets local refs relative to the note. Mine's frontend and
+/// preview manifest consume root-relative paths, so the index stores resolved
+/// root-relative values without rewriting the source markdown.
+pub fn normalize_block_media_refs_for_index(vault: &VaultLayout, block: &mut Block) {
+    if let Some(file) = block.frontmatter.file.clone() {
+        if let Some(resolved) = media_refs::resolve_frontmatter_media(vault, &block.slug, &file) {
+            if let Some(root_relative) = vault.root_relative_reference(&resolved) {
+                block.frontmatter.file = Some(root_relative);
+            }
+        }
+    }
+    if let Some(thumbnail) = block.frontmatter.thumbnail.clone() {
+        if let Some(resolved) =
+            media_refs::resolve_frontmatter_media(vault, &block.slug, &thumbnail)
+        {
+            if let Some(root_relative) = vault.root_relative_reference(&resolved) {
+                block.frontmatter.thumbnail = Some(root_relative);
+            }
+        }
+    }
 }
 
 /// Copy a media file into the vault with slug-based naming.
@@ -159,6 +192,10 @@ pub fn rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &
             "target thumbnail already exists: {}",
             new_thumb.display()
         );
+        if let Some(parent) = new_thumb.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+        }
         std::fs::rename(&old_thumb, &new_thumb).with_context(|| {
             format!(
                 "failed to rename thumbnail {} -> {}",
@@ -303,7 +340,7 @@ mod tests {
         assert!(path.exists());
         assert_eq!(path, vault.block_path("sunset"));
 
-        let (slug, content) = read_block_file(&path).unwrap();
+        let (slug, content) = read_block_file(&vault, &path).unwrap();
         assert_eq!(slug, "sunset");
 
         let parsed = parse_block(&slug, &content).unwrap();

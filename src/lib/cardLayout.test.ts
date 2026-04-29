@@ -61,6 +61,18 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.primaryAspectRatio).toBeCloseTo(800 / 600);
   });
 
+  it("uses indexed preview_text instead of raw body for article previews", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "article",
+        title: "Meeting",
+        body: "## Raw heading\n\n- [ ] Raw markdown task that should not render",
+        preview_text: "Raw heading Raw markdown task…",
+      }),
+    );
+    expect(descriptor.previewText).toBe("Raw heading Raw markdown task…");
+  });
+
   it("reserves square geometry for article composite previews with 3+ items", () => {
     const descriptor = deriveCardLayoutDescriptor(
       makeBlock({

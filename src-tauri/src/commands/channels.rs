@@ -12,7 +12,7 @@ use crate::domain::block::{
     parse_block, parse_markdown_document, serialize_block, Block, BlockType, DateTime, Frontmatter,
 };
 use crate::domain::channel::Channel;
-use crate::domain::tag::normalize_tag;
+use crate::domain::collection::normalize_collection_ref;
 use crate::storage::{db, files, index};
 use crate::util::append_startup_trace;
 
@@ -128,7 +128,7 @@ pub fn create_channel(
     let mut channel = Channel::new(&tag, title.as_deref(), dt)
         .map_err(|e| CommandError::Internal(e.to_string()))?;
 
-    // Check uniqueness after normalization
+    // Check uniqueness after collection-ref normalization
     let existing = index::list_channels(&vs.conn)?;
     if existing.iter().any(|c| c.tag == channel.tag) {
         return Err(CommandError::Internal(format!(
@@ -183,10 +183,14 @@ pub fn reorder_channels(
 
     let now = crate::commands::state::now_iso8601();
     for item in &items {
-        if !existing_tags.contains(item.tag.as_str()) {
+        let tag = normalize_collection_ref(&item.tag);
+        if tag.is_empty() {
+            continue;
+        }
+        if !existing_tags.contains(tag.as_str()) {
             let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
-            let channel = Channel::new(&item.tag, None, dt)
-                .map_err(|e| CommandError::Internal(e.to_string()))?;
+            let channel =
+                Channel::new(&tag, None, dt).map_err(|e| CommandError::Internal(e.to_string()))?;
             // Write .md file for new channel
             let block = channel_to_block(&channel);
             files::write_block_file(&vs.vault, &block)?;
@@ -196,7 +200,8 @@ pub fn reorder_channels(
 
     let positions: Vec<(String, u32)> = items
         .into_iter()
-        .map(|item| (item.tag, item.position))
+        .map(|item| (normalize_collection_ref(&item.tag), item.position))
+        .filter(|(tag, _)| !tag.is_empty())
         .collect();
 
     index::update_channel_positions(&vs.conn, &positions)?;
@@ -205,7 +210,7 @@ pub fn reorder_channels(
     for (tag, pos) in &positions {
         let md_path = vs.vault.block_path(tag);
         if md_path.exists() {
-            if let Ok((slug, content)) = files::read_block_file(&md_path) {
+            if let Ok((slug, content)) = files::read_block_file(&vs.vault, &md_path) {
                 if let Ok(mut block) = parse_block(&slug, &content) {
                     if block.frontmatter.block_type == BlockType::Channel {
                         block.frontmatter.position = Some(*pos);
@@ -234,14 +239,12 @@ pub fn rename_channel(
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
-    let normalized_new = normalize_tag(&new_tag);
+    let normalized_new = normalize_collection_ref(&new_tag);
     if normalized_new.is_empty() {
-        return Err(CommandError::Internal(
-            "new tag is empty after normalization".into(),
-        ));
+        return Err(CommandError::Internal("new collection ref is empty".into()));
     }
 
-    let normalized_old = normalize_tag(&old_tag);
+    let normalized_old = normalize_collection_ref(&old_tag);
     if normalized_old == normalized_new {
         // Same tag after normalization — no-op
         let channels = index::list_channels(&vs.conn)?;
@@ -286,7 +289,7 @@ pub fn rename_channel(
             continue;
         }
         let path = vs.vault.block_path(&indexed_block.slug);
-        let content = match files::read_block_file(&path) {
+        let content = match files::read_block_file(&vs.vault, &path) {
             Ok((_, c)) => c,
             Err(e) => {
                 vs.conn.execute("ROLLBACK", []).ok();
@@ -303,14 +306,12 @@ pub fn rename_channel(
         })?;
         let mut block = parsed.block;
 
-        // Replace old tag with new tag (compare normalized to handle legacy non-normalized tags)
-        block
-            .frontmatter
-            .tags
-            .retain(|t| normalize_tag(t) != normalized_old);
+        // Replace old collection ref with new collection ref.
+        block.frontmatter.tags.retain(|t| t != &normalized_old);
         if !block.frontmatter.tags.contains(&normalized_new) {
             block.frontmatter.tags.push(normalized_new.clone());
         }
+        files::normalize_block_media_refs_for_index(&vs.vault, &mut block);
 
         let serialized =
             patch_collections_frontmatter(&content, &block.frontmatter.tags).map_err(|e| {
@@ -333,13 +334,7 @@ pub fn rename_channel(
     // Create new channel with same metadata
     let new_channel = Channel {
         tag: normalized_new.clone(),
-        title: {
-            let mut chars = normalized_new.chars();
-            match chars.next() {
-                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-                None => normalized_new.clone(),
-            }
-        },
+        title: normalized_new.clone(),
         description: existing.description.clone(),
         color: existing.color.clone(),
         icon: existing.icon.clone(),
@@ -455,6 +450,11 @@ pub fn delete_channel(state: State<'_, AppState>, tag: String) -> Result<bool, C
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     // Delete .md file
+    let tag = normalize_collection_ref(&tag);
+    if tag.is_empty() {
+        return Err(CommandError::Internal("collection ref is empty".into()));
+    }
+
     let md_path = vs.vault.block_path(&tag);
     if md_path.exists() {
         let trashed = {

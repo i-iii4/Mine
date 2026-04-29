@@ -83,6 +83,8 @@ fn create_schema(conn: &Connection) -> Result<()> {
             height INTEGER,
             author TEXT,
             body TEXT DEFAULT '',
+            preview_text TEXT,
+            preview_text_cap INTEGER,
             body_hash TEXT,
             origin TEXT,
             index_warning TEXT,
@@ -158,6 +160,8 @@ fn create_schema(conn: &Connection) -> Result<()> {
     // decoding). Enables the frontend to render embedded images at their
     // exact aspect ratio without runtime measurement.
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_dimensions TEXT");
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_text TEXT");
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_text_cap INTEGER");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_manifest TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN feed_playback TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN related_notes TEXT");

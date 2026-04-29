@@ -7,7 +7,7 @@
 // Contract: SPEC_DOMAIN.md#domain/vault
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 use unicode_normalization::UnicodeNormalization;
 
@@ -47,7 +47,11 @@ impl VaultLayout {
         &self.root
     }
 
-    /// Path to a block's .md file: `root/slug.md`.
+    /// Path to a block's .md file: `root/<slug>.md`.
+    ///
+    /// `slug` is a vault-relative path without the `.md` extension. Root
+    /// files keep the historical shape (`Note`), nested files use forward
+    /// slashes (`Folder/Note`).
     ///
     /// Panics in debug builds if slug fails validation.
     /// Call `validate_slug()` at IPC boundaries before using this.
@@ -60,7 +64,7 @@ impl VaultLayout {
         self.root.join(format!("{}.md", slug))
     }
 
-    /// Path to a block's media file: `root/slug.ext`.
+    /// Path to a block's media file: `root/<slug>.<ext>`.
     ///
     /// Panics in debug builds if slug fails validation.
     /// Call `validate_slug()` at IPC boundaries before using this.
@@ -116,7 +120,7 @@ impl VaultLayout {
     }
 
     /// Path to a specific thumbnail in the local derived store:
-    /// `<derived_root>/cache/thumbs/slug.jpg`.
+    /// `<derived_root>/cache/thumbs/<slug>.jpg`.
     ///
     /// Panics in debug builds if slug fails validation.
     /// Call `validate_slug()` at IPC boundaries before using this.
@@ -130,7 +134,7 @@ impl VaultLayout {
     }
 
     /// Path to an article-audio sidecar JSON in the local derived store:
-    /// `<derived_root>/cache/audio/slug.json`.
+    /// `<derived_root>/cache/audio/<slug>.json`.
     pub fn article_audio_state_path(&self, slug: &str) -> PathBuf {
         debug_assert!(
             validate_slug(slug).is_ok(),
@@ -141,7 +145,7 @@ impl VaultLayout {
     }
 
     /// Path to an article-audio file in the local derived store:
-    /// `<derived_root>/cache/audio/slug.ext`.
+    /// `<derived_root>/cache/audio/<slug>.<ext>`.
     pub fn article_audio_asset_path(&self, slug: &str, ext: &str) -> PathBuf {
         debug_assert!(
             validate_slug(slug).is_ok(),
@@ -150,6 +154,51 @@ impl VaultLayout {
         );
         let ext = ext.strip_prefix('.').unwrap_or(ext);
         self.audio_dir().join(format!("{}.{}", slug, ext))
+    }
+
+    /// Convert an on-disk `.md` path into Mine's path-based slug.
+    pub fn slug_for_path(&self, path: &Path) -> Result<String, VaultError> {
+        let relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| VaultError::InvalidSlug {
+                reason: "path is outside vault root".to_string(),
+            })?;
+        let without_ext = relative.with_extension("");
+        let slug =
+            path_to_portable_string(&without_ext).ok_or_else(|| VaultError::InvalidSlug {
+                reason: "path is not valid UTF-8".to_string(),
+            })?;
+        let slug = normalize_path_slug(&slug);
+        validate_slug(&slug)?;
+        Ok(slug)
+    }
+
+    /// Resolve a local media reference against the directory containing a block.
+    ///
+    /// Frontmatter and Obsidian embeds are interpreted relative to their `.md`
+    /// file first, then constrained to stay inside the vault.
+    pub fn resolve_local_reference(&self, block_slug: &str, reference: &str) -> Option<PathBuf> {
+        if reference.is_empty()
+            || reference.starts_with("http://")
+            || reference.starts_with("https://")
+            || reference.contains('\0')
+        {
+            return None;
+        }
+        let reference_path = Path::new(reference);
+        if reference_path.is_absolute() {
+            return None;
+        }
+        let block_path = self.block_path(block_slug);
+        let base = block_path.parent().unwrap_or(self.root());
+        let resolved = normalize_join(base, reference_path)?;
+        resolved.starts_with(&self.root).then_some(resolved)
+    }
+
+    /// Render a media reference as a vault-root-relative portable path.
+    pub fn root_relative_reference(&self, path: &Path) -> Option<String> {
+        let relative = path.strip_prefix(&self.root).ok()?;
+        path_to_portable_string(relative)
     }
 }
 
@@ -231,8 +280,11 @@ pub fn normalize_filename_stem(stem: &str) -> String {
 
 // ─── Slug validation ────────────────────────────────────────────────────────
 
-/// Validate that a slug is safe for use in filesystem paths.
-/// Rejects path traversal, separators, NUL bytes, and empty strings.
+/// Validate that a slug is safe for use as a vault-relative path.
+///
+/// Slugs may contain `/` to identify files inside subdirectories, but every
+/// segment must be ordinary user content: no empty segments, no `.` / `..`,
+/// no absolute paths, no backslashes, and no NUL bytes.
 pub fn validate_slug(slug: &str) -> Result<(), VaultError> {
     if slug.is_empty() {
         return Err(VaultError::InvalidSlug {
@@ -244,17 +296,60 @@ pub fn validate_slug(slug: &str) -> Result<(), VaultError> {
             reason: "slug contains NUL byte".to_string(),
         });
     }
-    if slug.contains('/') || slug.contains('\\') {
+    if slug.contains('\\') {
         return Err(VaultError::InvalidSlug {
-            reason: "slug contains path separator".to_string(),
+            reason: "slug contains backslash path separator".to_string(),
         });
     }
-    if slug == "." || slug == ".." || slug.starts_with("../") || slug.starts_with("..\\") {
+    if slug.starts_with('/') || slug.ends_with('/') || slug.contains("//") {
         return Err(VaultError::InvalidSlug {
-            reason: "slug contains path traversal".to_string(),
+            reason: "slug contains invalid path separator placement".to_string(),
         });
+    }
+    for segment in slug.split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return Err(VaultError::InvalidSlug {
+                reason: "slug contains path traversal".to_string(),
+            });
+        }
     }
     Ok(())
+}
+
+pub fn normalize_path_slug(slug: &str) -> String {
+    slug.split('/')
+        .map(normalize_filename_stem)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn path_to_portable_string(path: &Path) -> Option<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_str()?.to_string()),
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    Some(parts.join("/"))
+}
+
+fn normalize_join(base: &Path, relative: &Path) -> Option<PathBuf> {
+    let mut out = base.to_path_buf();
+    for component in relative.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(part) => out.push(part),
+            Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some(out)
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -459,7 +554,10 @@ mod tests {
 
     #[test]
     fn validate_slug_forward_slash() {
-        assert!(validate_slug("foo/bar").is_err());
+        assert!(validate_slug("foo/bar").is_ok());
+        assert!(validate_slug("/foo").is_err());
+        assert!(validate_slug("foo/").is_err());
+        assert!(validate_slug("foo//bar").is_err());
     }
 
     #[test]
@@ -491,20 +589,31 @@ mod tests {
     #[test]
     fn conflict_one_existing() {
         let existing: HashSet<String> = ["slug"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(resolve_slug_conflict("slug", &existing).unwrap(), "slug (2)");
+        assert_eq!(
+            resolve_slug_conflict("slug", &existing).unwrap(),
+            "slug (2)"
+        );
     }
 
     #[test]
     fn conflict_two_existing() {
-        let existing: HashSet<String> = ["slug", "slug (2)"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(resolve_slug_conflict("slug", &existing).unwrap(), "slug (3)");
+        let existing: HashSet<String> =
+            ["slug", "slug (2)"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            resolve_slug_conflict("slug", &existing).unwrap(),
+            "slug (3)"
+        );
     }
 
     #[test]
     fn conflict_gap_in_sequence() {
         // slug (2) is free even though slug (3) exists
-        let existing: HashSet<String> = ["slug", "slug (3)"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(resolve_slug_conflict("slug", &existing).unwrap(), "slug (2)");
+        let existing: HashSet<String> =
+            ["slug", "slug (3)"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            resolve_slug_conflict("slug", &existing).unwrap(),
+            "slug (2)"
+        );
     }
 
     #[test]

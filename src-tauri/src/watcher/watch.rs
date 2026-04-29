@@ -103,7 +103,7 @@ pub fn start_watching(
             }
         })?;
 
-    watcher.watch(vault.root(), RecursiveMode::NonRecursive)?;
+    watcher.watch(vault.root(), RecursiveMode::Recursive)?;
 
     log::info!("file watcher started for {}", vault.root().display());
     append_startup_trace(

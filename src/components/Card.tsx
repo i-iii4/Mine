@@ -17,6 +17,7 @@ import {
 } from "@/lib/cardLayout";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
+import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
 import { buildFeedVideoPosterCandidates } from "@/lib/feedVideoPoster";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
@@ -53,13 +54,14 @@ interface CardFrameProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 const CardFrame = forwardRef<HTMLDivElement, CardFrameProps>(function CardFrame(
-  { children, className, ...props },
+  { children, className, style, ...props },
   ref,
 ) {
   return (
     <div
       ref={ref}
       className={cn(CARD_FRAME_CLASS, className)}
+      style={{ minHeight: CARD_HOVER_ACTION_MIN_HEIGHT, ...style }}
       {...props}
     >
       {children}

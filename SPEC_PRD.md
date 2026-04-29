@@ -1,6 +1,6 @@
 # PRD: Mine
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_USECASES.md](SPEC_USECASES.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Продукт
 
@@ -11,13 +11,13 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 | Приложение | Что берём | Что не берём |
 |---|---|---|
 | **Are.na** | Каналы, блоки, связи, блок в нескольких каналах | Социальное: подписки, лента, чужие каналы |
-| **Mymind** | Теги → каналы, мгновенное сохранение, умные карточки | Облачное хранение |
+| **Mymind** | Мгновенное сохранение, умные карточки | Облачное хранение |
 | **Cosmos** | Визуальный поиск (позже, через эмбеддинги) | Облачное хранение |
 
 ### Принципы
 
 1. **Файлы — источник правды.** Удалил приложение — файлы остались
-2. **Каналы — это теги.** Один файл, много тегов = блок в нескольких каналах
+2. **Коллекции — это Obsidian-страницы.** Один файл, много `Mine Collections` wikilinks = блок в нескольких коллекциях
 3. **Всё — Markdown.** Каждый блок = `.md` с frontmatter + опциональный медиафайл рядом
 4. **Плоская структура.** Все файлы в корне vault, никаких вложенных папок
 5. **Индекс восстановим.** SQLite — кэш, не хранилище. Пересобирается из файлов
@@ -36,7 +36,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 |---|---|---|
 | `type` | string | `link` / `article` / `image` / `video` / `file` |
 | `title` | string | Заголовок |
-| `tags` | string[] | Теги (= каналы) |
+| `Mine Collections` | string[] | Quoted Obsidian wikilinks на collection pages |
 | `saved_at` | datetime | Когда сохранён |
 
 **Опциональные атрибуты:**
@@ -52,13 +52,13 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 | `height` | number | Размеры |
 | `source` | string | Откуда сохранён (`browser-extension`, `drag-drop`, `manual`) |
 
-### Канал
+### Коллекция
 
-Канал — это тег, которому пользователь присвоил статус канала. Отображается в боковой панели как постоянный пункт навигации.
+Коллекция — это Obsidian-страница (`.md` с `type: channel`), которая отображается в боковой панели как постоянный пункт навигации.
 
-Открыть канал = показать все блоки, у которых этот тег в `tags[]`.
+Открыть коллекцию = показать все блоки, у которых есть wikilink на эту collection page в `Mine Collections`.
 
-Метаданные каналов (название, цвет, иконка, порядок) хранятся в `.arena/index.db`. Восстановимы: при потере индекса список уникальных тегов собирается из frontmatter всех файлов.
+Метаданные коллекций (название, цвет, иконка, порядок) хранятся в collection page frontmatter. SQLite — local derived cache и восстанавливается из файлов.
 
 ### Wikilinks
 
@@ -74,7 +74,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 
 **На диске:**
 ```
-stripe-homepage.md          ← frontmatter: type=link, url, title, tags
+stripe-homepage.md          ← frontmatter: type=link, url, title, Mine Collections
 stripe-og.png               ← миниатюра (og:image или скриншот)
 ```
 
@@ -87,7 +87,9 @@ url: https://stripe.com
 title: Stripe — Financial Infrastructure
 description: Financial infrastructure for the internet
 thumbnail: stripe-og.png
-tags: [web-design, fintech]
+Mine Collections:
+  - "[[Web Design]]"
+  - "[[Fintech]]"
 saved_at: 2026-02-26T14:30:00Z
 source: browser-extension
 ```
@@ -114,7 +116,9 @@ url: https://example.com/crdt-explained
 title: Как устроен CRDT
 author: Wim Cools
 thumbnail: crdt-article-og.png
-tags: [programming, distributed-systems]
+Mine Collections:
+  - "[[Programming]]"
+  - "[[Distributed Systems]]"
 saved_at: 2026-02-26T14:30:00Z
 source: browser-extension
 ```
@@ -133,11 +137,11 @@ source: browser-extension
 
 **На диске:**
 ```
-sunset-tokyo.md             ← frontmatter: type=image, file, tags
+sunset-tokyo.md             ← frontmatter: type=image, file, Mine Collections
 sunset-tokyo.jpg            ← само изображение
 ```
 
-**На фронте:** только картинка. Клик открывает детальный вид с атрибутами: откуда сохранена, когда, в каких каналах, связанные блоки через wikilinks.
+**На фронте:** только картинка. Клик открывает детальный вид с атрибутами: откуда сохранена, когда, в каких коллекциях, связанные блоки через wikilinks.
 
 **Frontmatter:**
 ```yaml
@@ -147,7 +151,10 @@ url: https://unsplash.com/photo/abc
 title: Sunset in Tokyo
 width: 3840
 height: 2160
-tags: [photography, japan, inspiration]
+Mine Collections:
+  - "[[Photography]]"
+  - "[[Japan]]"
+  - "[[Inspiration]]"
 saved_at: 2026-02-26T14:30:00Z
 source: browser-extension
 ```
@@ -158,7 +165,7 @@ source: browser-extension
 
 **На диске:**
 ```
-demo-reel.md                ← frontmatter: type=video, file, tags
+demo-reel.md                ← frontmatter: type=video, file, Mine Collections
 demo-reel.mp4               ← видеофайл
 demo-reel-thumb.jpg         ← кадр для миниатюры
 ```
@@ -169,7 +176,7 @@ demo-reel-thumb.jpg         ← кадр для миниатюры
 
 **На диске:**
 ```
-design-systems-book.md      ← frontmatter: type=file, file, tags
+design-systems-book.md      ← frontmatter: type=file, file, Mine Collections
 design-systems-book.pdf     ← файл
 ```
 
@@ -186,8 +193,8 @@ design-systems-book.pdf     ← файл
 │          │                                  │
 │ Sidebar  │         Основная область          │
 │          │                                  │
-│ Каналы   │   Сетка карточек / Детальный вид  │
-│ (теги)   │                                  │
+│ Коллекции│   Сетка карточек / Детальный вид  │
+│          │                                  │
 │          │                                  │
 │ Все      │                                  │
 │ design   │  ┌─────┐ ┌─────┐ ┌─────┐        │
@@ -195,7 +202,7 @@ design-systems-book.pdf     ← файл
 │ code     │  │ img │ │link │ │ txt │        │
 │ ...      │  │     │ │     │ │     │        │
 │          │  └─────┘ └─────┘ └─────┘        │
-│ + тег    │  ┌─────┐ ┌─────┐ ┌─────┐        │
+│ + канал  │  ┌─────┐ ┌─────┐ ┌─────┐        │
 │          │  │     │ │     │ │     │        │
 │──────────│  │ vid │ │ img │ │ pdf │        │
 │ Cmd+K    │  │     │ │     │ │     │        │
@@ -206,9 +213,9 @@ design-systems-book.pdf     ← файл
 ### Sidebar (боковая панель)
 
 - **«Все»** — все блоки в vault
-- **Каналы** — теги со статусом канала, упорядочены пользователем
-- **«+ канал»** — создать канал из существующего тега или нового
-- Счётчик блоков рядом с каждым каналом
+- **Коллекции** — Obsidian pages с `type: channel`, упорядочены пользователем
+- **«+ канал»** — создать новую collection page
+- Счётчик блоков рядом с каждой коллекцией
 - Перетаскивание для изменения порядка
 
 ### Сетка карточек
@@ -231,14 +238,14 @@ design-systems-book.pdf     ← файл
 - **video** — встроенный плеер
 - **file** — системный просмотр (Quick Look)
 
-Под контентом — атрибуты: теги, дата, источник, связанные блоки (wikilinks), «Открыть в Finder».
+Под контентом — атрибуты: коллекции, дата, источник, связанные блоки (wikilinks), «Открыть в Finder».
 
 ### Поиск (Cmd+K)
 
 - Глобальный поиск по всему vault
 - Мгновенные результаты (FTS5)
 - Поиск по: заголовку, описанию, тексту статей, именам файлов
-- Результаты: блоки и каналы вперемешку с иконками типа
+- Результаты: блоки и коллекции вперемешку с иконками типа
 
 ---
 

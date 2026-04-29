@@ -1,29 +1,15 @@
-// Recent tags: tracks most recently used tags for channel menus.
+// Recent tags: tracks most recently used collection refs for channel menus.
 // Stored in localStorage, max 10 entries, most recent first.
 
 const STORAGE_KEY = "arena:recentTags";
 const MAX_RECENT = 10;
 
-/** Mirror Rust normalize_tag: trim, lowercase, spaces/underscores to hyphens. */
-function normalizeTag(raw: string): string {
-  const lower = raw.trim().toLowerCase();
-  let result = "";
-  let prevDash = false;
-  for (const c of lower) {
-    if (/\p{L}|\p{N}/u.test(c)) {
-      result += c;
-      prevDash = false;
-    } else if (c === "-" || c === " " || c === "_") {
-      if (!prevDash && result.length > 0) {
-        result += "-";
-        prevDash = true;
-      }
-    }
-  }
-  if (result.endsWith("-")) {
-    result = result.slice(0, -1);
-  }
-  return result;
+function normalizeCollectionRef(raw: string): string {
+  const trimmed = raw.trim();
+  const unwrapped = trimmed.startsWith("[[") && trimmed.endsWith("]]")
+    ? trimmed.slice(2, -2)
+    : trimmed;
+  return unwrapped.split("|")[0]?.trim() ?? "";
 }
 
 export function getRecentTags(): string[] {
@@ -35,10 +21,10 @@ export function getRecentTags(): string[] {
 }
 
 export function pushRecentTag(tag: string): void {
-  const normalized = normalizeTag(tag);
-  if (!normalized) return;
-  const recent = getRecentTags().filter((t) => t !== normalized);
-  recent.unshift(normalized);
+  const collectionRef = normalizeCollectionRef(tag);
+  if (!collectionRef) return;
+  const recent = getRecentTags().filter((t) => t !== collectionRef);
+  recent.unshift(collectionRef);
   localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify(recent.slice(0, MAX_RECENT)),

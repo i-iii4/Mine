@@ -66,6 +66,19 @@ const LINK_FOOTER_HEIGHT = 76;
 /** Fixed file card height. */
 const FILE_CARD_HEIGHT = 88;
 
+/**
+ * Minimum interactive card height.
+ *
+ * Hover actions are absolutely positioned:
+ *   top offset 8px + icon button 32px + safe gap 8px +
+ *   bottom action button 32px + bottom offset 8px = 88px
+ *
+ * CardFrame has a 1px border on both vertical edges, so the outer masonry
+ * envelope must reserve 90px. This keeps an otherwise empty card from letting
+ * the top-right menu and bottom action row overlap on hover.
+ */
+export const CARD_HOVER_ACTION_MIN_HEIGHT = 90;
+
 /** Social cards use p-4 container. */
 const SOCIAL_PADDING_X = 16;
 const SOCIAL_PADDING_TOP = 16;
@@ -376,32 +389,36 @@ export function computeCardHeight(
   wordWidths: WordWidths | null,
 ): number {
   const descriptor = deriveCardLayoutDescriptor(block);
-  switch (block.block_type) {
-    case "image":
-      return computeImageHeight(block, columnWidth);
+  const rawHeight = (() => {
+    switch (block.block_type) {
+      case "image":
+        return computeImageHeight(block, columnWidth);
 
-    case "video":
-      return (
-        Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) + CARD_BORDER_HEIGHT
-      );
+      case "video":
+        return (
+          Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) + CARD_BORDER_HEIGHT
+        );
 
-    case "link":
-      return (
-        Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) +
-        LINK_FOOTER_HEIGHT +
-        CARD_BORDER_HEIGHT
-      );
+      case "link":
+        return (
+          Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) +
+          LINK_FOOTER_HEIGHT +
+          CARD_BORDER_HEIGHT
+        );
 
-    case "file":
-      return FILE_CARD_HEIGHT + CARD_BORDER_HEIGHT;
+      case "file":
+        return FILE_CARD_HEIGHT + CARD_BORDER_HEIGHT;
 
-    case "article":
-      if (descriptor.variant.startsWith("social")) {
-        return computeSocialHeight(block, columnWidth, wordWidths);
-      }
-      return computeArticleHeight(block, columnWidth, wordWidths);
+      case "article":
+        if (descriptor.variant.startsWith("social")) {
+          return computeSocialHeight(block, columnWidth, wordWidths);
+        }
+        return computeArticleHeight(block, columnWidth, wordWidths);
 
-    default:
-      return DEFAULT_CARD_HEIGHT;
-  }
+      default:
+        return DEFAULT_CARD_HEIGHT;
+    }
+  })();
+
+  return Math.max(CARD_HOVER_ACTION_MIN_HEIGHT, rawHeight);
 }

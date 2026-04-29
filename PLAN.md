@@ -1,10 +1,10 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Goal
 
-Создать технически совершенное десктопное приложение для macOS — локальную альтернативу Are.na. Файлы на диске (Markdown + frontmatter), каналы — теги, плавный интерфейс на 10 000+ блоков.
+Создать технически совершенное десктопное приложение для macOS — локальную альтернативу Are.na. Файлы на диске (Markdown + frontmatter), коллекции — Obsidian-страницы, плавный интерфейс на 10 000+ блоков.
 
 **Это не MVP.** Каждый модуль реализуется в финальном качестве.
 
@@ -161,23 +161,26 @@ Goal: устранить две подтверждённые архитекту�
   - Read path must be non-invasive: opening/rebuilding Mine must not write frontmatter into user-authored notes.
   - Mine frontmatter becomes an optional metadata overlay for explicit Mine fields (`Mine Collections`, `type`, `url`, `file`) rather than a hard requirement for displaying Markdown.
   - `tags` is user/Obsidian-owned metadata, not the canonical Mine collection field.
-  - New collection writes must use human-readable `Mine Collections`; legacy `tags` remains a backward-compat read fallback until manual migration.
-  - Scope and migration workflow are specified in `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`.
+  - Collection writes use `Mine Collections` as quoted Obsidian wikilinks, for example `- "[[Красивый веб]]"`.
+  - Legacy `tags` / raw `Mine Collections` are migration inputs, not a permanent runtime format.
+  - Scope and migration workflow are specified in `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md` and `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md`.
 
-### Current planned migration — `tags` → `Mine Collections`
+### Current migration — legacy collections → Obsidian wikilink collections
 
-This migration must be deliberate and manually reviewable because existing
-Obsidian users often use `tags` for their own systems.
+This migration is deliberate and manually reviewable because existing Obsidian
+users often use `tags` for their own systems. The target is not dual support.
+The target is one canonical post-migration format documented in
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md).
 
 | # | Step | Status | Deliverables |
 |---|------|--------|--------------|
-| MC1 | Dual-read model | [x] | Parse `Mine Collections`; if absent, read legacy Mine `tags` as collections; keep Obsidian `tags` separate |
-| MC2 | Write-path switch | [x] | `add_tag` / remove / rename / drag-to-collection / clipper save write `Mine Collections`, never `tags` |
-| MC3 | Index/UI compatibility | [x] | Sidebar/feed still use Mine collections; optional Obsidian tags remain non-destructive metadata |
-| MC4 | Manual migration dry-run | [ ] | Report files with legacy `tags`, proposed `Mine Collections`, Mine-authored vs foreign confidence |
-| MC5 | Manual migration apply | [ ] | Timestamped backups, surgical YAML patcher, preserve `tags` by default, rebuild index after apply |
-| MC6 | Live vault verification | [ ] | Compare collection counts before/after, inspect sample files in Obsidian and Mine |
-| MC7 | Legacy cleanup decision | [ ] | Only after verification, optional user-approved removal of truly Mine-only legacy `tags` |
+| MC1 | Target spec | [x] | `Mine Collections` values are quoted Obsidian wikilinks; collection pages use human filenames |
+| MC2 | Dry-run scanner | [x] | `migrate-collections-to-wikilinks --dry-run` reports legacy `tags`, raw `Mine Collections`, normalized channel pages, proposed rewrites and conflicts |
+| MC3 | Backup + apply migration | [x] | `--apply` creates timestamped byte backups, rewrites card membership, and safely renames root collection pages |
+| MC4 | Runtime write-path switch | [x] | Clipper/app/drag/checkbox/inline extraction write only canonical wikilinks |
+| MC5 | Storage/frontend semantic switch | [x] | `CollectionRef` replaces normalized tag semantics while legacy physical names remain in DB/API |
+| MC6 | Rebuild + verification | [ ] | Compare counts/order before/after, inspect Obsidian graph, verify no write path emits legacy format |
+| MC7 | Legacy fallback removal | [ ] | Remove normal runtime dependency on `tags`/raw values as collection membership; keep diagnostics/re-run migration affordance |
 
 ### Current known blocker before phase completion
 
@@ -943,7 +946,7 @@ Goal: убрать `Native host timeout` на статьях с многими i
 | 21.2 | Storage/index support | [ ] | `related_notes` column, wikilinks insertion, `IndexedBlock.related_notes` |
 | 21.3 | Backend extract command | [ ] | `extract_inline_media`, local media validation, shared-media-reference semantics, thumbnail generation |
 | 21.4 | Detail drag payload | [ ] | `type: "inline_media"`, local image-only activation, media drag overlay |
-| 21.5 | Sidebar drop routing | [ ] | Drop `inline_media` on `tag:<tag>` calls extraction command, not `addTag` |
+| 21.5 | Sidebar drop routing | [ ] | Drop `inline_media` on collection target calls extraction command, not the card connect path |
 | 21.6 | Metadata UI | [ ] | `RELATED NOTES` in Detail metadata with links to source notes |
 | 21.7 | Manual QA | [ ] | Real vault extraction, Obsidian source check, source article unchanged, rename source note updates relation |
 

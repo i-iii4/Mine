@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Card } from "./Card";
+import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
 import type { LightBlock } from "@/types";
 
 function block(overrides: Partial<LightBlock> = {}): LightBlock {
@@ -60,6 +61,13 @@ describe("Card", () => {
     render(<Card block={b} vaultPath={VAULT} onClick={onClick} />);
     fireEvent.keyDown(screen.getByRole("button"), { key: " " });
     expect(onClick).toHaveBeenCalledWith(b);
+  });
+
+  it("enforces the minimum height needed for hover actions", () => {
+    render(<Card block={block()} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(screen.getByRole("button")).toHaveStyle({
+      minHeight: `${CARD_HOVER_ACTION_MIN_HEIGHT}px`,
+    });
   });
 
   // ── Image card ────────────────────────────────────────────────────────

@@ -13,8 +13,11 @@ use imageproc::drawing::draw_text_mut;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use crate::domain::block::{iter_inline_media_sources, Block, BlockType};
+use crate::domain::block::{
+    iter_inline_media_references, iter_inline_media_sources, Block, BlockType,
+};
 use crate::domain::vault::VaultLayout;
+use crate::storage::media_refs;
 
 /// Default max side for thumbnails: 480px covers 240px CSS columns at 2x Retina.
 pub const DEFAULT_MAX_SIZE: u32 = 480;
@@ -132,8 +135,7 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
     //    Markdown File First principle. Do not construct from slug.
     if let Some(ref file_name) = block.frontmatter.file {
         let ext = ext_lower(file_name);
-        let media_path = vault.root().join(file_name);
-        if media_path.exists() {
+        if let Some(media_path) = resolve_block_media_path(block, vault, file_name) {
             if is_image_ext(&ext) {
                 if is_rust_decodable(&media_path) {
                     return ExpectedThumb::OnlyJpeg;
@@ -152,8 +154,7 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
     if let Some(ref thumb_file) = block.frontmatter.thumbnail {
         let ext = ext_lower(thumb_file);
         if is_image_ext(&ext) {
-            let media_path = vault.root().join(thumb_file);
-            if media_path.exists() {
+            if let Some(media_path) = resolve_block_media_path(block, vault, thumb_file) {
                 if is_rust_decodable(&media_path) {
                     return ExpectedThumb::OnlyJpeg;
                 }
@@ -183,12 +184,9 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
             return ExpectedThumb::OnlyJpeg;
         }
         // 4. Article body: first video.
-        if let Some(first_video) = find_first_local_media(&block.body, is_video_ext) {
-            let media_path = vault.root().join(&first_video);
-            if media_path.exists() {
-                // Video: Rust may succeed or fall through. Accept either.
-                return ExpectedThumb::Either;
-            }
+        if find_first_existing_body_media(block, vault, is_video_ext).is_some() {
+            // Video: Rust may succeed or fall through. Accept either.
+            return ExpectedThumb::Either;
         }
     }
 
@@ -201,15 +199,13 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
 /// so freshness only depends on files that the current thumbnail would use.
 fn preview_dependency_paths(block: &Block, vault: &VaultLayout) -> Vec<std::path::PathBuf> {
     if let Some(ref file_name) = block.frontmatter.file {
-        let media_path = vault.root().join(file_name);
-        if media_path.exists() {
+        if let Some(media_path) = resolve_block_media_path(block, vault, file_name) {
             return vec![media_path];
         }
     }
 
     if let Some(ref thumb_file) = block.frontmatter.thumbnail {
-        let media_path = vault.root().join(thumb_file);
-        if media_path.exists() {
+        if let Some(media_path) = resolve_block_media_path(block, vault, thumb_file) {
             return vec![media_path];
         }
     }
@@ -230,11 +226,10 @@ fn preview_dependency_paths(block: &Block, vault: &VaultLayout) -> Vec<std::path
         if let Some(media_path) = article_images.into_iter().next() {
             return vec![media_path];
         }
-        if let Some(first_video) = find_first_local_media(&block.body, is_video_ext) {
-            let media_path = vault.root().join(&first_video);
-            if media_path.exists() {
-                return vec![media_path];
-            }
+        if let Some((_first_video, media_path)) =
+            find_first_existing_body_media(block, vault, is_video_ext)
+        {
+            return vec![media_path];
         }
     }
 
@@ -974,8 +969,7 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
     //    and the block gets queued for WebView upgrade in Phase 2.
     if let Some(ref file_name) = block.frontmatter.file {
         let ext = ext_lower(file_name);
-        let media_path = vault.root().join(file_name);
-        if media_path.exists() {
+        if let Some(media_path) = resolve_block_media_path(block, vault, file_name) {
             if is_image_ext(&ext) && is_rust_decodable(&media_path) {
                 match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
                     Ok(_) => return ThumbSource::Image,
@@ -995,11 +989,12 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
     if let Some(thumb_file) = block.frontmatter.thumbnail.as_ref() {
         let ext = ext_lower(thumb_file);
         if is_image_ext(&ext) {
-            let media_path = vault.root().join(thumb_file);
-            if media_path.exists() && is_rust_decodable(&media_path) {
-                match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
-                    Ok(_) => return ThumbSource::Image,
-                    Err(e) => log::warn!("thumbnail-field thumb failed for {}: {}", slug, e),
+            if let Some(media_path) = resolve_block_media_path(block, vault, thumb_file) {
+                if is_rust_decodable(&media_path) {
+                    match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
+                        Ok(_) => return ThumbSource::Image,
+                        Err(e) => log::warn!("thumbnail-field thumb failed for {}: {}", slug, e),
+                    }
                 }
             }
         }
@@ -1039,17 +1034,16 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
                 Err(e) => log::warn!("first-image thumb failed for {}: {}", slug, e),
             }
         }
-        if let Some(first_video) = find_first_local_media(&block.body, is_video_ext) {
-            let media_path = vault.root().join(&first_video);
-            if media_path.exists() {
-                match generate_video_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
-                    Ok(_) => return ThumbSource::Video,
-                    Err(e) => log::warn!(
-                        "first-video thumb failed for {}, falling back to text: {}",
-                        slug,
-                        e
-                    ),
-                }
+        if let Some((_first_video, media_path)) =
+            find_first_existing_body_media(block, vault, is_video_ext)
+        {
+            match generate_video_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
+                Ok(_) => return ThumbSource::Video,
+                Err(e) => log::warn!(
+                    "first-video thumb failed for {}, falling back to text: {}",
+                    slug,
+                    e
+                ),
             }
         }
 
@@ -1127,6 +1121,47 @@ fn find_local_media(body: &str, ext_predicate: fn(&str) -> bool, limit: usize) -
     results
 }
 
+fn find_local_media_refs(
+    body: &str,
+    ext_predicate: fn(&str) -> bool,
+    limit: usize,
+) -> Vec<crate::domain::block::InlineMediaReference> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let mut results = Vec::new();
+    for reference in iter_inline_media_references(body) {
+        if reference.source.is_empty()
+            || reference.source.starts_with("http://")
+            || reference.source.starts_with("https://")
+        {
+            continue;
+        }
+        let ext = ext_lower(&reference.source);
+        if ext_predicate(&ext) {
+            results.push(reference);
+            if results.len() >= limit {
+                break;
+            }
+        }
+    }
+    results
+}
+
+fn find_first_existing_body_media(
+    block: &Block,
+    vault: &VaultLayout,
+    ext_predicate: fn(&str) -> bool,
+) -> Option<(String, std::path::PathBuf)> {
+    for reference in find_local_media_refs(&block.body, ext_predicate, usize::MAX) {
+        if let Some(path) = media_refs::resolve_inline_media(vault, &block.slug, &reference) {
+            return Some((reference.source, path));
+        }
+    }
+    None
+}
+
 fn find_first_existing_article_media(
     block: &Block,
     vault: &VaultLayout,
@@ -1134,11 +1169,14 @@ fn find_first_existing_article_media(
     if block.frontmatter.block_type != BlockType::Article {
         return None;
     }
-    for src in iter_inline_media_sources(&block.body) {
-        if src.is_empty() || src.starts_with("http://") || src.starts_with("https://") {
+    for reference in iter_inline_media_references(&block.body) {
+        if reference.source.is_empty()
+            || reference.source.starts_with("http://")
+            || reference.source.starts_with("https://")
+        {
             continue;
         }
-        let ext = ext_lower(&src);
+        let ext = ext_lower(&reference.source);
         let kind = if is_image_ext(&ext) {
             "image"
         } else if is_video_ext(&ext) {
@@ -1146,9 +1184,8 @@ fn find_first_existing_article_media(
         } else {
             continue;
         };
-        let path = vault.root().join(&src);
-        if path.exists() {
-            return Some((src, path, kind));
+        if let Some(path) = media_refs::resolve_inline_media(vault, &block.slug, &reference) {
+            return Some((reference.source, path, kind));
         }
     }
     None
@@ -1165,19 +1202,28 @@ fn collect_article_preview_images(
 
     let mut seen = std::collections::HashSet::<String>::new();
     let mut paths = Vec::new();
-    for image_name in find_local_media(&block.body, is_image_ext, limit.saturating_mul(3)) {
-        if !seen.insert(image_name.clone()) {
+    for reference in find_local_media_refs(&block.body, is_image_ext, limit.saturating_mul(3)) {
+        if !seen.insert(reference.source.clone()) {
             continue;
         }
-        let path = vault.root().join(&image_name);
-        if path.exists() && is_rust_decodable(&path) {
-            paths.push(path);
-            if paths.len() >= limit {
-                break;
+        if let Some(path) = media_refs::resolve_inline_media(vault, &block.slug, &reference) {
+            if is_rust_decodable(&path) {
+                paths.push(path);
+                if paths.len() >= limit {
+                    break;
+                }
             }
         }
     }
     paths
+}
+
+fn resolve_block_media_path(
+    block: &Block,
+    vault: &VaultLayout,
+    reference: &str,
+) -> Option<std::path::PathBuf> {
+    media_refs::resolve_indexed_media(vault, &block.slug, reference)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -1733,6 +1779,20 @@ mod tests {
             find_first_local_media_any(body),
             Some(("Title (video 1).mp4".to_string(), "video"))
         );
+    }
+
+    #[test]
+    fn generate_for_block_resolves_obsidian_attachment_by_basename() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        std::fs::create_dir_all(dir.path().join("Библиотека/images/images")).unwrap();
+        create_test_image(&dir.path().join("Библиотека/images/images/01.jpg"), 120, 80);
+        let block = make_article("Библиотека/Азбука", "![[01.jpg]]");
+
+        let source = generate_for_block(&block, &vault);
+
+        assert_eq!(source, ThumbSource::Image);
+        assert!(vault.thumb_path("Библиотека/Азбука").exists());
     }
 
     #[test]

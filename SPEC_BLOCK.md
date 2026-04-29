@@ -1,6 +1,6 @@
 # SPEC: domain/block
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 Эталонный модуль. Все последующие модули следуют его паттернам качества, тестирования и документирования.
 
@@ -54,7 +54,7 @@ struct Frontmatter {
     url: Option<String>,
     file: Option<String>,        // имя связанного медиафайла
     thumbnail: Option<String>,   // имя файла-миниатюры
-    tags: Vec<String>,           // теги (= каналы). Пустой vec допустим
+    tags: Vec<String>,           // legacy physical field; semantic value is CollectionRef
     saved_at: DateTime,          // обязательное
     source: Option<String>,      // "browser-extension", "drag-drop", "manual", etc.
     width: Option<u32>,
@@ -65,6 +65,12 @@ struct Frontmatter {
 
 **Обязательные поля:** `block_type`, `saved_at`.
 **Поведение при отсутствии обязательного поля:** ошибка `MissingRequiredField`.
+
+Status: this is the original strict Mine block model. Obsidian compatibility
+layers add optional implicit articles, and collection membership is stored in
+`Mine Collections` wikilinks. The in-memory field remains `tags` as a legacy
+physical/API name, but its semantic value is `CollectionRef`. See
+`SPEC_OBSIDIAN_MARKDOWN_COMPAT.md` and `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md`.
 
 ### Block
 
@@ -119,8 +125,10 @@ fn parse_frontmatter(yaml: &str) -> Result<Frontmatter, BlockError>
 - Неизвестный `type` → `BlockError::InvalidBlockType { value }`
 - Отсутствует `saved_at` → `BlockError::MissingRequiredField { field: "saved_at" }`
 - Невалидный `saved_at` → `BlockError::InvalidDateTime { value }`
-- `tags` отсутствует → `tags = vec![]` (не ошибка)
-- `tags` содержит не-строки → `BlockError::InvalidTagValue`
+- `Mine Collections` отсутствует → `tags = vec![]` (не ошибка)
+- `Mine Collections` содержит не-строки → `BlockError::InvalidTagValue`
+- `tags` in YAML is user-owned Obsidian metadata and is ignored by the strict
+  Mine collection parser
 - Неизвестные поля в YAML → игнорируются (forward compatibility)
 
 ### parse_block
@@ -152,8 +160,9 @@ fn serialize_frontmatter(frontmatter: &Frontmatter) -> String
 **Поведение:**
 - Всегда включает `type` и `saved_at`
 - `None` поля не включаются в вывод
-- Пустой `tags` vec — поле `tags` не включается
-- Порядок полей: type, title, description, url, file, thumbnail, tags, saved_at, source, width, height, author
+- Пустой `tags` vec — поле `Mine Collections` не включается
+- Непустой `tags` vec serializes as quoted wikilinks under `Mine Collections`
+- Порядок полей: type, title, description, url, file, thumbnail, Mine Collections, saved_at, source, width, height, author
 
 ### serialize_block
 
@@ -245,7 +254,7 @@ enum BlockError {
 1. `Block.slug` — непустая строка, содержит только `[a-z0-9-]`
 2. `Block.frontmatter.block_type` — всегда валидный `BlockType`
 3. `Block.frontmatter.saved_at` — всегда валидная дата ISO 8601
-4. `Block.frontmatter.tags` — может быть пустым, но каждый элемент — непустая строка
+4. `Block.frontmatter.tags` — может быть пустым, но каждый элемент — непустой `CollectionRef`
 5. `serialize_block(parse_block(slug, content).unwrap())` воспроизводит семантически эквивалентный content (roundtrip)
 
 ---
@@ -261,8 +270,8 @@ enum BlockError {
 | E5 | Frontmatter с `type: unknown` | `BlockError::InvalidBlockType { value: "unknown" }` |
 | E6 | Frontmatter без `saved_at` | `BlockError::MissingRequiredField { field: "saved_at" }` |
 | E7 | Frontmatter с `saved_at: "not a date"` | `BlockError::InvalidDateTime` |
-| E8 | Frontmatter без `tags` | `tags = vec![]`, не ошибка |
-| E9 | Frontmatter с `tags: "single-string"` (не массив) | `BlockError::InvalidTagValue` |
+| E8 | Frontmatter без `Mine Collections` | `tags = vec![]`, не ошибка |
+| E9 | `Mine Collections` с не-строковым элементом | `BlockError::InvalidTagValue` |
 | E10 | Frontmatter с неизвестными полями (`custom_field: value`) | Игнорируются, без ошибки |
 | E11 | Body с `---` внутри текста (после frontmatter) | `---` внутри body — обычный текст, не маркер |
 | E12 | Unicode в title и body | Корректная обработка, slug транслитерируется |

@@ -14,11 +14,10 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::domain::block::{
-    compute_body_hash, parse_block, parse_markdown_document, serialize_block, Block, BlockType,
-    DateTime,
+    compute_body_hash, iter_inline_media_references, parse_block, parse_markdown_document, Block,
+    BlockType, DateTime,
 };
-use crate::domain::tag::normalize_tag;
-use crate::domain::vault::{normalize_filename_stem, VaultLayout};
+use crate::domain::vault::VaultLayout;
 use crate::storage::{article_audio, db, files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
 
@@ -116,11 +115,7 @@ pub fn full_scan(
         // Phase 18.G.3: iCloud conflict files go into vault_conflicts
         // and are not treated as independent blocks. Skip them here
         // before the indexer sees them.
-        if let Some(stem) = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(normalize_filename_stem)
-        {
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
             if let Some(base_slug) = crate::domain::vault::detect_icloud_conflict(&stem) {
                 let _ = index::record_vault_conflict(&tx, &base_slug, &stem);
                 log::info!(
@@ -158,11 +153,7 @@ pub fn full_scan(
     // conflict stems themselves don't count as real blocks.
     let live_slugs: std::collections::HashSet<String> = paths
         .iter()
-        .filter_map(|p| {
-            p.file_stem()
-                .and_then(|s| s.to_str())
-                .map(normalize_filename_stem)
-        })
+        .filter_map(|p| path_to_slug(vault, p))
         .filter(|stem| crate::domain::vault::detect_icloud_conflict(stem).is_none())
         .collect();
     let all_indexed = index::list_blocks_light(&tx).unwrap_or_default();
@@ -225,11 +216,7 @@ pub fn incremental_scan(
         .context("failed to begin transaction for incremental_scan")?;
 
     for path in &paths {
-        if let Some(slug) = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .map(normalize_filename_stem)
-        {
+        if let Some(slug) = path_to_slug(vault, path) {
             live_slugs.insert(slug.clone());
             if let Some(indexed_at) = indexed_at_map.get(&slug) {
                 if file_mtime_secs(path).is_some_and(|mtime| mtime <= *indexed_at) {
@@ -493,11 +480,7 @@ pub fn index_md_file(
     // instead of indexing them as independent blocks. Phase 18.G.3: the
     // UI surfaces unresolved conflicts; the user picks a resolution
     // explicitly instead of silently ending up with two duplicate blocks.
-    if let Some(stem) = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .map(crate::domain::vault::normalize_filename_stem)
-    {
+    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
         if let Some(base_slug) = crate::domain::vault::detect_icloud_conflict(&stem) {
             if let Err(e) = index::record_vault_conflict(conn, &base_slug, &stem) {
                 log::warn!("failed to record vault conflict for {}: {}", stem, e);
@@ -512,7 +495,7 @@ pub fn index_md_file(
                         "vault-conflict-detected",
                         VaultConflictPayload {
                             base_slug,
-                            conflict_slug: stem,
+                            conflict_slug: stem.to_string(),
                         },
                     );
                 }
@@ -646,8 +629,9 @@ fn resolve_upgrade_media_for_block(
     // 1. frontmatter.file — use filename from frontmatter directly
     if let Some(ref file_name) = block.frontmatter.file {
         let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
-        let media_path = vault.root().join(file_name);
-        if media_path.exists() {
+        if let Some(media_path) =
+            crate::storage::media_refs::resolve_indexed_media(vault, &block.slug, file_name)
+        {
             if thumbnails::is_image_ext(&ext) {
                 return Some((media_path, "image"));
             }
@@ -661,17 +645,38 @@ fn resolve_upgrade_media_for_block(
     if let Some(ref thumb_file) = block.frontmatter.thumbnail {
         let ext = thumb_file.rsplit('.').next().unwrap_or("").to_lowercase();
         if thumbnails::is_image_ext(&ext) {
-            let media_path = vault.root().join(thumb_file);
-            if media_path.exists() {
+            if let Some(media_path) =
+                crate::storage::media_refs::resolve_indexed_media(vault, &block.slug, thumb_file)
+            {
                 return Some((media_path, "image"));
             }
         }
     }
 
     // 3. First embedded body media in markdown order.
-    if let Some((media_name, media_kind)) = thumbnails::find_first_local_media_any(&block.body) {
-        let media_path = vault.root().join(&media_name);
-        if media_path.exists() {
+    for reference in iter_inline_media_references(&block.body) {
+        if reference.source.is_empty()
+            || reference.source.starts_with("http://")
+            || reference.source.starts_with("https://")
+        {
+            continue;
+        }
+        let ext = reference
+            .source
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+        let media_kind = if thumbnails::is_image_ext(&ext) {
+            "image"
+        } else if thumbnails::is_video_ext(&ext) {
+            "video"
+        } else {
+            continue;
+        };
+        if let Some(media_path) =
+            crate::storage::media_refs::resolve_inline_media(vault, &block.slug, &reference)
+        {
             return Some((media_path, media_kind));
         }
     }
@@ -701,189 +706,13 @@ fn canonicalize_channel_scan_paths(
     vault: &VaultLayout,
     paths: Vec<PathBuf>,
 ) -> Result<Vec<PathBuf>> {
-    let mut changed = false;
-    for path in &paths {
-        let canonical_path = canonicalize_channel_file(vault, path)?;
-        if canonical_path != *path {
-            changed = true;
-        }
-    }
-
-    if changed {
-        files::scan_md_files(vault)
-    } else {
-        Ok(paths)
-    }
+    let _ = vault;
+    Ok(paths)
 }
 
 fn canonicalize_channel_file(vault: &VaultLayout, path: &Path) -> Result<PathBuf> {
-    let (slug, content) =
-        files::read_block_file(path).with_context(|| format!("reading {}", path.display()))?;
-    if crate::domain::vault::detect_icloud_conflict(&slug).is_some() {
-        return Ok(path.to_path_buf());
-    }
-
-    let parsed = parse_markdown_document(&slug, &content, file_saved_at(path))
-        .with_context(|| format!("parsing {}", path.display()))?;
-    let block = parsed.block;
-    if block.frontmatter.block_type != BlockType::Channel {
-        return Ok(path.to_path_buf());
-    }
-
-    let canonical_slug = normalize_tag(&block.slug);
-    if canonical_slug.is_empty() || canonical_slug == block.slug {
-        return Ok(path.to_path_buf());
-    }
-
-    let canonical_path = vault.block_path(&canonical_slug);
-    if paths_refer_to_same_file(path, &canonical_path) {
-        rename_channel_file(path, &canonical_path)?;
-        return Ok(canonical_path);
-    }
-
-    if !canonical_path.exists() {
-        rename_channel_file(path, &canonical_path)?;
-        return Ok(canonical_path);
-    }
-
-    let (canonical_slug_on_disk, canonical_content) = files::read_block_file(&canonical_path)
-        .with_context(|| format!("reading {}", canonical_path.display()))?;
-    let canonical_parsed = parse_markdown_document(
-        &canonical_slug_on_disk,
-        &canonical_content,
-        file_saved_at(&canonical_path),
-    )
-    .with_context(|| format!("parsing {}", canonical_path.display()))?;
-    if canonical_parsed.block.frontmatter.block_type != BlockType::Channel {
-        log::warn!(
-            "channel canonicalization skipped: {} targets non-channel file {}",
-            path.display(),
-            canonical_path.display()
-        );
-        return Ok(path.to_path_buf());
-    }
-
-    if let Some(merged) = merge_channel_alias_into_canonical(&block, canonical_parsed.block) {
-        std::fs::write(&canonical_path, serialize_block(&merged)).with_context(|| {
-            format!(
-                "failed to merge channel alias {} into {}",
-                path.display(),
-                canonical_path.display()
-            )
-        })?;
-    }
-
-    std::fs::remove_file(path)
-        .with_context(|| format!("failed to remove legacy channel alias {}", path.display()))?;
-    Ok(canonical_path)
-}
-
-fn merge_channel_alias_into_canonical(alias: &Block, mut canonical: Block) -> Option<Block> {
-    let mut changed = false;
-
-    if canonical.frontmatter.title.is_none() && alias.frontmatter.title.is_some() {
-        canonical.frontmatter.title = alias.frontmatter.title.clone();
-        changed = true;
-    }
-    if canonical.frontmatter.description.is_none() && alias.frontmatter.description.is_some() {
-        canonical.frontmatter.description = alias.frontmatter.description.clone();
-        changed = true;
-    }
-    if canonical.frontmatter.color.is_none() && alias.frontmatter.color.is_some() {
-        canonical.frontmatter.color = alias.frontmatter.color.clone();
-        changed = true;
-    }
-    if canonical.frontmatter.icon.is_none() && alias.frontmatter.icon.is_some() {
-        canonical.frontmatter.icon = alias.frontmatter.icon.clone();
-        changed = true;
-    }
-    if canonical.frontmatter.position.is_none() && alias.frontmatter.position.is_some() {
-        canonical.frontmatter.position = alias.frontmatter.position;
-        changed = true;
-    }
-    if canonical.body.trim().is_empty() && !alias.body.trim().is_empty() {
-        canonical.body = alias.body.clone();
-        changed = true;
-    }
-
-    changed.then_some(canonical)
-}
-
-fn rename_channel_file(source: &Path, target: &Path) -> Result<()> {
-    if source == target {
-        return Ok(());
-    }
-
-    if paths_refer_to_same_file(source, target) {
-        let temp = unique_channel_rename_temp_path(target)?;
-        std::fs::rename(source, &temp).with_context(|| {
-            format!(
-                "failed to stage channel rename {} -> {}",
-                source.display(),
-                temp.display()
-            )
-        })?;
-        std::fs::rename(&temp, target).with_context(|| {
-            format!(
-                "failed to finish channel rename {} -> {}",
-                temp.display(),
-                target.display()
-            )
-        })?;
-        return Ok(());
-    }
-
-    std::fs::rename(source, target).with_context(|| {
-        format!(
-            "failed to rename channel {} -> {}",
-            source.display(),
-            target.display()
-        )
-    })?;
-    Ok(())
-}
-
-fn unique_channel_rename_temp_path(target: &Path) -> Result<PathBuf> {
-    let parent = target
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("channel target has no parent: {}", target.display()))?;
-    let stem = target
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("channel");
-    for idx in 0..1000 {
-        let candidate = parent.join(format!(
-            ".mine-channel-canonicalize-{}-{}-{}.tmp",
-            std::process::id(),
-            stem,
-            idx
-        ));
-        if !candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    anyhow::bail!(
-        "failed to find temporary path for channel rename: {}",
-        target.display()
-    );
-}
-
-#[cfg(unix)]
-fn paths_refer_to_same_file(a: &Path, b: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
-    let Ok(a_meta) = std::fs::metadata(a) else {
-        return false;
-    };
-    let Ok(b_meta) = std::fs::metadata(b) else {
-        return false;
-    };
-    a_meta.dev() == b_meta.dev() && a_meta.ino() == b_meta.ino()
-}
-
-#[cfg(not(unix))]
-fn paths_refer_to_same_file(_a: &Path, _b: &Path) -> bool {
-    false
+    let _ = vault;
+    Ok(path.to_path_buf())
 }
 
 /// Core indexing logic: parse + upsert. Returns a ThumbJob if a thumbnail
@@ -893,12 +722,13 @@ fn index_md_file_inner(
     vault: &VaultLayout,
     path: &Path,
 ) -> Result<IndexMdOutcome> {
-    let (slug, content) =
-        files::read_block_file(path).with_context(|| format!("reading {}", path.display()))?;
+    let (slug, content) = files::read_block_file(vault, path)
+        .with_context(|| format!("reading {}", path.display()))?;
 
     let parsed = parse_markdown_document(&slug, &content, file_saved_at(path))
         .with_context(|| format!("parsing {}", path.display()))?;
-    let block = parsed.block;
+    let mut block = parsed.block;
+    files::normalize_block_media_refs_for_index(vault, &mut block);
 
     // Channel files → index as channel, no thumbnail
     if block.frontmatter.block_type == BlockType::Channel {
@@ -1066,8 +896,8 @@ struct VaultConflictPayload {
 /// Read a .md file and compute its body hash for rename-match comparison.
 /// Body is taken after frontmatter parsing so filename or metadata edits
 /// do not break identity for unchanged content.
-fn read_body_hash_from_md(path: &Path) -> Result<String> {
-    let (slug, content) = files::read_block_file(path)?;
+fn read_body_hash_from_md(vault: &VaultLayout, path: &Path) -> Result<String> {
+    let (slug, content) = files::read_block_file(vault, path)?;
     // parse_block peels off frontmatter; if it fails we treat the whole
     // content as the body, since hashing the raw file still gives a
     // stable identity for the rename match.
@@ -1159,10 +989,10 @@ pub fn handle_event(
             // Rename detection: if this looks like a brand-new slug and its
             // body matches a recently-deferred removal, migrate identity
             // instead of creating a second row.
-            if let Some(new_slug) = path_to_slug(path) {
+            if let Some(new_slug) = path_to_slug(vault, path) {
                 let already_indexed = index::get_block(conn, &new_slug).ok().flatten().is_some();
                 if !already_indexed {
-                    if let Ok(body_hash) = read_body_hash_from_md(path) {
+                    if let Ok(body_hash) = read_body_hash_from_md(vault, path) {
                         if let Some(pending) = take_pending_by_hash(&body_hash) {
                             return perform_rename_match(
                                 conn, vault, &pending, &new_slug, path, app,
@@ -1174,7 +1004,7 @@ pub fn handle_event(
             return index_md_file(conn, vault, path, app);
         }
         VaultEvent::BlockDeleted(path) => {
-            if let Some(slug) = path_to_slug(path) {
+            if let Some(slug) = path_to_slug(vault, path) {
                 // Defer the removal into the rename-detection queue.
                 // Capture body hash and tags now so either a matching Create
                 // within the window can rename identity cleanly, or the
@@ -1199,7 +1029,7 @@ pub fn handle_event(
             }
         }
         VaultEvent::MediaChanged(path) => {
-            if let Some(slug) = path_to_slug(path) {
+            if let Some(slug) = path_to_slug(vault, path) {
                 let ext = path
                     .extension()
                     .and_then(|e| e.to_str())
@@ -1241,7 +1071,7 @@ pub fn handle_event(
             return Ok(false);
         }
         VaultEvent::MediaDeleted(path) => {
-            if let Some(slug) = path_to_slug(path) {
+            if let Some(slug) = path_to_slug(vault, path) {
                 let thumb_path = vault.thumb_path(&slug);
                 let had_thumb = thumb_path.exists();
                 if thumb_path.exists() {
@@ -1256,13 +1086,9 @@ pub fn handle_event(
 
 // ─── Private helpers ────────────────────────────────────────────────────────
 
-/// Extract slug from a file path (file stem without extension).
-/// Normalizes to NFC so HFS+ (NFD) and APFS (NFC) representations of the
-/// same logical filename resolve to one identity.
-fn path_to_slug(path: &Path) -> Option<String> {
-    path.file_stem()
-        .and_then(|s| s.to_str())
-        .map(normalize_filename_stem)
+/// Extract path-based slug from a vault file path.
+fn path_to_slug(vault: &VaultLayout, path: &Path) -> Option<String> {
+    vault.slug_for_path(path).ok()
 }
 
 fn file_mtime_secs(path: &Path) -> Option<u64> {
@@ -1402,7 +1228,7 @@ mod tests {
     }
 
     #[test]
-    fn full_scan_canonicalizes_channel_filename_to_normalized_tag() {
+    fn full_scan_preserves_human_channel_filename() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
@@ -1412,17 +1238,17 @@ mod tests {
         let result = full_scan(&conn, &vault, None, None).unwrap();
         assert_eq!(result.indexed, 1);
         assert_eq!(result.errors, 0);
-        assert!(!vault.block_path("Красивый веб").exists());
-        assert!(vault.block_path("красивый-веб").exists());
+        assert!(vault.block_path("Красивый веб").exists());
+        assert!(!vault.block_path("красивый-веб").exists());
 
         let channels = index::list_channels(&conn).unwrap();
         assert_eq!(channels.len(), 1);
-        assert_eq!(channels[0].tag, "красивый-веб");
+        assert_eq!(channels[0].tag, "Красивый веб");
         assert_eq!(channels[0].title, "Красивый веб");
     }
 
     #[test]
-    fn full_scan_removes_legacy_channel_alias_when_canonical_file_exists() {
+    fn full_scan_preserves_distinct_channel_pages() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
@@ -1431,14 +1257,15 @@ mod tests {
         write_md_file(&vault, "красивый-веб", "channel", &[]);
 
         let result = full_scan(&conn, &vault, None, None).unwrap();
-        assert_eq!(result.indexed, 1);
+        assert_eq!(result.indexed, 2);
         assert_eq!(result.errors, 0);
-        assert!(!vault.block_path("Красивый веб").exists());
+        assert!(vault.block_path("Красивый веб").exists());
         assert!(vault.block_path("красивый-веб").exists());
 
         let channels = index::list_channels(&conn).unwrap();
-        assert_eq!(channels.len(), 1);
-        assert_eq!(channels[0].tag, "красивый-веб");
+        assert_eq!(channels.len(), 2);
+        assert!(channels.iter().any(|channel| channel.tag == "Красивый веб"));
+        assert!(channels.iter().any(|channel| channel.tag == "красивый-веб"));
     }
 
     #[test]
@@ -1474,7 +1301,7 @@ mod tests {
     }
 
     #[test]
-    fn index_single_file_canonicalizes_channel_filename() {
+    fn index_single_file_preserves_human_channel_filename() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
@@ -1483,12 +1310,12 @@ mod tests {
         let path = vault.block_path("Красивый веб");
         index_md_file(&conn, &vault, &path, None).unwrap();
 
-        assert!(!vault.block_path("Красивый веб").exists());
-        assert!(vault.block_path("красивый-веб").exists());
+        assert!(vault.block_path("Красивый веб").exists());
+        assert!(!vault.block_path("красивый-веб").exists());
 
         let channels = index::list_channels(&conn).unwrap();
         assert_eq!(channels.len(), 1);
-        assert_eq!(channels[0].tag, "красивый-веб");
+        assert_eq!(channels[0].tag, "Красивый веб");
     }
 
     #[test]
@@ -1629,7 +1456,7 @@ mod tests {
         let new_path = vault.block_path("new-name");
         handle_event(&conn, &vault, &VaultEvent::BlockChanged(new_path), None).unwrap();
 
-        let (_, reference_content) = files::read_block_file(&reference_path).unwrap();
+        let (_, reference_content) = files::read_block_file(&vault, &reference_path).unwrap();
         let reference_block = parse_block("reference", &reference_content).unwrap();
         assert!(reference_block.body.contains("[[old-name]]"));
         assert!(reference_block.body.contains("![[old-name]]"));
@@ -1765,7 +1592,7 @@ mod tests {
         );
 
         let path = vault.block_path("Human Readable Title");
-        let (slug, content) = files::read_block_file(&path).unwrap();
+        let (slug, content) = files::read_block_file(&vault, &path).unwrap();
         let block = parse_block(&slug, &content).unwrap();
 
         let (media_path, kind) = resolve_upgrade_media_for_block(&vault, &block).unwrap();
@@ -1789,7 +1616,7 @@ mod tests {
         );
 
         let path = vault.block_path("Video First");
-        let (slug, content) = files::read_block_file(&path).unwrap();
+        let (slug, content) = files::read_block_file(&vault, &path).unwrap();
         let block = parse_block(&slug, &content).unwrap();
 
         let (media_path, kind) = resolve_upgrade_media_for_block(&vault, &block).unwrap();
@@ -1801,13 +1628,18 @@ mod tests {
 
     #[test]
     fn path_to_slug_extracts_stem() {
+        let vault = VaultLayout::new(PathBuf::from("/vault"));
         assert_eq!(
-            path_to_slug(Path::new("/vault/sunset-tokyo.md")),
+            path_to_slug(&vault, Path::new("/vault/sunset-tokyo.md")),
             Some("sunset-tokyo".to_string())
         );
         assert_eq!(
-            path_to_slug(Path::new("/vault/photo.jpg")),
+            path_to_slug(&vault, Path::new("/vault/photo.jpg")),
             Some("photo".to_string())
+        );
+        assert_eq!(
+            path_to_slug(&vault, Path::new("/vault/folder/note.md")),
+            Some("folder/note".to_string())
         );
     }
 

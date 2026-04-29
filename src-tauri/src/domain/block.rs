@@ -13,12 +13,24 @@ use serde::Serialize;
 use serde_yaml::Value;
 use thiserror::Error;
 
+use crate::domain::collection::{
+    collection_ref_from_canonical_value, collection_wikilink_value, MINE_COLLECTIONS_FIELD,
+};
+
 const FRONTMATTER_SCAN_LIMIT_LINES: usize = 20;
-const MINE_COLLECTIONS_FIELD: &str = "Mine Collections";
 const MINE_RELATED_NOTES_FIELD: &str = "Mine Related Notes";
 const MINE_SOURCE_MEDIA_FIELD: &str = "Mine Source Media";
 const MAX_FILENAME_STEM_CHARS: usize = 100;
 const MAX_FILENAME_STEM_NFD_BYTES: usize = 220;
+
+/// Indexed feed preview buffer, not the final visual clamp.
+///
+/// The frontend currently shows up to 8 article-preview lines without media.
+/// At the widest one-column card (~512 CSS px, ~478 px inner text width), a
+/// conservative 5 px average glyph width yields ~765 chars. Keep the indexed
+/// buffer near that derived upper bound so the frontend, not SQLite payload
+/// truncation, decides the final visible cutoff.
+pub const FEED_PREVIEW_TEXT_BUFFER_CHARS: usize = 768;
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
@@ -222,7 +234,7 @@ pub fn parse_frontmatter(yaml: &str) -> Result<Frontmatter, BlockError> {
     let color = get_opt_string(&value, "color");
     let icon = get_opt_string(&value, "icon");
 
-    // Mine collections (optional, legacy fallback to `tags`)
+    // Mine collections (optional, canonical `Mine Collections` wikilinks only)
     let tags = parse_collections(&value)?;
     let related_notes = parse_related_notes(&value);
     let source_media = get_opt_string(&value, MINE_SOURCE_MEDIA_FIELD);
@@ -337,6 +349,230 @@ pub fn parse_markdown_document(
     }
 }
 
+/// Derive the human display fallback from a path-based slug.
+///
+/// Recursive vault support made `slug` a vault-relative path
+/// (`Folder/Subfolder/File`), but display fallback should stay filename-first:
+/// no folder prefixes unless the user explicitly put them in `title`.
+pub fn fallback_title_from_slug(slug: &str) -> String {
+    slug.rsplit('/').next().unwrap_or(slug).to_string()
+}
+
+/// Build a short, clean feed preview from full Markdown body text.
+///
+/// This is an indexed read-model value for list/grid views: strip markdown-ish
+/// syntax once at indexing time, normalize whitespace, then truncate on a word
+/// boundary with an ellipsis. Full article bodies remain in `blocks.body`.
+pub fn build_preview_text(body: &str, max_chars: usize) -> String {
+    truncate_preview_text(&plain_text_preview(body), max_chars)
+}
+
+fn plain_text_preview(body: &str) -> String {
+    let mut parts = Vec::new();
+
+    for raw_line in body.lines() {
+        let line = strip_markdown_line_prefixes(raw_line.trim());
+        let line = strip_inline_preview_markup(&line);
+        let line = normalize_inline_whitespace(&line);
+        if !line.is_empty() {
+            parts.push(line);
+        }
+    }
+
+    parts.join(" ")
+}
+
+fn strip_markdown_line_prefixes(line: &str) -> String {
+    let mut s = line.trim();
+
+    while let Some(rest) = s.strip_prefix('>') {
+        s = rest.trim_start();
+    }
+
+    let hash_count = s.chars().take_while(|c| *c == '#').count();
+    if (1..=6).contains(&hash_count) {
+        let rest = &s[hash_count..];
+        if rest.chars().next().is_some_and(char::is_whitespace) {
+            s = rest.trim_start();
+        }
+    }
+
+    if let Some(rest) = s
+        .strip_prefix("- ")
+        .or_else(|| s.strip_prefix("* "))
+        .or_else(|| s.strip_prefix("+ "))
+    {
+        s = rest.trim_start();
+        if let Some(after_task) = s
+            .strip_prefix("[ ]")
+            .or_else(|| s.strip_prefix("[x]"))
+            .or_else(|| s.strip_prefix("[X]"))
+        {
+            s = after_task.trim_start();
+        }
+    } else {
+        let mut digit_end = 0;
+        for (idx, ch) in s.char_indices() {
+            if ch.is_ascii_digit() {
+                digit_end = idx + ch.len_utf8();
+                continue;
+            }
+            break;
+        }
+        if digit_end > 0 {
+            let rest = &s[digit_end..];
+            if let Some(after_marker) = rest.strip_prefix('.').or_else(|| rest.strip_prefix(')')) {
+                if after_marker.chars().next().is_some_and(char::is_whitespace) {
+                    s = after_marker.trim_start();
+                }
+            }
+        }
+    }
+
+    if s.chars().all(|ch| ch == '-' || ch == '*' || ch == '_') && s.chars().count() >= 3 {
+        return String::new();
+    }
+
+    s.to_string()
+}
+
+fn strip_inline_preview_markup(input: &str) -> String {
+    let without_obsidian = replace_obsidian_links_for_preview(input);
+    let without_images = remove_markdown_images_for_preview(&without_obsidian);
+    let without_links = replace_markdown_links_for_preview(&without_images);
+    without_links
+        .chars()
+        .filter(|ch| !matches!(ch, '*' | '`'))
+        .collect()
+}
+
+fn replace_obsidian_links_for_preview(input: &str) -> String {
+    let mut out = String::new();
+    let mut rest = input;
+
+    loop {
+        let Some(start) = rest.find("[[") else {
+            out.push_str(rest);
+            break;
+        };
+        let is_embed = start > 0 && rest[..start].ends_with('!');
+        if is_embed {
+            out.push_str(&rest[..start - 1]);
+        } else {
+            out.push_str(&rest[..start]);
+        }
+
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find("]]") else {
+            out.push_str(&rest[start..]);
+            break;
+        };
+
+        if !is_embed {
+            let content = &after_start[..end];
+            let display = content
+                .rsplit_once('|')
+                .map(|(_, display)| display)
+                .unwrap_or(content);
+            out.push_str(display);
+        }
+        rest = &after_start[end + 2..];
+    }
+
+    out
+}
+
+fn remove_markdown_images_for_preview(input: &str) -> String {
+    let mut out = String::new();
+    let mut rest = input;
+
+    loop {
+        let Some(start) = rest.find("![") else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        let Some(label_end) = after_start.find("](") else {
+            out.push_str(&rest[start..]);
+            break;
+        };
+        let after_url_start = &after_start[label_end + 2..];
+        let Some(url_end) = after_url_start.find(')') else {
+            out.push_str(&rest[start..]);
+            break;
+        };
+        rest = &after_url_start[url_end + 1..];
+    }
+
+    out
+}
+
+fn replace_markdown_links_for_preview(input: &str) -> String {
+    let mut out = String::new();
+    let mut rest = input;
+
+    loop {
+        let Some(start) = rest.find('[') else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..start]);
+        let after_start = &rest[start + 1..];
+        let Some(label_end) = after_start.find("](") else {
+            out.push_str(&rest[start..]);
+            break;
+        };
+        let label = &after_start[..label_end];
+        let after_url_start = &after_start[label_end + 2..];
+        let Some(url_end) = after_url_start.find(')') else {
+            out.push_str(&rest[start..]);
+            break;
+        };
+        out.push_str(label);
+        rest = &after_url_start[url_end + 1..];
+    }
+
+    out
+}
+
+fn normalize_inline_whitespace(input: &str) -> String {
+    input.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_preview_text(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    let char_count = text.chars().count();
+    if char_count <= max_chars {
+        return text.to_string();
+    }
+
+    let mut end_byte = text.len();
+    for (count, (idx, _)) in text.char_indices().enumerate() {
+        if count == max_chars {
+            end_byte = idx;
+            break;
+        }
+    }
+
+    let candidate = text[..end_byte].trim_end();
+    let word_cut = candidate
+        .char_indices()
+        .filter(|(_, ch)| ch.is_whitespace())
+        .map(|(idx, _)| idx)
+        .last();
+
+    let cut = word_cut
+        .filter(|idx| candidate[..*idx].chars().count() >= max_chars / 2)
+        .unwrap_or(candidate.len());
+    let mut truncated = candidate[..cut].trim_end().to_string();
+    truncated.push('…');
+    truncated
+}
+
 /// Serialize a Frontmatter struct back to a YAML string.
 pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
     let mut lines = Vec::new();
@@ -364,7 +600,10 @@ pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
     if !frontmatter.tags.is_empty() {
         lines.push(format!("{MINE_COLLECTIONS_FIELD}:"));
         for tag in &frontmatter.tags {
-            lines.push(format!("  - {}", yaml_quote(tag)));
+            lines.push(format!(
+                "  - {}",
+                yaml_quote(&collection_wikilink_value(tag))
+            ));
         }
     }
     if !frontmatter.related_notes.is_empty() {
@@ -490,13 +729,25 @@ pub fn normalize_local_markdown_url(url: &str) -> String {
     percent_decode_str(url).decode_utf8_lossy().into_owned()
 }
 
-/// Extract every inline media reference from a markdown body in document order.
-///
-/// Supports both canonical local embeds (`![[name]]`, `![[name|alt]]`) and
-/// legacy markdown image syntax (`![alt](url)`). Local markdown URLs are
-/// percent-decoded back to their on-disk filenames; remote URLs are left
-/// unchanged.
-pub fn iter_inline_media_sources(body: &str) -> Vec<String> {
+/// The concrete syntax used for an inline media reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InlineMediaSyntax {
+    /// Obsidian embed syntax: `![[name]]` / `![[name|alt]]`.
+    ObsidianEmbed,
+    /// Standard Markdown image syntax: `![alt](path)`.
+    MarkdownImage,
+}
+
+/// Inline media reference extracted from a markdown body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineMediaReference {
+    pub source: String,
+    pub syntax: InlineMediaSyntax,
+}
+
+/// Extract every inline media reference from a markdown body in document order,
+/// preserving whether it came from an Obsidian embed or a Markdown image.
+pub fn iter_inline_media_references(body: &str) -> Vec<InlineMediaReference> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < body.len() {
@@ -518,7 +769,10 @@ pub fn iter_inline_media_sources(body: &str) -> Vec<String> {
             let inner = &body[name_start..name_start + close_offset];
             let name = inner.split('|').next().unwrap_or(inner).trim();
             if !name.is_empty() {
-                out.push(name.to_string());
+                out.push(InlineMediaReference {
+                    source: name.to_string(),
+                    syntax: InlineMediaSyntax::ObsidianEmbed,
+                });
             }
             i = name_start + close_offset + 2;
         } else {
@@ -533,12 +787,28 @@ pub fn iter_inline_media_sources(body: &str) -> Vec<String> {
             };
             let url = &body[url_start..url_start + paren_end];
             if !url.is_empty() {
-                out.push(normalize_local_markdown_url(url));
+                out.push(InlineMediaReference {
+                    source: normalize_local_markdown_url(url),
+                    syntax: InlineMediaSyntax::MarkdownImage,
+                });
             }
             i = url_start + paren_end + 1;
         }
     }
     out
+}
+
+/// Extract every inline media source from a markdown body in document order.
+///
+/// Supports both canonical local embeds (`![[name]]`, `![[name|alt]]`) and
+/// legacy markdown image syntax (`![alt](url)`). Local markdown URLs are
+/// percent-decoded back to their on-disk filenames; remote URLs are left
+/// unchanged.
+pub fn iter_inline_media_sources(body: &str) -> Vec<String> {
+    iter_inline_media_references(body)
+        .into_iter()
+        .map(|reference| reference.source)
+        .collect()
 }
 
 /// Compute a stable content hash of a block body.
@@ -659,10 +929,7 @@ fn get_opt_u64(parent: &Value, key: &str) -> Option<u64> {
 }
 
 fn parse_collections(parent: &Value) -> Result<Vec<String>, BlockError> {
-    let Some(tags_val) = parent
-        .get(MINE_COLLECTIONS_FIELD)
-        .or_else(|| parent.get("tags"))
-    else {
+    let Some(tags_val) = parent.get(MINE_COLLECTIONS_FIELD) else {
         return Ok(vec![]);
     };
 
@@ -670,20 +937,13 @@ fn parse_collections(parent: &Value) -> Result<Vec<String>, BlockError> {
 
     let mut tags = Vec::with_capacity(seq.len());
     for item in seq {
-        // YAML may parse bare values like `1` as integers, not strings.
-        // Coerce to string so tags like "1" don't break block indexing.
-        let s = match item.as_str() {
-            Some(s) => s.to_string(),
-            None => item
-                .as_i64()
-                .map(|n| n.to_string())
-                .or_else(|| item.as_f64().map(|n| n.to_string()))
-                .or_else(|| item.as_bool().map(|b| b.to_string()))
-                .ok_or(BlockError::InvalidTagValue)?,
+        let Some(s) = item.as_str() else {
+            return Err(BlockError::InvalidTagValue);
         };
-        let normalized = crate::domain::tag::normalize_tag(&s);
-        if !normalized.is_empty() && !tags.contains(&normalized) {
-            tags.push(normalized);
+        if let Some(collection_ref) = collection_ref_from_canonical_value(s) {
+            if !tags.contains(&collection_ref) {
+                tags.push(collection_ref);
+            }
         }
     }
 
@@ -755,7 +1015,7 @@ fn implicit_article_block(slug: &str, body: String, saved_at: DateTime) -> Block
         slug: slug.to_string(),
         frontmatter: Frontmatter {
             block_type: BlockType::Article,
-            title: Some(slug.to_string()),
+            title: Some(fallback_title_from_slug(slug)),
             description: None,
             url: None,
             file: None,
@@ -821,7 +1081,7 @@ fn parse_frontmatter_compat(
     Ok((
         Frontmatter {
             block_type,
-            title: get_opt_string(&value, "title").or_else(|| Some(slug.to_string())),
+            title: get_opt_string(&value, "title").or_else(|| Some(fallback_title_from_slug(slug))),
             description: get_opt_string(&value, "description"),
             url: get_opt_string(&value, "url"),
             file: get_opt_string(&value, "file"),
@@ -843,24 +1103,21 @@ fn parse_frontmatter_compat(
 }
 
 fn parse_collections_compat(parent: &Value) -> (Vec<String>, bool) {
-    let Some(tags_val) = parent
-        .get(MINE_COLLECTIONS_FIELD)
-        .or_else(|| parent.get("tags"))
-    else {
+    let Some(tags_val) = parent.get(MINE_COLLECTIONS_FIELD) else {
         return (Vec::new(), false);
     };
 
-    parse_tag_like_value_compat(tags_val)
+    parse_collection_value_compat(tags_val)
 }
 
-fn parse_tag_like_value_compat(tags_val: &Value) -> (Vec<String>, bool) {
+fn parse_collection_value_compat(tags_val: &Value) -> (Vec<String>, bool) {
     let mut warning = false;
-    let raw_tags: Vec<String> = match tags_val {
-        Value::Sequence(seq) => seq.iter().filter_map(yaml_value_to_string).collect(),
-        Value::String(s) => split_obsidian_tag_string(s),
-        Value::Number(_) | Value::Bool(_) | Value::Tagged(_) => yaml_value_to_string(tags_val)
-            .map(|s| split_obsidian_tag_string(&s))
-            .unwrap_or_default(),
+    let raw_values: Vec<String> = match tags_val {
+        Value::Sequence(seq) => seq
+            .iter()
+            .filter_map(|item| item.as_str().map(str::to_string))
+            .collect(),
+        Value::String(s) => vec![s.clone()],
         _ => {
             warning = true;
             Vec::new()
@@ -868,19 +1125,15 @@ fn parse_tag_like_value_compat(tags_val: &Value) -> (Vec<String>, bool) {
     };
 
     let mut tags = Vec::new();
-    for raw in raw_tags {
-        let stripped = raw.trim().trim_start_matches('#');
-        let normalized = crate::domain::tag::normalize_tag(stripped);
-        if !normalized.is_empty() && !tags.contains(&normalized) {
-            tags.push(normalized);
+    for raw in raw_values {
+        match collection_ref_from_canonical_value(&raw) {
+            Some(collection_ref) if !tags.contains(&collection_ref) => tags.push(collection_ref),
+            Some(_) => {}
+            None => warning = true,
         }
     }
 
     (tags, warning)
-}
-
-fn split_obsidian_tag_string(s: &str) -> Vec<String> {
-    s.split_whitespace().map(str::to_string).collect()
 }
 
 /// Validate an ISO 8601 date or datetime string.
@@ -1128,22 +1381,22 @@ mod tests {
 
     /// Full YAML frontmatter with all optional fields.
     fn full_yaml() -> String {
-        indoc::indoc! {"
+        indoc::indoc! {r#"
             type: article
             title: Test Article
             description: A test description
             url: https://example.com
             file: test.pdf
             thumbnail: test-thumb.png
-            tags:
-              - design
-              - rust
+            Mine Collections:
+              - "[[Design]]"
+              - "[[Rust]]"
             saved_at: 2026-02-26T14:30:00Z
             source: manual
             width: 1920
             height: 1080
             author: Test Author
-        "}
+        "#}
         .to_string()
     }
 
@@ -1261,7 +1514,7 @@ mod tests {
         assert_eq!(fm.url.as_deref(), Some("https://example.com"));
         assert_eq!(fm.file.as_deref(), Some("test.pdf"));
         assert_eq!(fm.thumbnail.as_deref(), Some("test-thumb.png"));
-        assert_eq!(fm.tags, vec!["design", "rust"]);
+        assert_eq!(fm.tags, vec!["Design", "Rust"]);
         assert_eq!(fm.saved_at.as_str(), "2026-02-26T14:30:00Z");
         assert_eq!(fm.source.as_deref(), Some("manual"));
         assert_eq!(fm.width, Some(1920));
@@ -1284,6 +1537,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_markdown_document_nested_slug_title_uses_filename_leaf() {
+        let parsed = parse_markdown_document(
+            "Gaming Platform/Встречи/12.04.2026 Встреча с Владом",
+            "## Мои задачи\n\nBody",
+            fallback_dt(),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.block.frontmatter.title.as_deref(),
+            Some("12.04.2026 Встреча с Владом")
+        );
+    }
+
+    #[test]
+    fn build_preview_text_strips_markdown_and_truncates_on_word_boundary() {
+        let body = "## Мои задачи\n\n- [ ] Создать **plan.md** проекта — формализовать все договорённости и роудмап в одном документе\n- [ ] Dogfood всех сценариев: пройти полный путь игрока, разработчика, фандера и спекулянта на платформе\n![[image.jpg]]";
+        let preview = build_preview_text(body, 120);
+        assert_eq!(
+            preview,
+            "Мои задачи Создать plan.md проекта — формализовать все договорённости и роудмап в одном документе Dogfood всех…"
+        );
+        assert!(!preview.contains("[ ]"));
+        assert!(!preview.contains("![["));
+        assert!(!preview.ends_with("платфор…"));
+    }
+
+    #[test]
     fn parse_markdown_document_hr_at_top_without_closing_fence_is_foreign() {
         let parsed =
             parse_markdown_document("hr", "---\n\n# Header\n\nBody", fallback_dt()).unwrap();
@@ -1293,11 +1573,11 @@ mod tests {
 
     #[test]
     fn parse_markdown_document_unknown_type_downgrades_to_article_with_warning() {
-        let input = "---\ntype: meeting\nMine Collections: [design/typography]\n---\nBody";
+        let input = "---\ntype: meeting\nMine Collections: [\"[[Design/Typography]]\"]\n---\nBody";
         let parsed = parse_markdown_document("meeting-note", input, fallback_dt()).unwrap();
         assert_eq!(parsed.index_warning.as_deref(), Some("unknown_type"));
         assert_eq!(parsed.block.frontmatter.block_type, BlockType::Article);
-        assert_eq!(parsed.block.frontmatter.tags, vec!["design/typography"]);
+        assert_eq!(parsed.block.frontmatter.tags, vec!["Design/Typography"]);
     }
 
     #[test]
@@ -1324,17 +1604,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_markdown_document_tags_scalar_string_supported() {
+    fn parse_markdown_document_obsidian_tags_are_user_metadata() {
         let input = "---\ntags: \"#design typography\"\n---\nBody";
         let parsed = parse_markdown_document("tags", input, fallback_dt()).unwrap();
-        assert_eq!(parsed.block.frontmatter.tags, vec!["design", "typography"]);
+        assert!(parsed.block.frontmatter.tags.is_empty());
     }
 
     #[test]
-    fn parse_markdown_document_mine_collections_override_obsidian_tags() {
-        let input = "---\ntags: \"#design typography\"\nMine Collections:\n  - Аркада\n---\nBody";
+    fn parse_markdown_document_mine_collections_are_canonical_wikilinks() {
+        let input =
+            "---\ntags: \"#design typography\"\nMine Collections:\n  - \"[[Аркада]]\"\n---\nBody";
         let parsed = parse_markdown_document("tags", input, fallback_dt()).unwrap();
-        assert_eq!(parsed.block.frontmatter.tags, vec!["аркада"]);
+        assert_eq!(parsed.block.frontmatter.tags, vec!["Аркада"]);
     }
 
     #[test]
@@ -1404,26 +1685,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_frontmatter_tags_scalar_not_array() {
-        // E9: tags as a single string (not an array) is an error.
+    fn parse_frontmatter_obsidian_tags_ignored_for_collections() {
         let yaml = "type: image\nsaved_at: 2026-02-26T14:30:00Z\ntags: single-string";
+        let fm = parse_frontmatter(yaml).unwrap();
+        assert!(fm.tags.is_empty());
+    }
+
+    #[test]
+    fn parse_frontmatter_mine_collections_rejects_non_string_items() {
+        let yaml = "type: link\nsaved_at: 2026-02-26T14:30:00Z\nMine Collections:\n  - \"[[Design]]\"\n  - 1";
         let err = parse_frontmatter(yaml).unwrap_err();
         assert!(matches!(err, BlockError::InvalidTagValue));
     }
 
     #[test]
-    fn parse_frontmatter_tags_numeric_coerced_to_string() {
-        // YAML parses bare `1` as integer. Tag parser must coerce to "1".
-        let yaml = "type: link\nsaved_at: 2026-02-26T14:30:00Z\nMine Collections:\n  - design\n  - 1\n  - 42";
+    fn parse_frontmatter_mine_collections_ignores_raw_non_wikilinks() {
+        let yaml = "type: link\nsaved_at: 2026-02-26T14:30:00Z\ntags:\n  - obsidian\nMine Collections:\n  - raw\n  - \"[[Mine]]\"";
         let fm = parse_frontmatter(yaml).unwrap();
-        assert_eq!(fm.tags, vec!["design", "1", "42"]);
-    }
-
-    #[test]
-    fn parse_frontmatter_mine_collections_override_legacy_tags() {
-        let yaml = "type: link\nsaved_at: 2026-02-26T14:30:00Z\ntags:\n  - obsidian\nMine Collections:\n  - mine";
-        let fm = parse_frontmatter(yaml).unwrap();
-        assert_eq!(fm.tags, vec!["mine"]);
+        assert_eq!(fm.tags, vec!["Mine"]);
     }
 
     #[test]
@@ -1608,8 +1887,8 @@ mod tests {
         assert!(yaml.contains("title: My Title"));
         assert!(yaml.contains("Mine Collections:"));
         assert!(!yaml.contains("tags:"));
-        assert!(yaml.contains("- tag1"));
-        assert!(yaml.contains("- tag2"));
+        assert!(yaml.contains("- \"[[tag1]]\""));
+        assert!(yaml.contains("- \"[[tag2]]\""));
         assert!(yaml.contains("author: Author"));
     }
 

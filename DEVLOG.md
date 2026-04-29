@@ -1,5 +1,136 @@
 # Devlog
 
+## 29.04.2026 [primary] — Feed article preview buffer is geometry-derived
+
+### Goal
+
+Не резать article preview на произвольных 220 символах: backend должен отдавать
+достаточный очищенный буфер, а фактическая видимая обрезка должна оставаться за
+геометрией карточки.
+
+### Completed
+
+- Заменён hard-coded 220-char preview cap на `FEED_PREVIEW_TEXT_BUFFER_CHARS =
+  768`, выведенный из максимальной one-column article-card геометрии:
+  8 lines × ~478px inner width ÷ ~5px average glyph width.
+- В SQLite добавлен `blocks.preview_text_cap`; `upsert_block` пишет cap вместе
+  с `preview_text`.
+- Startup backfill теперь пересобирает rows с пустым/старым
+  `preview_text_cap`, поэтому существующие vault indexes получают новый buffer
+  без ручного full rescan.
+- Обновлены `SPEC_STORAGE.md`, `SPEC_FRONTEND.md`,
+  `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib preview_text -- --test-threads=1`
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib --quiet -- --test-threads=1`
+- `npm test -- --run src/lib/cardLayout.test.ts src/lib/layoutGeneration.test.ts src/components/Card.test.tsx`
+- `npm run build`
+- `git diff --check`
+
+## 29.04.2026 [primary] — Obsidian attachment resolver for embeds
+
+### Goal
+
+Сделать Obsidian-style media embeds first-class: `![[01.jpg]]` должен находить
+attachment в vault так же, как Obsidian, даже если файл лежит не рядом с `.md`,
+а в вложенной attachment-папке.
+
+### Completed
+
+- Добавлен typed inline-media parser: backend различает `![[...]]`
+  (`ObsidianEmbed`) и `![...](...)` (`MarkdownImage`).
+- Добавлен общий `storage::media_refs` resolver:
+  - Markdown image paths остаются relative to note;
+  - Obsidian embeds сначала проверяют путь рядом с note, затем explicit path,
+    затем ищут basename по vault с игнором `.trash`, `.obsidian`, `.arena`,
+    `node_modules`, `target`, `__pycache__`;
+  - indexed/root-relative media paths резолвятся отдельно для DB-derived rows.
+- Index, `media_dimensions`, thumbnail generation, thumbnail-upgrade planner,
+  watcher thumb-upgrade events, and inline-media extraction now use the shared
+  resolver instead of local `vault.root().join(...)` guesses.
+- Detail view uses backend-resolved `preview_manifest.tiles[].source_path` when
+  rendering a bare Obsidian embed, while keeping the source `.md` body unchanged.
+- Regression coverage added for nested Obsidian attachments, ignored service
+  dirs, nearest duplicate preference, index media URLs, media dimensions,
+  thumbnail generation, and frontend manifest matching.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib --quiet -- --test-threads=1`
+- `npm test -- --run src/components/Detail.test.tsx src/lib/feedPreview.test.ts`
+
+## 29.04.2026 [primary] — Obsidian-first collection wikilinks implemented
+
+### Goal
+
+Перейти от normalized tag/channel identity к Obsidian-compatible collection
+pages: membership хранится в `Mine Collections` как quoted wikilinks, а
+коллекции живут как человекочитаемые `.md` страницы.
+
+### Completed
+
+- Добавлен `domain/collection`: `CollectionRef`, canonical wikilink parsing,
+  `Mine Collections` rendering, and surgical frontmatter patching that preserves
+  user-owned `tags`.
+- `domain/block` normal runtime теперь читает только canonical
+  `Mine Collections` wikilinks for Mine collection membership; `tags` no longer
+  acts as runtime fallback.
+- `serialize_frontmatter`, desktop commands, inline media extraction, native
+  clipper host, storage/channel indexing, and watcher channel handling switched
+  from normalized tags to human `CollectionRef` values.
+- Watcher no longer canonicalizes `type: channel` filenames to kebab/lowercase;
+  `Красивый веб.md` remains the collection page identity.
+- Frontend recent-channel tracking, sidebar labels, collection picker labels,
+  and Are.na import stop slugifying human collection names.
+- Added `migrate-collections-to-wikilinks` CLI:
+  `--dry-run` reports source rewrites/renames/conflicts, `--apply` writes
+  timestamped byte backups under `.mine-migration-backup/`, rewrites card
+  membership to quoted wikilinks, and safely renames root collection pages.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib --quiet`
+- `cargo test --manifest-path src-tauri/Cargo.toml --bins --quiet`
+
+## 29.04.2026 [primary] — Planned migration to Obsidian-linked collections
+
+### Goal
+
+Зафиксировать новый целевой contract коллекций перед реализацией миграции:
+коллекции должны быть Obsidian-страницами с human filename, а membership должен
+храниться как quoted wikilinks в `Mine Collections`.
+
+### Completed
+
+- Добавлен `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md`.
+- Зафиксировано решение: legacy collection formats are migration inputs, not a
+  permanent runtime/write format.
+- Целевой формат:
+  ```yaml
+  Mine Collections:
+    - "[[Красивый веб]]"
+  ```
+- Collection page должна называться `Красивый веб.md`, не `красивый-веб.md`.
+- `tags` остаётся user-owned Obsidian metadata. Mine не использует `tags` как
+  canonical collection field после миграции.
+- Миграция планируется как dry-run → byte backups → apply → rebuild/verify.
+- Документы обновлены под новый direction: `ARCHITECTURE.md`, `PLAN.md`,
+  `SPEC_STORAGE.md`, `SPEC_FRONTEND.md`, `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`,
+  `SPEC_INLINE_MEDIA_EXTRACTION.md`, `AGENTS.md`, `CLAUDE.md`.
+
+### Supersedes
+
+Предыдущий same-day normalized-filename direction (`Красивый веб.md` →
+`красивый-веб.md`) остаётся текущим runtime implementation detail до миграции,
+но больше не является целевой архитектурой.
+
+### Verification
+
+- Docs-only change.
+- `git diff --check`
+
 ## 29.04.2026 [primary] — Channel aliases canonicalize to normalized filenames
 
 ### Goal

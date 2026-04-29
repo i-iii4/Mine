@@ -36,7 +36,7 @@ export function buildBlockLayoutSignature(block: LightBlock): BlockLayoutSignatu
     `type=${block.block_type}`,
     `title=${hashString(block.title ?? "")}`,
     `author=${hashString(block.author ?? "")}`,
-    `body=${hashString(block.body)}`,
+    `preview=${hashString(block.preview_text ?? block.body)}`,
     `url=${hashString(block.url ?? "")}`,
     `thumb=${block.thumbnail ?? ""}`,
     `file=${block.media_file ?? ""}`,

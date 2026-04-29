@@ -48,6 +48,11 @@ function legacySyntheticTilePreviewPath(sourcePath: string): string | null {
   return `${fileName.slice(0, dotIndex)}.jpg`;
 }
 
+function fileNameOfLocalPath(value: string): string {
+  const clean = decodeLocalMarkdownUrl(value).split("?")[0] ?? value;
+  return clean.split(/[\\/]/).pop() ?? clean;
+}
+
 export function normalizeFeedPreviewManifest(
   raw: string | null | undefined,
 ): NormalizedFeedPreviewManifest | null {
@@ -143,8 +148,14 @@ export function findPreviewTileForSource(
 ): NormalizedFeedPreviewTile | null {
   if (!manifest) return null;
   const normalizedSource = decodeLocalMarkdownUrl(sourcePath);
-  return (
-    manifest.tiles.find((tile) => decodeLocalMarkdownUrl(tile.sourcePath) === normalizedSource)
-    ?? null
+  const exact = manifest.tiles.find(
+    (tile) => decodeLocalMarkdownUrl(tile.sourcePath) === normalizedSource,
   );
+  if (exact) return exact;
+  if (/[\\/]/.test(normalizedSource)) return null;
+
+  const byBasename = manifest.tiles.filter(
+    (tile) => fileNameOfLocalPath(tile.sourcePath) === normalizedSource,
+  );
+  return byBasename.length === 1 ? byBasename[0]! : null;
 }

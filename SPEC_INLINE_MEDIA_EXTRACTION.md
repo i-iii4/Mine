@@ -1,6 +1,6 @@
 # Спецификация извлечения inline-медиа
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Цель
 
@@ -35,7 +35,7 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 ### Новый извлечённый блок
 
-Пример результата для извлечения `Source Article (image 1).jpg` из статьи `Source Article.md` в коллекцию `inspiration`:
+Пример результата для извлечения `Source Article (image 1).jpg` из статьи `Source Article.md` в коллекцию `Inspiration`:
 
 ```markdown
 ---
@@ -44,7 +44,7 @@ title: Source Article image 1
 file: Source Article (image 1).jpg
 url: https://example.com/source-article
 Mine Collections:
-  - inspiration
+  - "[[Inspiration]]"
 Mine Related Notes:
   - "[[Source Article]]"
 Mine Source Media: Source Article (image 1).jpg
@@ -63,7 +63,7 @@ source: inline-media-extraction
 | `title` | да | Alt-текст, если он есть, иначе stem исходного media-файла |
 | `file` | да | Та же локальная media-ссылка, которая была извлечена из исходной статьи |
 | `url` | нет | URL источника, скопированный из исходного блока |
-| `Mine Collections` | да | Целевая коллекция из drop на sidebar |
+| `Mine Collections` | да | Целевая коллекция из drop на sidebar как quoted Obsidian wikilink |
 | `Mine Related Notes` | да | Односторонняя связь на исходную заметку как Obsidian wikilink |
 | `Mine Source Media` | да | Исходная media-ссылка внутри исходной заметки |
 | `saved_at` | да | Время создания |
@@ -135,7 +135,7 @@ async extract_inline_media(
     state: State<'_, AppState>,
     source_slug: String,
     media_ref: String,
-    target_tag: String,
+    target_collection_ref: String,
     title: Option<String>,
 ) -> Result<IndexedBlock, InlineMediaExtractError>
 ```
@@ -146,7 +146,7 @@ async extract_inline_media(
 |---|---|
 | `source_slug` | Filename stem of the open source article |
 | `media_ref` | Local media reference as it appears after render-boundary decode, for example `Source Article (image 1).jpg` |
-| `target_tag` | Collection tag from sidebar drop |
+| `target_collection_ref` | Obsidian collection ref from sidebar drop |
 | `title` | Optional title from image alt text |
 
 ### Валидация
@@ -158,7 +158,8 @@ async extract_inline_media(
 5. `media_ref` must be present in the source block body according to the same dual-syntax parser used by `SPEC_OBSIDIAN_WIKILINKS.md`.
 6. Resolved source media path must exist under the vault root.
 7. File extension must be an image extension supported by Mine's image block contract.
-8. `target_tag` must be normalized through the same path as channel/tag writes.
+8. `target_collection_ref` must be a valid collection ref and must not be
+   lowercase/kebab-normalized as a tag.
 
 ### Алгоритм создания
 
@@ -240,10 +241,10 @@ Remote-изображения рендерятся как обычно, но н�
 
 | Active payload | Drop target | Поведение |
 |---|---|---|
-| `block` | `tag:<tag>` | Existing `addTag` path |
-| `inline_media` | `tag:<tag>` | New `extract_inline_media` command |
+| `block` | `collection:<ref>` | Existing connect-to-collection path |
+| `inline_media` | `collection:<ref>` | New `extract_inline_media` command |
 | `inline_media` | anything else | No-op |
-| `tag:<tag>` | `tag:<tag>` | Existing reorder path |
+| `collection:<ref>` | `collection:<ref>` | Existing reorder path |
 
 После успешного извлечения:
 
@@ -251,7 +252,7 @@ Remote-изображения рендерятся как обычно, но н�
 2. Frontend relies on the existing event-driven refresh path for grid, sidebar counts and previews; it must not force a full `reloadAllSnapshots()` from the drop handler.
 3. If current route equals target collection, the new block appears in the current grid after the immediate event refresh.
 4. Detail remains open on the source article.
-5. The source article's selected tags and body are unchanged.
+5. The source article's selected collections and body are unchanged.
 6. User-initiated extraction clears the default debounce and schedules this refresh immediately. The 2-second coalescing window is for watcher/background events, not for a direct drop interaction.
 
 ## Изменения бэкенда
@@ -294,7 +295,7 @@ source_media: Option<String>,
 
 Команда должна быть async на IPC boundary и выполнять parse/write/thumbnail/index в blocking worker с короткоживущим SQLite connection. Она не должна держать `AppState.vault_state` mutex во время filesystem/thumbnail работы: из shared state берётся только `VaultLayout`, затем работа продолжается вне UI-facing command path.
 
-Sidebar drop targets use the same hover contract for card drags and inline-media drags: `TagNavItem` disables `content-visibility` during any tag-drop drag and shows the same `isOver` ring for both payload types.
+Sidebar drop targets use the same hover contract for card drags and inline-media drags: `TagNavItem` disables `content-visibility` during any collection-drop drag and shows the same `isOver` ring for both payload types.
 
 ## Совместимость с Obsidian
 
@@ -323,7 +324,7 @@ Sidebar drop targets use the same hover contract for card drags and inline-media
 |---|---|
 | `Detail` | local article image receives `inline_media` drag payload |
 | `Detail` | remote image is not draggable for extraction |
-| `App` drag end | `inline_media` dropped on tag calls `extractInlineMedia`, not `addTag` |
+| `App` drag end | `inline_media` dropped on collection calls `extractInlineMedia`, not the card connect path |
 | `App` drag end | source Detail remains open after successful extraction |
 | `MetadataPanel` | `RELATED NOTES` renders links for related slugs |
 
@@ -347,8 +348,8 @@ Sidebar drop targets use the same hover contract for card drags and inline-media
 - [ ] New block frontmatter contains source URL if available.
 - [ ] New block frontmatter contains one-way `Mine Related Notes` link to source article.
 - [ ] Source article `.md` is not modified.
-- [ ] Existing block drag-to-tag still works unchanged.
-- [ ] Existing tag reorder still works unchanged.
+- [ ] Existing block drag-to-collection still works unchanged.
+- [ ] Existing collection reorder still works unchanged.
 - [ ] Unsupported remote or missing media fails without closing Detail.
 
 ## План реализации

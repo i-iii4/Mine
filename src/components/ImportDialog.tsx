@@ -110,7 +110,7 @@ export function ImportDialog({
       .filter((c) => selected.has(c.slug))
       .map((c) => ({
         slug: c.slug,
-        tag: c.title.toLowerCase().replace(/[,\s]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, ""),
+        tag: c.title.trim(),
       }));
 
     if (toImport.length === 0) return;
@@ -382,4 +382,3 @@ function DoneStep({
     </div>
   );
 }
-

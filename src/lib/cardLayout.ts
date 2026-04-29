@@ -218,6 +218,7 @@ export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescrip
   const titleText = block.title ?? block.slug;
   const authorText = block.author ?? "";
   const previewManifest = parsePreviewManifest(block);
+  const indexedPreviewText = block.preview_text?.trim() ?? "";
 
   switch (block.block_type) {
     case "image": {
@@ -289,7 +290,7 @@ export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescrip
 
     case "article": {
       if (isSocialUrl(block.url)) {
-        const previewText = stripMarkdown((block.body.split(/^---+$/m)[0] ?? block.body).trim());
+        const previewText = indexedPreviewText || stripMarkdown((block.body.split(/^---+$/m)[0] ?? block.body).trim());
         const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : extractSocialMedia(block);
         if (mediaItems.length === 0) {
           return {
@@ -351,7 +352,7 @@ export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescrip
       return {
         variant: hasVisualPreview ? "article-media" : "article-text",
         titleText,
-        previewText: stripMarkdown(block.body).slice(0, 400).trim(),
+        previewText: indexedPreviewText || stripMarkdown(block.body).slice(0, 400).trim(),
         authorText,
         primaryAspectRatio,
         mediaItems,

@@ -19,6 +19,9 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
+use crate::domain::block::iter_inline_media_references;
+use crate::domain::vault::VaultLayout;
+use crate::storage::media_refs;
 use image::ImageReader;
 
 /// Extract (width, height) from an image file header. Returns None on any
@@ -54,78 +57,6 @@ pub fn extract_video_dimensions(path: &Path) -> Option<(u32, u32)> {
     None
 }
 
-/// Collect unique media filenames referenced by a block body.
-///
-/// Scans markdown image syntax `![alt](filename)` and returns filenames
-/// in encounter order, deduplicated. URLs starting with `http://` or
-/// `https://` are skipped — they are remote and cannot be measured from
-/// the vault filesystem.
-fn collect_body_media(body: &str) -> Vec<String> {
-    // Both `![[name]]` wikilinks (Phase 18.H.1 canonical) and legacy
-    // `![alt](url)` markdown are accepted. For markdown URLs the
-    // percent-encoded local form is decoded back to the on-disk
-    // filename; remote URLs (`http://`, `https://`) are skipped because
-    // dimensions can only be read from local files.
-    let mut out: Vec<String> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut i = 0usize;
-    while i < body.len() {
-        let Some(rel) = body[i..].find("![") else {
-            break;
-        };
-        let excl = i + rel;
-        let after_excl = excl + 2;
-        if after_excl >= body.len() {
-            break;
-        }
-
-        if body[after_excl..].starts_with('[') {
-            // Wikilink `![[name]]` or `![[name|alt]]`
-            let name_start = after_excl + 1;
-            let Some(close_offset) = body[name_start..].find("]]") else {
-                i = name_start;
-                continue;
-            };
-            let inner = &body[name_start..name_start + close_offset];
-            let name = inner.split('|').next().unwrap_or(inner).trim();
-            if !name.is_empty()
-                && !name.starts_with("http://")
-                && !name.starts_with("https://")
-                && seen.insert(name.to_string())
-            {
-                out.push(name.to_string());
-            }
-            i = name_start + close_offset + 2;
-        } else {
-            // Markdown `![alt](url)`
-            let Some(bracket_offset) = body[after_excl..].find("](") else {
-                i = after_excl;
-                continue;
-            };
-            let url_start = after_excl + bracket_offset + 2;
-            let Some(paren_end) = body[url_start..].find(')') else {
-                i = url_start;
-                continue;
-            };
-            let url = &body[url_start..url_start + paren_end];
-            let next_i = url_start + paren_end + 1;
-            if !url.is_empty()
-                && !url.starts_with("http://")
-                && !url.starts_with("https://")
-            {
-                let decoded = percent_encoding::percent_decode_str(url)
-                    .decode_utf8_lossy()
-                    .into_owned();
-                if seen.insert(decoded.clone()) {
-                    out.push(decoded);
-                }
-            }
-            i = next_i;
-        }
-    }
-    out
-}
-
 /// Build the `media_dimensions` JSON string for a block.
 ///
 /// The set of files we measure is the union of:
@@ -143,11 +74,13 @@ fn collect_body_media(body: &str) -> Vec<String> {
 /// as a nullable TEXT column.
 pub fn build_media_dimensions_json(
     vault_root: &Path,
+    block_slug: &str,
     primary_media: Option<&str>,
     body: &str,
 ) -> Option<String> {
     let mut filenames: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
+    let vault = VaultLayout::new(vault_root.to_path_buf());
 
     if let Some(name) = primary_media {
         if !name.is_empty()
@@ -157,7 +90,12 @@ pub fn build_media_dimensions_json(
             filenames.push(name.to_string());
         }
     }
-    for name in collect_body_media(body) {
+    for reference in iter_inline_media_references(body) {
+        if reference.source.starts_with("http://") || reference.source.starts_with("https://") {
+            continue;
+        }
+        let name = media_refs::resolve_inline_media_root_relative(&vault, block_slug, &reference)
+            .unwrap_or(reference.source);
         if !is_image_extension(&name) && !is_video_extension(&name) {
             continue;
         }
@@ -215,6 +153,21 @@ fn is_video_extension(name: &str) -> bool {
 }
 
 #[cfg(test)]
+fn collect_body_media(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for reference in iter_inline_media_references(body) {
+        if reference.source.starts_with("http://") || reference.source.starts_with("https://") {
+            continue;
+        }
+        if seen.insert(reference.source.clone()) {
+            out.push(reference.source);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
@@ -245,6 +198,22 @@ mod tests {
     }
 
     #[test]
+    fn build_media_dimensions_resolves_obsidian_attachment_by_basename() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("Библиотека/images/images");
+        fs::create_dir_all(&nested).unwrap();
+        let image_path = nested.join("01.jpg");
+        let img = image::RgbImage::from_pixel(32, 24, image::Rgb([120, 180, 200]));
+        img.save(&image_path).unwrap();
+
+        let json =
+            build_media_dimensions_json(dir.path(), "Библиотека/Азбука", None, "![[01.jpg]]")
+                .unwrap();
+
+        assert_eq!(json, "{\"Библиотека/images/images/01.jpg\":[32,24]}");
+    }
+
+    #[test]
     fn is_image_extension_recognizes_common_formats() {
         assert!(is_image_extension("photo.jpg"));
         assert!(is_image_extension("Photo.JPEG"));
@@ -267,15 +236,19 @@ mod tests {
     #[test]
     fn build_media_dimensions_returns_none_when_no_media() {
         let dir = tempdir().unwrap();
-        let result = build_media_dimensions_json(dir.path(), None, "just plain text");
+        let result = build_media_dimensions_json(dir.path(), "note", None, "just plain text");
         assert!(result.is_none());
     }
 
     #[test]
     fn build_media_dimensions_returns_none_when_files_missing() {
         let dir = tempdir().unwrap();
-        let result =
-            build_media_dimensions_json(dir.path(), Some("missing.jpg"), "![](also_missing.png)");
+        let result = build_media_dimensions_json(
+            dir.path(),
+            "note",
+            Some("missing.jpg"),
+            "![](also_missing.png)",
+        );
         assert!(result.is_none());
     }
 
@@ -287,7 +260,7 @@ mod tests {
         let path = dir.path().join("tiny.png");
         img.save(&path).unwrap();
 
-        let result = build_media_dimensions_json(dir.path(), None, "![](tiny.png)");
+        let result = build_media_dimensions_json(dir.path(), "note", None, "![](tiny.png)");
         let json = result.expect("should return JSON for existing image");
         assert!(json.contains("\"tiny.png\""));
         assert!(json.contains("[2,3]"));
@@ -301,9 +274,13 @@ mod tests {
         let img_b = image::RgbImage::from_fn(30, 40, |_, _| image::Rgb([0, 0, 0]));
         img_b.save(dir.path().join("secondary.png")).unwrap();
 
-        let json =
-            build_media_dimensions_json(dir.path(), Some("primary.png"), "![](secondary.png)")
-                .unwrap();
+        let json = build_media_dimensions_json(
+            dir.path(),
+            "note",
+            Some("primary.png"),
+            "![](secondary.png)",
+        )
+        .unwrap();
 
         assert!(json.contains("\"primary.png\""));
         assert!(json.contains("[10,20]"));
@@ -317,7 +294,7 @@ mod tests {
         // extraction fails gracefully and the entry is skipped.
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("broken.mp4"), b"not really mp4").unwrap();
-        let result = build_media_dimensions_json(dir.path(), None, "![](broken.mp4)");
+        let result = build_media_dimensions_json(dir.path(), "note", None, "![](broken.mp4)");
         assert!(result.is_none());
     }
 
@@ -325,7 +302,7 @@ mod tests {
     fn build_media_dimensions_skips_non_media_extensions() {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("doc.txt"), b"hello").unwrap();
-        let result = build_media_dimensions_json(dir.path(), None, "![](doc.txt)");
+        let result = build_media_dimensions_json(dir.path(), "note", None, "![](doc.txt)");
         assert!(result.is_none());
     }
 
@@ -336,7 +313,8 @@ mod tests {
         img.save(dir.path().join("same.png")).unwrap();
 
         let json =
-            build_media_dimensions_json(dir.path(), Some("same.png"), "![](same.png)").unwrap();
+            build_media_dimensions_json(dir.path(), "note", Some("same.png"), "![](same.png)")
+                .unwrap();
 
         // Only one key in the JSON object.
         let occurrences = json.matches("\"same.png\"").count();

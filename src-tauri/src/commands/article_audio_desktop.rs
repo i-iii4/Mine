@@ -80,6 +80,10 @@ pub(crate) fn generate_desktop_article_audio(
 
     let audio_file_name = audio_file_name_for_ext(slug, DESKTOP_ARTICLE_AUDIO_EXT);
     let audio_path = vault.audio_dir().join(&audio_file_name);
+    if let Some(parent) = audio_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| CommandError::Internal(format!("create audio dir: {e}")))?;
+    }
     let helper_request = DesktopArticleAudioHelperRequest {
         text: prepared.speakable_text.clone(),
         language_tag: prepared.language_tag.clone(),

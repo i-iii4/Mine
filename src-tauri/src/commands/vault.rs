@@ -375,11 +375,11 @@ fn initialize_vault(
     let derived_store_ready = local_index_existed || bootstrapped_from_legacy;
     let migration_required = !derived_store_ready;
 
-    // Expand asset protocol scope for the flat vault root plus thumbnail cache.
-    // The vault is intentionally flat; recursive scope over the whole vault
-    // needlessly walks every file on startup and blocks restore-path UX.
+    // Expand asset protocol scope for the vault root plus derived caches.
+    // Recursive scope is required because Obsidian-compatible vaults may keep
+    // notes and media in subfolders.
     app.asset_protocol_scope()
-        .allow_directory(vault.root(), false)
+        .allow_directory(vault.root(), true)
         .map_err(|e| CommandError::Internal(format!("failed to allow vault root: {e}")))?;
     append_startup_trace(
         app,
@@ -390,7 +390,7 @@ fn initialize_vault(
         ),
     );
     app.asset_protocol_scope()
-        .allow_directory(vault.thumbs_dir(), false)
+        .allow_directory(vault.thumbs_dir(), true)
         .map_err(|e| CommandError::Internal(format!("failed to allow thumbs dir: {e}")))?;
     append_startup_trace(
         app,
@@ -401,7 +401,7 @@ fn initialize_vault(
         ),
     );
     app.asset_protocol_scope()
-        .allow_directory(vault.audio_dir(), false)
+        .allow_directory(vault.audio_dir(), true)
         .map_err(|e| CommandError::Internal(format!("failed to allow audio dir: {e}")))?;
     append_startup_trace(
         app,
@@ -615,8 +615,25 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                     return;
                 }
             };
+            let preview_text_updated = match index::backfill_missing_preview_text(&conn) {
+                Ok(updated) => updated,
+                Err(err) => {
+                    log::warn!(
+                        "preview text backfill failed for {}: {:#}",
+                        path_for_thread,
+                        err
+                    );
+                    append_startup_trace(
+                        &app_for_thread,
+                        "index_metadata_backfill",
+                        &format!("preview_text_failed path={} err={:#}", path_for_thread, err),
+                    );
+                    return;
+                }
+            };
 
-            let total_updated = preview_updated + thumb_updated + playback_updated;
+            let total_updated =
+                preview_updated + thumb_updated + playback_updated + preview_text_updated;
             if total_updated == 0 {
                 append_startup_trace(
                     &app_for_thread,
@@ -627,18 +644,23 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
             }
 
             log::info!(
-                "index metadata backfill: preview={} thumb={} playback={} for {}",
+                "index metadata backfill: preview={} thumb={} playback={} preview_text={} for {}",
                 preview_updated,
                 thumb_updated,
                 playback_updated,
+                preview_text_updated,
                 path_for_thread,
             );
             append_startup_trace(
                 &app_for_thread,
                 "index_metadata_backfill",
                 &format!(
-                    "updated path={} preview={} thumb={} playback={}",
-                    path_for_thread, preview_updated, thumb_updated, playback_updated
+                    "updated path={} preview={} thumb={} playback={} preview_text={}",
+                    path_for_thread,
+                    preview_updated,
+                    thumb_updated,
+                    playback_updated,
+                    preview_text_updated
                 ),
             );
             let _ = app_for_thread.emit(
@@ -825,11 +847,9 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                                 total.elapsed().as_millis()
                             ),
                         ),
-                        Err(err) => log::warn!(
-                            "thumb_sweep failed for {}: {:#}",
-                            path_for_thread,
-                            err
-                        ),
+                        Err(err) => {
+                            log::warn!("thumb_sweep failed for {}: {:#}", path_for_thread, err)
+                        }
                     }
                     append_startup_trace(
                         &app_for_thread,

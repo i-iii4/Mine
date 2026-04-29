@@ -1,14 +1,57 @@
-# SPEC: domain layer (tag, channel, vault, search)
+# SPEC: domain layer (collection, tag, channel, vault, search)
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 Модули domain layer, кроме эталонного domain/block. Все чистые — нет зависимостей от Tauri, SQLite, файловой системы.
 
 ---
 
+## domain/collection
+
+`domain/collection` is the current Mine collection identity module.
+
+Collection membership is stored in `Mine Collections` as quoted Obsidian
+wikilinks. Runtime identity is the wikilink target (`CollectionRef`), not a
+normalized tag.
+
+### Constants and functions
+
+```rust
+const MINE_COLLECTIONS_FIELD: &str = "Mine Collections";
+
+normalize_collection_ref(raw: &str) -> String
+collection_ref_from_canonical_value(raw: &str) -> Option<String>
+collection_wikilink_value(collection_ref: &str) -> String
+render_collections(collections: &[String]) -> String
+patch_collections_frontmatter(content: &str, collections: &[String]) -> Result<String, String>
+```
+
+### Behavior
+
+- `normalize_collection_ref` trims whitespace, unwraps `[[target]]`, and drops
+  an optional wikilink alias after `|`.
+- It must not lowercase, kebab-case, collapse spaces, or treat
+  `Красивый веб` and `красивый-веб` as the same identity.
+- `collection_ref_from_canonical_value` accepts only canonical wikilink string
+  values such as `[[Красивый веб]]` or `[[Research|Board]]`.
+- `render_collections` writes quoted wikilinks:
+
+```yaml
+Mine Collections:
+  - "[[Красивый веб]]"
+```
+
+- `patch_collections_frontmatter` preserves user-owned `tags` and unknown YAML
+  fields while surgically replacing only `Mine Collections`.
+
 ## domain/tag
 
-Тег — метка для категоризации блоков. Каналы строятся на тегах. Теги допускают Unicode (кириллица и др.), транслитерация не применяется (это для slug, не для тегов).
+Legacy tag helper retained for one-time migration from old normalized Mine
+collection values. Normal runtime collection identity must not use
+`normalize_tag`.
+
+Тег — old normalized string wrapper. It is no longer the canonical collection
+model.
 
 ### Тип
 
@@ -71,14 +114,15 @@ enum TagError {
 
 ## domain/channel
 
-Канал — «продвинутый тег», отображаемый в боковой панели как постоянный пункт навигации.
+Канал — promoted collection page, отображаемая в боковой панели как постоянный
+пункт навигации.
 
 ### Типы
 
 ```rust
 struct Channel {
-    tag: String,               // тег, по которому фильтруются блоки
-    title: String,             // отображаемое имя (по умолчанию = тег)
+    tag: String,               // CollectionRef; physical name kept for API/DB compatibility
+    title: String,             // отображаемое имя
     description: Option<String>,
     color: Option<String>,     // hex-цвет, например "#FF5733"
     icon: Option<String>,      // имя иконки
@@ -108,16 +152,20 @@ enum ChannelError {
 
 ### Поведение
 
-- `Channel::new` нормализует тег через `normalize_tag`
-- Если `title` не указан, используется тег с заглавной буквы: `"web-design"` -> `"Web design"`
+- `Channel::new` derives `tag` via `normalize_collection_ref`, not `normalize_tag`.
+- If `title` is not provided, it uses the last path segment of the collection ref
+  with the first character uppercased.
 - `color` валидируется: `#RGB` или `#RRGGBB` (hex)
+- Human filenames such as `Красивый веб.md` remain valid collection pages.
+- Collection refs may be URL-encoded for routes, but must not be lowercased or
+  kebab-cased as domain identity.
 
 ### Edge cases
 
 | # | Случай | Ожидание |
 |---|---|---|
 | C1 | Пустой тег | ChannelError::EmptyTag |
-| C2 | Title не указан | title = тег с заглавной: `"Web design"` |
+| C2 | Title не указан | title = collection ref label with first character uppercased |
 | C3 | `color: "#FF5733"` | Валидно |
 | C4 | `color: "#FFF"` | Валидно (shorthand) |
 | C5 | `color: "red"` | ChannelError::InvalidColor |

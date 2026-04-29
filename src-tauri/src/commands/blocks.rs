@@ -12,11 +12,11 @@ use thiserror::Error;
 
 use crate::commands::state::{current_vault_layout, AppState, CommandError};
 use crate::domain::block::{
-    iter_inline_media_sources, parse_markdown_document, suggest_slug, Block, BlockType, DateTime,
-    Frontmatter,
+    iter_inline_media_references, parse_markdown_document, suggest_slug, Block, BlockType,
+    DateTime, Frontmatter,
 };
+use crate::domain::collection::normalize_collection_ref;
 use crate::domain::markdown::{rename_inline_media_references, rename_wikilink_targets};
-use crate::domain::tag::normalize_tag;
 use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultLayout};
 use crate::storage::index::IndexedBlock;
 use crate::storage::{article_audio, db, files, index, thumbnails};
@@ -234,6 +234,11 @@ pub fn create_block(
 
     let now = crate::commands::state::now_iso8601();
     let saved_at = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
+    let collections = tags
+        .iter()
+        .map(|tag| normalize_collection_ref(tag))
+        .filter(|tag| !tag.is_empty())
+        .collect();
 
     let block = Block {
         slug,
@@ -244,7 +249,7 @@ pub fn create_block(
             url,
             file: media_file,
             thumbnail: None,
-            tags,
+            tags: collections,
             related_notes: Vec::new(),
             source_media: None,
             saved_at,
@@ -342,10 +347,10 @@ fn extract_inline_media_inner(
     })?;
     validate_inline_media_ref(&media_ref)?;
 
-    let target_tag = normalize_tag(&target_tag);
+    let target_tag = normalize_collection_ref(&target_tag);
     if target_tag.is_empty() {
         return Err(InlineMediaExtractError::InvalidMediaRef {
-            reason: "target tag is empty after normalization".to_string(),
+            reason: "target collection is empty".to_string(),
         });
     }
 
@@ -355,7 +360,7 @@ fn extract_inline_media_inner(
     }
 
     let (read_slug, content) =
-        files::read_block_file(&source_path).map_err(internal_extract_error)?;
+        files::read_block_file(vault, &source_path).map_err(internal_extract_error)?;
     let parsed = parse_markdown_document(&read_slug, &content, file_saved_at(&source_path))
         .map_err(|e| InlineMediaExtractError::Internal {
             message: format!("failed to parse source block: {e}"),
@@ -368,17 +373,24 @@ fn extract_inline_media_inner(
         });
     }
 
-    let is_referenced = iter_inline_media_sources(&source_block.body)
+    let referenced_media = iter_inline_media_references(&source_block.body)
         .into_iter()
-        .any(|source| source == media_ref);
-    if !is_referenced {
+        .find(|reference| reference.source == media_ref);
+    let Some(referenced_media) = referenced_media else {
         return Err(InlineMediaExtractError::MediaNotReferenced {
             media_ref,
             source_slug: source_block.slug,
         });
-    }
+    };
 
-    let source_media_path = vault.root().join(&media_ref);
+    let source_media_path = crate::storage::media_refs::resolve_inline_media(
+        vault,
+        &source_block.slug,
+        &referenced_media,
+    )
+    .ok_or_else(|| InlineMediaExtractError::InvalidMediaRef {
+        reason: "media reference must stay inside the vault".to_string(),
+    })?;
     if !source_media_path.is_file() {
         return Err(InlineMediaExtractError::MediaNotFound { media_ref });
     }
@@ -397,7 +409,9 @@ fn extract_inline_media_inner(
     let raw_slug = suggest_slug(Some(&resolved_title), None);
     let slug = resolve_unique_extraction_slug(conn, vault, &raw_slug, &source_ext)
         .map_err(internal_extract_error)?;
-    let media_file = media_ref.clone();
+    let media_file = vault
+        .root_relative_reference(&source_media_path)
+        .unwrap_or_else(|| media_ref.clone());
     let now = crate::commands::state::now_iso8601();
     let saved_at = DateTime::new(&now).map_err(|e| InlineMediaExtractError::Internal {
         message: e.to_string(),
@@ -414,7 +428,7 @@ fn extract_inline_media_inner(
             thumbnail: None,
             tags: vec![target_tag.clone()],
             related_notes: vec![source_block.slug.clone()],
-            source_media: Some(media_ref.clone()),
+            source_media: Some(media_file.clone()),
             saved_at,
             source: Some("inline-media-extraction".to_string()),
             width: None,
@@ -511,7 +525,14 @@ fn rename_block_file_inner(
     old_slug: &str,
     new_stem: &str,
 ) -> Result<RenameBlockResult, RenameBlockError> {
-    let new_slug = normalize_requested_stem(new_stem)?;
+    let requested_slug = normalize_requested_stem(new_stem)?;
+    let new_slug = if requested_slug.contains('/') {
+        requested_slug
+    } else if let Some((parent, _)) = old_slug.rsplit_once('/') {
+        format!("{parent}/{requested_slug}")
+    } else {
+        requested_slug
+    };
     if old_slug == new_slug {
         return Ok(RenameBlockResult {
             old_slug: old_slug.to_string(),
@@ -534,7 +555,8 @@ fn rename_block_file_inner(
         });
     }
 
-    let (read_slug, content) = files::read_block_file(&old_path).map_err(internal_rename_error)?;
+    let (read_slug, content) =
+        files::read_block_file(vault, &old_path).map_err(internal_rename_error)?;
     let old_block = crate::domain::block::parse_block(&read_slug, &content).map_err(|e| {
         RenameBlockError::Internal {
             message: e.to_string(),
@@ -570,6 +592,11 @@ fn rename_block_file_inner(
         })?;
 
     for rename in &media_renames {
+        if let Some(parent) = rename.to.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory: {}", parent.display()))
+                .map_err(internal_rename_error)?;
+        }
         std::fs::rename(&rename.from, &rename.to)
             .with_context(|| {
                 format!(
@@ -582,6 +609,11 @@ fn rename_block_file_inner(
     }
 
     let new_path = vault.block_path(&new_slug);
+    if let Some(parent) = new_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory: {}", parent.display()))
+            .map_err(internal_rename_error)?;
+    }
     std::fs::rename(&old_path, &new_path)
         .with_context(|| {
             format!(
@@ -690,15 +722,17 @@ fn validate_inline_media_ref(media_ref: &str) -> Result<(), InlineMediaExtractEr
             reason: "remote media is not supported".to_string(),
         });
     }
-    if media_ref.contains('/') || media_ref.contains('\\') || media_ref.contains('\0') {
+    if media_ref.contains('\\') || media_ref.contains('\0') {
         return Err(InlineMediaExtractError::InvalidMediaRef {
-            reason: "media reference must be a leaf filename".to_string(),
+            reason: "media reference contains an invalid path separator".to_string(),
         });
     }
-    if media_ref == "." || media_ref == ".." {
-        return Err(InlineMediaExtractError::InvalidMediaRef {
-            reason: "media reference cannot be a path traversal segment".to_string(),
-        });
+    for segment in media_ref.split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return Err(InlineMediaExtractError::InvalidMediaRef {
+                reason: "media reference cannot contain path traversal".to_string(),
+            });
+        }
     }
     Ok(())
 }
@@ -779,7 +813,7 @@ fn build_planned_block_writes(
 
     let mut writes = Vec::new();
     for path in files::scan_md_files(vault).map_err(internal_rename_error)? {
-        let (_, content) = files::read_block_file(&path).map_err(internal_rename_error)?;
+        let (_, content) = files::read_block_file(vault, &path).map_err(internal_rename_error)?;
         let should_consider = path == vault.block_path(old_slug)
             || content.contains(old_slug)
             || media_name_map.keys().any(|name| content.contains(name));
@@ -787,7 +821,8 @@ fn build_planned_block_writes(
             continue;
         }
 
-        let (slug, content) = files::read_block_file(&path).map_err(internal_rename_error)?;
+        let (slug, content) =
+            files::read_block_file(vault, &path).map_err(internal_rename_error)?;
         let block = crate::domain::block::parse_block(&slug, &content).map_err(|e| {
             RenameBlockError::Internal {
                 message: format!("failed to parse {}: {e}", path.display()),
@@ -1042,7 +1077,7 @@ mod tests {
         assert_eq!(indexed.title.as_deref(), Some("Pulled Frame"));
         assert_eq!(indexed.url.as_deref(), Some("https://example.com/article"));
         assert_eq!(indexed.media_file.as_deref(), Some("photo.png"));
-        assert_eq!(indexed.tags, vec!["mood-board".to_string()]);
+        assert_eq!(indexed.tags, vec!["Mood Board".to_string()]);
         assert_eq!(indexed.related_notes, vec!["Source Article".to_string()]);
         assert_eq!(indexed.source.as_deref(), Some("inline-media-extraction"));
         assert_eq!(
@@ -1052,7 +1087,7 @@ mod tests {
         assert!(!vault.root().join("Pulled Frame.png").exists());
 
         let (_, extracted_content) =
-            files::read_block_file(&vault.block_path("Pulled Frame")).unwrap();
+            files::read_block_file(&vault, &vault.block_path("Pulled Frame")).unwrap();
         let extracted =
             crate::domain::block::parse_block("Pulled Frame", &extracted_content).unwrap();
         assert_eq!(
@@ -1066,7 +1101,7 @@ mod tests {
         assert_eq!(extracted.body, "![[photo.png]]");
 
         let (_, source_content) =
-            files::read_block_file(&vault.block_path("Source Article")).unwrap();
+            files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
         assert!(source_content.contains("![[photo.png]]"));
     }
 
@@ -1147,17 +1182,18 @@ mod tests {
         assert!(vault.root().join("Renamed Name (image 1).jpg").exists());
 
         let (_, renamed_content) =
-            files::read_block_file(&vault.block_path("Renamed Name")).unwrap();
+            files::read_block_file(&vault, &vault.block_path("Renamed Name")).unwrap();
         let renamed = crate::domain::block::parse_block("Renamed Name", &renamed_content).unwrap();
         assert_eq!(renamed.frontmatter.title.as_deref(), Some("Renamed Name"));
         assert!(renamed.body.contains("![[Renamed Name (image 1).jpg]]"));
 
-        let (_, ref_content) = files::read_block_file(&vault.block_path("Reference Note")).unwrap();
+        let (_, ref_content) =
+            files::read_block_file(&vault, &vault.block_path("Reference Note")).unwrap();
         let ref_block = crate::domain::block::parse_block("Reference Note", &ref_content).unwrap();
         assert!(ref_block.body.contains("[[Renamed Name]]"));
 
         let (_, related_content) =
-            files::read_block_file(&vault.block_path("Related Image")).unwrap();
+            files::read_block_file(&vault, &vault.block_path("Related Image")).unwrap();
         let related_block =
             crate::domain::block::parse_block("Related Image", &related_content).unwrap();
         assert_eq!(
@@ -1192,7 +1228,7 @@ mod tests {
         rename_block_file_inner(None, &state, &conn, &vault, "Old Name", "Renamed Name").unwrap();
 
         let (_, renamed_content) =
-            files::read_block_file(&vault.block_path("Renamed Name")).unwrap();
+            files::read_block_file(&vault, &vault.block_path("Renamed Name")).unwrap();
         let renamed = crate::domain::block::parse_block("Renamed Name", &renamed_content).unwrap();
         let prepared = prepare_article_speech(&renamed).unwrap();
         let audio_state =
@@ -1220,7 +1256,8 @@ mod tests {
 
         rename_block_file_inner(None, &state, &conn, &vault, "Old Name", "Renamed Name").unwrap();
 
-        let (_, content) = files::read_block_file(&vault.block_path("Renamed Name")).unwrap();
+        let (_, content) =
+            files::read_block_file(&vault, &vault.block_path("Renamed Name")).unwrap();
         let renamed = crate::domain::block::parse_block("Renamed Name", &content).unwrap();
         assert_eq!(
             renamed.frontmatter.file.as_deref(),

@@ -5,12 +5,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { TagCount } from "@/types";
 import { getRecentTags } from "@/lib/recentTags";
 
-/** Convert a normalized tag slug to a display title: `web-design` -> `Web Design` */
+/** Convert a collection ref to a compact display title. */
 export function titleFromTag(tag: string): string {
-  return tag
-    .split("-")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+  const parts = tag.split("/");
+  const label = (parts[parts.length - 1] ?? tag).trim();
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 interface CollectionPickerProps {

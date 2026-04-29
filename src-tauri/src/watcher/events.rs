@@ -6,6 +6,7 @@
 // Contract: SPEC_INTEGRATION.md#watcher/events
 
 use crate::domain::vault::VaultLayout;
+use crate::storage::files;
 use notify::event::{CreateKind, ModifyKind, RemoveKind};
 use notify::EventKind;
 use std::path::{Path, PathBuf};
@@ -40,7 +41,7 @@ impl VaultEvent {
 
 /// Classify a raw notify event into zero or more VaultEvents.
 ///
-/// - Ignores paths inside `.arena/`
+/// - Ignores paths inside hidden/service directories
 /// - Ignores directories
 /// - `.md` files produce Block events
 /// - Other files produce Media events
@@ -64,10 +65,8 @@ pub fn classify_notify_event(event: &notify::Event, vault: &VaultLayout) -> Vec<
         return result;
     }
 
-    let arena_dir = vault.arena_dir();
-
     for path in &event.paths {
-        if !is_in_vault_root(path, vault.root(), &arena_dir) {
+        if !is_in_vault(path, vault.root()) {
             continue;
         }
 
@@ -93,25 +92,34 @@ pub fn classify_notify_event(event: &notify::Event, vault: &VaultLayout) -> Vec<
 
 // ─── Private helpers ────────────────────────────────────────────────────────
 
-/// Check that a path is directly in the vault root (not in a subdirectory).
-/// Excludes paths inside `.arena/`.
-fn is_in_vault_root(path: &Path, root: &Path, arena_dir: &Path) -> bool {
-    // Must be inside vault root
-    let Some(parent) = path.parent() else {
+/// Check that a path is inside the vault and outside ignored service dirs.
+fn is_in_vault(path: &Path, root: &Path) -> bool {
+    if !path.starts_with(root) {
+        return false;
+    }
+    let Ok(relative) = path.strip_prefix(root) else {
         return false;
     };
-
-    // Must be a direct child of root (not in subdirectories)
-    if parent != root {
-        return false;
+    for ancestor in relative.ancestors().skip(1) {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        if files::is_ignored_vault_dir(ancestor) {
+            return false;
+        }
     }
-
-    // Must not be inside .arena/
-    if path.starts_with(arena_dir) {
-        return false;
-    }
-
-    true
+    relative
+        .parent()
+        .map(|parent| {
+            parent.components().all(|component| match component {
+                std::path::Component::Normal(part) => !part.to_str().is_some_and(|name| {
+                    name.starts_with('.')
+                        || matches!(name, "node_modules" | "target" | "__pycache__")
+                }),
+                _ => true,
+            })
+        })
+        .unwrap_or(true)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -217,13 +225,18 @@ mod tests {
     }
 
     #[test]
-    fn subdirectory_ignored() {
+    fn subdirectory_markdown_is_indexed() {
         let event = make_event(
             EventKind::Create(CreateKind::File),
             vec![PathBuf::from("/vault/subdir/note.md")],
         );
         let result = classify_notify_event(&event, &vault());
-        assert!(result.is_empty());
+        assert_eq!(
+            result,
+            vec![VaultEvent::BlockChanged(PathBuf::from(
+                "/vault/subdir/note.md"
+            ))]
+        );
     }
 
     #[test]

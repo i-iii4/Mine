@@ -48,6 +48,8 @@ export interface LightBlock {
   height: number | null;
   author: string | null;
   body: string;
+  /** Clean, word-boundary-truncated feed preview prepared by the indexer. */
+  preview_text?: string | null;
   first_image: string | null;
   media_urls: string | null;
   media_dimensions: string | null;

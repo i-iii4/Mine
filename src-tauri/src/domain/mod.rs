@@ -3,6 +3,7 @@
 pub mod article_audio;
 pub mod block;
 pub mod channel;
+pub mod collection;
 pub mod markdown;
 pub mod search;
 pub mod tag;

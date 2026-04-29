@@ -295,7 +295,10 @@ function MetadataPanel({
   const displayBlock = fullBlock ?? block;
   const indexWarning = getIndexWarning(displayBlock);
   const relatedNotes = useMemo(
-    () => isIndexedBlock(displayBlock) ? displayBlock.related_notes : [],
+    () =>
+      isIndexedBlock(displayBlock) && Array.isArray(displayBlock.related_notes)
+        ? displayBlock.related_notes
+        : [],
     [displayBlock],
   );
   const relatedNotesKey = relatedNotes.join("\u0000");
@@ -605,7 +608,9 @@ function ArticleBody({
     () => ({
       img: ({ src, alt, ...props }) => {
         const decodedSrc = decodeLocalMarkdownUrl(src ?? "");
-        const originalSrc = resolveImageSrc(decodedSrc, vaultPath);
+        const previewTile = findPreviewTileForSource(previewManifest, decodedSrc);
+        const resolvedSrc = previewTile?.sourcePath ?? decodedSrc;
+        const originalSrc = resolveImageSrc(resolvedSrc, vaultPath);
         // Video/GIF (downloaded MP4) — render as inline autoplay video with controls.
         // Autoplay must stay muted to satisfy browser/WebView media policies.
         if (/\.mp4(\?|$)|\.webm(\?|$)/i.test(decodedSrc)) {
@@ -620,7 +625,6 @@ function ArticleBody({
             />
           );
         }
-        const previewTile = findPreviewTileForSource(previewManifest, decodedSrc);
         const previewSrc = previewTile?.previewPath
           ? previewAssetUrl(thumbsRootPath, previewTile.previewPath)
           : null;

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  CARD_HOVER_ACTION_MIN_HEIGHT,
   computeCardHeight,
   computeFeedPlaybackSurfaceEnvelope,
   DEFAULT_CARD_HEIGHT,
@@ -71,8 +72,8 @@ describe("computeCardHeight — video / link / file", () => {
 
   it("file always returns fixed height + border", () => {
     const block = makeBlock({ block_type: "file" });
-    expect(computeCardHeight(block, 280, null)).toBe(88 + CARD_BORDER);
-    expect(computeCardHeight(block, 500, null)).toBe(88 + CARD_BORDER);
+    expect(computeCardHeight(block, 280, null)).toBe(CARD_HOVER_ACTION_MIN_HEIGHT);
+    expect(computeCardHeight(block, 500, null)).toBe(CARD_HOVER_ACTION_MIN_HEIGHT);
   });
 });
 
@@ -263,6 +264,16 @@ describe("computeCardHeight — social", () => {
     const h = computeCardHeight(block, 280, wordWidths);
     // border 2 + top padding 16 + one media row 122 + text-stack gap 12 + author 16 + bottom padding 16
     expect(h).toBe(184);
+  });
+
+  it("enforces the interactive minimum for empty social cards", () => {
+    const block = makeBlock({
+      block_type: "article",
+      url: "https://x.com/a/status/1",
+      body: "",
+    });
+
+    expect(computeCardHeight(block, 280, wordWidths)).toBe(CARD_HOVER_ACTION_MIN_HEIGHT);
   });
 });
 

@@ -34,8 +34,10 @@ export const BUCKET_PX = 40;
  * v7: generation-aware height cache. Keys now include route + width +
  *     layout-relevant content fingerprint, so same block id no longer
  *     reuses stale heights across generations.
+ * v8: CardFrame now enforces a 90px interactive minimum so hover actions
+ *     cannot overlap on empty cards.
  */
-const CACHE_VERSION = 7;
+const CACHE_VERSION = 8;
 
 const DB_NAME = "arena-card-heights";
 const DB_VERSION = 1;

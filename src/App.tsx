@@ -22,12 +22,11 @@ import {
 } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 
-/** Convert a normalized tag slug to a display title: `web-design` -> `Web Design` */
+/** Convert a collection ref to a compact display title. */
 function titleFromTag(tag: string): string {
-  return tag
-    .split("-")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+  const parts = tag.split("/");
+  const label = (parts[parts.length - 1] ?? tag).trim();
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 /** Pin the DragOverlay so the cursor tip sits just outside the top-left corner. */

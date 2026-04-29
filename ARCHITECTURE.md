@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
 
 ## Context
 
@@ -12,7 +12,7 @@ Mine решает это: визуальный букмаркинг с лока�
 
 1. **Файлы — источник правды.** SQLite — только индекс, как Spotlight для macOS
 2. **Всё — Markdown.** Mine-authored blocks используют `.md` с frontmatter; обычные Obsidian `.md` без frontmatter читаются как implicit articles. Медиафайлы рядом
-3. **Каналы — это теги.** Канал = сохранённый фильтр по тегу в frontmatter. Нет папок-каналов
+3. **Коллекции — это Obsidian-страницы.** Membership хранится в `Mine Collections` как quoted wikilinks на collection pages; `tags` остаётся пользовательским Obsidian-полем
 4. **Плоская структура.** Все файлы в корне vault. Позже — изолированные проекты (отдельные vault'ы)
 5. **Индекс восстановим.** Удаление `.arena/index.db` не приводит к потере данных
 6. **Thumbnail / preview pipeline.** В feed/grid/sidebar показываются preview-артефакты из локального derived store, не оригиналы
@@ -30,7 +30,9 @@ url: https://stripe.com
 title: Stripe — Financial Infrastructure
 description: Financial infrastructure for the internet
 thumbnail: stripe-og.png
-tags: [web-design, fintech]
+Mine Collections:
+  - "[[Web Design]]"
+  - "[[Fintech]]"
 saved_at: 2026-02-26T14:30:00Z
 source: browser-extension
 ---
@@ -45,7 +47,9 @@ url: https://example.com/crdt-explained
 title: Как устроен CRDT
 author: Wim Cools
 thumbnail: crdt-article-og.png
-tags: [programming, distributed-systems]
+Mine Collections:
+  - "[[Programming]]"
+  - "[[Distributed Systems]]"
 saved_at: 2026-02-26T14:30:00Z
 source: browser-extension
 ---
@@ -66,7 +70,10 @@ url: https://unsplash.com/photo/abc
 title: Sunset in Tokyo
 width: 3840
 height: 2160
-tags: [photography, japan, inspiration]
+Mine Collections:
+  - "[[Photography]]"
+  - "[[Japan]]"
+  - "[[Inspiration]]"
 saved_at: 2026-02-26T14:30:00Z
 source: browser-extension
 ---
@@ -81,25 +88,30 @@ file: demo-reel.mp4
 url: https://youtube.com/watch?v=xxx
 title: Demo Reel 2026
 thumbnail: demo-reel-thumb.jpg
-tags: [portfolio, motion]
+Mine Collections:
+  - "[[Portfolio]]"
+  - "[[Motion]]"
 saved_at: 2026-02-26T14:30:00Z
 ---
 ```
 Аналогично: `.md` с метаданными + медиафайл рядом.
 
-### Каналы = теги
+### Коллекции = Obsidian pages
 
-Канал — это **динамический вид**, фильтрующий блоки по значению в `tags[]` frontmatter.
+Коллекция — это **динамический вид**, фильтрующий блоки по значениям
+`Mine Collections`, где каждое значение является quoted Obsidian wikilink на
+страницу коллекции.
 
 | Действие пользователя | Что происходит |
 |---|---|
-| Сохраняет блок с тегами | Теги записываются в frontmatter `.md` файла |
-| Добавляет тег к блоку | Обновляется frontmatter + SQLite-индекс |
-| Создаёт канал из тега | Канал = сохранённый фильтр по тегу |
-| Открывает канал | Показываются все блоки с этим тегом |
-| Блок в нескольких каналах | Несколько тегов в `tags[]` — никаких симлинков |
+| Сохраняет блок в коллекции | `Mine Collections` получает quoted wikilink, например `- "[[Красивый веб]]"` |
+| Добавляет блок в коллекцию | Патчится `Mine Collections` + обновляется SQLite-индекс |
+| Создаёт коллекцию | Создаётся `.md` page с `type: channel`; filename остаётся человекочитаемым |
+| Открывает коллекцию | Показываются все блоки со ссылкой на эту collection page |
+| Блок в нескольких коллекциях | Несколько wikilinks в `Mine Collections` — никаких симлинков |
 
-Список каналов (тегов, которые стали каналами) хранится в `.arena/index.db`, но восстановим из frontmatter.
+Список коллекций и порядок восстанавливаются из collection pages и
+`Mine Collections`. SQLite остаётся local derived index.
 
 ### Vault — файловая структура
 
@@ -392,11 +404,11 @@ iOS UI contract:
 | Component | Purpose | Technology |
 |---|---|---|
 | Tauri Shell | Нативное окно, IPC между фронтом и бэком | Tauri v2 |
-| React Frontend | Сетка карточек, навигация по тегам, поиск | React 19 + Vite + TypeScript |
-| Rust Commands | API для фронтенда: CRUD блоков, теги, поиск | Rust, `#[tauri::command]` |
+| React Frontend | Сетка карточек, навигация по коллекциям, поиск | React 19 + Vite + TypeScript |
+| Rust Commands | API для фронтенда: CRUD блоков, коллекции, поиск | Rust, `#[tauri::command]` |
 | Indexer | Сканирование vault, парсинг frontmatter, file watcher | Rust, notify crate |
 | Frontmatter Parser | Извлечение атрибутов из `.md` файлов | Rust (yaml parsing) |
-| DB | Поисковый индекс, кэш тегов, список каналов | rusqlite + FTS5 |
+| DB | Поисковый индекс, collection-ref cache, список каналов | rusqlite + FTS5 |
 | Thumbnail Generator | Превью 240px: изображения (resize), статьи (text-to-image) | Rust, image + ab_glyph + imageproc |
 | Import | Импорт каналов из Are.na | Rust, ureq (sync HTTP) |
 | Web Clipper | Chrome/Safari расширение: сохранение из браузера | Manifest V3, Readability.js, TurndownService |
@@ -429,6 +441,11 @@ iOS UI contract:
   отдельный tile preview не создан, manifest оставляет `preview_path = null`,
   а frontend сразу рендерит `source_path` из vault. Legacy manifests с таким
   synthetic path frontend нормализует в `null`.
+- Obsidian embeds use backend-resolved `source_path`: `![[name.jpg]]` may point
+  to an attachment discovered by basename lookup in the vault, while
+  `![alt](path)` remains strict note-relative Markdown. Detail rendering,
+  feed previews, media dimensions, and thumb upgrades consume the same resolved
+  vault-root-relative path from the index/manifest.
 - Single-image social fallback contract: `social-single-media` больше не имеет права жёстко рендерить block-level `slug.jpg`. Для single-image X/Twitter/Instagram preview frontend сначала берёт tile-level `previewPath`, потом `source_path`, и использует `slug.jpg` только как последний fallback. Это выравнивает single-image path с `preview_manifest` contract и устраняет серый baked-text preview поверх валидной локальной картинки.
 - Gallery aspect contract: composite/media-grid previews with `3+` items используют квадратный wrapper, а gallery ровно из `2` изображений использует `2:1` wrapper, чтобы две tiles оставались почти квадратными и не деградировали в узкий `1:2` crop.
 - Legacy article fallback contract: если у article-карточки есть `media_urls` / `first_image`, но для строки ещё нет `preview_manifest`, feed всё равно обязан строить реальный tile set из source images. `imageCount > 1` без `mediaItems` больше не допускается, иначе карточка деградирует в пустой серый gallery wrapper.
@@ -459,11 +476,11 @@ Frontend: drop event → Tauri command `add_block`
     ▼
 Rust: копирует медиафайл в vault root
     │
-    ├──► Создаёт .md файл с frontmatter (type, file, tags, saved_at)
+    ├──► Создаёт .md файл с frontmatter (type, file, Mine Collections, saved_at)
     │
     ├──► Thumbnail Generator: превью → .arena/cache/thumbs/
     │
-    └──► Indexer: парсит frontmatter → SQLite (блок, теги, FTS)
+    └──► Indexer: парсит frontmatter → SQLite (блок, collection refs, FTS)
     │
     ▼
 Frontend: получает событие → обновляет сетку
@@ -486,14 +503,14 @@ Indexer: определяет тип (create/modify/delete)
 Tauri event → Frontend обновляет UI
 ```
 
-### Тег → Канал
+### Collection page → Channel
 
 ```
-Пользователь видит список всех тегов в sidebar
+Пользователь видит список collection pages в sidebar
     │
-    ├──► Клик по тегу → фильтр: показать все блоки с этим тегом
+    ├──► Клик по коллекции → фильтр: показать все блоки со ссылкой на эту collection page
     │
-    └──► «Создать канал» → тег получает статус канала в index.db
+    └──► «Создать канал» → создаётся/patch'ится .md page с type: channel
          (отображается в sidebar как постоянный пункт навигации)
 ```
 
@@ -518,21 +535,21 @@ CREATE TABLE blocks (
     thumb_path TEXT
 );
 
--- Теги (кэш из frontmatter)
+-- Collection refs (legacy physical table name)
 CREATE TABLE block_tags (
     block_id INTEGER REFERENCES blocks(id) ON DELETE CASCADE,
-    tag TEXT NOT NULL,
+    tag TEXT NOT NULL,                    -- semantic: CollectionRef
     PRIMARY KEY (block_id, tag)
 );
 
--- Индекс для быстрого поиска по тегу
+-- Индекс для быстрого поиска по collection ref
 CREATE INDEX idx_block_tags_tag ON block_tags(tag);
 
--- Каналы (теги, которые стали каналами)
+-- Collection pages (legacy physical column name)
 CREATE TABLE channels (
     id INTEGER PRIMARY KEY,
-    tag TEXT UNIQUE NOT NULL,            -- тег, по которому фильтруем
-    title TEXT NOT NULL,                 -- отображаемое имя (может отличаться от тега)
+    tag TEXT UNIQUE NOT NULL,            -- semantic: CollectionRef
+    title TEXT NOT NULL,                 -- отображаемое имя
     description TEXT,
     color TEXT,                          -- цвет канала в UI
     icon TEXT,                           -- иконка
@@ -575,7 +592,7 @@ Rationale: пользователь должен иметь возможност
 
 Rationale: приложение macOS-first, WebKit на macOS стабилен. Бэкенд на Rust идеален для файловых операций, thumbnail-генерации и SQLite. Thymer выбрал Electron из-за кросс-платформенности — у нас другие приоритеты.
 
-### 003: Каналы — это теги, не папки
+### 003: Каналы — это теги, не папки [historical]
 
 | Approach | Problem |
 |---|---|
@@ -583,6 +600,10 @@ Rationale: приложение macOS-first, WebKit на macOS стабилен.
 | Канал = тег в frontmatter (chosen) | Нужен парсер frontmatter, но один файл — много каналов без дублирования |
 
 Rationale: теговая модель (как Mymind) проще и надёжнее папочной (как Are.na). Блок в 5 каналах — это 5 тегов в одном файле, а не 5 симлинков. Теги редактируются в любом текстовом редакторе.
+
+Status: historical decision. Obsidian-first collection architecture keeps the
+"not folders" part, but replaces tags with `Mine Collections`
+wikilinks to collection pages.
 
 ### 004: Плоская структура vault
 
@@ -681,6 +702,11 @@ Rationale: расширение — проекция основного прил
 
 Rationale: файлы — источник правды (решение 001), и пользователь может редактировать их вручную. `parse_tags()` — единственная точка входа тегов из файлов в систему. Нормализация здесь гарантирует согласованность `block_tags ↔ channels` в SQLite.
 
+Status: historical decision for the tag-based architecture. Obsidian-first
+collections supersede this for Mine collection membership:
+`tags` remains user-owned Obsidian metadata, while Mine collections use
+`Mine Collections` wikilinks and `CollectionRef`.
+
 ### 011: Собственный virtualized masonry renderer вместо browser layout для больших коллекций
 
 | Approach | Problem |
@@ -714,6 +740,19 @@ Rationale: masonry-позиция блока зависит от всех пре
 Rationale: thumbnail pipeline требует декодирование **того же** набора форматов что браузер умеет рендерить. Попытка дублировать этот набор в Rust — проигрышная битва, мы уже третий раз ловим один класс bugs на разных форматах. WebView native decoder (WKWebView → ImageIO/AVFoundation на macOS) получает поддержку форматов бесплатно от системы. Trade-off — 2-3 hops IPC (Rust event → worker → Rust write) и двухфазная асинхронность, компенсируется guaranteed instant UX через Phase 1 placeholder и self-healing через is_thumb_fresh.
 
 Детальная спецификация: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md).
+
+### 014: Obsidian-first collections via wikilinks
+
+| Approach | Problem |
+|---|---|
+| Continue normalized tag identity (`красивый-веб`) | Obsidian graph sees detached text metadata; human filenames are rewritten into machine-like filenames; `tags` conflicts with user-owned Obsidian tags |
+| Dual runtime support for old and new collection formats | Permanent complexity in every write/read path and unclear source of truth |
+| One-time migration + single canonical wikilink format (chosen) | Requires a careful dry-run/backup/apply migration, but leaves one clear long-term contract |
+
+Rationale: Mine collections should be understandable in Obsidian without a Mine
+runtime. A card should link to `[[Красивый веб]]`, and the collection page
+should be `Красивый веб.md`. Legacy encodings are inputs to migration, not a
+second permanent format.
 
 ## Dependencies
 

@@ -1,6 +1,6 @@
 # Mine — локальная альтернатива Are.na для визуального букмаркинга
 
-Десктопное приложение для визуального букмаркинга. Файлы хранятся локально (плоская структура, Markdown + frontmatter), каналы — это теги. Интерфейс — окно в файловую систему. Никакого облака, никакого Electron.
+Десктопное приложение для визуального букмаркинга. Файлы хранятся локально (плоская структура, Markdown + frontmatter), коллекции — это Obsidian-страницы, а membership хранится в `Mine Collections` как wikilinks. Интерфейс — окно в файловую систему. Никакого облака, никакого Electron.
 
 ## Required reading
 
@@ -22,6 +22,7 @@
 - `SPEC_IDENTITY_ROBUSTNESS.md` — спецификация filename-first identity: rename, conflicts, NFC
 - `SPEC_OBSIDIAN_WIKILINKS.md` — спецификация inline media через Obsidian wikilinks
 - `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md` — обычные Obsidian `.md` без Mine frontmatter как implicit articles, optional metadata overlay, no rewrite on read
+- `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md` — implemented migration: collections as Obsidian pages, `Mine Collections` values as quoted wikilinks, legacy formats handled by CLI migration
 - `SPEC_CLIPPER.md` — спецификация веб-клиппера: типы клипов, popup, native messaging
 - `SPEC_MOBILE.md` — спецификация iOS-приложения: SwiftUI + Rust UniFFI, iCloud sync, Share Extension
 - `DESIGN_SYSTEM_IOS.md` — дизайн-система iOS: цвета, типографика, компоненты, жесты
@@ -116,14 +117,14 @@ local-arena/
 │   │   ├── Grid.tsx            # Masonry-сетка с чанковым рендерингом (IntersectionObserver)
 │   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
-│   │   ├── Detail.tsx          # Lightbox: просмотр, теги, навигация стрелками
+│   │   ├── Detail.tsx          # Lightbox: просмотр, коллекции, навигация стрелками
 │   │   ├── RenameBlockDialog.tsx # Unified filename rename modal
 │   │   ├── ArticleAudioControls.tsx # Desktop AUDIO rail: create/remove/play/persist progress
 │   │   ├── Search.tsx          # Cmd+K поиск (command palette)
 │   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог
 │   │   ├── DropZone.tsx        # Drag-and-drop файлов для создания блоков
 │   │   ├── ImportDialog.tsx    # 4-шаговый импорт из Are.na
-│   │   ├── CardContextMenu.tsx # Контекстное меню карточки: теги, удаление
+│   │   ├── CardContextMenu.tsx # Контекстное меню карточки: коллекции, удаление
 │   │   └── SidebarResizeHandle.tsx # Ресайз-ручка сайдбара (pill-стиль)
 │   ├── hooks/
 │   │   └── useSidebarResize.ts # Хук ресайза сайдбара (pointer events + persist)
@@ -203,7 +204,7 @@ local-arena/
     └── audio/                     # Article audio sidecars + .wav artifacts
 ```
 
-Каналы = `.md` файлы с `type: channel` (метаданные в frontmatter: position, color, icon). Блок = `.md` файл + опциональный медиафайл. Принадлежность блока к каналу — через `tags` в frontmatter блока.
+Коллекции = `.md` файлы с `type: channel` (метаданные в frontmatter: position, color, icon). Блок = `.md` файл + опциональный медиафайл. Collection membership — через `Mine Collections` с quoted Obsidian wikilinks, например `- "[[Красивый веб]]"`; `tags` остаётся пользовательским Obsidian-полем.
 
 ## Git
 

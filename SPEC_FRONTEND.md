@@ -1,6 +1,6 @@
 # SPEC: Frontend
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Overview
 
@@ -28,7 +28,7 @@ interface IndexedBlock {
   height: number | null;
   author: string | null;
   body: string;
-  tags: string[];
+  tags: string[]; // legacy physical name; semantic meaning: CollectionRef[]
 }
 ```
 
@@ -36,7 +36,7 @@ interface IndexedBlock {
 
 ```typescript
 interface TagCount {
-  tag: string;
+  tag: string; // legacy physical name; semantic meaning: CollectionRef
   count: number;
 }
 ```
@@ -45,7 +45,7 @@ interface TagCount {
 
 ```typescript
 interface ChannelDto {
-  tag: string;
+  tag: string; // legacy physical name; semantic meaning: CollectionRef
   title: string;
   description: string | null;
   color: string | null;
@@ -107,8 +107,13 @@ deleteChannel(tag: string): Promise<boolean>
 | Путь | Компонент | Описание |
 |---|---|---|
 | `/` | AllBlocks | Все блоки (по умолчанию после выбора vault) |
-| `/channel/:tag` | ChannelView | Блоки, отфильтрованные по тегу канала |
+| `/channel/:tag` | ChannelView | Blocks filtered by percent-encoded `CollectionRef` |
 | `/search?q=...` | SearchResults | Результаты поиска |
+
+Route params encode `CollectionRef`, derived from the Obsidian wikilink target,
+not a normalized tag. The URL currently keeps `/channel/:tag` for compatibility,
+but the value is a percent-encoded page ref such as `Красивый веб`, not
+`красивый-веб`.
 
 Vault-пикер — не маршрут, а состояние: если `vaultPath === null`, показываем пикер поверх.
 
@@ -144,9 +149,10 @@ Vault-пикер — не маршрут, а состояние: если `vault
    (thumbnails)
 
 Активный пункт подсвечивается. Каналы отсортированы по `channels.position`.
-`channels` является source of truth для порядка; `tags` используется только как
-источник счётчиков и списка неповышенных тегов. Изменение количества карточек в
-канале не должно менять порядок каналов в sidebar.
+`channels` является source of truth для порядка; legacy `tags` используется
+только как физическое имя текущего индекса. Runtime использует `CollectionRef`
+из `Mine Collections` wikilinks. Изменение количества карточек в канале не
+должно менять порядок каналов в sidebar.
 
 Режим открытого Detail:
 1. `Everything` остаётся обычным пунктом навигации на `/` с общим счётчиком и
@@ -199,8 +205,14 @@ Geometry зависит от Detail top menu mode. В `classic` selector жив�
 Оценка высоты:
 - `image` — по aspect ratio из `width/height` (если frontmatter содержит размеры)
 - `video` / `link` / `file` — по фиксированным эвристикам
-- `article` — по длине заголовка, body preview и наличию `first_image`
+- `article` — по длине заголовка, indexed `preview_text` и наличию `first_image`
 - После первого paint реальная высота уточняется через `ResizeObserver` и кешируется по `slug`
+
+`preview_text` не является визуальным лимитом карточки. Backend отдаёт
+очищенный buffer до 768 символов, рассчитанный из максимальной геометрии
+article-card без media (8 lines × widest single-column inner width). Frontend
+сохраняет финальное решение за CSS line-clamp/реальной измеренной высотой, так
+что текст не обрезается заранее на уровне SQLite payload.
 
 **CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`. Картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки — нет layout shift.
 
@@ -221,6 +233,12 @@ Geometry зависит от Detail top menu mode. В `classic` selector жив�
 Thumbnail отображается через `convertFileSrc(vaultPath + "/.arena/cache/thumbs/" + slug + ".jpg")`.
 
 Медиафайлы (для image-карточек без thumbnail): `convertFileSrc(vaultPath + "/" + media_file)`.
+
+Article inline media renders from backend-derived paths. For bare Obsidian
+embeds such as `![[01.jpg]]`, Detail first asks `preview_manifest.tiles` for a
+resolved `source_path` and then loads `convertFileSrc(vaultPath + "/" +
+source_path)`. The frontend must not reimplement vault-wide attachment search;
+that belongs to `storage::media_refs`.
 
 ### CardHoverMenu
 

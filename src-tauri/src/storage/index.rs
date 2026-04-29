@@ -12,13 +12,15 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::block::{
-    extract_wikilinks, iter_inline_media_sources, normalize_local_markdown_url, Block, BlockType,
-    DateTime, Frontmatter,
+    build_preview_text, extract_wikilinks, fallback_title_from_slug, iter_inline_media_references,
+    normalize_local_markdown_url, Block, BlockType, DateTime, Frontmatter,
+    FEED_PREVIEW_TEXT_BUFFER_CHARS,
 };
 use crate::domain::channel::Channel;
 use crate::domain::search::{SearchFilter, SearchQuery};
 use crate::domain::vault::VaultLayout;
 use crate::storage::media_dimensions::build_media_dimensions_json;
+use crate::storage::media_refs;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -103,6 +105,7 @@ pub struct LightBlock {
     pub height: Option<u32>,
     pub author: Option<String>,
     pub body: String,
+    pub preview_text: Option<String>,
     pub first_image: Option<String>,
     pub media_urls: Option<String>,
     pub media_dimensions: Option<String>,
@@ -230,18 +233,41 @@ pub struct PreviewBlock {
 }
 
 /// Extract the first inline media reference from body text.
-fn extract_first_image(body: &str) -> Option<String> {
-    iter_inline_media_sources(body).into_iter().next()
+fn extract_first_image(block: &Block, vault_root: Option<&Path>) -> Option<String> {
+    extract_media_sources(block, vault_root).into_iter().next()
 }
 
 /// Extract all inline media references from body text as a JSON array.
-fn extract_media_urls(body: &str) -> Option<String> {
-    let urls = iter_inline_media_sources(body);
+fn extract_media_urls(block: &Block, vault_root: Option<&Path>) -> Option<String> {
+    let urls = extract_media_sources(block, vault_root);
     if urls.is_empty() {
         None
     } else {
         serde_json::to_string(&urls).ok()
     }
+}
+
+fn extract_media_sources(block: &Block, vault_root: Option<&Path>) -> Vec<String> {
+    iter_inline_media_references(&block.body)
+        .into_iter()
+        .map(|reference| resolve_index_media_source(block, vault_root, &reference))
+        .collect()
+}
+
+fn resolve_index_media_source(
+    block: &Block,
+    vault_root: Option<&Path>,
+    reference: &crate::domain::block::InlineMediaReference,
+) -> String {
+    if is_remote_media(&reference.source) {
+        return reference.source.clone();
+    }
+    let Some(root) = vault_root else {
+        return reference.source.clone();
+    };
+    let vault = VaultLayout::new(root.to_path_buf());
+    media_refs::resolve_inline_media_root_relative(&vault, &block.slug, reference)
+        .unwrap_or_else(|| reference.source.clone())
 }
 
 fn serialize_related_notes(related_notes: &[String]) -> Option<String> {
@@ -376,10 +402,13 @@ fn parse_inline_media_src(line: &str) -> Option<String> {
 fn extract_social_preview_tiles(
     body: &str,
     dims: &std::collections::HashMap<String, [u32; 2]>,
+    media_urls: Option<&str>,
 ) -> Vec<FeedPreviewTile> {
     let first_section = body.split("\n---").next().unwrap_or(body);
     let mut tiles = Vec::new();
     let mut next_is_video_poster = false;
+    let resolved_media = extract_local_media_items(media_urls, |_| true);
+    let mut media_index = 0usize;
 
     for line in first_section.lines() {
         if line.trim() == "<!-- tweet-video -->" {
@@ -389,14 +418,15 @@ fn extract_social_preview_tiles(
         let Some(src) = parse_inline_media_src(line) else {
             continue;
         };
-        // `parse_inline_media_src` already returns a filesystem-form
-        // string: wikilinks pass through, percent-encoded markdown URLs
-        // are decoded. Downstream consumers can look the file up by
-        // this string directly.
+        let resolved_src = resolved_media.get(media_index).cloned().unwrap_or(src);
+        media_index += 1;
+        // Preserve tweet-video marker order from the body, but prefer
+        // media_urls because it has already passed through the canonical
+        // backend resolver.
         tiles.push(media_tile(
-            &src,
+            &resolved_src,
             dims,
-            is_video_media(&src),
+            is_video_media(&resolved_src),
             next_is_video_poster,
         ));
         next_is_video_poster = false;
@@ -500,7 +530,7 @@ fn serialize_feed_preview_manifest(
         },
         BlockType::Article => {
             if is_social_url(block.frontmatter.url.as_deref()) {
-                let mut tiles = extract_social_preview_tiles(&block.body, &dims);
+                let mut tiles = extract_social_preview_tiles(&block.body, &dims, media_urls);
                 if tiles.is_empty() {
                     tiles = extract_local_media_items(media_urls, |_| true)
                         .into_iter()
@@ -895,10 +925,15 @@ fn upsert_block_inner(
     origin: Option<&str>,
     index_warning: Option<&str>,
 ) -> Result<i64> {
-    let first_image = extract_first_image(&block.body);
-    let media_urls = extract_media_urls(&block.body);
+    let first_image = extract_first_image(block, vault_root);
+    let media_urls = extract_media_urls(block, vault_root);
     let media_dimensions = vault_root.and_then(|root| {
-        build_media_dimensions_json(root, block.frontmatter.file.as_deref(), &block.body)
+        build_media_dimensions_json(
+            root,
+            &block.slug,
+            block.frontmatter.file.as_deref(),
+            &block.body,
+        )
     });
 
     // Width/height priority: (1) existing DB row if present, (2) frontmatter,
@@ -970,13 +1005,14 @@ fn upsert_block_inner(
     // (Phase 18.G) can match Remove+Create events without reading the
     // file off disk at event time.
     let body_hash = crate::domain::block::compute_body_hash(&block.body);
+    let preview_text = build_preview_text(&block.body, FEED_PREVIEW_TEXT_BUFFER_CHARS);
 
     conn.execute(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body, first_image,
-            media_urls, media_dimensions, preview_manifest, feed_playback, related_notes, body_hash,
-            origin, index_warning)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+            media_urls, media_dimensions, preview_manifest, feed_playback, related_notes, preview_text, preview_text_cap,
+            body_hash, origin, index_warning)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
             title = excluded.title,
@@ -996,6 +1032,8 @@ fn upsert_block_inner(
             preview_manifest = excluded.preview_manifest,
             feed_playback = excluded.feed_playback,
             related_notes = excluded.related_notes,
+            preview_text = excluded.preview_text,
+            preview_text_cap = excluded.preview_text_cap,
             body_hash = excluded.body_hash,
             origin = excluded.origin,
             index_warning = excluded.index_warning,
@@ -1020,6 +1058,8 @@ fn upsert_block_inner(
             preview_manifest,
             feed_playback,
             related_notes,
+            preview_text,
+            FEED_PREVIEW_TEXT_BUFFER_CHARS as i64,
             body_hash,
             origin,
             index_warning,
@@ -1321,6 +1361,58 @@ pub fn backfill_missing_feed_playback(conn: &Connection, vault: &VaultLayout) ->
     Ok(updated)
 }
 
+/// Backfill list/grid read-model fields introduced after older indexes were
+/// created. Uses full `blocks.body` already stored in SQLite, so it avoids a
+/// full filesystem re-scan while making existing cards render with the same
+/// preview contract as newly indexed cards.
+pub fn backfill_missing_preview_text(conn: &Connection) -> Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT id, slug, title, body
+         FROM blocks
+         WHERE preview_text IS NULL
+            OR preview_text_cap IS NULL
+            OR preview_text_cap < ?1
+            OR (title = slug AND instr(slug, '/') > 0)",
+    )?;
+    let rows = stmt
+        .query_map([FEED_PREVIEW_TEXT_BUFFER_CHARS as i64], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    let mut updated = 0usize;
+    for (id, slug, title, body) in rows {
+        let preview_text = build_preview_text(&body, FEED_PREVIEW_TEXT_BUFFER_CHARS);
+        let display_title = if title.as_deref() == Some(slug.as_str()) {
+            Some(fallback_title_from_slug(&slug))
+        } else {
+            title
+        };
+
+        updated += conn.execute(
+            "UPDATE blocks
+             SET preview_text = ?1,
+                 preview_text_cap = ?2,
+                 title = ?3
+             WHERE id = ?4",
+            params![
+                preview_text,
+                FEED_PREVIEW_TEXT_BUFFER_CHARS as i64,
+                display_title,
+                id
+            ],
+        )?;
+    }
+
+    Ok(updated)
+}
+
 /// Check if a slug already exists in the index.
 pub fn slug_exists(conn: &Connection, slug: &str) -> Result<bool> {
     let exists: bool = conn
@@ -1522,7 +1614,7 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, url, media_file,
                 thumbnail, saved_at, width, height, author,
-                SUBSTR(body, 1, ?1), first_image, media_urls, media_dimensions, preview_manifest, feed_playback
+                SUBSTR(body, 1, ?1), preview_text, first_image, media_urls, media_dimensions, preview_manifest, feed_playback
          FROM blocks ORDER BY saved_at DESC",
     )?;
 
@@ -1550,11 +1642,12 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
                 height: row.get::<_, Option<i64>>(9)?.map(|v| v as u32),
                 author: row.get(10)?,
                 body: row.get(11)?,
-                first_image: row.get(12)?,
-                media_urls: row.get(13)?,
-                media_dimensions: row.get(14)?,
-                preview_manifest: row.get(15)?,
-                feed_playback: row.get(16)?,
+                preview_text: row.get(12)?,
+                first_image: row.get(13)?,
+                media_urls: row.get(14)?,
+                media_dimensions: row.get(15)?,
+                preview_manifest: row.get(16)?,
+                feed_playback: row.get(17)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1577,7 +1670,7 @@ pub fn list_grid_blocks(
             "SELECT b.id, b.slug, b.block_type, b.title, b.url, b.media_file,
                     b.thumbnail, b.saved_at, b.width, b.height, b.author,
                     CASE WHEN b.block_type = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
-                    b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest, b.feed_playback
+                    b.preview_text, b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest, b.feed_playback
              FROM blocks b
              INNER JOIN block_tags bt ON bt.block_id = b.id
              WHERE b.block_type != 'channel' AND bt.tag = ?2
@@ -1588,7 +1681,7 @@ pub fn list_grid_blocks(
             "SELECT id, slug, block_type, title, url, media_file,
                     thumbnail, saved_at, width, height, author,
                     CASE WHEN block_type = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
-                    first_image, media_urls, media_dimensions, preview_manifest, feed_playback
+                    preview_text, first_image, media_urls, media_dimensions, preview_manifest, feed_playback
              FROM blocks
              WHERE block_type != 'channel'
              ORDER BY saved_at DESC
@@ -1620,11 +1713,12 @@ pub fn list_grid_blocks(
             height: row.get::<_, Option<i64>>(9)?.map(|v| v as u32),
             author: row.get(10)?,
             body: row.get(11)?,
-            first_image: row.get(12)?,
-            media_urls: row.get(13)?,
-            media_dimensions: row.get(14)?,
-            preview_manifest: row.get(15)?,
-            feed_playback: row.get(16)?,
+            preview_text: row.get(12)?,
+            first_image: row.get(13)?,
+            media_urls: row.get(14)?,
+            media_dimensions: row.get(15)?,
+            preview_manifest: row.get(16)?,
+            feed_playback: row.get(17)?,
         })
     };
 
@@ -1931,9 +2025,8 @@ pub fn upsert_channel(conn: &Connection, channel: &Channel) -> Result<i64> {
 /// Index a channel from a parsed Block with type: channel.
 /// Maps frontmatter fields to Channel struct and upserts.
 pub fn upsert_channel_from_block(conn: &Connection, block: &Block) -> Result<i64> {
-    let raw_tag = block.slug.clone();
     let mut channel = Channel::new(
-        &raw_tag,
+        &block.slug,
         block.frontmatter.title.as_deref(),
         block.frontmatter.saved_at.clone(),
     )
@@ -1943,11 +2036,7 @@ pub fn upsert_channel_from_block(conn: &Connection, block: &Block) -> Result<i64
     channel.icon = block.frontmatter.icon.clone();
     channel.position = block.frontmatter.position.unwrap_or(0);
 
-    let id = upsert_channel(conn, &channel)?;
-    if raw_tag != channel.tag {
-        remove_channel(conn, &raw_tag)?;
-    }
-    Ok(id)
+    upsert_channel(conn, &channel)
 }
 
 /// List all channels ordered by position, then title.
@@ -1970,7 +2059,7 @@ pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut merged: Vec<(String, Channel)> = Vec::new();
+    let mut channels = Vec::new();
     for (raw_tag, title, description, color, icon, position, created_at) in rows {
         let dt = DateTime::new(&created_at)
             .map_err(|e| anyhow::anyhow!("invalid datetime in channel: {}", e))?;
@@ -1980,22 +2069,9 @@ pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
         ch.color = color;
         ch.icon = icon;
         ch.position = position as u32;
-
-        if let Some(idx) = merged
-            .iter()
-            .position(|(_, existing)| existing.tag == ch.tag)
-        {
-            let existing_is_canonical = merged[idx].0 == merged[idx].1.tag;
-            let candidate_is_canonical = raw_tag == ch.tag;
-            if candidate_is_canonical && !existing_is_canonical {
-                merged[idx] = (raw_tag, ch);
-            }
-        } else {
-            merged.push((raw_tag, ch));
-        }
+        channels.push(ch);
     }
 
-    let mut channels: Vec<Channel> = merged.into_iter().map(|(_, channel)| channel).collect();
     channels.sort_by(|a, b| {
         a.position
             .cmp(&b.position)
@@ -2183,6 +2259,10 @@ mod tests {
             },
             body: body.to_string(),
         }
+    }
+
+    fn media_test_block(body: &str) -> Block {
+        make_block_full("note", "article", None, "2026-01-15T12:00:00Z", &[], body)
     }
 
     fn sync_test_jpeg_thumb(conn: &Connection, slug: &str) {
@@ -2662,6 +2742,45 @@ mod tests {
     }
 
     #[test]
+    fn list_grid_blocks_returns_indexed_preview_text() {
+        let conn = test_conn();
+        let body = "## Мои задачи\n\n- [ ] Создать **plan.md** проекта — формализовать все договорённости и роудмап в одном документе\n- [ ] Dogfood всех сценариев: пройти полный путь игрока, разработчика, фандера и спекулянта на платформе";
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "Gaming Platform/Встречи/12.04.2026 Встреча с Владом",
+                "article",
+                None,
+                "2026-01-01T00:00:00Z",
+                &[],
+                body,
+            ),
+            None,
+        )
+        .unwrap();
+
+        let (blocks, has_more) = list_grid_blocks(&conn, None, 0, 20).unwrap();
+        assert!(!has_more);
+        assert_eq!(blocks.len(), 1);
+        let preview = blocks[0].preview_text.as_deref().unwrap();
+        assert!(preview.starts_with("Мои задачи Создать plan.md проекта"));
+        assert!(!preview.contains("[ ]"));
+        assert!(!preview.contains("**"));
+
+        let preview_text_cap: Option<i64> = conn
+            .query_row(
+                "SELECT preview_text_cap FROM blocks WHERE slug = ?1",
+                ["Gaming Platform/Встречи/12.04.2026 Встреча с Владом"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            preview_text_cap,
+            Some(FEED_PREVIEW_TEXT_BUFFER_CHARS as i64)
+        );
+    }
+
+    #[test]
     fn image_preview_manifest_prefers_media_dimensions_over_stale_frontmatter_size() {
         let dir = tempfile::tempdir().unwrap();
         let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
@@ -3091,6 +3210,73 @@ mod tests {
     }
 
     #[test]
+    fn backfill_missing_preview_text_restores_legacy_rows() {
+        let conn = test_conn();
+        conn.execute(
+            "INSERT INTO blocks (slug, block_type, title, saved_at, body)
+             VALUES (?1, 'article', ?1, '2026-01-01T00:00:00Z', ?2)",
+            params![
+                "Gaming Platform/Встречи/12.04.2026 Встреча с Владом",
+                "## Мои задачи\n\n- [ ] Создать **plan.md** проекта"
+            ],
+        )
+        .unwrap();
+
+        let updated = backfill_missing_preview_text(&conn).unwrap();
+        assert_eq!(updated, 1);
+
+        let (title, preview_text, preview_text_cap): (Option<String>, Option<String>, Option<i64>) =
+            conn.query_row(
+                "SELECT title, preview_text, preview_text_cap FROM blocks WHERE slug = ?1",
+                ["Gaming Platform/Встречи/12.04.2026 Встреча с Владом"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(title.as_deref(), Some("12.04.2026 Встреча с Владом"));
+        assert_eq!(
+            preview_text.as_deref(),
+            Some("Мои задачи Создать plan.md проекта")
+        );
+        assert_eq!(
+            preview_text_cap,
+            Some(FEED_PREVIEW_TEXT_BUFFER_CHARS as i64)
+        );
+    }
+
+    #[test]
+    fn backfill_missing_preview_text_rebuilds_older_short_cap() {
+        let conn = test_conn();
+        let body = format!(
+            "## Notes\n\n{}",
+            (0..180)
+                .map(|i| format!("word{i}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        let old_preview = build_preview_text(&body, 220);
+        conn.execute(
+            "INSERT INTO blocks (slug, block_type, title, saved_at, body, preview_text, preview_text_cap)
+             VALUES ('notes', 'article', 'Notes', '2026-01-01T00:00:00Z', ?1, ?2, 220)",
+            params![body, old_preview],
+        )
+        .unwrap();
+
+        let updated = backfill_missing_preview_text(&conn).unwrap();
+        assert_eq!(updated, 1);
+
+        let (preview_text, preview_text_cap): (String, i64) = conn
+            .query_row(
+                "SELECT preview_text, preview_text_cap FROM blocks WHERE slug = 'notes'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(preview_text.chars().count() > old_preview.chars().count());
+        assert!(preview_text.chars().count() <= FEED_PREVIEW_TEXT_BUFFER_CHARS);
+        assert_eq!(preview_text_cap, FEED_PREVIEW_TEXT_BUFFER_CHARS as i64);
+    }
+
+    #[test]
     fn combined_metadata_backfills_restore_feed_video_contract_for_legacy_rows() {
         let dir = tempfile::tempdir().unwrap();
         let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
@@ -3362,15 +3548,17 @@ mod tests {
     fn extract_media_urls_decodes_local_filenames() {
         let body = "![](Title%20%28image%201%29.jpg)\n\nsome text\n\n\
                     ![](Other%20%28video%201%29.mp4)";
-        let json = extract_media_urls(body).unwrap();
+        let block = media_test_block(body);
+        let json = extract_media_urls(&block, None).unwrap();
         assert_eq!(json, "[\"Title (image 1).jpg\",\"Other (video 1).mp4\"]");
     }
 
     #[test]
     fn extract_first_image_decodes_local_filename() {
         let body = "prelude\n\n![alt](Title%20%28image%201%29.jpg)\n\nend";
+        let block = media_test_block(body);
         assert_eq!(
-            extract_first_image(body),
+            extract_first_image(&block, None),
             Some("Title (image 1).jpg".to_string())
         );
     }
@@ -3378,7 +3566,8 @@ mod tests {
     #[test]
     fn extract_media_urls_preserves_remote_encoded_urls() {
         let body = "![](https://cdn.example.com/path%20with%20space.jpg)";
-        let json = extract_media_urls(body).unwrap();
+        let block = media_test_block(body);
+        let json = extract_media_urls(&block, None).unwrap();
         assert_eq!(
             json,
             "[\"https://cdn.example.com/path%20with%20space.jpg\"]"
@@ -3390,14 +3579,36 @@ mod tests {
     #[test]
     fn extract_media_urls_reads_wikilink() {
         let body = "intro\n\n![[Title (image 1).jpg]]\n\nmore text";
-        let json = extract_media_urls(body).unwrap();
+        let block = media_test_block(body);
+        let json = extract_media_urls(&block, None).unwrap();
         assert_eq!(json, "[\"Title (image 1).jpg\"]");
+    }
+
+    #[test]
+    fn extract_media_urls_resolves_obsidian_wikilink_attachment_by_basename() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(vault.root().join("Библиотека/images/images")).unwrap();
+        std::fs::write(vault.root().join("Библиотека/images/images/01.jpg"), b"img").unwrap();
+        let block = make_block_full(
+            "Библиотека/Азбука",
+            "article",
+            None,
+            "2026-01-15T12:00:00Z",
+            &[],
+            "![[01.jpg]]",
+        );
+
+        let json = extract_media_urls(&block, Some(vault.root())).unwrap();
+
+        assert_eq!(json, "[\"Библиотека/images/images/01.jpg\"]");
     }
 
     #[test]
     fn extract_media_urls_reads_wikilink_with_alt() {
         let body = "![[Title (image 1).jpg|a caption]]";
-        let json = extract_media_urls(body).unwrap();
+        let block = media_test_block(body);
+        let json = extract_media_urls(&block, None).unwrap();
         assert_eq!(json, "[\"Title (image 1).jpg\"]");
     }
 
@@ -3407,7 +3618,8 @@ mod tests {
         let body = "![[Note (image 1).png]]\n\ncontext\n\n\
                     ![](https://cdn.example.com/remote.jpg)\n\n\
                     ![[Other (video 1).mp4]]";
-        let json = extract_media_urls(body).unwrap();
+        let block = media_test_block(body);
+        let json = extract_media_urls(&block, None).unwrap();
         assert_eq!(
             json,
             "[\"Note (image 1).png\",\"https://cdn.example.com/remote.jpg\",\"Other (video 1).mp4\"]"
@@ -3417,8 +3629,9 @@ mod tests {
     #[test]
     fn extract_first_image_picks_wikilink_when_first() {
         let body = "![[First (image 1).jpg]]\n\n![](later.png)";
+        let block = media_test_block(body);
         assert_eq!(
-            extract_first_image(body),
+            extract_first_image(&block, None),
             Some("First (image 1).jpg".to_string())
         );
     }
@@ -3426,19 +3639,25 @@ mod tests {
     #[test]
     fn extract_first_image_picks_markdown_when_first() {
         let body = "![alt](early.png)\n\n![[Later (image 1).jpg]]";
-        assert_eq!(extract_first_image(body), Some("early.png".to_string()));
+        let block = media_test_block(body);
+        assert_eq!(
+            extract_first_image(&block, None),
+            Some("early.png".to_string())
+        );
     }
 
     #[test]
     fn extract_ignores_malformed_wikilink_without_closing() {
         let body = "![[Unclosed wikilink";
-        assert_eq!(extract_media_urls(body), None);
+        let block = media_test_block(body);
+        assert_eq!(extract_media_urls(&block, None), None);
     }
 
     #[test]
     fn extract_ignores_empty_wikilink() {
         let body = "![[]] and ![[  ]]";
-        assert_eq!(extract_media_urls(body), None);
+        let block = media_test_block(body);
+        assert_eq!(extract_media_urls(&block, None), None);
     }
 
     // ── FTS5 escaping ───────────────────────────────────────────────────
@@ -3505,30 +3724,31 @@ mod tests {
     }
 
     #[test]
-    fn list_channels_dedupes_legacy_alias_rows_by_normalized_tag() {
+    fn list_channels_preserves_distinct_human_collection_refs() {
         let conn = test_conn();
         conn.execute(
             "INSERT INTO channels (tag, title, description, color, icon, position, created_at)
              VALUES (?1, ?2, NULL, NULL, NULL, ?3, ?4)",
-            params!["Красивый веб", "Legacy Alias", 0i64, "2026-01-01T00:00:00Z"],
+            params!["Красивый веб", "Human", 0i64, "2026-01-01T00:00:00Z"],
         )
         .unwrap();
         conn.execute(
             "INSERT INTO channels (tag, title, description, color, icon, position, created_at)
              VALUES (?1, ?2, NULL, NULL, NULL, ?3, ?4)",
-            params!["красивый-веб", "Canonical", 5i64, "2026-01-01T00:00:00Z"],
+            params!["красивый-веб", "Kebab", 5i64, "2026-01-01T00:00:00Z"],
         )
         .unwrap();
 
         let channels = list_channels(&conn).unwrap();
-        assert_eq!(channels.len(), 1);
-        assert_eq!(channels[0].tag, "красивый-веб");
-        assert_eq!(channels[0].title, "Canonical");
-        assert_eq!(channels[0].position, 5);
+        assert_eq!(channels.len(), 2);
+        assert_eq!(channels[0].tag, "Красивый веб");
+        assert_eq!(channels[0].title, "Human");
+        assert_eq!(channels[1].tag, "красивый-веб");
+        assert_eq!(channels[1].title, "Kebab");
     }
 
     #[test]
-    fn upsert_channel_from_block_normalizes_filename_alias_tag() {
+    fn upsert_channel_from_block_preserves_filename_collection_ref() {
         let conn = test_conn();
         conn.execute(
             "INSERT INTO channels (tag, title, description, color, icon, position, created_at)
@@ -3550,18 +3770,18 @@ mod tests {
 
         let channels = list_channels(&conn).unwrap();
         assert_eq!(channels.len(), 1);
-        assert_eq!(channels[0].tag, "красивый-веб");
+        assert_eq!(channels[0].tag, "Красивый веб");
         assert_eq!(channels[0].title, "Красивый веб");
         assert_eq!(channels[0].position, 3);
 
-        let raw_alias_count: i64 = conn
+        let human_ref_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM channels WHERE tag = ?1",
                 ["Красивый веб"],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(raw_alias_count, 0);
+        assert_eq!(human_ref_count, 1);
     }
 
     #[test]

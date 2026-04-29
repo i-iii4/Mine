@@ -82,6 +82,57 @@ describe("feedPreview", () => {
     expect(tile?.previewPath).toBeNull();
   });
 
+  it("matches a bare Obsidian embed name to one resolved backend tile", () => {
+    const manifest = normalizeFeedPreviewManifest(
+      JSON.stringify({
+        kind: "image",
+        primary_preview_path: "Азбука.jpg",
+        width: 1,
+        height: 1,
+        tiles: [
+          {
+            source_path: "Библиотека/images/images/01.jpg",
+            preview_path: null,
+            width: 800,
+            height: 600,
+            is_video: false,
+            is_video_poster: false,
+          },
+        ],
+        overflow_count: 0,
+      }),
+    );
+
+    const tile = findPreviewTileForSource(manifest, "01.jpg");
+    expect(tile?.sourcePath).toBe("Библиотека/images/images/01.jpg");
+  });
+
+  it("does not basename-match ambiguous Obsidian embed names", () => {
+    const manifest = normalizeFeedPreviewManifest(
+      JSON.stringify({
+        kind: "composite",
+        primary_preview_path: "note.jpg",
+        width: 1,
+        height: 1,
+        tiles: [
+          {
+            source_path: "A/photo.jpg",
+            is_video: false,
+            is_video_poster: false,
+          },
+          {
+            source_path: "B/photo.jpg",
+            is_video: false,
+            is_video_poster: false,
+          },
+        ],
+        overflow_count: 0,
+      }),
+    );
+
+    expect(findPreviewTileForSource(manifest, "photo.jpg")).toBeNull();
+  });
+
   it("keeps explicit cache preview paths when they are not synthetic", () => {
     const manifest = normalizeFeedPreviewManifest(
       JSON.stringify({

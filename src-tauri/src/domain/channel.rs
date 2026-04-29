@@ -1,19 +1,19 @@
-// Channel: a promoted tag displayed in the sidebar.
+// Channel: a promoted collection displayed in the sidebar.
 //
-// A channel is a tag elevated to a permanent navigation item.
-// Opening a channel = showing all blocks with that tag.
+// A channel is backed by an Obsidian collection page. Opening a channel =
+// showing all blocks whose `Mine Collections` links target that page.
 //
 // Contract: SPEC_DOMAIN.md#domain/channel
 
 use super::block::DateTime;
-use super::tag::normalize_tag;
+use super::collection::normalize_collection_ref;
 use thiserror::Error;
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ChannelError {
-    #[error("channel tag is empty")]
+    #[error("channel collection ref is empty")]
     EmptyTag,
 
     #[error("channel title is empty")]
@@ -25,10 +25,10 @@ pub enum ChannelError {
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-/// A promoted tag with display metadata for the sidebar.
+/// A promoted collection with display metadata for the sidebar.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Channel {
-    /// The tag this channel filters by (normalized).
+    /// The collection ref this channel filters by.
     pub tag: String,
     /// Display name in the sidebar.
     pub title: String,
@@ -44,13 +44,10 @@ pub struct Channel {
 }
 
 impl Channel {
-    /// Create a new channel from a tag.
-    ///
-    /// If `title` is None, generates one from the tag:
-    /// `"web-design"` becomes `"Web design"`.
+    /// Create a new channel from an Obsidian collection ref.
     pub fn new(tag: &str, title: Option<&str>, created_at: DateTime) -> Result<Self, ChannelError> {
-        let normalized_tag = normalize_tag(tag);
-        if normalized_tag.is_empty() {
+        let collection_ref = normalize_collection_ref(tag);
+        if collection_ref.is_empty() {
             return Err(ChannelError::EmptyTag);
         }
 
@@ -62,11 +59,11 @@ impl Channel {
                 }
                 trimmed.to_string()
             }
-            None => title_from_tag(&normalized_tag),
+            None => title_from_ref(&collection_ref),
         };
 
         Ok(Self {
-            tag: normalized_tag,
+            tag: collection_ref,
             title,
             description: None,
             color: None,
@@ -117,11 +114,13 @@ pub fn validate_color(color: &str) -> bool {
 
 // ─── Private helpers ────────────────────────────────────────────────────────
 
-/// Generate a human-readable title from a kebab-case tag.
-/// `"web-design"` -> `"Web design"`.
-fn title_from_tag(tag: &str) -> String {
-    let with_spaces = tag.replace('-', " ");
-    let mut chars = with_spaces.chars();
+fn title_from_ref(collection_ref: &str) -> String {
+    let display = collection_ref
+        .rsplit('/')
+        .next()
+        .unwrap_or(collection_ref)
+        .trim();
+    let mut chars = display.chars();
     match chars.next() {
         None => String::new(),
         Some(first) => {
@@ -152,16 +151,16 @@ mod tests {
     }
 
     #[test]
-    fn new_title_generated_from_tag() {
+    fn new_title_generated_from_ref() {
         // C2
-        let ch = Channel::new("web-design", None, dt()).unwrap();
-        assert_eq!(ch.title, "Web design");
+        let ch = Channel::new("Красивый веб", None, dt()).unwrap();
+        assert_eq!(ch.title, "Красивый веб");
     }
 
     #[test]
-    fn new_normalizes_tag() {
+    fn new_preserves_human_ref() {
         let ch = Channel::new("  Web Design  ", None, dt()).unwrap();
-        assert_eq!(ch.tag, "web-design");
+        assert_eq!(ch.tag, "Web Design");
     }
 
     #[test]
@@ -249,21 +248,26 @@ mod tests {
         assert!(matches!(err, ChannelError::InvalidColor { .. }));
     }
 
-    // ── title_from_tag ──────────────────────────────────────────────────
+    // ── title_from_ref ──────────────────────────────────────────────────
 
     #[test]
     fn title_from_simple() {
-        assert_eq!(title_from_tag("design"), "Design");
+        assert_eq!(title_from_ref("design"), "Design");
     }
 
     #[test]
-    fn title_from_kebab() {
-        assert_eq!(title_from_tag("web-design"), "Web design");
+    fn title_from_human_name() {
+        assert_eq!(title_from_ref("Web Design"), "Web Design");
+    }
+
+    #[test]
+    fn title_from_path_target() {
+        assert_eq!(title_from_ref("Design/References"), "References");
     }
 
     #[test]
     fn title_from_cyrillic() {
-        assert_eq!(title_from_tag("верстка"), "Верстка");
+        assert_eq!(title_from_ref("верстка"), "Верстка");
     }
 
     // ── update_position ─────────────────────────────────────────────────

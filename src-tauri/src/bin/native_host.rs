@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use mine_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use mine_lib::domain::channel::Channel;
+use mine_lib::domain::collection::normalize_collection_ref;
 use mine_lib::domain::vault::{resolve_slug_conflict, VaultLayout};
 use mine_lib::storage::{db, files, index, thumbnails};
 use mine_lib::util::now_iso8601;
@@ -346,18 +347,18 @@ fn handle_list_channels(vault: &VaultLayout) {
 fn merge_channels_and_tags(channels: Vec<Channel>, tags: Vec<index::TagCount>) -> Vec<ChannelInfo> {
     let mut counts: HashMap<String, usize> = HashMap::new();
     for tag in &tags {
-        let normalized = mine_lib::domain::tag::normalize_tag(&tag.tag);
-        if normalized.is_empty() {
+        let collection_ref = normalize_collection_ref(&tag.tag);
+        if collection_ref.is_empty() {
             continue;
         }
-        *counts.entry(normalized).or_insert(0) += tag.count;
+        *counts.entry(collection_ref).or_insert(0) += tag.count;
     }
 
     let mut seen: HashSet<String> = HashSet::new();
     let mut infos = Vec::with_capacity(channels.len() + tags.len());
 
     for channel in channels {
-        let tag = mine_lib::domain::tag::normalize_tag(&channel.tag);
+        let tag = normalize_collection_ref(&channel.tag);
         if tag.is_empty() || seen.contains(&tag) {
             continue;
         }
@@ -371,26 +372,29 @@ fn merge_channels_and_tags(channels: Vec<Channel>, tags: Vec<index::TagCount>) -
     }
 
     for tag in tags {
-        let normalized = mine_lib::domain::tag::normalize_tag(&tag.tag);
-        if normalized.is_empty() || seen.contains(&normalized) {
+        let collection_ref = normalize_collection_ref(&tag.tag);
+        if collection_ref.is_empty() || seen.contains(&collection_ref) {
             continue;
         }
-        let block_count = counts.get(&normalized).copied().unwrap_or(tag.count);
+        let block_count = counts.get(&collection_ref).copied().unwrap_or(tag.count);
         infos.push(ChannelInfo {
-            title: capitalize_tag(&normalized),
-            tag: normalized.clone(),
+            title: collection_ref_title(&collection_ref),
+            tag: collection_ref.clone(),
             block_count,
         });
-        seen.insert(normalized);
+        seen.insert(collection_ref);
     }
 
     infos
 }
 
-/// Generate a human-readable title from a kebab-case tag.
-fn capitalize_tag(tag: &str) -> String {
-    let with_spaces = tag.replace('-', " ");
-    let mut chars = with_spaces.chars();
+fn collection_ref_title(collection_ref: &str) -> String {
+    let label = collection_ref
+        .split('/')
+        .next_back()
+        .unwrap_or(collection_ref)
+        .trim();
+    let mut chars = label.chars();
     match chars.next() {
         None => String::new(),
         Some(first) => {
@@ -554,7 +558,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
                 .tags
                 .unwrap_or_default()
                 .iter()
-                .map(|t| mine_lib::domain::tag::normalize_tag(t))
+                .map(|t| normalize_collection_ref(t))
                 .filter(|t| !t.is_empty())
                 .collect(),
             related_notes: Vec::new(),
@@ -666,21 +670,7 @@ fn channel_to_block(channel: &Channel) -> Block {
 }
 
 fn title_from_raw_channel_tag(tag: &str) -> String {
-    tag.replace('-', " ")
-        .split_whitespace()
-        .map(capitalize_first)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-fn capitalize_first(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-    }
+    collection_ref_title(&normalize_collection_ref(tag))
 }
 
 /// Finalize a pre-uploaded staging file by renaming it from whatever name
@@ -1784,11 +1774,11 @@ mod tests {
     }
 
     #[test]
-    fn merge_channels_and_tags_normalizes_promoted_channel_before_count_lookup() {
+    fn merge_channels_and_tags_preserves_promoted_collection_ref() {
         let infos = merge_channels_and_tags(
             vec![test_channel("Красивый веб", "Красивый веб")],
             vec![index::TagCount {
-                tag: "красивый-веб".to_string(),
+                tag: "Красивый веб".to_string(),
                 count: 4,
             }],
         );
@@ -1796,7 +1786,7 @@ mod tests {
         assert_eq!(
             infos,
             vec![ChannelInfo {
-                tag: "красивый-веб".to_string(),
+                tag: "Красивый веб".to_string(),
                 title: "Красивый веб".to_string(),
                 block_count: 4,
             }]
@@ -1804,11 +1794,11 @@ mod tests {
     }
 
     #[test]
-    fn merge_channels_and_tags_deduplicates_promoted_channel_aliases() {
+    fn merge_channels_and_tags_keeps_distinct_collection_refs() {
         let infos = merge_channels_and_tags(
             vec![
                 test_channel("Красивый веб", "Красивый веб"),
-                test_channel("красивый-веб", "Красивый веб"),
+                test_channel("красивый-веб", "Kebab"),
             ],
             vec![index::TagCount {
                 tag: "красивый-веб".to_string(),
@@ -1818,11 +1808,18 @@ mod tests {
 
         assert_eq!(
             infos,
-            vec![ChannelInfo {
-                tag: "красивый-веб".to_string(),
-                title: "Красивый веб".to_string(),
-                block_count: 4,
-            }]
+            vec![
+                ChannelInfo {
+                    tag: "Красивый веб".to_string(),
+                    title: "Красивый веб".to_string(),
+                    block_count: 0,
+                },
+                ChannelInfo {
+                    tag: "красивый-веб".to_string(),
+                    title: "Kebab".to_string(),
+                    block_count: 4,
+                },
+            ]
         );
     }
 
@@ -1852,7 +1849,7 @@ mod tests {
                 },
                 ChannelInfo {
                     tag: "local-first".to_string(),
-                    title: "Local first".to_string(),
+                    title: "Local-first".to_string(),
                     block_count: 2,
                 },
             ]

@@ -106,7 +106,7 @@ describe("Detail", () => {
         tiles: [
           {
             source_path: "Title (image 1).jpg",
-            preview_path: "Title (image 1).jpg",
+            preview_path: "Title (image 1)-preview.jpg",
             width: 1200,
             height: 628,
             is_video: false,
@@ -135,7 +135,49 @@ describe("Detail", () => {
 
     const imageSrcs = Array.from(container.querySelectorAll("img")).map((img) => img.getAttribute("src"));
     expect(imageSrcs).toContain("asset://localhost//tmp/test-vault/Title (image 1).jpg");
-    expect(imageSrcs).toContain("asset://localhost//tmp/thumbs/Title (image 1).jpg");
+    expect(imageSrcs).toContain("asset://localhost//tmp/thumbs/Title (image 1)-preview.jpg");
+  });
+
+  it("uses resolved backend tile path for bare Obsidian attachment embeds", () => {
+    const b = block({
+      body: "![[01.jpg]]",
+      preview_manifest: JSON.stringify({
+        kind: "image",
+        primary_preview_path: "test-block.jpg",
+        width: 1200,
+        height: 628,
+        tiles: [
+          {
+            source_path: "Библиотека/images/images/01.jpg",
+            preview_path: null,
+            width: 1200,
+            height: 628,
+            is_video: false,
+            is_video_poster: false,
+          },
+        ],
+        overflow_count: 0,
+      }),
+    });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    const imageSrcs = Array.from(container.querySelectorAll("img")).map((img) => img.getAttribute("src"));
+    expect(imageSrcs).toContain("asset://localhost//tmp/test-vault/Библиотека/images/images/01.jpg");
   });
 
   it("decodes local wikilink video paths before handing them to VideoFromBlob", () => {

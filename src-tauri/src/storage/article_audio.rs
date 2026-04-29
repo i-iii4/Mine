@@ -73,7 +73,7 @@ pub fn ensure_audio_dir(vault: &VaultLayout) -> Result<()> {
 
 pub fn load_block_for_audio(vault: &VaultLayout, slug: &str) -> Result<Block> {
     let block_path = vault.block_path(slug);
-    let (read_slug, content) = files::read_block_file(&block_path).with_context(|| {
+    let (read_slug, content) = files::read_block_file(vault, &block_path).with_context(|| {
         format!(
             "failed to read article source file: {}",
             block_path.display()
@@ -305,6 +305,10 @@ pub fn rename_all_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str)
             "target article audio asset already exists: {}",
             new_path.display()
         );
+        if let Some(parent) = new_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+        }
         std::fs::rename(&old_path, &new_path).with_context(|| {
             format!(
                 "failed to rename article audio asset {} -> {}",
@@ -353,6 +357,10 @@ fn write_stored_state(
     state: &StoredArticleAudioState,
 ) -> Result<()> {
     let path = vault.article_audio_state_path(slug);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+    }
     let bytes =
         serde_json::to_vec_pretty(state).context("failed to serialize article audio state")?;
     std::fs::write(&path, bytes)
@@ -627,21 +635,14 @@ mod tests {
         ensure_audio_dir(&vault).unwrap();
         let wav_path = vault.article_audio_asset_path("essay", "wav");
         std::fs::write(&wav_path, b"wav").unwrap();
-        write_test_state_file(
-            &vault,
-            "essay",
-            "hash",
-            "essay.wav",
-            Some(42),
-            7,
-            None,
-        )
-        .unwrap();
+        write_test_state_file(&vault, "essay", "hash", "essay.wav", Some(42), 7, None).unwrap();
 
         assert!(rename_all_artifacts(&vault, "essay", "Renamed Essay").unwrap());
         assert!(!vault.article_audio_state_path("essay").exists());
         assert!(!wav_path.exists());
-        assert!(vault.article_audio_asset_path("Renamed Essay", "wav").exists());
+        assert!(vault
+            .article_audio_asset_path("Renamed Essay", "wav")
+            .exists());
 
         let prepared = PreparedArticleSpeech {
             speakable_text: "body".to_string(),

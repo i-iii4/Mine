@@ -212,8 +212,7 @@ fn resolve_upgrade_media(
     // 1. frontmatter.file — explicit media for image/video blocks
     if let Some(ref file_name) = block.media_file {
         let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
-        let media_path = vault.root().join(file_name);
-        if media_path.exists() {
+        if let Some(media_path) = resolve_block_reference(vault, &block.slug, file_name) {
             if thumbnails::is_image_ext(&ext) {
                 return Some((media_path, "image"));
             }
@@ -227,8 +226,7 @@ fn resolve_upgrade_media(
     if let Some(ref thumb_file) = block.thumbnail {
         let ext = thumb_file.rsplit('.').next().unwrap_or("").to_lowercase();
         if thumbnails::is_image_ext(&ext) {
-            let media_path = vault.root().join(thumb_file);
-            if media_path.exists() {
+            if let Some(media_path) = resolve_block_reference(vault, &block.slug, thumb_file) {
                 return Some((media_path, "image"));
             }
         }
@@ -242,14 +240,12 @@ fn resolve_upgrade_media(
             for url in urls {
                 let ext = url.rsplit('.').next().unwrap_or("").to_lowercase();
                 if thumbnails::is_image_ext(&ext) {
-                    let media_path = vault.root().join(&url);
-                    if media_path.exists() {
+                    if let Some(media_path) = resolve_block_reference(vault, &block.slug, &url) {
                         return Some((media_path, "image"));
                     }
                 }
                 if thumbnails::is_video_ext(&ext) {
-                    let media_path = vault.root().join(&url);
-                    if media_path.exists() {
+                    if let Some(media_path) = resolve_block_reference(vault, &block.slug, &url) {
                         return Some((media_path, "video"));
                     }
                 }
@@ -261,14 +257,21 @@ fn resolve_upgrade_media(
     if let Some(ref first_image) = block.first_image {
         let ext = first_image.rsplit('.').next().unwrap_or("").to_lowercase();
         if thumbnails::is_image_ext(&ext) {
-            let media_path = vault.root().join(first_image);
-            if media_path.exists() {
+            if let Some(media_path) = resolve_block_reference(vault, &block.slug, first_image) {
                 return Some((media_path, "image"));
             }
         }
     }
 
     None
+}
+
+fn resolve_block_reference(
+    vault: &crate::domain::vault::VaultLayout,
+    slug: &str,
+    reference: &str,
+) -> Option<PathBuf> {
+    crate::storage::media_refs::resolve_indexed_media(vault, slug, reference)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -527,8 +530,12 @@ mod tests {
         };
         write_block(&vault, &conn, block);
 
-        thumbnails::generate_text_thumbnail(Some("poster"), "fallback", &vault.thumb_path("poster"))
-            .unwrap();
+        thumbnails::generate_text_thumbnail(
+            Some("poster"),
+            "fallback",
+            &vault.thumb_path("poster"),
+        )
+        .unwrap();
         // Simulate stale DB metadata claiming the thumb is already JPEG.
         conn.execute(
             "UPDATE blocks SET thumb_format = 'jpeg', thumb_mtime = 123 WHERE slug = 'poster'",
@@ -537,7 +544,10 @@ mod tests {
         .unwrap();
 
         let candidates = index::list_pending_thumb_upgrade_blocks(&conn).unwrap();
-        let target = candidates.iter().find(|candidate| candidate.slug == "poster").unwrap();
+        let target = candidates
+            .iter()
+            .find(|candidate| candidate.slug == "poster")
+            .unwrap();
         let (path, kind) = resolve_upgrade_media(&vault, target).unwrap();
 
         assert_eq!(kind, "image");
@@ -553,12 +563,15 @@ mod tests {
 
     #[test]
     fn validate_thumb_write_request_accepts_unicode_slug() {
-        assert!(validate_thumb_write_request("続きを描いてます", &[0xFF, 0xD8, 0xFF, 0x00]).is_ok());
+        assert!(
+            validate_thumb_write_request("続きを描いてます", &[0xFF, 0xD8, 0xFF, 0x00]).is_ok()
+        );
     }
 
     #[test]
     fn validate_thumb_write_request_rejects_path_traversal_and_separators() {
-        for slug in ["foo/bar", "foo\\bar", "..", "../x", ""] {
+        assert!(validate_thumb_write_request("foo/bar", &[0xFF, 0xD8, 0xFF, 0x00]).is_ok());
+        for slug in ["foo//bar", "foo\\bar", "..", "../x", ""] {
             assert!(validate_thumb_write_request(slug, &[0xFF, 0xD8, 0xFF, 0x00]).is_err());
         }
     }

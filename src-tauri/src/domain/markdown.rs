@@ -97,9 +97,7 @@ pub fn convert_markdown_images_to_wikilinks(body: &str) -> String {
             out.push_str(&decoded);
             out.push_str("]]");
         } else {
-            let safe_alt = alt_trimmed
-                .replace('|', "&#124;")
-                .replace('\n', " ");
+            let safe_alt = alt_trimmed.replace('|', "&#124;").replace('\n', " ");
             out.push_str("![[");
             out.push_str(&decoded);
             out.push('|');
@@ -235,8 +233,7 @@ pub fn rename_inline_media_references(body: &str, renames: &BTreeMap<String, Str
         let raw_url = &body[url_start..url_start + paren_end];
         let end = url_start + paren_end + 1;
 
-        if raw_url.starts_with("http://") || raw_url.starts_with("https://") || raw_url.is_empty()
-        {
+        if raw_url.starts_with("http://") || raw_url.starts_with("https://") || raw_url.is_empty() {
             out.push_str(&body[excl..end]);
             i = end;
             continue;
@@ -292,9 +289,7 @@ mod tests {
     #[test]
     fn converts_encoded_local_with_alt() {
         assert_eq!(
-            convert_markdown_images_to_wikilinks(
-                "![view](Title%20%28image%201%29.jpg)"
-            ),
+            convert_markdown_images_to_wikilinks("![view](Title%20%28image%201%29.jpg)"),
             "![[Title (image 1).jpg|view]]"
         );
     }
@@ -392,7 +387,10 @@ mod tests {
     fn rename_wikilink_targets_updates_text_and_embed_forms() {
         let input = "See [[Old Name]] and ![[Old Name|preview]], leave [[Other]].";
         let expected = "See [[New Name]] and ![[New Name|preview]], leave [[Other]].";
-        assert_eq!(rename_wikilink_targets(input, "Old Name", "New Name"), expected);
+        assert_eq!(
+            rename_wikilink_targets(input, "Old Name", "New Name"),
+            expected
+        );
     }
 
     #[test]

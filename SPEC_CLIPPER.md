@@ -1,6 +1,6 @@
 # Specification: Web Clipper (Browser Extension)
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Overview
 
@@ -18,7 +18,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 │  │  Popup UI  │  │  Content Script    │  │
 │  │            │  │                    │  │
 │  │ Type picker│  │ Meta extraction    │  │
-│  │ Tag picker │  │ Readability.js     │  │
+│  │ Channels   │  │ Readability.js     │  │
 │  │ Preview    │  │ Selection capture  │  │
 │  │ Save btn   │  │ Image src capture  │  │
 │  └─────┬──────┘  └────────┬───────────┘  │
@@ -182,7 +182,7 @@ Popup и save() используют одну чистую функцию — `r
 
 Скриншот можно захватить не целиком, а выделенной областью. В превью скриншота есть кнопка `Crop Area` рядом с `Retake`. При клике:
 
-1. Popup сериализует всё текущее состояние (метаданные, статью, выбранные теги, title, vault, полный скриншот) в `chrome.storage.session` под ключом `cropPendingState` и вызывает `window.close()`.
+1. Popup сериализует всё текущее состояние (метаданные, статью, выбранные коллекции, title, vault, полный скриншот) в `chrome.storage.session` под ключом `cropPendingState` и вызывает `window.close()`.
 2. Background получает сообщение `startCropMode` и пересылает `startCropOverlay` в content script активной вкладки.
 3. Content script инжектит Shadow DOM overlay: полупрозрачное затемнение на всю страницу, crosshair-курсор, плавающая плашка `Click and drag to select area • Esc to cancel`.
 4. Пользователь тянет мышью прямоугольник. Подсветка выделенной области — через трюк `box-shadow: 0 0 0 9999px rgba(0,0,0,0.55)` на самой рамке (одна рамка = «окно в темноту», без четырёх div'ов вокруг).
@@ -192,7 +192,7 @@ Popup и save() используют одну чистую функцию — `r
    - Получает dataUrl, грузит его в `Image`, кропит на `OffscreenCanvas` размером `width × height × devicePixelRatio`, конвертирует результат в JPEG q=0.9.
    - Отправляет background сообщение `cropDone` с обрезанным dataUrl.
 6. Background кладёт cropped dataUrl в screenshot upload cache, пишет `{status:"done", dataUrl, screenshotId}` в `chrome.storage.session.cropResult` и вызывает `chrome.action.openPopup()`.
-7. Popup при init обнаруживает `cropPendingState + cropResult`, восстанавливает состояние и заменяет превью на обрезанный скриншот. Выбранные теги, title, канал и `screenshotId` — всё на месте.
+7. Popup при init обнаруживает `cropPendingState + cropResult`, восстанавливает состояние и заменяет превью на обрезанный скриншот. Выбранные коллекции, title, канал и `screenshotId` — всё на месте.
 
 Отмена (Esc до или во время drag'а): content script убивает overlay, пишет `cropResult = {status:"cancelled"}`, background переоткрывает popup. Popup восстанавливает прежний (не кропнутый) скриншот из persisted state.
 
@@ -432,10 +432,13 @@ Response:
 
 #### `list_channels`
 
-Список коллекций из vault. Ответ строится как union двух источников:
+Список коллекций из vault. Current API name remains `list_channels`.
+Values are collection refs from Obsidian page targets, not normalized tags.
+
+Ответ строится как union двух источников:
 
 - promoted channel documents (`type: channel`) из таблицы `channels`;
-- unpromoted tags/collections, которые уже используются non-channel блоками.
+- collection refs, которые уже используются non-channel блоками.
 
 Пустой promoted channel обязан возвращаться с `block_count: 0`: channel document сам по себе является достаточным источником истины для списка коллекций, даже если watcher ещё не успел посчитать блоки.
 
@@ -450,20 +453,24 @@ Response:
 {
   "ok": true,
   "channels": [
-    { "tag": "design", "title": "Design", "block_count": 42 },
-    { "tag": "programming", "title": "Programming", "block_count": 15 }
+    { "tag": "Design", "title": "Design", "block_count": 42 },
+    { "tag": "Красивый веб", "title": "Красивый веб", "block_count": 15 }
   ]
 }
 ```
 
-Channel list refresh не является одноразовым init-state. Popup грузит список каналов асинхронно, не блокируя первый paint. Если любой открытый clipper context создаёт канал через `create_channel` или сохраняет блок с `tags` через `save_block`, background рассылает event `mineChannelsChanged`, и остальные открытые overlays повторно вызывают `list_channels`.
+Channel list refresh не является одноразовым init-state. Popup грузит список каналов асинхронно, не блокируя первый paint. Если любой открытый clipper context создаёт канал через `create_channel` или сохраняет блок с `Mine Collections` через `save_block`, background рассылает event `mineChannelsChanged`, и остальные открытые overlays повторно вызывают `list_channels`.
 
 Доставка события идёт двумя путями:
 
 - `chrome.runtime.sendMessage` — для detached extension windows;
 - `chrome.tabs.sendMessage` — для in-page overlays, потому что overlay живёт как content script внутри вкладки.
 
-`create_channel` обязан возвращать нормализованный `tag`, и popup обязан выбирать именно response tag, а не raw user input. Иначе `create_channel("My Channel")` и `save_block(tags:["My Channel"])` могут разойтись: save path нормализует tags в `my-channel`.
+`create_channel` returns the collection ref matching the Obsidian page target,
+and popup must use that response ref instead of normalizing raw user input.
+`create_channel("Красивый веб")` и
+`save_block(Mine Collections: ["[[Красивый веб]]"])` должны сходиться на одном
+collection ref.
 
 Native host обязан открывать тот же local derived index, что и desktop app:
 `~/Library/Application Support/com.mine.app/vaults/<vault-id>/index.db`.
@@ -473,10 +480,8 @@ Native host обязан открывать тот же local derived index, ч�
 с legacy `.arena/index.db`, иначе clipper видит stale channels по сравнению с
 desktop app.
 
-`list_channels` возвращает promoted channels + used tags из одного индекса.
-Перед merge channel/tag keys нормализуются через общий tag normalizer. Это
-защищает от старых alias-дублей вроде `Красивый веб` и `красивый-веб`: в popup
-должна быть одна строка с нормализованным `tag` и корректным `block_count`.
+`list_channels` returns promoted channels + used collection refs from one
+index. Legacy normalized tags are migration inputs only.
 
 #### `save_block`
 
@@ -490,7 +495,7 @@ desktop app.
   "description": "Financial infrastructure for the internet",
   "url": "https://stripe.com",
   "body": "",
-  "tags": ["design", "fintech"],
+  "tags": ["Design", "Fintech"],
   "image_url": "https://stripe.com/img/v3/home/twitter.png",
   "author": null
 }
@@ -513,7 +518,7 @@ Response:
   "title": "Sunset in Tokyo",
   "url": "https://unsplash.com/photo/abc",
   "body": "",
-  "tags": ["photography"],
+  "tags": ["Photography"],
   "image_url": "https://images.unsplash.com/photo-abc?w=3840",
   "width": 3840,
   "height": 2160
@@ -598,7 +603,7 @@ Chrome ограничивает отдельное native messaging-сообще
 
 После успешного upload попап передаёт полученное имя в `save_block` через поле `pre_uploaded_file`. Native host проверяет, что файл существует в vault, и использует его как `media_file` блока — без повторного скачивания через `image_url`.
 
-Если background service worker потерял in-memory cache и upload вернул `Screenshot upload expired`, popup ре-кэширует уже имеющийся `dataUrl` и один раз повторяет upload без нового screenshot capture. Остальные upload-ошибки (`timeout`, PNA/loopback отказ, сервер upload не настроен) показываются inline через `StatusBar`; popup остаётся в основном UI, а превью, выбранные теги, title, vault и кнопки `Save` / `Retake` сохраняются. Такие ошибки не переводят popup в full-screen `ErrorState`, потому что пользователь должен иметь возможность повторить сохранение без повторного сбора контекста.
+Если background service worker потерял in-memory cache и upload вернул `Screenshot upload expired`, popup ре-кэширует уже имеющийся `dataUrl` и один раз повторяет upload без нового screenshot capture. Остальные upload-ошибки (`timeout`, PNA/loopback отказ, сервер upload не настроен) показываются inline через `StatusBar`; popup остаётся в основном UI, а превью, выбранные коллекции, title, vault и кнопки `Save` / `Retake` сохраняются. Такие ошибки не переводят popup в full-screen `ErrorState`, потому что пользователь должен иметь возможность повторить сохранение без повторного сбора контекста.
 
 ### Browser-origin boundary
 
@@ -806,9 +811,9 @@ src-tauri/src/bin/
 | 3 | save_block link | Создаёт .md + загружает thumbnail |
 | 4 | save_block article | Создаёт .md с body |
 | 5 | save_block image | Загружает файл, генерирует thumbnail |
-| 6 | save_block с новыми тегами | Теги добавляются в frontmatter |
+| 6 | save_block с новыми коллекциями | `Mine Collections` wikilinks добавляются в frontmatter |
 | 7 | list_channels | Возвращает каналы из индекса |
-| 8 | create_channel | Создаёт канал, возвращает tag |
+| 8 | create_channel | Создаёт канал, возвращает collection ref |
 | 9 | concurrent access | Блок создаётся при запущенном приложении |
 | 10 | message framing | 4-byte length header, UTF-8 JSON |
 
