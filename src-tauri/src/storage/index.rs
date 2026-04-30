@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::block::{
     build_preview_text, extract_wikilinks, fallback_title_from_slug, iter_inline_media_references,
-    normalize_local_markdown_url, Block, BlockType, DateTime, Frontmatter,
+    normalize_local_markdown_url, parse_markdown_document, Block, BlockType, DateTime, Frontmatter,
     FEED_PREVIEW_TEXT_BUFFER_CHARS,
 };
 use crate::domain::channel::Channel;
@@ -27,6 +27,7 @@ use crate::storage::media_refs;
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 const MEDIA_INDEX_VERSION: i64 = 2;
+const COLLECTION_INDEX_VERSION: i64 = 1;
 
 /// A block as read from the database index.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1037,8 +1038,8 @@ fn upsert_block_inner(
         "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body, first_image,
             media_urls, media_dimensions, preview_manifest, feed_playback, related_notes, preview_text, preview_text_cap,
-            body_hash, origin, index_warning, media_index_version)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
+            body_hash, origin, index_warning, media_index_version, collection_index_version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
             title = excluded.title,
@@ -1064,6 +1065,7 @@ fn upsert_block_inner(
             origin = excluded.origin,
             index_warning = excluded.index_warning,
             media_index_version = excluded.media_index_version,
+            collection_index_version = excluded.collection_index_version,
             indexed_at = datetime('now')",
         params![
             block.slug,
@@ -1091,6 +1093,7 @@ fn upsert_block_inner(
             origin,
             index_warning,
             MEDIA_INDEX_VERSION,
+            COLLECTION_INDEX_VERSION,
         ],
     )
     .context("failed to upsert block")?;
@@ -1360,6 +1363,89 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
                 MEDIA_INDEX_VERSION,
             ],
         )?;
+    }
+
+    Ok(updated)
+}
+
+/// Rebuild Mine collection memberships after collection parsing rules change.
+///
+/// Older indexes treated Obsidian's user-owned `tags` frontmatter as Mine
+/// collection membership. The source of truth is now only `Mine Collections`,
+/// so this reparses Markdown files once and replaces the `block_tags` read
+/// model without touching user files.
+pub fn backfill_collection_index(conn: &Connection, vault: &VaultLayout) -> Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT slug
+         FROM blocks
+         WHERE slug != ''
+           AND block_type != 'channel'
+           AND (collection_index_version IS NULL OR collection_index_version < ?1)",
+    )?;
+
+    let slugs = stmt
+        .query_map([COLLECTION_INDEX_VERSION], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    let fallback_saved_at = DateTime::new("1970-01-01T00:00:00Z")?;
+    let mut updated = 0usize;
+
+    for slug in slugs {
+        let path = vault.block_path(&slug);
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(err) => {
+                log::warn!(
+                    "collection index backfill: failed to read {}: {err:#}",
+                    path.display()
+                );
+                continue;
+            }
+        };
+
+        let parsed = parse_markdown_document(&slug, &content, fallback_saved_at.clone())
+            .with_context(|| format!("failed to parse collection membership for {slug}"))?;
+
+        let block_id: i64 = conn
+            .query_row("SELECT id FROM blocks WHERE slug = ?1", [&slug], |row| {
+                row.get(0)
+            })
+            .with_context(|| format!("failed to get block id for {slug}"))?;
+
+        conn.execute_batch("SAVEPOINT collection_index_backfill")
+            .with_context(|| format!("failed to begin collection index savepoint for {slug}"))?;
+
+        let result = (|| -> Result<()> {
+            conn.execute("DELETE FROM block_tags WHERE block_id = ?1", [block_id])
+                .with_context(|| format!("failed to clear collection tags for {slug}"))?;
+
+            for tag in parsed.block.frontmatter.tags {
+                conn.execute(
+                    "INSERT INTO block_tags (block_id, tag) VALUES (?1, ?2)",
+                    params![block_id, tag],
+                )
+                .with_context(|| format!("failed to insert collection tag for {slug}"))?;
+            }
+
+            conn.execute(
+                "UPDATE blocks SET collection_index_version = ?2 WHERE id = ?1",
+                params![block_id, COLLECTION_INDEX_VERSION],
+            )
+            .with_context(|| format!("failed to mark collection index version for {slug}"))?;
+
+            Ok(())
+        })();
+
+        if let Err(err) = result {
+            let _ = conn.execute_batch("ROLLBACK TO SAVEPOINT collection_index_backfill");
+            let _ = conn.execute_batch("RELEASE SAVEPOINT collection_index_backfill");
+            return Err(err);
+        }
+
+        conn.execute_batch("RELEASE SAVEPOINT collection_index_backfill")
+            .with_context(|| format!("failed to release collection index savepoint for {slug}"))?;
+        updated += 1;
     }
 
     Ok(updated)
@@ -3393,6 +3479,71 @@ mod tests {
         assert_eq!(manifest.tiles[0].width, Some(388));
         assert_eq!(manifest.tiles[0].height, Some(340));
         assert_eq!(media_index_version, Some(MEDIA_INDEX_VERSION));
+    }
+
+    #[test]
+    fn backfill_collection_index_rebuilds_memberships_from_mine_collections_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        std::fs::write(
+            vault.block_path("Obsidian Tags"),
+            "---\ntags: \"design typography\"\n---\nBody",
+        )
+        .unwrap();
+        std::fs::write(
+            vault.block_path("Mine Collections"),
+            "---\ntags:\n  - design\nMine Collections:\n  - \"[[Design]]\"\n  - \"[[Типография]]\"\n---\nBody",
+        )
+        .unwrap();
+
+        let conn = test_conn();
+        conn.execute(
+            "INSERT INTO blocks (slug, block_type, title, saved_at, body)
+             VALUES ('Obsidian Tags', 'article', 'Obsidian Tags', '2026-01-01T00:00:00Z', 'Body')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO blocks (slug, block_type, title, saved_at, body)
+             VALUES ('Mine Collections', 'article', 'Mine Collections', '2026-01-01T00:00:00Z', 'Body')",
+            [],
+        )
+        .unwrap();
+        let obsidian_id: i64 = conn
+            .query_row(
+                "SELECT id FROM blocks WHERE slug = 'Obsidian Tags'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mine_id: i64 = conn
+            .query_row(
+                "SELECT id FROM blocks WHERE slug = 'Mine Collections'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        for tag in ["design", "typography"] {
+            conn.execute(
+                "INSERT INTO block_tags (block_id, tag) VALUES (?1, ?2)",
+                params![obsidian_id, tag],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO block_tags (block_id, tag) VALUES (?1, 'design')",
+            [mine_id],
+        )
+        .unwrap();
+
+        let updated = backfill_collection_index(&conn, &vault).unwrap();
+        assert_eq!(updated, 2);
+        assert!(get_tags_for_block(&conn, obsidian_id).unwrap().is_empty());
+        assert_eq!(
+            get_tags_for_block(&conn, mine_id).unwrap(),
+            vec!["Design", "Типография"]
+        );
+        assert_eq!(backfill_collection_index(&conn, &vault).unwrap(), 0);
     }
 
     #[test]

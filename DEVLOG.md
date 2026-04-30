@@ -1,5 +1,34 @@
 # Devlog
 
+## 30.04.2026 [primary] — Versioned collection index backfill
+
+### Goal
+
+Убрать дубли коллекций в Mine sidebar после перехода на `Mine Collections`.
+Старый SQLite read model мог всё ещё хранить user-owned Obsidian `tags`
+(`design`, `typography`, `аркада`) в `block_tags`, и frontend показывал их как
+виртуальные каналы рядом с настоящими коллекциями.
+
+### Completed
+
+- Добавлен `blocks.collection_index_version`.
+- `upsert_block` пишет текущую collection index version для новых и
+  переиндексированных строк.
+- Добавлен `backfill_collection_index`: перечитывает source Markdown и
+  пересобирает только `block_tags` из `Mine Collections`; исходные `.md` файлы
+  не меняются.
+- Startup metadata backfill запускает collection backfill и шлёт
+  `vault-changed`, чтобы sidebar перезагрузился после очистки stale rows.
+- Native host запускает тот же backfill перед `list_channels`, чтобы clipper не
+  показывал старые Obsidian `tags` как каналы, если desktop app ещё не успел
+  очистить индекс.
+- Обновлены `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md` и `SPEC_FRONTEND.md`.
+
+### Verification
+
+- `cargo test -p mine backfill_collection_index`
+- `cargo test -p mine --bin native-host merge_channels_and_tags`
+
 ## 30.04.2026 [primary] — Detail bottom safe space
 
 ### Goal

@@ -17,6 +17,11 @@ The SQLite schema still contains legacy physical names (`channels.tag`,
 normalized values and raw `Mine Collections` values are migration inputs only,
 not normal runtime formats.
 
+`blocks.collection_index_version` protects the derived SQLite read model from
+older parser rules. On upgrade, Mine may rebuild `block_tags` from source
+Markdown in the local index only; this is not a source-file migration and must
+not rewrite user files.
+
 ## Decision
 
 Mine collections are Obsidian pages.
@@ -70,7 +75,7 @@ Not:
 - No metadata is embedded into binary image/video files.
 - No hidden UUID is written to cards or collection pages.
 - No central SQLite-only source of truth for collection membership.
-- No automatic rewrite on ordinary read/index/open.
+- No automatic rewrite of source Markdown on ordinary read/index/open.
 - No use of `tags` as Mine collections after migration.
 
 ## Source Format
@@ -197,6 +202,11 @@ User-owned Obsidian `tags` are preserved. The migration must not delete or
 rewrite `tags` unless the user explicitly chooses a cleanup mode for files that
 are proven Mine-authored legacy files.
 
+Local indexes created by older versions may still contain user-owned Obsidian
+`tags` in `block_tags`. Runtime startup and native-host channel listing must
+run the versioned collection-index backfill, replacing those stale rows with
+memberships parsed only from `Mine Collections`.
+
 ## Migration Plan
 
 ### M1. Dry Run
@@ -272,6 +282,11 @@ During implementation they may either be:
 Either way, the data stored after migration must be the Obsidian collection ref,
 not a normalized tag.
 
+`block_tags` is a derived read model. Its rows must be rebuilt from
+`Mine Collections` when `blocks.collection_index_version` is absent or older
+than the current parser version. Rebuilding this table must not mutate the
+Markdown source.
+
 ## Frontend Migration Notes
 
 Routes should encode collection refs instead of normalized tags. The UI label is
@@ -287,3 +302,5 @@ sidebar filtering all operate on `CollectionRef`.
 - Existing vault files can be migrated in one explicit apply step.
 - After migration, no normal Mine write path emits raw collection strings or
   legacy `tags` membership.
+- After upgrade, stale `block_tags` rows derived from Obsidian `tags` disappear
+  after the background collection-index backfill.

@@ -326,6 +326,10 @@ fn handle_list_channels(vault: &VaultLayout) {
         Err(e) => return send_error(&format!("failed to open database: {e}")),
     };
 
+    if let Err(e) = index::backfill_collection_index(&conn, vault) {
+        return send_error(&format!("failed to update collection index: {e}"));
+    }
+
     // Get all tags (every tag used by any block)
     let tags = match index::get_all_tags(&conn) {
         Ok(t) => t,

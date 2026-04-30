@@ -579,6 +579,22 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                     return;
                 }
             };
+            let collections_updated = match index::backfill_collection_index(&conn, &vault) {
+                Ok(updated) => updated,
+                Err(err) => {
+                    log::warn!(
+                        "collection index backfill failed for {}: {:#}",
+                        path_for_thread,
+                        err
+                    );
+                    append_startup_trace(
+                        &app_for_thread,
+                        "index_metadata_backfill",
+                        &format!("collections_failed path={} err={:#}", path_for_thread, err),
+                    );
+                    return;
+                }
+            };
             let preview_updated = match index::backfill_missing_preview_manifest(&conn) {
                 Ok(updated) => updated,
                 Err(err) => {
@@ -645,6 +661,7 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
             };
 
             let total_updated = media_updated
+                + collections_updated
                 + preview_updated
                 + thumb_updated
                 + playback_updated
@@ -659,8 +676,9 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
             }
 
             log::info!(
-                "index metadata backfill: media={} preview={} thumb={} playback={} preview_text={} for {}",
+                "index metadata backfill: media={} collections={} preview={} thumb={} playback={} preview_text={} for {}",
                 media_updated,
+                collections_updated,
                 preview_updated,
                 thumb_updated,
                 playback_updated,
@@ -671,9 +689,10 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                 &app_for_thread,
                 "index_metadata_backfill",
                 &format!(
-                    "updated path={} media={} preview={} thumb={} playback={} preview_text={}",
+                    "updated path={} media={} collections={} preview={} thumb={} playback={} preview_text={}",
                     path_for_thread,
                     media_updated,
+                    collections_updated,
                     preview_updated,
                     thumb_updated,
                     playback_updated,
