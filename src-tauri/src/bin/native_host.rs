@@ -102,6 +102,26 @@ struct CreateChannelParams {
     title: Option<String>,
 }
 
+#[derive(serde::Deserialize)]
+struct ResolveTwitterMediaParams {
+    url: Option<String>,
+    tweet_id: Option<String>,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct TwitterMediaPreview {
+    kind: String,
+    src: String,
+    poster: Option<String>,
+    media_type: String,
+}
+
+#[derive(serde::Serialize)]
+struct ResolveTwitterMediaResponse {
+    ok: bool,
+    media: Vec<TwitterMediaPreview>,
+}
+
 // ─── Native messaging I/O ───────────────────────────────────────────────────
 
 /// Read a native message from stdin: 4-byte LE length + JSON bytes.
@@ -1359,6 +1379,14 @@ fn extract_twitter_video_id(url: &str) -> Option<String> {
 /// Fetch video/GIF MP4 URLs from Twitter syndication API.
 /// Returns only video and animated_gif types (not photos — those are already in body from DOM).
 fn fetch_tweet_videos(tweet_id: &str) -> anyhow::Result<Vec<String>> {
+    Ok(fetch_tweet_media_previews(tweet_id)?
+        .into_iter()
+        .filter(|m| m.kind == "video")
+        .map(|m| m.src)
+        .collect())
+}
+
+fn fetch_tweet_media_previews(tweet_id: &str) -> anyhow::Result<Vec<TwitterMediaPreview>> {
     let api_url = format!(
         "https://cdn.syndication.twimg.com/tweet-result?id={}&token=0",
         tweet_id
@@ -1368,30 +1396,69 @@ fn fetch_tweet_videos(tweet_id: &str) -> anyhow::Result<Vec<String>> {
         .call()?;
     let data: serde_json::Value = resp.into_json()?;
 
-    let mut urls = Vec::new();
+    let mut media_previews = Vec::new();
     if let Some(media) = data.get("mediaDetails").and_then(|v| v.as_array()) {
         for item in media {
             let media_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
-            if media_type != "video" && media_type != "animated_gif" {
-                continue;
-            }
-            if let Some(variants) = item
-                .pointer("/video_info/variants")
-                .and_then(|v| v.as_array())
-            {
-                let best = variants
-                    .iter()
-                    .filter(|v| v.get("content_type").and_then(|c| c.as_str()) == Some("video/mp4"))
-                    .max_by_key(|v| v.get("bitrate").and_then(|b| b.as_u64()).unwrap_or(0));
-                if let Some(variant) = best {
-                    if let Some(url) = variant.get("url").and_then(|u| u.as_str()) {
-                        urls.push(url.to_string());
+            if media_type == "photo" {
+                if let Some(src) = item.get("media_url_https").and_then(|v| v.as_str()) {
+                    media_previews.push(TwitterMediaPreview {
+                        kind: "image".to_string(),
+                        src: format!("{src}?name=large"),
+                        poster: Some(src.to_string()),
+                        media_type: media_type.to_string(),
+                    });
+                }
+            } else if media_type == "video" || media_type == "animated_gif" {
+                if let Some(variants) = item
+                    .pointer("/video_info/variants")
+                    .and_then(|v| v.as_array())
+                {
+                    let best = variants
+                        .iter()
+                        .filter(|v| {
+                            v.get("content_type").and_then(|c| c.as_str()) == Some("video/mp4")
+                        })
+                        .max_by_key(|v| v.get("bitrate").and_then(|b| b.as_u64()).unwrap_or(0));
+                    if let Some(variant) = best {
+                        if let Some(src) = variant.get("url").and_then(|u| u.as_str()) {
+                            media_previews.push(TwitterMediaPreview {
+                                kind: "video".to_string(),
+                                src: src.to_string(),
+                                poster: item
+                                    .get("media_url_https")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                                media_type: media_type.to_string(),
+                            });
+                        }
                     }
                 }
             }
         }
     }
-    Ok(urls)
+    Ok(media_previews)
+}
+
+fn handle_resolve_twitter_media(params: serde_json::Value) {
+    let p: ResolveTwitterMediaParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => return send_error(&format!("invalid resolve_twitter_media params: {e}")),
+    };
+
+    let tweet_id = p
+        .tweet_id
+        .filter(|s| !s.is_empty())
+        .or_else(|| p.url.as_deref().and_then(extract_twitter_video_id));
+
+    let Some(tweet_id) = tweet_id else {
+        return send_error("Twitter status id is required");
+    };
+
+    match fetch_tweet_media_previews(&tweet_id) {
+        Ok(media) => send_response(&ResolveTwitterMediaResponse { ok: true, media }),
+        Err(e) => send_error(&format!("failed to resolve Twitter media: {e}")),
+    }
 }
 
 // ─── Main loop ──────────────────────────────────────────────────────────────
@@ -1688,6 +1755,7 @@ fn main() {
         match req.action.as_str() {
             "get_status" => handle_get_status_with_upload(&upload_server),
             "list_known_vaults" => handle_list_known_vaults(),
+            "resolve_twitter_media" => handle_resolve_twitter_media(req.params),
 
             "list_channels" | "save_block" | "create_channel" => {
                 let Some(ref vp) = vault_path else {

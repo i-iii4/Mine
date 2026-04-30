@@ -258,11 +258,13 @@ Popup/overlay init не ждёт тяжёлый article extraction. Старто
 
 ### Content video preview
 
-Content preview не воспроизводит и не декодирует видео. Content script передаёт в popup `articleData.embeddedVideos` с `src`, `poster`, `title`. Источники, по приоритету: social extractors, которые уже получают media candidates (Twitter/X syndication API, Instagram media API); DOM fallback (`<video>`, YouTube/Vimeo `<iframe>`); meta fallback (`og:video`, `twitter:player:stream`, poster из `og:image` / `twitter:image`). Для YouTube poster вычисляется из video id (`i.ytimg.com/vi/.../maxresdefault.jpg`); для `<video>` берётся `poster` attribute. Если extracted markdown содержит inline video URL (`.mp4`, `.webm`, `.m4v`, `.mov`) в image syntax, popup также рендерит lightweight poster preview: `metadata.image` / `og:image` как картинка + play badge. Сам video URL остаётся в markdown/save payload без изменений.
+Content preview не воспроизводит видео. Content script передаёт в popup `articleData.embeddedVideos` с `src`, `poster`, `title`. Источники, по приоритету: social extractors, которые уже получают media candidates (Twitter/X syndication API, Instagram media API); DOM fallback (`<video>`, YouTube/Vimeo `<iframe>`); meta fallback (`og:video`, `twitter:player:stream`, poster из `og:image` / `twitter:image`). Для YouTube poster вычисляется из video id (`i.ytimg.com/vi/.../maxresdefault.jpg`); для `<video>` берётся `poster` attribute или, если сайт уже держит видимый video frame в памяти, preview-only canvas snapshot с ограниченным размером. Если extracted markdown содержит inline video URL (`.mp4`, `.webm`, `.m4v`, `.mov`) в image syntax, popup рендерит lightweight poster preview только если этот `src` ещё не представлен в `embeddedVideos`; одинаковый canonical video `src` должен давать один preview. Poster берётся из `embeddedVideos.poster`, а `metadata.image` / `og:image` используется только как последний fallback для inline video без structured preview. Сам video URL остаётся в markdown/save payload без изменений.
+
+Twitter/X extractor должен считать syndication/API media более авторитетным источником, чем generic DOM video scan. Если API уже дал direct mp4 + `tweet_video_thumb` poster, DOM `<video>` fallback не добавляется в `embeddedVideos`, чтобы blob/player nodes и generic X cards не создавали лишние previews. Поскольку content scripts могут упереться в CORS при чтении syndication API, popup имеет native-host fallback `resolve_twitter_media`: он возвращает тот же direct mp4 / poster contract, который использует save path. Для `animated_gif` popup может заменить API thumbnail на preview-only кадр из direct mp4 с seek к текущему времени DOM video; если frame capture недоступен, используется `tweet_video_thumb`. Это не меняет saved markdown/body и не локализует дополнительный файл.
 
 `useClipperState` обязан применять async extraction result, если пришёл `content` **или** `embeddedVideos.length > 0`. Preview-only media не должна отбрасываться только потому, что body text пустой или уже был показан раньше.
 
-Инвариант: предпросмотр видео в клиппере — чисто визуальный affordance, не playback surface. Он не должен запускать `<video>`, делать дополнительный media fetch или блокировать сохранение.
+Инвариант: предпросмотр видео в клиппере — чисто визуальный affordance, не playback surface. Он не должен запускать playback и не должен менять save payload. Любой frame capture должен быть bounded по времени/размеру, работать только как улучшение poster, и иметь fallback на metadata poster без ошибки для пользователя.
 
 Пользователь переключает тип через TypeSwitcher кликом. Tab/Shift+Tab циклит Content → Screenshot → Link **только** когда keyboard focus уже внутри overlay (после клика по overlay) — это known limitation, см. DEVLOG `24.04.2026 — Clipper: Tab-cycling` и решение не дорабатывать. Основной сценарий переключения — клик по табам.
 
@@ -641,7 +643,11 @@ Chrome ограничивает отдельное native messaging-сообще
 
 | OS | Path |
 |---|---|
-| macOS | `~/Library/Application Support/LocalArena/native-host` |
+| macOS | `~/Library/Application Support/com.mine.app/clipper/native-host` |
+
+`~/Library/Application Support/LocalArena/native-host` — legacy path. Chrome
+manifest для актуального клиппера не должен ссылаться на него: при обновлении
+native host source of truth — `com.mine.app/clipper/native-host`.
 
 ### Manifest (Chrome)
 
@@ -651,7 +657,7 @@ Chrome ограничивает отдельное native messaging-сообще
 {
   "name": "com.localarena.clipper",
   "description": "Mine Web Clipper",
-  "path": "~/Library/Application Support/LocalArena/native-host",
+  "path": "~/Library/Application Support/com.mine.app/clipper/native-host",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://<extension-id>/"

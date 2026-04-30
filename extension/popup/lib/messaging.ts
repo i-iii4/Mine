@@ -108,6 +108,7 @@ export interface EmbeddedVideoPreview {
   src: string | null;
   poster: string | null;
   title: string;
+  currentTime?: number | null;
 }
 
 // Extractors work in two contexts:

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Play } from "lucide-react";
@@ -10,10 +10,7 @@ import { SaveButton } from "./components/SaveButton";
 import { ScreenshotPreview } from "./components/ScreenshotPreview";
 import { StatusBar } from "./components/StatusBar";
 import { VaultSelect } from "./components/VaultSelect";
-
-function isVideoUrl(src: string | null | undefined): boolean {
-  return /\.(mp4|webm|m4v|mov)(\?|#|$)/i.test(src ?? "");
-}
+import { buildEmbeddedVideoPreviewMap, isVideoUrl, videoPreviewKey } from "./lib/videoPreview";
 
 function VideoPosterPreview({
   posterUrl,
@@ -160,6 +157,16 @@ export function PopupApp() {
     return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
   }, [handleSave, closeClipper, clipper.currentType, clipper.setCurrentType, clipper.metadata?.detectedType]);
 
+  const { metadata, articleData } = clipper;
+  const resolvedBody = resolveContentBody(metadata, articleData);
+  const ogImage = clipper.currentType === "image"
+    ? metadata?.imageToSave ?? metadata?.image ?? null
+    : metadata?.image ?? null;
+  const embeddedVideoPreviews = articleData?.embeddedVideos ?? [];
+  const embeddedVideoBySrc = useMemo(() => {
+    return buildEmbeddedVideoPreviewMap(embeddedVideoPreviews);
+  }, [embeddedVideoPreviews]);
+
   if (clipper.state === "loading") {
     return <LoadingState />;
   }
@@ -167,14 +174,6 @@ export function PopupApp() {
   if (clipper.state === "error") {
     return <ErrorState message={clipper.error ?? "Unknown error"} />;
   }
-
-  const { metadata, articleData } = clipper;
-  const resolvedBody = resolveContentBody(metadata, articleData);
-  const ogImage = clipper.currentType === "image"
-    ? metadata?.imageToSave ?? metadata?.image ?? null
-    : metadata?.image ?? null;
-  const embeddedVideoPreviews =
-    metadata?.detectedType === "video" ? [] : articleData?.embeddedVideos ?? [];
 
   return (
     <div className="flex flex-col gap-2 p-3">
@@ -212,7 +211,7 @@ export function PopupApp() {
 
         {clipper.currentType === "content" && (
           <div className="max-h-[280px] overflow-y-auto rounded-1 border border-border p-2">
-            {metadata?.detectedType === "video" && ogImage && (
+            {metadata?.detectedType === "video" && embeddedVideoPreviews.length === 0 && ogImage && (
               <VideoPosterPreview posterUrl={ogImage} title="Video preview" />
             )}
             {embeddedVideoPreviews.length > 0 && (
@@ -248,6 +247,8 @@ export function PopupApp() {
                   components={{
                     img: ({ src, alt, ...props }) => {
                       if (isVideoUrl(src)) {
+                        const video = embeddedVideoBySrc.get(videoPreviewKey(src) ?? "");
+                        if (video) return null;
                         return (
                           <VideoPosterPreview
                             posterUrl={ogImage}

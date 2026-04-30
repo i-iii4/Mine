@@ -108,6 +108,7 @@
         src,
         poster,
         title: video.getAttribute("aria-label") || video.getAttribute("title") || "",
+        currentTime: Number.isFinite(video.currentTime) ? video.currentTime : null,
       });
       if (out.length >= 3) return out;
     }
@@ -135,6 +136,123 @@
     pushVideoUrlPreview(out, getMeta("twitter:player:stream"), getMeta("twitter:image"), "");
 
     return out;
+  }
+
+  function drawVideoFrameDataUrl(video) {
+    if (!video || !video.videoWidth || !video.videoHeight) return null;
+    const maxWidth = 640;
+    const scale = Math.min(1, maxWidth / video.videoWidth);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    try {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/jpeg", 0.86);
+    } catch {
+      return null;
+    }
+  }
+
+  function captureVideoFrameDataUrl(video, timeoutMs = 350) {
+    if (!video) return Promise.resolve(null);
+    const readyFrame = drawVideoFrameDataUrl(video);
+    if (readyFrame) return Promise.resolve(readyFrame);
+    if (video.readyState >= 2 && video.videoWidth && video.videoHeight) {
+      return Promise.resolve(null);
+    }
+
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (value) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        video.removeEventListener("loadeddata", onReady);
+        video.removeEventListener("canplay", onReady);
+        video.removeEventListener("error", onError);
+        resolve(value);
+      };
+      const onReady = () => finish(drawVideoFrameDataUrl(video));
+      const onError = () => finish(null);
+      const timer = setTimeout(() => finish(null), timeoutMs);
+      video.addEventListener("loadeddata", onReady, { once: true });
+      video.addEventListener("canplay", onReady, { once: true });
+      video.addEventListener("error", onError, { once: true });
+    });
+  }
+
+  function captureVideoUrlFrameDataUrl(src, targetTime = 0.2, timeoutMs = 650) {
+    const absoluteSrc = absoluteUrl(src);
+    if (!absoluteSrc || !isInlineVideoUrl(absoluteSrc)) return Promise.resolve(null);
+
+    return new Promise((resolve) => {
+      const video = document.createElement("video");
+      let done = false;
+      let waitingForSeek = false;
+      const finish = (value) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        video.removeEventListener("loadedmetadata", onMetadata);
+        video.removeEventListener("loadeddata", onLoadedData);
+        video.removeEventListener("seeked", onSeeked);
+        video.removeEventListener("error", onError);
+        video.removeAttribute("src");
+        video.load();
+        resolve(value);
+      };
+      const draw = () => finish(drawVideoFrameDataUrl(video));
+      const onSeeked = () => draw();
+      const onLoadedData = () => {
+        if (!waitingForSeek) draw();
+      };
+      const onError = () => finish(null);
+      const onMetadata = () => {
+        const duration = Number.isFinite(video.duration) ? video.duration : 0;
+        const requestedTime = Number.isFinite(targetTime) ? targetTime : 0.2;
+        const seekTime = duration > 0
+          ? Math.min(Math.max(requestedTime, 0), Math.max(duration - 0.05, 0))
+          : Math.max(requestedTime, 0);
+        if (seekTime <= 0.01) return draw();
+        try {
+          waitingForSeek = true;
+          video.currentTime = seekTime;
+        } catch {
+          draw();
+        }
+      };
+      const timer = setTimeout(() => finish(null), timeoutMs);
+      video.crossOrigin = "anonymous";
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "auto";
+      video.addEventListener("loadedmetadata", onMetadata, { once: true });
+      video.addEventListener("loadeddata", onLoadedData, { once: true });
+      video.addEventListener("seeked", onSeeked, { once: true });
+      video.addEventListener("error", onError, { once: true });
+      video.src = absoluteSrc;
+      video.load();
+    });
+  }
+
+  async function captureArticleVideoPosters(article, videoMedia, maxCount = 3) {
+    if (!article) return [];
+    const domVideos = Array.from(article.querySelectorAll("video")).slice(0, maxCount);
+    const media = (videoMedia || []).slice(0, maxCount);
+    const count = Math.max(domVideos.length, media.length);
+    const posters = await Promise.all(Array.from({ length: count }, async (_, index) => {
+      const domVideo = domVideos[index] || null;
+      const domPoster = await captureVideoFrameDataUrl(domVideo);
+      if (domPoster) return domPoster;
+
+      const candidate = media[index];
+      if (!candidate || candidate.mediaType !== "animated_gif") return null;
+      const currentTime = Number.isFinite(domVideo?.currentTime) ? domVideo.currentTime : 0.2;
+      return captureVideoUrlFrameDataUrl(candidate.url, currentTime);
+    }));
+    return posters;
   }
 
   function extractMetadata() {
@@ -328,6 +446,7 @@
               kind: "video",
               url: variants[0].url,
               poster: m.media_url_https || null,
+              mediaType: m.type,
             });
           }
         }
@@ -360,6 +479,7 @@
 
     const tweets = [];
     let foundAuthorTweet = false;
+    let firstAuthorArticle = null;
 
     for (const article of articles) {
       const isAuthor = isTweetByAuthor(article, authorHandleLc);
@@ -370,6 +490,7 @@
       }
 
       foundAuthorTweet = true;
+      if (!firstAuthorArticle) firstAuthorArticle = article;
       const { text, media } = extractTweetContent(article);
       // First tweet: prefer API media (complete — photos + GIFs + videos).
       // Fallback to DOM media if API returned nothing.
@@ -386,10 +507,29 @@
       const finalMedia = apiMedia.length > 0 ? apiMedia : media;
       if (text || finalMedia.length > 0) {
         tweets.push({ text, media: finalMedia });
+        if (!firstAuthorArticle) firstAuthorArticle = articles[0];
       }
     }
 
     if (tweets.length === 0) return null;
+
+    // For X/Twitter animated media, the API thumbnail can differ from the
+    // actual frame the user sees in the page. Prefer a preview-only snapshot
+    // from the visible tweet <video>; never change the saved video URL/body.
+    const capturedPosters = await captureArticleVideoPosters(
+      firstAuthorArticle,
+      apiMediaDetails.filter((media) => media.kind === "video"),
+    );
+    if (capturedPosters.length > 0) {
+      let posterIndex = 0;
+      for (const media of apiMediaDetails) {
+        if (media.kind !== "video") continue;
+        const capturedPoster = capturedPosters[posterIndex];
+        if (!capturedPoster) break;
+        media.poster = capturedPoster;
+        posterIndex += 1;
+      }
+    }
 
     // Build Markdown body
     const parts = [];
@@ -415,8 +555,14 @@
         pushVideoUrlPreview(embeddedVideos, src, null, "Tweet video preview");
       }
     }
-    for (const video of extractEmbeddedVideoPreviews()) {
-      pushUniqueVideo(embeddedVideos, video);
+    // Twitter/X pages keep extra player <video> nodes in the DOM, often as
+    // blob URLs with generic page posters. If the social/API path already
+    // produced a direct mp4 + tweet_video_thumb poster, generic DOM fallback
+    // would only add noisy duplicates to the popup preview.
+    if (embeddedVideos.length === 0) {
+      for (const video of extractEmbeddedVideoPreviews()) {
+        pushUniqueVideo(embeddedVideos, video);
+      }
     }
 
     return {

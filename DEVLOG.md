@@ -1,5 +1,54 @@
 # Devlog
 
+## 30.04.2026 [primary] — Clipper X video preview dedupe
+
+### Goal
+
+Исправить Content preview для X/Twitter постов с одним GIF/video, где popup
+показывал два video preview и мог использовать generic X banner/card вместо
+`tweet_video_thumb` poster. Сохранение при этом уже было корректным.
+
+### Completed
+
+- Popup строит `embeddedVideoBySrc` по canonical video `src`.
+- Markdown inline video (`![](video.mp4)`) не рендерится вторым preview, если
+  тот же `src` уже пришёл в `embeddedVideos`.
+- Structured preview сохраняет poster из extractor (`tweet_video_thumb` для
+  X), а `og:image` остаётся только fallback для inline video без structured
+  metadata.
+- Для X `animated_gif` extractor теперь пытается взять poster из текущего
+  кадра видимого tweet `<video>`; если canvas snapshot недоступен, коротко
+  пробует direct mp4 frame capture с тем же timestamp и fallback'ом на
+  `tweet_video_thumb`.
+- Popup больше не выключает `embeddedVideos` для `detectedType=video`: structured
+  preview теперь приоритетнее `metadata.image`, а `og:image`/X banner остаётся
+  только последним fallback.
+- Native host получил read-only action `resolve_twitter_media`, чтобы popup
+  мог получить direct mp4 + `tweet_video_thumb` из того же CORS-safe слоя, что
+  и save path.
+- Twitter/X extractor больше не добавляет generic DOM `<video>` fallback, если
+  syndication/API уже дал direct mp4 + poster.
+- Save path не изменён: video URL остаётся в markdown body и локализуется
+  native host'ом как раньше.
+- Установленный Chrome Native Messaging manifest переключён со старого
+  `Application Support/LocalArena/native-host` на рабочий
+  `Application Support/com.mine.app/clipper/native-host`.
+- Обновлён `SPEC_CLIPPER.md`.
+
+### Verification
+
+- `node --check extension/content.js`
+- `npm test -- --run extension/popup/lib/videoPreview.test.ts`
+- `npm run build:extension`
+- `npm run build`
+- `cargo test --bin native-host fetch_tweet --no-default-features`
+- `cargo build --bin native-host`
+- native-host smoke: `resolve_twitter_media` для
+  `x.com/neomechanica/status/2049711844550721887` вернул один mp4 candidate +
+  `tweet_video_thumb`.
+- Manual validation: пользователь подтвердил, что X video preview теперь
+  работает корректно и больше не показывает Twitter banner.
+
 ## 30.04.2026 [primary] — Versioned collection index backfill
 
 ### Goal
