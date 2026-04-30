@@ -31,6 +31,7 @@ import { CardMoreMenu } from "./CardHoverMenu";
 // Layout constants — shared between scroll layer and metadata layer
 const CLASSIC_LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-12";
 const ISLANDS_LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-20";
+const DETAIL_BOTTOM_SAFE_SPACE_CLASS = "pb-20";
 
 interface DetailProps {
   block: LightBlock | IndexedBlock;
@@ -245,7 +246,7 @@ export function Detail({
           className="h-full w-full overflow-y-auto outline-none"
           data-detail-scroll
         >
-          <div className={layoutClasses}>
+          <div className={cn(layoutClasses, DETAIL_BOTTOM_SAFE_SPACE_CLASS)}>
             <div className="min-w-0 flex-1">
               <BlockContent
                 block={block}

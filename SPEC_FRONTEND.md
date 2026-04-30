@@ -280,7 +280,8 @@ that belongs to `storage::media_refs`.
 - Двухслойный layout: scroll-слой (контент + невидимый спейсер) и fixed-слой (метаданные)
 - Оба слоя используют общий `LAYOUT_CLASSES` для идентичного позиционирования
 - Контент центрирован горизонтально (`mx-auto max-w-[58rem]`)
-- Scroll/content top padding: `pt-12`; вместе с верхним меню `h-8` это сохраняет общий 80px visual top offset
+- Scroll/content top padding: classic `pt-12`, island `pt-20`; вместе с верхним меню это сохраняет общий visual top offset
+- Scroll/content bottom safe space: `pb-20` lives on the inner content layer, not on `[data-detail-scroll]`, so the final article line does not press against the bottom edge while scrollbar geometry stays unchanged
 - Метаданные справа (Geist Mono): AUDIO, WARNING, RESOLUTION, DATE, TYPE, SOURCE, AUTHOR
 - Metadata labels используют `text-sm text-muted-foreground`; значения — `text-sm text-foreground`
 - `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel; rename/delete/source/channel actions живут в shared overflow menu

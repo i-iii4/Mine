@@ -95,6 +95,28 @@ describe("Detail", () => {
     expect(islandMenu).toHaveClass("pr-1");
   });
 
+  it("keeps bottom safe space inside the scroll content", () => {
+    const { container } = render(
+      <Detail
+        block={block({ body: "Article body" })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    const scrollEl = container.querySelector("[data-detail-scroll]");
+    expect(scrollEl).not.toHaveClass("pb-20");
+    expect(scrollEl?.firstElementChild).toHaveClass("pb-20");
+  });
+
   it("decodes local wikilink image paths for original media and preview lookup", () => {
     const b = block({
       body: "![[Title (image 1).jpg]]",

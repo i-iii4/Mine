@@ -1,5 +1,27 @@
 # Devlog
 
+## 30.04.2026 [primary] — Detail bottom safe space
+
+### Goal
+
+Последняя строка статьи в Detail не должна упираться вплотную в нижний край
+окна при прокрутке до конца.
+
+### Completed
+
+- Добавлен `pb-20` на внутренний scroll content layer Detail.
+- Padding не добавлен на `[data-detail-scroll]`, чтобы не менять scrollport и
+  scrollbar geometry.
+- Добавлен regression test, который фиксирует, что bottom safe space находится
+  внутри scroll content.
+- Обновлён `SPEC_FRONTEND.md`.
+
+### Verification
+
+- `npm test -- --run src/components/Detail.test.tsx`
+- `npm run build`
+- `git diff --check`
+
 ## 29.04.2026 [primary] — Versioned media index backfill for Obsidian embeds
 
 ### Goal
