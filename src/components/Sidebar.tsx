@@ -31,6 +31,8 @@ import type { TagCount, PreviewCard } from "@/types";
 import type { DetailTopMenuMode } from "@/lib/appPreferences";
 import { cn } from "@/lib/utils";
 import {
+  clearActiveMineTextSelectionDragPayload,
+  getActiveMineTextSelectionDragPayload,
   hasMineTextSelectionDragData,
   readMineTextSelectionDragData,
   type MineTextSelectionDragPayload,
@@ -502,10 +504,12 @@ const TagNavItem = memo(function TagNavItem({
       event.preventDefault();
       event.stopPropagation();
       setNativeTextSelectionOver(false);
-      const payload = readMineTextSelectionDragData(event.dataTransfer);
+      const payload = readMineTextSelectionDragData(event.dataTransfer)
+        ?? getActiveMineTextSelectionDragPayload();
       if (payload) {
         onTextSelectionDrop(payload, tag);
       }
+      clearActiveMineTextSelectionDragPayload();
     },
     [onTextSelectionDrop, tag],
   );

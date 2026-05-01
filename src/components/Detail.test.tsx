@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { Detail } from "./Detail";
 import type { IndexedBlock } from "@/types";
-import { MINE_TEXT_SELECTION_DRAG_TYPE } from "@/lib/textSelectionDrag";
+import {
+  clearActiveMineTextSelectionDragPayload,
+  getActiveMineTextSelectionDragPayload,
+  MINE_TEXT_SELECTION_DRAG_TYPE,
+} from "@/lib/textSelectionDrag";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
@@ -193,8 +197,12 @@ describe("Detail", () => {
       sourceBodyHash: "body-hash-1",
       title: "beta",
     });
+    expect(getActiveMineTextSelectionDragPayload()).toMatchObject(payload);
     expect(dataTransfer.getData("text/plain")).toBe("beta");
+    fireEvent.dragEnd(paragraph!);
+    expect(getActiveMineTextSelectionDragPayload()).toBeNull();
     selection?.removeAllRanges();
+    clearActiveMineTextSelectionDragPayload();
   });
 
   it("decodes local wikilink image paths for original media and preview lookup", () => {

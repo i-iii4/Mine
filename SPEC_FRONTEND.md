@@ -167,6 +167,9 @@ type TextSelectionDragPayload = {
 The payload is serialized under MIME type
 `application/x-mine-text-selection`. Sidebar channel rows accept native drops
 with this MIME type and call `extractTextSelection` for the target collection.
+Because WebKit can hide custom MIME types during intermediate `dragover`
+events, Mine also keeps the active selected-text payload in memory between
+`dragstart` and `drop`/`dragend` as a same-WebView fallback.
 Existing `dnd-kit` paths remain responsible for card/tag drag and inline-media
 extraction.
 

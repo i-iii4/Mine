@@ -25,6 +25,7 @@ import {
   normalizeFeedPreviewManifest,
 } from "@/lib/feedPreview";
 import {
+  clearActiveMineTextSelectionDragPayload,
   writeMineTextSelectionDragData,
   type MineTextSelectionDragPayload,
 } from "@/lib/textSelectionDrag";
@@ -675,6 +676,10 @@ function ArticleBody({
     [buildTextSelectionDragPayload],
   );
 
+  const handleNativeTextSelectionDragEnd = useCallback(() => {
+    clearActiveMineTextSelectionDragPayload();
+  }, []);
+
   // Phase 18.H.2: rewrite Obsidian wikilinks into standard markdown
   // before passing to react-markdown. The raw `.md` file stays in
   // wikilink form for Obsidian; only the render pipeline sees the
@@ -756,6 +761,7 @@ function ArticleBody({
     <div
       ref={articleRef}
       onDragStartCapture={handleNativeTextSelectionDragStart}
+      onDragEndCapture={handleNativeTextSelectionDragEnd}
       className="prose prose-sm mt-4 max-w-none"
       data-article-body
     >

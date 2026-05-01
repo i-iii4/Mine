@@ -34,6 +34,9 @@ Obsidian block reference на первый выбранный параграф.
   подменяются custom draggable состоянием.
 - Sidebar channel rows принимают native `application/x-mine-text-selection`
   drop и вызывают тот же `extractTextSelection` command.
+- Для WebKit/Tauri добавлен same-WebView in-memory fallback активного
+  text-selection payload, потому что custom MIME может не быть виден на
+  промежуточном `dragover`; hover/drop в sidebar снова работают.
 - Global file DropZone теперь включает `Drop files to add` только после Tauri
   `enter` с непустыми file paths; native selected-text drag больше не вызывает
   file-import overlay.
