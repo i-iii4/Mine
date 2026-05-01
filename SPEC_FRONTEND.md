@@ -123,25 +123,12 @@ overlay state without importing anything.
 
 ## Text selection extraction
 
-Detail article body supports dragging an already selected text range to a
-concrete sidebar collection. Normal selection creation, system highlighting,
-`Cmd+C`, and the browser/WebView context menu remain native; the article body
-must not become a `dnd-kit` draggable while the user is selecting text.
-
-Inside the Tauri/WKWebView runtime, selected-text extraction uses a manual
-Pointer Events drag as the primary path. HTML5/native selected-text drag is not
-architecturally reliable in this app because WKWebView can hand the gesture to
-the native drag session before the DOM sees a useful drag lifecycle. The manual
-path starts only from a primary-button pointerdown inside an already existing
-text selection, calls `preventDefault()` for that gesture to suppress the
-native drag session, captures the pointer, and activates only after a small
-movement threshold. It then highlights sidebar channel rows by
-`document.elementFromPoint()` and calls the same extraction command on
-pointerup.
-
-Native `dragstart`/`drop` support remains only as an opportunistic browser
-compatibility path: when a real native `dragstart` reaches the article body, it
-writes Mine extraction metadata into `dataTransfer`.
+Detail article body supports native browser dragging of a selected text range
+to a concrete sidebar collection. The article body must not become a custom
+`dnd-kit` draggable when text is selected: normal text selection, system
+highlighting, `Cmd+C`, and the browser/WebView context menu remain native.
+Only a real native `dragstart` from the selected text writes Mine extraction
+metadata into `dataTransfer`.
 
 The drop creates a new article card through `extractTextSelection`; it does not
 connect the source card itself and does not enter the inline-media extraction
@@ -177,12 +164,17 @@ type TextSelectionDragPayload = {
 };
 ```
 
-The native compatibility payload is serialized under MIME type
+The payload is serialized under MIME type
 `application/x-mine-text-selection`. Sidebar channel rows accept native drops
 with this MIME type and call `extractTextSelection` for the target collection.
 Because WebKit can hide custom MIME types during intermediate `dragover`
 events, Mine also keeps the active selected-text payload in memory between
-`dragstart` and `drop`/`dragend` as a same-WebView native-drag fallback.
+`dragstart` and `drop`/`dragend` as a same-WebView fallback.
+When WKWebView does not emit usable native selected-text drag events at all,
+Article Detail has a pointer fallback: it starts only from a primary-button
+pointerdown inside an already existing text selection and only after a movement
+threshold. It then highlights sidebar channel rows by pointer position and
+calls the same `extractTextSelection` drop path on pointerup.
 Existing `dnd-kit` paths remain responsible for card/tag drag and inline-media
 extraction.
 

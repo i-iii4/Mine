@@ -702,14 +702,10 @@ function ArticleBody({
       const payload = buildTextSelectionDragPayload(dragTarget);
       if (!payload) return;
 
-      event.preventDefault();
-      event.currentTarget.setPointerCapture?.(event.pointerId);
       pointerTextSelectionDragRef.current?.cleanup();
 
       const startX = event.clientX;
       const startY = event.clientY;
-      const pointerId = event.pointerId;
-      const captureTarget = event.currentTarget;
       const dragState = {
         active: false,
         hoveredRow: null as HTMLElement | null,
@@ -726,10 +722,6 @@ function ArticleBody({
         window.removeEventListener("pointermove", handleMove, true);
         window.removeEventListener("pointerup", handleUp, true);
         window.removeEventListener("pointercancel", handleCancel, true);
-        window.removeEventListener("keydown", handleKeyDown, true);
-        if (captureTarget.hasPointerCapture?.(pointerId)) {
-          captureTarget.releasePointerCapture(pointerId);
-        }
         clearHover();
         clearActiveMineTextSelectionDragPayload();
         pointerTextSelectionDragRef.current = null;
@@ -769,12 +761,6 @@ function ArticleBody({
         cleanup();
       };
 
-      const handleKeyDown = (keyEvent: KeyboardEvent) => {
-        if (keyEvent.key === "Escape") {
-          cleanup();
-        }
-      };
-
       pointerTextSelectionDragRef.current = {
         cleanup,
         get hoveredRow() {
@@ -785,7 +771,6 @@ function ArticleBody({
       window.addEventListener("pointermove", handleMove, true);
       window.addEventListener("pointerup", handleUp, true);
       window.addEventListener("pointercancel", handleCancel, true);
-      window.addEventListener("keydown", handleKeyDown, true);
     },
     [buildTextSelectionDragPayload, onTextSelectionDrop],
   );
@@ -1027,48 +1012,7 @@ function selectionContainsPoint(selection: Selection | null, clientX: number, cl
       }
     }
   }
-  const pointRange = caretRangeFromPoint(clientX, clientY);
-  if (!pointRange) return false;
-  for (let i = 0; i < selection.rangeCount; i += 1) {
-    if (rangeContainsPoint(
-      selection.getRangeAt(i),
-      pointRange.startContainer,
-      pointRange.startOffset,
-    )) {
-      return true;
-    }
-  }
   return false;
-}
-
-function caretRangeFromPoint(clientX: number, clientY: number): Range | null {
-  const documentWithCaretRange = document as Document & {
-    caretRangeFromPoint?: (x: number, y: number) => Range | null;
-  };
-  if (typeof documentWithCaretRange.caretRangeFromPoint === "function") {
-    return documentWithCaretRange.caretRangeFromPoint(clientX, clientY);
-  }
-
-  const documentWithCaretPosition = document as Document & {
-    caretPositionFromPoint?: (
-      x: number,
-      y: number,
-    ) => { offsetNode: Node; offset: number } | null;
-  };
-  const position = documentWithCaretPosition.caretPositionFromPoint?.(clientX, clientY);
-  if (!position) return null;
-  const range = document.createRange();
-  range.setStart(position.offsetNode, position.offset);
-  range.collapse(true);
-  return range;
-}
-
-function rangeContainsPoint(range: Range, node: Node, offset: number): boolean {
-  try {
-    return range.comparePoint(node, offset) === 0;
-  } catch {
-    return false;
-  }
 }
 
 function findTextSelectionDropRow(clientX: number, clientY: number): HTMLElement | null {
