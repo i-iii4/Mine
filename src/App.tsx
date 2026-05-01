@@ -85,7 +85,11 @@ import {
   type DetailTopMenuMode,
 } from "@/lib/appPreferences";
 import { pushRecentTag } from "@/lib/recentTags";
-import type { MineTextSelectionDragPayload } from "@/lib/textSelectionDrag";
+import {
+  clearActiveMineTextSelectionDragPayload,
+  getActiveMineTextSelectionDragPayload,
+  type MineTextSelectionDragPayload,
+} from "@/lib/textSelectionDrag";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
@@ -160,6 +164,11 @@ type InlineMediaDragPayload = {
 
 type InlineMediaDragPreview = {
   src: string;
+  title: string | null;
+};
+
+type TextSelectionDragPreview = {
+  selectedText: string;
   title: string | null;
 };
 
@@ -317,6 +326,7 @@ export function AppWithVault({
   const [activeDragBlock, setActiveDragBlock] = useState<LightBlock | null>(null);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
   const [activeDragInlineMedia, setActiveDragInlineMedia] = useState<InlineMediaDragPreview | null>(null);
+  const [activeDragTextSelection, setActiveDragTextSelection] = useState<TextSelectionDragPreview | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const themeMenuRef = useRef<ThemeMenuHandle>(null);
   const gridColumnCountRef = useRef(1);
@@ -1307,7 +1317,7 @@ export function AppWithVault({
         type?: string;
         slug?: string;
         block?: LightBlock;
-      } & Partial<InlineMediaDragPayload>) | undefined;
+      } & Partial<InlineMediaDragPayload> & Partial<MineTextSelectionDragPayload>) | undefined;
       if (data?.type === "inline_media") {
         setActiveDragInlineMedia({
           src: data.imageSrc ?? "",
@@ -1315,12 +1325,29 @@ export function AppWithVault({
         });
         setActiveDragBlock(null);
         setActiveDragTag(null);
+        setActiveDragTextSelection(null);
+        return;
+      }
+      const textSelectionPayload = data?.type === "text_selection"
+        ? data as MineTextSelectionDragPayload
+        : id.startsWith("text-selection:")
+          ? getActiveMineTextSelectionDragPayload()
+          : null;
+      if (textSelectionPayload) {
+        setActiveDragTextSelection({
+          selectedText: textSelectionPayload.selectedText,
+          title: textSelectionPayload.title,
+        });
+        setActiveDragBlock(null);
+        setActiveDragTag(null);
+        setActiveDragInlineMedia(null);
         return;
       }
       if (id.startsWith("tag:")) {
         setActiveDragTag(id.slice(4));
         setActiveDragBlock(null);
         setActiveDragInlineMedia(null);
+        setActiveDragTextSelection(null);
       } else {
         const slug = data?.type === "block" && data.slug
           ? data.slug
@@ -1333,6 +1360,7 @@ export function AppWithVault({
         if (block) setActiveDragBlock(block);
         setActiveDragTag(null);
         setActiveDragInlineMedia(null);
+        setActiveDragTextSelection(null);
       }
     },
     [blocks],
@@ -1343,19 +1371,35 @@ export function AppWithVault({
       setActiveDragBlock(null);
       setActiveDragTag(null);
       setActiveDragInlineMedia(null);
+      setActiveDragTextSelection(null);
       const { active, over } = event;
-      if (!over) return;
+      if (!over) {
+        clearActiveMineTextSelectionDragPayload();
+        return;
+      }
 
       const activeId = String(active.id);
       const overId = String(over.id);
       const activeData = active.data.current as ({
         type?: string;
         slug?: string;
-      } & Partial<InlineMediaDragPayload>) | undefined;
+      } & Partial<InlineMediaDragPayload> & Partial<MineTextSelectionDragPayload>) | undefined;
       if (activeData?.type === "inline_media") {
         if (overId.startsWith("tag:")) {
           void handleInlineMediaDrop(activeData as InlineMediaDragPayload, overId.slice(4));
         }
+        return;
+      }
+      const textSelectionPayload = activeData?.type === "text_selection"
+        ? activeData as MineTextSelectionDragPayload
+        : activeId.startsWith("text-selection:")
+          ? getActiveMineTextSelectionDragPayload()
+          : null;
+      if (textSelectionPayload) {
+        if (overId.startsWith("tag:")) {
+          void handleTextSelectionDrop(textSelectionPayload, overId.slice(4));
+        }
+        clearActiveMineTextSelectionDragPayload();
         return;
       }
       const activeIsTag = activeId.startsWith("tag:");
@@ -1376,13 +1420,15 @@ export function AppWithVault({
         handleCardDrop(activeSlug, overId.slice(4));
       }
     },
-    [handleCardDrop, handleInlineMediaDrop, handleReorderTag],
+    [handleCardDrop, handleInlineMediaDrop, handleReorderTag, handleTextSelectionDrop],
   );
 
   const handleDndCancel = useCallback(() => {
     setActiveDragBlock(null);
     setActiveDragTag(null);
     setActiveDragInlineMedia(null);
+    setActiveDragTextSelection(null);
+    clearActiveMineTextSelectionDragPayload();
   }, []);
 
   // ── Card tag management (context menu) ───────────────────────────────────
@@ -1574,6 +1620,7 @@ export function AppWithVault({
         isDropDragging={
           activeDragBlock !== null
           || activeDragInlineMedia !== null
+          || activeDragTextSelection !== null
         }
         isCreatingChannel={isCreatingChannel}
         onSetCreatingChannel={setIsCreatingChannel}
@@ -1587,7 +1634,6 @@ export function AppWithVault({
         linkedTags={selectedBlockTags}
         onToggleLinkedTag={handleToggleTag}
         detailTopMenuMode={detailTopMenuMode}
-        onTextSelectionDrop={handleTextSelectionDrop}
       />
 
       <SidebarResizeHandle
@@ -1596,6 +1642,7 @@ export function AppWithVault({
           activeDragBlock !== null
           || activeDragInlineMedia !== null
           || activeDragTag !== null
+          || activeDragTextSelection !== null
         }
         onResizeStart={startResize}
         onResizeUpdate={updateResize}
@@ -1801,6 +1848,25 @@ export function AppWithVault({
             className="max-h-48 max-w-64 object-contain"
             draggable={false}
           />
+        </div>
+      )}
+      {activeDragTextSelection && (
+        <div className="pointer-events-none w-72 max-w-[calc(100vw-2rem)] rounded-1 border border-border bg-background px-3 py-2 text-sm shadow-lg">
+          {activeDragTextSelection.title && (
+            <div className="mb-1 truncate text-xs font-medium text-muted-foreground">
+              {activeDragTextSelection.title}
+            </div>
+          )}
+          <p
+            className="overflow-hidden whitespace-pre-wrap text-foreground"
+            style={{
+              display: "-webkit-box",
+              WebkitBoxOrient: "vertical",
+              WebkitLineClamp: 3,
+            }}
+          >
+            {activeDragTextSelection.selectedText}
+          </p>
         </div>
       )}
       {activeDragTag && (

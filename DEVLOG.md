@@ -29,17 +29,22 @@ Obsidian block reference на первый выбранный параграф.
   открывается из metadata, сохраняя block anchor.
 - Related Notes click для `Source#^id` открывает source article и прокручивает
   Detail к `^id` маркеру, если он всё ещё есть в тексте.
-- Text selection extraction переведён с `dnd-kit` на article body на native
-  selected-text drag/drop: обычное выделение, `Cmd+C` и context menu больше не
-  подменяются custom draggable состоянием.
-- Sidebar channel rows принимают native `application/x-mine-text-selection`
-  drop и вызывают тот же `extractTextSelection` command.
-- Для WebKit/Tauri добавлен same-WebView in-memory fallback активного
-  text-selection payload, потому что custom MIME может не быть виден на
-  промежуточном `dragover`; hover/drop в sidebar снова работают.
-- Если WKWebView вообще не отдаёт usable native selected-text drag events,
-  Detail включает pointer fallback: только из уже существующего выделения, с
-  movement threshold, hover по sidebar row и тем же `extractTextSelection`.
+- Text selection extraction переведён на selection proxy handle: текст статьи
+  не становится draggable, обычное выделение, double/triple click, `Cmd+C` и
+  context menu остаются native.
+- После валидного выделения Detail показывает маленькую drag-ручку рядом с
+  первым выбранным rendered Markdown block; ручка — `dnd-kit` draggable с
+  payload `text_selection`, а sidebar collection принимает её через общий
+  tag drop contract.
+- Rendered Markdown blocks получают `data-mine-md-start/end`; payload якорится
+  по первому реально выбранному DOM-блоку, поэтому одинаковый текст в разных
+  параграфах больше не привязывается к первому совпадению в body.
+- Native drag самого выделенного текста больше не является Mine action:
+  sidebar не принимает такой drop и Mine не пишет metadata в native
+  `DataTransfer`. Карточка создаётся только через selection handle.
+- Same-WebView in-memory payload используется только для handle path, чтобы
+  dnd-kit drag не терял выбранный текст при selectionchange/remount во время
+  activation threshold.
 - Global file DropZone теперь включает `Drop files to add` только после Tauri
   `enter` с непустыми file paths; native selected-text drag больше не вызывает
   file-import overlay.

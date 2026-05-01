@@ -3,11 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { Detail } from "./Detail";
 import type { IndexedBlock } from "@/types";
-import {
-  clearActiveMineTextSelectionDragPayload,
-  getActiveMineTextSelectionDragPayload,
-  MINE_TEXT_SELECTION_DRAG_TYPE,
-} from "@/lib/textSelectionDrag";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
@@ -69,33 +64,6 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
   };
 }
 
-function createMockDataTransfer(): DataTransfer {
-  const store = new Map<string, string>();
-  const dataTransfer = {
-    effectAllowed: "all",
-    dropEffect: "none",
-    files: [] as unknown as FileList,
-    items: [] as unknown as DataTransferItemList,
-    types: [] as unknown as DOMStringList,
-    clearData: vi.fn((type?: string) => {
-      if (type) {
-        store.delete(type);
-      } else {
-        store.clear();
-      }
-    }),
-    getData: vi.fn((type: string) => store.get(type) ?? ""),
-    setData: vi.fn((type: string, value: string) => {
-      store.set(type, value);
-      const types = Array.from(store.keys()) as unknown as DOMStringList;
-      Object.assign(types, { contains: (item: string) => store.has(item) });
-      (dataTransfer as { types: DOMStringList }).types = types;
-    }),
-    setDragImage: vi.fn(),
-  } as unknown as DataTransfer;
-  return dataTransfer;
-}
-
 describe("Detail", () => {
   it("renders the selected top menu mode", () => {
     const props = {
@@ -151,7 +119,7 @@ describe("Detail", () => {
     expect(scrollEl?.firstElementChild).toHaveClass("pb-20");
   });
 
-  it("writes native drag data for selected text without making article text draggable", () => {
+  it("does not attach Mine behavior to native selected-text drag", () => {
     const { container } = render(
       <Detail
         block={block({
@@ -184,28 +152,15 @@ describe("Detail", () => {
     selection?.removeAllRanges();
     selection?.addRange(range);
 
-    const dataTransfer = createMockDataTransfer();
-    fireEvent.dragStart(paragraph!, { dataTransfer });
-
-    const payload = JSON.parse(dataTransfer.getData(MINE_TEXT_SELECTION_DRAG_TYPE));
-    expect(payload).toMatchObject({
-      type: "text_selection",
-      sourceSlug: "test-block",
-      selectedText: "beta",
-      firstBlockStart: 0,
-      firstBlockEnd: "Alpha beta gamma".length,
-      sourceBodyHash: "body-hash-1",
-      title: "beta",
-    });
-    expect(getActiveMineTextSelectionDragPayload()).toMatchObject(payload);
-    expect(dataTransfer.getData("text/plain")).toBe("beta");
-    fireEvent.dragEnd(paragraph!);
-    expect(getActiveMineTextSelectionDragPayload()).toBeNull();
+    fireEvent.dragStart(paragraph!);
+    expect(article).not.toHaveAttribute("data-dnd-kit-draggable");
+    expect(screen.queryByRole("button", {
+      name: "Drag selected text to a collection",
+    })).not.toBeInTheDocument();
     selection?.removeAllRanges();
-    clearActiveMineTextSelectionDragPayload();
   });
 
-  it("supports pointer fallback when native selected-text drag events are unavailable", () => {
+  it("shows a separate drag handle for selected text without hijacking article pointer input", async () => {
     const onTextSelectionDrop = vi.fn();
     const { container } = render(
       <Detail
@@ -234,8 +189,11 @@ describe("Detail", () => {
     range.setEnd(textNode, "Alpha beta".length);
     Object.defineProperty(range, "getClientRects", {
       value: vi.fn(() => [
-        { left: 0, right: 100, top: 0, bottom: 20 },
+        { left: 40, right: 140, top: 20, bottom: 40, width: 100, height: 20 },
       ]),
+    });
+    Object.defineProperty(paragraph, "getBoundingClientRect", {
+      value: vi.fn(() => ({ left: 40, right: 200, top: 20, bottom: 40, width: 160, height: 20 })),
     });
     const selection = window.getSelection();
     selection?.removeAllRanges();
@@ -250,6 +208,12 @@ describe("Detail", () => {
       value: vi.fn(() => row),
     });
 
+    document.dispatchEvent(new Event("selectionchange"));
+    const handle = await screen.findByRole("button", {
+      name: "Drag selected text to a collection",
+    });
+    expect(handle).toBeInTheDocument();
+
     fireEvent.pointerDown(paragraph, {
       button: 0,
       pointerType: "mouse",
@@ -262,7 +226,7 @@ describe("Detail", () => {
       clientY: 10,
     });
 
-    expect(row).toHaveAttribute("data-selected-text-over", "true");
+    expect(row).not.toHaveAttribute("data-selected-text-over");
 
     fireEvent.pointerUp(window, {
       pointerType: "mouse",
@@ -270,22 +234,43 @@ describe("Detail", () => {
       clientY: 10,
     });
 
-    expect(onTextSelectionDrop).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "text_selection",
-        sourceSlug: "test-block",
-        selectedText: "beta",
-        sourceBodyHash: "body-hash-1",
-      }),
-      "alpha",
-    );
-    expect(row).not.toHaveAttribute("data-selected-text-over");
+    expect(onTextSelectionDrop).not.toHaveBeenCalled();
     Object.defineProperty(document, "elementFromPoint", {
       configurable: true,
       value: originalElementFromPoint,
     });
     row.remove();
     selection?.removeAllRanges();
+  });
+
+  it("marks duplicate rendered markdown blocks with source offsets for deterministic anchoring", () => {
+    const body = "Repeat\n\nRepeat";
+    const { container } = render(
+      <Detail
+        block={block({
+          body,
+          body_hash: "body-hash-1",
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    const paragraphs = container.querySelectorAll("p");
+    const secondParagraph = paragraphs[1];
+    const textNode = secondParagraph.firstChild!;
+    expect(secondParagraph).toHaveAttribute("data-mine-md-start", "8");
+    expect(secondParagraph).toHaveAttribute("data-mine-md-end", "14");
+
+    expect(textNode.textContent).toBe("Repeat");
   });
 
   it("decodes local wikilink image paths for original media and preview lookup", () => {

@@ -123,12 +123,30 @@ overlay state without importing anything.
 
 ## Text selection extraction
 
-Detail article body supports native browser dragging of a selected text range
-to a concrete sidebar collection. The article body must not become a custom
-`dnd-kit` draggable when text is selected: normal text selection, system
-highlighting, `Cmd+C`, and the browser/WebView context menu remain native.
-Only a real native `dragstart` from the selected text writes Mine extraction
-metadata into `dataTransfer`.
+Detail article body supports sending a selected text range to a concrete
+sidebar collection without turning article text itself into a draggable
+surface. Normal selection creation, double-click word selection, triple-click
+paragraph selection, system highlighting, `Cmd+C`, and the browser/WebView
+context menu remain native.
+
+The primary runtime path is a selection proxy handle. After a valid selection
+inside the article body, Detail shows a small drag handle near the first
+selected rendered Markdown block. The user drags that handle, not the text
+range itself. The handle is a `dnd-kit` draggable with payload
+`type: "text_selection"`, so it uses the same Pointer Events drag stack as
+card, tag, and inline-media drags and does not depend on WebKit HTML5 selected
+text drag behavior.
+
+Native selected-text drag is not a Mine command. If WebKit/OS allows the user
+to drag the highlighted text range itself, Mine does not write Mine metadata to
+that native drag and sidebar rows must not create cards from it. Card creation
+is deterministic and only happens through the visible selection handle.
+
+Rendered Markdown block elements carry source offsets in
+`data-mine-md-start` / `data-mine-md-end`. The extraction payload anchors to
+the first selected rendered block by these offsets, falling back to normalized
+text search only when block position metadata is unavailable. This prevents
+duplicate text from anchoring to the wrong paragraph.
 
 The drop creates a new article card through `extractTextSelection`; it does not
 connect the source card itself and does not enter the inline-media extraction
@@ -164,17 +182,10 @@ type TextSelectionDragPayload = {
 };
 ```
 
-The payload is serialized under MIME type
-`application/x-mine-text-selection`. Sidebar channel rows accept native drops
-with this MIME type and call `extractTextSelection` for the target collection.
-Because WebKit can hide custom MIME types during intermediate `dragover`
-events, Mine also keeps the active selected-text payload in memory between
-`dragstart` and `drop`/`dragend` as a same-WebView fallback.
-When WKWebView does not emit usable native selected-text drag events at all,
-Article Detail has a pointer fallback: it starts only from a primary-button
-pointerdown inside an already existing text selection and only after a movement
-threshold. It then highlights sidebar channel rows by pointer position and
-calls the same `extractTextSelection` drop path on pointerup.
+The selection handle stores the active payload in same-WebView memory at
+pointerdown so the payload survives selection changes or handle remounts during
+the dnd-kit activation threshold. This store is internal to the handle path; it
+is not exposed through native `DataTransfer`.
 Existing `dnd-kit` paths remain responsible for card/tag drag and inline-media
 extraction.
 

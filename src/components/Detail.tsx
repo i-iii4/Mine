@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
-import { X } from "lucide-react";
+import { GripVertical, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { IndexedBlock, LightBlock, TagCount } from "@/types";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -25,9 +25,7 @@ import {
   normalizeFeedPreviewManifest,
 } from "@/lib/feedPreview";
 import {
-  clearActiveMineTextSelectionDragPayload,
   setActiveMineTextSelectionDragPayload,
-  writeMineTextSelectionDragData,
   type MineTextSelectionDragPayload,
 } from "@/lib/textSelectionDrag";
 import { VideoFromBlob } from "./VideoFromBlob";
@@ -641,10 +639,9 @@ function ArticleBody({
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }) {
   const articleRef = useRef<HTMLDivElement | null>(null);
-  const pointerTextSelectionDragRef = useRef<{
-    cleanup: () => void;
-    hoveredRow: HTMLElement | null;
-  } | null>(null);
+  const selectionFrameRef = useRef<number | null>(null);
+  const selectionHandleLockedRef = useRef(false);
+  const [selectionHandle, setSelectionHandle] = useState<TextSelectionHandleState | null>(null);
 
   const buildTextSelectionDragPayload = useCallback((dragTarget: Node | null): MineTextSelectionDragPayload | null => {
     if (!sourceSlug || !sourceBodyHash || !articleRef.current) {
@@ -662,7 +659,8 @@ function ArticleBody({
     if (!selectedText) {
       return null;
     }
-    const range = findFirstMarkdownBlockRange(body, selectedText);
+    const range = findFirstSelectedMarkdownBlockRange(root, selection)
+      ?? findFirstMarkdownBlockRange(body, selectedText);
     if (!range) {
       return null;
     }
@@ -677,107 +675,76 @@ function ArticleBody({
     };
   }, [body, sourceBodyHash, sourceSlug, sourceTitle]);
 
-  const handleNativeTextSelectionDragStart = useCallback(
-    (event: React.DragEvent<HTMLDivElement>) => {
-      const dragTarget = event.target instanceof Node ? event.target : null;
-      const payload = buildTextSelectionDragPayload(dragTarget);
-      if (!payload) return;
-      if (writeMineTextSelectionDragData(event.dataTransfer, payload)) {
-        event.dataTransfer.dropEffect = "copy";
-      }
-    },
-    [buildTextSelectionDragPayload],
-  );
+  const updateTextSelectionHandle = useCallback(() => {
+    if (selectionHandleLockedRef.current) {
+      return;
+    }
+    if (!onTextSelectionDrop || !articleRef.current) {
+      setSelectionHandle(null);
+      return;
+    }
+    const root = articleRef.current;
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selectionIntersectsNode(selection, root)) {
+      setSelectionHandle(null);
+      return;
+    }
+    const payload = buildTextSelectionDragPayload(null);
+    const rect = firstSelectionClientRect(selection)
+      ?? firstSelectedMarkdownBlockElement(root, selection)?.getBoundingClientRect();
+    if (!payload || !rect || rect.width === 0 && rect.height === 0) {
+      setSelectionHandle(null);
+      return;
+    }
+    const rootRect = root.getBoundingClientRect();
+    setSelectionHandle({
+      payload,
+      left: Math.max(8, Math.min(rect.left - 34, rootRect.left - 34)),
+      top: Math.max(36, rect.top + Math.min(rect.height / 2, 18) - 14),
+    });
+  }, [buildTextSelectionDragPayload, onTextSelectionDrop]);
 
-  const handleNativeTextSelectionDragEnd = useCallback(() => {
-    clearActiveMineTextSelectionDragPayload();
-  }, []);
+  const scheduleTextSelectionHandleUpdate = useCallback(() => {
+    if (selectionFrameRef.current != null) {
+      window.cancelAnimationFrame(selectionFrameRef.current);
+    }
+    selectionFrameRef.current = window.requestAnimationFrame(() => {
+      selectionFrameRef.current = null;
+      updateTextSelectionHandle();
+    });
+  }, [updateTextSelectionHandle]);
 
-  const handleTextSelectionPointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!onTextSelectionDrop || event.button !== 0 || event.pointerType === "touch") return;
-      if (!selectionContainsPoint(window.getSelection(), event.clientX, event.clientY)) return;
+  const unlockTextSelectionHandle = useCallback(() => {
+    selectionHandleLockedRef.current = false;
+    window.removeEventListener("pointerup", unlockTextSelectionHandle, true);
+    window.removeEventListener("pointercancel", unlockTextSelectionHandle, true);
+    scheduleTextSelectionHandleUpdate();
+  }, [scheduleTextSelectionHandleUpdate]);
 
-      const dragTarget = event.target instanceof Node ? event.target : null;
-      const payload = buildTextSelectionDragPayload(dragTarget);
-      if (!payload) return;
-
-      pointerTextSelectionDragRef.current?.cleanup();
-
-      const startX = event.clientX;
-      const startY = event.clientY;
-      const dragState = {
-        active: false,
-        hoveredRow: null as HTMLElement | null,
-      };
-
-      const clearHover = () => {
-        if (dragState.hoveredRow) {
-          dragState.hoveredRow.removeAttribute("data-selected-text-over");
-          dragState.hoveredRow = null;
-        }
-      };
-
-      const cleanup = () => {
-        window.removeEventListener("pointermove", handleMove, true);
-        window.removeEventListener("pointerup", handleUp, true);
-        window.removeEventListener("pointercancel", handleCancel, true);
-        clearHover();
-        clearActiveMineTextSelectionDragPayload();
-        pointerTextSelectionDragRef.current = null;
-      };
-
-      const handleMove = (moveEvent: PointerEvent) => {
-        const movedEnough =
-          Math.abs(moveEvent.clientX - startX) > 4
-          || Math.abs(moveEvent.clientY - startY) > 4;
-        if (!dragState.active && movedEnough) {
-          dragState.active = true;
-          setActiveMineTextSelectionDragPayload(payload);
-        }
-        if (!dragState.active) return;
-        moveEvent.preventDefault();
-
-        const row = findTextSelectionDropRow(moveEvent.clientX, moveEvent.clientY);
-        if (row === dragState.hoveredRow) return;
-        clearHover();
-        dragState.hoveredRow = row;
-        dragState.hoveredRow?.setAttribute("data-selected-text-over", "true");
-      };
-
-      const handleUp = (upEvent: PointerEvent) => {
-        if (dragState.active) {
-          upEvent.preventDefault();
-          const row = dragState.hoveredRow ?? findTextSelectionDropRow(upEvent.clientX, upEvent.clientY);
-          const tag = row?.dataset.sidebarTextDropTag;
-          if (tag) {
-            onTextSelectionDrop(payload, tag);
-          }
-        }
-        cleanup();
-      };
-
-      const handleCancel = () => {
-        cleanup();
-      };
-
-      pointerTextSelectionDragRef.current = {
-        cleanup,
-        get hoveredRow() {
-          return dragState.hoveredRow;
-        },
-      };
-
-      window.addEventListener("pointermove", handleMove, true);
-      window.addEventListener("pointerup", handleUp, true);
-      window.addEventListener("pointercancel", handleCancel, true);
-    },
-    [buildTextSelectionDragPayload, onTextSelectionDrop],
-  );
+  const lockTextSelectionHandle = useCallback(() => {
+    selectionHandleLockedRef.current = true;
+    window.addEventListener("pointerup", unlockTextSelectionHandle, true);
+    window.addEventListener("pointercancel", unlockTextSelectionHandle, true);
+  }, [unlockTextSelectionHandle]);
 
   useEffect(() => {
-    return () => pointerTextSelectionDragRef.current?.cleanup();
-  }, []);
+    if (!onTextSelectionDrop) {
+      setSelectionHandle(null);
+      return undefined;
+    }
+    document.addEventListener("selectionchange", scheduleTextSelectionHandleUpdate);
+    window.addEventListener("resize", scheduleTextSelectionHandleUpdate);
+    window.addEventListener("scroll", scheduleTextSelectionHandleUpdate, true);
+    return () => {
+      document.removeEventListener("selectionchange", scheduleTextSelectionHandleUpdate);
+      window.removeEventListener("resize", scheduleTextSelectionHandleUpdate);
+      window.removeEventListener("scroll", scheduleTextSelectionHandleUpdate, true);
+      if (selectionFrameRef.current != null) {
+        window.cancelAnimationFrame(selectionFrameRef.current);
+        selectionFrameRef.current = null;
+      }
+    };
+  }, [onTextSelectionDrop, scheduleTextSelectionHandleUpdate]);
 
   // Phase 18.H.2: rewrite Obsidian wikilinks into standard markdown
   // before passing to react-markdown. The raw `.md` file stays in
@@ -802,6 +769,33 @@ function ArticleBody({
 
   const components: Components = useMemo(
     () => ({
+      p: ({ node, ...props }) => (
+        <p {...markdownBlockPositionProps(node)} {...props} />
+      ),
+      li: ({ node, ...props }) => (
+        <li {...markdownBlockPositionProps(node)} {...props} />
+      ),
+      blockquote: ({ node, ...props }) => (
+        <blockquote {...markdownBlockPositionProps(node)} {...props} />
+      ),
+      h1: ({ node, ...props }) => (
+        <h1 {...markdownBlockPositionProps(node)} {...props} />
+      ),
+      h2: ({ node, ...props }) => (
+        <h2 {...markdownBlockPositionProps(node)} {...props} />
+      ),
+      h3: ({ node, ...props }) => (
+        <h3 {...markdownBlockPositionProps(node)} {...props} />
+      ),
+      h4: ({ node, ...props }) => (
+        <h4 {...markdownBlockPositionProps(node)} {...props} />
+      ),
+      h5: ({ node, ...props }) => (
+        <h5 {...markdownBlockPositionProps(node)} {...props} />
+      ),
+      h6: ({ node, ...props }) => (
+        <h6 {...markdownBlockPositionProps(node)} {...props} />
+      ),
       img: ({ src, alt, ...props }) => {
         const decodedSrc = decodeLocalMarkdownUrl(src ?? "");
         const previewTile = findPreviewTileForSource(previewManifest, decodedSrc);
@@ -859,16 +853,84 @@ function ArticleBody({
   return (
     <div
       ref={articleRef}
-      onDragStartCapture={handleNativeTextSelectionDragStart}
-      onDragEndCapture={handleNativeTextSelectionDragEnd}
-      onPointerDownCapture={handleTextSelectionPointerDown}
+      onMouseUp={scheduleTextSelectionHandleUpdate}
+      onKeyUp={scheduleTextSelectionHandleUpdate}
       className="prose prose-sm mt-4 max-w-none"
       data-article-body
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {processedBody}
       </ReactMarkdown>
+      {selectionHandle && (
+        <TextSelectionDragHandle
+          state={selectionHandle}
+          onInteractionStart={lockTextSelectionHandle}
+        />
+      )}
     </div>
+  );
+}
+
+type TextSelectionHandleState = {
+  payload: MineTextSelectionDragPayload;
+  left: number;
+  top: number;
+};
+
+function TextSelectionDragHandle({
+  state,
+  onInteractionStart,
+}: {
+  state: TextSelectionHandleState;
+  onInteractionStart: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    isDragging,
+  } = useDraggable({
+    id: `text-selection:${state.payload.sourceSlug}`,
+    data: state.payload,
+  });
+  const pointerListener = (listeners as {
+    onPointerDown?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  } | undefined)?.onPointerDown;
+
+  const style: CSSProperties = {
+    left: state.left,
+    top: state.top,
+    transform: transform
+      ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
+      : undefined,
+  };
+
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      {...attributes}
+      {...listeners}
+      onPointerDown={(event) => {
+        setActiveMineTextSelectionDragPayload(state.payload);
+        onInteractionStart();
+        pointerListener?.(event);
+      }}
+      onMouseDown={(event) => {
+        event.preventDefault();
+      }}
+      className={cn(
+        "fixed z-50 flex size-7 items-center justify-center rounded-1 border border-border bg-background text-muted-foreground shadow-sm",
+        "cursor-grab active:cursor-grabbing hover:bg-accent hover:text-foreground",
+        isDragging && "opacity-0",
+      )}
+      style={style}
+      aria-label="Drag selected text to a collection"
+      title="Drag selected text to a collection"
+    >
+      <GripVertical className="size-4" aria-hidden="true" />
+    </button>
   );
 }
 
@@ -997,28 +1059,68 @@ function selectionIntersectsNode(selection: Selection, node: Node): boolean {
   return false;
 }
 
-function selectionContainsPoint(selection: Selection | null, clientX: number, clientY: number): boolean {
-  if (!selection || selection.isCollapsed) return false;
-  for (let i = 0; i < selection.rangeCount; i += 1) {
-    const range = selection.getRangeAt(i);
-    for (const rect of Array.from(range.getClientRects())) {
-      if (
-        clientX >= rect.left
-        && clientX <= rect.right
-        && clientY >= rect.top
-        && clientY <= rect.bottom
-      ) {
-        return true;
-      }
+function firstSelectedMarkdownBlockElement(root: HTMLElement, selection: Selection): HTMLElement | null {
+  const blocks = root.querySelectorAll<HTMLElement>("[data-mine-md-start][data-mine-md-end]");
+  for (const block of Array.from(blocks)) {
+    if (selectionIntersectsNode(selection, block)) {
+      return block;
     }
   }
-  return false;
+  return null;
 }
 
-function findTextSelectionDropRow(clientX: number, clientY: number): HTMLElement | null {
-  return document
-    .elementFromPoint(clientX, clientY)
-    ?.closest<HTMLElement>("[data-sidebar-text-drop-tag]") ?? null;
+function findFirstSelectedMarkdownBlockRange(
+  root: HTMLElement,
+  selection: Selection,
+): { start: number; end: number } | null {
+  const block = firstSelectedMarkdownBlockElement(root, selection);
+  if (!block) return null;
+  const start = Number(block.dataset.mineMdStart);
+  const end = Number(block.dataset.mineMdEnd);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return null;
+  }
+  return { start, end };
+}
+
+function firstSelectionClientRect(selection: Selection): DOMRect | null {
+  for (let i = 0; i < selection.rangeCount; i += 1) {
+    const range = selection.getRangeAt(i);
+    const rect = Array.from(range.getClientRects())
+      .find((item) => item.width > 0 || item.height > 0);
+    if (rect) {
+      return rect as DOMRect;
+    }
+  }
+  return null;
+}
+
+type MarkdownPositionedNode = {
+  position?: {
+    start?: { offset?: number };
+    end?: { offset?: number };
+  };
+};
+
+function markdownBlockPositionProps(
+  node: unknown,
+): { "data-mine-md-start"?: string; "data-mine-md-end"?: string } {
+  const positioned = node as MarkdownPositionedNode | undefined;
+  const start = positioned?.position?.start?.offset;
+  const end = positioned?.position?.end?.offset;
+  if (
+    typeof start !== "number"
+    || typeof end !== "number"
+    || !Number.isFinite(start)
+    || !Number.isFinite(end)
+    || end <= start
+  ) {
+    return {};
+  }
+  return {
+    "data-mine-md-start": String(start),
+    "data-mine-md-end": String(end),
+  };
 }
 
 function findFirstMarkdownBlockRange(

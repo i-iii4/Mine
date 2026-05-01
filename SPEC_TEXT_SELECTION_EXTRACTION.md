@@ -4,17 +4,22 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 ## Status
 
-Implemented v1. Runtime support exists for dragging a text selection from
-`Detail` onto a sidebar collection, creating a snapshot article card, and
-anchoring the source paragraph with an Obsidian block id when needed.
+Implemented v1. Runtime support exists for selecting text in `Detail`, dragging
+the selection proxy handle onto a sidebar collection, creating a snapshot
+article card, and anchoring the source paragraph with an Obsidian block id when
+needed.
 
 ## Goal
 
 Пользователь может открыть article-карточку в `Detail`, выделить отрезок
-текста и перетащить его на коллекцию в sidebar. Mine создаёт новую
-article-карточку в этой коллекции. Тело новой карточки содержит snapshot
+текста и перетащить появившуюся selection handle на коллекцию в sidebar. Mine
+создаёт новую article-карточку в этой коллекции. Тело новой карточки содержит snapshot
 выделенного текста, а frontmatter содержит ссылку на исходный блок текста через
 Obsidian block reference.
+
+Dragging the highlighted native text range itself is not a Mine command. Mine
+does not attach extraction metadata to native selected-text drag/drop; the
+visible selection handle is the only supported creation affordance.
 
 Главный контракт: это не live-sync и не embedded transclusion. Новая карточка
 не подтягивает будущие изменения исходного параграфа. Block reference нужен как
@@ -26,12 +31,13 @@ Obsidian block reference.
 
 1. Пользователь открывает article-блок в `Detail`.
 2. Пользователь выделяет текст внутри тела статьи.
-3. Пользователь перетаскивает выделение на коллекцию в sidebar.
-4. Mine создаёт новый article-блок в целевой коллекции.
-5. Новый блок содержит только выделенный текст.
-6. Новый блок связан с исходной статьёй через `Mine Related Notes` target
+3. Mine показывает маленькую drag-ручку рядом с первым выбранным блоком.
+4. Пользователь перетаскивает эту ручку на коллекцию в sidebar.
+5. Mine создаёт новый article-блок в целевой коллекции.
+6. Новый блок содержит только выделенный текст.
+7. Новый блок связан с исходной статьёй через `Mine Related Notes` target
    `[[Source Article#^block-id]]`.
-7. Исходная статья получает block id только если у первого выбранного
+8. Исходная статья получает block id только если у первого выбранного
    параграфа ещё нет существующего Obsidian block id.
 
 ### What v1 Does Not Do
@@ -44,6 +50,7 @@ Obsidian block reference.
 | Hidden sidecar metadata | No. No JSON sidecar, UUID registry, or HTML comments |
 | Source backlink insertion | No. The source article gets only the block id suffix when needed |
 | Non-article source blocks | No. v1 accepts article/implicit article body selections only |
+| Native selected-text drag action | No. Card creation only runs from the selection handle |
 
 ## Obsidian Source Format
 
@@ -356,8 +363,10 @@ The resulting files are useful outside Mine:
 
 | Area | Scenarios |
 |---|---|
-| Detail | text selection produces `text_selection` payload with source hash/range |
+| Detail | valid native selection shows a separate drag handle, not a draggable article body |
+| Detail | same selected text in different paragraphs anchors to the selected rendered block offsets |
 | Detail | selected text remains native selection/copy/context-menu UI before drag |
+| Detail/Sidebar | native selected-text drag/drop does not create a Mine card |
 | App drop | `text_selection` dropped on collection calls `extractTextSelection` |
 | App drop | `text_selection` does not call block connect or inline-media extraction |
 | Detail | source Detail remains open after extraction |
@@ -366,18 +375,20 @@ The resulting files are useful outside Mine:
 ### Manual QA
 
 1. Open article with multiple paragraphs.
-2. Select part of one paragraph and drag to a collection.
-3. Verify the source paragraph received one readable `^block-id`.
-4. Verify the new card body contains only selected text.
-5. Verify `Mine Related Notes` points to `[[Source#^block-id]]`.
-6. Select text across two paragraphs and repeat.
-7. Verify only the first paragraph is anchored.
-8. Edit the source paragraph and verify the excerpt body does not change.
-9. Rename the source article in Mine and verify the excerpt's related note
+2. Select part of one paragraph and verify normal highlight, double-click,
+   triple-click, `Cmd+C`, and context menu still work.
+3. Drag the selection handle to a collection.
+4. Verify the source paragraph received one readable `^block-id`.
+5. Verify the new card body contains only selected text.
+6. Verify `Mine Related Notes` points to `[[Source#^block-id]]`.
+7. Select text across two paragraphs and repeat.
+8. Verify only the first paragraph is anchored.
+9. Edit the source paragraph and verify the excerpt body does not change.
+10. Rename the source article in Mine and verify the excerpt's related note
    target updates while keeping `#^block-id`.
-10. Click the excerpt card's related note in Mine and verify Detail opens the
+11. Click the excerpt card's related note in Mine and verify Detail opens the
     source article at the anchored paragraph.
-11. Open both files in Obsidian and verify they remain readable Markdown.
+12. Open both files in Obsidian and verify they remain readable Markdown.
 
 ## Acceptance Criteria
 
