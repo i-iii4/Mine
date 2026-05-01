@@ -114,10 +114,16 @@ deleteChannel(tag: string): Promise<boolean>
 
 ## Text selection extraction
 
-Detail article body supports dragging a selected text range to a concrete
-sidebar collection. The drop creates a new article card through
-`extractTextSelection`; it does not connect the source card itself and does not
-enter the inline-media extraction path.
+Detail article body supports native browser dragging of a selected text range
+to a concrete sidebar collection. The article body must not become a custom
+`dnd-kit` draggable when text is selected: normal text selection, system
+highlighting, `Cmd+C`, and the browser/WebView context menu remain native.
+Only a real native `dragstart` from the selected text writes Mine extraction
+metadata into `dataTransfer`.
+
+The drop creates a new article card through `extractTextSelection`; it does not
+connect the source card itself and does not enter the inline-media extraction
+path.
 
 The new card body is a creation-time snapshot of the selected text. It is not a
 live embed and must not auto-update when the source paragraph changes.
@@ -148,6 +154,12 @@ type TextSelectionDragPayload = {
   title: string | null;
 };
 ```
+
+The payload is serialized under MIME type
+`application/x-mine-text-selection`. Sidebar channel rows accept native drops
+with this MIME type and call `extractTextSelection` for the target collection.
+Existing `dnd-kit` paths remain responsible for card/tag drag and inline-media
+extraction.
 
 After successful extraction:
 

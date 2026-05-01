@@ -357,6 +357,7 @@ The resulting files are useful outside Mine:
 | Area | Scenarios |
 |---|---|
 | Detail | text selection produces `text_selection` payload with source hash/range |
+| Detail | selected text remains native selection/copy/context-menu UI before drag |
 | App drop | `text_selection` dropped on collection calls `extractTextSelection` |
 | App drop | `text_selection` does not call block connect or inline-media extraction |
 | Detail | source Detail remains open after extraction |

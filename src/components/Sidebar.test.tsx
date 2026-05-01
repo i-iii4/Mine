@@ -5,6 +5,7 @@ import { DndContext } from "@dnd-kit/core";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
 import type { TagCount } from "@/types";
+import { MINE_TEXT_SELECTION_DRAG_TYPE, type MineTextSelectionDragPayload } from "@/lib/textSelectionDrag";
 
 function tag(name: string, count = 3): TagCount {
   return { tag: name, count };
@@ -41,6 +42,38 @@ function renderSidebar(props = defaultProps) {
   return render(sidebarTree(props));
 }
 
+function createMockDataTransfer(
+  payload?: MineTextSelectionDragPayload,
+): DataTransfer {
+  const store = new Map<string, string>();
+  const dataTransfer = {
+    effectAllowed: "all",
+    dropEffect: "none",
+    files: [] as unknown as FileList,
+    items: [] as unknown as DataTransferItemList,
+    types: [] as unknown as DOMStringList,
+    clearData: vi.fn((type?: string) => {
+      if (type) {
+        store.delete(type);
+      } else {
+        store.clear();
+      }
+    }),
+    getData: vi.fn((type: string) => store.get(type) ?? ""),
+    setData: vi.fn((type: string, value: string) => {
+      store.set(type, value);
+      const types = Array.from(store.keys()) as unknown as DOMStringList;
+      Object.assign(types, { contains: (item: string) => store.has(item) });
+      (dataTransfer as { types: DOMStringList }).types = types;
+    }),
+    setDragImage: vi.fn(),
+  } as unknown as DataTransfer;
+  if (payload) {
+    dataTransfer.setData(MINE_TEXT_SELECTION_DRAG_TYPE, JSON.stringify(payload));
+  }
+  return dataTransfer;
+}
+
 describe("Sidebar", () => {
   it("renders Everything link with total block count", () => {
     renderSidebar();
@@ -71,6 +104,32 @@ describe("Sidebar", () => {
     container.querySelectorAll("[data-sidebar-tag-menu-trigger]").forEach((trigger) => {
       expect(trigger).toHaveClass("size-8");
     });
+  });
+
+  it("accepts native selected-text drops on tag rows", () => {
+    const onTextSelectionDrop = vi.fn();
+    renderSidebar({
+      ...defaultProps,
+      onTextSelectionDrop,
+    });
+    const alphaLink = screen.getByRole("link", { name: /Alpha/ });
+    const alphaRow = alphaLink.parentElement!;
+    const payload: MineTextSelectionDragPayload = {
+      type: "text_selection",
+      sourceSlug: "source-card",
+      selectedText: "selected text",
+      firstBlockStart: 0,
+      firstBlockEnd: 25,
+      sourceBodyHash: "body-hash",
+      title: "selected text",
+    };
+    const dataTransfer = createMockDataTransfer(payload);
+
+    fireEvent.dragOver(alphaRow, { dataTransfer });
+    expect(alphaRow).toHaveClass("ring-2");
+
+    fireEvent.drop(alphaRow, { dataTransfer });
+    expect(onTextSelectionDrop).toHaveBeenCalledWith(payload, "alpha");
   });
 
   it("keeps the main sidebar top inset on the scroll container without a fixed empty header slot", () => {

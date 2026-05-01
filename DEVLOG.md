@@ -29,6 +29,11 @@ Obsidian block reference на первый выбранный параграф.
   открывается из metadata, сохраняя block anchor.
 - Related Notes click для `Source#^id` открывает source article и прокручивает
   Detail к `^id` маркеру, если он всё ещё есть в тексте.
+- Text selection extraction переведён с `dnd-kit` на article body на native
+  selected-text drag/drop: обычное выделение, `Cmd+C` и context menu больше не
+  подменяются custom draggable состоянием.
+- Sidebar channel rows принимают native `application/x-mine-text-selection`
+  drop и вызывают тот же `extractTextSelection` command.
 - Обновлены `SPEC_TEXT_SELECTION_EXTRACTION.md`, `SPEC_FRONTEND.md` и
   `SPEC_INTEGRATION.md` из planned-контракта в implemented v1.
 
@@ -38,7 +43,7 @@ Obsidian block reference на первый выбранный параграф.
 - `cargo test --manifest-path src-tauri/Cargo.toml rename_wikilink_targets`
 - `cargo test --manifest-path src-tauri/Cargo.toml rename_block_file_rewrites_links_and_inline_media`
 - `npm run build`
-- `npm run test -- src/App.test.tsx src/components/Detail.test.tsx src/components/Search.test.tsx`
+- `npm run test -- src/App.test.tsx src/components/Detail.test.tsx src/components/Sidebar.test.tsx src/components/Search.test.tsx`
 
 ## 01.05.2026 [primary] — Text selection extraction spec
 

@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { Detail } from "./Detail";
 import type { IndexedBlock } from "@/types";
+import { MINE_TEXT_SELECTION_DRAG_TYPE } from "@/lib/textSelectionDrag";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
@@ -64,6 +65,33 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
   };
 }
 
+function createMockDataTransfer(): DataTransfer {
+  const store = new Map<string, string>();
+  const dataTransfer = {
+    effectAllowed: "all",
+    dropEffect: "none",
+    files: [] as unknown as FileList,
+    items: [] as unknown as DataTransferItemList,
+    types: [] as unknown as DOMStringList,
+    clearData: vi.fn((type?: string) => {
+      if (type) {
+        store.delete(type);
+      } else {
+        store.clear();
+      }
+    }),
+    getData: vi.fn((type: string) => store.get(type) ?? ""),
+    setData: vi.fn((type: string, value: string) => {
+      store.set(type, value);
+      const types = Array.from(store.keys()) as unknown as DOMStringList;
+      Object.assign(types, { contains: (item: string) => store.has(item) });
+      (dataTransfer as { types: DOMStringList }).types = types;
+    }),
+    setDragImage: vi.fn(),
+  } as unknown as DataTransfer;
+  return dataTransfer;
+}
+
 describe("Detail", () => {
   it("renders the selected top menu mode", () => {
     const props = {
@@ -117,6 +145,56 @@ describe("Detail", () => {
     const scrollEl = container.querySelector("[data-detail-scroll]");
     expect(scrollEl).not.toHaveClass("pb-20");
     expect(scrollEl?.firstElementChild).toHaveClass("pb-20");
+  });
+
+  it("writes native drag data for selected text without making article text draggable", () => {
+    const { container } = render(
+      <Detail
+        block={block({
+          body: "Alpha beta gamma",
+          body_hash: "body-hash-1",
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    const article = container.querySelector<HTMLElement>("[data-article-body]");
+    const paragraph = article?.querySelector("p");
+    const textNode = paragraph?.firstChild;
+    expect(article).not.toHaveAttribute("role", "button");
+    expect(textNode?.textContent).toBe("Alpha beta gamma");
+
+    const range = document.createRange();
+    range.setStart(textNode!, "Alpha ".length);
+    range.setEnd(textNode!, "Alpha beta".length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const dataTransfer = createMockDataTransfer();
+    fireEvent.dragStart(paragraph!, { dataTransfer });
+
+    const payload = JSON.parse(dataTransfer.getData(MINE_TEXT_SELECTION_DRAG_TYPE));
+    expect(payload).toMatchObject({
+      type: "text_selection",
+      sourceSlug: "test-block",
+      selectedText: "beta",
+      firstBlockStart: 0,
+      firstBlockEnd: "Alpha beta gamma".length,
+      sourceBodyHash: "body-hash-1",
+      title: "beta",
+    });
+    expect(dataTransfer.getData("text/plain")).toBe("beta");
+    selection?.removeAllRanges();
   });
 
   it("decodes local wikilink image paths for original media and preview lookup", () => {

@@ -30,6 +30,11 @@ import {
 import type { TagCount, PreviewCard } from "@/types";
 import type { DetailTopMenuMode } from "@/lib/appPreferences";
 import { cn } from "@/lib/utils";
+import {
+  hasMineTextSelectionDragData,
+  readMineTextSelectionDragData,
+  type MineTextSelectionDragPayload,
+} from "@/lib/textSelectionDrag";
 
 /** Convert a collection ref to a compact display title. */
 function titleFromTag(tag: string): string {
@@ -59,6 +64,7 @@ interface SidebarProps {
   linkedTags?: string[];
   onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
   detailTopMenuMode?: DetailTopMenuMode;
+  onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }
 
 export function Sidebar({
@@ -81,6 +87,7 @@ export function Sidebar({
   linkedTags = [],
   onToggleLinkedTag,
   detailTopMenuMode = "island",
+  onTextSelectionDrop,
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [linkMode, setLinkMode] = useState<"all" | "linked">("all");
@@ -183,6 +190,7 @@ export function Sidebar({
                 onDelete={() => onDeleteTag(tc.tag)}
                 onClick={onNavClick}
                 onSameClick={isLinkingBlock ? undefined : onScrollToTop}
+                onTextSelectionDrop={onTextSelectionDrop}
               />
             );
           })}
@@ -403,6 +411,7 @@ const TagNavItem = memo(function TagNavItem({
   onDelete,
   onClick,
   onSameClick,
+  onTextSelectionDrop,
 }: {
   to: string;
   label: string;
@@ -422,10 +431,12 @@ const TagNavItem = memo(function TagNavItem({
   onDelete: () => void;
   onClick?: () => void;
   onSameClick?: () => void;
+  onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }) {
   const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [nativeTextSelectionOver, setNativeTextSelectionOver] = useState(false);
   const isLinkEditor = !!linkEditor;
 
   const {
@@ -464,6 +475,41 @@ const TagNavItem = memo(function TagNavItem({
       : {}),
   };
 
+  const handleNativeTextSelectionDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      if (!onTextSelectionDrop || !hasMineTextSelectionDragData(event.dataTransfer)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "copy";
+      setNativeTextSelectionOver(true);
+    },
+    [onTextSelectionDrop],
+  );
+
+  const handleNativeTextSelectionDragLeave = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      const nextTarget = event.relatedTarget;
+      if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+        setNativeTextSelectionOver(false);
+      }
+    },
+    [],
+  );
+
+  const handleNativeTextSelectionDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      if (!onTextSelectionDrop || !hasMineTextSelectionDragData(event.dataTransfer)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setNativeTextSelectionOver(false);
+      const payload = readMineTextSelectionDragData(event.dataTransfer);
+      if (payload) {
+        onTextSelectionDrop(payload, tag);
+      }
+    },
+    [onTextSelectionDrop, tag],
+  );
+
   if (isEditing) {
     return (
       <InlineInput
@@ -484,10 +530,13 @@ const TagNavItem = memo(function TagNavItem({
             style={style}
             {...(!isLinkEditor ? attributes : {})}
             {...(!isLinkEditor ? listeners : {})}
+            onDragOver={handleNativeTextSelectionDragOver}
+            onDragLeave={handleNativeTextSelectionDragLeave}
+            onDrop={handleNativeTextSelectionDrop}
             className={cn(
               "group relative rounded-1",
               isDragging && "opacity-30",
-              isOver && !isDragging && isDropDragging && "ring-2 ring-ring ring-inset",
+              ((isOver && !isDragging && isDropDragging) || nativeTextSelectionOver) && "ring-2 ring-ring ring-inset",
             )}
           >
         <NavLink

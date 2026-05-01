@@ -24,6 +24,10 @@ import {
   findPreviewTileForSource,
   normalizeFeedPreviewManifest,
 } from "@/lib/feedPreview";
+import {
+  writeMineTextSelectionDragData,
+  type MineTextSelectionDragPayload,
+} from "@/lib/textSelectionDrag";
 import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
 import { CardMoreMenu } from "./CardHoverMenu";
@@ -54,16 +58,6 @@ interface DetailProps {
 type DetailInlineMediaExtraction = {
   sourceSlug: string;
   mediaRef: string;
-  title: string | null;
-};
-
-type DetailTextSelectionExtraction = {
-  type: "text_selection";
-  sourceSlug: string;
-  selectedText: string;
-  firstBlockStart: number;
-  firstBlockEnd: number;
-  sourceBodyHash: string;
   title: string | null;
 };
 
@@ -637,49 +631,28 @@ function ArticleBody({
   scrollAnchor?: string | null;
 }) {
   const articleRef = useRef<HTMLDivElement | null>(null);
-  const [selectionExtraction, setSelectionExtraction] =
-    useState<DetailTextSelectionExtraction | null>(null);
-  const {
-    attributes: selectionDragAttributes,
-    listeners: selectionDragListeners,
-    setNodeRef: setSelectionDragRef,
-    isDragging: isSelectionDragging,
-  } = useDraggable({
-    id: selectionExtraction
-      ? `text-selection:${selectionExtraction.sourceSlug}:${selectionExtraction.sourceBodyHash}`
-      : `text-selection-disabled:${sourceSlug ?? "unknown"}`,
-    disabled: selectionExtraction === null,
-    data: selectionExtraction ?? undefined,
-  });
-  const setArticleNodeRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      articleRef.current = node;
-      setSelectionDragRef(node);
-    },
-    [setSelectionDragRef],
-  );
 
-  const refreshTextSelection = useCallback(() => {
+  const buildTextSelectionDragPayload = useCallback((dragTarget: Node | null): MineTextSelectionDragPayload | null => {
     if (!sourceSlug || !sourceBodyHash || !articleRef.current) {
-      setSelectionExtraction(null);
-      return;
+      return null;
     }
+    const root = articleRef.current;
     const selection = window.getSelection();
-    if (!selection || selection.isCollapsed || !selectionIntersectsNode(selection, articleRef.current)) {
-      setSelectionExtraction(null);
-      return;
+    if (!selection || selection.isCollapsed || !selectionIntersectsNode(selection, root)) {
+      return null;
+    }
+    if (dragTarget && root.contains(dragTarget) && !selectionIntersectsNode(selection, dragTarget)) {
+      return null;
     }
     const selectedText = selection.toString().trim();
     if (!selectedText) {
-      setSelectionExtraction(null);
-      return;
+      return null;
     }
     const range = findFirstMarkdownBlockRange(body, selectedText);
     if (!range) {
-      setSelectionExtraction(null);
-      return;
+      return null;
     }
-    setSelectionExtraction({
+    return {
       type: "text_selection",
       sourceSlug,
       selectedText,
@@ -687,12 +660,20 @@ function ArticleBody({
       firstBlockEnd: range.end,
       sourceBodyHash,
       title: textSelectionTitle(selectedText, sourceTitle),
-    });
+    };
   }, [body, sourceBodyHash, sourceSlug, sourceTitle]);
 
-  useEffect(() => {
-    setSelectionExtraction(null);
-  }, [body, sourceBodyHash, sourceSlug]);
+  const handleNativeTextSelectionDragStart = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      const dragTarget = event.target instanceof Node ? event.target : null;
+      const payload = buildTextSelectionDragPayload(dragTarget);
+      if (!payload) return;
+      if (writeMineTextSelectionDragData(event.dataTransfer, payload)) {
+        event.dataTransfer.dropEffect = "copy";
+      }
+    },
+    [buildTextSelectionDragPayload],
+  );
 
   // Phase 18.H.2: rewrite Obsidian wikilinks into standard markdown
   // before passing to react-markdown. The raw `.md` file stays in
@@ -773,16 +754,10 @@ function ArticleBody({
 
   return (
     <div
-      ref={setArticleNodeRef}
-      {...(selectionExtraction ? selectionDragAttributes : {})}
-      {...(selectionExtraction ? selectionDragListeners : {})}
-      onMouseUp={refreshTextSelection}
-      onKeyUp={refreshTextSelection}
-      className={cn(
-        "prose prose-sm mt-4 max-w-none",
-        selectionExtraction && "cursor-grab active:cursor-grabbing",
-        isSelectionDragging && "opacity-80",
-      )}
+      ref={articleRef}
+      onDragStartCapture={handleNativeTextSelectionDragStart}
+      className="prose prose-sm mt-4 max-w-none"
+      data-article-body
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {processedBody}
