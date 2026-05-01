@@ -1,5 +1,38 @@
 # Devlog
 
+## 01.05.2026 [primary] — Delete card unused media cleanup
+
+### Goal
+
+Сделать удаление карточки пользовательски предсказуемым: shared media остаются
+на диске, а media, которые после удаления карточки станут unused/orphan,
+показываются в confirm dialog и могут быть удалены вместе с карточкой.
+
+### Completed
+
+- Добавлен backend `prepare_delete_block`, который строит `DeleteBlockPlan`
+  через общий media resolver (`frontmatter.file`, `thumbnail`, `![[...]]`,
+  `![](...)`, nested/relative/Obsidian basename lookup).
+- `delete_block` получил явный `delete_unused_media` flag:
+  - `true` удаляет `.md` и все unused media из плана;
+  - `false` удаляет только `.md` и derived artifacts;
+  - absent сохраняет legacy-вызов для slug-owned primary media.
+- File cleanup теперь выполняется до удаления index row, чтобы failed file
+  delete не выглядел как successful card deletion.
+- Общий delete dialog на уровне App вызывает `prepareDeleteBlock` для Grid и
+  Detail, показывает компактные previews unused media, использует карточный
+  thumbnail/poster для video previews и даёт actions `Delete` / `Keep media`.
+- Detail overflow delete больше не обходит confirm dialog и не вызывает
+  silent `deleteUnusedMedia=true`.
+- Обновлены `SPEC_INTEGRATION.md`, `SPEC_FRONTEND.md`,
+  `SPEC_STORAGE.md`, `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml`
+- `npm run build`
+- `npm run test -- src/components/Grid.test.tsx src/App.test.tsx`
+
 ## 30.04.2026 [primary] — Clipper X video preview dedupe
 
 ### Goal

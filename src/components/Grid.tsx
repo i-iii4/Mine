@@ -10,16 +10,6 @@ import {
   ContextMenu,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import type { LightBlock, TagCount } from "@/types";
 import { Card, CardSkeleton } from "./Card";
 import { MeasureCard } from "./MeasureCard";
@@ -80,7 +70,7 @@ interface GridProps {
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onRequestRename: (block: LightBlock) => void;
-  onDeleteBlock: (slug: string) => void;
+  onRequestDelete: (slug: string) => void;
   onColumnCountChange?: (count: number) => void;
   hasMoreBlocks?: boolean;
   loadingMoreBlocks?: boolean;
@@ -161,7 +151,7 @@ export function Grid({
   onToggleTag,
   onCreateAndAssign,
   onRequestRename,
-  onDeleteBlock,
+  onRequestDelete,
   onColumnCountChange,
   hasMoreBlocks = false,
   loadingMoreBlocks = false,
@@ -171,7 +161,6 @@ export function Grid({
   const [parentWidth, setParentWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
-  const [blockToDelete, setBlockToDelete] = useState<string | null>(null);
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
 
   // Grid has exactly three pieces of genuine state:
@@ -584,8 +573,8 @@ export function Grid({
   );
 
   const handleRequestDelete = useCallback((slug: string) => {
-    setBlockToDelete(slug);
-  }, []);
+    onRequestDelete(slug);
+  }, [onRequestDelete]);
 
   const gridContext: GridContext = useMemo(
     () => ({
@@ -671,35 +660,9 @@ export function Grid({
           onToggleTag={onToggleTag}
           onCreateAndAssign={onCreateAndAssign}
           onRequestRename={onRequestRename}
-          onRequestDelete={(slug) => setBlockToDelete(slug)}
+          onRequestDelete={onRequestDelete}
         />
       )}
-
-      <AlertDialog
-        open={blockToDelete !== null}
-        onOpenChange={(open) => { if (!open) setBlockToDelete(null); }}
-      >
-        <AlertDialogContent size="sm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete card</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete the card and its files.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                if (blockToDelete) onDeleteBlock(blockToDelete);
-                setBlockToDelete(null);
-              }}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </ContextMenu>
   );
 }

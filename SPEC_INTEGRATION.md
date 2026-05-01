@@ -155,7 +155,8 @@ enum CommandError {
 #[tauri::command] list_blocks(state) -> Result<Vec<IndexedBlock>, CommandError>
 #[tauri::command] get_block(state, slug: String) -> Result<Option<IndexedBlock>, CommandError>
 #[tauri::command] create_block(state, ...) -> Result<IndexedBlock, CommandError>
-#[tauri::command] delete_block(state, slug: String) -> Result<bool, CommandError>
+#[tauri::command] prepare_delete_block(state, slug: String) -> Result<DeleteBlockPlan, CommandError>
+#[tauri::command] delete_block(state, slug: String, delete_unused_media: Option<bool>) -> Result<bool, CommandError>
 #[tauri::command] rename_block_file(state, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError>
 ```
 
@@ -172,9 +173,12 @@ enum CommandError {
 
 ### Поведение delete_block
 
-1. Получить блок из индекса (для media_file)
-2. Удалить файлы (`storage::files::delete_block_files`)
-3. Удалить из индекса (`storage::index::remove_block`)
+1. `prepare_delete_block` строит `DeleteBlockPlan`: `.md`, media текущего блока, media, используемые другими блоками, и unused media.
+2. Media refs резолвятся через общий backend resolver (`frontmatter.file`, `thumbnail`, `![[...]]`, `![](...)`, nested/relative/Obsidian basename lookup).
+3. `delete_block(..., delete_unused_media=true)` удаляет `.md` и все unused media из плана; shared media не удаляются.
+4. `delete_block(..., delete_unused_media=false)` удаляет только `.md` и derived artifacts.
+5. Legacy-вызов без `delete_unused_media` сохраняет старый режим: удаляет `.md` и только slug-owned primary media.
+6. Индекс удаляется только после успешного file cleanup; если удаление файлов упало, карточка не получает ложный successful delete.
 
 ### Поведение rename_block_file
 

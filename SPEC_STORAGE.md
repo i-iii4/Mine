@@ -234,7 +234,9 @@ write_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf>
 read_block_file(path: &Path) -> Result<(String, String)>  // (slug, content)
 scan_md_files(vault: &VaultLayout) -> Result<Vec<PathBuf>>
 copy_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Result<PathBuf>
+delete_user_file(path: &Path) -> Result<()>
 delete_block_files(vault: &VaultLayout, slug: &str, media_ext: Option<&str>) -> Result<()>
+delete_block_files_with_media_paths(vault: &VaultLayout, slug: &str, media_paths: &[PathBuf]) -> Result<()>
 persist_new_block(conn: &Connection, vault: &VaultLayout, block: &Block, source_file: Option<&Path>) -> Result<IndexedBlock>
 persist_new_reference_block(conn: &Connection, vault: &VaultLayout, block: &Block) -> Result<IndexedBlock>
 rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) -> Result<()>
@@ -254,6 +256,13 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
   `.trash/`, `.git/`, `node_modules/`, `target/`, `__pycache__/`.
 - Игнорирует файлы, не являющиеся `.md`
 - NFC-normalizes filename boundary перед возвратом в indexing/watcher pipeline
+
+### Поведение delete_block_files
+
+- User-owned source files удаляются через OS Trash, с fallback на `remove_file` для iCloud placeholder/failure случаев.
+- `delete_block_files` сохраняет legacy contract: удаляет `.md`, slug-owned primary media `<slug>.<ext>` и derived thumbnail.
+- `delete_block_files_with_media_paths` получает уже проверенный higher-level deletion plan и удаляет `.md`, перечисленные media paths и derived thumbnail.
+- Shared/orphan решение не принимается в storage layer; оно принадлежит `commands::blocks::prepare_delete_block`.
 
 ### Поведение media reference resolution
 

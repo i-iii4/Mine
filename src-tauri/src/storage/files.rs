@@ -123,49 +123,69 @@ pub fn copy_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Result
     Ok(dest)
 }
 
+/// Delete a user-owned file.
+///
+/// Moves to OS trash when available, then falls back to permanent delete for
+/// filesystems where trashing fails (notably some iCloud placeholder states).
+pub fn delete_user_file(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let trashed = {
+        #[cfg(not(target_os = "ios"))]
+        {
+            trash::delete(path).is_ok()
+        }
+        #[cfg(target_os = "ios")]
+        {
+            false
+        }
+    };
+    if !trashed {
+        std::fs::remove_file(path)
+            .with_context(|| format!("failed to delete: {}", path.display()))?;
+    }
+
+    Ok(())
+}
+
 /// Delete a block's .md file and optional media file.
 /// Also removes the thumbnail (best-effort). Non-existent files are silently ignored.
 pub fn delete_block_files(vault: &VaultLayout, slug: &str, media_ext: Option<&str>) -> Result<()> {
-    // Move user content to OS trash (recoverable).
-    // Fallback to permanent delete if trash fails (e.g. iCloud placeholders).
     let md_path = vault.block_path(slug);
-    if md_path.exists() {
-        let trashed = {
-            #[cfg(not(target_os = "ios"))]
-            {
-                trash::delete(&md_path).is_ok()
-            }
-            #[cfg(target_os = "ios")]
-            {
-                false
-            }
-        };
-        if !trashed {
-            std::fs::remove_file(&md_path)
-                .with_context(|| format!("failed to delete: {}", md_path.display()))?;
-        }
-    }
+    delete_user_file(&md_path)?;
 
     if let Some(ext) = media_ext {
         let media_path = vault.media_path(slug, ext);
-        if media_path.exists() {
-            let trashed = {
-                #[cfg(not(target_os = "ios"))]
-                {
-                    trash::delete(&media_path).is_ok()
-                }
-                #[cfg(target_os = "ios")]
-                {
-                    false
-                }
-            };
-            if !trashed {
-                let _ = std::fs::remove_file(&media_path);
-            }
-        }
+        delete_user_file(&media_path)?;
     }
 
     // Permanently delete thumbnail (generated cache, not user content)
+    let thumb_path = vault.thumb_path(slug);
+    if thumb_path.exists() {
+        let _ = std::fs::remove_file(&thumb_path);
+    }
+
+    Ok(())
+}
+
+/// Delete a block's .md file plus an explicit list of resolved media files.
+///
+/// The caller owns media resolution and sharing checks. This function only
+/// performs the final file operation and removes derived thumbnail cache.
+pub fn delete_block_files_with_media_paths(
+    vault: &VaultLayout,
+    slug: &str,
+    media_paths: &[PathBuf],
+) -> Result<()> {
+    let md_path = vault.block_path(slug);
+    delete_user_file(&md_path)?;
+
+    for media_path in media_paths {
+        delete_user_file(media_path)?;
+    }
+
     let thumb_path = vault.thumb_path(slug);
     if thumb_path.exists() {
         let _ = std::fs::remove_file(&thumb_path);

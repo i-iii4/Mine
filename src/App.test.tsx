@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
-import type { GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult } from "@/types";
+import type { DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult } from "@/types";
 import { AppWithVault } from "./App";
 
 const commandMocks = vi.hoisted(() => ({
@@ -13,6 +13,8 @@ const commandMocks = vi.hoisted(() => ({
   listGridBlocks: vi.fn<(tag?: string, offset?: number, limit?: number) => Promise<GridSnapshot>>(),
   listTaxonomySnapshot: vi.fn<() => Promise<TaxonomySnapshot>>(),
   renameBlockFile: vi.fn(),
+  prepareDeleteBlock: vi.fn<(slug: string) => Promise<DeleteBlockPlan>>(),
+  deleteBlock: vi.fn<(slug: string, deleteUnusedMedia?: boolean) => Promise<boolean>>(),
   getBlock: vi.fn(),
   extractInlineMedia: vi.fn(),
 }));
@@ -32,7 +34,8 @@ vi.mock("@/lib/commands", () => ({
   deleteTagFromAll: vi.fn(),
   addTag: vi.fn(),
   removeTag: vi.fn(),
-  deleteBlock: vi.fn(),
+  prepareDeleteBlock: commandMocks.prepareDeleteBlock,
+  deleteBlock: commandMocks.deleteBlock,
   getBlock: commandMocks.getBlock,
   extractInlineMedia: commandMocks.extractInlineMedia,
 }));
@@ -115,8 +118,19 @@ vi.mock("@/components/Search", () => ({
 }));
 
 vi.mock("@/components/Detail", () => ({
-  Detail: ({ block }: { block: LightBlock | IndexedBlock }) => (
-    <div data-testid="detail-title">{block.title ?? block.slug}</div>
+  Detail: ({
+    block,
+    onRequestDelete,
+  }: {
+    block: LightBlock | IndexedBlock;
+    onRequestDelete: (slug: string) => void;
+  }) => (
+    <div>
+      <div data-testid="detail-title">{block.title ?? block.slug}</div>
+      <button type="button" onClick={() => onRequestDelete(block.slug)}>
+        Delete detail
+      </button>
+    </div>
   ),
 }));
 
@@ -231,6 +245,13 @@ describe("AppWithVault", () => {
     commandMocks.openVault.mockResolvedValue(vaultOpenResult());
     commandMocks.startVaultSync.mockResolvedValue(true);
     commandMocks.renameBlockFile.mockReset();
+    commandMocks.prepareDeleteBlock.mockResolvedValue({
+      slug: "alpha-block",
+      markdown_file: "alpha-block.md",
+      unused_media: [],
+      shared_media: [],
+    });
+    commandMocks.deleteBlock.mockResolvedValue(true);
     commandMocks.getBlock.mockImplementation(async (slug: string) => indexedBlock(1, slug, slug));
     commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit) => {
       expect(offset).toBe(0);
@@ -398,6 +419,48 @@ describe("AppWithVault", () => {
 
     await waitFor(() => {
       expect(screen.queryByText("Preparing library…")).not.toBeInTheDocument();
+    });
+  });
+
+  it("routes detail deletion through the media confirmation dialog", async () => {
+    commandMocks.prepareDeleteBlock.mockResolvedValue({
+      slug: "alpha-block",
+      markdown_file: "alpha-block.md",
+      unused_media: [
+        {
+          path: "photo.png",
+          file_name: "photo.png",
+          kind: "image",
+          referenced_by: [],
+        },
+      ],
+      shared_media: [],
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete detail" }));
+
+    await waitFor(() => {
+      expect(commandMocks.prepareDeleteBlock).toHaveBeenCalledWith("alpha-block");
+    });
+    expect(commandMocks.deleteBlock).not.toHaveBeenCalled();
+    expect(await screen.findByText("Delete card?")).toBeInTheDocument();
+    expect(screen.getByText(/1 media file is only used by this card/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep media" }));
+
+    await waitFor(() => {
+      expect(commandMocks.deleteBlock).toHaveBeenCalledWith("alpha-block", false);
     });
   });
 

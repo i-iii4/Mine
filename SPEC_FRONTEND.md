@@ -91,7 +91,8 @@ getVaultPath(): Promise<string | null>
 listBlocks(): Promise<IndexedBlock[]>
 getBlock(slug: string): Promise<IndexedBlock | null>
 createBlock(params: CreateBlockParams): Promise<IndexedBlock>
-deleteBlock(slug: string): Promise<boolean>
+prepareDeleteBlock(slug: string): Promise<DeleteBlockPlan>
+deleteBlock(slug: string, deleteUnusedMedia?: boolean): Promise<boolean>
 renameBlockFile(oldSlug: string, newStem: string): Promise<RenameBlockResult>
 listTags(): Promise<TagCount[]>
 addTag(slug: string, tag: string): Promise<void>
@@ -101,6 +102,13 @@ listChannels(): Promise<ChannelDto[]>
 createChannel(tag: string, title?: string): Promise<ChannelDto>
 deleteChannel(tag: string): Promise<boolean>
 ```
+
+## Delete confirmation
+
+- Grid and Detail delete entry points open the same App-level delete dialog through `prepareDeleteBlock` before committing.
+- If the plan has `unused_media`, the dialog shows compact previews, uses the card thumbnail/poster for video previews, and offers both `Keep media` and `Delete`.
+- `Keep media` commits with `deleteUnusedMedia=false`: only the `.md` card and derived artifacts are removed.
+- Media referenced by other cards is never offered for deletion and remains on disk.
 
 ## Routing
 

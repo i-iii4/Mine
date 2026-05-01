@@ -5,7 +5,7 @@
 use anyhow::{bail, Context};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 use thiserror::Error;
@@ -19,7 +19,7 @@ use crate::domain::collection::normalize_collection_ref;
 use crate::domain::markdown::{rename_inline_media_references, rename_wikilink_targets};
 use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultLayout};
 use crate::storage::index::IndexedBlock;
-use crate::storage::{article_audio, db, files, index, thumbnails};
+use crate::storage::{article_audio, db, files, index, media_refs, thumbnails};
 use crate::util::append_startup_trace;
 
 #[derive(Debug, Serialize)]
@@ -33,6 +33,26 @@ pub struct GridSnapshot {
 pub struct RenameBlockResult {
     pub old_slug: String,
     pub new_slug: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteBlockMedia {
+    pub path: String,
+    pub file_name: String,
+    pub kind: String,
+    pub referenced_by: Vec<String>,
+    #[serde(skip_serializing)]
+    absolute_path: PathBuf,
+    #[serde(skip_serializing)]
+    slug_owned_primary: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteBlockPlan {
+    pub slug: String,
+    pub markdown_file: String,
+    pub unused_media: Vec<DeleteBlockMedia>,
+    pub shared_media: Vec<DeleteBlockMedia>,
 }
 
 #[derive(Debug, Error, Serialize)]
@@ -481,9 +501,12 @@ pub fn rename_block_file(
     )
 }
 
-/// Delete a block: remove from index, delete .md and media files.
+/// Prepare a user-visible deletion plan for a block.
 #[tauri::command]
-pub fn delete_block(state: State<'_, AppState>, slug: String) -> Result<bool, CommandError> {
+pub fn prepare_delete_block(
+    state: State<'_, AppState>,
+    slug: String,
+) -> Result<DeleteBlockPlan, CommandError> {
     let vault_state = state
         .vault_state
         .lock()
@@ -491,30 +514,209 @@ pub fn delete_block(state: State<'_, AppState>, slug: String) -> Result<bool, Co
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
+    build_delete_block_plan(&vs.conn, &vs.vault, &slug)
+}
 
-    // Get block info for media file extension
-    let block = index::get_block(&vs.conn, &slug)?;
-    let media_ext = block.as_ref().and_then(|b| {
-        b.media_file.as_ref().and_then(|f| {
-            std::path::Path::new(f)
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|s| s.to_string())
-        })
-    });
+/// Delete a block: remove .md, selected unused media, derived artifacts, and index row.
+#[tauri::command(rename_all = "snake_case")]
+pub fn delete_block(
+    state: State<'_, AppState>,
+    slug: String,
+    delete_unused_media: Option<bool>,
+) -> Result<bool, CommandError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
-    // Remove from index first (UI updates immediately)
+    validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
+    let plan = build_delete_block_plan(&vs.conn, &vs.vault, &slug)?;
+
+    let media_paths: Vec<PathBuf> = match delete_unused_media {
+        Some(true) => plan
+            .unused_media
+            .iter()
+            .map(|media| media.absolute_path.clone())
+            .collect(),
+        Some(false) => Vec::new(),
+        None => plan
+            .unused_media
+            .iter()
+            .filter(|media| media.slug_owned_primary)
+            .map(|media| media.absolute_path.clone())
+            .collect(),
+    };
+
+    files::delete_block_files_with_media_paths(&vs.vault, &slug, &media_paths)?;
+
     let removed = index::remove_block(&vs.conn, &slug)?;
-
-    // Then delete files (may be slow for iCloud placeholders)
-    if let Err(e) = files::delete_block_files(&vs.vault, &slug, media_ext.as_deref()) {
-        log::warn!("failed to delete files for {slug}: {e:#}");
-    }
     if let Err(e) = article_audio::delete_all_artifacts(&vs.vault, &slug) {
         log::warn!("failed to delete article audio for {slug}: {e:#}");
     }
 
     Ok(removed)
+}
+
+fn build_delete_block_plan(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    slug: &str,
+) -> Result<DeleteBlockPlan, CommandError> {
+    let block = index::get_block(conn, slug)?
+        .ok_or_else(|| CommandError::Internal(format!("block not found: {slug}")))?;
+
+    let mut current_resolver = media_refs::MediaResolver::new(vault);
+    let current_media = collect_delete_media_for_block(vault, &block, &mut current_resolver);
+
+    let mut other_refs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut shared_resolver = media_refs::MediaResolver::new(vault);
+    for other in index::list_blocks(conn)? {
+        if other.slug == slug {
+            continue;
+        }
+        for media in collect_delete_media_for_block(vault, &other, &mut shared_resolver).values() {
+            other_refs
+                .entry(media.path.clone())
+                .or_default()
+                .insert(other.slug.clone());
+        }
+    }
+
+    let mut unused_media = Vec::new();
+    let mut shared_media = Vec::new();
+    for mut media in current_media.into_values() {
+        if let Some(refs) = other_refs.get(&media.path) {
+            media.referenced_by = refs.iter().cloned().collect();
+            shared_media.push(media);
+        } else {
+            unused_media.push(media);
+        }
+    }
+
+    Ok(DeleteBlockPlan {
+        slug: slug.to_string(),
+        markdown_file: format!("{slug}.md"),
+        unused_media,
+        shared_media,
+    })
+}
+
+fn collect_delete_media_for_block(
+    vault: &VaultLayout,
+    block: &IndexedBlock,
+    resolver: &mut media_refs::MediaResolver<'_>,
+) -> BTreeMap<String, DeleteBlockMedia> {
+    let mut media = BTreeMap::new();
+
+    if let Err(error) = validate_slug(&block.slug) {
+        log::warn!(
+            "delete plan skipped invalid indexed block slug {:?}: {}",
+            block.slug,
+            error
+        );
+        return media;
+    }
+
+    if let Some(file_name) = block.media_file.as_deref() {
+        if let Some(path) = media_refs::resolve_indexed_media(vault, &block.slug, file_name) {
+            insert_delete_media(vault, &mut media, &block.slug, &path, true);
+        }
+    }
+
+    if let Some(thumbnail) = block.thumbnail.as_deref() {
+        if let Some(path) = media_refs::resolve_indexed_media(vault, &block.slug, thumbnail) {
+            insert_delete_media(vault, &mut media, &block.slug, &path, false);
+        }
+    }
+
+    for reference in iter_inline_media_references(&block.body) {
+        if let Some(path) = resolver.resolve_inline_media(&block.slug, &reference) {
+            insert_delete_media(vault, &mut media, &block.slug, &path, false);
+        }
+    }
+
+    media
+}
+
+fn insert_delete_media(
+    vault: &VaultLayout,
+    media: &mut BTreeMap<String, DeleteBlockMedia>,
+    block_slug: &str,
+    path: &Path,
+    primary: bool,
+) {
+    let Some(root_relative) = vault.root_relative_reference(path) else {
+        return;
+    };
+    if !is_deletable_media_path(&root_relative) {
+        return;
+    }
+
+    let slug_owned_primary = primary && is_slug_owned_primary_media(vault, block_slug, path);
+    media
+        .entry(root_relative.clone())
+        .and_modify(|existing| {
+            existing.slug_owned_primary |= slug_owned_primary;
+        })
+        .or_insert_with(|| DeleteBlockMedia {
+            file_name: Path::new(&root_relative)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&root_relative)
+                .to_string(),
+            kind: delete_media_kind(&root_relative).to_string(),
+            referenced_by: Vec::new(),
+            absolute_path: path.to_path_buf(),
+            slug_owned_primary,
+            path: root_relative,
+        });
+}
+
+fn is_slug_owned_primary_media(vault: &VaultLayout, block_slug: &str, path: &Path) -> bool {
+    if validate_slug(block_slug).is_err() {
+        return false;
+    }
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    vault.media_path(block_slug, ext) == path
+}
+
+fn is_deletable_media_path(root_relative: &str) -> bool {
+    if root_relative.is_empty()
+        || root_relative.starts_with('.')
+        || root_relative
+            .split('/')
+            .any(|segment| segment.starts_with('.'))
+    {
+        return false;
+    }
+    let ext = Path::new(root_relative)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    !ext.is_empty() && ext != "md"
+}
+
+fn delete_media_kind(root_relative: &str) -> &'static str {
+    let ext = Path::new(root_relative)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if thumbnails::is_image_ext(&ext) {
+        "image"
+    } else if thumbnails::is_video_ext(&ext) {
+        "video"
+    } else if matches!(ext.as_str(), "mp3" | "m4a" | "wav" | "aac" | "flac" | "ogg") {
+        "audio"
+    } else if ext == "pdf" {
+        "document"
+    } else {
+        "file"
+    }
 }
 
 fn rename_block_file_inner(
@@ -1130,6 +1332,98 @@ mod tests {
             std::fs::read(vault.root().join("photo.png")).unwrap(),
             b"image-bytes"
         );
+    }
+
+    #[test]
+    fn delete_plan_keeps_media_referenced_by_another_block() {
+        let (_root, _derived, vault, conn) = make_vault();
+        persist_block(
+            &conn,
+            &vault,
+            &article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro"),
+        );
+        persist_block(
+            &conn,
+            &vault,
+            &article("Other Article", "Still uses ![[photo.png]]."),
+        );
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let plan = build_delete_block_plan(&conn, &vault, "Source Article").unwrap();
+
+        assert!(plan.unused_media.is_empty());
+        assert_eq!(plan.shared_media.len(), 1);
+        assert_eq!(plan.shared_media[0].path, "photo.png");
+        assert_eq!(
+            plan.shared_media[0].referenced_by,
+            vec!["Other Article".to_string()]
+        );
+    }
+
+    #[test]
+    fn delete_plan_splits_unused_and_shared_embedded_media() {
+        let (_root, _derived, vault, conn) = make_vault();
+        persist_block(
+            &conn,
+            &vault,
+            &article("Source Article", "![[unused.png]]\n\n![[shared.png]]"),
+        );
+        persist_block(
+            &conn,
+            &vault,
+            &article("Other Article", "Still uses ![[shared.png]]."),
+        );
+        std::fs::write(vault.root().join("unused.png"), b"unused").unwrap();
+        std::fs::write(vault.root().join("shared.png"), b"shared").unwrap();
+
+        let plan = build_delete_block_plan(&conn, &vault, "Source Article").unwrap();
+        let media_paths: Vec<PathBuf> = plan
+            .unused_media
+            .iter()
+            .map(|media| media.absolute_path.clone())
+            .collect();
+
+        assert_eq!(plan.unused_media.len(), 1);
+        assert_eq!(plan.unused_media[0].path, "unused.png");
+        assert_eq!(plan.shared_media.len(), 1);
+        assert_eq!(plan.shared_media[0].path, "shared.png");
+
+        files::delete_block_files_with_media_paths(&vault, "Source Article", &media_paths).unwrap();
+        index::remove_block(&conn, "Source Article").unwrap();
+
+        assert!(!vault.block_path("Source Article").exists());
+        assert!(!vault.root().join("unused.png").exists());
+        assert!(vault.root().join("shared.png").exists());
+    }
+
+    #[test]
+    fn delete_plan_skips_invalid_indexed_slugs_instead_of_panicking() {
+        let (_root, _derived, vault, conn) = make_vault();
+        persist_block(
+            &conn,
+            &vault,
+            &article("Source Article", "Intro\n\n![[unused.png]]\n\nOutro"),
+        );
+        std::fs::write(vault.root().join("unused.png"), b"unused").unwrap();
+
+        conn.execute(
+            "INSERT INTO blocks (slug, block_type, title, saved_at, body)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                "../corrupt",
+                "article",
+                "Corrupt index row",
+                "2026-04-23T00:00:00Z",
+                "![[unused.png]]"
+            ],
+        )
+        .unwrap();
+
+        let plan = build_delete_block_plan(&conn, &vault, "Source Article").unwrap();
+
+        assert_eq!(plan.unused_media.len(), 1);
+        assert_eq!(plan.unused_media[0].path, "unused.png");
+        assert!(plan.shared_media.is_empty());
     }
 
     #[test]

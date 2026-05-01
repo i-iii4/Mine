@@ -443,7 +443,7 @@ Foreign Markdown is safe to read and index. Mutations require care:
 | Remove collection | allowed if collection is in `Mine Collections`; legacy `tags` membership requires the manual migration tool |
 | Rename in Mine | allowed only if rename path preserves Obsidian links and unknown frontmatter |
 | Delete block | allowed only after existing delete confirmation |
-| Media cleanup | must not delete embedded media solely because no `file:` exists; media referenced by body wikilinks such as `![[name.jpg]]` is protected |
+| Media cleanup | delete confirmation must surface unused local media; media referenced by other cards is protected even if referenced via body wikilinks such as `![[name.jpg]]` |
 | Web clipper save | unchanged as a Mine-owned write path; collection metadata uses `Mine Collections` |
 
 ## Directory / Import Scenarios

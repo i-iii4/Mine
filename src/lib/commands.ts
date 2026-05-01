@@ -6,6 +6,7 @@ import type {
   IndexedBlock,
   GridSnapshot,
   LightBlock,
+  DeleteBlockPlan,
   RenameBlockError,
   RenameBlockResult,
   TagCount,
@@ -118,8 +119,14 @@ export const renameBlockFile = async (old_slug: string, new_stem: string) => {
   }
 };
 
-export const deleteBlock = (slug: string) =>
-  invoke<boolean>("delete_block", { slug });
+export const prepareDeleteBlock = (slug: string) =>
+  invoke<DeleteBlockPlan>("prepare_delete_block", { slug });
+
+export const deleteBlock = (slug: string, delete_unused_media?: boolean) =>
+  invoke<boolean>(
+    "delete_block",
+    delete_unused_media === undefined ? { slug } : { slug, delete_unused_media },
+  );
 
 // Tags
 export const listTags = () =>

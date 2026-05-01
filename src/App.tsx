@@ -41,7 +41,7 @@ const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform })
   };
 };
 
-import type { IndexedBlock, LightBlock, TagCount, ChannelDto, GridSnapshot } from "@/types";
+import type { DeleteBlockPlan, IndexedBlock, LightBlock, TagCount, ChannelDto, GridSnapshot } from "@/types";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   getVaultPath,
@@ -55,6 +55,7 @@ import {
   reorderChannels,
   renameChannel,
   renameBlockFile,
+  prepareDeleteBlock,
   deleteTagFromAll,
   addTag,
   removeTag,
@@ -85,6 +86,7 @@ import { DragCardPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
+import { DeleteBlockDialog } from "@/components/DeleteBlockDialog";
 
 const Search = lazy(async () => {
   const mod = await import("@/components/Search");
@@ -290,6 +292,9 @@ export function AppWithVault({
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlockTags, setSelectedBlockTags] = useState<string[]>([]);
+  const [deleteTargetSlug, setDeleteTargetSlug] = useState<string | null>(null);
+  const [deletePlan, setDeletePlan] = useState<DeleteBlockPlan | null>(null);
+  const [deletePlanError, setDeletePlanError] = useState<string | null>(null);
   const [detailTopMenuMode, setDetailTopMenuMode] = useState<DetailTopMenuMode>(
     getStoredDetailTopMenuMode,
   );
@@ -602,6 +607,31 @@ export function AppWithVault({
       cancelled = true;
     };
   }, [selectedBlock]);
+
+  useEffect(() => {
+    if (!deleteTargetSlug) {
+      setDeletePlan(null);
+      setDeletePlanError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setDeletePlan(null);
+    setDeletePlanError(null);
+    prepareDeleteBlock(deleteTargetSlug)
+      .then((plan) => {
+        if (!cancelled) setDeletePlan(plan);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setDeletePlanError(err instanceof Error ? err.message : String(err));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deleteTargetSlug]);
 
   const flushRefreshQueue = useCallback(async () => {
     if (!vaultReady || refreshInFlightRef.current) {
@@ -1374,15 +1404,25 @@ export function AppWithVault({
     [reloadAllSnapshots, selectedBlock?.slug],
   );
 
-  const handleDeleteBlock = useCallback(
-    async (slug: string) => {
+  const requestDeleteBlock = useCallback((slug: string) => {
+    setDeleteTargetSlug(slug);
+  }, []);
+
+  const closeDeleteDialog = useCallback(() => {
+    setDeleteTargetSlug(null);
+    setDeletePlan(null);
+    setDeletePlanError(null);
+  }, []);
+
+  const performDeleteBlock = useCallback(
+    async (slug: string, deleteUnusedMedia: boolean) => {
       console.log("[DELETE] start", slug, "currentTag:", currentTag, "selectedBlock:", selectedBlock?.slug);
       setSelectedBlock(null);
       setFocusedBlockId(null);
       console.log("[DELETE] cleared selectedBlock/focusedBlockId");
       try {
         console.log("[DELETE] calling deleteBlock IPC...");
-        await deleteBlock(slug);
+        await deleteBlock(slug, deleteUnusedMedia);
         console.log("[DELETE] deleteBlock IPC done");
       } catch (err) {
         console.error("[DELETE] deleteBlock FAILED:", err);
@@ -1392,6 +1432,16 @@ export function AppWithVault({
       console.log("[DELETE] reloadAllSnapshots done, blocks:", blocks.length, "tags:", tags.length);
     },
     [reloadAllSnapshots, currentTag, selectedBlock, blocks.length, tags.length],
+  );
+
+  const confirmDeleteBlock = useCallback(
+    (deleteUnusedMedia: boolean) => {
+      if (!deleteTargetSlug || !deletePlan || deletePlanError) return;
+      const slug = deleteTargetSlug;
+      closeDeleteDialog();
+      void performDeleteBlock(slug, deleteUnusedMedia);
+    },
+    [closeDeleteDialog, deletePlan, deletePlanError, deleteTargetSlug, performDeleteBlock],
   );
 
   const handleRenameBlock = useCallback(
@@ -1533,7 +1583,7 @@ export function AppWithVault({
                 onToggleTag={handleToggleTag}
                 onCreateAndAssign={handleCreateTagFromMenu}
                 onRequestRename={setRenamingBlock}
-                onDeleteBlock={handleDeleteBlock}
+                onRequestDelete={requestDeleteBlock}
                 onColumnCountChange={handleColumnCountChange}
                 hasMoreBlocks={hasMoreBlocks}
                 loadingMoreBlocks={loadingMoreBlocks}
@@ -1568,7 +1618,7 @@ export function AppWithVault({
               onToggleTag={handleToggleTag}
               onCreateAndAssign={handleCreateTagFromMenu}
               onRequestRename={setRenamingBlock}
-              onRequestDelete={handleDeleteBlock}
+              onRequestDelete={requestDeleteBlock}
               onOpenRelatedNote={handleOpenRelatedNote}
               onTagsChanged={() => {
                 void reloadAllSnapshots();
@@ -1576,6 +1626,19 @@ export function AppWithVault({
             />
           </Suspense>
         )}
+
+        <DeleteBlockDialog
+          open={deleteTargetSlug !== null}
+          vaultPath={vaultPath}
+          thumbsRootPath={thumbsRootPath ?? undefined}
+          plan={deletePlan}
+          error={deletePlanError}
+          onOpenChange={(open) => {
+            if (!open) closeDeleteDialog();
+          }}
+          onKeepMedia={() => confirmDeleteBlock(false)}
+          onDeleteMedia={() => confirmDeleteBlock(Boolean(deletePlan?.unused_media.length))}
+        />
       </main>
 
       <Suspense fallback={null}>
@@ -1706,7 +1769,7 @@ interface RouteContext {
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
-  onDeleteBlock: (slug: string) => void;
+  onRequestDelete: (slug: string) => void;
   onColumnCountChange: (count: number) => void;
   hasMoreBlocks: boolean;
   loadingMoreBlocks: boolean;

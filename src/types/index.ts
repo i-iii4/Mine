@@ -113,6 +113,20 @@ export interface RenameBlockResult {
   new_slug: string;
 }
 
+export interface DeleteBlockMedia {
+  path: string;
+  file_name: string;
+  kind: "image" | "video" | "audio" | "document" | "file";
+  referenced_by: string[];
+}
+
+export interface DeleteBlockPlan {
+  slug: string;
+  markdown_file: string;
+  unused_media: DeleteBlockMedia[];
+  shared_media: DeleteBlockMedia[];
+}
+
 export type RenameBlockError =
   | { kind: "no_vault" }
   | { kind: "block_not_found"; slug: string }

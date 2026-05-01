@@ -366,7 +366,7 @@ const BASE_PROPS = {
   onToggleTag: vi.fn(),
   onCreateAndAssign: vi.fn(),
   onRequestRename: vi.fn(),
-  onDeleteBlock: vi.fn(),
+  onRequestDelete: vi.fn(),
 };
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
