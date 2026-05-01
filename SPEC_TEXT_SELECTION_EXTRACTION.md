@@ -374,7 +374,9 @@ The resulting files are useful outside Mine:
 8. Edit the source paragraph and verify the excerpt body does not change.
 9. Rename the source article in Mine and verify the excerpt's related note
    target updates while keeping `#^block-id`.
-10. Open both files in Obsidian and verify they remain readable Markdown.
+10. Click the excerpt card's related note in Mine and verify Detail opens the
+    source article at the anchored paragraph.
+11. Open both files in Obsidian and verify they remain readable Markdown.
 
 ## Acceptance Criteria
 
@@ -387,6 +389,8 @@ The resulting files are useful outside Mine:
 - [x] Multi-paragraph selections link only to the first selected paragraph.
 - [x] Source edits do not auto-sync into the excerpt card.
 - [x] `Mine Related Notes` stores `[[Source#^block-id]]`.
+- [x] Clicking that related note in Mine opens the source article at the
+      anchored paragraph when the marker is still present.
 - [x] Source note rename preserves the block anchor.
 - [x] Existing card drag and inline-media drag remain unchanged.
 - [x] Unsupported selections fail without source mutation.
@@ -400,4 +404,4 @@ The resulting files are useful outside Mine:
 | T.3 | `extract_text_selection` command | Rust command tests |
 | T.4 | Detail selection mapping and drag payload | TypeScript build + manual QA |
 | T.5 | App drop routing and event-driven refresh | TypeScript build + App tests |
-| T.6 | Related-note UI opens the source article while preserving the `#^id` target in metadata | Frontend/component manual QA |
+| T.6 | Related-note UI opens the source article and scrolls to `#^id` when the block-id marker exists | Frontend/component manual QA |

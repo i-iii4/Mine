@@ -157,6 +157,9 @@ After successful extraction:
    successful drop.
 3. Metadata renders the related note as provenance/source context, not as a
    synced body.
+4. Clicking a related note that includes `#^block-id` opens the source article
+   by base slug and scrolls the Detail body to the visible block-id marker when
+   the marker is still present.
 
 ## Routing
 

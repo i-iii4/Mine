@@ -33,6 +33,13 @@ function baseRelatedNoteSlug(target: string): string {
   return target.split("#", 1)[0] ?? target;
 }
 
+function relatedNoteBlockAnchor(target: string): string | null {
+  const fragment = target.split("#", 2)[1];
+  if (!fragment?.startsWith("^")) return null;
+  const blockId = fragment.slice(1).trim();
+  return blockId || null;
+}
+
 /** Pin the DragOverlay so the cursor tip sits just outside the top-left corner. */
 const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
   if (!activatorEvent || !draggingNodeRect) return transform;
@@ -311,6 +318,7 @@ export function AppWithVault({
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
+  const [selectedBlockAnchor, setSelectedBlockAnchor] = useState<string | null>(null);
   const [selectedBlockTags, setSelectedBlockTags] = useState<string[]>([]);
   const [deleteTargetSlug, setDeleteTargetSlug] = useState<string | null>(null);
   const [deletePlan, setDeletePlan] = useState<DeleteBlockPlan | null>(null);
@@ -382,6 +390,7 @@ export function AppWithVault({
   // Close Detail and clear grid focus when navigating to a different route
   useEffect(() => {
     setSelectedBlock(null);
+    setSelectedBlockAnchor(null);
     setFocusedBlockId(null);
   }, [location.pathname]);
 
@@ -406,6 +415,7 @@ export function AppWithVault({
         const block = ab.find((b) => b.id === cur);
         if (block) {
           setFocusedBlockId(null);
+          setSelectedBlockAnchor(null);
           setSelectedBlock(block);
         }
         return;
@@ -1059,17 +1069,20 @@ export function AppWithVault({
 
   const handleBlockClick = useCallback((block: LightBlock) => {
     setFocusedBlockId(null);
+    setSelectedBlockAnchor(null);
     setSelectedBlock(block);
   }, []);
 
   const handleDetailClose = useCallback(() => {
     if (selectedBlock) setFocusedBlockId(selectedBlock.id);
+    setSelectedBlockAnchor(null);
     setSelectedBlock(null);
   }, [selectedBlock]);
 
   const handleScrollToTop = useCallback(() => {
     if (selectedBlock) {
       setFocusedBlockId(selectedBlock.id);
+      setSelectedBlockAnchor(null);
       setSelectedBlock(null);
     }
     setScrollToTopSignal((n) => n + 1);
@@ -1090,6 +1103,7 @@ export function AppWithVault({
       }
       if (newIdx >= 0 && newIdx < activeBlocks.length) {
         const target = activeBlocks[newIdx]!;
+        setSelectedBlockAnchor(null);
         setSelectedBlock(target);
       }
     },
@@ -1102,9 +1116,11 @@ export function AppWithVault({
   }, []);
 
   const handleOpenRelatedNote = useCallback((slug: string) => {
+    const blockAnchor = relatedNoteBlockAnchor(slug);
     void getBlock(baseRelatedNoteSlug(slug)).then((block) => {
       if (block) {
         setFocusedBlockId(null);
+        setSelectedBlockAnchor(blockAnchor);
         setSelectedBlock(block);
       }
     });
@@ -1485,6 +1501,7 @@ export function AppWithVault({
     async (slug: string, deleteUnusedMedia: boolean) => {
       console.log("[DELETE] start", slug, "currentTag:", currentTag, "selectedBlock:", selectedBlock?.slug);
       setSelectedBlock(null);
+      setSelectedBlockAnchor(null);
       setFocusedBlockId(null);
       console.log("[DELETE] cleared selectedBlock/focusedBlockId");
       try {
@@ -1684,6 +1701,7 @@ export function AppWithVault({
           <Suspense fallback={null}>
             <Detail
               block={selectedBlock}
+              scrollAnchor={selectedBlockAnchor}
               vaultPath={vaultPath}
               thumbsRootPath={thumbsRootPath ?? undefined}
               onClose={handleDetailClose}
@@ -1722,6 +1740,7 @@ export function AppWithVault({
           open={searchOpen}
           onClose={() => setSearchOpen(false)}
           onSelect={(block) => {
+            setSelectedBlockAnchor(null);
             setSelectedBlock(block);
             setSearchOpen(false);
           }}

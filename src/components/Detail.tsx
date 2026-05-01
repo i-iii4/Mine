@@ -35,6 +35,7 @@ const DETAIL_BOTTOM_SAFE_SPACE_CLASS = "pb-20";
 
 interface DetailProps {
   block: LightBlock | IndexedBlock;
+  scrollAnchor?: string | null;
   vaultPath: string;
   thumbsRootPath?: string;
   detailTopMenuMode?: DetailTopMenuMode;
@@ -72,6 +73,7 @@ function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock
 
 export function Detail({
   block,
+  scrollAnchor = null,
   vaultPath,
   thumbsRootPath,
   detailTopMenuMode = "island",
@@ -261,6 +263,7 @@ export function Detail({
               <BlockContent
                 block={block}
                 fullBlock={fullBlock}
+                scrollAnchor={scrollAnchor}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath}
               />
@@ -384,7 +387,7 @@ function MetadataPanel({
               return isAvailable ? (
                 <button
                   key={slug}
-                  onClick={() => onOpenRelatedNote(baseRelatedNoteSlug(slug))}
+                  onClick={() => onOpenRelatedNote(slug)}
                   className="block text-left text-sm text-foreground hover:underline"
                 >
                   {slug}
@@ -454,11 +457,13 @@ function isTwitterUrl(url: string): boolean {
 function BlockContent({
   block,
   fullBlock,
+  scrollAnchor,
   vaultPath,
   thumbsRootPath,
 }: {
   block: LightBlock | IndexedBlock;
   fullBlock: IndexedBlock | null;
+  scrollAnchor?: string | null;
   vaultPath: string;
   thumbsRootPath?: string;
 }) {
@@ -550,6 +555,7 @@ function BlockContent({
             sourceSlug={block.slug}
             sourceBodyHash={fullBlock?.body_hash ?? (isIndexedBlock(block) ? block.body_hash : null)}
             sourceTitle={block.title ?? block.slug}
+            scrollAnchor={scrollAnchor}
           />
         </div>
       );
@@ -619,6 +625,7 @@ function ArticleBody({
   sourceSlug,
   sourceBodyHash,
   sourceTitle,
+  scrollAnchor,
 }: {
   body: string;
   vaultPath: string;
@@ -627,6 +634,7 @@ function ArticleBody({
   sourceSlug?: string;
   sourceBodyHash?: string | null;
   sourceTitle?: string | null;
+  scrollAnchor?: string | null;
 }) {
   const articleRef = useRef<HTMLDivElement | null>(null);
   const [selectionExtraction, setSelectionExtraction] =
@@ -686,6 +694,27 @@ function ArticleBody({
     setSelectionExtraction(null);
   }, [body, sourceBodyHash, sourceSlug]);
 
+  // Phase 18.H.2: rewrite Obsidian wikilinks into standard markdown
+  // before passing to react-markdown. The raw `.md` file stays in
+  // wikilink form for Obsidian; only the render pipeline sees the
+  // transformed markdown.
+  const processedBody = useMemo(() => preprocessWikilinks(body), [body]);
+
+  useEffect(() => {
+    if (!scrollAnchor || !articleRef.current) return;
+    const root = articleRef.current;
+    const frame = window.requestAnimationFrame(() => {
+      const element = findElementForBlockAnchor(root, scrollAnchor);
+      if (!element) return;
+      element.scrollIntoView?.({ block: "center", behavior: "smooth" });
+      element.setAttribute("data-scroll-anchor-hit", "true");
+      window.setTimeout(() => {
+        element.removeAttribute("data-scroll-anchor-hit");
+      }, 1400);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [processedBody, scrollAnchor]);
+
   const components: Components = useMemo(
     () => ({
       img: ({ src, alt, ...props }) => {
@@ -741,12 +770,6 @@ function ArticleBody({
     }),
     [previewManifest, sourceSlug, thumbsRootPath, vaultPath],
   );
-
-  // Phase 18.H.2: rewrite Obsidian wikilinks into standard markdown
-  // before passing to react-markdown. The raw `.md` file stays in
-  // wikilink form for Obsidian; only the render pipeline sees the
-  // transformed markdown.
-  const processedBody = useMemo(() => preprocessWikilinks(body), [body]);
 
   return (
     <div
@@ -854,6 +877,20 @@ function resolveImageSrc(src: string, vaultPath: string): string {
     return src;
   }
   return mediaUrl(vaultPath, src);
+}
+
+function findElementForBlockAnchor(root: HTMLElement, blockId: string): HTMLElement | null {
+  const marker = `^${blockId}`;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    if (node.textContent?.includes(marker)) {
+      const parent = node.parentElement;
+      return parent?.closest<HTMLElement>("p, li, blockquote, h1, h2, h3, h4, h5, h6") ?? parent ?? null;
+    }
+    node = walker.nextNode();
+  }
+  return null;
 }
 
 function isExtractableLocalImage(src: string): boolean {

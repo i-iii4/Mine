@@ -26,7 +26,9 @@ Obsidian block reference на первый выбранный параграф.
 - Detail article body получил drag payload `text_selection` для выделенного
   текста; App drop на sidebar collection вызывает `extractTextSelection`.
 - Related Notes UI резолвит `Source#^id` по base slug, поэтому source note
-  открывается из metadata.
+  открывается из metadata, сохраняя block anchor.
+- Related Notes click для `Source#^id` открывает source article и прокручивает
+  Detail к `^id` маркеру, если он всё ещё есть в тексте.
 - Обновлены `SPEC_TEXT_SELECTION_EXTRACTION.md`, `SPEC_FRONTEND.md` и
   `SPEC_INTEGRATION.md` из planned-контракта в implemented v1.
 
