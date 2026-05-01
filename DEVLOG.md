@@ -29,17 +29,21 @@ Obsidian block reference на первый выбранный параграф.
   открывается из metadata, сохраняя block anchor.
 - Related Notes click для `Source#^id` открывает source article и прокручивает
   Detail к `^id` маркеру, если он всё ещё есть в тексте.
-- Text selection extraction переведён с `dnd-kit` на article body на native
-  selected-text drag/drop: обычное выделение, `Cmd+C` и context menu больше не
-  подменяются custom draggable состоянием.
-- Sidebar channel rows принимают native `application/x-mine-text-selection`
-  drop и вызывают тот же `extractTextSelection` command.
-- Для WebKit/Tauri добавлен same-WebView in-memory fallback активного
+- Text selection extraction переведён с `dnd-kit` на article body на ручной
+  Pointer Events drag из уже существующего выделения: обычное выделение,
+  `Cmd+C` и context menu остаются native, а drag gesture внутри выделения
+  гасит native WKWebView drag через `preventDefault()`.
+- Ручной selected-text drag берёт pointer capture, активируется только после
+  movement threshold, наводит hover по sidebar row через `elementFromPoint` и
+  вызывает тот же `extractTextSelection` command на pointerup.
+- Hit-test старта drag проверяет и `Range.getClientRects()`, и caret-at-point,
+  чтобы выделение не ломалось на WebKit/рендеринговых случаях, где rects
+  недоступны или неполны.
+- Sidebar channel rows всё ещё принимают native
+  `application/x-mine-text-selection` drop как browser compatibility path.
+- Для WebKit/Tauri оставлен same-WebView in-memory fallback активного
   text-selection payload, потому что custom MIME может не быть виден на
-  промежуточном `dragover`; hover/drop в sidebar снова работают.
-- Если WKWebView вообще не отдаёт usable native selected-text drag events,
-  Detail включает pointer fallback: только из уже существующего выделения, с
-  movement threshold, hover по sidebar row и тем же `extractTextSelection`.
+  промежуточном `dragover`.
 - Global file DropZone теперь включает `Drop files to add` только после Tauri
   `enter` с непустыми file paths; native selected-text drag больше не вызывает
   file-import overlay.

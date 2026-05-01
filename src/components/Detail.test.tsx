@@ -288,6 +288,96 @@ describe("Detail", () => {
     selection?.removeAllRanges();
   });
 
+  it("starts pointer fallback from caret hit-testing when selection rects are unavailable", () => {
+    const onTextSelectionDrop = vi.fn();
+    const { container } = render(
+      <Detail
+        block={block({
+          body: "Alpha beta gamma",
+          body_hash: "body-hash-1",
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onTextSelectionDrop={onTextSelectionDrop}
+      />,
+    );
+
+    const paragraph = container.querySelector("p")!;
+    const textNode = paragraph.firstChild!;
+    const range = document.createRange();
+    range.setStart(textNode, "Alpha ".length);
+    range.setEnd(textNode, "Alpha beta".length);
+    Object.defineProperty(range, "getClientRects", {
+      value: vi.fn(() => []),
+    });
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const pointRange = document.createRange();
+    pointRange.setStart(textNode, "Alpha b".length);
+    pointRange.collapse(true);
+    const originalCaretRangeFromPoint = (document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    }).caretRangeFromPoint;
+    Object.defineProperty(document, "caretRangeFromPoint", {
+      configurable: true,
+      value: vi.fn(() => pointRange),
+    });
+
+    const row = document.createElement("div");
+    row.dataset.sidebarTextDropTag = "alpha";
+    document.body.appendChild(row);
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn(() => row),
+    });
+
+    fireEvent.pointerDown(paragraph, {
+      button: 0,
+      pointerType: "mouse",
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.pointerMove(window, {
+      pointerType: "mouse",
+      clientX: 20,
+      clientY: 10,
+    });
+    fireEvent.pointerUp(window, {
+      pointerType: "mouse",
+      clientX: 20,
+      clientY: 10,
+    });
+
+    expect(onTextSelectionDrop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "text_selection",
+        selectedText: "beta",
+      }),
+      "alpha",
+    );
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: originalElementFromPoint,
+    });
+    Object.defineProperty(document, "caretRangeFromPoint", {
+      configurable: true,
+      value: originalCaretRangeFromPoint,
+    });
+    row.remove();
+    selection?.removeAllRanges();
+  });
+
   it("decodes local wikilink image paths for original media and preview lookup", () => {
     const b = block({
       body: "![[Title (image 1).jpg]]",
