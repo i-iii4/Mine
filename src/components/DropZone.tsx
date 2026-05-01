@@ -18,6 +18,7 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
   const currentTagRef = useRef(currentTag);
   currentTagRef.current = currentTag;
   const importingRef = useRef(false);
+  const fileDragActiveRef = useRef(false);
 
   const handleDrop = useCallback(
     async (paths: string[]) => {
@@ -61,11 +62,22 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
 
     getCurrentWebviewWindow()
       .onDragDropEvent((event) => {
-        if (event.payload.type === "over") {
+        if (event.payload.type === "enter") {
+          fileDragActiveRef.current = event.payload.paths.length > 0;
+          setDragging(fileDragActiveRef.current);
+        } else if (event.payload.type === "over") {
+          if (!fileDragActiveRef.current) return;
           setDragging(true);
         } else if (event.payload.type === "drop") {
-          handleDrop(event.payload.paths);
+          const shouldHandleDrop = fileDragActiveRef.current || event.payload.paths.length > 0;
+          fileDragActiveRef.current = false;
+          if (shouldHandleDrop) {
+            handleDrop(event.payload.paths);
+          } else {
+            setDragging(false);
+          }
         } else if (event.payload.type === "leave") {
+          fileDragActiveRef.current = false;
           setDragging(false);
         }
       })
@@ -75,6 +87,17 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
 
     return () => unlisten?.();
   }, [handleDrop]);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      fileDragActiveRef.current = false;
+      setDragging(false);
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [dragging]);
 
   // Auto-hide error after 4 seconds
   useEffect(() => {
@@ -135,4 +158,3 @@ const IMAGE_EXTS = new Set([
 const VIDEO_EXTS = new Set([
   "mp4", "mov", "avi", "mkv", "webm", "m4v",
 ]);
-

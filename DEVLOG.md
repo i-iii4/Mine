@@ -34,6 +34,11 @@ Obsidian block reference на первый выбранный параграф.
   подменяются custom draggable состоянием.
 - Sidebar channel rows принимают native `application/x-mine-text-selection`
   drop и вызывают тот же `extractTextSelection` command.
+- Global file DropZone теперь включает `Drop files to add` только после Tauri
+  `enter` с непустыми file paths; native selected-text drag больше не вызывает
+  file-import overlay.
+- В видимом file-drop overlay клавиша `Escape` сбрасывает drag state и закрывает
+  overlay без импорта.
 - Обновлены `SPEC_TEXT_SELECTION_EXTRACTION.md`, `SPEC_FRONTEND.md` и
   `SPEC_INTEGRATION.md` из planned-контракта в implemented v1.
 
@@ -43,7 +48,7 @@ Obsidian block reference на первый выбранный параграф.
 - `cargo test --manifest-path src-tauri/Cargo.toml rename_wikilink_targets`
 - `cargo test --manifest-path src-tauri/Cargo.toml rename_block_file_rewrites_links_and_inline_media`
 - `npm run build`
-- `npm run test -- src/App.test.tsx src/components/Detail.test.tsx src/components/Sidebar.test.tsx src/components/Search.test.tsx`
+- `npm run test -- src/App.test.tsx src/components/Detail.test.tsx src/components/Sidebar.test.tsx src/components/DropZone.test.tsx src/components/Search.test.tsx`
 
 ## 01.05.2026 [primary] — Text selection extraction spec
 

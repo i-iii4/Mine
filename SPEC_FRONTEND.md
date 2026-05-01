@@ -112,6 +112,15 @@ deleteChannel(tag: string): Promise<boolean>
 - `Keep media` commits with `deleteUnusedMedia=false`: only the `.md` card and derived artifacts are removed.
 - Media referenced by other cards is never offered for deletion and remains on disk.
 
+## File drop overlay
+
+The global file `DropZone` listens to Tauri webview drag/drop events and should
+show the import overlay only for real file drags. It must gate overlay state on
+the Tauri `enter` event carrying at least one path. Plain native drags inside
+the WebView, including selected text extraction drags, must not show the `Drop
+files to add` overlay. While the overlay is visible, `Escape` cancels the
+overlay state without importing anything.
+
 ## Text selection extraction
 
 Detail article body supports native browser dragging of a selected text range
