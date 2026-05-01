@@ -37,6 +37,8 @@ import { CardMoreMenu } from "./CardHoverMenu";
 const CLASSIC_LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-12";
 const ISLANDS_LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-20";
 const DETAIL_BOTTOM_SAFE_SPACE_CLASS = "pb-20";
+const ARTICLE_H1_CLASSES = "mt-0 mb-4 text-lg leading-6 font-semibold";
+const ARTICLE_SECTION_HEADING_CLASSES = "mt-6 mb-2 text-base leading-5 font-semibold";
 
 interface DetailProps {
   block: LightBlock | IndexedBlock;
@@ -768,22 +770,46 @@ function ArticleBody({
         <blockquote {...markdownBlockPositionProps(node)} {...props} />
       ),
       h1: ({ node, ...props }) => (
-        <h1 {...markdownBlockPositionProps(node)} {...props} />
+        <h1
+          {...markdownBlockPositionProps(node)}
+          {...props}
+          className={cn(ARTICLE_H1_CLASSES, props.className)}
+        />
       ),
       h2: ({ node, ...props }) => (
-        <h2 {...markdownBlockPositionProps(node)} {...props} />
+        <h2
+          {...markdownBlockPositionProps(node)}
+          {...props}
+          className={cn(ARTICLE_SECTION_HEADING_CLASSES, props.className)}
+        />
       ),
       h3: ({ node, ...props }) => (
-        <h3 {...markdownBlockPositionProps(node)} {...props} />
+        <h3
+          {...markdownBlockPositionProps(node)}
+          {...props}
+          className={cn(ARTICLE_SECTION_HEADING_CLASSES, props.className)}
+        />
       ),
       h4: ({ node, ...props }) => (
-        <h4 {...markdownBlockPositionProps(node)} {...props} />
+        <h4
+          {...markdownBlockPositionProps(node)}
+          {...props}
+          className={cn(ARTICLE_SECTION_HEADING_CLASSES, props.className)}
+        />
       ),
       h5: ({ node, ...props }) => (
-        <h5 {...markdownBlockPositionProps(node)} {...props} />
+        <h5
+          {...markdownBlockPositionProps(node)}
+          {...props}
+          className={cn(ARTICLE_SECTION_HEADING_CLASSES, props.className)}
+        />
       ),
       h6: ({ node, ...props }) => (
-        <h6 {...markdownBlockPositionProps(node)} {...props} />
+        <h6
+          {...markdownBlockPositionProps(node)}
+          {...props}
+          className={cn(ARTICLE_SECTION_HEADING_CLASSES, props.className)}
+        />
       ),
       img: ({ src, alt, ...props }) => {
         const decodedSrc = decodeLocalMarkdownUrl(src ?? "");

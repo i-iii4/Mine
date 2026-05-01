@@ -43,6 +43,21 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 **Только три размера.** `text-xs`, `text-xl`, `text-2xl` и т.д. не используются.
 
+### Markdown headings in articles
+
+Article prose does not inherit heading sizes from `@tailwindcss/typography`
+defaults. Mine maps Markdown headings onto the same three-token typography
+scale used by the rest of the product:
+
+| Element | Typography | Где |
+|---|---|---|
+| Article body `h1` | `text-lg leading-6 font-semibold` | Видимый заголовок статьи / link clip body H1 |
+| Article body `h2-h6` | `text-base leading-5 font-semibold` | Внутренние секции markdown |
+| Article body paragraphs | `text-base` via prose body | Основной текст статьи |
+
+`30px/36px` prose-default `h1` is not allowed in Mine; article heading
+typography must stay inside the 12/14/18px design-system scale.
+
 ### Веса
 
 | Вес | Утилита | Где |

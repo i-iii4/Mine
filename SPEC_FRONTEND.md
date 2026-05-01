@@ -1,6 +1,6 @@
 # SPEC: Frontend
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 ## Overview
 
@@ -17,7 +17,10 @@ interface IndexedBlock {
   id: number;
   slug: string;
   block_type: "image" | "article" | "link" | "video" | "file";
-  title: string | null;
+  title: string | null; // legacy frontmatter.title; not canonical for new writes
+  content_heading: string | null; // first body H1, if present
+  display_title: string | null; // first body H1, then legacy title; null for untitled cards
+  fallback_label: string; // filename stem / media filename for non-title surfaces
   description: string | null;
   url: string | null;
   media_file: string | null;
@@ -32,6 +35,11 @@ interface IndexedBlock {
   tags: string[]; // legacy physical name; semantic meaning: CollectionRef[]
 }
 ```
+
+Frontend title rendering follows [SPEC_DISPLAY_TITLE.md](./SPEC_DISPLAY_TITLE.md):
+card title slots use `display_title` and render it as one line with ellipsis.
+If `display_title` is null, social/quote/media cards do not invent a title
+slot; utility surfaces can still show `fallback_label`.
 
 ### TagCount
 
@@ -178,7 +186,6 @@ type TextSelectionDragPayload = {
   firstBlockStart: number;
   firstBlockEnd: number;
   sourceBodyHash: string;
-  title: string | null;
 };
 ```
 
@@ -387,7 +394,8 @@ that belongs to `storage::media_refs`.
 - Метаданные справа (Geist Mono): AUDIO, WARNING, RESOLUTION, DATE, TYPE, SOURCE, AUTHOR
 - Metadata labels используют `text-sm text-muted-foreground`; значения — `text-sm text-foreground`
 - `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel; rename/delete/source/channel actions живут в shared overflow menu
-- После успешного rename Detail продолжает показывать тот же блок уже под новым slug и новым visible title
+- После успешного rename Detail продолжает показывать тот же блок уже под новым slug; visible title меняется только если изменился body H1 or legacy `frontmatter.title`, а filename-only surfaces используют новый `fallback_label`
+- Markdown body H1 не полагается на prose-default sizes; Detail задаёт `text-lg leading-6 font-semibold` для `h1` и `text-base leading-5 font-semibold` для `h2-h6`, чтобы article typography не выходила за рамки дизайн-системы
 - Кнопка X справа вверху, Esc для закрытия
 - Стрелки влево/вправо — линейная навигация между блоками
 - Detail — plain div с `absolute inset-0 z-10` (не Radix Dialog)

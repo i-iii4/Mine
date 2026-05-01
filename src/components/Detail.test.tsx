@@ -388,4 +388,35 @@ describe("Detail", () => {
     expect(screen.getByTestId("video-from-blob")).toHaveAttribute("data-muted", "true");
     expect(screen.getByTestId("video-from-blob")).toHaveAttribute("data-loop", "true");
   });
+
+  it("renders article headings with design-system typography instead of prose defaults", () => {
+    render(
+      <Detail
+        block={block({
+          body: "# Heading\n\n## Section",
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { level: 1, name: "Heading" })).toHaveClass(
+      "text-lg",
+      "leading-6",
+      "font-semibold",
+    );
+    expect(screen.getByRole("heading", { level: 2, name: "Section" })).toHaveClass(
+      "text-base",
+      "leading-5",
+      "font-semibold",
+    );
+  });
 });

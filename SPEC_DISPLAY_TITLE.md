@@ -78,6 +78,9 @@ Detail:
    must not also appear.
 4. If there is no H1, Detail should not invent one from filename or selected
    text.
+5. Body H1 follows Mine typography tokens, not raw typography-plugin defaults:
+   `text-lg` / 18px / 24px with `font-semibold`.
+6. Body H2-H6 use `text-base` / 14px / 20px with `font-semibold`.
 
 Search:
 

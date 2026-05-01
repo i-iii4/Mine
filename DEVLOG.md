@@ -1,5 +1,54 @@
 # Devlog
 
+## 01.05.2026 19:52 -03 [primary] — Article H1 typography aligned with design system
+
+### Goal
+
+Убрать у article body H1 внешний `@tailwindcss/typography` размер `30px/36px`
+и подчинить заголовки markdown той же 12/14/18px шкале, что и остальной UI.
+
+### Completed
+
+- В [Detail.tsx](src/components/Detail.tsx) article markdown headings перестали
+  жить на prose-default sizing.
+- `h1` теперь рендерится как `text-lg leading-6 font-semibold`
+  (18px/24px), а `h2-h6` — как `text-base leading-5 font-semibold`
+  (14px/20px).
+- Добавлен regression test, который закрепляет этот typography contract и не
+  даёт `prose-sm` снова протащить `30px` heading в Detail.
+- Обновлены [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md),
+  [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) и
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md).
+
+### Verification
+
+- `bun run test src/components/Detail.test.tsx`
+- `bun run build`
+
+## 01.05.2026 14:34 -03 [docs] — Display title contract planned
+
+### Goal
+
+Зафиксировать новый title contract: искусственный `frontmatter.title` не
+является каноническим новым полем. Реальный видимый заголовок живёт в Markdown
+body как H1, а filename остаётся identity/fallback label.
+
+### Completed
+
+- Добавлена [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) с контрактом
+  `body H1 -> legacy frontmatter.title -> filename fallback`.
+- Обновлены block, PRD, Obsidian compatibility, clipper, frontend, storage,
+  rename/identity, article-audio, thumbnails, grid/display-mode документы.
+- Text-selection and inline-media extraction specs now explicitly reject
+  generated title/H1 from selected text, alt text, or media filename.
+- [PLAN.md](PLAN.md) получил Phase 22 с планом реализации backend read model,
+  frontend rendering, write paths, rename/audio/thumbnail consequences, tests
+  and migration boundaries.
+
+### Verification
+
+- Docs-only change; no runtime tests run.
+
 ## 01.05.2026 [primary] — Text selection extraction implementation
 
 ### Goal
