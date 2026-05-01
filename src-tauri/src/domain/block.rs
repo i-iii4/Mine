@@ -190,6 +190,14 @@ pub struct ParsedMarkdownBlock {
     pub index_warning: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedTitleFields {
+    pub content_heading: Option<String>,
+    pub legacy_title: Option<String>,
+    pub display_title: Option<String>,
+    pub fallback_label: String,
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /// Parse a YAML string into a Frontmatter struct.
@@ -358,6 +366,83 @@ pub fn fallback_title_from_slug(slug: &str) -> String {
     slug.rsplit('/').next().unwrap_or(slug).to_string()
 }
 
+pub fn derive_title_fields(slug: &str, legacy_title: Option<&str>, body: &str) -> DerivedTitleFields {
+    let content_heading = extract_first_markdown_h1(body);
+    let legacy_title = normalize_optional_title(legacy_title);
+    let fallback_label = fallback_title_from_slug(slug);
+    let display_title = content_heading.clone().or_else(|| legacy_title.clone());
+    DerivedTitleFields {
+        content_heading,
+        legacy_title,
+        display_title,
+        fallback_label,
+    }
+}
+
+pub fn extract_first_markdown_h1(body: &str) -> Option<String> {
+    let mut in_fence = false;
+
+    for raw_line in body.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+
+        let heading = trimmed.strip_prefix("# ")?;
+        let heading = trim_trailing_heading_hashes(heading);
+        let heading = normalize_optional_title(Some(heading))?;
+        return Some(heading);
+    }
+
+    None
+}
+
+pub fn strip_first_markdown_h1(body: &str) -> String {
+    let mut out = Vec::new();
+    let mut in_fence = false;
+    let mut stripped = false;
+
+    for raw_line in body.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            out.push(raw_line);
+            continue;
+        }
+
+        if !in_fence && !stripped && trimmed.starts_with("# ") {
+            stripped = true;
+            continue;
+        }
+
+        out.push(raw_line);
+    }
+
+    let joined = out.join("\n");
+    joined.trim_start_matches('\n').trim_start().to_string()
+}
+
+pub fn ensure_body_starts_with_h1(body: &str, heading: &str) -> String {
+    let Some(normalized_heading) = normalize_optional_title(Some(heading)) else {
+        return body.to_string();
+    };
+
+    if extract_first_markdown_h1(body).as_deref() == Some(normalized_heading.as_str()) {
+        return body.to_string();
+    }
+
+    let trimmed_body = body.trim_start_matches('\n').trim_start();
+    if trimmed_body.is_empty() {
+        format!("# {normalized_heading}")
+    } else {
+        format!("# {normalized_heading}\n\n{trimmed_body}")
+    }
+}
+
 /// Build a short, clean feed preview from full Markdown body text.
 ///
 /// This is an indexed read-model value for list/grid views: strip markdown-ish
@@ -365,6 +450,23 @@ pub fn fallback_title_from_slug(slug: &str) -> String {
 /// boundary with an ellipsis. Full article bodies remain in `blocks.body`.
 pub fn build_preview_text(body: &str, max_chars: usize) -> String {
     truncate_preview_text(&plain_text_preview(body), max_chars)
+}
+
+fn normalize_optional_title(title: Option<&str>) -> Option<String> {
+    title
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn trim_trailing_heading_hashes(heading: &str) -> &str {
+    let trimmed = heading.trim_end();
+    let without_hashes = trimmed.trim_end_matches('#').trim_end();
+    if without_hashes.is_empty() {
+        trimmed
+    } else {
+        without_hashes
+    }
 }
 
 fn plain_text_preview(body: &str) -> String {
@@ -1015,7 +1117,7 @@ fn implicit_article_block(slug: &str, body: String, saved_at: DateTime) -> Block
         slug: slug.to_string(),
         frontmatter: Frontmatter {
             block_type: BlockType::Article,
-            title: Some(fallback_title_from_slug(slug)),
+            title: None,
             description: None,
             url: None,
             file: None,
@@ -1037,7 +1139,7 @@ fn implicit_article_block(slug: &str, body: String, saved_at: DateTime) -> Block
 }
 
 fn parse_frontmatter_compat(
-    slug: &str,
+    _slug: &str,
     yaml: &str,
     fallback_saved_at: DateTime,
 ) -> Result<(Frontmatter, Option<String>), BlockError> {
@@ -1081,7 +1183,7 @@ fn parse_frontmatter_compat(
     Ok((
         Frontmatter {
             block_type,
-            title: get_opt_string(&value, "title").or_else(|| Some(fallback_title_from_slug(slug))),
+            title: get_opt_string(&value, "title"),
             description: get_opt_string(&value, "description"),
             url: get_opt_string(&value, "url"),
             file: get_opt_string(&value, "file"),
@@ -1529,10 +1631,7 @@ mod tests {
         assert_eq!(parsed.origin, "foreign_markdown");
         assert!(parsed.index_warning.is_none());
         assert_eq!(parsed.block.frontmatter.block_type, BlockType::Article);
-        assert_eq!(
-            parsed.block.frontmatter.title.as_deref(),
-            Some("Plain Note")
-        );
+        assert!(parsed.block.frontmatter.title.is_none());
         assert_eq!(parsed.block.body, "# Heading\n\nBody");
     }
 
@@ -1544,9 +1643,33 @@ mod tests {
             fallback_dt(),
         )
         .unwrap();
+        assert!(parsed.block.frontmatter.title.is_none());
+    }
+
+    #[test]
+    fn derive_title_fields_prefers_body_h1_then_legacy_title_then_filename() {
+        let with_h1 = derive_title_fields("Folder/Note", Some("Legacy"), "# Heading\n\nBody");
+        assert_eq!(with_h1.content_heading.as_deref(), Some("Heading"));
+        assert_eq!(with_h1.display_title.as_deref(), Some("Heading"));
+        assert_eq!(with_h1.fallback_label, "Note");
+
+        let legacy_only = derive_title_fields("Folder/Note", Some("Legacy"), "Body");
+        assert!(legacy_only.content_heading.is_none());
+        assert_eq!(legacy_only.display_title.as_deref(), Some("Legacy"));
+        assert_eq!(legacy_only.fallback_label, "Note");
+
+        let fallback_only = derive_title_fields("Folder/Note", None, "Body");
+        assert!(fallback_only.content_heading.is_none());
+        assert!(fallback_only.display_title.is_none());
+        assert_eq!(fallback_only.fallback_label, "Note");
+    }
+
+    #[test]
+    fn strip_first_markdown_h1_removes_only_the_leading_h1_line() {
+        let body = "# Heading\n\nParagraph\n\n## Subheading";
         assert_eq!(
-            parsed.block.frontmatter.title.as_deref(),
-            Some("12.04.2026 Встреча с Владом")
+            strip_first_markdown_h1(body),
+            "Paragraph\n\n## Subheading"
         );
     }
 

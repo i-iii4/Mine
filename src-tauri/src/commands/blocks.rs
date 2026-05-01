@@ -298,7 +298,7 @@ pub fn create_block(
         slug,
         frontmatter: Frontmatter {
             block_type: bt,
-            title,
+            title: None,
             description: None,
             url,
             file: media_file,
@@ -335,7 +335,6 @@ pub async fn extract_inline_media(
     source_slug: String,
     media_ref: String,
     target_tag: String,
-    title: Option<String>,
 ) -> Result<IndexedBlock, InlineMediaExtractError> {
     let vault = {
         let vault_state =
@@ -353,7 +352,7 @@ pub async fn extract_inline_media(
 
     let indexed = tauri::async_runtime::spawn_blocking(move || {
         let conn = db::open_or_create(&vault.index_db_path()).map_err(internal_extract_error)?;
-        extract_inline_media_inner(&conn, &vault, source_slug, media_ref, target_tag, title)
+        extract_inline_media_inner(&conn, &vault, source_slug, media_ref, target_tag)
     })
     .await
     .map_err(|e| InlineMediaExtractError::Internal {
@@ -398,7 +397,6 @@ pub async fn extract_text_selection(
     first_block_start: usize,
     first_block_end: usize,
     source_body_hash: String,
-    title: Option<String>,
 ) -> Result<IndexedBlock, TextSelectionExtractError> {
     validate_slug(&source_slug).map_err(|e| TextSelectionExtractError::UnsafeSourcePatch {
         reason: format!("invalid source slug: {e}"),
@@ -436,7 +434,6 @@ pub async fn extract_text_selection(
             first_block_start,
             first_block_end,
             source_body_hash,
-            title,
         )
     })
     .await
@@ -478,7 +475,6 @@ fn extract_inline_media_inner(
     source_slug: String,
     media_ref: String,
     target_tag: String,
-    title: Option<String>,
 ) -> Result<IndexedBlock, InlineMediaExtractError> {
     validate_slug(&source_slug).map_err(|e| InlineMediaExtractError::InvalidMediaRef {
         reason: format!("invalid source slug: {e}"),
@@ -543,8 +539,7 @@ fn extract_inline_media_inner(
         return Err(InlineMediaExtractError::UnsupportedMediaType { media_ref });
     }
 
-    let resolved_title = extraction_title(title.as_deref(), &media_ref);
-    let raw_slug = suggest_slug(Some(&resolved_title), None);
+    let raw_slug = suggest_slug(Some(&extraction_slug_seed(&media_ref)), None);
     let slug = resolve_unique_extraction_slug(conn, vault, &raw_slug, &source_ext)
         .map_err(internal_extract_error)?;
     let media_file = vault
@@ -559,7 +554,7 @@ fn extract_inline_media_inner(
         slug: slug.clone(),
         frontmatter: Frontmatter {
             block_type: BlockType::Image,
-            title: Some(resolved_title),
+            title: None,
             description: None,
             url: source_block.frontmatter.url.clone(),
             file: Some(media_file.clone()),
@@ -594,7 +589,6 @@ fn extract_text_selection_inner(
     first_block_start: usize,
     first_block_end: usize,
     source_body_hash: String,
-    title: Option<String>,
 ) -> Result<IndexedBlock, TextSelectionExtractError> {
     validate_slug(&source_slug).map_err(|e| TextSelectionExtractError::UnsafeSourcePatch {
         reason: format!("invalid source slug: {e}"),
@@ -683,8 +677,7 @@ fn extract_text_selection_inner(
         block_id
     };
 
-    let resolved_title = text_selection_title(title.as_deref(), selected_text);
-    let raw_slug = suggest_slug(Some(&resolved_title), None);
+    let raw_slug = suggest_slug(Some(&text_selection_slug_seed(selected_text)), None);
     let slug = resolve_unique_text_selection_slug(conn, vault, &raw_slug)
         .map_err(internal_text_selection_error)?;
     let now = crate::commands::state::now_iso8601();
@@ -696,7 +689,7 @@ fn extract_text_selection_inner(
         slug: slug.clone(),
         frontmatter: Frontmatter {
             block_type: BlockType::Article,
-            title: Some(resolved_title),
+            title: None,
             description: None,
             url: source_block.frontmatter.url.clone(),
             file: None,
@@ -1438,10 +1431,7 @@ fn frontmatter_body_start_offset(content: &str) -> Option<usize> {
     None
 }
 
-fn text_selection_title(title: Option<&str>, selected_text: &str) -> String {
-    if let Some(title) = title.map(str::trim).filter(|value| !value.is_empty()) {
-        return title.to_string();
-    }
+fn text_selection_slug_seed(selected_text: &str) -> String {
     let mut normalized = String::new();
     let mut last_space = false;
     for ch in selected_text.trim().chars() {
@@ -1486,10 +1476,7 @@ fn resolve_unique_text_selection_slug(
     )
 }
 
-fn extraction_title(title: Option<&str>, media_ref: &str) -> String {
-    if let Some(title) = title.map(str::trim).filter(|value| !value.is_empty()) {
-        return title.to_string();
-    }
+fn extraction_slug_seed(media_ref: &str) -> String {
     std::path::Path::new(media_ref)
         .file_stem()
         .and_then(|value| value.to_str())
@@ -1614,7 +1601,6 @@ fn rewrite_block_for_rename(
 ) -> Block {
     let mut rewritten = rewrite_block_references(block, old_slug, new_slug, media_name_map);
     rewritten.slug = new_slug.to_string();
-    rewritten.frontmatter.title = Some(new_slug.to_string());
     rewritten
 }
 
@@ -1836,13 +1822,12 @@ mod tests {
             "Source Article".to_string(),
             "photo.png".to_string(),
             "Mood Board".to_string(),
-            Some("Pulled Frame".to_string()),
         )
         .unwrap();
 
-        assert_eq!(indexed.slug, "Pulled Frame");
+        assert_eq!(indexed.slug, "photo (2)");
         assert_eq!(indexed.block_type, BlockType::Image);
-        assert_eq!(indexed.title.as_deref(), Some("Pulled Frame"));
+        assert!(indexed.title.is_none());
         assert_eq!(indexed.url.as_deref(), Some("https://example.com/article"));
         assert_eq!(indexed.media_file.as_deref(), Some("photo.png"));
         assert_eq!(indexed.tags, vec!["Mood Board".to_string()]);
@@ -1854,14 +1839,15 @@ mod tests {
         );
         assert!(!vault.root().join("Pulled Frame.png").exists());
 
-        let (_, extracted_content) =
-            files::read_block_file(&vault, &vault.block_path("Pulled Frame")).unwrap();
+        let (_, extracted_content) = files::read_block_file(&vault, &vault.block_path("photo (2)"))
+            .unwrap();
         let extracted =
-            crate::domain::block::parse_block("Pulled Frame", &extracted_content).unwrap();
+            crate::domain::block::parse_block("photo (2)", &extracted_content).unwrap();
         assert_eq!(
             extracted.frontmatter.related_notes,
             vec!["Source Article".to_string()]
         );
+        assert!(extracted.frontmatter.title.is_none());
         assert_eq!(
             extracted.frontmatter.source_media.as_deref(),
             Some("photo.png")
@@ -1886,7 +1872,6 @@ mod tests {
             "Source Article".to_string(),
             "photo.png".to_string(),
             "Mood Board".to_string(),
-            Some("photo".to_string()),
         )
         .unwrap();
 
@@ -2005,7 +1990,6 @@ mod tests {
             "Source Article".to_string(),
             "photo.png".to_string(),
             "Mood Board".to_string(),
-            None,
         )
         .unwrap_err();
 
@@ -2034,12 +2018,12 @@ mod tests {
             0,
             0,
             body_hash.clone(),
-            None,
         )
         .unwrap();
 
         assert_eq!(indexed.block_type, BlockType::Article);
         assert_eq!(indexed.body, "useful sentence");
+        assert!(indexed.title.is_none());
         assert_eq!(indexed.tags, vec!["Quotes".to_string()]);
         assert_eq!(indexed.source.as_deref(), Some("text-selection-extraction"));
         assert_eq!(
@@ -2059,6 +2043,7 @@ mod tests {
             extracted.frontmatter.related_notes,
             vec!["Source Article#^useful-sentence"]
         );
+        assert!(extracted.frontmatter.title.is_none());
 
         let source_after = index::get_block(&conn, "Source Article").unwrap().unwrap();
         assert_ne!(source_after.body_hash.as_deref(), Some(body_hash.as_str()));
@@ -2083,7 +2068,6 @@ mod tests {
             0,
             0,
             body_hash,
-            None,
         )
         .unwrap();
 
@@ -2108,7 +2092,6 @@ mod tests {
             0,
             0,
             "stale".to_string(),
-            None,
         )
         .unwrap_err();
 
@@ -2144,7 +2127,7 @@ mod tests {
         let (_, renamed_content) =
             files::read_block_file(&vault, &vault.block_path("Renamed Name")).unwrap();
         let renamed = crate::domain::block::parse_block("Renamed Name", &renamed_content).unwrap();
-        assert_eq!(renamed.frontmatter.title.as_deref(), Some("Renamed Name"));
+        assert_eq!(renamed.frontmatter.title.as_deref(), Some("Old Name"));
         assert!(renamed.body.contains("![[Renamed Name (image 1).jpg]]"));
 
         let (_, ref_content) =
@@ -2166,7 +2149,7 @@ mod tests {
     }
 
     #[test]
-    fn rename_block_file_invalidates_article_audio_when_title_changes_speech_text() {
+    fn rename_block_file_preserves_article_audio_when_filename_only_changes() {
         let (_root, _derived, vault, conn) = make_vault();
         let state = AppState::new();
         let original = article("Old Name", "Plain article body");
@@ -2196,13 +2179,19 @@ mod tests {
                 .unwrap();
         assert_eq!(
             audio_state.status,
-            article_audio_storage::ArticleAudioStatus::Absent
+            article_audio_storage::ArticleAudioStatus::Ready
         );
-        assert!(audio_state.audio_path.is_none());
-        assert!(!vault
-            .article_audio_asset_path("Renamed Name", "wav")
-            .exists());
-        assert!(!vault.article_audio_state_path("Renamed Name").exists());
+        assert_eq!(
+            audio_state.audio_path.as_deref(),
+            Some(
+                vault
+                    .article_audio_asset_path("Renamed Name", "wav")
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+        assert!(vault.article_audio_asset_path("Renamed Name", "wav").exists());
+        assert!(vault.article_audio_state_path("Renamed Name").exists());
     }
 
     #[test]

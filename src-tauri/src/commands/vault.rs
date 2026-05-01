@@ -643,7 +643,7 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                     return;
                 }
             };
-            let preview_text_updated = match index::backfill_missing_preview_text(&conn) {
+            let preview_text_updated = match index::backfill_missing_preview_text(&conn, &vault) {
                 Ok(updated) => updated,
                 Err(err) => {
                     log::warn!(

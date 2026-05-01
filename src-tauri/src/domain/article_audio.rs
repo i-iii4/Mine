@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use whatlang::{detect, Lang};
 
-use crate::domain::block::{Block, BlockType};
+use crate::domain::block::{derive_title_fields, strip_first_markdown_h1, Block, BlockType};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedArticleSpeech {
@@ -43,7 +43,8 @@ pub fn prepare_article_speech(
     }
 
     let mut sections = Vec::new();
-    if let Some(title) = block.frontmatter.title.as_deref() {
+    let title_fields = derive_title_fields(&block.slug, block.frontmatter.title.as_deref(), &block.body);
+    if let Some(title) = title_fields.display_title.as_deref() {
         let title = normalize_inline_markup(title);
         if !title.is_empty() {
             sections.push(title);
@@ -56,7 +57,7 @@ pub fn prepare_article_speech(
         }
     }
 
-    let body = sanitize_body_for_speech(&block.body);
+    let body = sanitize_body_for_speech(&strip_first_markdown_h1(&block.body));
     if !body.is_empty() {
         sections.push(body);
     }
@@ -382,7 +383,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             prepared.speakable_text,
-            "My Title\n\nJane Doe\n\nIntro Quote line Bullet item\n\nExample\n\nFinal paragraph."
+            "Intro\n\nJane Doe\n\nQuote line Bullet item\n\nExample\n\nFinal paragraph."
         );
     }
 

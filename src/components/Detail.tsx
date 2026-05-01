@@ -18,6 +18,7 @@ import {
   legacyThumbsRoot,
 } from "@/lib/assets";
 import { cn } from "@/lib/utils";
+import { getDisplayTitle, getNavigationLabel } from "@/lib/displayTitle";
 import { getBlock } from "@/lib/commands";
 import type { DetailTopMenuMode } from "@/lib/appPreferences";
 import {
@@ -59,7 +60,6 @@ interface DetailProps {
 type DetailInlineMediaExtraction = {
   sourceSlug: string;
   mediaRef: string;
-  title: string | null;
 };
 
 function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock {
@@ -444,11 +444,6 @@ function youtubeEmbedUrl(url: string): string | null {
   return match ? `https://www.youtube.com/embed/${match[1]}` : null;
 }
 
-function isTwitterUrl(url: string): boolean {
-  const lc = url.toLowerCase();
-  return (lc.includes("twitter.com/") || lc.includes("x.com/")) && lc.includes("/status/");
-}
-
 // ─── Block content renderers ────────────────────────────────────────────────
 
 function BlockContent({
@@ -487,6 +482,8 @@ function BlockContent({
 
   const body = fullBody ?? block.body;
   const description = "description" in block ? (block as IndexedBlock).description : null;
+  const displayTitle = getDisplayTitle(block);
+  const navigationLabel = getNavigationLabel(block);
 
   switch (block.block_type) {
     case "image": {
@@ -497,7 +494,7 @@ function BlockContent({
         <div className="flex min-h-full items-center justify-center">
           <img
             src={src}
-            alt={block.title ?? block.slug}
+            alt={navigationLabel}
             className="max-h-[85vh] object-contain"
           />
         </div>
@@ -520,9 +517,11 @@ function BlockContent({
             />
           </div>
           <div className="py-4">
-            <h2 className="text-lg font-semibold text-foreground">
-              {block.title ?? block.slug}
-            </h2>
+            {displayTitle && (
+              <h2 className="text-lg font-semibold text-foreground">
+                {displayTitle}
+              </h2>
+            )}
             {description && (
               <p className="mt-2 text-base text-muted-foreground">
                 {description}
@@ -533,16 +532,10 @@ function BlockContent({
       );
     }
     case "article": {
-      const isTwitter = block.url ? isTwitterUrl(block.url) : false;
       return (
         <div>
-          {!isTwitter && (
-            <h2 className="text-lg font-semibold text-foreground">
-              {block.title ?? block.slug}
-            </h2>
-          )}
           {block.author && (
-            <p className={isTwitter ? "text-base text-muted-foreground" : "mt-1 text-base text-muted-foreground"}>
+            <p className="text-base text-muted-foreground">
               {block.author}
             </p>
           )}
@@ -553,7 +546,6 @@ function BlockContent({
             previewManifest={previewManifest}
             sourceSlug={block.slug}
             sourceBodyHash={fullBlock?.body_hash ?? (isIndexedBlock(block) ? block.body_hash : null)}
-            sourceTitle={block.title ?? block.slug}
             scrollAnchor={scrollAnchor}
             onTextSelectionDrop={onTextSelectionDrop}
           />
@@ -605,7 +597,7 @@ function BlockContent({
             {block.media_file?.split(".").pop()?.toUpperCase() ?? "FILE"}
           </div>
           <p className="text-base font-semibold text-foreground">
-            {block.title ?? block.slug}
+            {displayTitle ?? navigationLabel}
           </p>
           {block.media_file && (
             <p className="text-sm text-muted-foreground">{block.media_file}</p>
@@ -624,7 +616,6 @@ function ArticleBody({
   previewManifest,
   sourceSlug,
   sourceBodyHash,
-  sourceTitle,
   scrollAnchor,
   onTextSelectionDrop,
 }: {
@@ -634,7 +625,6 @@ function ArticleBody({
   previewManifest: ReturnType<typeof normalizeFeedPreviewManifest>;
   sourceSlug?: string;
   sourceBodyHash?: string | null;
-  sourceTitle?: string | null;
   scrollAnchor?: string | null;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }) {
@@ -671,9 +661,8 @@ function ArticleBody({
       firstBlockStart: range.start,
       firstBlockEnd: range.end,
       sourceBodyHash,
-      title: textSelectionTitle(selectedText, sourceTitle),
     };
-  }, [body, sourceBodyHash, sourceSlug, sourceTitle]);
+  }, [body, sourceBodyHash, sourceSlug]);
 
   const updateTextSelectionHandle = useCallback(() => {
     if (selectionHandleLockedRef.current) {
@@ -822,7 +811,6 @@ function ArticleBody({
           ? {
               sourceSlug,
               mediaRef: decodedSrc,
-              title: alt?.trim() ? alt.trim() : null,
             }
           : null;
         return (
@@ -964,7 +952,6 @@ function DetailImage({
           sourceSlug: extraction.sourceSlug,
           mediaRef: extraction.mediaRef,
           mediaKind: "image",
-          title: extraction.title,
           imageSrc: previewSrc ?? src,
         }
       : undefined,
@@ -1187,10 +1174,4 @@ function markdownBlockRangeContaining(body: string, index: number): { start: num
     end -= 1;
   }
   return { start, end };
-}
-
-function textSelectionTitle(selectedText: string, sourceTitle?: string | null): string {
-  const title = collapseWhitespace(selectedText).slice(0, 72);
-  if (title) return title;
-  return sourceTitle ? `Selection from ${sourceTitle}` : "Text selection";
 }

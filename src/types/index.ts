@@ -8,6 +8,9 @@ export interface IndexedBlock {
   slug: string;
   block_type: BlockType;
   title: string | null;
+  content_heading?: string | null;
+  display_title?: string | null;
+  fallback_label?: string | null;
   description: string | null;
   url: string | null;
   media_file: string | null;
@@ -41,6 +44,9 @@ export interface LightBlock {
   slug: string;
   block_type: BlockType;
   title: string | null;
+  content_heading?: string | null;
+  display_title?: string | null;
+  fallback_label?: string | null;
   url: string | null;
   media_file: string | null;
   thumbnail: string | null;
@@ -139,7 +145,6 @@ export interface ExtractInlineMediaParams {
   source_slug: string;
   media_ref: string;
   target_tag: string;
-  title?: string | null;
 }
 
 export type InlineMediaExtractError =
@@ -159,7 +164,6 @@ export interface ExtractTextSelectionParams {
   first_block_start: number;
   first_block_end: number;
   source_body_hash: string;
-  title?: string | null;
 }
 
 export type TextSelectionExtractError =

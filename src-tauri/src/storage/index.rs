@@ -12,8 +12,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::block::{
-    build_preview_text, extract_wikilinks, fallback_title_from_slug, iter_inline_media_references,
-    normalize_local_markdown_url, parse_markdown_document, Block, BlockType, DateTime, Frontmatter,
+    build_preview_text, derive_title_fields, extract_wikilinks, iter_inline_media_references,
+    normalize_local_markdown_url, parse_markdown_document, strip_first_markdown_h1, Block,
+    BlockType, DateTime, Frontmatter,
     FEED_PREVIEW_TEXT_BUFFER_CHARS,
 };
 use crate::domain::channel::Channel;
@@ -36,6 +37,9 @@ pub struct IndexedBlock {
     pub slug: String,
     pub block_type: BlockType,
     pub title: Option<String>,
+    pub content_heading: Option<String>,
+    pub display_title: Option<String>,
+    pub fallback_label: String,
     pub description: Option<String>,
     pub url: Option<String>,
     pub media_file: Option<String>,
@@ -103,6 +107,9 @@ pub struct LightBlock {
     pub slug: String,
     pub block_type: BlockType,
     pub title: Option<String>,
+    pub content_heading: Option<String>,
+    pub display_title: Option<String>,
+    pub fallback_label: String,
     pub url: Option<String>,
     pub media_file: Option<String>,
     pub thumbnail: Option<String>,
@@ -953,6 +960,12 @@ fn upsert_block_inner(
     origin: Option<&str>,
     index_warning: Option<&str>,
 ) -> Result<i64> {
+    let title_fields = derive_title_fields(
+        &block.slug,
+        block.frontmatter.title.as_deref(),
+        &block.body,
+    );
+    let preview_body = strip_first_markdown_h1(&block.body);
     let first_image = extract_first_image(block, vault_root);
     let media_urls = extract_media_urls(block, vault_root);
     let media_dimensions = vault_root.and_then(|root| {
@@ -1033,17 +1046,20 @@ fn upsert_block_inner(
     // (Phase 18.G) can match Remove+Create events without reading the
     // file off disk at event time.
     let body_hash = crate::domain::block::compute_body_hash(&block.body);
-    let preview_text = build_preview_text(&block.body, FEED_PREVIEW_TEXT_BUFFER_CHARS);
+    let preview_text = build_preview_text(&preview_body, FEED_PREVIEW_TEXT_BUFFER_CHARS);
 
     conn.execute(
-        "INSERT INTO blocks (slug, block_type, title, description, url, media_file,
+        "INSERT INTO blocks (slug, block_type, title, content_heading, display_title, fallback_label, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body, first_image,
             media_urls, media_dimensions, preview_manifest, feed_playback, related_notes, preview_text, preview_text_cap,
             body_hash, origin, index_warning, media_index_version, collection_index_version)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
             title = excluded.title,
+            content_heading = excluded.content_heading,
+            display_title = excluded.display_title,
+            fallback_label = excluded.fallback_label,
             description = excluded.description,
             url = excluded.url,
             media_file = excluded.media_file,
@@ -1071,7 +1087,10 @@ fn upsert_block_inner(
         params![
             block.slug,
             block.frontmatter.block_type.as_str(),
-            block.frontmatter.title,
+            title_fields.legacy_title,
+            title_fields.content_heading,
+            title_fields.display_title,
+            title_fields.fallback_label,
             block.frontmatter.description,
             block.frontmatter.url,
             block.frontmatter.file,
@@ -1592,18 +1611,23 @@ pub fn backfill_missing_feed_playback(conn: &Connection, vault: &VaultLayout) ->
     Ok(updated)
 }
 
-/// Backfill list/grid read-model fields introduced after older indexes were
-/// created. Uses full `blocks.body` already stored in SQLite, so it avoids a
-/// full filesystem re-scan while making existing cards render with the same
-/// preview contract as newly indexed cards.
-pub fn backfill_missing_preview_text(conn: &Connection) -> Result<usize> {
+/// Backfill title + preview read-model fields introduced after older indexes
+/// were created.
+///
+/// Re-parses source `.md` files when available so `legacy_title` can recover
+/// from older index rows that had a synthetic fallback copied into `title`.
+/// Falls back to the current SQLite snapshot when the file is missing or
+/// unreadable.
+pub fn backfill_missing_preview_text(conn: &Connection, vault: &VaultLayout) -> Result<usize> {
     let mut stmt = conn.prepare(
-        "SELECT id, slug, title, body
+        "SELECT id, slug, title, body, content_heading, display_title, fallback_label
          FROM blocks
          WHERE preview_text IS NULL
             OR preview_text_cap IS NULL
             OR preview_text_cap < ?1
-            OR (title = slug AND instr(slug, '/') > 0)",
+            OR content_heading IS NULL
+            OR display_title IS NULL
+            OR fallback_label IS NULL",
     )?;
     let rows = stmt
         .query_map([FEED_PREVIEW_TEXT_BUFFER_CHARS as i64], |row| {
@@ -1612,30 +1636,60 @@ pub fn backfill_missing_preview_text(conn: &Connection) -> Result<usize> {
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
 
+    let fallback_saved_at = DateTime::new("1970-01-01T00:00:00Z")?;
     let mut updated = 0usize;
-    for (id, slug, title, body) in rows {
-        let preview_text = build_preview_text(&body, FEED_PREVIEW_TEXT_BUFFER_CHARS);
-        let display_title = if title.as_deref() == Some(slug.as_str()) {
-            Some(fallback_title_from_slug(&slug))
-        } else {
-            title
+
+    for (id, slug, stored_title, stored_body, stored_heading, stored_display_title, stored_fallback_label) in rows {
+        let (legacy_title, body) = match std::fs::read_to_string(vault.block_path(&slug)) {
+            Ok(content) => match parse_markdown_document(&slug, &content, fallback_saved_at.clone()) {
+                Ok(parsed) => (parsed.block.frontmatter.title, parsed.block.body),
+                Err(_) => (stored_title.clone(), stored_body.clone()),
+            },
+            Err(_) => (stored_title.clone(), stored_body.clone()),
         };
+        let title_fields = derive_title_fields(&slug, legacy_title.as_deref(), &body);
+        let preview_body = strip_first_markdown_h1(&body);
+        let preview_text = build_preview_text(&preview_body, FEED_PREVIEW_TEXT_BUFFER_CHARS);
+
+        if stored_title == title_fields.legacy_title
+            && stored_heading == title_fields.content_heading
+            && stored_display_title == title_fields.display_title
+            && stored_fallback_label.as_deref() == Some(title_fields.fallback_label.as_str())
+        {
+            updated += conn.execute(
+                "UPDATE blocks
+                 SET preview_text = ?1,
+                     preview_text_cap = ?2
+                 WHERE id = ?3",
+                params![preview_text, FEED_PREVIEW_TEXT_BUFFER_CHARS as i64, id],
+            )?;
+            continue;
+        }
 
         updated += conn.execute(
             "UPDATE blocks
              SET preview_text = ?1,
                  preview_text_cap = ?2,
-                 title = ?3
-             WHERE id = ?4",
+                 title = ?3,
+                 content_heading = ?4,
+                 display_title = ?5,
+                 fallback_label = ?6
+             WHERE id = ?7",
             params![
                 preview_text,
                 FEED_PREVIEW_TEXT_BUFFER_CHARS as i64,
-                display_title,
+                title_fields.legacy_title,
+                title_fields.content_heading,
+                title_fields.display_title,
+                title_fields.fallback_label,
                 id
             ],
         )?;
@@ -1843,7 +1897,7 @@ pub fn clear_vault_conflict(conn: &Connection, base_slug: &str, conflict_slug: &
 /// Body is truncated to a short preview to reduce IPC payload for large vaults.
 pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
     let mut stmt = conn.prepare(
-        "SELECT id, slug, block_type, title, url, media_file,
+        "SELECT id, slug, block_type, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
                 thumbnail, saved_at, width, height, author,
                 SUBSTR(body, 1, ?1), preview_text, first_image, media_urls, media_dimensions, preview_manifest, feed_playback
          FROM blocks ORDER BY saved_at DESC",
@@ -1865,20 +1919,23 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
                     })?
                 },
                 title: row.get(3)?,
-                url: row.get(4)?,
-                media_file: row.get(5)?,
-                thumbnail: row.get(6)?,
-                saved_at: row.get(7)?,
-                width: row.get::<_, Option<i64>>(8)?.map(|v| v as u32),
-                height: row.get::<_, Option<i64>>(9)?.map(|v| v as u32),
-                author: row.get(10)?,
-                body: row.get(11)?,
-                preview_text: row.get(12)?,
-                first_image: row.get(13)?,
-                media_urls: row.get(14)?,
-                media_dimensions: row.get(15)?,
-                preview_manifest: row.get(16)?,
-                feed_playback: row.get(17)?,
+                content_heading: row.get(4)?,
+                display_title: row.get(5)?,
+                fallback_label: row.get(6)?,
+                url: row.get(7)?,
+                media_file: row.get(8)?,
+                thumbnail: row.get(9)?,
+                saved_at: row.get(10)?,
+                width: row.get::<_, Option<i64>>(11)?.map(|v| v as u32),
+                height: row.get::<_, Option<i64>>(12)?.map(|v| v as u32),
+                author: row.get(13)?,
+                body: row.get(14)?,
+                preview_text: row.get(15)?,
+                first_image: row.get(16)?,
+                media_urls: row.get(17)?,
+                media_dimensions: row.get(18)?,
+                preview_manifest: row.get(19)?,
+                feed_playback: row.get(20)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1898,7 +1955,7 @@ pub fn list_grid_blocks(
     let fetch_limit = limit.saturating_add(1);
     let sql = match tag {
         Some(_) => {
-            "SELECT b.id, b.slug, b.block_type, b.title, b.url, b.media_file,
+            "SELECT b.id, b.slug, b.block_type, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.url, b.media_file,
                     b.thumbnail, b.saved_at, b.width, b.height, b.author,
                     CASE WHEN b.block_type = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
                     b.preview_text, b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest, b.feed_playback
@@ -1909,7 +1966,7 @@ pub fn list_grid_blocks(
              LIMIT ?3 OFFSET ?4"
         }
         None => {
-            "SELECT id, slug, block_type, title, url, media_file,
+            "SELECT id, slug, block_type, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
                     thumbnail, saved_at, width, height, author,
                     CASE WHEN block_type = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
                     preview_text, first_image, media_urls, media_dimensions, preview_manifest, feed_playback
@@ -1936,20 +1993,23 @@ pub fn list_grid_blocks(
                 })?
             },
             title: row.get(3)?,
-            url: row.get(4)?,
-            media_file: row.get(5)?,
-            thumbnail: row.get(6)?,
-            saved_at: row.get(7)?,
-            width: row.get::<_, Option<i64>>(8)?.map(|v| v as u32),
-            height: row.get::<_, Option<i64>>(9)?.map(|v| v as u32),
-            author: row.get(10)?,
-            body: row.get(11)?,
-            preview_text: row.get(12)?,
-            first_image: row.get(13)?,
-            media_urls: row.get(14)?,
-            media_dimensions: row.get(15)?,
-            preview_manifest: row.get(16)?,
-            feed_playback: row.get(17)?,
+            content_heading: row.get(4)?,
+            display_title: row.get(5)?,
+            fallback_label: row.get(6)?,
+            url: row.get(7)?,
+            media_file: row.get(8)?,
+            thumbnail: row.get(9)?,
+            saved_at: row.get(10)?,
+            width: row.get::<_, Option<i64>>(11)?.map(|v| v as u32),
+            height: row.get::<_, Option<i64>>(12)?.map(|v| v as u32),
+            author: row.get(13)?,
+            body: row.get(14)?,
+            preview_text: row.get(15)?,
+            first_image: row.get(16)?,
+            media_urls: row.get(17)?,
+            media_dimensions: row.get(18)?,
+            preview_manifest: row.get(19)?,
+            feed_playback: row.get(20)?,
         })
     };
 
@@ -2098,7 +2158,7 @@ pub fn list_pending_thumb_upgrade_blocks(
 pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, slug, block_type, title, description, url, media_file,
+            "SELECT id, slug, block_type, title, content_heading, display_title, COALESCE(fallback_label, slug), description, url, media_file,
                     thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning
              FROM blocks WHERE slug = ?1",
         )
@@ -2117,7 +2177,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
 /// List all blocks, ordered by saved_at descending (newest first).
 pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
-        "SELECT id, slug, block_type, title, description, url, media_file,
+        "SELECT id, slug, block_type, title, content_heading, display_title, COALESCE(fallback_label, slug), description, url, media_file,
                 thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning
          FROM blocks ORDER BY saved_at DESC",
     )?;
@@ -2127,7 +2187,7 @@ pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
 /// List blocks with a specific tag, ordered by saved_at descending.
 pub fn list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
-        "SELECT b.id, b.slug, b.block_type, b.title, b.description, b.url,
+        "SELECT b.id, b.slug, b.block_type, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
                 b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning
          FROM blocks b
@@ -2200,7 +2260,7 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
     }
 
     let mut sql = String::from(
-        "SELECT DISTINCT b.id, b.slug, b.block_type, b.title, b.description, b.url,
+        "SELECT DISTINCT b.id, b.slug, b.block_type, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
                 b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning
          FROM blocks b",
@@ -2373,23 +2433,26 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
             })?
         },
         title: row.get(3)?,
-        description: row.get(4)?,
-        url: row.get(5)?,
-        media_file: row.get(6)?,
-        thumbnail: row.get(7)?,
-        saved_at: row.get(8)?,
-        source: row.get(9)?,
-        width: row.get::<_, Option<i64>>(10)?.map(|v| v as u32),
-        height: row.get::<_, Option<i64>>(11)?.map(|v| v as u32),
-        author: row.get(12)?,
-        body: row.get(13)?,
-        media_dimensions: row.get(14)?,
-        preview_manifest: row.get(15)?,
-        feed_playback: row.get(16)?,
-        related_notes: parse_related_notes_json(row.get(17)?),
-        body_hash: row.get(18)?,
-        origin: row.get(19)?,
-        index_warning: row.get(20)?,
+        content_heading: row.get(4)?,
+        display_title: row.get(5)?,
+        fallback_label: row.get(6)?,
+        description: row.get(7)?,
+        url: row.get(8)?,
+        media_file: row.get(9)?,
+        thumbnail: row.get(10)?,
+        saved_at: row.get(11)?,
+        source: row.get(12)?,
+        width: row.get::<_, Option<i64>>(13)?.map(|v| v as u32),
+        height: row.get::<_, Option<i64>>(14)?.map(|v| v as u32),
+        author: row.get(15)?,
+        body: row.get(16)?,
+        media_dimensions: row.get(17)?,
+        preview_manifest: row.get(18)?,
+        feed_playback: row.get(19)?,
+        related_notes: parse_related_notes_json(row.get(20)?),
+        body_hash: row.get(21)?,
+        origin: row.get(22)?,
+        index_warning: row.get(23)?,
         tags: Vec::new(), // filled by caller
     })
 }
@@ -3587,7 +3650,12 @@ mod tests {
 
     #[test]
     fn backfill_missing_preview_text_restores_legacy_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
+        let path = vault.block_path("Gaming Platform/Встречи/12.04.2026 Встреча с Владом");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "## Мои задачи\n\n- [ ] Создать **plan.md** проекта").unwrap();
         conn.execute(
             "INSERT INTO blocks (slug, block_type, title, saved_at, body)
              VALUES (?1, 'article', ?1, '2026-01-01T00:00:00Z', ?2)",
@@ -3598,17 +3666,19 @@ mod tests {
         )
         .unwrap();
 
-        let updated = backfill_missing_preview_text(&conn).unwrap();
+        let updated = backfill_missing_preview_text(&conn, &vault).unwrap();
         assert_eq!(updated, 1);
 
-        let (title, preview_text, preview_text_cap): (Option<String>, Option<String>, Option<i64>) =
+        let (title, display_title, fallback_label, preview_text, preview_text_cap): (Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>) =
             conn.query_row(
-                "SELECT title, preview_text, preview_text_cap FROM blocks WHERE slug = ?1",
+                "SELECT title, display_title, fallback_label, preview_text, preview_text_cap FROM blocks WHERE slug = ?1",
                 ["Gaming Platform/Встречи/12.04.2026 Встреча с Владом"],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .unwrap();
-        assert_eq!(title.as_deref(), Some("12.04.2026 Встреча с Владом"));
+        assert!(title.is_none());
+        assert!(display_title.is_none());
+        assert_eq!(fallback_label.as_deref(), Some("12.04.2026 Встреча с Владом"));
         assert_eq!(
             preview_text.as_deref(),
             Some("Мои задачи Создать plan.md проекта")
@@ -3621,6 +3691,8 @@ mod tests {
 
     #[test]
     fn backfill_missing_preview_text_rebuilds_older_short_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
         let body = format!(
             "## Notes\n\n{}",
@@ -3637,7 +3709,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated = backfill_missing_preview_text(&conn).unwrap();
+        let updated = backfill_missing_preview_text(&conn, &vault).unwrap();
         assert_eq!(updated, 1);
 
         let (preview_text, preview_text_cap): (String, i64) = conn

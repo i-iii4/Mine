@@ -1,5 +1,6 @@
 import type { LightBlock } from "@/types";
 import { normalizeFeedPreviewManifest } from "@/lib/feedPreview";
+import { getDisplayTitle, getFallbackLabel } from "@/lib/displayTitle";
 
 export type LayoutGenerationKey = string;
 export type BlockLayoutSignature = string;
@@ -34,7 +35,8 @@ export function buildBlockLayoutSignature(block: LightBlock): BlockLayoutSignatu
   return [
     `id=${block.id}`,
     `type=${block.block_type}`,
-    `title=${hashString(block.title ?? "")}`,
+    `title=${hashString(getDisplayTitle(block) ?? "")}`,
+    `fallback=${hashString(getFallbackLabel(block))}`,
     `author=${hashString(block.author ?? "")}`,
     `preview=${hashString(block.preview_text ?? block.body)}`,
     `url=${hashString(block.url ?? "")}`,

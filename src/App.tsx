@@ -158,18 +158,15 @@ type InlineMediaDragPayload = {
   sourceSlug: string;
   mediaRef: string;
   mediaKind: "image";
-  title: string | null;
   imageSrc?: string;
 };
 
 type InlineMediaDragPreview = {
   src: string;
-  title: string | null;
 };
 
 type TextSelectionDragPreview = {
   selectedText: string;
-  title: string | null;
 };
 
 interface BlockRemovedEvent {
@@ -1270,7 +1267,6 @@ export function AppWithVault({
           source_slug: payload.sourceSlug,
           media_ref: payload.mediaRef,
           target_tag: tag,
-          title: payload.title,
         });
         invalidateRoutesForTags(block.tags);
         scheduleRefresh({
@@ -1295,7 +1291,6 @@ export function AppWithVault({
           first_block_start: payload.firstBlockStart,
           first_block_end: payload.firstBlockEnd,
           source_body_hash: payload.sourceBodyHash,
-          title: payload.title,
         });
         invalidateRoutesForTags(block.tags);
         scheduleRefresh({
@@ -1321,7 +1316,6 @@ export function AppWithVault({
       if (data?.type === "inline_media") {
         setActiveDragInlineMedia({
           src: data.imageSrc ?? "",
-          title: data.title ?? null,
         });
         setActiveDragBlock(null);
         setActiveDragTag(null);
@@ -1336,7 +1330,6 @@ export function AppWithVault({
       if (textSelectionPayload) {
         setActiveDragTextSelection({
           selectedText: textSelectionPayload.selectedText,
-          title: textSelectionPayload.title,
         });
         setActiveDragBlock(null);
         setActiveDragTag(null);
@@ -1844,7 +1837,7 @@ export function AppWithVault({
         <div className="pointer-events-none max-h-48 max-w-64 overflow-hidden rounded-1 border border-border bg-background shadow-lg">
           <img
             src={activeDragInlineMedia.src}
-            alt={activeDragInlineMedia.title ?? ""}
+            alt=""
             className="max-h-48 max-w-64 object-contain"
             draggable={false}
           />
@@ -1852,11 +1845,6 @@ export function AppWithVault({
       )}
       {activeDragTextSelection && (
         <div className="pointer-events-none w-72 max-w-[calc(100vw-2rem)] rounded-1 border border-border bg-background px-3 py-2 text-sm shadow-lg">
-          {activeDragTextSelection.title && (
-            <div className="mb-1 truncate text-xs font-medium text-muted-foreground">
-              {activeDragTextSelection.title}
-            </div>
-          )}
           <p
             className="overflow-hidden whitespace-pre-wrap text-foreground"
             style={{

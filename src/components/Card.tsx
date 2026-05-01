@@ -19,6 +19,7 @@ import { normalizeFeedPlayback } from "@/lib/feedPlayback";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
 import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
 import { buildFeedVideoPosterCandidates } from "@/lib/feedVideoPoster";
+import { getDisplayTitle, getNavigationLabel } from "@/lib/displayTitle";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
 import { FeedVideoSurface } from "./FeedVideoSurface";
@@ -434,6 +435,7 @@ const ImageCard = memo(function ImageCard({
   }, [sourceIndex, sources.length]);
 
   const currentSrc = sources[sourceIndex] ?? null;
+  const navigationLabel = getNavigationLabel(block);
 
   if (currentSrc === null) {
     return (
@@ -441,7 +443,7 @@ const ImageCard = memo(function ImageCard({
         <div className="text-center">
           <ImageOff className="mx-auto size-6 text-muted-foreground/50" />
           <p className="mt-1 text-sm text-foreground">
-            {block.title ?? block.slug}
+            {navigationLabel}
           </p>
         </div>
       </div>
@@ -468,7 +470,7 @@ const ImageCard = memo(function ImageCard({
           // would reuse the failed request entry and never re-request.
           key={currentSrc}
           src={currentSrc}
-          alt={block.title ?? block.slug}
+          alt={navigationLabel}
           className="absolute inset-0 h-full w-full object-cover"
           loading={imgLoading}
           onError={() => setSourceIndex((i) => i + 1)}
@@ -497,6 +499,7 @@ const LinkCard = memo(function LinkCard({
   const [thumbError, setThumbError] = useState(false);
   const thumb = thumbnailUrl(thumbsRootPath, block.slug);
   const domain = block.url ? domainFromUrl(block.url) : null;
+  const navigationLabel = getNavigationLabel(block);
 
   // Retry failed loads when vault data refreshes (e.g. iCloud files downloaded)
   useEffect(() => {
@@ -514,7 +517,7 @@ const LinkCard = memo(function LinkCard({
     return (
       <div className="p-3">
         <p className="truncate text-sm font-semibold text-foreground">
-          {block.title ?? block.slug}
+          {navigationLabel}
         </p>
         {domain && (
           <p className="mt-0.5 truncate text-sm text-muted-foreground">{domain}</p>
@@ -554,7 +557,7 @@ const LinkCard = memo(function LinkCard({
       </div>
       <div className="p-3">
         <p className="truncate text-sm font-semibold text-foreground">
-          {block.title ?? block.slug}
+          {navigationLabel}
         </p>
         {domain && (
           <p className="mt-0.5 truncate text-sm text-muted-foreground">{domain}</p>
@@ -719,9 +722,10 @@ const ArticleCard = memo(function ArticleCard({
     playback,
     primaryMedia,
   });
+  const displayTitle = getDisplayTitle(block);
   const slots = deriveContentCardSlots(descriptor);
   const hasBottomMeta = slots?.hasBottomMeta ?? false;
-  const hasTextStack = Boolean(block.title ?? block.slug) || descriptor.previewText.length > 0 || hasBottomMeta;
+  const hasTextStack = Boolean(displayTitle) || descriptor.previewText.length > 0 || hasBottomMeta;
 
   return (
     <div className="p-4">
@@ -780,7 +784,7 @@ const ArticleCard = memo(function ArticleCard({
             className="line-clamp-2 text-sm font-semibold text-foreground"
             style={{ lineHeight: "16px" }}
           >
-            {block.title ?? block.slug}
+            {displayTitle}
           </p>
           {descriptor.previewText && (
             <p
@@ -798,7 +802,7 @@ const ArticleCard = memo(function ArticleCard({
             <p
               className={cn(
                 "text-sm text-muted-foreground",
-                (descriptor.previewText.length > 0 || (block.title ?? block.slug).length > 0) && "mt-2",
+                (descriptor.previewText.length > 0 || (displayTitle ?? "").length > 0) && "mt-2",
               )}
               style={{ lineHeight: "16px" }}
             >
@@ -868,6 +872,7 @@ const FileCard = memo(function FileCard({ block }: { block: LightBlock }) {
     ?.split(".")
     .pop()
     ?.toUpperCase();
+  const navigationLabel = getNavigationLabel(block);
 
   return (
     <div className="flex items-center gap-3 p-4">
@@ -876,7 +881,7 @@ const FileCard = memo(function FileCard({ block }: { block: LightBlock }) {
       </div>
       <div className="min-w-0">
         <p className="truncate text-sm font-semibold text-foreground">
-          {block.title ?? block.slug}
+          {navigationLabel}
         </p>
         {block.media_file && (
           <p className="truncate text-sm text-muted-foreground">

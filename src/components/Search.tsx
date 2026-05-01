@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { IndexedBlock } from "@/types";
+import { getNavigationLabel } from "@/lib/displayTitle";
 
 const DEBOUNCE_MS = 200;
 
@@ -96,7 +97,7 @@ export function Search({ open, onClose, onSelect }: SearchProps) {
               >
                 <TypeBadge type={block.block_type} />
                 <span className="truncate text-foreground">
-                  {block.title ?? block.slug}
+                  {getNavigationLabel(block)}
                 </span>
                 {block.tags.length > 0 && (
                   <span className="ml-auto shrink-0 text-sm text-muted-foreground">

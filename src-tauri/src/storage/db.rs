@@ -73,6 +73,9 @@ fn create_schema(conn: &Connection) -> Result<()> {
             slug TEXT UNIQUE NOT NULL,
             block_type TEXT NOT NULL,
             title TEXT,
+            content_heading TEXT,
+            display_title TEXT,
+            fallback_label TEXT,
             description TEXT,
             url TEXT,
             media_file TEXT,
@@ -134,27 +137,72 @@ fn create_schema(conn: &Connection) -> Result<()> {
         );
 
         -- FTS5 content-sync triggers: keep index in sync with blocks table.
-        CREATE TRIGGER IF NOT EXISTS blocks_ai AFTER INSERT ON blocks BEGIN
+        DROP TRIGGER IF EXISTS blocks_ai;
+        DROP TRIGGER IF EXISTS blocks_ad;
+        DROP TRIGGER IF EXISTS blocks_au;
+
+        CREATE TRIGGER blocks_ai AFTER INSERT ON blocks BEGIN
             INSERT INTO blocks_fts(rowid, title, description, body)
-            VALUES (new.id, new.title, new.description, new.body);
+            VALUES (
+                new.id,
+                trim(
+                    coalesce(new.display_title, '')
+                    || ' ' || coalesce(new.title, '')
+                    || ' ' || coalesce(new.fallback_label, '')
+                ),
+                new.description,
+                new.body
+            );
         END;
 
-        CREATE TRIGGER IF NOT EXISTS blocks_ad AFTER DELETE ON blocks BEGIN
+        CREATE TRIGGER blocks_ad AFTER DELETE ON blocks BEGIN
             INSERT INTO blocks_fts(blocks_fts, rowid, title, description, body)
-            VALUES ('delete', old.id, old.title, old.description, old.body);
+            VALUES (
+                'delete',
+                old.id,
+                trim(
+                    coalesce(old.display_title, '')
+                    || ' ' || coalesce(old.title, '')
+                    || ' ' || coalesce(old.fallback_label, '')
+                ),
+                old.description,
+                old.body
+            );
         END;
 
-        CREATE TRIGGER IF NOT EXISTS blocks_au AFTER UPDATE ON blocks BEGIN
+        CREATE TRIGGER blocks_au AFTER UPDATE ON blocks BEGIN
             INSERT INTO blocks_fts(blocks_fts, rowid, title, description, body)
-            VALUES ('delete', old.id, old.title, old.description, old.body);
+            VALUES (
+                'delete',
+                old.id,
+                trim(
+                    coalesce(old.display_title, '')
+                    || ' ' || coalesce(old.title, '')
+                    || ' ' || coalesce(old.fallback_label, '')
+                ),
+                old.description,
+                old.body
+            );
             INSERT INTO blocks_fts(rowid, title, description, body)
-            VALUES (new.id, new.title, new.description, new.body);
+            VALUES (
+                new.id,
+                trim(
+                    coalesce(new.display_title, '')
+                    || ' ' || coalesce(new.title, '')
+                    || ' ' || coalesce(new.fallback_label, '')
+                ),
+                new.description,
+                new.body
+            );
         END;",
     )?;
 
     // Migration: add media_urls column (JSON array of image/video URLs from body)
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN first_image TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_urls TEXT");
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN content_heading TEXT");
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN display_title TEXT");
+    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN fallback_label TEXT");
 
     // Migration: add media_dimensions column.
     // JSON object mapping each referenced media filename → [width, height] in

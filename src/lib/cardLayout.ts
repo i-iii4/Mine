@@ -3,6 +3,7 @@ import {
   normalizeFeedPreviewManifest,
   type NormalizedFeedPreviewTile,
 } from "@/lib/feedPreview";
+import { getDisplayTitle } from "@/lib/displayTitle";
 import { parseMediaDimensions } from "@/lib/mediaDimensions";
 
 export type CardLayoutVariant =
@@ -215,7 +216,7 @@ function galleryAspectRatio(itemCount: number): number {
 }
 
 export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescriptor {
-  const titleText = block.title ?? block.slug;
+  const titleText = getDisplayTitle(block) ?? "";
   const authorText = block.author ?? "";
   const previewManifest = parsePreviewManifest(block);
   const indexedPreviewText = block.preview_text?.trim() ?? "";

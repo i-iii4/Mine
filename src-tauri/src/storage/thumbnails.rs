@@ -14,7 +14,8 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use crate::domain::block::{
-    iter_inline_media_references, iter_inline_media_sources, Block, BlockType,
+    derive_title_fields, iter_inline_media_references, iter_inline_media_sources,
+    strip_first_markdown_h1, Block, BlockType,
 };
 use crate::domain::vault::VaultLayout;
 use crate::storage::media_refs;
@@ -961,6 +962,8 @@ pub enum ThumbSource {
 pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
     let slug = &block.slug;
     let thumb_path = vault.thumb_path(slug);
+    let title_fields = derive_title_fields(slug, block.frontmatter.title.as_deref(), &block.body);
+    let preview_body = strip_first_markdown_h1(&block.body);
 
     // 1. Block has an explicit media file. We only try Rust decode if the
     //    file bytes start with one of the formats image crate can actually
@@ -1051,8 +1054,8 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
         //    whose embedded media isn't Rust-decodable. In the latter case
         //    the placeholder is temporary: Phase 2 will overwrite it with
         //    a WebView-decoded JPEG.
-        let title = block.frontmatter.title.as_deref();
-        match generate_text_thumbnail(title, &block.body, &thumb_path) {
+        let title = title_fields.display_title.as_deref();
+        match generate_text_thumbnail(title, &preview_body, &thumb_path) {
             Ok(_) => return ThumbSource::Text,
             Err(e) => log::warn!("text thumb failed for {}: {}", slug, e),
         }
@@ -1066,9 +1069,9 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
     //    pick it up and upgrade to a real decoded JPEG via the WebView.
     //    Without this, image blocks with HEIC media were left with no
     //    thumb at all → broken-image icon in the sidebar forever.
-    let title = block.frontmatter.title.as_deref();
-    if title.is_some() || !block.body.is_empty() {
-        match generate_text_thumbnail(title, &block.body, &thumb_path) {
+    let title = title_fields.display_title.as_deref();
+    if title.is_some() || !preview_body.is_empty() {
+        match generate_text_thumbnail(title, &preview_body, &thumb_path) {
             Ok(_) => return ThumbSource::Text,
             Err(e) => log::warn!("fallback text thumb failed for {}: {}", slug, e),
         }

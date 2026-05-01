@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
-use crate::domain::block::{serialize_block, Block, BlockType};
+use crate::domain::block::{derive_title_fields, serialize_block, strip_first_markdown_h1, Block, BlockType};
 use crate::domain::vault::VaultLayout;
 use crate::storage::{article_audio, index, media_refs, thumbnails};
 
@@ -264,8 +264,14 @@ pub fn persist_new_block(
         }
     } else if block.frontmatter.block_type == BlockType::Article {
         let thumb_dest = vault.thumb_path(&block.slug);
-        let title = block.frontmatter.title.as_deref();
-        let _ = thumbnails::generate_text_thumbnail(title, &block.body, &thumb_dest);
+        let title_fields =
+            derive_title_fields(&block.slug, block.frontmatter.title.as_deref(), &block.body);
+        let preview_body = strip_first_markdown_h1(&block.body);
+        let _ = thumbnails::generate_text_thumbnail(
+            title_fields.display_title.as_deref(),
+            &preview_body,
+            &thumb_dest,
+        );
     }
 
     // Index

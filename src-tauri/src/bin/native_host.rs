@@ -547,6 +547,14 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             raw
         }
     };
+    let body = if should_write_body_h1(bt, p.url.as_deref()) {
+        mine_lib::domain::block::ensure_body_starts_with_h1(
+            &body,
+            p.title.as_deref().unwrap_or(""),
+        )
+    } else {
+        body
+    };
 
     let now = now_iso8601();
     let saved_at = match DateTime::new(&now) {
@@ -573,7 +581,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         slug: slug.clone(),
         frontmatter: Frontmatter {
             block_type: bt,
-            title: p.title,
+            title: None,
             description: p.description,
             url: p.url,
             file: media_file,
@@ -624,6 +632,24 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         block_type: p.block_type,
         warning,
     });
+}
+
+fn should_write_body_h1(block_type: BlockType, url: Option<&str>) -> bool {
+    let is_social_status = url.is_some_and(is_social_status_url);
+    match block_type {
+        BlockType::Link => true,
+        BlockType::Article => !is_social_status,
+        BlockType::Video => url.is_some() && !is_social_status,
+        BlockType::Image | BlockType::File | BlockType::Channel => false,
+    }
+}
+
+fn is_social_status_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    ((lower.contains("twitter.com/") || lower.contains("x.com/")) && lower.contains("/status/"))
+        || lower.contains("instagram.com/p/")
+        || lower.contains("instagram.com/reel/")
+        || lower.contains("instagram.com/stories/")
 }
 
 fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {

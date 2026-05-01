@@ -440,7 +440,7 @@ mod tests {
         let block = load_block_for_audio(&vault, "foreign").unwrap();
 
         assert_eq!(block.frontmatter.block_type, BlockType::Article);
-        assert_eq!(block.frontmatter.title.as_deref(), Some("foreign"));
+        assert!(block.frontmatter.title.is_none());
         assert_eq!(block.body, "Plain article body");
     }
 

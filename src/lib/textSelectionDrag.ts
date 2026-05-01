@@ -5,7 +5,6 @@ export type MineTextSelectionDragPayload = {
   firstBlockStart: number;
   firstBlockEnd: number;
   sourceBodyHash: string;
-  title: string | null;
 };
 
 let activeMineTextSelectionDragPayload: MineTextSelectionDragPayload | null = null;
