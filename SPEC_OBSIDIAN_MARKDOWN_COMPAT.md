@@ -1,6 +1,6 @@
 # Obsidian Markdown Compatibility Specification
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 ## Goal
 
@@ -243,6 +243,39 @@ Obsidian-compatible tag parsing is not part of Mine collection membership in
 the current runtime. Inline body tags such as `#typography` and
 `#design/typography` remain body text; assigning/removing Mine collections must
 not rewrite body inline tags or `frontmatter.tags`.
+
+### Text Excerpts And Block References
+
+Text-selection extraction uses Obsidian block references as lightweight source
+anchors. The excerpt card stores selected text as a snapshot; it is not a live
+sync or transclusion of the source paragraph.
+
+Source note patch:
+
+```md
+The paragraph that starts the selected range. ^attention-is-selection
+```
+
+Excerpt card provenance:
+
+```yaml
+Mine Related Notes:
+  - "[[Source Article#^attention-is-selection]]"
+```
+
+Compatibility rules:
+
+- If the first selected paragraph already has a `^block-id`, Mine reuses it.
+- If it lacks a block id, Mine appends one readable `^block-id` to that
+  paragraph only.
+- Multi-paragraph selections anchor only the first selected paragraph; the
+  excerpt body may still include the full selected multi-paragraph snapshot.
+- Mine must not add source frontmatter, hidden comments, sidecar files, or a
+  source backlink for this feature.
+- Future source edits do not update the excerpt body. The block reference only
+  helps navigate back to the source context.
+- In-app rename must rewrite `[[Old Source#^id]]` to `[[New Source#^id]]`
+  without dropping the `#^id` fragment.
 
 ## Frontmatter Parsing Contract
 

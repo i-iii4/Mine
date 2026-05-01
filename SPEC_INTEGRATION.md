@@ -1,6 +1,6 @@
 # SPEC: integration layer (watcher + commands)
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 Связующий слой: file watcher отслеживает изменения в vault, Tauri commands предоставляют API для фронтенда. Оркестрация файл → парсинг → индексация → thumbnail.
 
@@ -155,6 +155,7 @@ enum CommandError {
 #[tauri::command] list_blocks(state) -> Result<Vec<IndexedBlock>, CommandError>
 #[tauri::command] get_block(state, slug: String) -> Result<Option<IndexedBlock>, CommandError>
 #[tauri::command] create_block(state, ...) -> Result<IndexedBlock, CommandError>
+#[tauri::command] extract_text_selection(state, ...) -> Result<IndexedBlock, TextSelectionExtractError>
 #[tauri::command] prepare_delete_block(state, slug: String) -> Result<DeleteBlockPlan, CommandError>
 #[tauri::command] delete_block(state, slug: String, delete_unused_media: Option<bool>) -> Result<bool, CommandError>
 #[tauri::command] rename_block_file(state, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError>
@@ -170,6 +171,36 @@ enum CommandError {
 6. Сгенерировать thumbnail (если изображение)
 7. Проиндексировать
 8. Вернуть `IndexedBlock`
+
+### Поведение extract_text_selection
+
+`extract_text_selection` создаёт новую article-карточку из выделенного текста в
+открытой статье. Новая карточка хранит snapshot выделения; постоянной
+синхронизации с исходным параграфом нет.
+
+1. Проверить vault state, `source_slug`, `target_tag`, non-empty
+   `selected_text`, body hash and selected source block range.
+2. Перечитать source `.md` с диска; если `source_body_hash` устарел, вернуть
+   typed stale-selection error без записи.
+3. Найти первый Markdown block выбранного диапазона.
+4. Если у блока уже есть Obsidian block id, использовать его; иначе вставить
+   readable `^block-id` в конец этого блока, сохранив остальные байты файла.
+5. Если patch source unsafe (code fence, table, raw HTML, ambiguous range),
+   вернуть recoverable error без создания новой карточки.
+6. Создать новый `article` block с body snapshot, `Mine Collections` целевой
+   коллекции и `Mine Related Notes: [[Source#^block-id]]`.
+7. Persist/index через reference-block path: media copy не выполняется.
+8. Re-index source block после patch, чтобы body hash и wikilinks были свежими.
+9. Эмитить `block:added` и `thumb:updated` для нового блока; source Detail
+   остаётся открытым.
+
+In-app rename must preserve block-reference anchors when rewriting source
+targets:
+
+```diff
+- [[Old Source#^attention-is-selection]]
++ [[New Source#^attention-is-selection]]
+```
 
 ### Поведение delete_block
 

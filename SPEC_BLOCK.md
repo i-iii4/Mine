@@ -1,6 +1,6 @@
 # SPEC: domain/block
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 Эталонный модуль. Все последующие модули следуют его паттернам качества, тестирования и документирования.
 
@@ -60,6 +60,8 @@ struct Frontmatter {
     width: Option<u32>,
     height: Option<u32>,
     author: Option<String>,
+    related_notes: Vec<String>,  // Mine Related Notes wikilink targets
+    source_media: Option<String>, // Mine Source Media provenance string
 }
 ```
 
@@ -127,6 +129,10 @@ fn parse_frontmatter(yaml: &str) -> Result<Frontmatter, BlockError>
 - Невалидный `saved_at` → `BlockError::InvalidDateTime { value }`
 - `Mine Collections` отсутствует → `tags = vec![]` (не ошибка)
 - `Mine Collections` содержит не-строки → `BlockError::InvalidTagValue`
+- `Mine Related Notes` accepts string list values, normalizes Obsidian
+  wikilinks to targets, and preserves block-reference fragments such as
+  `Source#^block-id`
+- `Mine Source Media` is optional provenance metadata
 - `tags` in YAML is user-owned Obsidian metadata and is ignored by the strict
   Mine collection parser
 - Неизвестные поля в YAML → игнорируются (forward compatibility)
@@ -162,7 +168,10 @@ fn serialize_frontmatter(frontmatter: &Frontmatter) -> String
 - `None` поля не включаются в вывод
 - Пустой `tags` vec — поле `Mine Collections` не включается
 - Непустой `tags` vec serializes as quoted wikilinks under `Mine Collections`
-- Порядок полей: type, title, description, url, file, thumbnail, Mine Collections, saved_at, source, width, height, author
+- Непустой `related_notes` serializes as quoted wikilinks under
+  `Mine Related Notes`
+- `source_media` serializes as `Mine Source Media`
+- Порядок полей: type, title, description, url, file, thumbnail, Mine Collections, Mine Related Notes, Mine Source Media, saved_at, source, width, height, author
 
 ### serialize_block
 

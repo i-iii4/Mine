@@ -1,6 +1,6 @@
 # SPEC: Frontend
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 ## Overview
 
@@ -28,6 +28,7 @@ interface IndexedBlock {
   height: number | null;
   author: string | null;
   body: string;
+  related_notes: string[];
   tags: string[]; // legacy physical name; semantic meaning: CollectionRef[]
 }
 ```
@@ -91,6 +92,7 @@ getVaultPath(): Promise<string | null>
 listBlocks(): Promise<IndexedBlock[]>
 getBlock(slug: string): Promise<IndexedBlock | null>
 createBlock(params: CreateBlockParams): Promise<IndexedBlock>
+extractTextSelection(params: ExtractTextSelectionParams): Promise<IndexedBlock>
 prepareDeleteBlock(slug: string): Promise<DeleteBlockPlan>
 deleteBlock(slug: string, deleteUnusedMedia?: boolean): Promise<boolean>
 renameBlockFile(oldSlug: string, newStem: string): Promise<RenameBlockResult>
@@ -109,6 +111,52 @@ deleteChannel(tag: string): Promise<boolean>
 - If the plan has `unused_media`, the dialog shows compact previews, uses the card thumbnail/poster for video previews, and offers both `Keep media` and `Delete`.
 - `Keep media` commits with `deleteUnusedMedia=false`: only the `.md` card and derived artifacts are removed.
 - Media referenced by other cards is never offered for deletion and remains on disk.
+
+## Text selection extraction
+
+Detail article body supports dragging a selected text range to a concrete
+sidebar collection. The drop creates a new article card through
+`extractTextSelection`; it does not connect the source card itself and does not
+enter the inline-media extraction path.
+
+The new card body is a creation-time snapshot of the selected text. It is not a
+live embed and must not auto-update when the source paragraph changes.
+
+Source provenance is stored in `Mine Related Notes` as an Obsidian block
+reference:
+
+```yaml
+Mine Related Notes:
+  - "[[Source Article#^attention-is-selection]]"
+```
+
+If the user selects text across multiple paragraphs, the card body includes the
+selected text across paragraphs, but the related-note link anchors only the
+first selected paragraph. This is the intended v1 reverse-navigation behavior:
+the anchor brings the user back to the start/context of the source passage.
+
+Frontend drag payload:
+
+```ts
+type TextSelectionDragPayload = {
+  type: "text_selection";
+  sourceSlug: string;
+  selectedText: string;
+  firstBlockStart: number;
+  firstBlockEnd: number;
+  sourceBodyHash: string;
+  title: string | null;
+};
+```
+
+After successful extraction:
+
+1. Detail remains open on the source article.
+2. The command emits normal `block:added` / `thumb:updated` events for the new
+   card, and App schedules grid/taxonomy/preview refresh immediately after the
+   successful drop.
+3. Metadata renders the related note as provenance/source context, not as a
+   synced body.
 
 ## Routing
 

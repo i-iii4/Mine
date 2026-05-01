@@ -1,6 +1,6 @@
 # SPEC: storage layer
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 Персистентный слой: SQLite-индекс, файловые операции, thumbnail-генерация.
 Зависит от domain/ для типов. Не зависит от commands/ и watcher/.
@@ -295,6 +295,32 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
 - Генерирует thumbnail через общий `generate_for_block`, то есть из уже существующего файла, на который указывает `frontmatter.file`.
 - Индексирует блок и синхронизирует thumbnail metadata так же, как `persist_new_block`.
 - Используется для inline-media extraction: новый блок копирует ссылку на media из исходной статьи, а не бинарный файл.
+- Will be used for text-selection extraction: новый article-блок копирует
+  selected text snapshot и related-note reference; media copy не выполняется.
+
+### Text selection extraction storage contract
+
+Text-selection extraction writes two source-vault files in the successful path:
+
+1. Source article `.md`: patched only if the first selected Markdown block lacks
+   a native Obsidian block id.
+2. New excerpt card `.md`: normal Mine article block with `Mine Collections`,
+   `Mine Related Notes: [[Source#^block-id]]`, and snapshot body.
+
+Storage rules:
+
+- Source patch must preserve every byte outside the inserted ` ^block-id`
+  suffix.
+- Source patch must not add frontmatter, sidecar metadata, hidden comments, or
+  backlinks.
+- New excerpt card does not own any media file and must not influence media
+  cleanup planning.
+- Thumbnail generation for the new excerpt uses the normal text-thumbnail path.
+- Relationship indexing must preserve the full block-reference target for
+  display/opening and expose the base note target for existence checks and
+  rename rewrite.
+- In-app rename of a source note must rewrite `[[Old#^id]]` to `[[New#^id]]`
+  in body wikilinks and in `Mine Related Notes`.
 
 ---
 

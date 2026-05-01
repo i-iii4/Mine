@@ -20,6 +20,8 @@ import type {
   ArticleAudioState,
   ExtractInlineMediaParams,
   InlineMediaExtractError,
+  ExtractTextSelectionParams,
+  TextSelectionExtractError,
 } from "@/types";
 
 // Vault
@@ -95,6 +97,27 @@ export const extractInlineMedia = async (params: ExtractInlineMediaParams) => {
     return await invoke<IndexedBlock>("extract_inline_media", { ...params });
   } catch (error) {
     throw normalizeInlineMediaExtractError(error);
+  }
+};
+
+function normalizeTextSelectionExtractError(error: unknown): TextSelectionExtractError {
+  if (error && typeof error === "object" && "kind" in error) {
+    return error as TextSelectionExtractError;
+  }
+  if (typeof error === "string") {
+    return { kind: "internal", message: error };
+  }
+  if (error instanceof Error) {
+    return { kind: "internal", message: error.message };
+  }
+  return { kind: "internal", message: String(error) };
+}
+
+export const extractTextSelection = async (params: ExtractTextSelectionParams) => {
+  try {
+    return await invoke<IndexedBlock>("extract_text_selection", { ...params });
+  } catch (error) {
+    throw normalizeTextSelectionExtractError(error);
   }
 };
 

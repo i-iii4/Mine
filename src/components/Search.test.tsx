@@ -22,6 +22,11 @@ function block(id: number, title: string): IndexedBlock {
     height: null,
     author: null,
     body: "",
+    media_dimensions: null,
+    preview_manifest: null,
+    feed_playback: null,
+    related_notes: [],
+    body_hash: null,
     tags: [],
   };
 }

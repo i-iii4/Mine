@@ -12,8 +12,8 @@ use thiserror::Error;
 
 use crate::commands::state::{current_vault_layout, AppState, CommandError};
 use crate::domain::block::{
-    iter_inline_media_references, parse_markdown_document, suggest_slug, Block, BlockType,
-    DateTime, Frontmatter,
+    compute_body_hash, iter_inline_media_references, parse_markdown_document, suggest_slug, Block,
+    BlockType, DateTime, Frontmatter,
 };
 use crate::domain::collection::normalize_collection_ref;
 use crate::domain::markdown::{rename_inline_media_references, rename_wikilink_targets};
@@ -103,6 +103,40 @@ pub enum InlineMediaExtractError {
 
     #[error("unsupported media type for '{media_ref}'")]
     UnsupportedMediaType { media_ref: String },
+
+    #[error("{message}")]
+    Internal { message: String },
+}
+
+#[derive(Debug, Error, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TextSelectionExtractError {
+    #[error("no vault selected")]
+    NoVault,
+
+    #[error("source block '{source_slug}' not found")]
+    SourceNotFound { source_slug: String },
+
+    #[error("source block '{source_slug}' is not an article")]
+    SourceNotArticle {
+        source_slug: String,
+        block_type: String,
+    },
+
+    #[error("selection is empty")]
+    EmptySelection,
+
+    #[error("source text changed since selection started")]
+    StaleSelection,
+
+    #[error("unsupported selection shape: {reason}")]
+    UnsupportedSelectionShape { reason: String },
+
+    #[error("unsafe source patch: {reason}")]
+    UnsafeSourcePatch { reason: String },
+
+    #[error("invalid collection reference: {reason}")]
+    InvalidCollectionRef { reason: String },
 
     #[error("{message}")]
     Internal { message: String },
@@ -354,6 +388,90 @@ pub async fn extract_inline_media(
     Ok(indexed)
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn extract_text_selection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source_slug: String,
+    target_tag: String,
+    selected_text: String,
+    first_block_start: usize,
+    first_block_end: usize,
+    source_body_hash: String,
+    title: Option<String>,
+) -> Result<IndexedBlock, TextSelectionExtractError> {
+    validate_slug(&source_slug).map_err(|e| TextSelectionExtractError::UnsafeSourcePatch {
+        reason: format!("invalid source slug: {e}"),
+    })?;
+    let vault = {
+        let vault_state =
+            state
+                .vault_state
+                .lock()
+                .map_err(|_| TextSelectionExtractError::Internal {
+                    message: "vault state mutex poisoned".into(),
+                })?;
+        let vs = vault_state
+            .as_ref()
+            .ok_or(TextSelectionExtractError::NoVault)?;
+        vs.vault.clone()
+    };
+    let source_path = vault.block_path(&source_slug);
+    state
+        .suppress_paths(
+            [source_path],
+            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+        )
+        .map_err(internal_text_selection_error)?;
+
+    let indexed = tauri::async_runtime::spawn_blocking(move || {
+        let conn =
+            db::open_or_create(&vault.index_db_path()).map_err(internal_text_selection_error)?;
+        extract_text_selection_inner(
+            &conn,
+            &vault,
+            source_slug,
+            target_tag,
+            selected_text,
+            first_block_start,
+            first_block_end,
+            source_body_hash,
+            title,
+        )
+    })
+    .await
+    .map_err(|e| TextSelectionExtractError::Internal {
+        message: format!("text selection extraction worker failed: {e}"),
+    })??;
+
+    let slug = indexed.slug.clone();
+    let tags = indexed.tags.clone();
+
+    app.emit(
+        "block:added",
+        BlockAddedPayload {
+            slug: slug.clone(),
+            tags,
+            is_text: true,
+        },
+    )
+    .map_err(|e| TextSelectionExtractError::Internal {
+        message: format!("failed to emit block:added: {e}"),
+    })?;
+    app.emit(
+        "thumb:updated",
+        ThumbUpdatedPayload {
+            slug,
+            is_text: true,
+        },
+    )
+    .map_err(|e| TextSelectionExtractError::Internal {
+        message: format!("failed to emit thumb:updated: {e}"),
+    })?;
+
+    Ok(indexed)
+}
+
 fn extract_inline_media_inner(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
@@ -464,6 +582,181 @@ fn extract_inline_media_inner(
     let indexed =
         files::persist_new_reference_block(conn, vault, &block).map_err(internal_extract_error)?;
     Ok(indexed)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn extract_text_selection_inner(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    source_slug: String,
+    target_tag: String,
+    selected_text: String,
+    first_block_start: usize,
+    first_block_end: usize,
+    source_body_hash: String,
+    title: Option<String>,
+) -> Result<IndexedBlock, TextSelectionExtractError> {
+    validate_slug(&source_slug).map_err(|e| TextSelectionExtractError::UnsafeSourcePatch {
+        reason: format!("invalid source slug: {e}"),
+    })?;
+
+    let target_tag = normalize_collection_ref(&target_tag);
+    if target_tag.is_empty() {
+        return Err(TextSelectionExtractError::InvalidCollectionRef {
+            reason: "target collection is empty".to_string(),
+        });
+    }
+
+    let selected_text = selected_text.trim();
+    if selected_text.is_empty() {
+        return Err(TextSelectionExtractError::EmptySelection);
+    }
+
+    let source_path = vault.block_path(&source_slug);
+    if !source_path.exists() {
+        return Err(TextSelectionExtractError::SourceNotFound { source_slug });
+    }
+
+    let (read_slug, content) =
+        files::read_block_file(vault, &source_path).map_err(internal_text_selection_error)?;
+    let parsed = parse_markdown_document(&read_slug, &content, file_saved_at(&source_path))
+        .map_err(|e| TextSelectionExtractError::Internal {
+            message: format!("failed to parse source block: {e}"),
+        })?;
+    let source_origin = parsed.origin.clone();
+    let source_index_warning = parsed.index_warning.clone();
+    let source_block = parsed.block;
+    if source_block.frontmatter.block_type != BlockType::Article {
+        return Err(TextSelectionExtractError::SourceNotArticle {
+            source_slug: source_block.slug,
+            block_type: source_block.frontmatter.block_type.as_str().to_string(),
+        });
+    }
+
+    if compute_body_hash(&source_block.body) != source_body_hash.trim() {
+        return Err(TextSelectionExtractError::StaleSelection);
+    }
+
+    let (block_start, block_end) = validated_source_block_range(
+        &source_block.body,
+        first_block_start,
+        first_block_end,
+        selected_text,
+    )?;
+    let source_block_slice = source_block
+        .body
+        .get(block_start..block_end)
+        .ok_or_else(|| TextSelectionExtractError::UnsafeSourcePatch {
+            reason: "source block range is out of bounds".to_string(),
+        })?;
+    if is_unsupported_anchor_block(source_block_slice) {
+        return Err(TextSelectionExtractError::UnsupportedSelectionShape {
+            reason: "first selected block cannot safely receive an Obsidian block id".to_string(),
+        });
+    }
+
+    let mut patched_source = None;
+    let block_id = if let Some(existing) = existing_block_id(source_block_slice) {
+        existing
+    } else {
+        let block_id = generate_block_id(selected_text, &source_block.body);
+        let insertion_offset =
+            block_anchor_insert_offset(&source_block.body, block_start, block_end).ok_or_else(
+                || TextSelectionExtractError::UnsafeSourcePatch {
+                    reason: "cannot compute source block-id insertion point".to_string(),
+                },
+            )?;
+        let body_start_offset = source_body_start_offset(&content, &source_origin)?;
+        let content_offset = body_start_offset
+            .checked_add(insertion_offset)
+            .ok_or_else(|| TextSelectionExtractError::UnsafeSourcePatch {
+                reason: "source patch offset overflowed".to_string(),
+            })?;
+        if content_offset > content.len() || !content.is_char_boundary(content_offset) {
+            return Err(TextSelectionExtractError::UnsafeSourcePatch {
+                reason: "source patch offset is not a valid UTF-8 boundary".to_string(),
+            });
+        }
+        let mut updated = content.clone();
+        updated.insert_str(content_offset, &format!(" ^{block_id}"));
+        patched_source = Some(updated);
+        block_id
+    };
+
+    let resolved_title = text_selection_title(title.as_deref(), selected_text);
+    let raw_slug = suggest_slug(Some(&resolved_title), None);
+    let slug = resolve_unique_text_selection_slug(conn, vault, &raw_slug)
+        .map_err(internal_text_selection_error)?;
+    let now = crate::commands::state::now_iso8601();
+    let saved_at = DateTime::new(&now).map_err(|e| TextSelectionExtractError::Internal {
+        message: e.to_string(),
+    })?;
+
+    let block = Block {
+        slug: slug.clone(),
+        frontmatter: Frontmatter {
+            block_type: BlockType::Article,
+            title: Some(resolved_title),
+            description: None,
+            url: source_block.frontmatter.url.clone(),
+            file: None,
+            thumbnail: None,
+            tags: vec![target_tag.clone()],
+            related_notes: vec![format!("{}#^{}", source_block.slug, block_id)],
+            source_media: None,
+            saved_at,
+            source: Some("text-selection-extraction".to_string()),
+            width: None,
+            height: None,
+            author: source_block.frontmatter.author.clone(),
+            position: None,
+            color: None,
+            icon: None,
+        },
+        body: selected_text.to_string(),
+    };
+
+    if let Some(updated) = patched_source.as_ref() {
+        std::fs::write(&source_path, &updated).map_err(internal_text_selection_error)?;
+        let reindex_result = (|| -> Result<(), TextSelectionExtractError> {
+            let reparsed =
+                parse_markdown_document(&read_slug, updated, file_saved_at(&source_path)).map_err(
+                    |e| TextSelectionExtractError::Internal {
+                        message: format!("failed to parse patched source block: {e}"),
+                    },
+                )?;
+            index::upsert_block_with_diagnostics(
+                conn,
+                &reparsed.block,
+                Some(vault.root()),
+                Some(&reparsed.origin),
+                reparsed.index_warning.as_deref(),
+            )
+            .map_err(internal_text_selection_error)?;
+            Ok(())
+        })();
+        if let Err(error) = reindex_result {
+            let _ = std::fs::write(&source_path, &content);
+            return Err(error);
+        }
+    }
+
+    match files::persist_new_reference_block(conn, vault, &block) {
+        Ok(indexed) => Ok(indexed),
+        Err(error) => {
+            if patched_source.is_some() {
+                let _ = std::fs::write(&source_path, &content);
+                let _ = index::upsert_block_with_diagnostics(
+                    conn,
+                    &source_block,
+                    Some(vault.root()),
+                    Some(&source_origin),
+                    source_index_warning.as_deref(),
+                );
+            }
+            Err(internal_text_selection_error(error))
+        }
+    }
 }
 
 /// Rename a block's backing `.md` file while keeping filename-derived identity.
@@ -939,6 +1232,260 @@ fn validate_inline_media_ref(media_ref: &str) -> Result<(), InlineMediaExtractEr
     Ok(())
 }
 
+fn validated_source_block_range(
+    body: &str,
+    first_block_start: usize,
+    first_block_end: usize,
+    selected_text: &str,
+) -> Result<(usize, usize), TextSelectionExtractError> {
+    if first_block_start < first_block_end
+        && first_block_end <= body.len()
+        && body.is_char_boundary(first_block_start)
+        && body.is_char_boundary(first_block_end)
+    {
+        if range_matches_selection_start(body, first_block_start, first_block_end, selected_text) {
+            return Ok((first_block_start, first_block_end));
+        }
+        return Err(TextSelectionExtractError::UnsupportedSelectionShape {
+            reason: "selected text does not match the provided source block range".to_string(),
+        });
+    }
+
+    let Some(selection_start) = body.find(selected_text) else {
+        return Err(TextSelectionExtractError::UnsupportedSelectionShape {
+            reason: "selected text could not be located in the current source body".to_string(),
+        });
+    };
+    Ok(markdown_block_range_containing(body, selection_start))
+}
+
+fn range_matches_selection_start(
+    body: &str,
+    block_start: usize,
+    block_end: usize,
+    selected_text: &str,
+) -> bool {
+    if let Some(selection_start) = body.find(selected_text) {
+        return selection_start >= block_start && selection_start < block_end;
+    }
+
+    let Some(block) = body.get(block_start..block_end) else {
+        return false;
+    };
+    let block_normalized = normalize_inline_whitespace(block);
+    let selection_normalized = normalize_inline_whitespace(selected_text);
+    if selection_normalized.is_empty() {
+        return false;
+    }
+    if block_normalized.contains(&selection_normalized)
+        || selection_normalized.starts_with(&block_normalized)
+    {
+        return true;
+    }
+
+    let selection_head = selection_normalized
+        .split_whitespace()
+        .take(8)
+        .collect::<Vec<_>>()
+        .join(" ");
+    !selection_head.is_empty() && block_normalized.contains(&selection_head)
+}
+
+fn normalize_inline_whitespace(value: &str) -> String {
+    let mut out = String::new();
+    let mut last_space = false;
+    for ch in value.trim().chars() {
+        if ch.is_whitespace() {
+            if !last_space && !out.is_empty() {
+                out.push(' ');
+                last_space = true;
+            }
+        } else {
+            out.push(ch);
+            last_space = false;
+        }
+    }
+    out
+}
+
+fn markdown_block_range_containing(body: &str, index: usize) -> (usize, usize) {
+    let mut start = body[..index].rfind("\n\n").map_or(0, |pos| pos + 2);
+    let mut end = body[index..]
+        .find("\n\n")
+        .map_or(body.len(), |pos| index + pos);
+
+    while start < end {
+        let Some(ch) = body[start..end].chars().next() else {
+            break;
+        };
+        if ch == '\n' || ch == '\r' {
+            start += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    while start < end {
+        let Some(ch) = body[start..end].chars().next_back() else {
+            break;
+        };
+        if ch == '\n' || ch == '\r' {
+            end -= ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    (start, end)
+}
+
+fn is_unsupported_anchor_block(block: &str) -> bool {
+    let trimmed = block.trim_start();
+    trimmed.starts_with("```")
+        || trimmed.starts_with("~~~")
+        || trimmed.starts_with('<')
+        || trimmed
+            .lines()
+            .next()
+            .is_some_and(|line| line.trim_start().starts_with('|') && line.contains('|'))
+}
+
+fn existing_block_id(block: &str) -> Option<String> {
+    let trimmed = block.trim_end();
+    let candidate = trimmed.split_whitespace().last()?;
+    let id = candidate.strip_prefix('^')?;
+    if id.is_empty() || !id.chars().all(is_block_id_char) {
+        return None;
+    }
+    Some(id.to_string())
+}
+
+fn generate_block_id(selected_text: &str, body: &str) -> String {
+    let mut out = String::with_capacity(48);
+    let mut last_dash = false;
+    for ch in selected_text.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash && !out.is_empty() {
+            out.push('-');
+            last_dash = true;
+        }
+        if out.len() >= 48 {
+            break;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        out.push_str("selection");
+    }
+
+    for n in 1..=1000 {
+        let candidate = if n == 1 {
+            out.clone()
+        } else {
+            format!("{}-{n}", out.trim_end_matches('-'))
+        };
+        if !body.contains(&format!("^{candidate}")) {
+            return candidate;
+        }
+    }
+    format!("selection-{}", compute_body_hash(selected_text))
+}
+
+fn is_block_id_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'
+}
+
+fn block_anchor_insert_offset(body: &str, start: usize, end: usize) -> Option<usize> {
+    let slice = body.get(start..end)?;
+    let trimmed_len = slice.trim_end_matches(|ch| ch == '\n' || ch == '\r').len();
+    Some(start + trimmed_len)
+}
+
+fn source_body_start_offset(
+    content: &str,
+    origin: &str,
+) -> Result<usize, TextSelectionExtractError> {
+    if origin != "partial_frontmatter" {
+        return Ok(0);
+    }
+    frontmatter_body_start_offset(content).ok_or_else(|| {
+        TextSelectionExtractError::UnsafeSourcePatch {
+            reason: "could not locate source frontmatter boundary".to_string(),
+        }
+    })
+}
+
+fn frontmatter_body_start_offset(content: &str) -> Option<usize> {
+    let mut iter = content.split_inclusive('\n');
+    let first = iter.next()?;
+    if first.trim_end_matches(|ch| ch == '\r' || ch == '\n') != "---" {
+        return None;
+    }
+    let mut cursor = first.len();
+    for (idx, line) in iter.enumerate() {
+        if idx >= 100 {
+            break;
+        }
+        let line_body = line.trim_end_matches(|ch| ch == '\r' || ch == '\n');
+        if line_body == "---" {
+            return Some(cursor + line.len());
+        }
+        cursor += line.len();
+    }
+    None
+}
+
+fn text_selection_title(title: Option<&str>, selected_text: &str) -> String {
+    if let Some(title) = title.map(str::trim).filter(|value| !value.is_empty()) {
+        return title.to_string();
+    }
+    let mut normalized = String::new();
+    let mut last_space = false;
+    for ch in selected_text.trim().chars() {
+        if ch.is_whitespace() {
+            if !last_space && !normalized.is_empty() {
+                normalized.push(' ');
+                last_space = true;
+            }
+        } else {
+            normalized.push(ch);
+            last_space = false;
+        }
+        if normalized.chars().count() >= 72 {
+            break;
+        }
+    }
+    let normalized = normalized.trim();
+    if normalized.is_empty() {
+        "Text selection".to_string()
+    } else if selected_text.trim().chars().count() > normalized.chars().count() {
+        format!("{}...", normalized.trim_end_matches('.'))
+    } else {
+        normalized.to_string()
+    }
+}
+
+fn resolve_unique_text_selection_slug(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    raw_slug: &str,
+) -> anyhow::Result<String> {
+    let first = index::resolve_unique_slug(conn, raw_slug)?;
+    for candidate in std::iter::once(first).chain((2..=1000).map(|n| format!("{raw_slug} ({n})"))) {
+        if index::slug_exists(conn, &candidate)? || vault.block_path(&candidate).exists() {
+            continue;
+        }
+        return Ok(candidate);
+    }
+    anyhow::bail!(
+        "could not resolve text selection filename for '{}'",
+        raw_slug
+    )
+}
+
 fn extraction_title(title: Option<&str>, media_ref: &str) -> String {
     if let Some(title) = title.map(str::trim).filter(|value| !value.is_empty()) {
         return title.to_string();
@@ -981,6 +1528,12 @@ fn file_saved_at(path: &std::path::Path) -> DateTime {
 
 fn internal_extract_error(error: impl std::fmt::Display) -> InlineMediaExtractError {
     InlineMediaExtractError::Internal {
+        message: error.to_string(),
+    }
+}
+
+fn internal_text_selection_error(error: impl std::fmt::Display) -> TextSelectionExtractError {
+    TextSelectionExtractError::Internal {
         message: error.to_string(),
     }
 }
@@ -1077,13 +1630,26 @@ fn rewrite_block_references(
     rewritten.frontmatter.thumbnail =
         rewrite_owned_filename_field(rewritten.frontmatter.thumbnail.as_deref(), media_name_map);
     for note in &mut rewritten.frontmatter.related_notes {
-        if note == old_slug {
-            *note = new_slug.to_string();
+        if let Some(updated) = rewrite_related_note_target(note, old_slug, new_slug) {
+            *note = updated;
         }
     }
     rewritten.body = rename_inline_media_references(&rewritten.body, media_name_map);
     rewritten.body = rename_wikilink_targets(&rewritten.body, old_slug, new_slug);
     rewritten
+}
+
+fn rewrite_related_note_target(note: &str, old_slug: &str, new_slug: &str) -> Option<String> {
+    let (base, fragment) = note
+        .split_once('#')
+        .map_or((note, None), |(base, fragment)| (base, Some(fragment)));
+    if base != old_slug {
+        return None;
+    }
+    Some(match fragment {
+        Some(fragment) => format!("{new_slug}#{fragment}"),
+        None => new_slug.to_string(),
+    })
 }
 
 fn rewrite_owned_filename_field(
@@ -1450,14 +2016,114 @@ mod tests {
     }
 
     #[test]
+    fn extract_text_selection_inner_creates_snapshot_and_anchors_source() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let source = article(
+            "Source Article",
+            "First paragraph with useful sentence.\n\nSecond paragraph.",
+        );
+        let body_hash = compute_body_hash(&source.body);
+        persist_block(&conn, &vault, &source);
+
+        let indexed = extract_text_selection_inner(
+            &conn,
+            &vault,
+            "Source Article".to_string(),
+            "Quotes".to_string(),
+            "useful sentence".to_string(),
+            0,
+            0,
+            body_hash.clone(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(indexed.block_type, BlockType::Article);
+        assert_eq!(indexed.body, "useful sentence");
+        assert_eq!(indexed.tags, vec!["Quotes".to_string()]);
+        assert_eq!(indexed.source.as_deref(), Some("text-selection-extraction"));
+        assert_eq!(
+            indexed.related_notes,
+            vec!["Source Article#^useful-sentence"]
+        );
+
+        let (_, source_content) =
+            files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
+        assert!(source_content.contains("First paragraph with useful sentence. ^useful-sentence"));
+
+        let (_, extracted_content) =
+            files::read_block_file(&vault, &vault.block_path(&indexed.slug)).unwrap();
+        let extracted =
+            crate::domain::block::parse_block(&indexed.slug, &extracted_content).unwrap();
+        assert_eq!(
+            extracted.frontmatter.related_notes,
+            vec!["Source Article#^useful-sentence"]
+        );
+
+        let source_after = index::get_block(&conn, "Source Article").unwrap().unwrap();
+        assert_ne!(source_after.body_hash.as_deref(), Some(body_hash.as_str()));
+    }
+
+    #[test]
+    fn extract_text_selection_inner_reuses_existing_block_id() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let source = article(
+            "Source Article",
+            "Paragraph with anchor. ^manual-anchor\n\nOther paragraph.",
+        );
+        let body_hash = compute_body_hash(&source.body);
+        persist_block(&conn, &vault, &source);
+
+        let indexed = extract_text_selection_inner(
+            &conn,
+            &vault,
+            "Source Article".to_string(),
+            "Quotes".to_string(),
+            "Paragraph with anchor.".to_string(),
+            0,
+            0,
+            body_hash,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(indexed.related_notes, vec!["Source Article#^manual-anchor"]);
+        let (_, source_content) =
+            files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
+        assert_eq!(source_content.matches("^manual-anchor").count(), 1);
+    }
+
+    #[test]
+    fn extract_text_selection_inner_rejects_stale_hash() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let source = article("Source Article", "Current body.");
+        persist_block(&conn, &vault, &source);
+
+        let err = extract_text_selection_inner(
+            &conn,
+            &vault,
+            "Source Article".to_string(),
+            "Quotes".to_string(),
+            "Current".to_string(),
+            0,
+            0,
+            "stale".to_string(),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, TextSelectionExtractError::StaleSelection));
+    }
+
+    #[test]
     fn rename_block_file_rewrites_links_and_inline_media() {
         let (_root, _derived, vault, conn) = make_vault();
         let state = AppState::new();
 
         let original = article("Old Name", "Intro\n\n![[Old Name (image 1).jpg]]");
-        let reference = article("Reference Note", "See [[Old Name]].");
+        let reference = article("Reference Note", "See [[Old Name#^anchor]].");
         let mut related = image("Related Image", "Related Image.jpg");
-        related.frontmatter.related_notes = vec!["Old Name".to_string()];
+        related.frontmatter.related_notes = vec!["Old Name#^anchor".to_string()];
         persist_block(&conn, &vault, &original);
         persist_block(&conn, &vault, &reference);
         persist_block(&conn, &vault, &related);
@@ -1484,7 +2150,7 @@ mod tests {
         let (_, ref_content) =
             files::read_block_file(&vault, &vault.block_path("Reference Note")).unwrap();
         let ref_block = crate::domain::block::parse_block("Reference Note", &ref_content).unwrap();
-        assert!(ref_block.body.contains("[[Renamed Name]]"));
+        assert!(ref_block.body.contains("[[Renamed Name#^anchor]]"));
 
         let (_, related_content) =
             files::read_block_file(&vault, &vault.block_path("Related Image")).unwrap();
@@ -1492,7 +2158,7 @@ mod tests {
             crate::domain::block::parse_block("Related Image", &related_content).unwrap();
         assert_eq!(
             related_block.frontmatter.related_notes,
-            vec!["Renamed Name".to_string()]
+            vec!["Renamed Name#^anchor".to_string()]
         );
 
         assert!(index::get_block(&conn, "Old Name").unwrap().is_none());

@@ -57,6 +57,8 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
     media_dimensions: null,
     preview_manifest: null,
     feed_playback: null,
+    related_notes: [],
+    body_hash: null,
     tags: [],
     ...overrides,
   };

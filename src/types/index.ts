@@ -29,6 +29,7 @@ export interface IndexedBlock {
   preview_manifest: string | null;
   feed_playback: string | null;
   related_notes: string[];
+  body_hash: string | null;
   origin?: string | null;
   index_warning?: string | null;
   tags: string[];
@@ -149,6 +150,27 @@ export type InlineMediaExtractError =
   | { kind: "media_not_referenced"; media_ref: string; source_slug: string }
   | { kind: "media_not_found"; media_ref: string }
   | { kind: "unsupported_media_type"; media_ref: string }
+  | { kind: "internal"; message: string };
+
+export interface ExtractTextSelectionParams {
+  source_slug: string;
+  target_tag: string;
+  selected_text: string;
+  first_block_start: number;
+  first_block_end: number;
+  source_body_hash: string;
+  title?: string | null;
+}
+
+export type TextSelectionExtractError =
+  | { kind: "no_vault" }
+  | { kind: "source_not_found"; source_slug: string }
+  | { kind: "source_not_article"; source_slug: string; block_type: string }
+  | { kind: "empty_selection" }
+  | { kind: "stale_selection" }
+  | { kind: "unsupported_selection_shape"; reason: string }
+  | { kind: "unsafe_source_patch"; reason: string }
+  | { kind: "invalid_collection_ref"; reason: string }
   | { kind: "internal"; message: string };
 
 export interface TagCount {

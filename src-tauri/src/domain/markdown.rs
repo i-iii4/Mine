@@ -123,7 +123,8 @@ pub fn encode_local_markdown_url(name: &str) -> String {
 /// Rewrite every wikilink target equal to `old_target` to `new_target`.
 ///
 /// Applies to both text links (`[[note]]`) and embeds (`![[note]]`), while
-/// preserving any alias after `|`. Non-matching wikilinks are left unchanged.
+/// preserving any `#...` fragment and alias after `|`. Non-matching wikilinks
+/// are left unchanged.
 pub fn rename_wikilink_targets(body: &str, old_target: &str, new_target: &str) -> String {
     let mut out = String::with_capacity(body.len());
     let mut i = 0usize;
@@ -144,9 +145,14 @@ pub fn rename_wikilink_targets(body: &str, old_target: &str, new_target: &str) -
         let inner = &body[inner_start..inner_start + close_offset];
         let mut parts = inner.splitn(2, '|');
         let raw_target = parts.next().unwrap_or("").trim();
-        if raw_target == old_target {
+        let (target_base, target_fragment) = split_wikilink_fragment(raw_target);
+        if target_base == old_target {
             out.push_str("[[");
             out.push_str(new_target);
+            if let Some(fragment) = target_fragment {
+                out.push('#');
+                out.push_str(fragment);
+            }
             if let Some(alias) = parts.next() {
                 out.push('|');
                 out.push_str(alias);
@@ -160,6 +166,13 @@ pub fn rename_wikilink_targets(body: &str, old_target: &str, new_target: &str) -
     }
 
     out
+}
+
+fn split_wikilink_fragment(target: &str) -> (&str, Option<&str>) {
+    match target.split_once('#') {
+        Some((base, fragment)) => (base, Some(fragment)),
+        None => (target, None),
+    }
 }
 
 /// Rewrite local inline-media references according to `renames`.
@@ -387,6 +400,16 @@ mod tests {
     fn rename_wikilink_targets_updates_text_and_embed_forms() {
         let input = "See [[Old Name]] and ![[Old Name|preview]], leave [[Other]].";
         let expected = "See [[New Name]] and ![[New Name|preview]], leave [[Other]].";
+        assert_eq!(
+            rename_wikilink_targets(input, "Old Name", "New Name"),
+            expected
+        );
+    }
+
+    #[test]
+    fn rename_wikilink_targets_preserves_fragments() {
+        let input = "See [[Old Name#^abc123]] and ![[Old Name#Heading|preview]].";
+        let expected = "See [[New Name#^abc123]] and ![[New Name#Heading|preview]].";
         assert_eq!(
             rename_wikilink_targets(input, "Old Name", "New Name"),
             expected

@@ -1,5 +1,68 @@
 # Devlog
 
+## 01.05.2026 [primary] — Text selection extraction implementation
+
+### Goal
+
+Реализовать создание карточки из выделенного текста в article Detail: новая
+карточка хранит snapshot, а обратная связь с источником делается через
+Obsidian block reference на первый выбранный параграф.
+
+### Completed
+
+- Добавлена Tauri-команда `extract_text_selection`:
+  - проверяет vault, source article, target collection, non-empty selection и
+    `source_body_hash`;
+  - дописывает `^block-id` в первый исходный Markdown-блок только если id ещё
+    нет;
+  - создаёт новую article-карточку с `Mine Related Notes:
+    [[Source#^block-id]]`;
+  - re-indexes patched source и эмитит `block:added` / `thumb:updated` для
+    новой карточки.
+- `IndexedBlock` теперь возвращает `body_hash`, чтобы frontend мог передавать
+  stale-selection guard в backend.
+- In-app rename сохраняет `#^block-id` fragments в wikilinks и
+  `Mine Related Notes`.
+- Detail article body получил drag payload `text_selection` для выделенного
+  текста; App drop на sidebar collection вызывает `extractTextSelection`.
+- Related Notes UI резолвит `Source#^id` по base slug, поэтому source note
+  открывается из metadata.
+- Обновлены `SPEC_TEXT_SELECTION_EXTRACTION.md`, `SPEC_FRONTEND.md` и
+  `SPEC_INTEGRATION.md` из planned-контракта в implemented v1.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml extract_text_selection`
+- `cargo test --manifest-path src-tauri/Cargo.toml rename_wikilink_targets`
+- `cargo test --manifest-path src-tauri/Cargo.toml rename_block_file_rewrites_links_and_inline_media`
+- `npm run build`
+- `npm run test -- src/App.test.tsx src/components/Detail.test.tsx src/components/Search.test.tsx`
+
+## 01.05.2026 [primary] — Text selection extraction spec
+
+### Goal
+
+Задокументировать planned-функционал создания карточки из выделенного текста:
+новая карточка хранит snapshot выделения, а связь с источником делается через
+Obsidian block reference без постоянной синхронизации.
+
+### Completed
+
+- Добавлен `SPEC_TEXT_SELECTION_EXTRACTION.md` с продуктовым контрактом,
+  форматом файлов, selection semantics, snapshot semantics, command contract,
+  rename/link rewrite правилами и планом тестирования.
+- Зафиксировано, что multi-paragraph selection ссылается только на первый
+  выбранный параграф, а тело новой карточки может содержать весь выделенный
+  отрезок.
+- Обновлены cross-links и контракты в `SPEC_FRONTEND.md`,
+  `SPEC_INTEGRATION.md`, `SPEC_STORAGE.md`,
+  `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`, `SPEC_OBSIDIAN_WIKILINKS.md` и
+  `SPEC_BLOCK.md`.
+
+### Verification
+
+- `git diff --check`
+
 ## 01.05.2026 [primary] — Delete card unused media cleanup
 
 ### Goal

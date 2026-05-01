@@ -29,6 +29,10 @@ function titleFromTag(tag: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+function baseRelatedNoteSlug(target: string): string {
+  return target.split("#", 1)[0] ?? target;
+}
+
 /** Pin the DragOverlay so the cursor tip sits just outside the top-left corner. */
 const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
   if (!activatorEvent || !draggingNodeRect) return transform;
@@ -62,6 +66,7 @@ import {
   deleteBlock,
   getBlock,
   extractInlineMedia,
+  extractTextSelection,
   sweepVaultThumbnails,
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
@@ -147,6 +152,21 @@ type InlineMediaDragPayload = {
 
 type InlineMediaDragPreview = {
   src: string;
+  title: string | null;
+};
+
+type TextSelectionDragPayload = {
+  type: "text_selection";
+  sourceSlug: string;
+  selectedText: string;
+  firstBlockStart: number;
+  firstBlockEnd: number;
+  sourceBodyHash: string;
+  title: string | null;
+};
+
+type TextSelectionDragPreview = {
+  text: string;
   title: string | null;
 };
 
@@ -303,6 +323,7 @@ export function AppWithVault({
   const [activeDragBlock, setActiveDragBlock] = useState<LightBlock | null>(null);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
   const [activeDragInlineMedia, setActiveDragInlineMedia] = useState<InlineMediaDragPreview | null>(null);
+  const [activeDragTextSelection, setActiveDragTextSelection] = useState<TextSelectionDragPreview | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const themeMenuRef = useRef<ThemeMenuHandle>(null);
   const gridColumnCountRef = useRef(1);
@@ -1081,7 +1102,7 @@ export function AppWithVault({
   }, []);
 
   const handleOpenRelatedNote = useCallback((slug: string) => {
-    void getBlock(slug).then((block) => {
+    void getBlock(baseRelatedNoteSlug(slug)).then((block) => {
       if (block) {
         setFocusedBlockId(null);
         setSelectedBlock(block);
@@ -1253,6 +1274,31 @@ export function AppWithVault({
     [invalidateRoutesForTags, scheduleRefresh],
   );
 
+  const handleTextSelectionDrop = useCallback(
+    async (payload: TextSelectionDragPayload, tag: string) => {
+      try {
+        const block = await extractTextSelection({
+          source_slug: payload.sourceSlug,
+          target_tag: tag,
+          selected_text: payload.selectedText,
+          first_block_start: payload.firstBlockStart,
+          first_block_end: payload.firstBlockEnd,
+          source_body_hash: payload.sourceBodyHash,
+          title: payload.title,
+        });
+        invalidateRoutesForTags(block.tags);
+        scheduleRefresh({
+          grid: currentTagRef.current === undefined || block.tags.includes(currentTagRef.current),
+          taxonomy: true,
+          previews: true,
+        }, 0, { force: true });
+      } catch (err) {
+        console.error("Failed to extract text selection:", err);
+      }
+    },
+    [invalidateRoutesForTags, scheduleRefresh],
+  );
+
   const handleDndStart = useCallback(
     (event: DragStartEvent) => {
       const id = String(event.active.id);
@@ -1260,7 +1306,7 @@ export function AppWithVault({
         type?: string;
         slug?: string;
         block?: LightBlock;
-      } & Partial<InlineMediaDragPayload>) | undefined;
+      } & Partial<InlineMediaDragPayload> & Partial<TextSelectionDragPayload>) | undefined;
       if (data?.type === "inline_media") {
         setActiveDragInlineMedia({
           src: data.imageSrc ?? "",
@@ -1268,12 +1314,24 @@ export function AppWithVault({
         });
         setActiveDragBlock(null);
         setActiveDragTag(null);
+        setActiveDragTextSelection(null);
+        return;
+      }
+      if (data?.type === "text_selection") {
+        setActiveDragTextSelection({
+          text: data.selectedText ?? "",
+          title: data.title ?? null,
+        });
+        setActiveDragBlock(null);
+        setActiveDragTag(null);
+        setActiveDragInlineMedia(null);
         return;
       }
       if (id.startsWith("tag:")) {
         setActiveDragTag(id.slice(4));
         setActiveDragBlock(null);
         setActiveDragInlineMedia(null);
+        setActiveDragTextSelection(null);
       } else {
         const slug = data?.type === "block" && data.slug
           ? data.slug
@@ -1286,6 +1344,7 @@ export function AppWithVault({
         if (block) setActiveDragBlock(block);
         setActiveDragTag(null);
         setActiveDragInlineMedia(null);
+        setActiveDragTextSelection(null);
       }
     },
     [blocks],
@@ -1296,6 +1355,7 @@ export function AppWithVault({
       setActiveDragBlock(null);
       setActiveDragTag(null);
       setActiveDragInlineMedia(null);
+      setActiveDragTextSelection(null);
       const { active, over } = event;
       if (!over) return;
 
@@ -1304,10 +1364,16 @@ export function AppWithVault({
       const activeData = active.data.current as ({
         type?: string;
         slug?: string;
-      } & Partial<InlineMediaDragPayload>) | undefined;
+      } & Partial<InlineMediaDragPayload> & Partial<TextSelectionDragPayload>) | undefined;
       if (activeData?.type === "inline_media") {
         if (overId.startsWith("tag:")) {
           void handleInlineMediaDrop(activeData as InlineMediaDragPayload, overId.slice(4));
+        }
+        return;
+      }
+      if (activeData?.type === "text_selection") {
+        if (overId.startsWith("tag:")) {
+          void handleTextSelectionDrop(activeData as TextSelectionDragPayload, overId.slice(4));
         }
         return;
       }
@@ -1329,13 +1395,14 @@ export function AppWithVault({
         handleCardDrop(activeSlug, overId.slice(4));
       }
     },
-    [handleCardDrop, handleInlineMediaDrop, handleReorderTag],
+    [handleCardDrop, handleInlineMediaDrop, handleReorderTag, handleTextSelectionDrop],
   );
 
   const handleDndCancel = useCallback(() => {
     setActiveDragBlock(null);
     setActiveDragTag(null);
     setActiveDragInlineMedia(null);
+    setActiveDragTextSelection(null);
   }, []);
 
   // ── Card tag management (context menu) ───────────────────────────────────
@@ -1523,7 +1590,11 @@ export function AppWithVault({
         orderedTags={orderedTags}
         channelPreviews={channelPreviews}
         totalBlocks={totalBlocks}
-        isDropDragging={activeDragBlock !== null || activeDragInlineMedia !== null}
+        isDropDragging={
+          activeDragBlock !== null
+          || activeDragInlineMedia !== null
+          || activeDragTextSelection !== null
+        }
         isCreatingChannel={isCreatingChannel}
         onSetCreatingChannel={setIsCreatingChannel}
         onDeleteTag={handleDeleteTagFromAll}
@@ -1540,7 +1611,12 @@ export function AppWithVault({
 
       <SidebarResizeHandle
         isResizing={sidebarResizing}
-        disabled={activeDragBlock !== null || activeDragInlineMedia !== null || activeDragTag !== null}
+        disabled={
+          activeDragBlock !== null
+          || activeDragInlineMedia !== null
+          || activeDragTextSelection !== null
+          || activeDragTag !== null
+        }
         onResizeStart={startResize}
         onResizeUpdate={updateResize}
         onResizeEnd={endResize}
@@ -1742,6 +1818,13 @@ export function AppWithVault({
             className="max-h-48 max-w-64 object-contain"
             draggable={false}
           />
+        </div>
+      )}
+      {activeDragTextSelection && (
+        <div className="pointer-events-none max-w-80 rounded-1 border border-border bg-background px-3 py-2 text-sm leading-snug text-foreground shadow-lg">
+          <p className="line-clamp-4">
+            {activeDragTextSelection.text}
+          </p>
         </div>
       )}
       {activeDragTag && (

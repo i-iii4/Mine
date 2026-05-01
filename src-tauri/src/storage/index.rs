@@ -50,6 +50,7 @@ pub struct IndexedBlock {
     pub preview_manifest: Option<String>,
     pub feed_playback: Option<String>,
     pub related_notes: Vec<String>,
+    pub body_hash: Option<String>,
     pub origin: Option<String>,
     pub index_warning: Option<String>,
     pub tags: Vec<String>,
@@ -2098,7 +2099,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
     let mut stmt = conn
         .prepare(
             "SELECT id, slug, block_type, title, description, url, media_file,
-                    thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, related_notes, origin, index_warning
+                    thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning
              FROM blocks WHERE slug = ?1",
         )
         .context("failed to prepare get_block")?;
@@ -2117,7 +2118,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
 pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, description, url, media_file,
-                thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, related_notes, origin, index_warning
+                thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning
          FROM blocks ORDER BY saved_at DESC",
     )?;
     collect_blocks(conn, &mut stmt, &[] as &[&dyn rusqlite::types::ToSql])
@@ -2128,7 +2129,7 @@ pub fn list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlo
     let mut stmt = conn.prepare(
         "SELECT b.id, b.slug, b.block_type, b.title, b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.related_notes, b.origin, b.index_warning
+                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning
          FROM blocks b
          JOIN block_tags bt ON bt.block_id = b.id
          WHERE bt.tag = ?1
@@ -2201,7 +2202,7 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
     let mut sql = String::from(
         "SELECT DISTINCT b.id, b.slug, b.block_type, b.title, b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.related_notes, b.origin, b.index_warning
+                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning
          FROM blocks b",
     );
 
@@ -2386,8 +2387,9 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
         preview_manifest: row.get(15)?,
         feed_playback: row.get(16)?,
         related_notes: parse_related_notes_json(row.get(17)?),
-        origin: row.get(18)?,
-        index_warning: row.get(19)?,
+        body_hash: row.get(18)?,
+        origin: row.get(19)?,
+        index_warning: row.get(20)?,
         tags: Vec::new(), // filled by caller
     })
 }

@@ -39,6 +39,7 @@ pub fn run() {
             commands::blocks::get_block,
             commands::blocks::create_block,
             commands::blocks::extract_inline_media,
+            commands::blocks::extract_text_selection,
             commands::blocks::rename_block_file,
             commands::blocks::prepare_delete_block,
             commands::blocks::delete_block,

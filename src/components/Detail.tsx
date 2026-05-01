@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -53,6 +53,16 @@ interface DetailProps {
 type DetailInlineMediaExtraction = {
   sourceSlug: string;
   mediaRef: string;
+  title: string | null;
+};
+
+type DetailTextSelectionExtraction = {
+  type: "text_selection";
+  sourceSlug: string;
+  selectedText: string;
+  firstBlockStart: number;
+  firstBlockEnd: number;
+  sourceBodyHash: string;
   title: string | null;
 };
 
@@ -313,7 +323,10 @@ function MetadataPanel({
     let cancelled = false;
     setAvailableRelatedNotes(null);
     void Promise.all(
-      relatedNotes.map(async (slug) => ({ slug, block: await getBlock(slug) })),
+      relatedNotes.map(async (slug) => {
+        const baseSlug = baseRelatedNoteSlug(slug);
+        return { slug, block: await getBlock(baseSlug) };
+      }),
     ).then((results) => {
       if (cancelled) return;
       setAvailableRelatedNotes(new Set(results.filter((item) => item.block).map((item) => item.slug)));
@@ -371,7 +384,7 @@ function MetadataPanel({
               return isAvailable ? (
                 <button
                   key={slug}
-                  onClick={() => onOpenRelatedNote(slug)}
+                  onClick={() => onOpenRelatedNote(baseRelatedNoteSlug(slug))}
                   className="block text-left text-sm text-foreground hover:underline"
                 >
                   {slug}
@@ -403,6 +416,10 @@ function MetadataField({ label, value }: { label: string; value: string }) {
 
 function getIndexWarning(block: LightBlock | IndexedBlock): string | null {
   return "index_warning" in block ? block.index_warning ?? null : null;
+}
+
+function baseRelatedNoteSlug(target: string): string {
+  return target.split("#", 1)[0] ?? target;
 }
 
 function formatIndexWarning(warning: string): string {
@@ -531,6 +548,8 @@ function BlockContent({
             thumbsRootPath={resolvedThumbsRoot}
             previewManifest={previewManifest}
             sourceSlug={block.slug}
+            sourceBodyHash={fullBlock?.body_hash ?? (isIndexedBlock(block) ? block.body_hash : null)}
+            sourceTitle={block.title ?? block.slug}
           />
         </div>
       );
@@ -598,13 +617,75 @@ function ArticleBody({
   thumbsRootPath,
   previewManifest,
   sourceSlug,
+  sourceBodyHash,
+  sourceTitle,
 }: {
   body: string;
   vaultPath: string;
   thumbsRootPath: string;
   previewManifest: ReturnType<typeof normalizeFeedPreviewManifest>;
   sourceSlug?: string;
+  sourceBodyHash?: string | null;
+  sourceTitle?: string | null;
 }) {
+  const articleRef = useRef<HTMLDivElement | null>(null);
+  const [selectionExtraction, setSelectionExtraction] =
+    useState<DetailTextSelectionExtraction | null>(null);
+  const {
+    attributes: selectionDragAttributes,
+    listeners: selectionDragListeners,
+    setNodeRef: setSelectionDragRef,
+    isDragging: isSelectionDragging,
+  } = useDraggable({
+    id: selectionExtraction
+      ? `text-selection:${selectionExtraction.sourceSlug}:${selectionExtraction.sourceBodyHash}`
+      : `text-selection-disabled:${sourceSlug ?? "unknown"}`,
+    disabled: selectionExtraction === null,
+    data: selectionExtraction ?? undefined,
+  });
+  const setArticleNodeRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      articleRef.current = node;
+      setSelectionDragRef(node);
+    },
+    [setSelectionDragRef],
+  );
+
+  const refreshTextSelection = useCallback(() => {
+    if (!sourceSlug || !sourceBodyHash || !articleRef.current) {
+      setSelectionExtraction(null);
+      return;
+    }
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selectionIntersectsNode(selection, articleRef.current)) {
+      setSelectionExtraction(null);
+      return;
+    }
+    const selectedText = selection.toString().trim();
+    if (!selectedText) {
+      setSelectionExtraction(null);
+      return;
+    }
+    const range = findFirstMarkdownBlockRange(body, selectedText);
+    if (!range) {
+      setSelectionExtraction(null);
+      return;
+    }
+    setSelectionExtraction({
+      type: "text_selection",
+      sourceSlug,
+      selectedText,
+      firstBlockStart: range.start,
+      firstBlockEnd: range.end,
+      sourceBodyHash,
+      title: textSelectionTitle(selectedText, sourceTitle),
+    });
+  }, [body, sourceBodyHash, sourceSlug, sourceTitle]);
+
+  useEffect(() => {
+    setSelectionExtraction(null);
+  }, [body, sourceBodyHash, sourceSlug]);
+
   const components: Components = useMemo(
     () => ({
       img: ({ src, alt, ...props }) => {
@@ -658,7 +739,7 @@ function ArticleBody({
         </a>
       ),
     }),
-    [previewManifest, thumbsRootPath, vaultPath],
+    [previewManifest, sourceSlug, thumbsRootPath, vaultPath],
   );
 
   // Phase 18.H.2: rewrite Obsidian wikilinks into standard markdown
@@ -668,7 +749,18 @@ function ArticleBody({
   const processedBody = useMemo(() => preprocessWikilinks(body), [body]);
 
   return (
-    <div className="prose prose-sm mt-4 max-w-none">
+    <div
+      ref={setArticleNodeRef}
+      {...(selectionExtraction ? selectionDragAttributes : {})}
+      {...(selectionExtraction ? selectionDragListeners : {})}
+      onMouseUp={refreshTextSelection}
+      onKeyUp={refreshTextSelection}
+      className={cn(
+        "prose prose-sm mt-4 max-w-none",
+        selectionExtraction && "cursor-grab active:cursor-grabbing",
+        isSelectionDragging && "opacity-80",
+      )}
+    >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {processedBody}
       </ReactMarkdown>
@@ -769,4 +861,92 @@ function isExtractableLocalImage(src: string): boolean {
     return false;
   }
   return /\.(avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)$/i.test(src);
+}
+
+function selectionIntersectsNode(selection: Selection, node: Node): boolean {
+  for (let i = 0; i < selection.rangeCount; i += 1) {
+    const range = selection.getRangeAt(i);
+    try {
+      if (range.intersectsNode(node)) {
+        return true;
+      }
+    } catch {
+      if (node.contains(range.commonAncestorContainer)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function findFirstMarkdownBlockRange(
+  body: string,
+  selectedText: string,
+): { start: number; end: number } | null {
+  const selectionStart = body.indexOf(selectedText);
+  const start = selectionStart >= 0
+    ? selectionStart
+    : findNormalizedSelectionStart(body, selectedText);
+  if (start == null || start < 0) {
+    return null;
+  }
+  return markdownBlockRangeContaining(body, start);
+}
+
+function findNormalizedSelectionStart(body: string, selectedText: string): number | null {
+  const needle = collapseWhitespace(selectedText.trim());
+  if (!needle) return null;
+  const normalized = normalizeWithSourceIndices(body);
+  const index = normalized.text.indexOf(needle);
+  if (index < 0) return null;
+  return normalized.indices[index] ?? null;
+}
+
+function normalizeWithSourceIndices(value: string): { text: string; indices: number[] } {
+  let text = "";
+  const indices: number[] = [];
+  let inSpace = false;
+  for (let offset = 0; offset < value.length;) {
+    const codePoint = value.codePointAt(offset);
+    if (codePoint == null) break;
+    const char = String.fromCodePoint(codePoint);
+    const nextOffset = offset + char.length;
+    if (/\s/.test(char)) {
+      if (!inSpace && text.length > 0) {
+        text += " ";
+        indices.push(offset);
+      }
+      inSpace = true;
+    } else {
+      text += char;
+      indices.push(offset);
+      inSpace = false;
+    }
+    offset = nextOffset;
+  }
+  return { text: text.trimEnd(), indices };
+}
+
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function markdownBlockRangeContaining(body: string, index: number): { start: number; end: number } {
+  let start = body.lastIndexOf("\n\n", index);
+  start = start >= 0 ? start + 2 : 0;
+  let end = body.indexOf("\n\n", index);
+  end = end >= 0 ? end : body.length;
+  while (start < end && (body[start] === "\n" || body[start] === "\r")) {
+    start += 1;
+  }
+  while (end > start && (body[end - 1] === "\n" || body[end - 1] === "\r")) {
+    end -= 1;
+  }
+  return { start, end };
+}
+
+function textSelectionTitle(selectedText: string, sourceTitle?: string | null): string {
+  const title = collapseWhitespace(selectedText).slice(0, 72);
+  if (title) return title;
+  return sourceTitle ? `Selection from ${sourceTitle}` : "Text selection";
 }

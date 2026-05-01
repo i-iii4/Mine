@@ -1,6 +1,6 @@
 # Obsidian Wikilinks Specification
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 ## Goal
 
@@ -59,11 +59,16 @@ source view.
 ```
 [[name]]
 [[name|display]]
+[[name#^block-id]]
+[[name#^block-id|display]]
 ```
 
 - Рендерится как ссылка (не embed) на другой блок.
 - Mine в текущей версии не создаёт plain wikilinks сам; они
   распознаются для совместимости с user-authored markdown и Obsidian.
+- `#^block-id` is an Obsidian block-reference fragment. It identifies a
+  Markdown block inside the target note and must be preserved by parsing,
+  rendering, related-note metadata, and rename rewrites.
 
 ### Reserved characters
 
@@ -126,6 +131,9 @@ filesystem-form строку (wikilink name as-is, markdown URL percent-decoded
 4. `[[name|display]]` → `[display](encoded-name)` — text link с display
 5. Пустые wikilinks (`![[]]`, `[[]]`) отбрасываются silent
 6. Обычный markdown проходит без изменений
+7. Block-reference fragments preserve the target string before render
+   encoding: `[[note#^id]]` becomes a normal link whose href still carries
+   `#^id`.
 
 Percent-encoding применяется **только** на render boundary, не в
 source файле. Пользователь, смотрящий raw `.md` в Obsidian или Finder,
@@ -171,6 +179,9 @@ Stable: applying дважды даёт тот же результат (idempoten
    миграции. Mix двух форм в одном vault — supported forever.
 5. **Idempotent migration**: `migrate-body-to-wikilinks --apply`
    дважды подряд — второй раз no-op.
+6. **Block-reference preservation**: `#^block-id` fragments are part of the
+   human-readable link target and must survive parse/render/rename. In-app
+   rename rewrites only the note target: `[[Old#^id]]` → `[[New#^id]]`.
 
 ## Testing plan
 

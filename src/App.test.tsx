@@ -17,6 +17,7 @@ const commandMocks = vi.hoisted(() => ({
   deleteBlock: vi.fn<(slug: string, deleteUnusedMedia?: boolean) => Promise<boolean>>(),
   getBlock: vi.fn(),
   extractInlineMedia: vi.fn(),
+  extractTextSelection: vi.fn(),
 }));
 
 vi.mock("@/lib/commands", () => ({
@@ -38,6 +39,7 @@ vi.mock("@/lib/commands", () => ({
   deleteBlock: commandMocks.deleteBlock,
   getBlock: commandMocks.getBlock,
   extractInlineMedia: commandMocks.extractInlineMedia,
+  extractTextSelection: commandMocks.extractTextSelection,
 }));
 
 vi.mock("@/lib/articleAudioDesktopGateway", () => ({
@@ -212,6 +214,8 @@ function indexedBlock(id: number, slug: string, title = slug): IndexedBlock {
     title,
     description: null,
     source: null,
+    related_notes: [],
+    body_hash: null,
     tags: [],
   };
 }
