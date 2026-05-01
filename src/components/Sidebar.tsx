@@ -537,9 +537,11 @@ const TagNavItem = memo(function TagNavItem({
             onDragOver={handleNativeTextSelectionDragOver}
             onDragLeave={handleNativeTextSelectionDragLeave}
             onDrop={handleNativeTextSelectionDrop}
+            data-sidebar-text-drop-tag={tag}
             className={cn(
               "group relative rounded-1",
               isDragging && "opacity-30",
+              "data-[selected-text-over=true]:ring-2 data-[selected-text-over=true]:ring-ring data-[selected-text-over=true]:ring-inset",
               ((isOver && !isDragging && isDropDragging) || nativeTextSelectionOver) && "ring-2 ring-ring ring-inset",
             )}
           >

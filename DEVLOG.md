@@ -37,6 +37,9 @@ Obsidian block reference на первый выбранный параграф.
 - Для WebKit/Tauri добавлен same-WebView in-memory fallback активного
   text-selection payload, потому что custom MIME может не быть виден на
   промежуточном `dragover`; hover/drop в sidebar снова работают.
+- Если WKWebView вообще не отдаёт usable native selected-text drag events,
+  Detail включает pointer fallback: только из уже существующего выделения, с
+  movement threshold, hover по sidebar row и тем же `extractTextSelection`.
 - Global file DropZone теперь включает `Drop files to add` только после Tauri
   `enter` с непустыми file paths; native selected-text drag больше не вызывает
   file-import overlay.

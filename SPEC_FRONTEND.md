@@ -170,6 +170,11 @@ with this MIME type and call `extractTextSelection` for the target collection.
 Because WebKit can hide custom MIME types during intermediate `dragover`
 events, Mine also keeps the active selected-text payload in memory between
 `dragstart` and `drop`/`dragend` as a same-WebView fallback.
+When WKWebView does not emit usable native selected-text drag events at all,
+Article Detail has a pointer fallback: it starts only from a primary-button
+pointerdown inside an already existing text selection and only after a movement
+threshold. It then highlights sidebar channel rows by pointer position and
+calls the same `extractTextSelection` drop path on pointerup.
 Existing `dnd-kit` paths remain responsible for card/tag drag and inline-media
 extraction.
 

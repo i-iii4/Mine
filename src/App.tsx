@@ -1677,6 +1677,7 @@ export function AppWithVault({
               onRequestRename={setRenamingBlock}
               onRequestDelete={requestDeleteBlock}
               onOpenRelatedNote={handleOpenRelatedNote}
+              onTextSelectionDrop={handleTextSelectionDrop}
               onTagsChanged={() => {
                 void reloadAllSnapshots();
               }}

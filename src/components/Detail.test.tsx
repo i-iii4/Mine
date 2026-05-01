@@ -205,6 +205,89 @@ describe("Detail", () => {
     clearActiveMineTextSelectionDragPayload();
   });
 
+  it("supports pointer fallback when native selected-text drag events are unavailable", () => {
+    const onTextSelectionDrop = vi.fn();
+    const { container } = render(
+      <Detail
+        block={block({
+          body: "Alpha beta gamma",
+          body_hash: "body-hash-1",
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onTextSelectionDrop={onTextSelectionDrop}
+      />,
+    );
+
+    const paragraph = container.querySelector("p")!;
+    const textNode = paragraph.firstChild!;
+    const range = document.createRange();
+    range.setStart(textNode, "Alpha ".length);
+    range.setEnd(textNode, "Alpha beta".length);
+    Object.defineProperty(range, "getClientRects", {
+      value: vi.fn(() => [
+        { left: 0, right: 100, top: 0, bottom: 20 },
+      ]),
+    });
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const row = document.createElement("div");
+    row.dataset.sidebarTextDropTag = "alpha";
+    document.body.appendChild(row);
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn(() => row),
+    });
+
+    fireEvent.pointerDown(paragraph, {
+      button: 0,
+      pointerType: "mouse",
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.pointerMove(window, {
+      pointerType: "mouse",
+      clientX: 20,
+      clientY: 10,
+    });
+
+    expect(row).toHaveAttribute("data-selected-text-over", "true");
+
+    fireEvent.pointerUp(window, {
+      pointerType: "mouse",
+      clientX: 20,
+      clientY: 10,
+    });
+
+    expect(onTextSelectionDrop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "text_selection",
+        sourceSlug: "test-block",
+        selectedText: "beta",
+        sourceBodyHash: "body-hash-1",
+      }),
+      "alpha",
+    );
+    expect(row).not.toHaveAttribute("data-selected-text-over");
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: originalElementFromPoint,
+    });
+    row.remove();
+    selection?.removeAllRanges();
+  });
+
   it("decodes local wikilink image paths for original media and preview lookup", () => {
     const b = block({
       body: "![[Title (image 1).jpg]]",

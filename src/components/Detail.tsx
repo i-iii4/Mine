@@ -26,6 +26,7 @@ import {
 } from "@/lib/feedPreview";
 import {
   clearActiveMineTextSelectionDragPayload,
+  setActiveMineTextSelectionDragPayload,
   writeMineTextSelectionDragData,
   type MineTextSelectionDragPayload,
 } from "@/lib/textSelectionDrag";
@@ -54,6 +55,7 @@ interface DetailProps {
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
   onRequestDelete: (slug: string) => void;
   onOpenRelatedNote: (slug: string) => void;
+  onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }
 
 type DetailInlineMediaExtraction = {
@@ -81,6 +83,7 @@ export function Detail({
   onRequestRename,
   onRequestDelete,
   onOpenRelatedNote,
+  onTextSelectionDrop,
 }: DetailProps) {
   const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
     isIndexedBlock(block) ? block : null,
@@ -261,6 +264,7 @@ export function Detail({
                 scrollAnchor={scrollAnchor}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath}
+                onTextSelectionDrop={onTextSelectionDrop}
               />
             </div>
             <div className="w-56 shrink-0" aria-hidden="true" />
@@ -455,12 +459,14 @@ function BlockContent({
   scrollAnchor,
   vaultPath,
   thumbsRootPath,
+  onTextSelectionDrop,
 }: {
   block: LightBlock | IndexedBlock;
   fullBlock: IndexedBlock | null;
   scrollAnchor?: string | null;
   vaultPath: string;
   thumbsRootPath?: string;
+  onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
   const previewManifest = useMemo(
@@ -551,6 +557,7 @@ function BlockContent({
             sourceBodyHash={fullBlock?.body_hash ?? (isIndexedBlock(block) ? block.body_hash : null)}
             sourceTitle={block.title ?? block.slug}
             scrollAnchor={scrollAnchor}
+            onTextSelectionDrop={onTextSelectionDrop}
           />
         </div>
       );
@@ -621,6 +628,7 @@ function ArticleBody({
   sourceBodyHash,
   sourceTitle,
   scrollAnchor,
+  onTextSelectionDrop,
 }: {
   body: string;
   vaultPath: string;
@@ -630,8 +638,13 @@ function ArticleBody({
   sourceBodyHash?: string | null;
   sourceTitle?: string | null;
   scrollAnchor?: string | null;
+  onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }) {
   const articleRef = useRef<HTMLDivElement | null>(null);
+  const pointerTextSelectionDragRef = useRef<{
+    cleanup: () => void;
+    hoveredRow: HTMLElement | null;
+  } | null>(null);
 
   const buildTextSelectionDragPayload = useCallback((dragTarget: Node | null): MineTextSelectionDragPayload | null => {
     if (!sourceSlug || !sourceBodyHash || !articleRef.current) {
@@ -678,6 +691,92 @@ function ArticleBody({
 
   const handleNativeTextSelectionDragEnd = useCallback(() => {
     clearActiveMineTextSelectionDragPayload();
+  }, []);
+
+  const handleTextSelectionPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!onTextSelectionDrop || event.button !== 0 || event.pointerType === "touch") return;
+      if (!selectionContainsPoint(window.getSelection(), event.clientX, event.clientY)) return;
+
+      const dragTarget = event.target instanceof Node ? event.target : null;
+      const payload = buildTextSelectionDragPayload(dragTarget);
+      if (!payload) return;
+
+      pointerTextSelectionDragRef.current?.cleanup();
+
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const dragState = {
+        active: false,
+        hoveredRow: null as HTMLElement | null,
+      };
+
+      const clearHover = () => {
+        if (dragState.hoveredRow) {
+          dragState.hoveredRow.removeAttribute("data-selected-text-over");
+          dragState.hoveredRow = null;
+        }
+      };
+
+      const cleanup = () => {
+        window.removeEventListener("pointermove", handleMove, true);
+        window.removeEventListener("pointerup", handleUp, true);
+        window.removeEventListener("pointercancel", handleCancel, true);
+        clearHover();
+        clearActiveMineTextSelectionDragPayload();
+        pointerTextSelectionDragRef.current = null;
+      };
+
+      const handleMove = (moveEvent: PointerEvent) => {
+        const movedEnough =
+          Math.abs(moveEvent.clientX - startX) > 4
+          || Math.abs(moveEvent.clientY - startY) > 4;
+        if (!dragState.active && movedEnough) {
+          dragState.active = true;
+          setActiveMineTextSelectionDragPayload(payload);
+        }
+        if (!dragState.active) return;
+        moveEvent.preventDefault();
+
+        const row = findTextSelectionDropRow(moveEvent.clientX, moveEvent.clientY);
+        if (row === dragState.hoveredRow) return;
+        clearHover();
+        dragState.hoveredRow = row;
+        dragState.hoveredRow?.setAttribute("data-selected-text-over", "true");
+      };
+
+      const handleUp = (upEvent: PointerEvent) => {
+        if (dragState.active) {
+          upEvent.preventDefault();
+          const row = dragState.hoveredRow ?? findTextSelectionDropRow(upEvent.clientX, upEvent.clientY);
+          const tag = row?.dataset.sidebarTextDropTag;
+          if (tag) {
+            onTextSelectionDrop(payload, tag);
+          }
+        }
+        cleanup();
+      };
+
+      const handleCancel = () => {
+        cleanup();
+      };
+
+      pointerTextSelectionDragRef.current = {
+        cleanup,
+        get hoveredRow() {
+          return dragState.hoveredRow;
+        },
+      };
+
+      window.addEventListener("pointermove", handleMove, true);
+      window.addEventListener("pointerup", handleUp, true);
+      window.addEventListener("pointercancel", handleCancel, true);
+    },
+    [buildTextSelectionDragPayload, onTextSelectionDrop],
+  );
+
+  useEffect(() => {
+    return () => pointerTextSelectionDragRef.current?.cleanup();
   }, []);
 
   // Phase 18.H.2: rewrite Obsidian wikilinks into standard markdown
@@ -762,6 +861,7 @@ function ArticleBody({
       ref={articleRef}
       onDragStartCapture={handleNativeTextSelectionDragStart}
       onDragEndCapture={handleNativeTextSelectionDragEnd}
+      onPointerDownCapture={handleTextSelectionPointerDown}
       className="prose prose-sm mt-4 max-w-none"
       data-article-body
     >
@@ -895,6 +995,30 @@ function selectionIntersectsNode(selection: Selection, node: Node): boolean {
     }
   }
   return false;
+}
+
+function selectionContainsPoint(selection: Selection | null, clientX: number, clientY: number): boolean {
+  if (!selection || selection.isCollapsed) return false;
+  for (let i = 0; i < selection.rangeCount; i += 1) {
+    const range = selection.getRangeAt(i);
+    for (const rect of Array.from(range.getClientRects())) {
+      if (
+        clientX >= rect.left
+        && clientX <= rect.right
+        && clientY >= rect.top
+        && clientY <= rect.bottom
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function findTextSelectionDropRow(clientX: number, clientY: number): HTMLElement | null {
+  return document
+    .elementFromPoint(clientX, clientY)
+    ?.closest<HTMLElement>("[data-sidebar-text-drop-tag]") ?? null;
 }
 
 function findFirstMarkdownBlockRange(
