@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Plus, Trash2, Info, ExternalLink } from "lucide-react";
 import { ActionButton } from "@/components/ActionButton";
 import { Button } from "@/components/ui/button";
@@ -39,10 +39,26 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
+type RedactionIconVariant = {
+  family: string;
+  label: string;
+  glyph: "m";
+  style: "regular" | "italic";
+};
+
+const actualMineIconVariant: RedactionIconVariant = {
+  family: "Redaction 100",
+  label: "Redaction 100 Italic",
+  glyph: "m",
+  style: "italic",
+};
+
 export function ComponentTestBench() {
   return (
     <div className="border-b border-border p-8">
       <p className="mb-6 font-mono text-sm text-muted-foreground">Component test bench</p>
+
+      <AppIconTemplateBench />
 
       <Section label="Button — Sizes">
         <Button size="xs">xs 24px</Button>
@@ -213,6 +229,144 @@ export function ComponentTestBench() {
       </Section>
     </div>
   );
+}
+
+function AppIconTemplateBench() {
+  return (
+    <div className="mb-8 border-b border-border pb-8">
+      <div className="mb-4">
+        <p className="font-mono text-sm text-muted-foreground">Logo</p>
+        <h1 className="mt-1 text-lg font-semibold text-foreground">Current Mine icon</h1>
+      </div>
+
+      <div className="grid max-w-xl gap-4 [grid-template-columns:repeat(auto-fill,minmax(304px,1fr))]">
+        <RedactionIconCard variant={actualMineIconVariant} />
+      </div>
+    </div>
+  );
+}
+
+function RedactionIconCard({ variant }: { variant: RedactionIconVariant }) {
+  return (
+    <div className="rounded-1 border border-border bg-background p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-mono text-sm text-foreground">{variant.label}</p>
+          <p className="font-mono text-sm text-muted-foreground">lowercase m</p>
+        </div>
+        <div
+          className="text-lg leading-6 text-foreground"
+          style={redactionGlyphStyle(variant, 24)}
+        >
+          {variant.glyph}
+        </div>
+      </div>
+
+      <div className="flex items-end gap-3">
+        <AppIconSourceTemplate variant={variant} />
+        <div className="flex items-end gap-2">
+          <AppIconMaskedPreview variant={variant} size={96} label="large" />
+          <AppIconMaskedPreview variant={variant} size={56} label="small" />
+          <AppIconMaskedPreview variant={variant} size={32} label="tiny" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AppIconSourceTemplate({ variant }: { variant: RedactionIconVariant }) {
+  const size = 112;
+  const grid = Math.max(1, Math.round(size / 8));
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div
+        className="relative border border-border bg-white"
+        style={{
+          width: size,
+          height: size,
+        }}
+      >
+        <div
+          className="absolute inset-0 opacity-[0.05]"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, #000 1px, transparent 1px), linear-gradient(to bottom, #000 1px, transparent 1px)",
+            backgroundSize: `${grid}px ${grid}px`,
+          }}
+        />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <RedactionGlyph variant={variant} size={size * 0.72} />
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-2 font-mono text-sm text-muted-foreground">
+        <span>source</span>
+        <span>1024</span>
+      </div>
+    </div>
+  );
+}
+
+function AppIconMaskedPreview({
+  variant,
+  size,
+  label,
+}: {
+  variant: RedactionIconVariant;
+  size: number;
+  label: string;
+}) {
+  const grid = Math.max(1, Math.round(size / 8));
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div
+        className="relative overflow-hidden border border-border bg-white shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
+        style={{
+          width: size,
+          height: size,
+          borderRadius: `${size * 0.2237}px`,
+        }}
+      >
+        <div
+          className="absolute inset-0 opacity-[0.05]"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, #000 1px, transparent 1px), linear-gradient(to bottom, #000 1px, transparent 1px)",
+            backgroundSize: `${grid}px ${grid}px`,
+          }}
+        />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <RedactionGlyph variant={variant} size={size * 0.72} />
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-2 font-mono text-sm text-muted-foreground">
+        <span>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function RedactionGlyph({ variant, size }: { variant: RedactionIconVariant; size: number }) {
+  return (
+    <div
+      className="select-none text-black"
+      style={redactionGlyphStyle(variant, size)}
+    >
+      {variant.glyph}
+    </div>
+  );
+}
+
+function redactionGlyphStyle(variant: RedactionIconVariant, size: number): CSSProperties {
+  return {
+    fontFamily: `"${variant.family}", "Redaction", serif`,
+    fontSize: size,
+    fontStyle: variant.style === "italic" ? "italic" : "normal",
+    fontWeight: 400,
+    lineHeight: 1,
+    letterSpacing: 0,
+  };
 }
 
 function Section({ label, children, vertical }: { label: string; children: ReactNode; vertical?: boolean }) {

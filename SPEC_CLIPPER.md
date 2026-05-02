@@ -758,11 +758,26 @@ extension/
     ├── icon-16.png
     ├── icon-32.png
     ├── icon-48.png
-    └── icon-128.png
+    ├── icon-128.png
+    └── clipper-overlay-32.png
 
 src-tauri/src/bin/
 └── native_host.rs          # Native messaging host (Rust binary)
 ```
+
+## Icon Contract
+
+Toolbar icon и in-page overlay используют разные assets.
+
+| Surface | Contract |
+|---|---|
+| Extension toolbar / manifest icons | Белый круг с чёрной строчной `m` из Redaction 100 Italic. Это не app icon и не squircle |
+| Instagram feed overlay button | Content script рисует круглую белую кнопку `34x34px` с белой обводкой и вставляет внутрь `icons/clipper-overlay-32.png` как glyph `28x28px` |
+
+Instagram-кнопка версионируется через `data-la-clip-version`. Если старый
+content script уже вставил кнопку без текущей версии, новый scan обязан удалить
+её и создать заново, иначе Safari/Chrome оставят устаревший визуальный asset до
+перезагрузки страницы.
 
 ## Manifest V3
 
@@ -795,6 +810,15 @@ src-tauri/src/bin/
       "matches": ["<all_urls>"],
       "js": ["lib/readerable.js", "lib/readability.js", "lib/turndown.browser.umd.js", "content.js"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/icon-32.png",
+        "icons/clipper-overlay-32.png"
+      ],
+      "matches": ["<all_urls>"]
     }
   ],
   "commands": {

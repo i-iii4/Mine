@@ -50,6 +50,8 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "icons/icon-32.png",
+        "icons/clipper-overlay-32.png",
         "dist/assets/popup.css",
         "dist/fonts/Geist-Variable.woff2",
         "dist/fonts/GeistMono-Variable.woff2"

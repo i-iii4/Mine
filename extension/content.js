@@ -696,6 +696,7 @@
     if (!window.location.hostname.includes("instagram.com")) return;
 
     const BUTTON_ATTR = "data-la-clip";
+    const BUTTON_VERSION = "2";
 
     function findShortcode(article) {
       for (const a of article.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]')) {
@@ -708,17 +709,19 @@
     function createClipButton() {
       const btn = document.createElement("button");
       btn.setAttribute(BUTTON_ATTR, "");
+      btn.setAttribute("data-la-clip-version", BUTTON_VERSION);
       btn.title = "Save to Mine";
       Object.assign(btn.style, {
         position: "absolute",
         top: "62px",
         right: "12px",
         zIndex: "10",
-        width: "32px",
-        height: "32px",
+        width: "34px",
+        height: "34px",
         borderRadius: "50%",
-        background: "rgba(0,0,0,0.6)",
-        border: "none",
+        background: "rgba(255,255,255,0.92)",
+        border: "2px solid #ffffff",
+        boxShadow: "0 1px 4px rgba(0,0,0,0.28)",
         cursor: "pointer",
         display: "flex",
         alignItems: "center",
@@ -726,7 +729,15 @@
         opacity: "1",
         padding: "0",
       });
-      btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+      const icon = document.createElement("img");
+      icon.src = chrome.runtime.getURL("icons/clipper-overlay-32.png");
+      icon.alt = "";
+      Object.assign(icon.style, {
+        width: "28px",
+        height: "28px",
+        display: "block",
+      });
+      btn.appendChild(icon);
       return btn;
     }
 
@@ -831,7 +842,10 @@
 
     function scanArticles() {
       for (const article of document.querySelectorAll("article")) {
-        if (article.querySelector(`[${BUTTON_ATTR}]`)) continue;
+        const existing = article.querySelector(`[${BUTTON_ATTR}]`);
+        if (existing?.getAttribute("data-la-clip-version") === BUTTON_VERSION) continue;
+        existing?.remove();
+
         const shortcode = findShortcode(article);
         if (!shortcode) continue;
 

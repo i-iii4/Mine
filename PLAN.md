@@ -115,6 +115,7 @@ Goal: устранить две подтверждённые архитекту�
 | C3 | Measurement + Invalidation Hardening | [~] | media-free measurement, `source_stamp` invalidation, acceptance profiling |
 | C4 | Residual Risks / Follow-up | [ ] | watcher hardening beyond current catch-up, remaining frontend boot optimization, optional async/custom asset path for Detail/original flows, remaining windowing bugs |
 | C5 | Feed Video Phase | [~] | explicit `feed_playback` contract, tiered `standard/heavy` autoplay policy, poster-first `FeedVideoSurface`, single-active autoplay, preview-only galleries |
+| C6 | Identity Assets | [x] | Redaction 100 Italic `m`, platform-specific app icons, toolbar circle icon, Instagram overlay glyph/button contract |
 
 ### Current progress snapshot
 
@@ -153,6 +154,12 @@ Goal: устранить две подтверждённые архитекту�
     - `heavy` clips остаются консервативными: одновременно autoplay'ит только один committed heavy clip, при этом in-viewport heavy имеет приоритет над off-screen lingering candidate;
     - autoplay больше не сбрасывается на всём `measuring`; уже committed prefix может продолжать и начинать playback, пока нижняя часть grid ещё догоняет layout;
   - `C5` остаётся `[~]` до ручной приёмки пользователем: autoplay dedicated video, autoplay single-video previews, preview-only multi-media, no blank square on failures.
+- `C6` завершён:
+  - product mark зафиксирован как строчная `m` из Redaction 100 Italic;
+  - iOS app icon использует square white source под системную mask;
+  - macOS/Tauri app icon использует transparent canvas + inset white rounded tile, чтобы Dock не показывал oversized квадрат;
+  - extension toolbar icon — белый круг с чёрной `m`;
+  - Instagram overlay отделён от toolbar icon: content script рисует круглую белую кнопку и вставляет glyph-only `clipper-overlay-32.png`.
 
 ### Current known product compatibility gap
 

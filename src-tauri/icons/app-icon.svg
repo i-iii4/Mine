@@ -1,15 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <!-- Eye outline: two arcs with sharp points at left and right -->
-  <path fill-rule="evenodd" fill="black" d="
-    M 72 512
-    C 200 190, 824 190, 952 512
-    C 824 834, 200 834, 72 512
-    Z
-    M 140 512
-    C 248 248, 776 248, 884 512
-    C 776 776, 248 776, 140 512
-    Z
-  "/>
-  <!-- Rectangular pupil -->
-  <rect x="370" y="448" width="284" height="128" fill="black"/>
+  <rect width="1024" height="1024" rx="229" fill="white"/>
+  <text
+    x="512"
+    y="548"
+    fill="black"
+    font-family="Redaction 100, Redaction, serif"
+    font-size="760"
+    font-style="italic"
+    font-weight="400"
+    text-anchor="middle"
+    dominant-baseline="middle"
+  >m</text>
 </svg>

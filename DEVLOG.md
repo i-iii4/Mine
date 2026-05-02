@@ -1,5 +1,35 @@
 # Devlog
 
+## 02.05.2026 13:40 -03 [primary] — Mine identity assets and clipper overlay icon
+
+### Goal
+
+Зафиксировать фактический знак Mine и развести app icon, browser toolbar icon
+и Instagram overlay, чтобы один square asset больше не попадал в Dock/toolbar
+и не ломал размеры/скругление.
+
+### Completed
+
+- Product mark зафиксирован как строчная `m` из Redaction 100 Italic; на
+  дизайн-странице оставлен только фактически используемый вариант.
+- Перегенерированы app icons:
+  - iOS получает white square source под системную mask;
+  - macOS/Tauri получает transparent canvas + inset white rounded tile для
+    корректного размера в Dock.
+- Обновлены Chrome/Safari extension toolbar icons: белый круг с чёрной `m`.
+- Instagram feed overlay получил отдельный `clipper-overlay-32.png` и
+  content-script кнопку `34x34px`: белый круг, белая обводка, glyph `28x28px`.
+- Добавлено версионирование `data-la-clip-version`, чтобы старые уже
+  инжектнутые Instagram-кнопки заменялись новым визуальным контрактом.
+- Обновлены [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md),
+  [ARCHITECTURE.md](ARCHITECTURE.md), [PLAN.md](PLAN.md) и
+  [SPEC_CLIPPER.md](SPEC_CLIPPER.md).
+
+### Verification
+
+- `bunx eslint src/components/ComponentTestBench.tsx`
+- `bun run build:extension`
+
 ## 02.05.2026 11:26 -03 [primary] — Detail related-notes hydration and article layout recovery
 
 ### Goal

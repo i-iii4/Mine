@@ -717,7 +717,22 @@ collections supersede this for Mine collection membership:
 `tags` remains user-owned Obsidian metadata, while Mine collections use
 `Mine Collections` wikilinks and `CollectionRef`.
 
-### 011: Собственный virtualized masonry renderer вместо browser layout для больших коллекций
+### 011: Brand icon assets разделены по surface
+
+| Approach | Problem |
+|---|---|
+| Один square/app icon asset для Dock, iOS, toolbar и in-page overlay | Dock показывает oversized квадрат, toolbar теряет форму reference-иконки, а in-page overlay получает слишком маленький glyph без нужной круглой кнопки |
+| Surface-specific assets (chosen) | App icon, extension toolbar icon и Instagram overlay имеют разные host-маски, размеры и optical alignment, поэтому получают отдельные raster contracts |
+
+Rationale: Apple app icon и browser toolbar icon — разные surfaces. iOS ожидает
+square source и сама применяет mask. macOS Dock в Tauri получает уже готовый
+app icon asset, поэтому source должен иметь transparent canvas + inset rounded
+tile. Browser toolbar icon должен быть белым кругом с чёрной `m`; Instagram
+overlay использует отдельный glyph-only `clipper-overlay-32.png`, который
+вставляется внутрь круглой белой кнопки content script'ом. Общий glyph — строчная
+`m` из Redaction 100 Italic, но bitmap assets не взаимозаменяемы.
+
+### 012: Собственный virtualized masonry renderer вместо browser layout для больших коллекций
 
 | Approach | Problem |
 |---|---|
