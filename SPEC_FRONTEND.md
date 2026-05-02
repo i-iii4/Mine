@@ -155,9 +155,14 @@ is deterministic and only happens through the visible selection handle.
 
 Rendered Markdown block elements carry source offsets in
 `data-mine-md-start` / `data-mine-md-end`. The extraction payload anchors to
-the first selected rendered block by these offsets, falling back to normalized
-text search only when block position metadata is unavailable. This prevents
-duplicate text from anchoring to the wrong paragraph.
+the first selected rendered block by these offsets. The backend still treats
+the selected text itself as the source of truth and resolves the source block
+from exact text search first, then from whitespace-normalized text search with
+byte offsets preserved. This is required because rendered Markdown selections
+can collapse source newlines into spaces, including CJK paragraphs split across
+multiple Markdown lines. Frontend block offsets are only a fallback hint when
+the selected text cannot be located directly. This prevents duplicate text from
+anchoring to the wrong paragraph without rejecting valid rendered selections.
 
 The drop creates a new article card through `extractTextSelection`; it does not
 connect the source card itself and does not enter the inline-media extraction
@@ -402,14 +407,22 @@ that belongs to `storage::media_refs`.
 - Верхний chrome Detail входит и выходит через мягкий `opacity + translateY`
   transition; нижняя hairline у `classic` живёт отдельным visual layer и
   анимируется отдельно от fill
-- Двухслойный layout: scroll-слой (контент + невидимый спейсер) и fixed-слой (метаданные)
-- Оба слоя используют общий `LAYOUT_CLASSES` для идентичного позиционирования
-- Контент центрирован горизонтально (`mx-auto max-w-[58rem]`)
-- Right metadata rail имеет единый width contract в обоих слоях: visible rail
-  и invisible spacer используют `w-72 min-w-0 shrink-0`. Fixed rail допускает
-  только vertical scroll (`overflow-y-auto`) и запрещает horizontal scroll
-  (`overflow-x-hidden`); metadata/actions/related notes не должны создавать
-  внутреннюю горизонтальную прокрутку.
+- Двухслойный layout: scroll-слой (article content + невидимый rail spacer)
+  и fixed-слой (метаданные). Оба слоя используют один Detail canvas/grid
+  contract, чтобы article column, right rail и top pill подчинялись одной
+  горизонтальной системе.
+- Detail canvas: `mx-auto w-[calc(100%-6rem)] max-w-[70rem]`. `70rem` — это
+  сумма article column `48rem`, gap `2rem` и right rail `20rem`; на широких
+  экранах растут внешние поля, а не пустота между article и rail.
+- Detail body grid: `grid grid-cols-[minmax(0,48rem)_20rem] gap-8`. Article
+  column занимает левую bounded колонку, right rail занимает фиксированную
+  20rem колонку и доходит до правого края общего Detail canvas.
+- Article column adds `pl-4` inside the left grid column, so article body text
+  is inset 16px from the top chrome/canvas outer edge instead of sitting flush
+  against the framed top pill.
+- Fixed rail допускает только vertical scroll (`overflow-y-auto`) и запрещает
+  horizontal scroll (`overflow-x-hidden`); metadata/actions/related notes не
+  должны создавать внутреннюю горизонтальную прокрутку.
 - Scroll/content top padding: classic `pt-12`, island `pt-20`; вместе с верхним меню это сохраняет общий visual top offset
 - Scroll/content bottom safe space: `pb-20` lives on the inner content layer, not on `[data-detail-scroll]`, so the final article line does not press against the bottom edge while scrollbar geometry stays unchanged
 - Article content keeps a stable top inset (`pt-4`) even when duplicate

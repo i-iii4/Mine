@@ -111,6 +111,10 @@ describe("Detail", () => {
     expect(islandMenu).toHaveClass("detail-top-pill-enter");
     expect(islandMenu).toHaveClass("pl-3");
     expect(islandMenu).toHaveClass("pr-1");
+    expect(islandMenu?.parentElement).toHaveClass(
+      "w-[calc(100%-6rem)]",
+      "max-w-[70rem]",
+    );
   });
 
   it("animates the classic header and its separator as separate chrome layers", () => {
@@ -318,7 +322,7 @@ describe("Detail", () => {
     );
   });
 
-  it("uses a fixed right rail without horizontal overflow", () => {
+  it("uses one detail canvas grid for content spacer and fixed rail", () => {
     const { container } = render(
       <Detail
         block={block({
@@ -340,15 +344,29 @@ describe("Detail", () => {
     );
 
     const rail = container.querySelector("[data-metadata-scroll]");
+    const articleColumn = container.querySelector("[data-detail-article-column]");
+    expect(articleColumn).toHaveClass("min-w-0", "pl-4");
     expect(rail).toHaveClass(
-      "w-72",
       "min-w-0",
-      "shrink-0",
       "overflow-y-auto",
       "overflow-x-hidden",
     );
     const spacer = container.querySelector("[data-detail-metadata-spacer]");
-    expect(spacer).toHaveClass("w-72", "min-w-0", "shrink-0");
+    expect(spacer).toHaveClass("min-w-0");
+    expect(spacer?.parentElement).toHaveClass(
+      "w-[calc(100%-6rem)]",
+      "max-w-[70rem]",
+      "grid",
+      "grid-cols-[minmax(0,48rem)_20rem]",
+      "gap-8",
+    );
+    expect(rail?.parentElement).toHaveClass(
+      "w-[calc(100%-6rem)]",
+      "max-w-[70rem]",
+      "grid",
+      "grid-cols-[minmax(0,48rem)_20rem]",
+      "gap-8",
+    );
   });
 
   it("keeps related notes as a separate block below the metadata table", async () => {

@@ -1,5 +1,36 @@
 # Devlog
 
+## 02.05.2026 20:12 -03 [primary] — Detail canvas, CJK selection extraction, feed card radius
+
+### Goal
+
+Довести article Detail layout до ограниченного canvas, исправить создание
+карточек из конкретного японского rendered-параграфа и попробовать 3px radius
+для карточек главной ленты.
+
+### Completed
+
+- Detail canvas ограничен `max-w-[70rem]` с общей grid-геометрией для top
+  chrome, article column и metadata rail; article column получил внутренний
+  `pl-4`, чтобы текст не стоял заподлицо с верхним chrome.
+- `extract_text_selection` больше не доверяет frontend `first_block_start/end`
+  как основному источнику истины: backend сначала ищет точный `selected_text`,
+  затем whitespace-normalized match с сохранением byte offsets.
+- Закрыт CJK/rendered Markdown case: японский абзац, разбитый переносом строки
+  в `.md`, но выделенный в UI как один rendered-параграф, теперь создаёт
+  карточку и переиспользует существующий block id.
+- Feed card frame radius переведён на `--radius-card: var(--radius-1)` (3px);
+  media radius остаётся отдельным токеном `--radius-media`.
+- Обновлены [SPEC_FRONTEND.md](SPEC_FRONTEND.md) и
+  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md).
+
+### Verification
+
+- `bun run test src/components/Detail.test.tsx`
+- `bunx eslint src/components/Detail.tsx src/components/Detail.test.tsx`
+- `cargo test -p mine commands::blocks::tests::extract_text_selection_inner -- --nocapture`
+- `bun run test src/components/Card.test.tsx`
+
 ## 02.05.2026 15:18 -03 [primary] — Detail rail card radius correction
 
 ### Goal

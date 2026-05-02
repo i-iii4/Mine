@@ -51,10 +51,11 @@ import { CardMoreMenu } from "./CardHoverMenu";
 import { DragCardPreview } from "./Card";
 import { CollectionPicker } from "./CollectionPicker";
 
-// Layout constants — shared between scroll layer and metadata layer
-const CLASSIC_LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-12";
-const ISLANDS_LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-20";
-const DETAIL_METADATA_RAIL_CLASSES = "w-72 min-w-0 shrink-0";
+// Layout constants — shared between top chrome, scroll layer, and metadata layer.
+const DETAIL_CANVAS_CLASSES = "mx-auto w-[calc(100%-6rem)] max-w-[70rem]";
+const DETAIL_GRID_CLASSES = `${DETAIL_CANVAS_CLASSES} grid grid-cols-[minmax(0,48rem)_20rem] gap-8`;
+const CLASSIC_LAYOUT_CLASSES = `${DETAIL_GRID_CLASSES} pt-12`;
+const ISLANDS_LAYOUT_CLASSES = `${DETAIL_GRID_CLASSES} pt-20`;
 const DETAIL_BOTTOM_SAFE_SPACE_CLASS = "pb-20";
 const ARTICLE_H1_CLASSES = "mt-0 mb-4 text-lg leading-6 font-semibold";
 const ARTICLE_SECTION_HEADING_CLASSES = "mt-6 mb-2 text-base leading-5 font-semibold";
@@ -217,7 +218,7 @@ export function Detail({
       {isFloatingTopMenu ? (
         <div
           key={`detail-top-pill:${detailTopMenuMode}:${displayBlock.slug}`}
-          className="absolute left-1/2 top-4 z-20 w-[calc(100%-3rem)] max-w-[58rem] -translate-x-1/2"
+          className={cn("absolute left-1/2 top-4 z-20 -translate-x-1/2", DETAIL_CANVAS_CLASSES)}
         >
           <header
             data-detail-top-menu={detailTopMenuMode}
@@ -327,7 +328,7 @@ export function Detail({
           data-detail-scroll
         >
           <div className={cn(layoutClasses, DETAIL_BOTTOM_SAFE_SPACE_CLASS)}>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 pl-4" data-detail-article-column>
               <BlockContent
                 block={block}
                 fullBlock={fullBlock}
@@ -338,7 +339,7 @@ export function Detail({
               />
             </div>
             <div
-              className={DETAIL_METADATA_RAIL_CLASSES}
+              className="min-w-0"
               aria-hidden="true"
               data-detail-metadata-spacer
             />
@@ -348,9 +349,9 @@ export function Detail({
         {/* Layer 2: Fixed metadata (same layout, doesn't scroll) */}
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <div className={layoutClasses}>
-            <div className="flex-1" />
+            <div className="min-w-0" />
             <div
-              className={cn(DETAIL_METADATA_RAIL_CLASSES, "pointer-events-auto overflow-y-auto overflow-x-hidden")}
+              className="pointer-events-auto min-w-0 overflow-y-auto overflow-x-hidden"
               data-metadata-scroll
             >
               <MetadataPanel

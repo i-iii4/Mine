@@ -1231,6 +1231,10 @@ fn validated_source_block_range(
     first_block_end: usize,
     selected_text: &str,
 ) -> Result<(usize, usize), TextSelectionExtractError> {
+    if let Some(selection_start) = find_selection_start(body, selected_text) {
+        return Ok(markdown_block_range_containing(body, selection_start));
+    }
+
     if first_block_start < first_block_end
         && first_block_end <= body.len()
         && body.is_char_boundary(first_block_start)
@@ -1244,12 +1248,56 @@ fn validated_source_block_range(
         });
     }
 
-    let Some(selection_start) = body.find(selected_text) else {
-        return Err(TextSelectionExtractError::UnsupportedSelectionShape {
-            reason: "selected text could not be located in the current source body".to_string(),
-        });
-    };
-    Ok(markdown_block_range_containing(body, selection_start))
+    Err(TextSelectionExtractError::UnsupportedSelectionShape {
+        reason: "selected text could not be located in the current source body".to_string(),
+    })
+}
+
+fn find_selection_start(body: &str, selected_text: &str) -> Option<usize> {
+    body.find(selected_text)
+        .or_else(|| find_normalized_selection_start(body, selected_text))
+}
+
+fn find_normalized_selection_start(body: &str, selected_text: &str) -> Option<usize> {
+    let needle = normalize_inline_whitespace(selected_text);
+    if needle.is_empty() {
+        return None;
+    }
+    let normalized = normalize_inline_whitespace_with_offsets(body);
+    let normalized_start = normalized.text.find(&needle)?;
+    normalized.offsets.get(normalized_start).copied()
+}
+
+struct NormalizedSource {
+    text: String,
+    offsets: Vec<usize>,
+}
+
+fn normalize_inline_whitespace_with_offsets(value: &str) -> NormalizedSource {
+    let mut text = String::new();
+    let mut offsets = Vec::new();
+    let mut last_space = false;
+
+    for (offset, ch) in value.char_indices() {
+        if ch.is_whitespace() {
+            if !last_space && !text.is_empty() {
+                text.push(' ');
+                offsets.push(offset);
+                last_space = true;
+            }
+        } else {
+            text.push(ch);
+            offsets.push(offset);
+            last_space = false;
+        }
+    }
+
+    while text.ends_with(' ') {
+        text.pop();
+        offsets.pop();
+    }
+
+    NormalizedSource { text, offsets }
 }
 
 fn range_matches_selection_start(
@@ -1258,7 +1306,7 @@ fn range_matches_selection_start(
     block_end: usize,
     selected_text: &str,
 ) -> bool {
-    if let Some(selection_start) = body.find(selected_text) {
+    if let Some(selection_start) = find_selection_start(body, selected_text) {
         return selection_start >= block_start && selection_start < block_end;
     }
 
@@ -2072,6 +2120,68 @@ mod tests {
         let (_, source_content) =
             files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
         assert_eq!(source_content.matches("^manual-anchor").count(), 1);
+    }
+
+    #[test]
+    fn extract_text_selection_inner_accepts_japanese_with_utf16_like_range() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let source = article(
+            "Source Article",
+            "これは日本語の文章です。\n\nSecond paragraph.",
+        );
+        let body_hash = compute_body_hash(&source.body);
+        persist_block(&conn, &vault, &source);
+
+        let utf16_like_first_block_end = "これは日本語の文章です。".chars().count();
+        let indexed = extract_text_selection_inner(
+            &conn,
+            &vault,
+            "Source Article".to_string(),
+            "Quotes".to_string(),
+            "文章".to_string(),
+            0,
+            utf16_like_first_block_end,
+            body_hash,
+        )
+        .unwrap();
+
+        assert_eq!(indexed.body, "文章");
+        assert_eq!(indexed.tags, vec!["Quotes".to_string()]);
+
+        let (_, source_content) =
+            files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
+        assert!(source_content.contains("これは日本語の文章です。 ^selection"));
+    }
+
+    #[test]
+    fn extract_text_selection_inner_accepts_japanese_rendered_paragraph_selection() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let source = article(
+            "Source Article",
+            "コットンのように粗野な質感でもなく、ナイロンのような光沢感もない、周囲の環境に馴染むような控えめな質感が特徴のコットン・ナイロン。\n軽量でありながら適度にハリのある素材感は、着用した時のシルエット形成にも寄与している。 ^this-cot-2\n\nThis cotton-nylon blend is characterized by a subtle text.",
+        );
+        let body_hash = compute_body_hash(&source.body);
+        persist_block(&conn, &vault, &source);
+
+        let selected_text = "コットンのように粗野な質感でもなく、ナイロンのような光沢感もない、周囲の環境に馴染むような控えめな質感が特徴のコットン・ナイロン。 軽量でありながら適度にハリのある素材感は、着用した時のシルエット形成にも寄与している。 ^this-cot-2";
+        let indexed = extract_text_selection_inner(
+            &conn,
+            &vault,
+            "Source Article".to_string(),
+            "Quotes".to_string(),
+            selected_text.to_string(),
+            0,
+            selected_text.chars().count(),
+            body_hash,
+        )
+        .unwrap();
+
+        assert_eq!(indexed.body, selected_text);
+        assert_eq!(indexed.related_notes, vec!["Source Article"]);
+
+        let (_, source_content) =
+            files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
+        assert_eq!(source_content.matches("^this-cot-2").count(), 1);
     }
 
     #[test]

@@ -233,7 +233,7 @@ Input и Command — тоже 32px (`h-8`).
 
 **Семантические токены скругления** (управляются из `global.css`):
 - `--radius-card` → скругление карточек (по умолчанию `var(--radius-1)` = 3px)
-- `--radius-media` → скругление медиа внутри карточек (по умолчанию `var(--radius-1)` = 3px)
+- `--radius-media` → скругление медиа внутри карточек (по умолчанию `var(--radius-0)` = 0px)
 
 Карточки: `rounded-[var(--radius-card)]` на обёртке `[data-block-slug]`.
 Медиа: глобальное CSS-правило `[data-block-slug] img, [data-block-slug] video { border-radius: var(--radius-media) }`.
