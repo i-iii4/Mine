@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { DndContext } from "@dnd-kit/core";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -112,7 +112,7 @@ describe("Sidebar", () => {
     expect(aside).toHaveStyle({ width: "var(--sidebar-width)" });
   });
 
-  it("renders link editor when a block is open", () => {
+  it("renders link editor when a block is open", async () => {
     const onToggleLinkedTag = vi.fn();
     const onNavClick = vi.fn();
     renderSidebar({
@@ -127,10 +127,12 @@ describe("Sidebar", () => {
     expect(screen.queryByRole("checkbox", { name: /Everything/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connected" })).toBeInTheDocument();
-    expect(screen.getByText("10")).toHaveClass("opacity-0");
+    await waitFor(() => {
+      expect(screen.getByText("10")).toHaveClass("opacity-0");
+      expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement).toHaveClass("opacity-100");
+    });
     expect(screen.getByText("5")).not.toHaveClass("opacity-0");
     expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement).toHaveClass("opacity-100");
     expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement).toHaveClass("pointer-events-auto");
     expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement?.parentElement).toHaveClass("h-8");
     expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement?.parentElement).toHaveClass("w-8");
@@ -200,6 +202,10 @@ describe("Sidebar", () => {
 
     expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("h-8");
     expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("gap-2");
+    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("detail-top-bar-enter");
+    expect(
+      container.querySelector("[data-sidebar-link-mode-bar] span[aria-hidden='true']"),
+    ).toHaveClass("detail-top-bar-line-enter");
     expect(screen.getByText("Channels:")).toBeInTheDocument();
     expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-12");
   });
@@ -226,6 +232,7 @@ describe("Sidebar", () => {
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("bg-accent/80");
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("backdrop-blur-sm");
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("backdrop-saturate-150");
+    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("detail-top-pill-enter");
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("gap-2");
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("pl-3");
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("pr-[2px]");

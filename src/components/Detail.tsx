@@ -46,6 +46,7 @@ interface DetailProps {
   vaultPath: string;
   thumbsRootPath?: string;
   detailTopMenuMode?: DetailTopMenuMode;
+  isClosing?: boolean;
   onClose: () => void;
   onNavigate: (direction: "prev" | "next" | "up" | "down") => void;
   tags: TagCount[];
@@ -74,6 +75,7 @@ export function Detail({
   vaultPath,
   thumbsRootPath,
   detailTopMenuMode = "island",
+  isClosing = false,
   onClose,
   onNavigate,
   tags,
@@ -108,6 +110,20 @@ export function Detail({
   useEffect(() => {
     setFullBlock(isIndexedBlock(block) ? block : null);
   }, [block]);
+
+  const [chromeEntered, setChromeEntered] = useState(false);
+
+  useEffect(() => {
+    if (isClosing) {
+      setChromeEntered(false);
+      return;
+    }
+    setChromeEntered(false);
+    const frame = window.requestAnimationFrame(() => {
+      setChromeEntered(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [displayBlock.slug, detailTopMenuMode, isClosing]);
 
   useEffect(() => {
     if (isIndexedBlock(block)) return;
@@ -156,60 +172,68 @@ export function Detail({
   return (
     <div
       className={cn(
-        "absolute inset-0 z-10 bg-background outline-none",
+        "absolute inset-0 z-10 outline-none",
+        isClosing ? "pointer-events-none bg-transparent" : "bg-background",
         !isFloatingTopMenu && "flex flex-col",
       )}
       role="dialog"
       aria-modal="false"
     >
       {isFloatingTopMenu ? (
-        <header
-          data-detail-top-menu={detailTopMenuMode}
-          className={cn(
-            "absolute left-1/2 top-4 z-20 flex h-8 w-[calc(100%-3rem)] max-w-[58rem] -translate-x-1/2 items-center",
-            "gap-3 rounded-1 border border-border bg-accent/80 pl-3 pr-1 backdrop-blur-sm backdrop-saturate-150",
-          )}
+        <div
+          key={`detail-top-pill:${detailTopMenuMode}:${displayBlock.slug}`}
+          className="absolute left-1/2 top-4 z-20 w-[calc(100%-3rem)] max-w-[58rem] -translate-x-1/2"
         >
-          <div
-            ref={setDragHandleRef}
-            {...dragAttributes}
-            {...dragListeners}
+          <header
+            data-detail-top-menu={detailTopMenuMode}
+            data-entered={chromeEntered ? "true" : "false"}
             className={cn(
-              "min-w-0 flex-1 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
-              isDragging && "opacity-30",
+              "detail-top-pill-enter flex h-8 w-full items-center gap-3 rounded-1 border border-border bg-accent/80 pl-3 pr-1 backdrop-blur-sm backdrop-saturate-150",
             )}
-            data-detail-drag-handle
-            title={filename}
           >
-            {filename}
-          </div>
-          <div className="flex h-8 shrink-0 items-center gap-1">
-            <CardMoreMenu
-              block={displayBlock}
-              vaultPath={vaultPath}
-              tags={tags}
-              currentTag={currentTag}
-              onToggleTag={onToggleTag}
-              onCreateAndAssign={onCreateAndAssign}
-              onRequestRename={onRequestRename}
-              onRequestDelete={onRequestDelete}
-              triggerVariant="ghost"
-              className="shrink-0 text-muted-foreground hover:text-foreground"
-            />
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onClose}
-              className="text-muted-foreground hover:text-foreground"
+            <div
+              ref={setDragHandleRef}
+              {...dragAttributes}
+              {...dragListeners}
+              className={cn(
+                "min-w-0 flex-1 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
+                isDragging && "opacity-30",
+              )}
+              data-detail-drag-handle
+              title={filename}
             >
-              <X className="size-4" />
-              <span className="sr-only">Close</span>
-            </Button>
-          </div>
-        </header>
+              {filename}
+            </div>
+            <div className="flex h-8 shrink-0 items-center gap-1">
+              <CardMoreMenu
+                block={displayBlock}
+                vaultPath={vaultPath}
+                tags={tags}
+                currentTag={currentTag}
+                onToggleTag={onToggleTag}
+                onCreateAndAssign={onCreateAndAssign}
+                onRequestRename={onRequestRename}
+                onRequestDelete={onRequestDelete}
+                triggerVariant="ghost"
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-4" />
+                <span className="sr-only">Close</span>
+              </Button>
+            </div>
+          </header>
+        </div>
       ) : (
         <header
-          className="flex h-8 shrink-0 items-center gap-3 border-b border-border bg-accent px-8"
+          key={`detail-top-bar:${displayBlock.slug}`}
+          data-entered={chromeEntered ? "true" : "false"}
+          className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 bg-accent px-8"
           data-detail-top-menu="classic"
         >
           <div
@@ -246,9 +270,20 @@ export function Detail({
             <X className="size-4" />
             <span className="sr-only">Close</span>
           </Button>
+          <span
+            aria-hidden="true"
+            data-entered={chromeEntered ? "true" : "false"}
+            className="detail-top-bar-line-enter pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border"
+          />
         </header>
       )}
-      <div className={cn("relative min-h-0", isFloatingTopMenu ? "h-full" : "flex-1")}>
+      <div
+        className={cn(
+          "relative min-h-0",
+          isFloatingTopMenu ? "h-full" : "flex-1",
+          isClosing && "opacity-0",
+        )}
+      >
         {/* Layer 1: Scrollable content + invisible spacer */}
         <div
           ref={panelRef}
@@ -536,11 +571,6 @@ function BlockContent({
     case "article": {
       return (
         <div>
-          {block.author && (
-            <p className="text-base text-muted-foreground">
-              {block.author}
-            </p>
-          )}
           <ArticleBody
             body={body}
             vaultPath={vaultPath}

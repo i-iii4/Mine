@@ -93,8 +93,65 @@ describe("Detail", () => {
     expect(islandMenu).toHaveClass("bg-accent/80");
     expect(islandMenu).toHaveClass("backdrop-blur-sm");
     expect(islandMenu).toHaveClass("backdrop-saturate-150");
+    expect(islandMenu).toHaveClass("detail-top-pill-enter");
     expect(islandMenu).toHaveClass("pl-3");
     expect(islandMenu).toHaveClass("pr-1");
+  });
+
+  it("animates the classic header and its separator as separate chrome layers", () => {
+    const { container } = render(
+      <Detail
+        block={block()}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        detailTopMenuMode="classic"
+      />,
+    );
+
+    const classicMenu = container.querySelector('[data-detail-top-menu="classic"]');
+    expect(classicMenu).toHaveClass("detail-top-bar-enter");
+    expect(classicMenu).not.toHaveClass("border-b");
+    const line = classicMenu?.querySelector("span[aria-hidden='true']");
+    expect(line).toHaveClass("detail-top-bar-line-enter");
+    expect(line).toHaveClass("bg-border");
+  });
+
+  it("reverses the top chrome enter state while closing", () => {
+    const props = {
+      block: block(),
+      vaultPath: "/tmp/test-vault",
+      thumbsRootPath: "/tmp/thumbs",
+      onClose: vi.fn(),
+      onNavigate: vi.fn(),
+      tags: [],
+      onToggleTag: vi.fn(),
+      onCreateAndAssign: vi.fn(),
+      onTagsChanged: vi.fn(),
+      onRequestRename: vi.fn(),
+      onRequestDelete: vi.fn(),
+      onOpenRelatedNote: vi.fn(),
+    };
+
+    const { container, rerender } = render(
+      <Detail {...props} detailTopMenuMode="classic" />,
+    );
+
+    rerender(<Detail {...props} detailTopMenuMode="classic" isClosing />);
+
+    const classicMenu = container.querySelector('[data-detail-top-menu="classic"]');
+    expect(classicMenu).toHaveAttribute("data-entered", "false");
+    expect(classicMenu?.querySelector("span[aria-hidden='true']")).toHaveAttribute(
+      "data-entered",
+      "false",
+    );
   });
 
   it("keeps bottom safe space inside the scroll content", () => {
@@ -117,6 +174,31 @@ describe("Detail", () => {
     const scrollEl = container.querySelector("[data-detail-scroll]");
     expect(scrollEl).not.toHaveClass("pb-20");
     expect(scrollEl?.firstElementChild).toHaveClass("pb-20");
+  });
+
+  it("shows article author only in metadata, not above the opened article body", () => {
+    render(
+      <Detail
+        block={block({
+          author: "Author Name",
+          body: "# Heading\n\nArticle body",
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("AUTHOR")).toBeInTheDocument();
+    expect(screen.getAllByText("Author Name")).toHaveLength(1);
   });
 
   it("does not attach Mine behavior to native selected-text drag", () => {

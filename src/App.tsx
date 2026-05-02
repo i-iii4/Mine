@@ -131,6 +131,7 @@ const ComponentTestBench = lazy(async () => {
 });
 
 const GRID_PAGE_SIZE = 200;
+const DETAIL_CHROME_TRANSITION_MS = 360;
 
 interface VaultChangedEvent {
   path: string;
@@ -318,6 +319,9 @@ export function AppWithVault({
   const [detailTopMenuMode, setDetailTopMenuMode] = useState<DetailTopMenuMode>(
     getStoredDetailTopMenuMode,
   );
+  const [detailChromeClosing, setDetailChromeClosing] = useState(false);
+  const [closingDetailBlock, setClosingDetailBlock] = useState<LightBlock | IndexedBlock | null>(null);
+  const [closingDetailTags, setClosingDetailTags] = useState<string[]>([]);
   const [focusedBlockId, setFocusedBlockId] = useState<number | null>(null);
   const [scrollToTopSignal, setScrollToTopSignal] = useState(0);
   const [activeDragBlock, setActiveDragBlock] = useState<LightBlock | null>(null);
@@ -338,6 +342,7 @@ export function AppWithVault({
   const lastRevalidatedRouteKeyRef = useRef<string | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
   const refreshInFlightRef = useRef(false);
+  const detailCloseTimerRef = useRef<number | null>(null);
   const pendingRefreshRef = useRef({
     grid: false,
     taxonomy: false,
@@ -349,6 +354,34 @@ export function AppWithVault({
   const [thumbsRootPath, setThumbsRootPath] = useState<string | null>(null);
 
   const routeKeyFor = useCallback((tag?: string) => tag ?? "__all__", []);
+
+  const cancelPendingDetailClose = useCallback(() => {
+    if (detailCloseTimerRef.current !== null) {
+      window.clearTimeout(detailCloseTimerRef.current);
+      detailCloseTimerRef.current = null;
+    }
+    setDetailChromeClosing(false);
+    setClosingDetailBlock(null);
+    setClosingDetailTags([]);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (detailCloseTimerRef.current !== null) {
+        window.clearTimeout(detailCloseTimerRef.current);
+      }
+    };
+  }, []);
+
+  const openDetailBlock = useCallback((
+    block: LightBlock | IndexedBlock,
+    anchor: string | null = null,
+  ) => {
+    cancelPendingDetailClose();
+    setFocusedBlockId(null);
+    setSelectedBlockAnchor(anchor);
+    setSelectedBlock(block);
+  }, [cancelPendingDetailClose]);
 
   const applyGridSnapshot = useCallback((tag: string | undefined, grid: GridSnapshot) => {
     routeSnapshotCacheRef.current.set(routeKeyFor(tag), grid);
@@ -374,6 +407,12 @@ export function AppWithVault({
   }, [currentTag, tags, channels, navigate]);
 
   const activeBlocks = blocks;
+  const renderedDetailBlock = selectedBlock ?? closingDetailBlock;
+  const renderedLinkedBlockSlug = selectedBlock?.slug
+    ?? (detailChromeClosing ? closingDetailBlock?.slug ?? null : null);
+  const renderedLinkedTags = selectedBlock
+    ? selectedBlockTags
+    : (detailChromeClosing ? closingDetailTags : []);
 
   const handleColumnCountChange = useCallback((n: number) => {
     gridColumnCountRef.current = n;
@@ -381,10 +420,11 @@ export function AppWithVault({
 
   // Close Detail and clear grid focus when navigating to a different route
   useEffect(() => {
+    cancelPendingDetailClose();
     setSelectedBlock(null);
     setSelectedBlockAnchor(null);
     setFocusedBlockId(null);
-  }, [location.pathname]);
+  }, [location.pathname, cancelPendingDetailClose]);
 
   // ── Grid keyboard navigation (when Detail is closed) ───────────────────
   // Refs avoid re-subscribing the keydown listener on every focus change
@@ -406,9 +446,7 @@ export function AppWithVault({
       if (e.key === "Enter" && cur !== null) {
         const block = ab.find((b) => b.id === cur);
         if (block) {
-          setFocusedBlockId(null);
-          setSelectedBlockAnchor(null);
-          setSelectedBlock(block);
+          openDetailBlock(block);
         }
         return;
       }
@@ -441,7 +479,7 @@ export function AppWithVault({
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedBlock, searchOpen]);
+  }, [selectedBlock, searchOpen, openDetailBlock]);
 
   // Auto-scroll to focused card
   useEffect(() => {
@@ -1060,25 +1098,47 @@ export function AppWithVault({
   // ── Block navigation ──────────────────────────────────────────────────────
 
   const handleBlockClick = useCallback((block: LightBlock) => {
-    setFocusedBlockId(null);
-    setSelectedBlockAnchor(null);
-    setSelectedBlock(block);
-  }, []);
+    openDetailBlock(block);
+  }, [openDetailBlock]);
 
   const handleDetailClose = useCallback(() => {
-    if (selectedBlock) setFocusedBlockId(selectedBlock.id);
+    if (!selectedBlock || detailChromeClosing) return;
+    setFocusedBlockId(selectedBlock.id);
     setSelectedBlockAnchor(null);
+    setClosingDetailBlock(selectedBlock);
+    setClosingDetailTags(selectedBlockTags);
+    setDetailChromeClosing(true);
     setSelectedBlock(null);
-  }, [selectedBlock]);
+    if (detailCloseTimerRef.current !== null) {
+      window.clearTimeout(detailCloseTimerRef.current);
+    }
+    detailCloseTimerRef.current = window.setTimeout(() => {
+      detailCloseTimerRef.current = null;
+      cancelPendingDetailClose();
+    }, DETAIL_CHROME_TRANSITION_MS);
+  }, [selectedBlock, selectedBlockTags, detailChromeClosing, cancelPendingDetailClose]);
 
   const handleScrollToTop = useCallback(() => {
     if (selectedBlock) {
+      if (detailChromeClosing) return;
       setFocusedBlockId(selectedBlock.id);
       setSelectedBlockAnchor(null);
+      setClosingDetailBlock(selectedBlock);
+      setClosingDetailTags(selectedBlockTags);
+      setDetailChromeClosing(true);
       setSelectedBlock(null);
+      setScrollToTopSignal((n) => n + 1);
+      if (detailCloseTimerRef.current !== null) {
+        window.clearTimeout(detailCloseTimerRef.current);
+      }
+      detailCloseTimerRef.current = window.setTimeout(() => {
+        detailCloseTimerRef.current = null;
+        cancelPendingDetailClose();
+      }, DETAIL_CHROME_TRANSITION_MS);
+      return;
     }
     setScrollToTopSignal((n) => n + 1);
-  }, [selectedBlock]);
+  }, [selectedBlock, selectedBlockTags, detailChromeClosing, cancelPendingDetailClose]);
 
   const handleDetailNavigate = useCallback(
     async (direction: "prev" | "next" | "up" | "down") => {
@@ -1095,11 +1155,10 @@ export function AppWithVault({
       }
       if (newIdx >= 0 && newIdx < activeBlocks.length) {
         const target = activeBlocks[newIdx]!;
-        setSelectedBlockAnchor(null);
-        setSelectedBlock(target);
+        openDetailBlock(target);
       }
     },
-    [selectedBlock, activeBlocks],
+    [selectedBlock, activeBlocks, openDetailBlock],
   );
 
   const handleDetailTopMenuModeChange = useCallback((mode: DetailTopMenuMode) => {
@@ -1111,12 +1170,10 @@ export function AppWithVault({
     const blockAnchor = relatedNoteBlockAnchor(slug);
     void getBlock(baseRelatedNoteSlug(slug)).then((block) => {
       if (block) {
-        setFocusedBlockId(null);
-        setSelectedBlockAnchor(blockAnchor);
-        setSelectedBlock(block);
+        openDetailBlock(block, blockAnchor);
       }
     });
-  }, []);
+  }, [openDetailBlock]);
 
   // ── Tag management ──────────────────────────────────────────────────────
 
@@ -1623,10 +1680,11 @@ export function AppWithVault({
         onNavClick={handleDetailClose}
         onScrollToTop={handleScrollToTop}
         headerSlot={<VaultConflictsBanner vaultReady={vaultReady} />}
-        linkedBlockSlug={selectedBlock?.slug ?? null}
-        linkedTags={selectedBlockTags}
+        linkedBlockSlug={renderedLinkedBlockSlug}
+        linkedTags={renderedLinkedTags}
         onToggleLinkedTag={handleToggleTag}
         detailTopMenuMode={detailTopMenuMode}
+        detailChromeClosing={detailChromeClosing}
       />
 
       <SidebarResizeHandle
@@ -1700,13 +1758,14 @@ export function AppWithVault({
           </div>
         )}
 
-        {selectedBlock && (
+        {renderedDetailBlock && (
           <Suspense fallback={null}>
             <Detail
-              block={selectedBlock}
+              block={renderedDetailBlock}
               scrollAnchor={selectedBlockAnchor}
               vaultPath={vaultPath}
               thumbsRootPath={thumbsRootPath ?? undefined}
+              isClosing={detailChromeClosing}
               onClose={handleDetailClose}
               onNavigate={handleDetailNavigate}
               detailTopMenuMode={detailTopMenuMode}
@@ -1744,8 +1803,7 @@ export function AppWithVault({
           open={searchOpen}
           onClose={() => setSearchOpen(false)}
           onSelect={(block) => {
-            setSelectedBlockAnchor(null);
-            setSelectedBlock(block);
+            openDetailBlock(block);
             setSearchOpen(false);
           }}
         />

@@ -477,7 +477,7 @@ sidebar.
 
 | Режим Detail menu | Geometry |
 |---|---|
-| `classic` | `h-8 border-b border-border bg-accent px-8 gap-2` |
+| `classic` | `h-8 bg-accent px-8 gap-2` + отдельная нижняя hairline |
 | `island` | absolute `top-4`, centered, без фоновой плашки; pill `h-8 rounded-1 border border-border bg-accent/80 backdrop-blur-sm backdrop-saturate-150 pl-3 pr-[2px] gap-2` |
 
 Содержимое surface: `Channels:` + selector `All / Connected`. `Channels:`
@@ -491,6 +491,12 @@ backdrop-blur-sm backdrop-saturate-150`, без теней и градиенто
 разрешён только для маленьких fixed-height island surfaces (`h-8`), не для
 полноширинных classic bars и не для больших overlay.
 
+Motion contract: верхний chrome в Detail и sidebar link-editor surface входят и
+выходят через мягкий `opacity + translateY` transition с тем же темпом
+(`220–280ms`, `cubic-bezier(0.22, 1, 0.36, 1)`). Close не должен блокировать
+возврат к grid: страница закрывается мгновенно, а exit дочёркивается отдельным
+неблокирующим chrome overlay.
+
 Checkbox behaviour: только прямой click/key на checkbox меняет membership.
 Клик по строке канала навигирует как обычный sidebar item. Правый слот канала
 по умолчанию показывает count. Для уже связанного канала checkbox виден всегда
@@ -498,7 +504,10 @@ Checkbox behaviour: только прямой click/key на checkbox меняе
 hover/focus, а checkbox проявляется через `group-hover/group-focus-within`.
 Визуальный checkbox остаётся `size-4` (16×16), но его row hit area — `h-8 w-8`
 (32×32). Клик по этой hit area toggles membership и не должен вызывать
-навигацию строки.
+навигацию строки. Count и checkbox обязаны жить в одном и том же `h-8 w-8`
+slot с одинаковым vertical centering; нельзя иметь отдельную baseline
+геометрию для count-mode и checkbox-mode, иначе count визуально прыгает на 1px
+при появлении активного checkbox.
 
 Stable preview invariant: обычный sidebar и link-editor используют один и тот
 же row component и один thumbnail strip. При открытии карточки нельзя

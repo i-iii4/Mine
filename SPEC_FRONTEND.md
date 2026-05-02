@@ -284,10 +284,21 @@ versioned collection-index backfill до формирования стабиль
    при открытии карточки.
 
 Geometry зависит от Detail top menu mode. В `classic` selector живёт в
-полноширинном `h-8 bg-accent border-b` баре. В `island` selector живёт в
+полноширинном `h-8 bg-accent` баре с отдельной нижней hairline. В `island` selector живёт в
 абсолютной top-пуле (`top-4`, `bg-accent/80`, `backdrop-blur-sm`,
 `backdrop-saturate-150`, `rounded-1`, `border`) без фоновой защитной плашки;
 список сохраняет top inset `pt-20`.
+
+Sidebar link-editor chrome использует тот же motion contract, что и Detail top
+chrome: мягкий `opacity + translateY` enter/exit (`220–280ms`,
+`cubic-bezier(0.22, 1, 0.36, 1)`). Close detail не должен блокировать возврат
+к grid: sidebar сразу возвращается в обычный interactive state, а exit sidebar
+chrome доигрывается неблокирующим overlay-путём.
+
+Count и checkbox в правом row-action slot обязаны использовать один и тот же
+`h-8 w-8` контейнер и один vertical-centering contract. Checked checkbox
+появляется тем же fade tempo, что и верхний chrome. Count не должен менять
+baseline или прыгать вверх/вниз при появлении checkbox.
 
 **Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время любого drag-to-channel (`isDropDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию и hover-ring работал одинаково для карточек и inline-media. `SortableContext` получает полный список channels IDs независимо от видимости.
 
@@ -385,7 +396,9 @@ that belongs to `storage::media_refs`.
 - Верхнее меню detail имеет фиксированную высоту `h-8`
 - В верхнем меню показывается filename (`media_file`, иначе `${slug}.md`) в `font-mono text-sm text-muted-foreground`
 - Справа в верхнем меню находятся shared overflow menu (`CardMoreMenu`) и close button
-- Разделительная линия верхнего меню прозрачна в начале и становится видимой только когда scroll content доезжает до её зоны
+- Верхний chrome Detail входит и выходит через мягкий `opacity + translateY`
+  transition; нижняя hairline у `classic` живёт отдельным visual layer и
+  анимируется отдельно от fill
 - Двухслойный layout: scroll-слой (контент + невидимый спейсер) и fixed-слой (метаданные)
 - Оба слоя используют общий `LAYOUT_CLASSES` для идентичного позиционирования
 - Контент центрирован горизонтально (`mx-auto max-w-[58rem]`)
@@ -394,11 +407,17 @@ that belongs to `storage::media_refs`.
 - Метаданные справа (Geist Mono): AUDIO, WARNING, RESOLUTION, DATE, TYPE, SOURCE, AUTHOR
 - Metadata labels используют `text-sm text-muted-foreground`; значения — `text-sm text-foreground`
 - `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel; rename/delete/source/channel actions живут в shared overflow menu
+- Для `article` author не дублируется над body; в открытой странице author
+  показывается только в metadata panel
 - После успешного rename Detail продолжает показывать тот же блок уже под новым slug; visible title меняется только если изменился body H1 or legacy `frontmatter.title`, а filename-only surfaces используют новый `fallback_label`
 - Markdown body H1 не полагается на prose-default sizes; Detail задаёт `text-lg leading-6 font-semibold` для `h1` и `text-base leading-5 font-semibold` для `h2-h6`, чтобы article typography не выходила за рамки дизайн-системы
 - Кнопка X справа вверху, Esc для закрытия
 - Стрелки влево/вправо — линейная навигация между блоками
 - Detail — plain div с `absolute inset-0 z-10` (не Radix Dialog)
+- Close Detail должен быть мгновенным для navigation state: `selectedBlock`
+  сбрасывается сразу, grid/sidebar становятся interactive immediately, а exit
+  верхнего chrome доигрывается через отдельный closing snapshot без ожидания
+  таймера пользователем
 
 ### Клавиатурная навигация
 

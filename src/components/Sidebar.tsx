@@ -59,6 +59,7 @@ interface SidebarProps {
   linkedTags?: string[];
   onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
   detailTopMenuMode?: DetailTopMenuMode;
+  detailChromeClosing?: boolean;
 }
 
 export function Sidebar({
@@ -81,6 +82,7 @@ export function Sidebar({
   linkedTags = [],
   onToggleLinkedTag,
   detailTopMenuMode = "island",
+  detailChromeClosing = false,
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [linkMode, setLinkMode] = useState<"all" | "linked">("all");
@@ -113,6 +115,23 @@ export function Sidebar({
     ? orderedTags.filter((tc) => linkedTagSet.has(tc.tag))
     : orderedTags;
   const linkEditorNavPadding = detailTopMenuMode === "classic" ? "pt-12" : "pt-20";
+  const [linkChromeEntered, setLinkChromeEntered] = useState(false);
+
+  useEffect(() => {
+    if (!isLinkingBlock) {
+      setLinkChromeEntered(false);
+      return;
+    }
+    if (detailChromeClosing) {
+      setLinkChromeEntered(false);
+      return;
+    }
+    setLinkChromeEntered(false);
+    const frame = window.requestAnimationFrame(() => {
+      setLinkChromeEntered(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isLinkingBlock, linkedBlockSlug, detailTopMenuMode, detailChromeClosing]);
 
   return (
     <aside
@@ -129,6 +148,7 @@ export function Sidebar({
         <SidebarLinkModeSwitch
           value={linkMode}
           mode={detailTopMenuMode}
+          entered={linkChromeEntered}
           onChange={setLinkMode}
         />
       )}
@@ -175,6 +195,7 @@ export function Sidebar({
                 isEditing={!isLinkingBlock && editingTag === tc.tag}
                 linkEditor={isLinkingBlock ? {
                   checked,
+                  entered: linkChromeEntered,
                   onToggle: () => onToggleLinkedTag(linkedBlockSlug, tc.tag, checked),
                 } : undefined}
                 onDoubleClick={() => setEditingTag(tc.tag)}
@@ -206,6 +227,7 @@ export function Sidebar({
         <SidebarLinkModeSwitch
           value={linkMode}
           mode={detailTopMenuMode}
+          entered={linkChromeEntered}
           onChange={setLinkMode}
         />
       )}
@@ -243,10 +265,12 @@ function scrollActiveSidebarItemIntoView(nav: HTMLElement, active: HTMLElement) 
 const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
   value,
   mode,
+  entered,
   onChange,
 }: {
   value: "all" | "linked";
   mode: DetailTopMenuMode;
+  entered: boolean;
   onChange: (value: "all" | "linked") => void;
 }) {
   const isIsland = mode !== "classic";
@@ -291,11 +315,17 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
   if (mode === "classic") {
     return (
       <div
-        className="flex h-8 shrink-0 items-center gap-2 border-b border-border bg-accent px-8"
+        className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-2 bg-accent px-8"
+        data-entered={entered ? "true" : "false"}
         data-sidebar-link-mode-bar
       >
         {label}
         {control}
+        <span
+          aria-hidden="true"
+          data-entered={entered ? "true" : "false"}
+          className="detail-top-bar-line-enter pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border"
+        />
       </div>
     );
   }
@@ -306,7 +336,8 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
       data-sidebar-link-mode-bar
     >
       <div
-        className="pointer-events-auto flex h-8 w-fit items-center gap-2 rounded-1 border border-border bg-accent/80 pl-3 pr-[2px] backdrop-blur-sm backdrop-saturate-150"
+        className="detail-top-pill-enter pointer-events-auto flex h-8 w-fit items-center gap-2 rounded-1 border border-border bg-accent/80 pl-3 pr-[2px] backdrop-blur-sm backdrop-saturate-150"
+        data-entered={entered ? "true" : "false"}
         data-sidebar-link-mode-pill
       >
         {label}
@@ -414,6 +445,7 @@ const TagNavItem = memo(function TagNavItem({
   isEditing: boolean;
   linkEditor?: {
     checked: boolean;
+    entered: boolean;
     onToggle: () => void;
   };
   onDoubleClick: () => void;
@@ -549,10 +581,10 @@ const TagNavItem = memo(function TagNavItem({
             <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
               <span
                 className={cn(
-                  "text-sm text-muted-foreground",
-                  linkEditor.checked
+                  "absolute inset-y-0 right-0 flex items-center justify-end text-sm text-muted-foreground transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                  linkEditor.checked && linkEditor.entered
                     ? "opacity-0"
-                    : "group-hover:opacity-0 group-focus-within:opacity-0",
+                    : "opacity-100 group-hover:opacity-0 group-focus-within:opacity-0",
                 )}
               >
                 {count || ""}
@@ -569,9 +601,11 @@ const TagNavItem = memo(function TagNavItem({
                   event.stopPropagation();
                 }}
                 className={cn(
-                  "absolute inset-0 flex cursor-pointer items-center justify-end",
+                  "absolute inset-0 flex cursor-pointer items-center justify-end transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
                   linkEditor.checked
-                    ? "opacity-100 pointer-events-auto"
+                    ? (linkEditor.entered
+                      ? "opacity-100 pointer-events-auto"
+                      : "opacity-0 pointer-events-none")
                     : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
                 )}
               >
@@ -586,8 +620,15 @@ const TagNavItem = memo(function TagNavItem({
               </div>
             </div>
           ) : (
-            <div className="relative w-8 shrink-0 text-right">
-              <span className={cn("text-sm text-muted-foreground group-hover:opacity-0", menuOpen && "opacity-0")}>{count || ""}</span>
+            <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
+              <span
+                className={cn(
+                  "absolute inset-y-0 right-0 flex items-center justify-end text-sm text-muted-foreground group-hover:opacity-0",
+                  menuOpen && "opacity-0",
+                )}
+              >
+                {count || ""}
+              </span>
               <div className={cn("absolute inset-0 flex items-center justify-end opacity-0 group-hover:opacity-100", menuOpen && "opacity-100")}>
                 <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
                   <DropdownMenuTrigger asChild>

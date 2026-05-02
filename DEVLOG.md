@@ -1,5 +1,43 @@
 # Devlog
 
+## 02.05.2026 10:21 -03 [primary] — Detail/sidebar chrome motion and link-editor polish
+
+### Goal
+
+Сделать появление и исчезновение верхнего chrome в Detail и link-editor в
+sidebar мягким и предсказуемым, не блокируя закрытие страницы. Заодно убрать
+мелкие visual regressions: дублирование автора над article body и скачок count
+в sidebar при появлении active checkbox.
+
+### Completed
+
+- В [Detail.tsx](src/components/Detail.tsx) top chrome переведён с
+  mount-keyframes на stateful `data-entered` transition contract:
+  - `classic` header и его нижняя hairline анимируются раздельно;
+  - `island` pill использует тот же motion tempo;
+  - `isClosing` переводит chrome в обратное состояние без повторного mount.
+- В [Sidebar.tsx](src/components/Sidebar.tsx) link-editor surface получил тот
+  же chrome-motion contract и ту же геометрию для `classic` / `island`.
+- Close Detail больше не блокирует возврат в grid:
+  - `selectedBlock` сбрасывается сразу;
+  - для exit используется отдельный `closingDetailBlock` snapshot;
+  - sidebar/detail chrome доигрывают exit как неблокирующий overlay.
+- В открытой `article` author больше не дублируется над телом статьи; author
+  остаётся только в metadata panel.
+- Active checkbox в sidebar link-editor теперь появляется мягко тем же fade
+  tempo, что и верхний chrome.
+- Count/checkbox slot в sidebar унифицирован:
+  - count и checkbox живут в одном `h-8 w-8` контейнере;
+  - одинаковый vertical centering убирает 1px jump count при появлении active
+    checkbox.
+- Обновлены [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) и
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md) под фактический motion/layout contract.
+
+### Verification
+
+- `bun run test src/components/Detail.test.tsx src/components/Sidebar.test.tsx src/App.test.tsx`
+- `bun run build`
+
 ## 01.05.2026 19:52 -03 [primary] — Article H1 typography aligned with design system
 
 ### Goal
