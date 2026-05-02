@@ -1,6 +1,6 @@
 # Text Selection Extraction Specification
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Status
 
@@ -150,7 +150,6 @@ collection `Ideas`:
 ```markdown
 ---
 type: article
-title: Attention is selection
 Mine Collections:
   - "[[Ideas]]"
 Mine Related Notes:
@@ -167,7 +166,6 @@ Fields:
 | Field | Required | Value |
 |---|---:|---|
 | `type` | yes | `article` |
-| `title` | yes | User-provided title, first selected line, or generated excerpt title |
 | `Mine Collections` | yes | Target collection from sidebar drop as quoted Obsidian wikilink |
 | `Mine Related Notes` | yes | Source note block reference as quoted Obsidian wikilink |
 | `saved_at` | yes | Creation time |
@@ -176,6 +174,11 @@ Fields:
 The body contains the selected text snapshot only. It should not include a
 manual backlink paragraph because provenance already lives in `Mine Related
 Notes`.
+Text-selection extraction follows [SPEC_DISPLAY_TITLE.md](./SPEC_DISPLAY_TITLE.md):
+it does not synthesize `title:` frontmatter and does not create an H1 from the
+selected text. A quote that is one word remains a one-word body. The filename
+may be seeded from the selected text for readability, but that seed is not
+persisted as block metadata.
 
 ## Snapshot Semantics
 
@@ -204,7 +207,6 @@ async fn extract_text_selection(
     first_block_start: usize,
     first_block_end: usize,
     source_body_hash: String,
-    title: Option<String>,
 ) -> Result<IndexedBlock, TextSelectionExtractError>
 ```
 
@@ -218,7 +220,6 @@ async fn extract_text_selection(
 | `first_block_start` | Byte offset of the first selected Markdown block in source body |
 | `first_block_end` | Byte offset end of that block in source body |
 | `source_body_hash` | Body hash read by the frontend when selection started |
-| `title` | Optional user/UI title override |
 
 The byte offsets are source-body offsets after frontmatter split, not rendered
 DOM offsets. The frontend may derive them from a backend-provided render map or
@@ -283,7 +284,6 @@ type TextSelectionDragPayload = {
   firstBlockStart: number;
   firstBlockEnd: number;
   sourceBodyHash: string;
-  title: string | null;
 };
 ```
 

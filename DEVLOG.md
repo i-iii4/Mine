@@ -11,10 +11,10 @@ preview related-note row до того же card contract, что и лента.
 
 ### Completed
 
-- В [Detail.tsx](src/components/Detail.tsx) article markdown body больше не
-  несёт legacy `mt-4`. Верхняя геометрия статьи снова определяется только
-  outer detail layout (`pt-12` / `pt-20`), а не случайным внутренним отступом
-  markdown-контейнера.
+- В [Detail.tsx](src/components/Detail.tsx) article content получил
+  стабильный top inset `pt-4`, который не зависит от наличия duplicate author
+  chrome. Сам `ArticleBody` больше не несёт compensating `mt-4`; верхняя
+  геометрия задаётся outer detail layout + dedicated article-content wrapper.
 - `Detail` теперь гидратит открытый блок повторно по `vault-refreshed`:
   - при refresh он делает `getBlock(slug)` для текущей страницы;
   - `RELATED NOTES` обновляются in-place, без закрытия и повторного открытия

@@ -1,6 +1,6 @@
 # Дизайн-система Mine iOS
 
-Related documents: [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md)
+Related documents: [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md)
 
 ## Принцип
 
@@ -144,8 +144,8 @@ System font (SF Pro) — не кастомные шрифты. Размеры а
 | Тип | Десктоп | iOS |
 |---|---|---|
 | Image | `<img>` full width | `AsyncImage` full width |
-| Link | Thumbnail + title + domain | Аналогично |
-| Article | Title + preview text | Аналогично |
+| Link | Thumbnail + display title + domain | Аналогично |
+| Article | Display title + preview text | Аналогично |
 | Video | Thumbnail + play icon | `LoopingVideoView` (AVPlayerLooper — muted autoplay loop) |
 | Social (Twitter/IG) | Text + media grid | Аналогично + `LoopingVideoView` для .mp4 медиа |
 

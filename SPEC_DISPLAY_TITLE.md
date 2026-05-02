@@ -4,9 +4,9 @@ Related documents: [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_OBSIDIAN_MARKDOWN_COMP
 
 ## Status
 
-Planned. This document defines the target contract for removing
-`frontmatter.title` from the canonical write model while preserving read
-compatibility with existing vault files.
+Implemented. This document defines the shipped contract for removing
+synthetic `frontmatter.title` from new Mine-authored writes while preserving
+read compatibility with existing vault files.
 
 ## Goal
 
@@ -178,44 +178,33 @@ Unsafe migration cases:
 3. Quote cards where the legacy title was generated from selected text.
 4. Media/file cards where the legacy title merely mirrors filename.
 
-## Implementation Plan
+## Implemented Notes
 
-1. Add a derived title parser.
-   - Extract first H1 from Markdown body without rendering.
-   - Return `{ content_heading, legacy_title, fallback_label }`.
-   - Keep it pure and covered by Rust unit tests.
+1. Derived title parser exists in the backend read model.
+   - It extracts first body H1 without mutating source Markdown.
+   - It derives `content_heading`, `display_title`, and `fallback_label`.
 
-2. Extend storage read model.
-   - Add derived fields such as `display_title` and `content_heading` to the
-     local index/API, or an equivalent typed read model.
-   - Keep `frontmatter.title` as legacy metadata, not the UI source.
-   - Rebuild these fields from source files during indexing.
+2. Storage/read model exposes derived title fields.
+   - `IndexedBlock` and `LightBlock` carry `content_heading`,
+     `display_title`, and `fallback_label`.
+   - Physical `blocks.title` remains legacy metadata only.
 
-3. Switch frontend title surfaces.
+3. Frontend title surfaces consume derived titles.
    - Card title slot reads `display_title`.
-   - Card title stays one line with ellipsis.
-   - Detail removes metadata H2 duplication and relies on rendered body H1.
-   - Search result label uses `display_title`, then fallback label.
+   - Search labels use `display_title`, then fallback label.
+   - Detail renders body H1 through Markdown and does not create a duplicate
+     metadata heading.
 
-4. Update write paths.
-   - Clipper link/article writes real page title as H1.
-   - Text-selection extraction stops sending/writing title.
-   - Inline-media extraction stops sending/writing title.
-   - File/image/video imports stop generating title.
-   - Rename stops syncing `frontmatter.title` to filename stem.
+4. New write paths no longer synthesize `title:`.
+   - Link/article/video page clips write real page title as body H1.
+   - Text-selection extraction, inline-media extraction, and
+     image/video/file/media-only paths do not generate `title:` or H1.
+   - In-app rename changes filename only and does not rewrite
+     `frontmatter.title` or body H1.
 
-5. Preserve old vaults.
-   - Existing `frontmatter.title` remains visible as fallback until edited or
-     optionally migrated.
-   - No read path writes H1 or removes title.
-
-6. Add tests.
-   - H1 beats legacy title.
-   - Legacy title works when no H1 exists.
-   - Filename fallback works when neither H1 nor legacy title exists.
-   - Tweet/quote without H1 shows no synthetic card title.
-   - Link/article clips write H1 and no `title:`.
-   - Rename changes filename only, not content heading.
+5. Backward compatibility remains intact.
+   - Existing `frontmatter.title` is still visible as a fallback.
+   - No read path writes H1 or removes legacy title metadata.
 
 ## Acceptance Criteria
 

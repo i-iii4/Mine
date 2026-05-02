@@ -1,6 +1,6 @@
 # SPEC: storage layer
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 Персистентный слой: SQLite-индекс, файловые операции, thumbnail-генерация.
 Зависит от domain/ для типов. Не зависит от commands/ и watcher/.
@@ -26,7 +26,7 @@ CREATE TABLE blocks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     slug TEXT UNIQUE NOT NULL,
     block_type TEXT NOT NULL,
-    title TEXT,
+    title TEXT, -- legacy frontmatter.title only; new writes do not synthesize it
     description TEXT,
     url TEXT,
     media_file TEXT,
@@ -76,6 +76,9 @@ CREATE TABLE wikilinks (
 ```
 
 FTS5 синхронизируется через триггеры (INSERT/DELETE/UPDATE на blocks).
+`title` in the physical schema is legacy metadata. The body column carries
+Markdown H1 text, so search still sees new content headings without storing a
+generated `frontmatter.title`.
 
 ### Прагмы
 
@@ -95,7 +98,10 @@ struct IndexedBlock {
     id: i64,
     slug: String,
     block_type: BlockType,
-    title: Option<String>,
+    title: Option<String>, // legacy frontmatter.title
+    content_heading: Option<String>, // first body H1
+    display_title: Option<String>, // content_heading, then legacy title
+    fallback_label: String, // filename stem/media filename for utility surfaces
     description: Option<String>,
     url: Option<String>,
     media_file: Option<String>,
@@ -120,7 +126,10 @@ struct LightBlock {
     id: i64,
     slug: String,
     block_type: BlockType,
-    title: Option<String>,
+    title: Option<String>, // legacy frontmatter.title
+    content_heading: Option<String>,
+    display_title: Option<String>,
+    fallback_label: String,
     url: Option<String>,
     media_file: Option<String>,
     thumbnail: Option<String>,
@@ -203,7 +212,7 @@ a normalized tag. Legacy normalized values are migration inputs only.
 - Collection pages are `.md` files with `type: channel`.
 - Canonical source format uses human-readable filenames:
   `Красивый веб.md`, not `красивый-веб.md`.
-- `title` may mirror filename for display, but it is not a machine id.
+- Channel `title` may mirror filename for display, but it is not a machine id.
 - Watcher must not canonicalize collection filenames by lowercasing,
   kebab-casing, or tag-normalizing them.
 - Legacy normalized channel files are migration inputs. The
@@ -247,7 +256,7 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
 - Сериализует Block через domain::block::serialize_block
 - Записывает в `vault/slug.md`
 - Создаёт директории при необходимости
-- `slug` должен приходить из `domain::block::suggest_slug`: human-readable Unicode stem, NFC-normalized, bounded by `100` chars и `220` NFD bytes. Storage не должен повторно обрезать имя или строить media path из title: source media references берутся из `frontmatter.file`.
+- `slug` должен приходить из `domain::block::suggest_slug`: human-readable Unicode stem, NFC-normalized, bounded by `100` chars и `220` NFD bytes. Storage не должен повторно обрезать имя или строить media path из legacy title: source media references берутся из `frontmatter.file`.
 
 ### Поведение scan_md_files
 
@@ -334,7 +343,7 @@ Storage rules:
 
 ```rust
 generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<(u32, u32)>
-generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> Result<(u32, u32)>
+generate_text_thumbnail(display_title: Option<&str>, body: &str, dest: &Path) -> Result<(u32, u32)>
 is_thumb_fresh(thumb_path: &Path, source_path: &Path) -> bool
 generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource
 is_image_ext(ext: &str) -> bool

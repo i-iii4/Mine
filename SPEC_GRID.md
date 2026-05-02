@@ -1,6 +1,6 @@
 # SPEC: components/Grid — Zero-Jank Masonry
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PRINCIPLES.md](PRINCIPLES.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [DEVLOG.md](DEVLOG.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PRINCIPLES.md](PRINCIPLES.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [DEVLOG.md](DEVLOG.md)
 
 ---
 
@@ -100,8 +100,8 @@ export type FontHash = string;
 
 /** Ширина отдельных слов в тексте, в пикселях */
 export interface WordWidths {
-  /** Ширины слов title */
-  title: number[];
+  /** Ширины слов display title */
+  displayTitle: number[];
   /** Ширины слов preview (обрезанного body до 400 символов) */
   preview: number[];
   /** Ширина пробела — для word-wrap calculation */
@@ -117,7 +117,7 @@ export interface CachedWordWidths {
 
 /** Protocol сообщений с worker'ом */
 export type WorkerMessage =
-  | { type: "compute"; blocks: Array<{ id: number; title: string; body: string }>; fontHash: FontHash }
+  | { type: "compute"; blocks: Array<{ id: number; displayTitle: string; body: string }>; fontHash: FontHash }
   | { type: "result"; widths: Array<{ id: number; widths: WordWidths }>; fontHash: FontHash }
   | { type: "progress"; done: number; total: number }
   | { type: "ready" };
@@ -171,7 +171,7 @@ export function computeCardHeight(
 - **link** — `columnWidth * 9 / 16 + 76` (16:9 thumbnail + 76px text)
 - **file** — `88` (фиксированная высота)
 - **article** — используется `wordWidths`:
-  - `titleLines = min(2, countLines(wordWidths.title, wordWidths.space, columnWidth - 32))`
+  - `displayTitleLines = min(2, countLines(wordWidths.displayTitle, wordWidths.space, columnWidth - 32))`
   - `previewLines = min(block.first_image ? 3 : 8, countLines(wordWidths.preview, wordWidths.space, columnWidth - 32))`
   - `imageH = block.first_image ? columnWidth * 0.5 : 0`
   - `authorH = block.author ? 24 : 0`
@@ -258,10 +258,10 @@ function measureWord(word: string): number {
   return ctx.measureText(word).width;
 }
 
-function computeWordWidths(title: string, body: string): WordWidths {
+function computeWordWidths(displayTitle: string, body: string): WordWidths {
   const preview = body.slice(0, 400);
   return {
-    title: splitWords(title).map(measureWord),
+    displayTitle: splitWords(displayTitle).map(measureWord),
     preview: splitWords(preview).map(measureWord),
     space: ctx.measureText(" ").width,
   };
@@ -271,7 +271,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
   if (event.data.type === "compute") {
     const results = event.data.blocks.map((b) => ({
       id: b.id,
-      widths: computeWordWidths(b.title ?? "", b.body ?? ""),
+      widths: computeWordWidths(b.displayTitle ?? "", b.body ?? ""),
     }));
     self.postMessage({ type: "result", widths: results, fontHash: event.data.fontHash });
   }
@@ -348,7 +348,7 @@ export function Grid({ blocks, parentWidth, ... }: GridProps) {
 
 - Каждая card-wrapper `div` получает `className="will-change-transform"` (через Tailwind)
 - Inline стиль: `transform: translate3d(${x}px, ${y}px, 0)` (force 3d для GPU layer)
-- Фиксация line-height и font-size на `cardHeight.ts` константы (20px для title, 18px для preview, 14px base)
+- Фиксация line-height и font-size на `cardHeight.ts` константы (20px для display title, 18px для preview, 14px base)
 - Контейнеры с текстом получают `line-clamp-N` с фиксированным N соответствующим `computeCardHeight` максимальным значениям
 
 ---
@@ -518,7 +518,7 @@ export function Grid({ blocks, parentWidth, ... }: GridProps) {
 
 1. **Block без `width/height` метаданных (image)** — используется `DEFAULT_CARD_HEIGHT = 240` как conservative fallback. Backend task (отдельный PR) должен извлекать dimensions из image file при индексации и записывать в SQLite.
 
-2. **Очень длинный title/preview в article** — слова, которые не влезают в column width целиком, разбиваются на символы через `Intl.Segmenter` на grapheme boundaries. Fallback на CSS `word-break: break-word` если `Intl.Segmenter` недоступен.
+2. **Очень длинный display title/preview в article** — слова, которые не влезают в column width целиком, разбиваются на символы через `Intl.Segmenter` на grapheme boundaries. Fallback на CSS `word-break: break-word` если `Intl.Segmenter` недоступен.
 
 3. **Emoji в тексте** — `Intl.Segmenter` корректно обрабатывает ZWJ sequences. `measureText` возвращает корректную ширину для font'ов с emoji support.
 

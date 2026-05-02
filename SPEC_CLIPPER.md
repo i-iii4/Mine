@@ -1,6 +1,6 @@
 # Specification: Web Clipper (Browser Extension)
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md)
 
 ## Overview
 
@@ -63,12 +63,12 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 |---|---|
 | type | `link` |
 | url | `canonical URL` > `og:url` > `window.location.href` |
-| title | `og:title` > `twitter:title` > `<title>` |
+| body H1 | `og:title` > `twitter:title` > `<title>` |
 | description | `og:description` > `twitter:description` > `meta[name=description]` |
 | thumbnail | Скачивается: `og:image` > `twitter:image` |
 | source | `web-clipper` |
 
-Результат: `.md` (type: link) + миниатюра (если есть og:image).
+Результат: `.md` (type: link, body starts with H1 when a real page title exists) + миниатюра (если есть og:image). New link clips do not write `title:` frontmatter.
 
 ### 2. Article (полная статья)
 
@@ -78,13 +78,13 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 |---|---|
 | type | `article` |
 | url | Canonical URL страницы |
-| title | Readability.title > og:title > `<title>` |
+| body H1 | Readability.title > og:title > `<title>` |
 | author | Readability.byline > `meta[name=author]` |
 | body | Readability.textContent (очищенный текст) |
 | thumbnail | `og:image` |
 | source | `web-clipper` |
 
-Результат: `.md` (type: article, body = очищенный текст) + миниатюра.
+Результат: `.md` (type: article, body starts with H1 when a real article title exists, then cleaned article text) + миниатюра. New article clips do not write `title:` frontmatter.
 
 ### 3. Selection (выделенный текст)
 
@@ -94,11 +94,12 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 |---|---|
 | type | `article` |
 | url | URL страницы |
-| title | Первые 60 символов выделения > `<title>` |
 | body | `window.getSelection().toString()` |
 | source | `web-clipper` |
 
 Результат: `.md` (type: article, body = выделенный текст).
+Selection clips do not generate H1 or `title:` from selected text. A one-word
+selection remains a one-word body.
 
 Визуально в popup: блок Content рендерит выделение как `<blockquote>` с подписью `Selected text · N characters` — пользователь видит ровно то, что попадёт в body. См. раздел «Content body resolution» ниже.
 
@@ -123,12 +124,13 @@ Popup и save() используют одну чистую функцию — `r
 |---|---|
 | type | `image` |
 | url | URL страницы (источник) |
-| title | `alt` > `title` > имя файла |
 | file | Скачивается по `img.src` |
 | width/height | `img.naturalWidth` / `img.naturalHeight` |
 | source | `web-clipper` |
 
 Результат: `.md` (type: image) + скачанный файл + thumbnail.
+Image clips do not write generated `title:`. Alt/title attributes may be used
+as filename seeds or future captions, but not as automatic frontmatter title.
 
 ### 5. Video (видеоссылка)
 
@@ -138,11 +140,11 @@ Popup и save() используют одну чистую функцию — `r
 |---|---|
 | type | `video` |
 | url | URL видео |
-| title | `og:title` > `<title>` |
+| body H1 | `og:title` > `<title>` when this is a real video page title |
 | thumbnail | `og:image` |
 | source | `web-clipper` |
 
-Результат: `.md` (type: video) + миниатюра.
+Результат: `.md` (type: video, optional body H1 for a real page title) + миниатюра. Local/anonymous videos do not get synthetic title.
 
 ### 6. File (файл по прямой ссылке)
 
@@ -152,11 +154,12 @@ Popup и save() используют одну чистую функцию — `r
 |---|---|
 | type | `file` |
 | url | URL файла |
-| title | Имя файла из URL |
 | file | Скачивается native host'ом |
 | source | `web-clipper` |
 
 Результат: `.md` (type: file) + скачанный файл.
+File clips use the downloaded filename as identity/fallback label, not as
+generated `title:` frontmatter.
 
 ### 7. Screenshot (скриншот viewport)
 
@@ -171,10 +174,12 @@ Popup и save() используют одну чистую функцию — `r
 | Field | Source |
 |---|---|
 | type | `image` |
-| title | Заголовок страницы (редактируется) |
 | url | URL страницы (для ссылки на источник) |
 | file | JPEG/PNG, залит через HTTP upload, имя передаётся в save_block как `pre_uploaded_file` |
 | source | `web-clipper` |
+
+Screenshot clips do not write generated `title:`. If the user explicitly adds a
+caption/heading in a future UI, it should be written to Markdown body.
 
 Почему отдельный HTTP-канал, а не native messaging: Chrome ограничивает native messaging-сообщения 1 МБ, а скриншот Retina-viewport легко выходит за этот порог.
 
@@ -182,7 +187,7 @@ Popup и save() используют одну чистую функцию — `r
 
 Скриншот можно захватить не целиком, а выделенной областью. В превью скриншота есть кнопка `Crop Area` рядом с `Retake`. При клике:
 
-1. Popup сериализует всё текущее состояние (метаданные, статью, выбранные коллекции, title, vault, полный скриншот) в `chrome.storage.session` под ключом `cropPendingState` и вызывает `window.close()`.
+1. Popup сериализует всё текущее состояние (метаданные, статью, выбранные коллекции, display heading/body H1 if present, vault, полный скриншот) в `chrome.storage.session` под ключом `cropPendingState` и вызывает `window.close()`.
 2. Background получает сообщение `startCropMode` и пересылает `startCropOverlay` в content script активной вкладки.
 3. Content script инжектит Shadow DOM overlay: полупрозрачное затемнение на всю страницу, crosshair-курсор, плавающая плашка `Click and drag to select area • Esc to cancel`.
 4. Пользователь тянет мышью прямоугольник. Подсветка выделенной области — через трюк `box-shadow: 0 0 0 9999px rgba(0,0,0,0.55)` на самой рамке (одна рамка = «окно в темноту», без четырёх div'ов вокруг).
@@ -192,7 +197,7 @@ Popup и save() используют одну чистую функцию — `r
    - Получает dataUrl, грузит его в `Image`, кропит на `OffscreenCanvas` размером `width × height × devicePixelRatio`, конвертирует результат в JPEG q=0.9.
    - Отправляет background сообщение `cropDone` с обрезанным dataUrl.
 6. Background кладёт cropped dataUrl в screenshot upload cache, пишет `{status:"done", dataUrl, screenshotId}` в `chrome.storage.session.cropResult` и вызывает `chrome.action.openPopup()`.
-7. Popup при init обнаруживает `cropPendingState + cropResult`, восстанавливает состояние и заменяет превью на обрезанный скриншот. Выбранные коллекции, title, канал и `screenshotId` — всё на месте.
+7. Popup при init обнаруживает `cropPendingState + cropResult`, восстанавливает состояние и заменяет превью на обрезанный скриншот. Выбранные коллекции, display heading/body H1 if present, канал и `screenshotId` — всё на месте.
 
 Отмена (Esc до или во время drag'а): content script убивает overlay, пишет `cropResult = {status:"cancelled"}`, background переоткрывает popup. Popup восстанавливает прежний (не кропнутый) скриншот из persisted state.
 
@@ -299,7 +304,7 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 │                                      │
 │  ┌────────────────────────────────┐  │
 │  │ Preview area                   │  │
-│  │ (thumbnail + title input)      │  │
+│  │ (thumbnail + display heading)  │  │
 │  └────────────────────────────────┘  │
 │                                      │
 │  Channels: [search________________]  │
@@ -323,7 +328,7 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 | Component | File | shadcn/ui | Description |
 |---|---|---|---|
 | PopupApp | `PopupApp.tsx` | — | Корневой компонент, состояния (loading → error → main), Cmd+Enter / Esc |
-| PreviewCard | `components/PreviewCard.tsx` | `<Input>` | Thumbnail + редактируемый title + домен |
+| PreviewCard | `components/PreviewCard.tsx` | `<Input>` | Thumbnail + editable body H1/display heading when the clip type has a real page/article heading; media-only and selection clips do not synthesize title |
 | TypeSwitcher | `components/TypeSwitcher.tsx` | `<Button variant="ghost" size="xs">` | Content / Link / Image / Video |
 | ChannelList | `components/ChannelList.tsx` | `<Input>`, `<ScrollArea>` | Поиск + список каналов с чекбоксами, создание нового |
 | SaveButton | `components/SaveButton.tsx` | `<Button variant="default">` | Полная ширина, без kbd-подсказки (Cmd+Enter handler есть, но не всегда срабатывает из overlay — см. DEVLOG `24.04.2026 — Clipper: Tab-cycling`) |
@@ -379,7 +384,7 @@ Content script извлекает метаданные из DOM текущей �
 | Field | Priority |
 |---|---|
 | url | `link[rel=canonical]` > `og:url` > `window.location.href` |
-| title | `og:title` > `twitter:title` > `<title>` |
+| page heading seed | `og:title` > `twitter:title` > `<title>`; written as body H1 for link/article clips, not as generated `title:` frontmatter |
 | description | `og:description` > `twitter:description` > `meta[name=description]` |
 | image | `og:image` > `twitter:image` |
 | author | `meta[name=author]` > `article:author` |
@@ -391,7 +396,7 @@ Content script извлекает метаданные из DOM текущей �
 Используется только для типа Article. Библиотека включена в расширение (bundled, не CDN).
 
 Извлекает:
-- `title` — заголовок статьи
+- `title` — заголовок статьи; Mine writes it as first body H1, not as `title:` frontmatter
 - `byline` — автор
 - `textContent` — очищенный текст (без HTML)
 - `excerpt` — краткое описание
@@ -489,14 +494,19 @@ index. Legacy normalized tags are migration inputs only.
 
 Сохранение блока в vault.
 
+New clipper writes follow [SPEC_DISPLAY_TITLE.md](./SPEC_DISPLAY_TITLE.md):
+the request may carry a real page/article heading in `body` as the first H1,
+but it must not synthesize `title:` frontmatter for tweets, selections, files,
+images, videos, or screenshots. Existing `title` fields in older extension
+builds remain a legacy compatibility input only.
+
 ```json
 {
   "action": "save_block",
   "block_type": "link",
-  "title": "Stripe — Financial Infrastructure",
   "description": "Financial infrastructure for the internet",
   "url": "https://stripe.com",
-  "body": "",
+  "body": "# Stripe — Financial Infrastructure\n\nFinancial infrastructure for the internet",
   "tags": ["Design", "Fintech"],
   "image_url": "https://stripe.com/img/v3/home/twitter.png",
   "author": null
@@ -517,7 +527,6 @@ Response:
 {
   "action": "save_block",
   "block_type": "image",
-  "title": "Sunset in Tokyo",
   "url": "https://unsplash.com/photo/abc",
   "body": "",
   "tags": ["Photography"],
@@ -605,7 +614,7 @@ Chrome ограничивает отдельное native messaging-сообще
 
 После успешного upload попап передаёт полученное имя в `save_block` через поле `pre_uploaded_file`. Native host проверяет, что файл существует в vault, и использует его как `media_file` блока — без повторного скачивания через `image_url`.
 
-Если background service worker потерял in-memory cache и upload вернул `Screenshot upload expired`, popup ре-кэширует уже имеющийся `dataUrl` и один раз повторяет upload без нового screenshot capture. Остальные upload-ошибки (`timeout`, PNA/loopback отказ, сервер upload не настроен) показываются inline через `StatusBar`; popup остаётся в основном UI, а превью, выбранные коллекции, title, vault и кнопки `Save` / `Retake` сохраняются. Такие ошибки не переводят popup в full-screen `ErrorState`, потому что пользователь должен иметь возможность повторить сохранение без повторного сбора контекста.
+Если background service worker потерял in-memory cache и upload вернул `Screenshot upload expired`, popup ре-кэширует уже имеющийся `dataUrl` и один раз повторяет upload без нового screenshot capture. Остальные upload-ошибки (`timeout`, PNA/loopback отказ, сервер upload не настроен) показываются inline через `StatusBar`; popup остаётся в основном UI, а превью, выбранные коллекции, display heading/body H1 if present, vault и кнопки `Save` / `Retake` сохраняются. Такие ошибки не переводят popup в full-screen `ErrorState`, потому что пользователь должен иметь возможность повторить сохранение без повторного сбора контекста.
 
 ### Browser-origin boundary
 
@@ -624,7 +633,6 @@ Chrome ограничивает отдельное native messaging-сообще
 {
   "action": "save_block",
   "block_type": "image",
-  "title": "Article — Screenshot",
   "pre_uploaded_file": "article-screenshot.jpg",
   "tags": ["reference"]
 }
@@ -711,7 +719,7 @@ Native host читает путь к vault из файла конфигурац�
 | Image media source missing | `block_type=image` не создаётся. Popup показывает inline error, main UI остаётся открытым |
 | Image media download/upload/finalize failed | Response: `{"ok": false, "error": "..."}`. `.md` не создаётся, чтобы не получить orphan image block без `file:` |
 | Link/video thumbnail download failed | Блок может быть создан без thumbnail; media failure для preview не ломает сохранение самой ссылки/видео |
-| Screenshot upload failed | Popup показывает inline error в `StatusBar` и сохраняет preview/tags/title для retry |
+| Screenshot upload failed | Popup показывает inline error в `StatusBar` и сохраняет preview/tags/display heading для retry |
 | SQLite locked | Retry через 100мс, до 3 попыток. Затем ошибка |
 | Disk full | Ошибка записи файла. Response: `{"ok": false, "error": "Failed to write file: ..."}` |
 | Invalid URL | Блок создаётся, URL сохраняется as-is |
@@ -729,7 +737,7 @@ extension/
 │   ├── popup-layout.css    # @import global.css + popup-размеры (360x600)
 │   ├── PopupApp.tsx        # Корневой компонент (loading/error/main)
 │   ├── components/
-│   │   ├── PreviewCard.tsx  # Thumbnail + title input
+│   │   ├── PreviewCard.tsx  # Thumbnail + display heading input
 │   │   ├── TypeSwitcher.tsx # Content / Link переключатель
 │   │   ├── ChannelList.tsx  # Поиск + список каналов
 │   │   ├── SaveButton.tsx   # Кнопка сохранения

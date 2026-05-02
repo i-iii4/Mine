@@ -407,7 +407,9 @@ that belongs to `storage::media_refs`.
 - Контент центрирован горизонтально (`mx-auto max-w-[58rem]`)
 - Scroll/content top padding: classic `pt-12`, island `pt-20`; вместе с верхним меню это сохраняет общий visual top offset
 - Scroll/content bottom safe space: `pb-20` lives on the inner content layer, not on `[data-detail-scroll]`, so the final article line does not press against the bottom edge while scrollbar geometry stays unchanged
-- Article body itself no longer carries an extra compensating `mt-*` offset; removing duplicated author/title chrome must not shift the markdown column horizontally or vertically
+- Article content keeps a stable top inset (`pt-4`) even when duplicate
+  author/title chrome is removed. The inset belongs to the article content
+  wrapper; `ArticleBody` itself does not carry a compensating `mt-*` margin.
 - Метаданные справа (Geist Mono): AUDIO, WARNING, RESOLUTION, DATE, TYPE, SOURCE, AUTHOR
 - Metadata labels используют `text-sm text-muted-foreground`; значения — `text-sm text-foreground`
 - `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel; rename/delete/source/channel actions живут в shared overflow menu

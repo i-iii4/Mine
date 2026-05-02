@@ -1,6 +1,6 @@
 # SPEC: Thumbnail Pipeline
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [DEVLOG.md](DEVLOG.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [DEVLOG.md](DEVLOG.md)
 
 ## Status
 
@@ -64,7 +64,7 @@ Pipeline обязан удовлетворять **каждому** из эти�
 │  │ 3. PHASE 1: generate instant thumb                                │
 │  │    ├─ sniff first 3 bytes of media file                           │
 │  │    ├─ if JPEG/PNG magic → generate_thumbnail (Rust decode, fast)  │
-│  │    └─ else → generate_text_thumbnail (baked title, always works)  │
+│  │    └─ else → generate_text_thumbnail (display title, always works)│
 │  │ 4. upsert_block → SQLite                                          │
 │  │ 5. Response OK                                                    │
 └──────────────────────────────────────────────────────────────────────┘
@@ -175,7 +175,7 @@ Runs inside native host `handle_save_block` **before** the response is sent to t
 ```rust
 struct SaveBlockParams {
     block_type: BlockType,  // Image | Article | Video | Link | ...
-    title: Option<String>,
+    title: Option<String>,  // legacy compatibility input only
     body: String,
     image_url: Option<String>,  // main media URL for image-type blocks
     // ... other fields
@@ -202,7 +202,7 @@ else:
 ```
 if candidate is None:
     # Pure text article or no media
-    generate_text_thumbnail(title, body, thumb_path)  # always succeeds
+    generate_text_thumbnail(display_title, body, thumb_path)  # always succeeds
     return ThumbSource::Text
 
 read first 12 bytes of candidate file
@@ -221,7 +221,7 @@ if bytes[0..3] == [0x47, 0x49, 0x46]:  # GIF
 
 # Anything else (WebP variants, HEIC, AVIF, TIFF, video, exotic formats):
 # Rust может упасть — сразу пишем text placeholder.
-generate_text_thumbnail(title, body, thumb_path)
+generate_text_thumbnail(display_title, body, thumb_path)
 return ThumbSource::PlaceholderPendingUpgrade
 ```
 

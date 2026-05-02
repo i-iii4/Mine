@@ -1,6 +1,6 @@
 # SPEC: integration layer (watcher + commands)
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 Связующий слой: file watcher отслеживает изменения в vault, Tauri commands предоставляют API для фронтенда. Оркестрация файл → парсинг → индексация → thumbnail.
 
@@ -163,7 +163,8 @@ enum CommandError {
 
 ### Поведение create_block
 
-1. Сгенерировать slug из title/url
+1. Сгенерировать slug из first body H1 / readable seed / url, without
+   synthesizing `frontmatter.title`
 2. Разрешить конфликт slug (через `resolve_slug_conflict`)
 3. Создать `Block` с frontmatter
 4. Записать `.md` файл
@@ -224,8 +225,10 @@ targets:
 6. Обновить индекс и эмитить `block:renamed { old_slug, new_slug }`
 
 Boundary:
-- у самого переименовываемого блока `frontmatter.title` синхронизируется с новым stem
-- если rename меняет speakable article text, article-audio invalidируется вместо silent stale migration
+- `new_stem` is a filename change, not a title edit; in-app rename must not
+  synthesize or rewrite `frontmatter.title`, and it must not edit body H1
+- если rename меняет speakable article text через отдельный body/H1 edit,
+  article-audio invalidируется вместо silent stale migration
 - custom media filenames, не совпадающие с Mine naming patterns, не переименовываются
 - external rename и in-app rename разделены: rewrite других `.md` происходит только в explicit command path
 

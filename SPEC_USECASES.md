@@ -1,6 +1,6 @@
 # Use Cases: Mine
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_PRD.md](SPEC_PRD.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Референсы
 
@@ -31,7 +31,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 2. Нажимает расширение Mine (или горячую клавишу)
 3. Выбирает коллекции из списка или вводит новые
 4. Контент сохраняется в vault:
-   - Ссылка → `.md` с frontmatter (url, title, `Mine Collections`) + миниатюра (og:image)
+   - Ссылка → `.md` с frontmatter (url, `Mine Collections`) + body H1 + миниатюра (og:image)
    - Статья/фрагмент → `.md` с frontmatter + текст в теле + скачанные изображения
    - Изображение → `.md` с frontmatter + файл изображения
 5. В приложении появляется новая карточка
@@ -122,9 +122,9 @@ stripe-og.png
 2. Вводит запрос
 3. Мгновенные результаты (SQLite FTS5, <10 мс на 10 000 блоков):
    - По имени файла
-   - По заголовку и описанию
+   - По body H1/display heading и описанию
    - По содержимому текстовых блоков (тело `.md`)
-   - По метаданным ссылок (title, description)
+   - По метаданным ссылок (legacy title fallback, description)
 4. Результаты группируются: каналы (теги), блоки
 5. Enter — переход к блоку, Cmd+Enter — переход к каналу
 

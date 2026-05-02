@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Goal
 
@@ -627,7 +627,7 @@ Goal: расширение собирается через Vite, использ�
 
 | # | Task | Status |
 |---|------|--------|
-| 12.3.1 | `PreviewCard`: thumbnail + title input + domain. Использует `<Input>` из shadcn | [x] |
+| 12.3.1 | `PreviewCard`: thumbnail + display heading/body H1 input where applicable + domain. Использует `<Input>` из shadcn | [x] |
 | 12.3.2 | `TypeSwitcher`: Content / Link. Стилизован как type-switcher, использует `<Button variant="ghost">` | [x] |
 | 12.3.3 | `ChannelList`: поиск + список каналов с чекбоксами. Использует `<Input>`, `<ScrollArea>` | [x] |
 | 12.3.4 | `SaveButton`: кнопка сохранения. `<Button variant="default">` полной ширины + `<kbd>` | [x] |
@@ -917,7 +917,7 @@ Goal: довести filename-first rename до законченного про�
 | # | Slice | Status | Scope |
 |---|-------|--------|-------|
 | 19.1 | Backend rename command | [x] | `rename_block_file(old_slug, new_stem)` с NFC normalization, safe filename validation и typed errors (`NameTaken`, `InvalidFilename`, ...). |
-| 19.2 | Source-vault rewrite policy | [x] | In-app rename переименовывает `.md`, Mine-owned rename-family (`old_slug.ext`, `old_slug (image N).*`, `old_slug (video N).*`) и переписывает wikilinks / file references по parseable `.md` в vault. У переименовываемого блока `title` синхронизируется с новым stem. |
+| 19.2 | Source-vault rewrite policy | [x] | In-app rename переименовывает `.md`, Mine-owned rename-family (`old_slug.ext`, `old_slug (image N).*`, `old_slug (video N).*`) и переписывает wikilinks / file references по parseable `.md` в vault. Legacy behavior синхронизировал `title`; Phase 22 заменяет это на filename-only rename без title/H1 rewrite. |
 | 19.3 | Derived artifacts + watcher suppression | [x] | `rename_derived_artifacts` + `article_audio::rename_all_artifacts`, `AppState.suppressed_paths`, watcher filter против re-entry во время command-driven rename. |
 | 19.4 | Frontend rename UX | [x] | `Rename…` в overflow `…` menu и `Detail`, единый `RenameBlockDialog`, typed error rendering, `block:renamed` retargeting для open detail/grid state. |
 | 19.5 | Specs + tests | [x] | Rust tests на rewrite/media/audio/name collisions, frontend tests на dialog и `block:renamed` state sync, обновление SPEC/PLAN/DEVLOG. |
@@ -934,7 +934,7 @@ Goal: убрать `Native host timeout` на статьях с многими i
 | 20.4 | Unit tests | [x] | 9 новых тестов: `host_from_url_*`, `scan_*` (skip data/relative, indices, cap, malformed), `apply_rewrites_*` (success/failed/dedup/zero/reverse), `domain_limiter_*` (cap/release/per-host). 42/42 зелёных. |
 | 20.5 | Docs | [x] | [SPEC_CLIPPER.md](file:///Users/i_iii/Проекты/local-arena/SPEC_CLIPPER.md) § Article inline-media pipeline, [DEVLOG.md](file:///Users/i_iii/Проекты/local-arena/DEVLOG.md) entry с rejected alternatives (heartbeat / daemon / Tauri-worker). |
 
-### Phase 21 — Inline Media Extraction [SPEC]
+### Phase 21 — Inline Media Extraction
 
 Цель: позволить пользователю вытащить конкретное inline-изображение из открытой статьи в отдельный image-блок через перетаскивание на коллекцию в sidebar. Новый блок копирует ссылку на тот же media-файл, содержит URL источника и одностороннюю связь на исходную заметку. Исходная статья не переписывается.
 
@@ -942,13 +942,32 @@ Goal: убрать `Native host timeout` на статьях с многими i
 
 | # | Slice | Status | Scope |
 |---|-------|--------|-------|
-| 21.1 | Related-note frontmatter | [ ] | `Mine Related Notes`, `Mine Source Media`, parse/serialize, rename rewrite |
-| 21.2 | Storage/index support | [ ] | `related_notes` column, wikilinks insertion, `IndexedBlock.related_notes` |
-| 21.3 | Backend extract command | [ ] | `extract_inline_media`, local media validation, shared-media-reference semantics, thumbnail generation |
-| 21.4 | Detail drag payload | [ ] | `type: "inline_media"`, local image-only activation, media drag overlay |
-| 21.5 | Sidebar drop routing | [ ] | Drop `inline_media` on collection target calls extraction command, not the card connect path |
-| 21.6 | Metadata UI | [ ] | `RELATED NOTES` in Detail metadata with links to source notes |
+| 21.1 | Related-note frontmatter | [x] | `Mine Related Notes`, `Mine Source Media`, parse/serialize, rename rewrite |
+| 21.2 | Storage/index support | [x] | `related_notes` column, wikilinks insertion, `IndexedBlock.related_notes` |
+| 21.3 | Backend extract command | [x] | `extract_inline_media`, local media validation, shared-media-reference semantics, thumbnail generation |
+| 21.4 | Detail drag payload | [x] | `type: "inline_media"`, local image-only activation, media drag overlay |
+| 21.5 | Sidebar drop routing | [x] | Drop `inline_media` on collection target calls extraction command, not the card connect path |
+| 21.6 | Metadata UI | [x] | `RELATED NOTES` in Detail metadata with links to source notes |
 | 21.7 | Manual QA | [ ] | Real vault extraction, Obsidian source check, source article unchanged, rename source note updates relation |
+
+### Phase 22 — Display Title / Body H1 Contract
+
+Goal: remove synthetic `frontmatter.title` from new Mine-authored data and make
+visible titles fully Obsidian-compatible. A real heading lives in Markdown body
+as first H1. Existing `frontmatter.title` remains a legacy read fallback.
+Filename stem remains identity/fallback label, not visible content title.
+
+Specification: [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md).
+
+| # | Slice | Status | Scope |
+|---|---|---|---|
+| 22.1 | Domain parser + derived fields | [x] | `content_heading`, `display_title`, `fallback_label` derived from body H1 → legacy title → filename |
+| 22.2 | Backend read-model | [x] | `IndexedBlock` / `LightBlock` expose derived title fields while physical `blocks.title` stays legacy metadata |
+| 22.3 | Frontend title rendering | [x] | Card/Search/Detail consume `display_title`; Detail renders body H1 as normal Markdown content without duplicate metadata heading |
+| 22.4 | Write-path switch | [x] | New link/article/video page clips write real page heading as body H1; tweet/selection/media/file paths do not synthesize `title:` or H1 |
+| 22.5 | Rename and derived artifacts | [x] | Filename rename no longer rewrites `frontmatter.title` or body H1; text thumbnails and article-audio use derived display-title/speakable content |
+| 22.6 | Compatibility and migration boundary | [x] | Existing `frontmatter.title` remains read fallback; no automatic vault-wide rewrite |
+| 22.7 | Manual QA | [ ] | Fresh clipper save paths + old vault fallback behavior on a real Obsidian vault |
 
 ### Backlog
 

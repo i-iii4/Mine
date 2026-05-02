@@ -1,6 +1,6 @@
 # Specification: iOS Mobile App
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md)
 
 ## Overview
 
@@ -139,8 +139,8 @@ iCloud Drive при конфликте создаёт копию: `note.md` → 
 |---|---|---|
 | URL из Safari | URL string | Fetch og:tags → создать link/article блок |
 | URL из Twitter app | Tweet URL | Syndication API → текст + медиа |
-| URL из Instagram app | Post URL | Ограничено (нет cookies) — og:image + title |
-| URL из YouTube app | Video URL | oEmbed → title + thumbnail |
+| URL из Instagram app | Post URL | Ограничено (нет cookies) — og:image + page heading seed |
+| URL из YouTube app | Video URL | oEmbed → page heading seed + thumbnail |
 | Изображение | UIImage data | Сохранить как image блок |
 | Текст | String | Сохранить как article блок |
 
@@ -151,9 +151,9 @@ iCloud Drive при конфликте создаёт копию: `note.md` → 
 2. Share Extension получает URL/image/text
 3. Если URL:
    a. Показать spinner
-   b. Fetch страницы → extract og:title, og:image, og:description
+   b. Fetch страницы → extract og:title as body H1 seed, og:image, og:description
    c. Для Twitter: вызвать syndication API → получить текст + медиа
-   d. Показать preview: title + image + tag picker
+   d. Показать preview: display heading + image + tag picker
 4. Пользователь выбирает теги → Save
 5. Rust core: создать .md файл + скачать медиа
 6. CloudKit push → десктоп получает уведомление

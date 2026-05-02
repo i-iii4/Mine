@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
 
 ## Context
 
@@ -27,7 +27,6 @@ Mine решает это: визуальный букмаркинг с лока�
 ---
 type: link
 url: https://stripe.com
-title: Stripe — Financial Infrastructure
 description: Financial infrastructure for the internet
 thumbnail: stripe-og.png
 Mine Collections:
@@ -36,15 +35,18 @@ Mine Collections:
 saved_at: 2026-02-26T14:30:00Z
 source: browser-extension
 ---
+
+# Stripe — Financial Infrastructure
+
+Financial infrastructure for the internet
 ```
-Тело пустое. Рядом лежит `stripe-og.png` (og:image или скриншот).
+Body H1 is the visible title. Рядом лежит `stripe-og.png` (og:image или скриншот).
 
 #### Статья / текст (article)
 ```markdown
 ---
 type: article
 url: https://example.com/crdt-explained
-title: Как устроен CRDT
 author: Wim Cools
 thumbnail: crdt-article-og.png
 Mine Collections:
@@ -53,6 +55,8 @@ Mine Collections:
 saved_at: 2026-02-26T14:30:00Z
 source: browser-extension
 ---
+
+# Как устроен CRDT
 
 Текст статьи или выделенный фрагмент.
 Может содержать форматирование и ссылки на изображения.
@@ -67,7 +71,6 @@ source: browser-extension
 type: image
 file: sunset-tokyo.jpg
 url: https://unsplash.com/photo/abc
-title: Sunset in Tokyo
 width: 3840
 height: 2160
 Mine Collections:
@@ -86,15 +89,22 @@ source: browser-extension
 type: video
 file: demo-reel.mp4
 url: https://youtube.com/watch?v=xxx
-title: Demo Reel 2026
 thumbnail: demo-reel-thumb.jpg
 Mine Collections:
   - "[[Portfolio]]"
   - "[[Motion]]"
 saved_at: 2026-02-26T14:30:00Z
 ---
+
+# Demo Reel 2026
 ```
 Аналогично: `.md` с метаданными + медиафайл рядом.
+
+Visible block title is content, not identity metadata. Mine-authored link,
+article, and real page/video clips write a visible heading as the first body H1.
+Tweet/text-selection/media/file blocks do not synthesize a title from content,
+alt text, or filename. Existing `frontmatter.title` is read as a legacy
+fallback only; new write paths do not create it.
 
 ### Коллекции = Obsidian pages
 
@@ -145,10 +155,10 @@ Source vault хранит только пользовательские файл
 - hidden `id` / `uuid` во frontmatter не вводятся
 - **in-app rename** — канонический smart path:
   - переименовывает `.md`
-  - синхронизирует `frontmatter.title` переименовываемой карточки с новым stem
+  - не синтезирует и не переписывает `frontmatter.title` or body H1
   - переименовывает Mine-owned source media (`slug.ext`, `slug (image N).*`, `slug (video N).*`)
   - переписывает wikilinks и Mine-owned file references по vault
-  - переносит block-level thumb; article audio инвалидируется, если rename меняет speakable text
+  - переносит block-level thumb; article audio инвалидируется только если отдельный body/H1 edit меняет speakable text
 - **external rename** через Finder / Obsidian — resilience path:
   - watcher через `body_hash` трактует `Remove + Create` как rename
   - DB slug и derived artifacts сохраняются
@@ -339,7 +349,7 @@ Desktop UI contract:
 
 iOS UI contract:
 
-- `AudioSection` рендерится под `title / author` и перед body
+- `AudioSection` рендерится под body H1/display title + author и перед body
 - `ArticleAudioService` отвечает за generate/delete/state resolution
 - `ArticleAudioController` отвечает за play/pause/resume/persistence
 
@@ -423,7 +433,7 @@ iOS UI contract:
 - `App.tsx` держит per-route snapshot cache (`tag -> GridSnapshot`). Повторный переход в уже посещённый канал сначала применяет локальный snapshot синхронно, а taxonomy (`list_tags` / `list_channels`) не перезапрашивается на чистом route switch. Это убирает лишний IPC round-trip и второй `list_grid_blocks` на старте после `setTags/setChannels`.
 - `Grid.tsx` использует собственный windowed masonry renderer: карточки позиционируются абсолютно, контейнер получает вычисленную `totalHeight`, в DOM остаются только видимые элементы плюс overscan.
 - Геометрия карточки больше не должна выводиться из независимых эвристик в `Card.tsx` и `cardHeight.ts`. Введён общий descriptor-driven слой (`src/lib/cardLayout.ts`): variant карточки, preview text и media geometry вычисляются один раз и затем используются и для рендера, и для расчёта высоты.
-- Контентные карточки больше не кодируют spacing через variant-specific `mt-*` ветки. Введён slot-based contract: frame карточки задаёт общий inset, media идёт первой, а текстовые слоты живут единым text-stack ниже (`media -> title/preview -> author`). Внутренние gap'ы появляются только между реально существующими соседними слотами. Это устраняет phantom top gap и сохраняет системный отступ под media.
+- Контентные карточки больше не кодируют spacing через variant-specific `mt-*` ветки. Введён slot-based contract: frame карточки задаёт общий inset, media идёт первой, а текстовые слоты живут единым text-stack ниже (`media -> display title/preview -> author`). Внутренние gap'ы появляются только между реально существующими соседними слотами. Это устраняет phantom top gap и сохраняет системный отступ под media.
 - Layout generation теперь keyed by `layoutGenerationKey = route + width bucket + ordered block layout fingerprint`. Fingerprint включает layout-relevant content блока, в том числе `preview_manifest`, поэтому same-id content/preview changes не могут reuse stale heights/layout.
 - `heightCache` и `layoutCache` generation-aware: exact heights и exact layouts кэшируются только для текущего generation key, а не просто по `slug` или набору ids.
 - Layout вычисляется чистой функцией (`src/lib/masonryLayout.ts`): `containerWidth + current-generation heights -> columnCount + positions + totalHeight`. Exact heights текущего generation используются там, где они уже есть; для остальных блоков provisional path использует heuristic only for skeleton geometry.
@@ -522,7 +532,7 @@ CREATE TABLE blocks (
     id INTEGER PRIMARY KEY,
     path TEXT UNIQUE NOT NULL,           -- относительный путь .md от vault root
     block_type TEXT NOT NULL,            -- image, article, link, video, file
-    title TEXT,
+    title TEXT,                          -- legacy frontmatter.title fallback
     description TEXT,
     url TEXT,                            -- source URL (для ссылок и статей)
     media_file TEXT,                     -- имя связанного медиафайла
@@ -549,7 +559,7 @@ CREATE INDEX idx_block_tags_tag ON block_tags(tag);
 CREATE TABLE channels (
     id INTEGER PRIMARY KEY,
     tag TEXT UNIQUE NOT NULL,            -- semantic: CollectionRef
-    title TEXT NOT NULL,                 -- отображаемое имя
+    title TEXT NOT NULL,                 -- отображаемое имя коллекции
     description TEXT,
     color TEXT,                          -- цвет канала в UI
     icon TEXT,                           -- иконка

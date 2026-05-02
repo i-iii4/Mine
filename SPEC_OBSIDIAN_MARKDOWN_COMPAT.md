@@ -1,6 +1,6 @@
 # Obsidian Markdown Compatibility Specification
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 ## Goal
 
@@ -19,8 +19,9 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 - Не менять canonical wikilink syntax из `SPEC_OBSIDIAN_WIKILINKS.md`.
 - Не делать папки каналами. Mine collections остаются frontmatter metadata, а
   не filesystem directories.
-- Не делать H1 приоритетнее имени файла в v1. Filename-first остаётся
-  контрактом identity/display fallback; H1 остаётся частью body.
+- Не переписывать Markdown на read path ради заголовка. H1 может стать
+  display-title source, но индексирование не должно вставлять H1 или удалять
+  legacy `title:` без явного write/migration action.
 
 ## Motivation
 
@@ -47,19 +48,19 @@ Frontmatter нужен для явной Mine-метадаты, но не дол
 ```md
 ---
 type: article
-title: Example
 saved_at: 2026-04-24T12:00:00Z
-tags:
-  - design
 Mine Collections:
   - "[[Research]]"
 ---
+
+# Example
 
 Body.
 ```
 
 Это полный Mine block. Frontmatter является source of truth для explicit
-metadata.
+metadata, но видимый заголовок живёт в body H1. Existing `frontmatter.title`
+остаётся legacy read fallback.
 
 ### Foreign Markdown
 
@@ -106,7 +107,7 @@ Indexer строит `Block` из `.md` файла через двухступе
 | Field | Explicit source | Fallback source |
 |---|---|---|
 | `type` | known Mine `frontmatter.type` | `article` |
-| `title` | `frontmatter.title` | filename stem |
+| display title | first H1 in body | legacy `frontmatter.title` → filename stem |
 | `saved_at` | `frontmatter.saved_at` | filesystem creation time → modified time |
 | Mine collections | `frontmatter["Mine Collections"]` wikilinks | empty list in post-migration runtime; legacy `frontmatter.tags` is migration-only |
 | Obsidian tags | `frontmatter.tags` | empty list |
@@ -122,7 +123,11 @@ Rules:
 - If `frontmatter.type` exists and is a known Mine block type, it wins.
 - If `frontmatter.type` exists but is unknown to Mine, it is preserved as user
   YAML and the indexed block falls back to `article` with an index warning.
-- If `frontmatter.title` exists, it wins over filename.
+- If body contains a first H1, it is the preferred display title.
+- If no H1 exists and `frontmatter.title` exists, legacy title is used as a
+  compatibility fallback.
+- If neither H1 nor legacy title exists, filename stem is used as a fallback
+  navigation label.
 - If `frontmatter.saved_at` exists and parses, it wins over filesystem
   timestamps.
 - If `frontmatter.saved_at` exists but is invalid, Mine falls back to
@@ -154,22 +159,22 @@ Markdown unless the user explicitly owns that metadata in Mine:
 `source`, Mine preserves it, but Mine must not inject a `source` marker just to
 classify an Obsidian file.
 
-### Title Fallback
+### Display Title Fallback
 
-For Markdown without explicit `title`:
+For Markdown without a content H1:
 
-1. Filename stem. In recursive vaults this means the last path segment only,
+1. Existing `frontmatter.title`, if present.
+2. Filename stem. In recursive vaults this means the last path segment only,
    not the full vault-relative slug.
 
-This preserves the existing filename-first identity model while keeping identity
-and display separate: the vault-relative path slug locates the file, and the
-leaf `.md` filename is the default display title when no explicit
-`frontmatter.title` exists.
+This preserves the filename-first identity model while keeping identity and
+display separate: the vault-relative path slug locates the file, H1 expresses
+user-visible title content, and the leaf `.md` filename is only the final
+fallback label.
 
-Headings remain part of body. An H1 can be used later as a preview/content
-signal, but v1 must not let H1 override filename-derived display title. This
-avoids ambiguity when an Obsidian note is named one way but starts with a
-different heading.
+Mine-authored new write paths should create a body H1 when a real page/article
+title exists and should not create `frontmatter.title`. Social clips, quotes,
+and media/file imports with no real heading must remain headingless.
 
 ### Date Fallback
 
@@ -324,7 +329,10 @@ For an indexed Markdown file:
 - `slug` = filename stem;
 - `block_type` = known Mine `frontmatter.type` if present, otherwise
   `article`;
-- `title` = valid `frontmatter.title` if present, otherwise filename stem;
+- `display_title` / equivalent read-model value = first H1, then valid legacy
+  `frontmatter.title`, then filename stem fallback;
+- `frontmatter.title` is indexed only as legacy metadata and must not be
+  synthesized for files that do not contain it;
 - `saved_at` = valid `frontmatter.saved_at` if present, otherwise filesystem
   fallback;
 - `index_warning` = warning code when metadata was downgraded or skipped,
@@ -363,7 +371,9 @@ exist in source text. It consumes the derived `Block` read model.
 Foreign Markdown displays as article/note:
 
 - feed card uses article layout;
-- title uses derived title;
+- title slot uses the display title contract from `SPEC_DISPLAY_TITLE.md`; H1
+  is preferred, legacy `frontmatter.title` is fallback, filename is the final
+  navigation label;
 - body preview uses indexed `preview_text`: markdown/embed syntax stripped,
   whitespace normalized, and truncated on a word boundary to a backend buffer
   of 768 chars. This is not the final visual clamp; feed cards still decide
@@ -584,8 +594,9 @@ Rollback is file-level: restore the timestamped backup and rebuild the index.
 
 - `parse_markdown_document_no_frontmatter_defaults_article`.
 - `parse_markdown_document_partial_frontmatter_defaults_missing_type`.
-- `parse_markdown_document_title_from_filename`.
-- `parse_markdown_document_h1_does_not_override_filename_title`.
+- `parse_markdown_document_display_title_from_h1`.
+- `parse_markdown_document_legacy_title_used_when_no_h1`.
+- `parse_markdown_document_filename_label_when_no_h1_or_legacy_title`.
 - `parse_markdown_document_saved_at_from_file_metadata`.
 - `parse_markdown_document_hr_at_top_without_closing_fence_is_foreign`.
 - `parse_markdown_document_empty_frontmatter_body_after_closing_fence`.
@@ -595,7 +606,7 @@ Rollback is file-level: restore the timestamped backup and rebuild the index.
 - `parse_markdown_document_obsidian_tags_are_user_metadata`.
 - `parse_markdown_document_mine_collections_are_canonical_wikilinks`.
 - `parse_markdown_document_inline_body_tag_does_not_mutate_tags`.
-- `parse_markdown_document_unicode_filename_title`.
+- `parse_markdown_document_unicode_filename_label`.
 
 ### Storage / Watcher
 
@@ -615,7 +626,8 @@ Rollback is file-level: restore the timestamped backup and rebuild the index.
 
 - feed renders implicit article card.
 - detail renders Obsidian embed from implicit article body.
-- metadata panel handles derived title/date without source frontmatter fields.
+- metadata panel handles derived display title/date without source frontmatter
+  fields.
 - metadata panel surfaces `index_warning` for malformed frontmatter, unknown
   type, invalid date, or unsupported tag shape.
 

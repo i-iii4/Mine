@@ -1,6 +1,6 @@
 # PRD: Mine
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md)
 
 ## Продукт
 
@@ -35,7 +35,6 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 | Атрибут | Тип | Описание |
 |---|---|---|
 | `type` | string | `link` / `article` / `image` / `video` / `file` |
-| `title` | string | Заголовок |
 | `Mine Collections` | string[] | Quoted Obsidian wikilinks на collection pages |
 | `saved_at` | datetime | Когда сохранён |
 
@@ -51,6 +50,11 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 | `width` | number | Размеры (для изображений, видео) |
 | `height` | number | Размеры |
 | `source` | string | Откуда сохранён (`browser-extension`, `drag-drop`, `manual`) |
+
+Visible title is content, not required metadata. New Mine-authored blocks write
+real page/article headings as the first Markdown H1 in body. Existing
+`frontmatter.title` remains a legacy read fallback only. See
+`SPEC_DISPLAY_TITLE.md`.
 
 ### Коллекция
 
@@ -74,7 +78,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 
 **На диске:**
 ```
-stripe-homepage.md          ← frontmatter: type=link, url, title, Mine Collections
+stripe-homepage.md          ← frontmatter: type=link, url, Mine Collections; body H1
 stripe-og.png               ← миниатюра (og:image или скриншот)
 ```
 
@@ -84,7 +88,6 @@ stripe-og.png               ← миниатюра (og:image или скринш
 ```yaml
 type: link
 url: https://stripe.com
-title: Stripe — Financial Infrastructure
 description: Financial infrastructure for the internet
 thumbnail: stripe-og.png
 Mine Collections:
@@ -94,7 +97,10 @@ saved_at: 2026-02-26T14:30:00Z
 source: browser-extension
 ```
 
-Тело `.md` пустое.
+**Тело:**
+```markdown
+# Stripe — Financial Infrastructure
+```
 
 ### 2. Статья / фрагмент текста (article)
 
@@ -113,7 +119,6 @@ crdt-article-og.png         ← миниатюра
 ```yaml
 type: article
 url: https://example.com/crdt-explained
-title: Как устроен CRDT
 author: Wim Cools
 thumbnail: crdt-article-og.png
 Mine Collections:
@@ -125,6 +130,8 @@ source: browser-extension
 
 **Тело:**
 ```markdown
+# Как устроен CRDT
+
 Текст статьи или выделенный фрагмент.
 Может содержать форматирование.
 
@@ -148,7 +155,6 @@ sunset-tokyo.jpg            ← само изображение
 type: image
 file: sunset-tokyo.jpg
 url: https://unsplash.com/photo/abc
-title: Sunset in Tokyo
 width: 3840
 height: 2160
 Mine Collections:
@@ -223,8 +229,8 @@ design-systems-book.pdf     ← файл
 - Виртуальный скроллинг: на экране ~50-200 карточек, в DOM ~40-60 элементов
 - Карточки адаптируются по типу блока:
   - **image** — thumbnail с соотношением сторон оригинала
-  - **link** — миниатюра страницы + заголовок + домен
-  - **article** — первые строки текста (или og:image + заголовок)
+- **link** — миниатюра страницы + H1 из body + домен
+- **article** — первые строки текста (или og:image + H1 из body)
   - **video** — кадр с иконкой воспроизведения
   - **file** — иконка типа + имя + размер
 - Режимы: сетка (равномерные столбцы), masonry (разная высота), список
@@ -244,7 +250,7 @@ design-systems-book.pdf     ← файл
 
 - Глобальный поиск по всему vault
 - Мгновенные результаты (FTS5)
-- Поиск по: заголовку, описанию, тексту статей, именам файлов
+- Поиск по: H1/display heading, legacy title, описанию, тексту статей, именам файлов
 - Результаты: блоки и коллекции вперемешку с иконками типа
 
 ---
@@ -266,7 +272,7 @@ Vault — корневая папка, выбираемая пользовате
 
 ### Именование файлов
 
-При сохранении из браузера: `<slug-из-title>.<ext>`. При конфликте имён: `<slug>-2.md`, `<slug>-3.md`.
+При сохранении из браузера: `<slug-из-H1-или-readable-seed>.<ext>`. При конфликте имён: `<slug>-2.md`, `<slug>-3.md`.
 
 При сохранении через drag-and-drop: сохраняется оригинальное имя файла. `.md` файл метаданных создаётся с тем же именем: `photo.jpg` → `photo.md` + `photo.jpg`.
 

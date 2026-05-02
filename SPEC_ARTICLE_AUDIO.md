@@ -1,6 +1,6 @@
 # Article Audio Specification
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md)
 
 ## Goal
 
@@ -46,7 +46,7 @@ v1 поддерживает только `article` blocks.
 
 #### iOS
 
-- compact `AudioSection` рендерится сразу под `title / author`
+- compact `AudioSection` рендерится сразу под body H1/display title + author
 - секция стоит перед body статьи
 
 ### Playback expectations
@@ -151,7 +151,7 @@ type ArticleAudioGateway = {
 
 ### Inputs
 
-- `title`
+- first body H1/display title (legacy `frontmatter.title` is fallback only)
 - `author`
 - prose body статьи
 

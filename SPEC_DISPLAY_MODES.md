@@ -104,7 +104,7 @@ Masonry layout с virtualized rendering. Сохраняет всю сущест�
 ┌─────────────────────┐
 │      [image]        │ ← img object-cover, высота по aspect ratio
 ├─────────────────────┤
-│ Title               │ ← text-sm, 1-2 строки
+│ Display title       │ ← text-sm, 1-2 строки, first body H1 or legacy title
 │ domain.com          │ ← text-xs, muted
 └─────────────────────┘
 ```
@@ -117,7 +117,7 @@ Masonry layout с virtualized rendering. Сохраняет всю сущест�
 
 Режим `table`. Табличное представление (как Notion database view или Finder list view).
 
-Колонки: thumbnail (48px) | title | type | tags | saved_at | author | source
+Колонки: thumbnail (48px) | display title | type | tags | saved_at | author | source
 
 Сортировка по клику на заголовок. Фиксированная высота строки. Virtual scroll через `content-visibility: auto`.
 

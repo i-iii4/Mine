@@ -1,6 +1,6 @@
 # Identity Robustness Specification
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md)
 
 ## Goal
 
@@ -10,7 +10,7 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 - rename `.md` файла в Obsidian или Finder;
 - iCloud sync conflict files;
 - Unicode normalization mismatch (NFC vs NFD) между устройствами;
-- slug collision при clip'е второго блока с тем же заголовком.
+- slug collision при clip'е второго блока с тем же H1/readable seed.
 
 **Не меняется:**
 
@@ -75,9 +75,11 @@ pub fn read_block_file(path: &Path) -> Result<(String, String)> {
 ### Markdown First invariants
 
 7. `.md` файл не содержит служебных полей идентификации.
-8. Obsidian может открыть любой блок Mine, увидеть только человекочитаемые поля (`title`, `tags`, `saved_at`, `url`, и т.д.).
+8. Obsidian может открыть любой блок Mine, увидеть только человекочитаемые поля (`Mine Collections`, `saved_at`, `url`, body H1, и т.д.); `frontmatter.title` остаётся legacy metadata, а не обязательным новым полем.
 9. Wikilinks `[[sunset-tokyo]]` работают в Obsidian без Mine-specific processing.
-10. In-app rename синхронизирует `frontmatter.title` у самого переименовываемого блока с новым filename stem; external rename через Finder / Obsidian `title` не меняет.
+10. In-app rename меняет filename stem only: it must not synthesize or rewrite
+    `frontmatter.title`, and it must not edit body H1. External rename через
+    Finder / Obsidian также не меняет title/H1.
 
 ### Watcher invariants
 
@@ -94,7 +96,7 @@ pub fn read_block_file(path: &Path) -> Result<(String, String)> {
 
 1. **Tauri command** `src-tauri/src/commands/blocks.rs`:
    - `rename_block_file(old_slug, new_stem) -> RenameBlockResult { old_slug, new_slug }`;
-   - `new_stem` трактуется как новое имя файла, не как `title`;
+   - `new_stem` трактуется как новое имя файла, не как `title` or body H1;
    - boundary normalizes stem в NFC, запрещает path traversal и пустое имя через общий `validate_slug`;
    - при занятом target возвращает typed error `NameTaken`, без silent suffix.
 
@@ -179,7 +181,7 @@ pub fn read_block_file(path: &Path) -> Result<(String, String)> {
 
 **Правило:** все входящие filename паттерны нормализуются в NFC **на boundary**.
 
-**Канонический helper:** [`domain/vault.rs::normalize_filename_stem`](file:///Users/i_iii/Проекты/local-arena/src-tauri/src/domain/vault.rs) — предпочтительная точка вызова `.nfc().collect()` для всех path→slug преобразований. При добавлении новой path boundary — переиспользовать helper, не дублировать `.nfc().collect()`. Для slug-генерации из произвольной user-строки (title, url) доступен второй канал — `domain::block::sanitize_for_filename` (вызывает `.nfc()` внутри и дополнительно фильтрует fs-unsafe символы).
+**Канонический helper:** [`domain/vault.rs::normalize_filename_stem`](file:///Users/i_iii/Проекты/local-arena/src-tauri/src/domain/vault.rs) — предпочтительная точка вызова `.nfc().collect()` для всех path→slug преобразований. При добавлении новой path boundary — переиспользовать helper, не дублировать `.nfc().collect()`. Для slug-генерации из произвольной user-строки (body H1, readable seed, url) доступен второй канал — `domain::block::sanitize_for_filename` (вызывает `.nfc()` внутри и дополнительно фильтрует fs-unsafe символы).
 
 **Точки применения** (boundary, где path/slug впервые попадает в runtime):
 
@@ -207,7 +209,7 @@ Grep "normalize_filename_stem|\.nfc\(\)" src-tauri/src/
 **Новое поведение:**
 
 1. Клиппер при повторном сохранении того же URL (detected via `block.url` DB match) **не создаёт** новый блок, показывает: `Already saved: [Open in Mine]`.
-2. Клиппер при разных URL но identical title — суффикс ` — YYYY-MM-DD` вместо `(2)`:
+2. Клиппер при разных URL but identical H1/readable slug seed — суффикс ` — YYYY-MM-DD` вместо `(2)`:
    - `sunset-tokyo.md` (первый)
    - `sunset-tokyo — 2026-04-22.md` (второй)
    - filename остаётся осмысленным, пользователь видит дату сохранения как differentiator.
@@ -245,7 +247,7 @@ Grep "normalize_filename_stem|\.nfc\(\)" src-tauri/src/
 
 - `src-tauri/src/commands/blocks.rs`:
   - `rename_block_file_rewrites_links_and_inline_media`
-  - `rename_block_file_invalidates_article_audio_when_title_changes_speech_text`
+  - `rename_block_file_does_not_rewrite_frontmatter_title_or_body_h1`
   - `rename_block_file_leaves_custom_media_filenames_untouched`
   - `rename_block_file_rejects_taken_name`
 - `src-tauri/src/watcher/handler.rs`:
@@ -272,7 +274,7 @@ Grep "normalize_filename_stem|\.nfc\(\)" src-tauri/src/
 
 ### Integration tests
 
-- end-to-end in-app rename в test vault: create block, rename via command, verify `.md` renamed, DB slug updated, Mine-owned media rewritten, `title` synced, thumb moved, stale article-audio invalidated if speakable text changed;
+- end-to-end in-app rename в test vault: create block, rename via command, verify `.md` renamed, DB slug updated, Mine-owned media rewritten, `frontmatter.title` and body H1 unchanged, thumb moved, stale article-audio unchanged unless speakable body text changed by a separate edit;
 - external rename в test vault: rename `.md` вручную, verify DB slug updated, derived artifacts preserved, no duplicate block;
 - iCloud conflict simulation: create `foo.md` + `foo (conflict).md` with different bodies, verify `vault_conflicts` entry, verify second block NOT created in `blocks`;
 - NFC roundtrip: write filename в NFD, read back, verify matched как NFC в DB.
@@ -285,13 +287,13 @@ Grep "normalize_filename_stem|\.nfc\(\)" src-tauri/src/
 
 ## Acceptance criteria
 
-1. In-app rename внутри Mine: `.md` файл переименован, Mine-owned rename-family переименован, wikilinks и file references обновлены, `title` синхронизирован с новым stem, thumb перенесён; если rename меняет speakable article text, stale article-audio инвалидируется.
+1. In-app rename внутри Mine: `.md` файл переименован, Mine-owned rename-family переименован, wikilinks и file references обновлены, `frontmatter.title` and body H1 are not rewritten, thumb перенесён; если отдельный body/H1 edit меняет speakable article text, stale article-audio инвалидируется.
 2. Rename `.md` файла в Obsidian/Finder: identity сохраняется, thumb cache не становится orphan, audio position сохраняется, другие `.md` файлы не переписываются silently.
 3. iCloud conflict file: появляется в `vault_conflicts`, не создаёт второй блок в `blocks`, UI показывает banner с вариантами разрешения.
 4. Rename с одновременным edit body (same debounce window): content hash не совпадает, treated как delete + create — documented edge case, acceptable.
 5. NFC/NFD mismatch между устройствами: при первом scan после sync filename нормализуется в NFC, identity сохраняется.
 6. Повторный clip того же URL: клиппер детектит via DB match, показывает `Already saved`, не создаёт дубликат.
-7. Повторный clip разных URL с одинаковым title: filename получает `— YYYY-MM-DD` suffix вместо `-2`.
+7. Повторный clip разных URL с одинаковым H1/readable slug seed: filename получает `— YYYY-MM-DD` suffix вместо `-2`.
 
 ## Known residuals
 

@@ -1,6 +1,6 @@
 # SPEC: domain/block
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 Эталонный модуль. Все последующие модули следуют его паттернам качества, тестирования и документирования.
 
@@ -49,7 +49,7 @@ enum BlockType {
 ```rust
 struct Frontmatter {
     block_type: BlockType,       // обязательное
-    title: Option<String>,
+    title: Option<String>,       // legacy read fallback; new write paths do not synthesize it
     description: Option<String>,
     url: Option<String>,
     file: Option<String>,        // имя связанного медиафайла
@@ -69,10 +69,12 @@ struct Frontmatter {
 **Поведение при отсутствии обязательного поля:** ошибка `MissingRequiredField`.
 
 Status: this is the original strict Mine block model. Obsidian compatibility
-layers add optional implicit articles, and collection membership is stored in
-`Mine Collections` wikilinks. The in-memory field remains `tags` as a legacy
-physical/API name, but its semantic value is `CollectionRef`. See
-`SPEC_OBSIDIAN_MARKDOWN_COMPAT.md` and `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md`.
+layers add optional implicit articles, collection membership is stored in
+`Mine Collections` wikilinks, and visible titles are moving to body H1 instead
+of generated `frontmatter.title`. The in-memory field remains `tags` as a
+legacy physical/API name, but its semantic value is `CollectionRef`. See
+`SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`, `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md`, and
+`SPEC_DISPLAY_TITLE.md`.
 
 ### Block
 
@@ -171,7 +173,24 @@ fn serialize_frontmatter(frontmatter: &Frontmatter) -> String
 - Непустой `related_notes` serializes as quoted wikilinks under
   `Mine Related Notes`
 - `source_media` serializes as `Mine Source Media`
-- Порядок полей: type, title, description, url, file, thumbnail, Mine Collections, Mine Related Notes, Mine Source Media, saved_at, source, width, height, author
+- Legacy `title` serializes only when already present in `Frontmatter`; new
+  write paths must not synthesize it from filename, selected text, tweet text,
+  alt text, or URL metadata
+- Порядок полей: type, legacy title (only when present), description, url, file, thumbnail, Mine Collections, Mine Related Notes, Mine Source Media, saved_at, source, width, height, author
+
+### Display title
+
+`frontmatter.title` is not the canonical display-title source for new data.
+Mine derives visible title from content:
+
+1. First H1 in body.
+2. Existing `frontmatter.title` as legacy fallback.
+3. Filename stem as final fallback label.
+
+New Mine-authored blocks write real page/article titles as body H1, not as
+`title:`. Social clips, text-selection quote cards, image/video/file imports,
+and inline-media extraction must not generate artificial titles. See
+`SPEC_DISPLAY_TITLE.md`.
 
 ### serialize_block
 
@@ -204,16 +223,19 @@ fn extract_wikilinks(body: &str) -> Vec<String>
 
 ### suggest_slug
 
-Генерирует slug из заголовка или URL.
+Генерирует slug из человекочитаемого seed или URL.
 
 ```rust
-fn suggest_slug(title: Option<&str>, url: Option<&str>) -> String
+fn suggest_slug(seed: Option<&str>, url: Option<&str>) -> String
 ```
 
 **Поведение:**
-- Из title: `"Как устроен CRDT"` → `"Как устроен CRDT"`
-- Из URL (если title нет): `"https://stripe.com/blog/api"` → `"stripe.com blog api"`
-- Нет ни title, ни URL → `"Untitled"`
+- Из content heading / explicit seed: `"Как устроен CRDT"` → `"Как устроен CRDT"`
+- Из URL (если seed нет): `"https://stripe.com/blog/api"` → `"stripe.com blog api"`
+- Нет ни seed, ни URL → `"Untitled"`
+- Seed может приходить из H1, page title, selected text, media filename, or
+  another filename source. Passing a seed to `suggest_slug` must not imply that
+  the same value is persisted as `frontmatter.title`.
 - Unicode сохраняется; NFC-normalization применяется на boundary.
 - Filesystem-hostile символы (`/`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, `\`, NUL) заменяются пробелом, whitespace runs схлопываются.
 - Максимальная длина filename stem: `100` Unicode scalar chars и `220` bytes в NFD-представлении. Byte budget важнее char budget для macOS/iCloud: длинные CJK/Japanese имена должны обрезаться до безопасного файлового компонента, чтобы `.md` и `frontmatter.file` не расходились с фактически созданным media-файлом.
@@ -283,8 +305,8 @@ enum BlockError {
 | E9 | `Mine Collections` с не-строковым элементом | `BlockError::InvalidTagValue` |
 | E10 | Frontmatter с неизвестными полями (`custom_field: value`) | Игнорируются, без ошибки |
 | E11 | Body с `---` внутри текста (после frontmatter) | `---` внутри body — обычный текст, не маркер |
-| E12 | Unicode в title и body | Корректная обработка, slug транслитерируется |
-| E13 | Очень длинный title (>200 символов) | Slug обрезается до 80 символов |
+| E12 | Unicode в seed и body | Корректная обработка, readable slug сохраняет Unicode |
+| E13 | Очень длинный seed (>200 символов) | Slug обрезается до лимитов filename contract |
 | E14 | Wikilinks: `[[]]`, `[[ ]]` | Игнорируются (пустые) |
 | E15 | Wikilinks: дубликаты `[[a]] text [[a]]` | Один элемент `["a"]` |
 | E16 | Roundtrip: parse → serialize → parse | Результат идентичен |

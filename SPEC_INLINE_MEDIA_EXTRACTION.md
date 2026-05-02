@@ -1,6 +1,6 @@
 # Спецификация извлечения inline-медиа
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Цель
 
@@ -40,7 +40,6 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 ```markdown
 ---
 type: image
-title: Source Article image 1
 file: Source Article (image 1).jpg
 url: https://example.com/source-article
 Mine Collections:
@@ -60,7 +59,6 @@ source: inline-media-extraction
 | Поле | Обязательно | Значение |
 |---|---:|---|
 | `type` | да | `image` для v1 |
-| `title` | да | Alt-текст, если он есть, иначе stem исходного media-файла |
 | `file` | да | Та же локальная media-ссылка, которая была извлечена из исходной статьи |
 | `url` | нет | URL источника, скопированный из исходного блока |
 | `Mine Collections` | да | Целевая коллекция из drop на sidebar как quoted Obsidian wikilink |
@@ -80,6 +78,11 @@ source: inline-media-extraction
 Без текста статьи, подписи и обратной ссылки отдельным абзацем. Связь с исходной заметкой живёт во frontmatter, поэтому тело остаётся самим извлечённым медиа.
 
 `frontmatter.file` и body wikilink — живые ссылки на существующий media-файл в vault. `Mine Source Media` — строка происхождения: она фиксирует, какая media-ссылка была извлечена при создании блока. Если исходную статью позже переименовали и её собственное семейство медиафайлов получило новые имена, `frontmatter.file` и body wikilink обновляются через общий rename path, а `Mine Source Media` может остаться историческим исходным значением.
+
+Inline-media extraction follows [SPEC_DISPLAY_TITLE.md](./SPEC_DISPLAY_TITLE.md):
+it does not synthesize `title:` frontmatter from alt text or media stem. Alt
+text may be used later as an explicit caption, and the media stem may seed the
+filename, but neither becomes a generated metadata title.
 
 ## Модель владения
 
@@ -136,7 +139,6 @@ async extract_inline_media(
     source_slug: String,
     media_ref: String,
     target_collection_ref: String,
-    title: Option<String>,
 ) -> Result<IndexedBlock, InlineMediaExtractError>
 ```
 
@@ -147,7 +149,6 @@ async extract_inline_media(
 | `source_slug` | Filename stem of the open source article |
 | `media_ref` | Local media reference as it appears after render-boundary decode, for example `Source Article (image 1).jpg` |
 | `target_collection_ref` | Obsidian collection ref from sidebar drop |
-| `title` | Optional title from image alt text |
 
 ### Валидация
 
@@ -166,15 +167,17 @@ async extract_inline_media(
 1. Read and parse source block.
 2. Verify `media_ref` belongs to source body.
 3. Resolve source media file under vault root.
-4. Determine `title`: explicit title, then alt text, then media stem.
-5. Generate unique slug through `suggest_slug` and `resolve_unique_slug`, while rejecting candidates whose `<slug>.<ext>` path already exists as the shared media file.
-6. Do not copy source media.
-7. Create new image block with fields from `Source Format`.
-8. Write `.md` with `file: <media_ref>` and body `![[<media_ref>]]`.
-9. Generate thumbnail from the existing referenced media file.
-10. Index block, including `Mine Collections`, `Mine Related Notes`, media dimensions and preview manifest.
-11. Emit `block:added` and `thumb:updated` through existing event paths.
-12. Return `IndexedBlock` for immediate UI update.
+4. Generate a readable unique slug from media stem/source context through
+   `suggest_slug` and `resolve_unique_slug`, while rejecting candidates whose
+   `<slug>.<ext>` path already exists as the shared media file.
+5. Do not copy source media.
+6. Create new image block with fields from `Source Format`, without generated
+   `title:` frontmatter.
+7. Write `.md` with `file: <media_ref>` and body `![[<media_ref>]]`.
+8. Generate thumbnail from the existing referenced media file.
+9. Index block, including `Mine Collections`, `Mine Related Notes`, media dimensions and preview manifest.
+10. Emit `block:added` and `thumb:updated` through existing event paths.
+11. Return `IndexedBlock` for immediate UI update.
 
 ### Ошибки
 
@@ -207,7 +210,6 @@ type InlineMediaDragPayload = {
   sourceSlug: string;
   mediaRef: string;
   mediaKind: "image";
-  title: string | null;
 };
 ```
 
@@ -229,7 +231,6 @@ type InlineMediaDragPayload = {
 type DetailInlineMediaExtraction = {
   sourceSlug: string;
   mediaRef: string;
-  title: string | null;
 };
 ```
 

@@ -216,7 +216,7 @@ describe("Detail", () => {
     expect(screen.getAllByText("Author Name")).toHaveLength(1);
   });
 
-  it("does not keep legacy top margin on article body after author removal", () => {
+  it("keeps a stable top inset for article content after author removal", () => {
     const { container } = render(
       <Detail
         block={block({
@@ -235,7 +235,9 @@ describe("Detail", () => {
       />,
     );
 
+    const articleContent = container.querySelector("[data-article-content]");
     const articleBody = container.querySelector("[data-article-body]");
+    expect(articleContent).toHaveClass("pt-4");
     expect(articleBody).toHaveClass("prose", "prose-sm", "max-w-none");
     expect(articleBody).not.toHaveClass("mt-4");
   });
