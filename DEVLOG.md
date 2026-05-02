@@ -1,5 +1,25 @@
 # Devlog
 
+## 02.05.2026 15:18 -03 [primary] — Detail rail card radius correction
+
+### Goal
+
+Вернуть metadata rail card к правильному interface radius перед более крупным
+пересмотром Detail two-column layout.
+
+### Completed
+
+- Detail metadata/action rail card использует `rounded-1` (3px), а не
+  `rounded-[2px]`; 2px остаётся для чекбоксов и маленьких внутренних сегментов.
+- Обновлены [Detail.tsx](src/components/Detail.tsx),
+  [Detail.test.tsx](src/components/Detail.test.tsx) и
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md).
+
+### Verification
+
+- `bun run test src/components/Detail.test.tsx`
+- `bunx eslint src/components/Detail.tsx src/components/Detail.test.tsx`
+
 ## 02.05.2026 14:58 -03 [primary] — Detail metadata card and Chrome toolbar icon polish
 
 ### Goal

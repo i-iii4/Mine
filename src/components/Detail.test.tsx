@@ -433,8 +433,7 @@ describe("Detail", () => {
     expect(sections).toHaveClass("gap-6");
     expect(actionRow).toHaveClass(
       "min-w-0",
-      "grid",
-      "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]",
+      "flex",
       "items-center",
       "gap-2",
       "px-2",
@@ -446,10 +445,11 @@ describe("Detail", () => {
 
     const sourceButton = screen.getByRole("button", { name: /Source/i });
     const connectButton = screen.getByRole("button", { name: /Connect/i });
-    expect(sourceButton).toHaveClass("min-w-0");
-    expect(connectButton).toHaveClass("min-w-0");
+    expect(sourceButton).toHaveClass("min-w-0", "flex-1", "bg-component-fill-inner");
+    expect(connectButton).toHaveClass("min-w-0", "flex-1", "bg-component-fill-inner");
     expect(sourceButton).not.toHaveClass("w-full");
     expect(connectButton).not.toHaveClass("w-full");
+    expect(screen.queryByRole("button", { name: /More/i })).not.toBeInTheDocument();
   });
 
   it("frames metadata and detail actions as one rounded card", () => {
@@ -474,10 +474,10 @@ describe("Detail", () => {
     expect(metadataCard).toHaveClass(
       "min-w-0",
       "overflow-hidden",
-      "rounded-[var(--radius-card)]",
+      "rounded-1",
       "border",
       "border-border",
-      "bg-background",
+      "bg-accent",
     );
     const metadataContent = metadataCard?.querySelector("[data-detail-metadata-card-content]");
     expect(metadataContent).toHaveClass("p-4");

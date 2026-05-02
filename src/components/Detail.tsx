@@ -363,8 +363,6 @@ export function Detail({
                 currentTag={currentTag}
                 onToggleTag={onToggleTag}
                 onCreateAndAssign={onCreateAndAssign}
-                onRequestRename={onRequestRename}
-                onRequestDelete={onRequestDelete}
                 onOpenRelatedNote={onOpenRelatedNote}
               />
             </div>
@@ -387,8 +385,6 @@ interface MetadataPanelProps {
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
-  onRequestRename: (block: LightBlock | IndexedBlock) => void;
-  onRequestDelete: (slug: string) => void;
   onOpenRelatedNote: (slug: string) => void;
 }
 
@@ -402,8 +398,6 @@ function MetadataPanel({
   currentTag,
   onToggleTag,
   onCreateAndAssign,
-  onRequestRename,
-  onRequestDelete,
   onOpenRelatedNote,
 }: MetadataPanelProps) {
   const relatedNoteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -497,7 +491,7 @@ function MetadataPanel({
 
         <div className="flex min-w-0 flex-col gap-6" data-metadata-sections>
           <section
-            className="min-w-0 overflow-hidden rounded-[var(--radius-card)] border border-border bg-background"
+            className="min-w-0 overflow-hidden rounded-1 border border-border bg-accent"
             data-detail-metadata-card
           >
             <div className="p-4" data-detail-metadata-card-content>
@@ -534,16 +528,13 @@ function MetadataPanel({
               </MetadataTable>
             </div>
 
-            <DetailActionRow
-              block={displayBlock}
-              vaultPath={vaultPath}
-              tags={tags}
-              currentTag={currentTag}
-              onToggleTag={onToggleTag}
-              onCreateAndAssign={onCreateAndAssign}
-              onRequestRename={onRequestRename}
-              onRequestDelete={onRequestDelete}
-            />
+          <DetailActionRow
+            block={displayBlock}
+            tags={tags}
+            currentTag={currentTag}
+            onToggleTag={onToggleTag}
+            onCreateAndAssign={onCreateAndAssign}
+          />
           </section>
 
           {relatedNotes.length > 0 && (
@@ -654,22 +645,16 @@ function MetadataLinkValue({
 
 function DetailActionRow({
   block,
-  vaultPath,
   tags,
   currentTag,
   onToggleTag,
   onCreateAndAssign,
-  onRequestRename,
-  onRequestDelete,
 }: {
   block: LightBlock | IndexedBlock;
-  vaultPath: string;
   tags: TagCount[];
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
-  onRequestRename: (block: LightBlock | IndexedBlock) => void;
-  onRequestDelete: (slug: string) => void;
 }) {
   const [connectOpen, setConnectOpen] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>(
@@ -696,13 +681,13 @@ function DetailActionRow({
   }, [block, connectOpen]);
 
   return (
-    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 px-2 pb-2" data-detail-action-row>
+    <div className="flex min-w-0 items-center gap-2 px-2 pb-2" data-detail-action-row>
       {block.url && isSafeUrl(block.url) && (
         <Button
           type="button"
           variant="default"
           size="default"
-          className="min-w-0"
+          className="min-w-0 flex-1 bg-component-fill-inner"
           onClick={() => openUrl(block.url!)}
         >
           Source
@@ -712,7 +697,12 @@ function DetailActionRow({
 
       <DropdownMenu open={connectOpen} onOpenChange={setConnectOpen} modal={false}>
         <DropdownMenuTrigger asChild>
-          <Button type="button" variant="default" size="default" className="min-w-0">
+          <Button
+            type="button"
+            variant="default"
+            size="default"
+            className="min-w-0 flex-1 bg-component-fill-inner"
+          >
             Connect
             <Plus className="size-3" />
           </Button>
@@ -729,17 +719,6 @@ function DetailActionRow({
           />
         </DropdownMenuContent>
       </DropdownMenu>
-
-      <CardMoreMenu
-        block={block}
-        vaultPath={vaultPath}
-        tags={tags}
-        currentTag={currentTag}
-        onToggleTag={onToggleTag}
-        onCreateAndAssign={onCreateAndAssign}
-        onRequestRename={onRequestRename}
-        onRequestDelete={onRequestDelete}
-      />
     </div>
   );
 }

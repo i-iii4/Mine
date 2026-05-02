@@ -419,18 +419,20 @@ that belongs to `storage::media_refs`.
 - Metadata labels используют `text-sm leading-4 text-muted-foreground`;
   значения — `text-sm leading-4 text-foreground`, matching feed-card text scale.
 - `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel. Metadata
-  table и action row живут в одном framed card с тем же frame contract, что
-  feed cards: `overflow-hidden rounded-[var(--radius-card)] border
-  border-border bg-background`. Metadata content использует `p-4`, как
-  article/social feed card content. Action row использует card-hover action
-  inset contract `px-2 pb-2` и `gap-2`, matching `CardHoverMenu`
-  `left-2 right-2 bottom-2 gap-2`; поэтому кнопки не выровнены по текстовому
-  padding, как и в оригинальной карточке на главной.
+  table и action row живут в одном framed rail card:
+  `overflow-hidden rounded-1 border border-border bg-accent`. Радиус 3px
+  следует interface-surface contract; surface использует тот же `bg-accent`,
+  что нижний action bar.
+  Metadata content использует `p-4`, как article/social feed card content.
+  Action row использует card-hover action inset contract `px-2 pb-2` и `gap-2`,
+  matching `CardHoverMenu` `left-2 right-2 bottom-2 gap-2`; поэтому кнопки не
+  выровнены по текстовому padding, как и в оригинальной карточке на главной.
+  Кнопки на `bg-accent` surface используют более тёмный component fill
+  `bg-component-fill-inner`. В row остаются только `Source` и `Connect`;
+  обе кнопки `flex-1` и занимают всю ширину карточки. Overflow menu остаётся в
+  верхнем chrome Detail, а не внутри metadata card.
   `RELATED NOTES` остаётся отдельной sibling section ниже; внешний vertical
-  rhythm между framed block и `RELATED NOTES` остаётся `gap-6`. Action row
-  занимает ширину карточки через grid
-  `minmax(0,1fr) minmax(0,1fr) auto`: `Source` и `Connect` получают равные
-  flexible columns, overflow menu остаётся intrinsic-width.
+  rhythm между framed block и `RELATED NOTES` остаётся `gap-6`.
 - Для `article` author не дублируется над body; в открытой странице author
   показывается только в metadata panel
 - `RELATED NOTES` is a derived note-graph view, not raw `Mine Related Notes`
