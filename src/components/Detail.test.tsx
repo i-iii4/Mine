@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Detail } from "./Detail";
 import type { IndexedBlock } from "@/types";
+import { getBlock } from "@/lib/commands";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
@@ -38,6 +39,10 @@ vi.mock("./VideoFromBlob", () => ({
   ),
 }));
 
+vi.mock("@/lib/commands", () => ({
+  getBlock: vi.fn(),
+}));
+
 function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
   return {
     id: 1,
@@ -54,6 +59,9 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
     height: null,
     author: null,
     body: "",
+    preview_text: null,
+    first_image: null,
+    media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
     feed_playback: null,
@@ -64,7 +72,14 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
   };
 }
 
+const getBlockMock = vi.mocked(getBlock);
+
 describe("Detail", () => {
+  beforeEach(() => {
+    getBlockMock.mockReset();
+    getBlockMock.mockResolvedValue(null);
+  });
+
   it("renders the selected top menu mode", () => {
     const props = {
       block: block(),
@@ -199,6 +214,30 @@ describe("Detail", () => {
 
     expect(screen.getByText("AUTHOR")).toBeInTheDocument();
     expect(screen.getAllByText("Author Name")).toHaveLength(1);
+  });
+
+  it("does not keep legacy top margin on article body after author removal", () => {
+    const { container } = render(
+      <Detail
+        block={block({
+          body: "# Heading\n\nArticle body",
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    const articleBody = container.querySelector("[data-article-body]");
+    expect(articleBody).toHaveClass("prose", "prose-sm", "max-w-none");
+    expect(articleBody).not.toHaveClass("mt-4");
   });
 
   it("does not attach Mine behavior to native selected-text drag", () => {
@@ -500,5 +539,124 @@ describe("Detail", () => {
       "leading-5",
       "font-semibold",
     );
+  });
+
+  it("renders related notes as sidebar-sized rows with thumbnail and title", async () => {
+    getBlockMock.mockImplementation(async (slug: string) => {
+      if (slug === "related-note") {
+        return block({
+          id: 2,
+          slug: "related-note",
+          content_heading: "Related Note Title",
+          display_title: "Related Note Title",
+          title: null,
+        });
+      }
+      return null;
+    });
+
+    const onOpenRelatedNote = vi.fn();
+    render(
+      <Detail
+        block={block({
+          related_notes: ["related-note"],
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={onOpenRelatedNote}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Related Note Title")).toBeInTheDocument();
+    });
+
+    const row = screen.getByRole("button", { name: "Related Note Title" });
+    expect(row).toHaveAttribute("data-related-note-item", "button");
+    expect(row).toHaveClass(
+      "rounded-1",
+      "border",
+      "border-border",
+      "bg-component-fill",
+      "p-[3px]",
+      "cursor-pointer",
+      "font-mono",
+      "text-base",
+      "text-muted-foreground",
+    );
+    expect(row).toHaveClass(
+      "hover:outline-1",
+      "hover:-outline-offset-1",
+      "hover:outline-component-fill-hover",
+      "focus-visible:outline-1",
+      "focus-visible:-outline-offset-1",
+      "focus-visible:outline-component-fill-hover",
+    );
+
+    const img = row.querySelector("img");
+    expect(img).toHaveAttribute("src", "asset://localhost//tmp/thumbs/related-note.jpg");
+    expect(row.querySelector("div.flex.h-8.w-full.items-center.gap-2.overflow-hidden")).not.toBeNull();
+
+    fireEvent.mouseEnter(row);
+    await waitFor(() => {
+      expect(document.querySelector("[data-related-note-hover-preview]")).not.toBeNull();
+    });
+
+    fireEvent.click(row);
+    expect(onOpenRelatedNote).toHaveBeenCalledWith("related-note");
+  });
+
+  it("refreshes related notes in-place after a vault snapshot refresh", async () => {
+    getBlockMock.mockImplementation(async (slug: string) => {
+      if (slug === "test-block") {
+        return block({
+          related_notes: ["related-note"],
+        });
+      }
+      if (slug === "related-note") {
+        return block({
+          id: 2,
+          slug: "related-note",
+          content_heading: "Related Note Title",
+          display_title: "Related Note Title",
+          title: null,
+        });
+      }
+      return null;
+    });
+
+    render(
+      <Detail
+        block={block()}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("RELATED NOTES")).not.toBeInTheDocument();
+
+    window.dispatchEvent(new Event("vault-refreshed"));
+
+    await waitFor(() => {
+      expect(screen.getByText("RELATED NOTES")).toBeInTheDocument();
+      expect(screen.getByText("Related Note Title")).toBeInTheDocument();
+    });
   });
 });

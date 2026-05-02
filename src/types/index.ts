@@ -21,6 +21,9 @@ export interface IndexedBlock {
   height: number | null;
   author: string | null;
   body: string;
+  preview_text?: string | null;
+  first_image: string | null;
+  media_urls: string | null;
   /**
    * Per-image pixel dimensions as a JSON string. Populated by the Rust
    * indexer at index time: keys are media filenames referenced by the

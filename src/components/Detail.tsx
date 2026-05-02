@@ -32,6 +32,7 @@ import {
 import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
 import { CardMoreMenu } from "./CardHoverMenu";
+import { DragCardPreview } from "./Card";
 
 // Layout constants — shared between scroll layer and metadata layer
 const CLASSIC_LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-12";
@@ -91,6 +92,7 @@ export function Detail({
     isIndexedBlock(block) ? block : null,
   );
   const displayBlock = fullBlock ?? block;
+  const currentBlockSlugRef = useRef(block.slug);
   const isFloatingTopMenu = detailTopMenuMode !== "classic";
   const layoutClasses = isFloatingTopMenu ? ISLANDS_LAYOUT_CLASSES : CLASSIC_LAYOUT_CLASSES;
   const {
@@ -111,6 +113,10 @@ export function Detail({
     setFullBlock(isIndexedBlock(block) ? block : null);
   }, [block]);
 
+  useEffect(() => {
+    currentBlockSlugRef.current = block.slug;
+  }, [block.slug]);
+
   const [chromeEntered, setChromeEntered] = useState(false);
 
   useEffect(() => {
@@ -125,18 +131,29 @@ export function Detail({
     return () => window.cancelAnimationFrame(frame);
   }, [displayBlock.slug, detailTopMenuMode, isClosing]);
 
+  const refreshFullBlock = useCallback((slug: string) => {
+    void getBlock(slug).then((full) => {
+      if (!full || currentBlockSlugRef.current !== slug) {
+        return;
+      }
+      setFullBlock(full);
+    });
+  }, []);
+
   useEffect(() => {
     if (isIndexedBlock(block)) return;
-    let cancelled = false;
-    void getBlock(block.slug).then((full) => {
-      if (!cancelled && full) {
-        setFullBlock(full);
-      }
-    });
-    return () => {
-      cancelled = true;
+    refreshFullBlock(block.slug);
+  }, [block, refreshFullBlock]);
+
+  useEffect(() => {
+    const handleVaultRefreshed = () => {
+      refreshFullBlock(block.slug);
     };
-  }, [block]);
+    window.addEventListener("vault-refreshed", handleVaultRefreshed);
+    return () => {
+      window.removeEventListener("vault-refreshed", handleVaultRefreshed);
+    };
+  }, [block.slug, refreshFullBlock]);
 
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -315,6 +332,8 @@ export function Detail({
                 block={block}
                 fullBlock={fullBlock}
                 formattedDate={formattedDate}
+                vaultPath={vaultPath}
+                thumbsRootPath={thumbsRootPath}
                 onOpenRelatedNote={onOpenRelatedNote}
               />
             </div>
@@ -331,6 +350,8 @@ interface MetadataPanelProps {
   block: LightBlock | IndexedBlock;
   fullBlock: IndexedBlock | null;
   formattedDate: string;
+  vaultPath: string;
+  thumbsRootPath?: string;
   onOpenRelatedNote: (slug: string) => void;
 }
 
@@ -338,8 +359,11 @@ function MetadataPanel({
   block,
   fullBlock,
   formattedDate,
+  vaultPath,
+  thumbsRootPath,
   onOpenRelatedNote,
 }: MetadataPanelProps) {
+  const relatedNoteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const displayBlock = fullBlock ?? block;
   const indexWarning = getIndexWarning(displayBlock);
   const relatedNotes = useMemo(
@@ -350,31 +374,77 @@ function MetadataPanel({
     [displayBlock],
   );
   const relatedNotesKey = relatedNotes.join("\u0000");
-  const [availableRelatedNotes, setAvailableRelatedNotes] = useState<Set<string> | null>(null);
+  const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
+  const [relatedNoteBlocks, setRelatedNoteBlocks] = useState<Map<string, IndexedBlock | null> | null>(null);
+  const [hoveredRelatedNoteSlug, setHoveredRelatedNoteSlug] = useState<string | null>(null);
+  const [hoverPreviewPosition, setHoverPreviewPosition] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => {
     if (relatedNotes.length === 0) {
-      setAvailableRelatedNotes(null);
+      setRelatedNoteBlocks(null);
       return;
     }
     let cancelled = false;
-    setAvailableRelatedNotes(null);
+    setRelatedNoteBlocks(null);
     void Promise.all(
       relatedNotes.map(async (slug) => {
         const baseSlug = baseRelatedNoteSlug(slug);
-        return { slug, block: await getBlock(baseSlug) };
+        return { slug: baseSlug, block: await getBlock(baseSlug) };
       }),
     ).then((results) => {
       if (cancelled) return;
-      setAvailableRelatedNotes(new Set(results.filter((item) => item.block).map((item) => item.slug)));
+      setRelatedNoteBlocks(
+        new Map(results.map(({ slug, block }) => [slug, block])),
+      );
     });
     return () => {
       cancelled = true;
     };
   }, [relatedNotes, relatedNotesKey]);
 
+  useEffect(() => {
+    if (!hoveredRelatedNoteSlug) {
+      setHoverPreviewPosition(null);
+      return;
+    }
+    const button = relatedNoteButtonRefs.current.get(hoveredRelatedNoteSlug);
+    if (!button) {
+      setHoverPreviewPosition(null);
+      return;
+    }
+
+    const rect = button.getBoundingClientRect();
+    setHoverPreviewPosition({
+      top: Math.max(16, rect.top),
+      left: Math.max(16, rect.left - 240 - 16),
+    });
+  }, [hoveredRelatedNoteSlug]);
+
+  const hoveredRelatedNoteBlock = hoveredRelatedNoteSlug
+    ? relatedNoteBlocks?.get(hoveredRelatedNoteSlug) ?? null
+    : null;
+
   return (
-    <div className="flex flex-col gap-5 font-mono">
+    <>
+      {hoverPreviewPosition && hoveredRelatedNoteBlock && (
+        <div
+          className="pointer-events-none fixed z-30"
+          style={{
+            top: hoverPreviewPosition.top,
+            left: hoverPreviewPosition.left,
+            width: 240,
+          }}
+          data-related-note-hover-preview
+        >
+          <DragCardPreview
+            block={hoveredRelatedNoteBlock}
+            vaultPath={vaultPath}
+            thumbsRootPath={resolvedThumbsRoot}
+            width={240}
+          />
+        </div>
+      )}
+      <div className="flex flex-col gap-5 font-mono">
       <ArticleAudioControls
         slug={displayBlock.slug}
         blockType={displayBlock.block_type}
@@ -415,28 +485,78 @@ function MetadataPanel({
           <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
             RELATED NOTES
           </div>
-          <div className="mt-1 flex flex-col items-start gap-1">
+          <div className="mt-1 flex flex-col gap-1">
             {relatedNotes.map((slug) => {
-              const isAvailable = availableRelatedNotes?.has(slug) ?? false;
-              return isAvailable ? (
+              const baseSlug = baseRelatedNoteSlug(slug);
+              const relatedBlock = relatedNoteBlocks?.get(baseSlug) ?? null;
+              const rowLabel = relatedBlock ? getNavigationLabel(relatedBlock) : baseSlug;
+              const rowShellClasses =
+                "w-full overflow-hidden rounded-1 border border-border bg-component-fill p-[3px] font-mono text-base";
+              const rowContentClasses = "flex h-8 w-full items-center gap-2 overflow-hidden";
+
+              if (!relatedBlock) {
+                return (
+                  <div
+                    key={slug}
+                    className={cn(rowShellClasses, "text-muted-foreground")}
+                    data-related-note-item="placeholder"
+                  >
+                    <div className={rowContentClasses}>
+                      <div aria-hidden="true" className="size-8 shrink-0 overflow-hidden bg-component-fill" />
+                      <span className="min-w-0 flex-1 truncate text-left leading-5">{rowLabel}</span>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
                 <button
-                  key={slug}
-                  onClick={() => onOpenRelatedNote(slug)}
-                  className="block text-left text-sm text-foreground hover:underline"
+                  key={baseSlug}
+                  type="button"
+                  onClick={() => onOpenRelatedNote(baseSlug)}
+                  className={cn(
+                    rowShellClasses,
+                    "cursor-pointer text-left text-muted-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+                  )}
+                  ref={(node) => {
+                    if (node) {
+                      relatedNoteButtonRefs.current.set(baseSlug, node);
+                    } else {
+                      relatedNoteButtonRefs.current.delete(baseSlug);
+                    }
+                  }}
+                  onMouseEnter={() => setHoveredRelatedNoteSlug(baseSlug)}
+                  onMouseLeave={() => setHoveredRelatedNoteSlug((current) => (
+                    current === baseSlug ? null : current
+                  ))}
+                  onFocus={() => setHoveredRelatedNoteSlug(baseSlug)}
+                  onBlur={() => setHoveredRelatedNoteSlug((current) => (
+                    current === baseSlug ? null : current
+                  ))}
+                  data-related-note-item="button"
                 >
-                  {slug}
+                  <div className={rowContentClasses}>
+                    <div aria-hidden="true" className="size-8 shrink-0 overflow-hidden bg-component-fill">
+                      <img
+                        src={thumbnailUrl(resolvedThumbsRoot, relatedBlock.slug)}
+                        className="size-8 object-cover"
+                        loading="lazy"
+                        onError={(event) => {
+                          event.currentTarget.style.display = "none";
+                        }}
+                      />
+                    </div>
+                    <span className="min-w-0 flex-1 truncate text-left leading-5">{rowLabel}</span>
+                  </div>
                 </button>
-              ) : (
-                <span key={slug} className="text-sm text-muted-foreground">
-                  {slug}
-                </span>
               );
             })}
           </div>
         </div>
       )}
 
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -899,7 +1019,7 @@ function ArticleBody({
       ref={articleRef}
       onMouseUp={scheduleTextSelectionHandleUpdate}
       onKeyUp={scheduleTextSelectionHandleUpdate}
-      className="prose prose-sm mt-4 max-w-none"
+      className="prose prose-sm max-w-none"
       data-article-body
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>

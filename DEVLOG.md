@@ -1,5 +1,40 @@
 # Devlog
 
+## 02.05.2026 11:26 -03 [primary] — Detail related-notes hydration and article layout recovery
+
+### Goal
+
+Починить две реальные регрессии в открытой странице: сломанный верхний offset
+article body после удаления duplicate author line и stale `RELATED NOTES`,
+которые обновлялись только после переоткрытия Detail. Заодно довести hover
+preview related-note row до того же card contract, что и лента.
+
+### Completed
+
+- В [Detail.tsx](src/components/Detail.tsx) article markdown body больше не
+  несёт legacy `mt-4`. Верхняя геометрия статьи снова определяется только
+  outer detail layout (`pt-12` / `pt-20`), а не случайным внутренним отступом
+  markdown-контейнера.
+- `Detail` теперь гидратит открытый блок повторно по `vault-refreshed`:
+  - при refresh он делает `getBlock(slug)` для текущей страницы;
+  - `RELATED NOTES` обновляются in-place, без закрытия и повторного открытия
+    карточки.
+- Hover preview для `RELATED NOTES` доведён до feed-card path:
+  - `IndexedBlock` теперь несёт тот же preview read-model, что нужен
+    `DragCardPreview` (`preview_text`, `first_image`, `media_urls`);
+  - related-note row может показывать слева полноценный card preview, а не
+    деградировать в placeholder или ломаться на типах.
+- Обновлён [SPEC_FRONTEND.md](SPEC_FRONTEND.md): зафиксированы
+  bidirectional/derived `RELATED NOTES`, live refresh открытого Detail и
+  отсутствие внутреннего article body top margin.
+
+### Verification
+
+- `bun run test src/components/Detail.test.tsx`
+- `bun run build`
+- `cargo check -p mine --quiet`
+- `cargo test -p mine --lib --quiet`
+
 ## 02.05.2026 10:21 -03 [primary] — Detail/sidebar chrome motion and link-editor polish
 
 ### Goal

@@ -31,6 +31,9 @@ interface IndexedBlock {
   height: number | null;
   author: string | null;
   body: string;
+  preview_text?: string | null; // same stripped preview buffer used by feed cards
+  first_image: string | null; // indexed primary inline image candidate
+  media_urls: string | null; // indexed JSON array of inline/local media refs
   related_notes: string[];
   tags: string[]; // legacy physical name; semantic meaning: CollectionRef[]
 }
@@ -404,11 +407,23 @@ that belongs to `storage::media_refs`.
 - Контент центрирован горизонтально (`mx-auto max-w-[58rem]`)
 - Scroll/content top padding: classic `pt-12`, island `pt-20`; вместе с верхним меню это сохраняет общий visual top offset
 - Scroll/content bottom safe space: `pb-20` lives on the inner content layer, not on `[data-detail-scroll]`, so the final article line does not press against the bottom edge while scrollbar geometry stays unchanged
+- Article body itself no longer carries an extra compensating `mt-*` offset; removing duplicated author/title chrome must not shift the markdown column horizontally or vertically
 - Метаданные справа (Geist Mono): AUDIO, WARNING, RESOLUTION, DATE, TYPE, SOURCE, AUTHOR
 - Metadata labels используют `text-sm text-muted-foreground`; значения — `text-sm text-foreground`
 - `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel; rename/delete/source/channel actions живут в shared overflow menu
 - Для `article` author не дублируется над body; в открытой странице author
   показывается только в metadata panel
+- `RELATED NOTES` is a derived note-graph view, not raw `Mine Related Notes`
+  frontmatter. It shows the union of direct note links from the current note
+  and backlinks from other notes, excludes `channel` docs and self-links, and
+  deduplicates by base slug.
+- `RELATED NOTES` rows use a compact button-shell with persistent fill/border,
+  `8x8` thumbnail on the left, and the normal navigation label on the right.
+  Hover/focus can show a feed-style card preview to the left of the metadata
+  column.
+- Open Detail must refresh its hydrated `IndexedBlock` snapshot on
+  `vault-refreshed`, so a newly added connector/link updates `RELATED NOTES`
+  in-place without closing and reopening the page.
 - После успешного rename Detail продолжает показывать тот же блок уже под новым slug; visible title меняется только если изменился body H1 or legacy `frontmatter.title`, а filename-only surfaces используют новый `fallback_label`
 - Markdown body H1 не полагается на prose-default sizes; Detail задаёт `text-lg leading-6 font-semibold` для `h1` и `text-base leading-5 font-semibold` для `h2-h6`, чтобы article typography не выходила за рамки дизайн-системы
 - Кнопка X справа вверху, Esc для закрытия

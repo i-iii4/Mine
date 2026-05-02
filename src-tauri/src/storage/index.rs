@@ -50,6 +50,9 @@ pub struct IndexedBlock {
     pub height: Option<u32>,
     pub author: Option<String>,
     pub body: String,
+    pub preview_text: Option<String>,
+    pub first_image: Option<String>,
+    pub media_urls: Option<String>,
     pub media_dimensions: Option<String>,
     pub preview_manifest: Option<String>,
     pub feed_playback: Option<String>,
@@ -2159,7 +2162,8 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
     let mut stmt = conn
         .prepare(
             "SELECT id, slug, block_type, title, content_heading, display_title, COALESCE(fallback_label, slug), description, url, media_file,
-                    thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning
+                    thumbnail, saved_at, source, width, height, author, body, preview_text, first_image, media_urls,
+                    media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning
              FROM blocks WHERE slug = ?1",
         )
         .context("failed to prepare get_block")?;
@@ -2167,6 +2171,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
     match stmt.query_row([slug], row_to_block) {
         Ok(mut block) => {
             block.tags = get_tags_for_block(conn, block.id)?;
+            block.related_notes = load_bidirectional_related_notes(conn, block.id, &block.slug)?;
             Ok(Some(block))
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -2178,7 +2183,8 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
 pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, title, content_heading, display_title, COALESCE(fallback_label, slug), description, url, media_file,
-                thumbnail, saved_at, source, width, height, author, body, media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning
+                thumbnail, saved_at, source, width, height, author, body, preview_text, first_image, media_urls,
+                media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning
          FROM blocks ORDER BY saved_at DESC",
     )?;
     collect_blocks(conn, &mut stmt, &[] as &[&dyn rusqlite::types::ToSql])
@@ -2189,7 +2195,8 @@ pub fn list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlo
     let mut stmt = conn.prepare(
         "SELECT b.id, b.slug, b.block_type, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning
+                b.height, b.author, b.body, b.preview_text, b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest,
+                b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning
          FROM blocks b
          JOIN block_tags bt ON bt.block_id = b.id
          WHERE bt.tag = ?1
@@ -2262,7 +2269,8 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
     let mut sql = String::from(
         "SELECT DISTINCT b.id, b.slug, b.block_type, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
-                b.height, b.author, b.body, b.media_dimensions, b.preview_manifest, b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning
+                b.height, b.author, b.body, b.preview_text, b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest,
+                b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning
          FROM blocks b",
     );
 
@@ -2418,6 +2426,66 @@ fn escape_fts5(input: &str) -> String {
         .join(" ")
 }
 
+fn normalized_wikilink_target_sql(column: &str) -> String {
+    format!(
+        "TRIM(
+            CASE
+                WHEN instr({column}, '#') > 0 AND instr({column}, '|') > 0
+                    THEN substr({column}, 1, MIN(instr({column}, '#'), instr({column}, '|')) - 1)
+                WHEN instr({column}, '#') > 0
+                    THEN substr({column}, 1, instr({column}, '#') - 1)
+                WHEN instr({column}, '|') > 0
+                    THEN substr({column}, 1, instr({column}, '|') - 1)
+                ELSE {column}
+            END
+        )",
+    )
+}
+
+fn load_bidirectional_related_notes(
+    conn: &Connection,
+    block_id: i64,
+    slug: &str,
+) -> Result<Vec<String>> {
+    let normalized_target = normalized_wikilink_target_sql("w.target_slug");
+    let sql = format!(
+        "SELECT slug
+         FROM (
+             SELECT tb.slug AS slug, tb.saved_at AS saved_at
+             FROM wikilinks w
+             JOIN blocks tb
+               ON tb.slug = {normalized_target}
+             WHERE w.source_id = ?1
+               AND tb.block_type != 'channel'
+               AND tb.slug != ?2
+
+             UNION
+
+             SELECT sb.slug AS slug, sb.saved_at AS saved_at
+             FROM wikilinks w
+             JOIN blocks sb
+               ON sb.id = w.source_id
+             WHERE {normalized_target} = ?2
+               AND sb.block_type != 'channel'
+               AND sb.slug != ?2
+         )
+         ORDER BY saved_at DESC, slug ASC",
+    );
+
+    let mut stmt = conn
+        .prepare(&sql)
+        .context("failed to prepare bidirectional related notes query")?;
+    let rows = stmt
+        .query_map(params![block_id, slug], |row| row.get::<_, String>(0))
+        .context("failed to query bidirectional related notes")?;
+
+    let mut related_notes = Vec::new();
+    for row in rows {
+        related_notes.push(row?);
+    }
+    Ok(related_notes)
+}
+
 fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
     Ok(IndexedBlock {
         id: row.get(0)?,
@@ -2446,13 +2514,16 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
         height: row.get::<_, Option<i64>>(14)?.map(|v| v as u32),
         author: row.get(15)?,
         body: row.get(16)?,
-        media_dimensions: row.get(17)?,
-        preview_manifest: row.get(18)?,
-        feed_playback: row.get(19)?,
-        related_notes: parse_related_notes_json(row.get(20)?),
-        body_hash: row.get(21)?,
-        origin: row.get(22)?,
-        index_warning: row.get(23)?,
+        preview_text: row.get(17)?,
+        first_image: row.get(18)?,
+        media_urls: row.get(19)?,
+        media_dimensions: row.get(20)?,
+        preview_manifest: row.get(21)?,
+        feed_playback: row.get(22)?,
+        related_notes: parse_related_notes_json(row.get(23)?),
+        body_hash: row.get(24)?,
+        origin: row.get(25)?,
+        index_warning: row.get(26)?,
         tags: Vec::new(), // filled by caller
     })
 }
@@ -2682,8 +2753,20 @@ mod tests {
         block.frontmatter.related_notes = vec!["Source Article".to_string()];
         upsert_block(&conn, &block, None).unwrap();
 
+        let raw_related_notes: Option<String> = conn
+            .query_row(
+                "SELECT related_notes FROM blocks WHERE slug = ?1",
+                ["extracted"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            parse_related_notes_json(raw_related_notes),
+            vec!["Source Article".to_string()]
+        );
+
         let got = get_block(&conn, "extracted").unwrap().unwrap();
-        assert_eq!(got.related_notes, vec!["Source Article"]);
+        assert!(got.related_notes.is_empty());
 
         let targets = conn
             .prepare(
@@ -2757,6 +2840,126 @@ mod tests {
         assert_eq!(got.author.as_deref(), Some("Author"));
         assert_eq!(got.body, "Body text");
         assert_eq!(got.tags, vec!["design", "web"]);
+    }
+
+    #[test]
+    fn get_block_related_notes_are_bidirectional() {
+        let conn = test_conn();
+
+        let current = make_block_full(
+            "current",
+            "article",
+            Some("Current"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "See [[outgoing]] [[aliased|Shown]] [[current]] [[channel-home]]",
+        );
+        upsert_block(&conn, &current, None).unwrap();
+
+        let outgoing = make_block_full(
+            "outgoing",
+            "article",
+            Some("Outgoing"),
+            "2026-01-04T00:00:00Z",
+            &[],
+            "",
+        );
+        upsert_block(&conn, &outgoing, None).unwrap();
+
+        let aliased = make_block_full(
+            "aliased",
+            "article",
+            Some("Aliased"),
+            "2026-01-03T00:00:00Z",
+            &[],
+            "",
+        );
+        upsert_block(&conn, &aliased, None).unwrap();
+
+        let mut extracted = make_block_full(
+            "extracted",
+            "image",
+            Some("Extracted"),
+            "2026-01-06T00:00:00Z",
+            &[],
+            "![[extracted.jpg]]",
+        );
+        extracted.frontmatter.related_notes = vec!["current#^source".to_string()];
+        upsert_block(&conn, &extracted, None).unwrap();
+
+        let incoming = make_block_full(
+            "incoming",
+            "article",
+            Some("Incoming"),
+            "2026-01-05T00:00:00Z",
+            &[],
+            "Backlink [[current#Heading]] and [[current|Alias]]",
+        );
+        upsert_block(&conn, &incoming, None).unwrap();
+
+        let channel = make_block_full(
+            "channel-home",
+            "channel",
+            Some("Channel"),
+            "2026-01-07T00:00:00Z",
+            &[],
+            "[[current]]",
+        );
+        upsert_block(&conn, &channel, None).unwrap();
+
+        let got = get_block(&conn, "current").unwrap().unwrap();
+        assert_eq!(
+            got.related_notes,
+            vec![
+                "extracted".to_string(),
+                "incoming".to_string(),
+                "outgoing".to_string(),
+                "aliased".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn get_block_related_notes_exclude_nonexistent_targets_and_channels() {
+        let conn = test_conn();
+
+        let mut current = make_block_full(
+            "current",
+            "article",
+            Some("Current"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        current.frontmatter.related_notes = vec![
+            "missing note".to_string(),
+            "channel-home".to_string(),
+            "existing note".to_string(),
+        ];
+        upsert_block(&conn, &current, None).unwrap();
+
+        let existing = make_block_full(
+            "existing note",
+            "article",
+            Some("Existing"),
+            "2026-01-03T00:00:00Z",
+            &[],
+            "",
+        );
+        upsert_block(&conn, &existing, None).unwrap();
+
+        let channel = make_block_full(
+            "channel-home",
+            "channel",
+            Some("Channel"),
+            "2026-01-04T00:00:00Z",
+            &[],
+            "",
+        );
+        upsert_block(&conn, &channel, None).unwrap();
+
+        let got = get_block(&conn, "current").unwrap().unwrap();
+        assert_eq!(got.related_notes, vec!["existing note".to_string()]);
     }
 
     // ── list_blocks ──────────────────────────────────────────────────────
