@@ -2026,10 +2026,7 @@ mod tests {
         assert!(indexed.title.is_none());
         assert_eq!(indexed.tags, vec!["Quotes".to_string()]);
         assert_eq!(indexed.source.as_deref(), Some("text-selection-extraction"));
-        assert_eq!(
-            indexed.related_notes,
-            vec!["Source Article#^useful-sentence"]
-        );
+        assert_eq!(indexed.related_notes, vec!["Source Article"]);
 
         let (_, source_content) =
             files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
@@ -2071,7 +2068,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(indexed.related_notes, vec!["Source Article#^manual-anchor"]);
+        assert_eq!(indexed.related_notes, vec!["Source Article"]);
         let (_, source_content) =
             files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
         assert_eq!(source_content.matches("^manual-anchor").count(), 1);

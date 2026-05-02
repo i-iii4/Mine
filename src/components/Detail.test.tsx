@@ -212,8 +212,277 @@ describe("Detail", () => {
       />,
     );
 
-    expect(screen.getByText("AUTHOR")).toBeInTheDocument();
+    expect(screen.getByText("Author")).toBeInTheDocument();
     expect(screen.getAllByText("Author Name")).toHaveLength(1);
+  });
+
+  it("truncates identifier metadata values instead of wrapping them", () => {
+    render(
+      <Detail
+        block={block({
+          author: "@meanwhile_really_long_handle",
+          body: "Article body",
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("@meanwhile_really_long_handle")).toHaveClass(
+      "min-w-0",
+      "truncate",
+    );
+    expect(screen.getByText("@meanwhile_really_long_handle")).toHaveAttribute(
+      "title",
+      "@meanwhile_really_long_handle",
+    );
+  });
+
+  it("wraps warning metadata while keeping the shared rail layout", () => {
+    render(
+      <Detail
+        block={block({
+          body: "Article body",
+          index_warning: "malformed_frontmatter",
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Malformed frontmatter, shown as Markdown")).toHaveClass(
+      "min-w-0",
+      "break-words",
+      "[overflow-wrap:anywhere]",
+    );
+  });
+
+  it("renders metadata as a shared two-column grid", () => {
+    const { container } = render(
+      <Detail
+        block={block({
+          body: "Article body",
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    const metadataTable = container.querySelector("[data-metadata-table]");
+    expect(metadataTable).toHaveClass(
+      "w-full",
+      "grid",
+      "grid-cols-[max-content_minmax(0,1fr)]",
+      "gap-x-4",
+      "gap-y-2",
+    );
+
+    const dateLabel = screen.getByText("Date");
+    expect(dateLabel).toHaveClass("font-sans", "text-sm", "leading-4");
+    expect(dateLabel).not.toHaveClass("font-semibold", "uppercase", "tracking-widest");
+    expect(dateLabel).toHaveClass("whitespace-nowrap");
+    expect(dateLabel.closest("[data-metadata-row]")?.tagName).toBe("DIV");
+    expect(dateLabel.closest("[data-metadata-row]")).toHaveClass("contents");
+    const metadataRows = container.querySelectorAll("[data-metadata-row]");
+    expect(metadataRows.length).toBeGreaterThan(0);
+    expect(dateLabel.closest("[data-metadata-row]")?.lastElementChild?.firstElementChild).toHaveClass(
+      "text-sm",
+      "leading-4",
+    );
+  });
+
+  it("uses a fixed right rail without horizontal overflow", () => {
+    const { container } = render(
+      <Detail
+        block={block({
+          body: "Article body",
+          author: "@meanwhile_really_long_handle",
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    const rail = container.querySelector("[data-metadata-scroll]");
+    expect(rail).toHaveClass(
+      "w-72",
+      "min-w-0",
+      "shrink-0",
+      "overflow-y-auto",
+      "overflow-x-hidden",
+    );
+    const spacer = container.querySelector("[data-detail-metadata-spacer]");
+    expect(spacer).toHaveClass("w-72", "min-w-0", "shrink-0");
+  });
+
+  it("keeps related notes as a separate block below the metadata table", async () => {
+    getBlockMock.mockImplementation(async (slug: string) => {
+      if (slug === "related-note") {
+        return block({
+          id: 2,
+          slug: "related-note",
+          content_heading: "Related Note Title",
+          display_title: "Related Note Title",
+          title: null,
+          related_notes: [],
+        });
+      }
+      return null;
+    });
+
+    render(
+      <Detail
+        block={block({ related_notes: ["related-note"] })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      const label = screen.getByText("Related notes");
+      expect(label.closest("[data-metadata-row]")).toBeNull();
+      expect(label.parentElement).toHaveAttribute("data-related-notes-block");
+      expect(label.parentElement).toHaveClass("flex", "flex-col", "gap-1");
+      expect(label.parentElement?.parentElement).toHaveAttribute("data-metadata-sections");
+      expect(label.parentElement?.parentElement).toHaveClass("gap-6");
+    });
+  });
+
+  it("places the detail action row between metadata and related notes with intrinsic button widths", async () => {
+    getBlockMock.mockImplementation(async (slug: string) => {
+      if (slug === "related-note") {
+        return block({
+          id: 2,
+          slug: "related-note",
+          fallback_label: "Related Note",
+          related_notes: [],
+        });
+      }
+      return null;
+    });
+
+    const { container } = render(
+      <Detail
+        block={block({ related_notes: ["related-note"] })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Related Note")).toBeInTheDocument();
+    });
+
+    const sections = container.querySelector("[data-metadata-sections]");
+    const actionRow = container.querySelector("[data-detail-action-row]");
+    const relatedNotesBlock = container.querySelector("[data-related-notes-block]");
+    expect(sections).toHaveClass("gap-6");
+    expect(actionRow).toHaveClass(
+      "min-w-0",
+      "grid",
+      "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]",
+      "items-center",
+      "gap-2",
+      "px-2",
+      "pb-2",
+    );
+    const metadataCard = actionRow?.closest("[data-detail-metadata-card]");
+    expect(metadataCard?.querySelector("[data-metadata-table]")).not.toBeNull();
+    expect(metadataCard?.nextElementSibling).toBe(relatedNotesBlock);
+
+    const sourceButton = screen.getByRole("button", { name: /Source/i });
+    const connectButton = screen.getByRole("button", { name: /Connect/i });
+    expect(sourceButton).toHaveClass("min-w-0");
+    expect(connectButton).toHaveClass("min-w-0");
+    expect(sourceButton).not.toHaveClass("w-full");
+    expect(connectButton).not.toHaveClass("w-full");
+  });
+
+  it("frames metadata and detail actions as one rounded card", () => {
+    const { container } = render(
+      <Detail
+        block={block({ body: "Article body" })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    const metadataCard = container.querySelector("[data-detail-metadata-card]");
+    expect(metadataCard).toHaveClass(
+      "min-w-0",
+      "overflow-hidden",
+      "rounded-[var(--radius-card)]",
+      "border",
+      "border-border",
+      "bg-background",
+    );
+    const metadataContent = metadataCard?.querySelector("[data-detail-metadata-card-content]");
+    expect(metadataContent).toHaveClass("p-4");
+    expect(metadataCard?.querySelector("[data-metadata-table]")).not.toBeNull();
+    expect(metadataCard?.querySelector("[data-detail-action-row]")).not.toBeNull();
   });
 
   it("keeps a stable top inset for article content after author removal", () => {
@@ -235,11 +504,15 @@ describe("Detail", () => {
       />,
     );
 
-    const articleContent = container.querySelector("[data-article-content]");
     const articleBody = container.querySelector("[data-article-body]");
-    expect(articleContent).toHaveClass("pt-4");
-    expect(articleBody).toHaveClass("prose", "prose-sm", "max-w-none");
-    expect(articleBody).not.toHaveClass("mt-4");
+    expect(articleBody).toHaveClass(
+      "prose",
+      "prose-sm",
+      "max-w-none",
+      "[&>:first-child]:mt-0",
+      "[&_p]:leading-5",
+      "[&_li]:leading-5",
+    );
   });
 
   it("does not attach Mine behavior to native selected-text drag", () => {
@@ -543,14 +816,15 @@ describe("Detail", () => {
     );
   });
 
-  it("renders related notes as sidebar-sized rows with thumbnail and title", async () => {
+  it("renders related notes as sidebar-sized rows with thumbnail and filename", async () => {
     getBlockMock.mockImplementation(async (slug: string) => {
       if (slug === "related-note") {
         return block({
           id: 2,
           slug: "related-note",
-          content_heading: "Related Note Title",
-          display_title: "Related Note Title",
+          content_heading: "First line from note body",
+          display_title: "First line from note body",
+          fallback_label: "Related Note",
           title: null,
         });
       }
@@ -578,10 +852,11 @@ describe("Detail", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Related Note Title")).toBeInTheDocument();
+      expect(screen.getByText("Related Note")).toBeInTheDocument();
     });
+    expect(screen.queryByText("First line from note body")).not.toBeInTheDocument();
 
-    const row = screen.getByRole("button", { name: "Related Note Title" });
+    const row = screen.getByRole("button", { name: "Related Note" });
     expect(row).toHaveAttribute("data-related-note-item", "button");
     expect(row).toHaveClass(
       "rounded-1",
@@ -627,8 +902,9 @@ describe("Detail", () => {
         return block({
           id: 2,
           slug: "related-note",
-          content_heading: "Related Note Title",
-          display_title: "Related Note Title",
+          content_heading: "First line from note body",
+          display_title: "First line from note body",
+          fallback_label: "Related Note",
           title: null,
         });
       }
@@ -652,13 +928,14 @@ describe("Detail", () => {
       />,
     );
 
-    expect(screen.queryByText("RELATED NOTES")).not.toBeInTheDocument();
+    expect(screen.queryByText("Related notes")).not.toBeInTheDocument();
 
     window.dispatchEvent(new Event("vault-refreshed"));
 
     await waitFor(() => {
-      expect(screen.getByText("RELATED NOTES")).toBeInTheDocument();
-      expect(screen.getByText("Related Note Title")).toBeInTheDocument();
+      expect(screen.getByText("Related notes")).toBeInTheDocument();
+      expect(screen.getByText("Related Note")).toBeInTheDocument();
     });
+    expect(screen.queryByText("First line from note body")).not.toBeInTheDocument();
   });
 });

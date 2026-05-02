@@ -405,14 +405,32 @@ that belongs to `storage::media_refs`.
 - Двухслойный layout: scroll-слой (контент + невидимый спейсер) и fixed-слой (метаданные)
 - Оба слоя используют общий `LAYOUT_CLASSES` для идентичного позиционирования
 - Контент центрирован горизонтально (`mx-auto max-w-[58rem]`)
+- Right metadata rail имеет единый width contract в обоих слоях: visible rail
+  и invisible spacer используют `w-72 min-w-0 shrink-0`. Fixed rail допускает
+  только vertical scroll (`overflow-y-auto`) и запрещает horizontal scroll
+  (`overflow-x-hidden`); metadata/actions/related notes не должны создавать
+  внутреннюю горизонтальную прокрутку.
 - Scroll/content top padding: classic `pt-12`, island `pt-20`; вместе с верхним меню это сохраняет общий visual top offset
 - Scroll/content bottom safe space: `pb-20` lives on the inner content layer, not on `[data-detail-scroll]`, so the final article line does not press against the bottom edge while scrollbar geometry stays unchanged
 - Article content keeps a stable top inset (`pt-4`) even when duplicate
   author/title chrome is removed. The inset belongs to the article content
   wrapper; `ArticleBody` itself does not carry a compensating `mt-*` margin.
 - Метаданные справа (Geist Mono): AUDIO, WARNING, RESOLUTION, DATE, TYPE, SOURCE, AUTHOR
-- Metadata labels используют `text-sm text-muted-foreground`; значения — `text-sm text-foreground`
-- `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel; rename/delete/source/channel actions живут в shared overflow menu
+- Metadata labels используют `text-sm leading-4 text-muted-foreground`;
+  значения — `text-sm leading-4 text-foreground`, matching feed-card text scale.
+- `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel. Metadata
+  table и action row живут в одном framed card с тем же frame contract, что
+  feed cards: `overflow-hidden rounded-[var(--radius-card)] border
+  border-border bg-background`. Metadata content использует `p-4`, как
+  article/social feed card content. Action row использует card-hover action
+  inset contract `px-2 pb-2` и `gap-2`, matching `CardHoverMenu`
+  `left-2 right-2 bottom-2 gap-2`; поэтому кнопки не выровнены по текстовому
+  padding, как и в оригинальной карточке на главной.
+  `RELATED NOTES` остаётся отдельной sibling section ниже; внешний vertical
+  rhythm между framed block и `RELATED NOTES` остаётся `gap-6`. Action row
+  занимает ширину карточки через grid
+  `minmax(0,1fr) minmax(0,1fr) auto`: `Source` и `Connect` получают равные
+  flexible columns, overflow menu остаётся intrinsic-width.
 - Для `article` author не дублируется над body; в открытой странице author
   показывается только в metadata panel
 - `RELATED NOTES` is a derived note-graph view, not raw `Mine Related Notes`
@@ -420,7 +438,7 @@ that belongs to `storage::media_refs`.
   and backlinks from other notes, excludes `channel` docs and self-links, and
   deduplicates by base slug.
 - `RELATED NOTES` rows use a compact button-shell with persistent fill/border,
-  `8x8` thumbnail on the left, and the normal navigation label on the right.
+  `8x8` thumbnail on the left, and filename fallback label on the right.
   Hover/focus can show a feed-style card preview to the left of the metadata
   column.
 - Open Detail must refresh its hydrated `IndexedBlock` snapshot on

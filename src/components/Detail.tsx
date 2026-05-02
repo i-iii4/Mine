@@ -1,10 +1,26 @@
-import { useCallback, useEffect, useRef, useState, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useMemo,
+  type CSSProperties,
+  type Dispatch,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import { useDraggable } from "@dnd-kit/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
-import { GripVertical, X } from "lucide-react";
+import { ExternalLink, GripVertical, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { IndexedBlock, LightBlock, TagCount } from "@/types";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { preprocessWikilinks } from "@/lib/markdownWikilinks";
@@ -18,7 +34,7 @@ import {
   legacyThumbsRoot,
 } from "@/lib/assets";
 import { cn } from "@/lib/utils";
-import { getDisplayTitle, getNavigationLabel } from "@/lib/displayTitle";
+import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { getBlock } from "@/lib/commands";
 import type { DetailTopMenuMode } from "@/lib/appPreferences";
 import {
@@ -33,12 +49,13 @@ import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
 import { CardMoreMenu } from "./CardHoverMenu";
 import { DragCardPreview } from "./Card";
+import { CollectionPicker } from "./CollectionPicker";
 
 // Layout constants — shared between scroll layer and metadata layer
 const CLASSIC_LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-12";
 const ISLANDS_LAYOUT_CLASSES = "mx-auto flex max-w-[58rem] gap-8 px-6 pt-20";
+const DETAIL_METADATA_RAIL_CLASSES = "w-72 min-w-0 shrink-0";
 const DETAIL_BOTTOM_SAFE_SPACE_CLASS = "pb-20";
-const ARTICLE_CONTENT_TOP_INSET_CLASS = "pt-4";
 const ARTICLE_H1_CLASSES = "mt-0 mb-4 text-lg leading-6 font-semibold";
 const ARTICLE_SECTION_HEADING_CLASSES = "mt-6 mb-2 text-base leading-5 font-semibold";
 
@@ -320,7 +337,11 @@ export function Detail({
                 onTextSelectionDrop={onTextSelectionDrop}
               />
             </div>
-            <div className="w-56 shrink-0" aria-hidden="true" />
+            <div
+              className={DETAIL_METADATA_RAIL_CLASSES}
+              aria-hidden="true"
+              data-detail-metadata-spacer
+            />
           </div>
         </div>
 
@@ -328,13 +349,22 @@ export function Detail({
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <div className={layoutClasses}>
             <div className="flex-1" />
-            <div className="pointer-events-auto w-56 shrink-0 overflow-y-auto" data-metadata-scroll>
+            <div
+              className={cn(DETAIL_METADATA_RAIL_CLASSES, "pointer-events-auto overflow-y-auto overflow-x-hidden")}
+              data-metadata-scroll
+            >
               <MetadataPanel
                 block={block}
                 fullBlock={fullBlock}
                 formattedDate={formattedDate}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath}
+                tags={tags}
+                currentTag={currentTag}
+                onToggleTag={onToggleTag}
+                onCreateAndAssign={onCreateAndAssign}
+                onRequestRename={onRequestRename}
+                onRequestDelete={onRequestDelete}
                 onOpenRelatedNote={onOpenRelatedNote}
               />
             </div>
@@ -353,6 +383,12 @@ interface MetadataPanelProps {
   formattedDate: string;
   vaultPath: string;
   thumbsRootPath?: string;
+  tags: TagCount[];
+  currentTag?: string;
+  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestRename: (block: LightBlock | IndexedBlock) => void;
+  onRequestDelete: (slug: string) => void;
   onOpenRelatedNote: (slug: string) => void;
 }
 
@@ -362,6 +398,12 @@ function MetadataPanel({
   formattedDate,
   vaultPath,
   thumbsRootPath,
+  tags,
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
   onOpenRelatedNote,
 }: MetadataPanelProps) {
   const relatedNoteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -424,6 +466,7 @@ function MetadataPanel({
   const hoveredRelatedNoteBlock = hoveredRelatedNoteSlug
     ? relatedNoteBlocks?.get(hoveredRelatedNoteSlug) ?? null
     : null;
+  const blockTypeValue = formatMetadataBlockType(displayBlock.block_type);
 
   return (
     <>
@@ -445,131 +488,350 @@ function MetadataPanel({
           />
         </div>
       )}
-      <div className="flex flex-col gap-5 font-mono">
-      <ArticleAudioControls
-        slug={displayBlock.slug}
-        blockType={displayBlock.block_type}
-        url={displayBlock.url}
-      />
+      <div className="min-w-0 overflow-x-hidden">
+        <ArticleAudioControls
+          slug={displayBlock.slug}
+          blockType={displayBlock.block_type}
+          url={displayBlock.url}
+        />
 
-      {displayBlock.width != null && displayBlock.height != null && (
-        <MetadataField label="RESOLUTION" value={`${displayBlock.width} \u00d7 ${displayBlock.height}`} />
-      )}
-      <MetadataField label="DATE" value={formattedDate} />
-
-      <MetadataField label="TYPE" value={displayBlock.block_type.toUpperCase()} />
-
-      {indexWarning && (
-        <MetadataField label="WARNING" value={formatIndexWarning(indexWarning)} />
-      )}
-
-      {displayBlock.url && isSafeUrl(displayBlock.url) && (
-        <div>
-          <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-            SOURCE
-          </div>
-          <button
-            onClick={() => openUrl(displayBlock.url!)}
-            className="mt-1 block text-sm text-foreground hover:underline text-left"
+        <div className="flex min-w-0 flex-col gap-6" data-metadata-sections>
+          <section
+            className="min-w-0 overflow-hidden rounded-[var(--radius-card)] border border-border bg-background"
+            data-detail-metadata-card
           >
-            {domainFromUrl(displayBlock.url)}
-          </button>
+            <div className="p-4" data-detail-metadata-card-content>
+              <MetadataTable>
+                {displayBlock.width != null && displayBlock.height != null && (
+                  <MetadataField
+                    label="Resolution"
+                    value={`${displayBlock.width} \u00d7 ${displayBlock.height}`}
+                  />
+                )}
+                <MetadataField label="Date" value={formattedDate} />
+                <MetadataField label="Type" value={blockTypeValue} />
+
+                {indexWarning && (
+                  <MetadataField
+                    label="Warning"
+                    value={formatIndexWarning(indexWarning)}
+                    mode="wrap"
+                  />
+                )}
+
+                {displayBlock.url && isSafeUrl(displayBlock.url) && (
+                  <MetadataRow label="Source">
+                    <MetadataLinkValue
+                      value={domainFromUrl(displayBlock.url)}
+                      onClick={() => openUrl(displayBlock.url!)}
+                    />
+                  </MetadataRow>
+                )}
+
+                {displayBlock.author && (
+                  <MetadataField label="Author" value={displayBlock.author} />
+                )}
+              </MetadataTable>
+            </div>
+
+            <DetailActionRow
+              block={displayBlock}
+              vaultPath={vaultPath}
+              tags={tags}
+              currentTag={currentTag}
+              onToggleTag={onToggleTag}
+              onCreateAndAssign={onCreateAndAssign}
+              onRequestRename={onRequestRename}
+              onRequestDelete={onRequestDelete}
+            />
+          </section>
+
+          {relatedNotes.length > 0 && (
+            <RelatedNotesSection
+              relatedNotes={relatedNotes}
+              relatedNoteBlocks={relatedNoteBlocks}
+              resolvedThumbsRoot={resolvedThumbsRoot}
+              onOpenRelatedNote={onOpenRelatedNote}
+              relatedNoteButtonRefs={relatedNoteButtonRefs}
+              onHoveredRelatedNoteSlugChange={setHoveredRelatedNoteSlug}
+            />
+          )}
         </div>
-      )}
-
-      {displayBlock.author && (
-        <MetadataField label="AUTHOR" value={displayBlock.author} />
-      )}
-
-      {relatedNotes.length > 0 && (
-        <div>
-          <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-            RELATED NOTES
-          </div>
-          <div className="mt-1 flex flex-col gap-1">
-            {relatedNotes.map((slug) => {
-              const baseSlug = baseRelatedNoteSlug(slug);
-              const relatedBlock = relatedNoteBlocks?.get(baseSlug) ?? null;
-              const rowLabel = relatedBlock ? getNavigationLabel(relatedBlock) : baseSlug;
-              const rowShellClasses =
-                "w-full overflow-hidden rounded-1 border border-border bg-component-fill p-[3px] font-mono text-base";
-              const rowContentClasses = "flex h-8 w-full items-center gap-2 overflow-hidden";
-
-              if (!relatedBlock) {
-                return (
-                  <div
-                    key={slug}
-                    className={cn(rowShellClasses, "text-muted-foreground")}
-                    data-related-note-item="placeholder"
-                  >
-                    <div className={rowContentClasses}>
-                      <div aria-hidden="true" className="size-8 shrink-0 overflow-hidden bg-component-fill" />
-                      <span className="min-w-0 flex-1 truncate text-left leading-5">{rowLabel}</span>
-                    </div>
-                  </div>
-                );
-              }
-
-              return (
-                <button
-                  key={baseSlug}
-                  type="button"
-                  onClick={() => onOpenRelatedNote(baseSlug)}
-                  className={cn(
-                    rowShellClasses,
-                    "cursor-pointer text-left text-muted-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
-                  )}
-                  ref={(node) => {
-                    if (node) {
-                      relatedNoteButtonRefs.current.set(baseSlug, node);
-                    } else {
-                      relatedNoteButtonRefs.current.delete(baseSlug);
-                    }
-                  }}
-                  onMouseEnter={() => setHoveredRelatedNoteSlug(baseSlug)}
-                  onMouseLeave={() => setHoveredRelatedNoteSlug((current) => (
-                    current === baseSlug ? null : current
-                  ))}
-                  onFocus={() => setHoveredRelatedNoteSlug(baseSlug)}
-                  onBlur={() => setHoveredRelatedNoteSlug((current) => (
-                    current === baseSlug ? null : current
-                  ))}
-                  data-related-note-item="button"
-                >
-                  <div className={rowContentClasses}>
-                    <div aria-hidden="true" className="size-8 shrink-0 overflow-hidden bg-component-fill">
-                      <img
-                        src={thumbnailUrl(resolvedThumbsRoot, relatedBlock.slug)}
-                        className="size-8 object-cover"
-                        loading="lazy"
-                        onError={(event) => {
-                          event.currentTarget.style.display = "none";
-                        }}
-                      />
-                    </div>
-                    <span className="min-w-0 flex-1 truncate text-left leading-5">{rowLabel}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       </div>
     </>
   );
 }
 
-function MetadataField({ label, value }: { label: string; value: string }) {
+const METADATA_LABEL_CLASSES = "whitespace-nowrap font-sans text-sm leading-4 text-muted-foreground";
+const METADATA_VALUE_BASE_CLASSES = "block min-w-0 font-sans text-sm leading-4 text-foreground";
+const RELATED_NOTE_ROW_SHELL_CLASSES =
+  "w-full min-w-0 overflow-hidden rounded-1 border border-border bg-component-fill p-[3px] font-mono text-base";
+const RELATED_NOTE_ROW_CONTENT_CLASSES = "flex h-8 w-full min-w-0 items-center gap-2 overflow-hidden";
+
+type MetadataValueMode = "truncate" | "wrap";
+
+function MetadataTable({ children }: { children: ReactNode }) {
   return (
-    <div>
-      <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-        {label}
-      </div>
-      <div className="mt-1 text-sm text-foreground">{value}</div>
+    <div
+      className="grid w-full grid-cols-[max-content_minmax(0,1fr)] items-start gap-x-4 gap-y-2"
+      data-metadata-table
+    >
+      {children}
     </div>
   );
+}
+
+function MetadataRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="contents" data-metadata-row>
+      <div className={METADATA_LABEL_CLASSES}>
+        {label}
+      </div>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+function MetadataField({
+  label,
+  value,
+  mode = "truncate",
+}: {
+  label: string;
+  value: string;
+  mode?: MetadataValueMode;
+}) {
+  return (
+    <MetadataRow label={label}>
+      <MetadataTextValue value={value} mode={mode} />
+    </MetadataRow>
+  );
+}
+
+function MetadataTextValue({
+  value,
+  mode,
+}: {
+  value: string;
+  mode: MetadataValueMode;
+}) {
+  const className = cn(
+    METADATA_VALUE_BASE_CLASSES,
+    mode === "truncate" ? "truncate" : "break-words [overflow-wrap:anywhere]",
+  );
+
+  return (
+    <div className={className} title={mode === "truncate" ? value : undefined}>
+      {value}
+    </div>
+  );
+}
+
+function MetadataLinkValue({
+  value,
+  onClick,
+}: {
+  value: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(METADATA_VALUE_BASE_CLASSES, "w-full truncate text-left hover:underline")}
+      title={value}
+    >
+      {value}
+    </button>
+  );
+}
+
+function DetailActionRow({
+  block,
+  vaultPath,
+  tags,
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
+}: {
+  block: LightBlock | IndexedBlock;
+  vaultPath: string;
+  tags: TagCount[];
+  currentTag?: string;
+  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestRename: (block: LightBlock | IndexedBlock) => void;
+  onRequestDelete: (slug: string) => void;
+}) {
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>(
+    isIndexedBlock(block) ? block.tags : [],
+  );
+
+  useEffect(() => {
+    if (isIndexedBlock(block)) {
+      setSelectedTags(block.tags);
+    }
+  }, [block]);
+
+  useEffect(() => {
+    if (!connectOpen) return;
+    let cancelled = false;
+    void getBlock(block.slug).then((full) => {
+      if (!cancelled) {
+        setSelectedTags(full?.tags ?? (isIndexedBlock(block) ? block.tags : []));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [block, connectOpen]);
+
+  return (
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 px-2 pb-2" data-detail-action-row>
+      {block.url && isSafeUrl(block.url) && (
+        <Button
+          type="button"
+          variant="default"
+          size="default"
+          className="min-w-0"
+          onClick={() => openUrl(block.url!)}
+        >
+          Source
+          <ExternalLink className="size-3" />
+        </Button>
+      )}
+
+      <DropdownMenu open={connectOpen} onOpenChange={setConnectOpen} modal={false}>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="default" size="default" className="min-w-0">
+            Connect
+            <Plus className="size-3" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0" align="start">
+          <CollectionPicker
+            blockSlug={block.slug}
+            selectedTags={selectedTags}
+            tags={tags}
+            currentTag={currentTag}
+            onToggleTag={onToggleTag}
+            onCreateAndAssign={onCreateAndAssign}
+            stopKeyPropagation
+          />
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <CardMoreMenu
+        block={block}
+        vaultPath={vaultPath}
+        tags={tags}
+        currentTag={currentTag}
+        onToggleTag={onToggleTag}
+        onCreateAndAssign={onCreateAndAssign}
+        onRequestRename={onRequestRename}
+        onRequestDelete={onRequestDelete}
+      />
+    </div>
+  );
+}
+
+function RelatedNotesSection({
+  relatedNotes,
+  relatedNoteBlocks,
+  resolvedThumbsRoot,
+  onOpenRelatedNote,
+  relatedNoteButtonRefs,
+  onHoveredRelatedNoteSlugChange,
+}: {
+  relatedNotes: string[];
+  relatedNoteBlocks: Map<string, IndexedBlock | null> | null;
+  resolvedThumbsRoot: string;
+  onOpenRelatedNote: (slug: string) => void;
+  relatedNoteButtonRefs: { current: Map<string, HTMLButtonElement> };
+  onHoveredRelatedNoteSlugChange: Dispatch<SetStateAction<string | null>>;
+}) {
+  return (
+    <section className="flex flex-col gap-1" data-related-notes-block>
+      <div className={METADATA_LABEL_CLASSES}>Related notes</div>
+      <div className="flex min-w-0 flex-col gap-1" data-related-notes-list>
+        {relatedNotes.map((slug) => {
+          const baseSlug = baseRelatedNoteSlug(slug);
+          const relatedBlock = relatedNoteBlocks?.get(baseSlug) ?? null;
+          const rowLabel = relatedBlock ? getFallbackLabel(relatedBlock) : baseSlug;
+
+          if (!relatedBlock) {
+            return (
+              <div
+                key={slug}
+                className={cn(RELATED_NOTE_ROW_SHELL_CLASSES, "text-muted-foreground")}
+                data-related-note-item="placeholder"
+              >
+                <div className={RELATED_NOTE_ROW_CONTENT_CLASSES}>
+                  <div aria-hidden="true" className="size-8 shrink-0 overflow-hidden bg-component-fill" />
+                  <span className="min-w-0 flex-1 truncate text-left leading-5">{rowLabel}</span>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <button
+              key={baseSlug}
+              type="button"
+              onClick={() => onOpenRelatedNote(baseSlug)}
+              className={cn(
+                RELATED_NOTE_ROW_SHELL_CLASSES,
+                "cursor-pointer text-left text-muted-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+              )}
+              ref={(node) => {
+                if (node) {
+                  relatedNoteButtonRefs.current.set(baseSlug, node);
+                } else {
+                  relatedNoteButtonRefs.current.delete(baseSlug);
+                }
+              }}
+              onMouseEnter={() => onHoveredRelatedNoteSlugChange(baseSlug)}
+              onMouseLeave={() => onHoveredRelatedNoteSlugChange((current) => (
+                current === baseSlug ? null : current
+              ))}
+              onFocus={() => onHoveredRelatedNoteSlugChange(baseSlug)}
+              onBlur={() => onHoveredRelatedNoteSlugChange((current) => (
+                current === baseSlug ? null : current
+              ))}
+              data-related-note-item="button"
+            >
+              <div className={RELATED_NOTE_ROW_CONTENT_CLASSES}>
+                <div aria-hidden="true" className="size-8 shrink-0 overflow-hidden bg-component-fill">
+                  <img
+                    src={thumbnailUrl(resolvedThumbsRoot, relatedBlock.slug)}
+                    className="size-8 object-cover"
+                    loading="lazy"
+                    onError={(event) => {
+                      event.currentTarget.style.display = "none";
+                    }}
+                  />
+                </div>
+                <span className="min-w-0 flex-1 truncate text-left leading-5">{rowLabel}</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function formatMetadataBlockType(blockType: LightBlock["block_type"] | IndexedBlock["block_type"]): string {
+  return blockType.charAt(0).toUpperCase() + blockType.slice(1);
 }
 
 function getIndexWarning(block: LightBlock | IndexedBlock): string | null {
@@ -691,7 +953,7 @@ function BlockContent({
     }
     case "article": {
       return (
-        <div className={ARTICLE_CONTENT_TOP_INSET_CLASS} data-article-content>
+        <div>
           <ArticleBody
             body={body}
             vaultPath={vaultPath}
@@ -1020,7 +1282,7 @@ function ArticleBody({
       ref={articleRef}
       onMouseUp={scheduleTextSelectionHandleUpdate}
       onKeyUp={scheduleTextSelectionHandleUpdate}
-      className="prose prose-sm max-w-none"
+      className="prose prose-sm max-w-none [&>:first-child]:mt-0 [&_li]:leading-5 [&_p]:leading-5"
       data-article-body
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>

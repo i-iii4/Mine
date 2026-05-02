@@ -551,7 +551,7 @@ wordmark-пробы не являются частью продукта.
 |---|---|
 | iOS app icon | Белый квадратный source asset; скругление и mask применяет iOS. В source-файле не рисуется собственная рамка или тень |
 | macOS/Tauri app icon | Прозрачный canvas с inset white rounded tile и чёрной `m`, чтобы Dock не показывал oversized белый квадрат |
-| Browser extension toolbar | Белый круг с чёрной `m`, без оранжевого фона и без app-like squircle |
+| Browser extension toolbar | Transparent square PNGs `16/24/32/48/128`; внутри inset white circle и чёрная `m`, без оранжевого фона и без app-like squircle |
 | Instagram feed overlay | Белая круглая кнопка поверх поста; внутри отдельный glyph-only asset `clipper-overlay-32.png`, а не toolbar/app icon |
 
 ## Расширение (браузерный попап)

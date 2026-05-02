@@ -756,6 +756,7 @@ extension/
 │   └── turndown.browser.umd.js  # HTML → Markdown
 └── icons/
     ├── icon-16.png
+    ├── icon-24.png
     ├── icon-32.png
     ├── icon-48.png
     ├── icon-128.png
@@ -771,7 +772,7 @@ Toolbar icon и in-page overlay используют разные assets.
 
 | Surface | Contract |
 |---|---|
-| Extension toolbar / manifest icons | Белый круг с чёрной строчной `m` из Redaction 100 Italic. Это не app icon и не squircle |
+| Extension toolbar / manifest icons | Square PNG with transparent background. `action.default_icon` ships `16`, `24`, `32`, `48`, `128`; Chrome toolbar renders 16 DIP and chooses the best raster for device scale. The visible mark is an inset white circle with a centred black lowercase `m` from Redaction 100 Italic. This is not app icon and not squircle |
 | Instagram feed overlay button | Content script рисует круглую белую кнопку `34x34px` с белой обводкой и вставляет внутрь `icons/clipper-overlay-32.png` как glyph `28x28px` |
 
 Instagram-кнопка версионируется через `data-la-clip-version`. Если старый
@@ -797,6 +798,7 @@ content script уже вставил кнопку без текущей верс
     "default_popup": "dist/index.html",
     "default_icon": {
       "16": "icons/icon-16.png",
+      "24": "icons/icon-24.png",
       "32": "icons/icon-32.png",
       "48": "icons/icon-48.png",
       "128": "icons/icon-128.png"
@@ -832,6 +834,7 @@ content script уже вставил кнопку без текущей верс
   },
   "icons": {
     "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   }

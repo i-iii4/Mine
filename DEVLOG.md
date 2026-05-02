@@ -1,5 +1,43 @@
 # Devlog
 
+## 02.05.2026 14:58 -03 [primary] — Detail metadata card and Chrome toolbar icon polish
+
+### Goal
+
+Довести Detail right rail и extension toolbar icon до стабильного visual
+contract: без горизонтального overflow, с feed-card идентичностью metadata
+card и с корректными Chrome action icon rasters.
+
+### Completed
+
+- Detail right rail получил явный width/overflow contract:
+  - visible rail и invisible spacer используют один `w-72 min-w-0 shrink-0`;
+  - fixed metadata rail запрещает horizontal scroll через `overflow-x-hidden`.
+- Metadata/actions block перепроектирован под feed-card contract:
+  - frame совпадает с `CardFrame`: `overflow-hidden`,
+    `rounded-[var(--radius-card)]`, `border border-border`, `bg-background`;
+  - metadata content использует `p-4`, как article/social feed cards;
+  - action row использует `px-2 pb-2 gap-2`, matching hover action inset
+    основной карточки (`left-2 right-2 bottom-2 gap-2`);
+  - metadata typography переведена на `text-sm leading-4`.
+- `RELATED NOTES` теперь показывает filename fallback label, а не первую
+  строку body/derived title.
+- Action row между metadata и `RELATED NOTES` содержит `Source`, `Connect` и
+  overflow menu; `Source`/`Connect` занимают flexible columns, overflow menu
+  остаётся intrinsic-width.
+- Chrome/Safari toolbar icon assets перерисованы как transparent square PNG
+  `16/24/32/48/128` с inset white circle и чёрной Redaction 100 Italic `m`.
+  `action.default_icon` теперь включает `24px`, чтобы Chrome выбирал правильный
+  raster для toolbar scale.
+- Обновлены [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md),
+  [SPEC_CLIPPER.md](SPEC_CLIPPER.md) и [SPEC_FRONTEND.md](SPEC_FRONTEND.md).
+
+### Verification
+
+- `bun run test src/components/Detail.test.tsx`
+- `bunx eslint src/components/Detail.tsx src/components/Detail.test.tsx`
+- `bun run build:extension`
+
 ## 02.05.2026 13:40 -03 [primary] — Mine identity assets and clipper overlay icon
 
 ### Goal
