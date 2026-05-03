@@ -1,8 +1,17 @@
-import { useState, useRef, useCallback, useEffect, memo, type CSSProperties } from "react";
+import {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  memo,
+  type CSSProperties,
+  type FocusEvent as ReactFocusEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { NavLink, useLocation } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   ContextMenu,
@@ -10,12 +19,6 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -45,6 +48,7 @@ const SIDEBAR_PREVIEW_GAP = 8;
 const SIDEBAR_PREVIEW_VIEWPORT_MARGIN = 16;
 const SIDEBAR_PREVIEW_OPEN_DELAY_MS = 160;
 const SIDEBAR_PREVIEW_CLOSE_DELAY_MS = 120;
+const SIDEBAR_THUMBNAIL_HOVER_PREVIEW_ENABLED = false;
 const SIDEBAR_PREVIEW_THUMB_SIZE = 32;
 const SIDEBAR_PREVIEW_THUMB_GAP = 4;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH =
@@ -156,10 +160,16 @@ export function Sidebar({
   const previewRef = useRef<HTMLDivElement | null>(null);
   const previewOpenTimerRef = useRef<number | null>(null);
   const previewCloseTimerRef = useRef<number | null>(null);
+  const sidebarRowSwitchFrameRef = useRef<number | null>(null);
+  const sidebarRowFocusKeyRef = useRef<string | null>(null);
+  const sidebarRowFocusModeRef = useRef(false);
   const [hoveredPreview, setHoveredPreview] = useState<SidebarPreviewTarget | null>(null);
   const [hoverPreviewBlock, setHoverPreviewBlock] = useState<IndexedBlock | null>(null);
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<SidebarPreviewPosition | null>(null);
   const [hoverPreviewPinned, setHoverPreviewPinned] = useState(false);
+  const [sidebarRowFocusKey, setSidebarRowFocusKey] = useState<string | null>(null);
+  const [sidebarRowFocusMode, setSidebarRowFocusMode] = useState(false);
+  const [sidebarRowSwitching, setSidebarRowSwitching] = useState(false);
   const location = useLocation();
 
   // Auto-scroll sidebar to the active channel (e.g. after Opt+Cmd+Arrow)
@@ -212,6 +222,79 @@ export function Sidebar({
       previewCloseTimerRef.current = null;
     }
   }, []);
+
+  const clearSidebarRowSwitchFrame = useCallback(() => {
+    if (sidebarRowSwitchFrameRef.current !== null) {
+      window.cancelAnimationFrame(sidebarRowSwitchFrameRef.current);
+      sidebarRowSwitchFrameRef.current = null;
+    }
+  }, []);
+
+  const deactivateSidebarRowFocusMode = useCallback(() => {
+    clearSidebarRowSwitchFrame();
+    sidebarRowFocusKeyRef.current = null;
+    sidebarRowFocusModeRef.current = false;
+    setSidebarRowSwitching(false);
+    setSidebarRowFocusKey(null);
+    setSidebarRowFocusMode(false);
+  }, [clearSidebarRowSwitchFrame]);
+
+  const activateSidebarRowFocus = useCallback((rowKey: string) => {
+    const previousKey = sidebarRowFocusKeyRef.current;
+    const wasFocusMode = sidebarRowFocusModeRef.current;
+    if (wasFocusMode && previousKey === rowKey) {
+      return;
+    }
+
+    clearSidebarRowSwitchFrame();
+    if (wasFocusMode && previousKey !== null) {
+      setSidebarRowSwitching(true);
+      sidebarRowSwitchFrameRef.current = window.requestAnimationFrame(() => {
+        sidebarRowSwitchFrameRef.current = null;
+        setSidebarRowSwitching(false);
+      });
+    } else {
+      setSidebarRowSwitching(false);
+    }
+
+    sidebarRowFocusKeyRef.current = rowKey;
+    sidebarRowFocusModeRef.current = true;
+    setSidebarRowFocusKey(rowKey);
+    setSidebarRowFocusMode(true);
+  }, [clearSidebarRowSwitchFrame]);
+
+  const focusSidebarRowFromTarget = useCallback((target: EventTarget | null, root: HTMLElement) => {
+    if (!(target instanceof Element)) {
+      deactivateSidebarRowFocusMode();
+      return;
+    }
+    const row = target.closest<HTMLElement>("[data-sidebar-row]");
+    if (!row || !root.contains(row)) {
+      deactivateSidebarRowFocusMode();
+      return;
+    }
+    const rowKey = row.dataset.sidebarRowKey;
+    if (!rowKey) {
+      deactivateSidebarRowFocusMode();
+      return;
+    }
+    activateSidebarRowFocus(rowKey);
+  }, [activateSidebarRowFocus, deactivateSidebarRowFocusMode]);
+
+  const handleSidebarPointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    focusSidebarRowFromTarget(event.target, event.currentTarget);
+  }, [focusSidebarRowFromTarget]);
+
+  const handleSidebarFocusCapture = useCallback((event: ReactFocusEvent<HTMLElement>) => {
+    focusSidebarRowFromTarget(event.target, event.currentTarget);
+  }, [focusSidebarRowFromTarget]);
+
+  const handleSidebarBlurCapture = useCallback((event: ReactFocusEvent<HTMLElement>) => {
+    const nextTarget = event.relatedTarget;
+    if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+      deactivateSidebarRowFocusMode();
+    }
+  }, [deactivateSidebarRowFocusMode]);
 
   const closePreview = useCallback(() => {
     clearPreviewOpenTimer();
@@ -278,7 +361,8 @@ export function Sidebar({
   useEffect(() => () => {
     clearPreviewOpenTimer();
     clearPreviewCloseTimer();
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer]);
+    clearSidebarRowSwitchFrame();
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, clearSidebarRowSwitchFrame]);
 
   useEffect(() => {
     if (!hoveredPreview) {
@@ -399,6 +483,12 @@ export function Sidebar({
           compact ? "px-2" : "px-8",
         )}
         data-sidebar-scroll
+        data-sidebar-row-focus-mode={sidebarRowFocusMode ? "true" : undefined}
+        data-sidebar-row-switching={sidebarRowSwitching ? "true" : undefined}
+        onPointerMove={handleSidebarPointerMove}
+        onPointerLeave={deactivateSidebarRowFocusMode}
+        onFocusCapture={handleSidebarFocusCapture}
+        onBlurCapture={handleSidebarBlurCapture}
       >
         {!isLinkingBlock && headerSlot}
 
@@ -416,6 +506,8 @@ export function Sidebar({
           end
           onClick={onNavClick}
           onSameClick={isLinkEditorActive ? onNavClick : onScrollToTop}
+          rowKey="all"
+          isSidebarRowFocused={sidebarRowFocusKey === "all"}
         />
 
         <SortableContext
@@ -450,6 +542,8 @@ export function Sidebar({
                 onDelete={() => onDeleteTag(tc.tag)}
                 onClick={onNavClick}
                 onSameClick={isLinkEditorActive ? undefined : onScrollToTop}
+                rowKey={`tag:${tc.tag}`}
+                isSidebarRowFocused={sidebarRowFocusKey === `tag:${tc.tag}`}
               />
             );
           })}
@@ -469,7 +563,10 @@ export function Sidebar({
 
       </nav>
 
-      {vaultPath && hoverPreviewPosition && hoverPreviewBlock && (
+      {SIDEBAR_THUMBNAIL_HOVER_PREVIEW_ENABLED
+        && vaultPath
+        && hoverPreviewPosition
+        && hoverPreviewBlock && (
         <>
           <div
             className="fixed z-40"
@@ -691,6 +788,8 @@ const NavItem = memo(function NavItem({
   end,
   onClick,
   onSameClick,
+  rowKey,
+  isSidebarRowFocused,
 }: {
   to: string;
   label: string;
@@ -705,6 +804,8 @@ const NavItem = memo(function NavItem({
   end?: boolean;
   onClick?: () => void;
   onSameClick?: () => void;
+  rowKey: string;
+  isSidebarRowFocused: boolean;
 }) {
   const loc = useLocation();
   const isCurrentRoute = end ? loc.pathname === to : loc.pathname.startsWith(to);
@@ -713,6 +814,9 @@ const NavItem = memo(function NavItem({
     <NavLink
       to={to}
       end={end}
+      data-sidebar-row=""
+      data-sidebar-row-key={rowKey}
+      data-sidebar-row-focused={isSidebarRowFocused ? "true" : undefined}
       onClick={(e) => {
         if (isCurrentRoute && onSameClick) {
           e.preventDefault();
@@ -725,15 +829,20 @@ const NavItem = memo(function NavItem({
         compact
           ? cn(
               "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 text-base",
-              "text-muted-foreground",
+              "text-foreground",
             )
           : cn(
               "flex items-center gap-2 border-b border-sidebar-border py-1 font-sans text-base",
-              "text-muted-foreground",
+              "text-foreground",
             )
       }
     >
-      <span className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 translate-x-px truncate"}>{label}</span>
+      <span
+        data-sidebar-row-text=""
+        className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 translate-x-px truncate"}
+      >
+        {label}
+      </span>
       {!compact && (
         <SidebarPreviewStrip
           cards={cards}
@@ -745,9 +854,9 @@ const NavItem = memo(function NavItem({
         />
       )}
       <span className={cn(
-        "w-8 shrink-0 text-right font-mono text-sm text-muted-foreground",
+        "w-8 shrink-0 text-right font-mono text-sm text-foreground",
         !compact && "-translate-x-px",
-      )}>
+      )} data-sidebar-row-text="">
         {count || ""}
       </span>
     </NavLink>
@@ -775,6 +884,8 @@ const TagNavItem = memo(function TagNavItem({
   onDelete,
   onClick,
   onSameClick,
+  rowKey,
+  isSidebarRowFocused,
 }: {
   to: string;
   label: string;
@@ -799,11 +910,13 @@ const TagNavItem = memo(function TagNavItem({
   onDelete: () => void;
   onClick?: () => void;
   onSameClick?: () => void;
+  rowKey: string;
+  isSidebarRowFocused: boolean;
 }) {
   const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const isLinkEditor = !!linkEditor;
+  const isCurrentRoute = location.pathname === to || location.pathname.startsWith(`${to}/`);
 
   const {
     setNodeRef,
@@ -861,6 +974,9 @@ const TagNavItem = memo(function TagNavItem({
             style={style}
             {...(!isLinkEditor ? attributes : {})}
             {...(!isLinkEditor ? listeners : {})}
+            data-sidebar-row=""
+            data-sidebar-row-key={rowKey}
+            data-sidebar-row-focused={isSidebarRowFocused ? "true" : undefined}
             data-sidebar-text-drop-tag={tag}
             className={cn(
               "group relative rounded-1",
@@ -877,7 +993,6 @@ const TagNavItem = memo(function TagNavItem({
               e.preventDefault();
               return;
             }
-            const isCurrentRoute = location.pathname === to || location.pathname.startsWith(to + "/");
             if (isCurrentRoute && onSameClick) {
               e.preventDefault();
               onSameClick();
@@ -894,15 +1009,20 @@ const TagNavItem = memo(function TagNavItem({
             compact
               ? cn(
                   "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 text-base",
-                  "text-muted-foreground",
+                  "text-foreground",
                 )
               : cn(
                   "flex items-center gap-2 border-b border-sidebar-border py-1 font-sans text-base",
-                  "text-muted-foreground",
+                  "text-foreground",
                 )
           }
         >
-          <span className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 translate-x-px truncate"}>{label}</span>
+          <span
+            data-sidebar-row-text=""
+            className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 translate-x-px truncate"}
+          >
+            {label}
+          </span>
           {!compact && (
             <SidebarPreviewStrip
               cards={cards}
@@ -917,13 +1037,15 @@ const TagNavItem = memo(function TagNavItem({
             <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
               <span
                 className={cn(
-                  "absolute inset-y-0 right-0 flex items-center justify-end text-sm text-muted-foreground transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                  "absolute inset-y-0 right-0 flex items-center justify-end text-sm transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
                   "font-mono",
+                  "text-foreground",
                   !compact && "-translate-x-px",
                   linkEditor.checked
                     ? "opacity-0"
                     : "opacity-100 group-hover:opacity-0 group-focus-within:opacity-0",
                 )}
+                data-sidebar-row-text=""
               >
                 {count || ""}
               </span>
@@ -932,41 +1054,15 @@ const TagNavItem = memo(function TagNavItem({
             <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
               <span
                 className={cn(
-                  "absolute inset-y-0 right-0 flex items-center justify-end text-sm text-muted-foreground group-hover:opacity-0",
+                  "absolute inset-y-0 right-0 flex items-center justify-end text-sm",
                   "font-mono",
+                  "text-foreground",
                   !compact && "-translate-x-px",
-                  menuOpen && "opacity-0",
                 )}
+                data-sidebar-row-text=""
               >
                 {count || ""}
               </span>
-              <div className={cn("absolute inset-0 flex items-center justify-end opacity-0 group-hover:opacity-100", menuOpen && "opacity-100")}>
-                <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      data-sidebar-tag-menu-trigger
-                      onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                      onPointerDown={(e) => { e.stopPropagation(); }}
-                      className="flex size-8 items-center justify-end text-muted-foreground hover:text-foreground"
-                    >
-                      <MoreHorizontal className="size-3" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent side="right" align="start">
-                    <DropdownMenuItem onSelect={onDoubleClick}>
-                      <Pencil className="size-3" />
-                      Rename
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      variant="destructive"
-                      onSelect={() => setDeleteOpen(true)}
-                    >
-                      <Trash2 className="size-3" />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
             </div>
           )}
         </NavLink>
@@ -1055,12 +1151,15 @@ function SidebarPreviewStrip({
 }) {
   return (
     <div
+      data-sidebar-thumbnail-strip=""
       className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden"
       style={SIDEBAR_PREVIEW_MASK_STYLE}
     >
       {cards.map((card, index) => {
         const previewKey = `${previewKeyPrefix}:${card.slug ?? index}:${index}`;
-        const canPreview = card.hasThumb && !!card.slug;
+        const canPreview = SIDEBAR_THUMBNAIL_HOVER_PREVIEW_ENABLED
+          && card.hasThumb
+          && !!card.slug;
         return (
           <div
             key={previewKey}

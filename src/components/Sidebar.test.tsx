@@ -79,32 +79,58 @@ describe("Sidebar", () => {
     expect(screen.getByText("10")).toHaveClass("-translate-x-px");
   });
 
-  it("does not highlight sidebar nav rows on hover or active route", () => {
-    renderSidebar({ ...defaultProps, width: 600 }, ["/channel/alpha"]);
+  it("uses foreground rows by default and activates row focus mode without background highlight", () => {
+    const { container } = renderSidebar({ ...defaultProps, width: 600 }, ["/channel/alpha"]);
 
     const everythingLink = screen.getByRole("link", { name: /Everything/ });
     expect(everythingLink).not.toHaveClass("bg-sidebar-accent");
     expect(everythingLink).not.toHaveClass("text-sidebar-accent-foreground");
     expect(everythingLink).not.toHaveClass("hover:bg-accent");
     expect(everythingLink).not.toHaveClass("hover:bg-sidebar-accent");
+    expect(everythingLink).toHaveClass("text-foreground");
+    expect(screen.getByText("17")).toHaveClass("text-foreground");
 
     const alphaLink = screen.getByRole("link", { name: /Alpha/ });
     expect(alphaLink).not.toHaveClass("bg-sidebar-accent");
     expect(alphaLink).not.toHaveClass("text-sidebar-accent-foreground");
     expect(alphaLink).not.toHaveClass("hover:bg-accent");
     expect(alphaLink).not.toHaveClass("hover:bg-sidebar-accent");
+    expect(alphaLink).toHaveClass("text-foreground");
+    expect(screen.getByText("10")).toHaveClass("text-foreground");
 
     const betaLink = screen.getByRole("link", { name: /Beta/ });
     expect(betaLink).not.toHaveClass("hover:bg-accent");
     expect(betaLink).not.toHaveClass("hover:bg-sidebar-accent");
+    expect(betaLink).toHaveClass("text-foreground");
+    expect(screen.getByText("5")).toHaveClass("text-foreground");
+
+    const nav = container.querySelector("[data-sidebar-scroll]")!;
+    const alphaRow = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+    const betaRow = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
+    expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
+    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-focused");
+
+    fireEvent.pointerMove(alphaRow);
+    expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
+    expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
+    expect(betaRow).not.toHaveAttribute("data-sidebar-row-focused");
+
+    fireEvent.pointerMove(betaRow);
+    expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
+    expect(nav).toHaveAttribute("data-sidebar-row-switching", "true");
+    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-focused");
+    expect(betaRow).toHaveAttribute("data-sidebar-row-focused", "true");
+
+    fireEvent.pointerLeave(nav);
+    expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
+    expect(nav).not.toHaveAttribute("data-sidebar-row-switching");
   });
 
-  it("keeps sidebar row action targets at row-control size", () => {
+  it("does not replace sidebar counts with a hover ellipsis menu", () => {
     const { container } = renderSidebar();
 
-    container.querySelectorAll("[data-sidebar-tag-menu-trigger]").forEach((trigger) => {
-      expect(trigger).toHaveClass("size-8");
-    });
+    expect(container.querySelector("[data-sidebar-tag-menu-trigger]")).not.toBeInTheDocument();
+    expect(screen.getByText("10")).not.toHaveClass("group-hover:opacity-0");
   });
 
   it("does not treat native selected-text drops as Mine card creation", () => {
@@ -227,6 +253,28 @@ describe("Sidebar", () => {
 
     const after = container.querySelector('img[src="asset://localhost/thumbs/alpha-a.jpg"]');
     expect(after).toBe(before);
+  });
+
+  it("keeps sidebar thumbnail hover preview card disabled behind a feature flag", () => {
+    const previews = new Map([
+      ["alpha", [{
+        url: "asset://localhost/thumbs/alpha-a.jpg",
+        text: false,
+        hasThumb: true,
+        slug: "alpha-a",
+      }]],
+    ]);
+    const { container } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      channelPreviews: previews,
+    });
+
+    const thumbnail = container.querySelector("[data-sidebar-preview-thumbnail]");
+    expect(thumbnail).toHaveAttribute("data-sidebar-preview-thumbnail", "placeholder");
+    expect(thumbnail).not.toHaveClass("cursor-pointer");
+    fireEvent.mouseEnter(thumbnail!);
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
   });
 
   it("filters link editor to linked channels", () => {

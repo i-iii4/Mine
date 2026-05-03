@@ -21,16 +21,17 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 ## Problem statement
 
-Текущий контракт (`src-tauri/src/storage/files.rs:38`):
+Текущий контракт (`src-tauri/src/storage/files.rs:37`):
 
 ```rust
-pub fn read_block_file(path: &Path) -> Result<(String, String)> {
-    let slug = path.file_stem()...;
+pub fn read_block_file(vault: &VaultLayout, path: &Path) -> Result<(String, String)> {
+    let slug = vault.slug_for_path(path)...;
     ...
 }
 ```
 
-`slug = file_stem` делает identity:
+`slug = vault.slug_for_path(path)` делает identity filename-first и
+vault-relative:
 
 - **mutable**: rename файла = смена identity;
 - **collision-prone**: два блока с одинаковым заголовком получают суффикс `-2` в имени файла;

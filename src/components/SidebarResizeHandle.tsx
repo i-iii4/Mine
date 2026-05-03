@@ -19,6 +19,10 @@ function readSidebarWidth(): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function clearNativeSelection(): void {
+  document.getSelection()?.removeAllRanges();
+}
+
 export function SidebarResizeHandle({
   isResizing,
   disabled,
@@ -35,6 +39,10 @@ export function SidebarResizeHandle({
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (disabled) return;
+      e.preventDefault();
+      e.stopPropagation();
+      clearNativeSelection();
+      document.body.classList.add("sidebar-resizing");
       e.currentTarget.setPointerCapture(e.pointerId);
       startXRef.current = e.clientX;
       startWidthRef.current = readSidebarWidth();
@@ -46,10 +54,12 @@ export function SidebarResizeHandle({
   const handlePointerMove = useCallback(
     (e: React.PointerEvent) => {
       if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+      e.preventDefault();
       const delta = e.clientX - startXRef.current;
 
       if (!didDragRef.current && Math.abs(delta) > DRAG_THRESHOLD) {
         didDragRef.current = true;
+        clearNativeSelection();
         onResizeStart(startXRef.current, startWidthRef.current);
       }
       if (didDragRef.current) {
@@ -65,11 +75,27 @@ export function SidebarResizeHandle({
       if (didDragRef.current) {
         onResizeEnd();
       } else {
+        document.body.classList.remove("sidebar-resizing");
         onToggleCollapsed();
       }
       didDragRef.current = false;
     },
     [onResizeEnd, onToggleCollapsed],
+  );
+
+  const handlePointerCancel = useCallback(
+    (e: React.PointerEvent) => {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+      if (didDragRef.current) {
+        onResizeEnd();
+      } else {
+        document.body.classList.remove("sidebar-resizing");
+      }
+      didDragRef.current = false;
+    },
+    [onResizeEnd],
   );
 
   const showPill = hovered || isResizing;
@@ -92,6 +118,7 @@ export function SidebarResizeHandle({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
     >
       {/* Pill handle: 4px left zone + 6px gap + pill + 2px right */}
       <div

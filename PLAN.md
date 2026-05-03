@@ -366,7 +366,7 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.21 | Grid: делегирование ContextMenu (O(N)→O(1)) + синхронный сброс visibleCount + исправление скролла контекстного меню + hover сайдбара | [x] |
 | 7.22 | Визуальная стилизация: overlay titlebar + drag region, Geist Sans (UI) + Geist Mono (карточки, метаданные), острые карточки без заливки, GAP 32px, sidebar без заголовка с градиентным fade | [x] |
 | 7.23 | Иконки каналов в sidebar: стопка из 1–3 мини-карточек с реальными превью, веерная анимация при ховере | [x] |
-| 7.23.1 | Sidebar thumbnail hover preview: outline конкретной миниатюры, click opens block, `slug -> IndexedBlock`, interactive actions, down/up placement, без fake preview | [x] |
+| 7.23.1 | Sidebar thumbnail hover preview: outline конкретной миниатюры, click opens block, `slug -> IndexedBlock`, interactive actions, down/up placement, без fake preview; temporarily disabled behind feature flag | [~] |
 | 7.24 | Fullscreen Detail: двухслойный layout (scroll + fixed metadata), Geist Mono, top menu modes (`Classic` / `Island`), filename drag handle в sidebar | [x] |
 | 7.24.1 | Membership actions: sidebar link-editor + CollectionPicker use `Connected` always, hover `Connect`/`Disconnect`, no checkbox | [x] |
 | 7.24.2 | Sidebar row edge alignment: no inner horizontal row padding, right counts monospace, action buttons flush to row edge, 1px optical text compensation | [x] |
@@ -375,9 +375,12 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.24.5 | Sidebar thumbnail strip fade: replace abrupt linear mask with one always-on fixed-width 72px eased alpha mask, without hover-state overlay changes | [x] |
 | 7.24.6 | Sidebar link-editor actions: render `Connect`/`Disconnect` as absolute row overlay, not a flex item, so buttons never shift thumbnail strip mask | [x] |
 | 7.24.7 | Sidebar link-editor close: remove row actions immediately on `detailChromeClosing`; only top chrome uses closing snapshot | [x] |
+| 7.24.8 | Sidebar row focus-mode: default `text-foreground`, hover/focus dims non-focused labels/counts to `muted-foreground` and thumbnail strips to `0.9`, with animated enter/exit and instant row switching | [x] |
 | 7.25 | Detail related-notes hover preview: row-key positioning, 3px preview radius, viewport-aware side/up placement, hover bridge, interactive card actions with pinned outside-click close | [~] |
 | 7.26 | Detail inline-image hover preview: image wrapper hover outline + resolver `image src/mediaRef -> extracted media block` + below/above interactive preview | [ ] |
 | 7.27 | Single-instance guard для desktop app: повторный запуск должен фокусировать существующее окно, а не создавать вторую инстанцию | [ ] |
+| 7.28 | Sidebar resize handle: suppress native WebKit text selection from `pointerdown`, before drag threshold | [x] |
+| 7.29 | Sidebar ordinary rows: remove hover ellipsis action that replaced counts; keep Rename/Delete in row ContextMenu | [x] |
 
 ### Phase 8 — Веб-клиппер (браузерное расширение) [COMPLETED]
 

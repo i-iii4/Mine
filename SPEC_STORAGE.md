@@ -240,7 +240,7 @@ a normalized tag. Legacy normalized values are migration inputs only.
 
 ```rust
 write_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf>
-read_block_file(path: &Path) -> Result<(String, String)>  // (slug, content)
+read_block_file(vault: &VaultLayout, path: &Path) -> Result<(String, String)>  // (vault-relative slug, content)
 scan_md_files(vault: &VaultLayout) -> Result<Vec<PathBuf>>
 copy_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Result<PathBuf>
 delete_user_file(path: &Path) -> Result<()>

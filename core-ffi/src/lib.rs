@@ -7,6 +7,7 @@ uniffi::setup_scaffolding!();
 
 use mine_lib::domain::article_audio::prepare_article_speech;
 use mine_lib::domain::block::{parse_markdown_document, DateTime};
+use mine_lib::domain::vault::VaultLayout;
 use mine_lib::storage::{db, index};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -95,6 +96,7 @@ impl ArenaVault {
             .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
 
         let vault_dir = PathBuf::from(&self.vault_path);
+        let vault = VaultLayout::new(vault_dir.clone());
         let entries =
             std::fs::read_dir(&vault_dir).map_err(|e| ArenaError::Io { msg: e.to_string() })?;
 
@@ -104,7 +106,7 @@ impl ArenaVault {
             if path.extension().and_then(|e| e.to_str()) != Some("md") {
                 continue;
             }
-            if let Ok((slug, content)) = mine_lib::storage::files::read_block_file(&path) {
+            if let Ok((slug, content)) = mine_lib::storage::files::read_block_file(&vault, &path) {
                 match mine_lib::domain::block::parse_markdown_document(
                     &slug,
                     &content,

@@ -265,7 +265,14 @@ Vault-пикер — не маршрут, а состояние: если `vault
 Активный route сохраняется в router state, но sidebar navigation rows,
 включая `Everything` и строки каналов, не получают визуальную hover/active
 плашку: без `hover:bg-*`, `bg-sidebar-accent` и
-`text-sidebar-accent-foreground`. Каналы отсортированы по `channels.position`.
+`text-sidebar-accent-foreground`. Default label/count color — `text-foreground`.
+На hover/focus конкретной строки sidebar входит в row focus-mode: неактивные
+row labels/counts становятся `text-muted-foreground`, неактивные thumbnail
+strips получают `opacity: 0.9`, а focused row остаётся `text-foreground` и
+`opacity: 1`. Вход/выход анимируется `180ms cubic-bezier(0.22, 1, 0.36, 1)`;
+переключение между строками внутри уже активного focus-mode происходит
+мгновенно через `data-sidebar-row-switching="true"` на один animation frame.
+Каналы отсортированы по `channels.position`.
 `channels` является source of truth для порядка; legacy `tags` используется
 только как физическое имя текущего индекса. Runtime использует `CollectionRef`
 из `Mine Collections` wikilinks. Изменение количества карточек в канале не
@@ -337,9 +344,12 @@ strip. Внутри этой зоны применяется eased multi-stop al
 отдельный overlay layer и не hover-gated state; ordinary sidebar и link-editor
 режим должны видеть один и тот же strip fade и одинаковую защитную область,
 если отдельный контракт явно не оговорён.
-Hover navigation row не должен менять background/text color; hover разрешён
-только для правого row action и thumbnail outline. Active route не должен иметь
-отдельный selected background.
+Hover navigation row не должен менять background. Обычный sidebar count slot не
+должен заменяться hover-многоточием или другим action trigger; Rename/Delete
+остаются в `ContextMenu` строки. Active route не должен иметь отдельный
+selected background. Text/thumbnail changes on hover are limited to the shared
+row focus-mode contract above; they must not introduce layout shift or change
+thumbnail strip width.
 
 **Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время любого drag-to-channel (`isDropDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию и hover-ring работал одинаково для карточек и inline-media. `SortableContext` получает полный список channels IDs независимо от видимости.
 
@@ -366,6 +376,12 @@ DOM-геометрии конкретной миниатюры: раскрыва
 открывает Detail именно этого block slug, а не навигацию строки канала.
 Placeholder thumbnail без `slug` может получать обычный визуальный thumbnail
 slot, но не interactive preview.
+
+Temporary state: this block remains implemented but disabled behind
+`SIDEBAR_THUMBNAIL_HOVER_PREVIEW_ENABLED = false`. While disabled, thumbnails
+remain visible in the strip but do not show trigger outline, do not open popup
+preview cards, and do not open Detail on thumbnail click. Do not delete the
+implementation; it is intentionally gated for later return.
 
 **Main sidebar top inset.** На главной sidebar использует `pt-20` прямо на
 `data-sidebar-scroll`. Не создавать отдельную пустую header surface для
@@ -400,6 +416,15 @@ article-card без media (8 lines × widest single-column inner width). Fronten
 **CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`. Картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки — нет layout shift.
 
 Это даёт быстрый resize и мгновенное переключение между разделами при тысячах блоков, потому что browser layout работает только с окном видимых карточек, а не со всей коллекцией.
+
+### Sidebar Resize
+
+Resize handle должен блокировать нативное WebKit text selection с первого
+`pointerdown`, а не только после преодоления drag threshold. На `pointerdown`
+handle ставит `body.sidebar-resizing`, вызывает `preventDefault()`, очищает
+`document.getSelection()` и захватывает pointer. `startResize()` может
+оставаться threshold-gated, чтобы click по handle продолжал toggle collapsed,
+но selection suppression не должна ждать этого порога.
 
 ### Card
 

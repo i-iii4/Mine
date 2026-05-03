@@ -53,6 +53,35 @@ nav {
   user-select: none;
 }
 
+[data-sidebar-row-text] {
+  transition: color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-sidebar-thumbnail-strip] {
+  transition: opacity 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-sidebar-scroll][data-sidebar-row-focus-mode="true"] [data-sidebar-row-text] {
+  color: var(--muted-foreground);
+}
+
+[data-sidebar-scroll][data-sidebar-row-focus-mode="true"] [data-sidebar-row-focused="true"] [data-sidebar-row-text] {
+  color: var(--foreground);
+}
+
+[data-sidebar-scroll][data-sidebar-row-focus-mode="true"] [data-sidebar-thumbnail-strip] {
+  opacity: 0.9;
+}
+
+[data-sidebar-scroll][data-sidebar-row-focus-mode="true"] [data-sidebar-row-focused="true"] [data-sidebar-thumbnail-strip] {
+  opacity: 1;
+}
+
+[data-sidebar-scroll][data-sidebar-row-switching="true"] [data-sidebar-row-text],
+[data-sidebar-scroll][data-sidebar-row-switching="true"] [data-sidebar-thumbnail-strip] {
+  transition-duration: 0ms;
+}
+
 /* Sidebar resize: force col-resize cursor and disable selection globally */
 body.sidebar-resizing {
   cursor: col-resize !important;
@@ -63,6 +92,16 @@ body.sidebar-resizing * {
   cursor: col-resize !important;
   -webkit-user-select: none !important;
   user-select: none !important;
+}
+body.sidebar-resizing ::selection {
+  background: transparent;
+}
+
+[data-detail-inline-media-drag="true"],
+[data-detail-inline-media-drag="true"] * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 /* Hide scrollbars in WebKit (Tauri/Safari) */

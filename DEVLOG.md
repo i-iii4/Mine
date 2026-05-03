@@ -1,5 +1,106 @@
 # Devlog
 
+## 03.05.2026 12:27 -03 [primary] — Finalize sidebar row focus contract
+
+### Goal
+
+Зафиксировать текущий sidebar/detail interaction пакет в документации,
+обновить тесты под фактические UI-контракты и проверить весь проект перед push.
+
+### Completed
+
+- Sidebar row focus-mode оформлен как явный контракт:
+  default `text-foreground`, hover/focus приглушает неактивные labels/counts до
+  `text-muted-foreground` и thumbnail strips до `opacity: 0.9`.
+- Вход/выход из focus-mode анимируется, а переключение между строками внутри
+  активного focus-mode остаётся мгновенным через one-frame switching state.
+- Sidebar thumbnail hover preview остаётся отключённым feature flag'ом без
+  удаления реализации.
+- Исправлены тестовые ожидания Detail metadata/Related Notes под текущую
+  карточку и таблицу.
+- `core-ffi` приведён к актуальному `read_block_file(&VaultLayout, &Path)`
+  контракту, чтобы workspace `cargo test` снова компилировался.
+- Обновлены frontend/design/storage/identity contracts:
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md),
+  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [SPEC_STORAGE.md](SPEC_STORAGE.md),
+  [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md), [PLAN.md](PLAN.md).
+
+### Verification
+
+- `bun run test` — 237/237 passed.
+- `cargo test` — 538/538 passed across `mine`, migration/native-host bins and
+  `core-ffi`.
+
+## 03.05.2026 10:45 -03 [primary] — Remove sidebar hover ellipsis
+
+### Goal
+
+Убрать поведение обычного sidebar, где count справа скрывался на hover и
+замещался кнопкой-многоточием.
+
+### Completed
+
+- Из обычного `TagNavItem` удалён hover `DropdownMenu` с `MoreHorizontal`.
+- Правый `w-8` slot теперь всегда показывает count в `font-mono` и не меняется
+  по hover.
+- Rename/Delete остаются доступны через существующий `ContextMenu` строки.
+- Обновлены frontend/design contracts:
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md),
+  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [PLAN.md](PLAN.md).
+
+### Verification
+
+- Локальные проверки не запускались.
+
+## 03.05.2026 10:47 -03 [primary] — Disable sidebar thumbnail hover preview
+
+### Goal
+
+Временно отключить hover preview card на миниатюрах sidebar без удаления
+реализации, чтобы позже вернуться к этому функциональному блоку.
+
+### Completed
+
+- Добавлен явный feature flag `SIDEBAR_THUMBNAIL_HOVER_PREVIEW_ENABLED=false`.
+- Миниатюры остаются видимыми в strip, но больше не получают interactive
+  trigger state: нет hover outline, popup preview card, hover bridge и click
+  open Detail по миниатюре.
+- Код `InteractiveCardPreview`, positioning, hover bridge и `slug -> getBlock`
+  path оставлен в файле и только загейчен.
+- Обновлены frontend/design contracts:
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md),
+  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [PLAN.md](PLAN.md).
+
+### Verification
+
+- Локальные проверки не запускались.
+
+## 03.05.2026 10:40 -03 [primary] — Sidebar resize selection suppression
+
+### Goal
+
+Убрать случайное нативное выделение страницы при перетаскивании sidebar resize
+handle.
+
+### Completed
+
+- Resize handle теперь ставит `body.sidebar-resizing` уже на `pointerdown`, до
+  преодоления drag threshold.
+- `pointerdown`/`pointermove` на handle вызывают `preventDefault()`, а текущий
+  `document.getSelection()` очищается на старте gesture и при переходе в resize.
+- Если gesture оказался обычным click/toggle, handle сам снимает
+  `body.sidebar-resizing`; если это resize, класс снимает существующий
+  `endResize()`.
+- На время `body.sidebar-resizing` добавлен transparent `::selection` fallback
+  для WebKit.
+- Обновлены frontend/design contracts:
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md),
+  [PLAN.md](PLAN.md).
+
+### Verification
+
+- Локальные проверки не запускались.
+
 ## 03.05.2026 10:33 -03 [primary] — Sidebar preview strip protection width
 
 ### Goal

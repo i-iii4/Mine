@@ -102,7 +102,7 @@ typography must stay inside the 12/14/18px design-system scale.
 |---|---|---|---|---|
 | 0 | `--background` | 1.0 | 0.1567 | Фон страницы |
 | +1 | `--accent` | 0.98 | 0.1815 | Hover фон, action bar |
-| +2 | `--sidebar-accent`, `--active` | 0.965 | 0.2063 | Выделенный пункт сайдбара, нажатие |
+| +2 | `--sidebar-accent`, `--active` | 0.965 | 0.2063 | Legacy/sidebar surface, нажатие |
 | +3 | `--border` | 0.95 | 0.2311 | Границы, разделители |
 
 **Шаг от accent:** светлая тема — 0.015, тёмная — 0.0248.
@@ -150,7 +150,6 @@ typography must stay inside the 12/14/18px design-system scale.
 | Кнопка default/destructive | Обводка 1px inset | `--component-fill-hover` | `--component-fill-hover` | `hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover` |
 | Кнопка ghost/link | Цвет текста | #333 → #000 | #E4E4E4 → #FFF | `hover:text-hover-foreground` |
 | Карточка | Inset border 2px (::after) | — | — | `after:... hover:after:shadow-[inset_0_0_0_2px_var(--primary-hover)]` |
-| Пункт сайдбара | Цвет фона | transparent → #F5F5F5 | transparent → #111111 | `hover:bg-accent` |
 
 ### Focus
 
@@ -167,12 +166,17 @@ typography must stay inside the 12/14/18px design-system scale.
 
 ### Selected (активный пункт сайдбара)
 
-| Свойство | Светлая (oklch L) | Тёмная (oklch L) |
-|---|---|---|
-| Фон (`--sidebar-accent`) | 0.965 | 0.2063 |
-| Текст (`--sidebar-accent-foreground`) | 0.3211 | 0.9189 |
+Sidebar navigation rows do not render a selected background. The active route
+lives in router state; the table-like sidebar keeps one visual row model for
+default, hover and active route states.
 
-Утилиты: `bg-sidebar-accent text-sidebar-accent-foreground`. Без изменения веса шрифта — фонового выделения достаточно.
+Default row text and right counts use `text-foreground`. On row hover/focus the
+sidebar enters row focus mode: every non-focused row label/count uses
+`text-muted-foreground`, while the focused row stays `text-foreground`.
+Thumbnail strips follow the same focus model by opacity: non-focused strips use
+`opacity: 0.9`, focused strip stays `1`. Enter/exit uses `180ms
+cubic-bezier(0.22, 1, 0.36, 1)`; switching directly between rows inside focus
+mode disables transition for that switch frame.
 
 ### Токены интерактивных состояний
 
@@ -181,7 +185,7 @@ typography must stay inside the 12/14/18px design-system scale.
 | Токен | Светлая (oklch L) | Тёмная (oklch L) | Назначение |
 |---|---|---|---|
 | `--accent` | 0.98 | 0.1815 | Ховер фон (поверхность +1) |
-| `--sidebar-accent` | 0.965 | 0.2063 | Выделенный пункт (поверхность +2) |
+| `--sidebar-accent` | 0.965 | 0.2063 | Legacy/sidebar surface (+2), не для текущих row states |
 | `--active` | 0.965 | 0.2063 | Нажатие (поверхность +2) |
 
 Заливки компонентов:
@@ -353,6 +357,8 @@ preview при drag: `rounded-1` (3px), `border border-border`, `bg-background`,
 утилитарная `shadow-lg`. Ordinary feed cards остаются на `--radius-card`.
 
 Sidebar thumbnail preview:
+- Temporarily disabled behind `SIDEBAR_THUMBNAIL_HOVER_PREVIEW_ENABLED=false`;
+  code remains in place for later return.
 - Trigger — конкретная `size-8` миниатюра в левой колонке, не вся строка
   канала.
 - Hover outline: `outline-1 -outline-offset-1 outline-component-fill-hover`.
@@ -529,21 +535,32 @@ conflict banner) ничего не рендерит, он не должен ос
 
 Шрифт названий: `text-base` (14px), без `font-mono`. Правый счётчик:
 `font-mono text-sm text-right`. Стиль shadcn SidebarMenuButton: `rounded-1
-p-2`. Без разделительных линий. Channel rows не получают фонового или
-текстового выделения на hover/active.
+p-2`. Без разделительных линий. Channel rows не получают фонового выделения на
+hover/active; текст участвует в общем sidebar row focus-mode contract.
 
 #### Общее
 
 Ширина по умолчанию: 300px. Диапазон ресайза: 220–600px. Порог сворачивания: 100px. Паддинг строки в полном режиме: `py-1` (4px), без `px-*`.
 
-Действия: на hover счётчик скрывается, появляется иконка многоточия (DropdownMenu, `modal={false}`, `side="right"`). Dropdown содержит Rename и Delete.
-Hit area многоточия — `size-8` (32×32), даже если визуальная иконка `size-3`.
-Правая колонка строки (`w-8`) является минимальной кликабельной зоной row-action;
-обычный счётчик в этой колонке всегда `font-mono`.
+Обычные строки sidebar не заменяют счётчик hover-действиями: правый `w-8`
+slot всегда показывает count в `font-mono`. Rename/Delete доступны через
+`ContextMenu` строки, а не через hover-многоточие.
 Sidebar navigation rows, включая `Everything` и каналы, не используют
 `hover:bg-*`, `bg-sidebar-accent` или `text-sidebar-accent-foreground`: выбор
 маршрута отражается состоянием приложения, но не визуальной плашкой строки.
-Hover остаётся только для row actions и thumbnail outline.
+Обычный count slot не меняется по hover.
+
+Row focus-mode:
+- Без hover/focus все row labels и counts используют `text-foreground`.
+- Когда курсор или keyboard focus находится внутри строки, sidebar получает
+  `data-sidebar-row-focus-mode="true"`.
+- Все неактивные row labels/counts переходят в `text-muted-foreground`, а
+  focused row остаётся `text-foreground`.
+- Все неактивные thumbnail strips получают `opacity: 0.9`, focused strip
+  остаётся `opacity: 1`.
+- Вход/выход из focus-mode анимируется `180ms cubic-bezier(0.22, 1, 0.36, 1)`.
+  Переключение между строками внутри уже активного focus-mode идёт мгновенно
+  через `data-sidebar-row-switching="true"` на один animation frame.
 
 #### Link-editor режим (Detail открыт)
 
@@ -617,6 +634,10 @@ Masonry с round-robin распределением по колонкам. Gap: 
 - **Без теней и градиентов** — исключения: hover-оверлей на карточках изображений (`bg-gradient-to-t from-black/60`), утилитарная тень всплывающих элементов (для отделения слоя от контента)
 - **1px solid borders** — основной визуальный разделитель. Без двойных линий, пунктиров, инсетов
 - **Нативное ощущение** — `-webkit-user-select: none` на кнопках и навигации, `overscroll-behavior: none`, скрытые скроллбары WebKit
+- **Resize handle без выделения** — sidebar resize gesture блокирует WebKit
+  text selection уже на `pointerdown`: `body.sidebar-resizing`,
+  `preventDefault()`, clear `document.getSelection()`, transparent
+  `::selection`.
 - **Variable-шрифты** — один файл WOFF2 на все насыщенности (100–900), `font-display: swap`
 
 ## Рендеринг

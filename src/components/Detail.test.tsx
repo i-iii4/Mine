@@ -300,20 +300,21 @@ describe("Detail", () => {
     );
 
     const metadataTable = container.querySelector("[data-metadata-table]");
-    expect(metadataTable).toHaveClass(
-      "w-full",
-      "grid",
-      "grid-cols-[max-content_minmax(0,1fr)]",
-      "gap-x-4",
-      "gap-y-2",
-    );
+    expect(metadataTable).toHaveClass("w-full");
 
     const dateLabel = screen.getByText("Date");
-    expect(dateLabel).toHaveClass("font-sans", "text-sm", "leading-4");
+    expect(dateLabel).toHaveClass("font-mono", "text-sm", "leading-4");
     expect(dateLabel).not.toHaveClass("font-semibold", "uppercase", "tracking-widest");
     expect(dateLabel).toHaveClass("whitespace-nowrap");
     expect(dateLabel.closest("[data-metadata-row]")?.tagName).toBe("DIV");
-    expect(dateLabel.closest("[data-metadata-row]")).toHaveClass("contents");
+    expect(dateLabel.closest("[data-metadata-row]")).toHaveClass(
+      "relative",
+      "grid",
+      "w-full",
+      "grid-cols-[max-content_minmax(0,1fr)]",
+      "gap-x-4",
+      "pb-2",
+    );
     const metadataRows = container.querySelectorAll("[data-metadata-row]");
     expect(metadataRows.length).toBeGreaterThan(0);
     expect(dateLabel.closest("[data-metadata-row]")?.lastElementChild?.firstElementChild).toHaveClass(
@@ -498,7 +499,7 @@ describe("Detail", () => {
       "bg-accent",
     );
     const metadataContent = metadataCard?.querySelector("[data-detail-metadata-card-content]");
-    expect(metadataContent).toHaveClass("p-4");
+    expect(metadataContent).toHaveClass("px-2", "pb-4", "pt-4");
     expect(metadataCard?.querySelector("[data-metadata-table]")).not.toBeNull();
     expect(metadataCard?.querySelector("[data-detail-action-row]")).not.toBeNull();
   });
@@ -728,6 +729,19 @@ describe("Detail", () => {
     const imageSrcs = Array.from(container.querySelectorAll("img")).map((img) => img.getAttribute("src"));
     expect(imageSrcs).toContain("asset://localhost//tmp/test-vault/Title (image 1).jpg");
     expect(imageSrcs).toContain("asset://localhost//tmp/thumbs/Title (image 1)-preview.jpg");
+
+    const dragSurface = container.querySelector<HTMLElement>(
+      "[data-detail-inline-media-drag='true']",
+    );
+    expect(dragSurface).not.toBeNull();
+    expect(dragSurface).toHaveClass("select-none");
+    expect(dragSurface).toHaveAttribute("draggable", "false");
+    expect(dragSurface!.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+    )).toBe(false);
+    expect(dragSurface!.dispatchEvent(
+      new Event("dragstart", { bubbles: true, cancelable: true }),
+    )).toBe(false);
   });
 
   it("uses resolved backend tile path for bare Obsidian attachment embeds", () => {
@@ -883,7 +897,7 @@ describe("Detail", () => {
       "bg-component-fill",
       "p-[3px]",
       "cursor-pointer",
-      "font-mono",
+      "font-sans",
       "text-base",
       "text-muted-foreground",
     );

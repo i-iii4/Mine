@@ -1550,14 +1550,38 @@ function DetailImage({
     setOriginalReady(false);
   }, [src]);
 
+  const dragPointerListener = (dragListeners as {
+    onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  } | undefined)?.onPointerDown;
+
   return (
     <div
       ref={setDragRef}
       {...(extraction ? dragAttributes : {})}
       {...(extraction ? dragListeners : {})}
+      draggable={extraction ? false : undefined}
+      data-detail-inline-media-drag={extraction ? "true" : undefined}
+      onPointerDown={(event) => {
+        if (!extraction) {
+          return;
+        }
+        dragPointerListener?.(event);
+        event.preventDefault();
+        window.getSelection()?.removeAllRanges();
+      }}
+      onMouseDown={(event) => {
+        if (extraction) {
+          event.preventDefault();
+        }
+      }}
+      onDragStart={(event) => {
+        if (extraction) {
+          event.preventDefault();
+        }
+      }}
       className={cn(
         "relative overflow-hidden",
-        extraction && "cursor-grab active:cursor-grabbing",
+        extraction && "cursor-grab select-none active:cursor-grabbing",
         isDragging && "opacity-40",
       )}
     >
