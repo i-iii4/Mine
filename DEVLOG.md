@@ -1,5 +1,49 @@
 # Devlog
 
+## 03.05.2026 10:33 -03 [primary] — Sidebar preview strip protection width
+
+### Goal
+
+Увеличить правую защитную область thumbnail strip, чтобы контент полностью
+растворялся перед action button одинаково на главной и в Detail.
+
+### Completed
+
+- Ширина fade изменена с `52px` на `72px`: две preview-ячейки
+  (`32px` thumbnail + `4px` gap) × 2.
+- Layout, padding, ширина strip и absolute action button не менялись; изменена
+  только paint mask.
+- Обновлены frontend/design contracts:
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md),
+  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [PLAN.md](PLAN.md).
+
+### Verification
+
+- Локальные проверки не запускались.
+
+## 03.05.2026 10:27 -03 [primary] — Sidebar link-editor close timing
+
+### Goal
+
+Убрать задержку исчезновения `Connect`/`Disconnect` row actions при закрытии
+Detail: кнопки не должны ждать завершения анимации верхнего chrome.
+
+### Completed
+
+- В `Sidebar` разделены `isLinkingBlock` (closing snapshot для верхнего chrome)
+  и `isLinkEditorActive` (интерактивный row action mode).
+- При `detailChromeClosing=true` строки сразу перестают получать `linkEditor`,
+  возвращают обычные counts и больше не рендерят `Connect`/`Disconnect`.
+- Фильтр `Connected` для строк также выключается вместе с row action mode, пока
+  верхний link-editor chrome может спокойно доиграть exit-анимацию.
+- Обновлены frontend/design contracts:
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md),
+  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [PLAN.md](PLAN.md).
+
+### Verification
+
+- Локальные проверки не запускались.
+
 ## 03.05.2026 10:00 -03 [primary] — Sidebar preview strip eased mask
 
 ### Goal

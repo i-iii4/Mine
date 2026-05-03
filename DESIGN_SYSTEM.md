@@ -509,11 +509,12 @@ conflict banner) ничего не рендерит, он не должен ос
 
 Превью-карточки: `size-8 object-cover`, `gap-1` (4px). Strip использует
 одну постоянную CSS mask, без дополнительных overlay-слоёв. Fade имеет
-физическую ширину `52px` от правого края (`32px` thumbnail + `4px` gap +
-половина thumbnail), а не процент от ширины strip. Внутри этих `52px`
+физическую ширину `72px` от правого края: две preview-ячейки
+(`32px` thumbnail + `4px` gap) × 2. Это не процент от ширины strip, поэтому
+защитная область одинаковая на главной и в Detail. Внутри этих `72px`
 используется multi-stop alpha-кривая, чтобы справа не было визуального
-«разгона» градиента и чтобы маска не цепляла больше полутора карточек при
-широком sidebar. Текстовые thumbnail (PNG с прозрачным фоном) обёрнуты в
+«разгона» градиента и чтобы контент полностью растворялся перед зоной
+абсолютной action button. Текстовые thumbnail (PNG с прозрачным фоном) обёрнуты в
 `bg-accent` + `dark:invert`. Видео-блоки показывают первый кадр (H.264
 декодирование через OpenH264).
 
@@ -574,6 +575,10 @@ Motion contract: верхний chrome в Detail и sidebar link-editor surface 
 (`220–280ms`, `cubic-bezier(0.22, 1, 0.36, 1)`). Close не должен блокировать
 возврат к grid: страница закрывается мгновенно, а exit дочёркивается отдельным
 неблокирующим chrome overlay.
+
+`Connect`/`Disconnect` row actions не ждут closing-анимацию верхнего chrome:
+при `detailChromeClosing` строки сразу возвращаются в обычный sidebar mode, а
+closing snapshot остаётся только у верхнего link-editor chrome.
 
 Membership action behaviour: checkbox в link-editor не используется. Клик по
 строке канала навигирует как обычный sidebar item; только прямой click/key по

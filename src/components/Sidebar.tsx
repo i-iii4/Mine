@@ -48,7 +48,7 @@ const SIDEBAR_PREVIEW_CLOSE_DELAY_MS = 120;
 const SIDEBAR_PREVIEW_THUMB_SIZE = 32;
 const SIDEBAR_PREVIEW_THUMB_GAP = 4;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH =
-  SIDEBAR_PREVIEW_THUMB_SIZE * 1.5 + SIDEBAR_PREVIEW_THUMB_GAP;
+  (SIDEBAR_PREVIEW_THUMB_SIZE + SIDEBAR_PREVIEW_THUMB_GAP) * 2;
 const sidebarPreviewMaskStop = (alpha: number, progress: number) => {
   const offset =
     Math.round(SIDEBAR_PREVIEW_MASK_FADE_WIDTH * (1 - progress) * 100) / 100;
@@ -183,8 +183,9 @@ export function Sidebar({
 
   const compact = width > 0 && width < 320;
   const isLinkingBlock = !!linkedBlockSlug && !!onToggleLinkedTag;
+  const isLinkEditorActive = isLinkingBlock && !detailChromeClosing;
   const linkedTagSet = new Set(linkedTags);
-  const visibleTags = isLinkingBlock && linkMode === "linked"
+  const visibleTags = isLinkEditorActive && linkMode === "linked"
     ? orderedTags.filter((tc) => linkedTagSet.has(tc.tag))
     : orderedTags;
   const linkEditorNavPadding = detailTopMenuMode === "classic" ? "pt-12" : "pt-20";
@@ -414,7 +415,7 @@ export function Sidebar({
           compact={compact}
           end
           onClick={onNavClick}
-          onSameClick={isLinkingBlock ? onNavClick : onScrollToTop}
+          onSameClick={isLinkEditorActive ? onNavClick : onScrollToTop}
         />
 
         <SortableContext
@@ -438,8 +439,8 @@ export function Sidebar({
                 onPreviewTriggerRef={setPreviewTriggerRef}
                 compact={compact}
                 isDropDragging={isDropDragging}
-                isEditing={!isLinkingBlock && editingTag === tc.tag}
-                linkEditor={isLinkingBlock ? {
+                isEditing={!isLinkEditorActive && editingTag === tc.tag}
+                linkEditor={isLinkEditorActive ? {
                   checked,
                   onToggle: () => onToggleLinkedTag(linkedBlockSlug, tc.tag, checked),
                 } : undefined}
@@ -448,7 +449,7 @@ export function Sidebar({
                 onRenameCancel={() => setEditingTag(null)}
                 onDelete={() => onDeleteTag(tc.tag)}
                 onClick={onNavClick}
-                onSameClick={isLinkingBlock ? undefined : onScrollToTop}
+                onSameClick={isLinkEditorActive ? undefined : onScrollToTop}
               />
             );
           })}

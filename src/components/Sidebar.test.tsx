@@ -191,6 +191,21 @@ describe("Sidebar", () => {
     expect(onToggleLinkedTag).toHaveBeenCalledWith("open-block", "beta", false);
   });
 
+  it("removes link editor row actions immediately while detail chrome is closing", () => {
+    renderSidebar({
+      ...defaultProps,
+      linkedBlockSlug: "open-block",
+      linkedTags: ["alpha"],
+      onToggleLinkedTag: vi.fn(),
+      detailChromeClosing: true,
+    });
+
+    expect(screen.queryByRole("button", { name: "Disconnect Alpha" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect Beta" })).not.toBeInTheDocument();
+    expect(screen.getByText("10")).not.toHaveClass("opacity-0");
+    expect(screen.getByText("5")).not.toHaveClass("opacity-0");
+  });
+
   it("keeps preview images mounted when switching to the open-card link editor", () => {
     const previews = new Map([
       ["alpha", [{ url: "asset://localhost/thumbs/alpha-a.jpg", text: false, hasThumb: true }]],

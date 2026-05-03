@@ -308,6 +308,11 @@ chrome: мягкий `opacity + translateY` enter/exit (`220–280ms`,
 к grid: sidebar сразу возвращается в обычный interactive state, а exit sidebar
 chrome доигрывается неблокирующим overlay-путём.
 
+Row actions не являются частью closing snapshot. Когда `detailChromeClosing`
+становится `true`, `Connect`/`Disconnect` overlay-кнопки и фильтр строк
+link-editor выключаются сразу, даже если верхний link-editor chrome ещё
+доигрывает exit-анимацию.
+
 Count остаётся единственным участником правого row-action layout slot
 (`h-8 w-8`). Link-editor action button не должен участвовать в flex layout:
 он рисуется как absolute overlay строки (`right-0 top-1/2 -translate-y-1/2`,
@@ -326,12 +331,12 @@ preview-карточек. Из-за font side bearings применяется т
 оптическая компенсация, не layout shift: label text получает `translate-x-px`,
 а правый count text получает `-translate-x-px`.
 Thumbnail strip использует один постоянный CSS mask на самом strip element.
-Fade начинается от правого края и имеет фиксированную физическую ширину `52px`
-(`32px` thumbnail + `4px` gap + половина thumbnail), а не процент от ширины
+Fade начинается от правого края и имеет фиксированную физическую ширину `72px`:
+две preview-ячейки (`32px` thumbnail + `4px` gap) × 2, а не процент от ширины
 strip. Внутри этой зоны применяется eased multi-stop alpha fade. Это не
 отдельный overlay layer и не hover-gated state; ordinary sidebar и link-editor
-режим должны видеть один и тот же strip fade, если отдельный контракт явно не
-оговорён.
+режим должны видеть один и тот же strip fade и одинаковую защитную область,
+если отдельный контракт явно не оговорён.
 Hover navigation row не должен менять background/text color; hover разрешён
 только для правого row action и thumbnail outline. Active route не должен иметь
 отдельный selected background.
