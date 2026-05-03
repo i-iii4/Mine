@@ -262,7 +262,10 @@ Vault-пикер — не маршрут, а состояние: если `vault
 3. Каждый канал: название + счётчик блоков + до 20 превью-карточек
    (thumbnails)
 
-Активный пункт подсвечивается. Каналы отсортированы по `channels.position`.
+Активный route сохраняется в router state, но sidebar navigation rows,
+включая `Everything` и строки каналов, не получают визуальную hover/active
+плашку: без `hover:bg-*`, `bg-sidebar-accent` и
+`text-sidebar-accent-foreground`. Каналы отсортированы по `channels.position`.
 `channels` является source of truth для порядка; legacy `tags` используется
 только как физическое имя текущего индекса. Runtime использует `CollectionRef`
 из `Mine Collections` wikilinks. Изменение количества карточек в канале не
@@ -278,16 +281,18 @@ versioned collection-index backfill до формирования стабиль
 3. `All` показывает все каналы; `Connected` показывает только каналы, связанные
    с открытым блоком.
 4. Строка канала продолжает работать как навигация на `/channel/:tag`.
-5. Checkbox справа — единственный control, который добавляет/удаляет открытый
-   блок из канала. Нажатие на строку без checkbox не меняет membership.
-6. Правый слот строки повторяет обычный sidebar: без hover виден счётчик.
-   Если канал уже связан с открытым блоком, checkbox виден всегда и замещает
-   счётчик. Если канал не связан, checkbox появляется только на hover/focus.
-7. Визуальный checkbox остаётся 16×16, но кликабельная область равна правому
-   row-action slot: 32×32. Клик по этой области не должен вызывать навигацию.
-8. Строки каналов должны сохранять stable row identity при переключении
+5. Правый action slot строки управляет membership через текстовую кнопку, не
+   через checkbox. Нажатие на строку вне action slot не меняет membership.
+6. Если канал уже связан с открытым блоком, action slot всегда показывает
+   `Connected`; на hover/focus строки кнопка замещается действием
+   `Disconnect`.
+7. Если канал не связан с открытым блоком, без hover/focus виден счётчик; на
+   hover/focus счётчик скрывается и появляется кнопка `Connect`.
+8. Клик по `Connect`/`Disconnect` вызывает membership toggle и не должен
+   вызывать навигацию строки.
+9. Строки каналов должны сохранять stable row identity при переключении
    ordinary sidebar ↔ Detail link-editor. Нельзя менять весь row component tree
-   только ради checkbox: thumbnail strip остаётся тем же DOM-поддеревом, меняется
+   только ради action slot: thumbnail strip остаётся тем же DOM-поддеревом, меняется
    только правый action slot. Это предотвращает remount `<img>` и blink превью
    при открытии карточки.
 
@@ -303,14 +308,59 @@ chrome: мягкий `opacity + translateY` enter/exit (`220–280ms`,
 к grid: sidebar сразу возвращается в обычный interactive state, а exit sidebar
 chrome доигрывается неблокирующим overlay-путём.
 
-Count и checkbox в правом row-action slot обязаны использовать один и тот же
-`h-8 w-8` контейнер и один vertical-centering contract. Checked checkbox
-появляется тем же fade tempo, что и верхний chrome. Count не должен менять
-baseline или прыгать вверх/вниз при появлении checkbox.
+Count остаётся единственным участником правого row-action layout slot
+(`h-8 w-8`). Link-editor action button не должен участвовать в flex layout:
+он рисуется как absolute overlay строки (`right-0 top-1/2 -translate-y-1/2`,
+`z-10`) с `h-6 w-[10ch]`, `rounded-1 bg-component-fill` и тем же hover
+outline, что Button. Появление `Connect`/`Disconnect` не должно менять ширину
+thumbnail strip, положение mask/fade или baseline count.
+Когда linked action замещается на `Disconnect`, видимый текст получает
+`text-destructive`; `Connected` и `Connect` остаются нейтральными.
+
+В полном sidebar mode строки не имеют собственного горизонтального padding:
+левое название канала, правый счётчик и правый link-editor action button
+выравниваются по краям `data-sidebar-scroll` padding (`px-8`). Правые счётчики
+используют `font-mono text-sm text-right`; названия каналов остаются в обычном
+UI-шрифте. Освобождённая ширина должна доставаться центральной strip-зоне
+preview-карточек. Из-за font side bearings применяется только визуальная
+оптическая компенсация, не layout shift: label text получает `translate-x-px`,
+а правый count text получает `-translate-x-px`.
+Thumbnail strip использует один постоянный CSS mask на самом strip element.
+Fade начинается от правого края и имеет фиксированную физическую ширину `52px`
+(`32px` thumbnail + `4px` gap + половина thumbnail), а не процент от ширины
+strip. Внутри этой зоны применяется eased multi-stop alpha fade. Это не
+отдельный overlay layer и не hover-gated state; ordinary sidebar и link-editor
+режим должны видеть один и тот же strip fade, если отдельный контракт явно не
+оговорён.
+Hover navigation row не должен менять background/text color; hover разрешён
+только для правого row action и thumbnail outline. Active route не должен иметь
+отдельный selected background.
 
 **Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время любого drag-to-channel (`isDropDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию и hover-ring работал одинаково для карточек и inline-media. `SortableContext` получает полный список channels IDs независимо от видимости.
 
 **Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`), а не через polling `listChannelPreviews`. Initial state грузится один раз при mount через `listChannelPreviews(20)`, потом инкрементально патчится `useChannelPreviewsEvents` hook'ом. Latency add block → visible in sidebar: ~110ms (native host write + watcher debounce + IPC event + React update). Cache-bust: initial load использует `?m=<mtime>` (unix timestamp thumb-файла из Rust `stat()`), real-time updates используют `?v=<counter>` (per-slug version counter, инкрементируется на `thumb:updated`). Два механизма дополняют друг друга: `?m=` покрывает межсессионные изменения (Phase 2 worker перезаписал PNG→JPEG), `?v=` покрывает live-обновления внутри сессии.
+
+**Sidebar thumbnail hover preview.** Миниатюры внутри thumbnail strip в левой
+части экрана являются отдельными preview triggers. Это не markdown inline
+images и не `RELATED NOTES`. Hover применяется к конкретной `size-8`
+миниатюре: `outline-component-fill-hover`, `outline-1`, `-outline-offset-1`,
+без изменения layout. Preview показывается только если `PreviewCard` содержит
+реальный `slug`; frontend загружает `IndexedBlock` через `getBlock(slug)` и
+рендерит существующий `InteractiveCardPreview`. Фальшивая карточка из одного
+thumbnail URL недопустима. Outline появляется сразу, а сам popup открывается
+только после hover-intent delay `160ms`; уход курсора с миниатюры отменяет
+pending open. Popup использует тот же interactive feed-card contract, что и
+другие hover previews: `rounded-1`, hover overlay, actions `Source`,
+`Connect`, `More`, и click по preview открывает block detail. Surface sidebar
+popup использует лёгкую серую заливку `dark:bg-accent` только в тёмной теме; в
+светлой теме остаётся `bg-background`, потому что shadow уже отделяет popup от
+canvas. Между thumbnail и popup есть hover bridge;
+interaction с actions закрепляет popup до outside click. Popup привязан к
+DOM-геометрии конкретной миниатюры: раскрывается вниз, если хватает
+вертикального места, иначе вверх, с viewport margin. Click по миниатюре
+открывает Detail именно этого block slug, а не навигацию строки канала.
+Placeholder thumbnail без `slug` может получать обычный визуальный thumbnail
+slot, но не interactive preview.
 
 **Main sidebar top inset.** На главной sidebar использует `pt-20` прямо на
 `data-sidebar-scroll`. Не создавать отдельную пустую header surface для
@@ -375,6 +425,29 @@ that belongs to `storage::media_refs`.
 - Overflow `…` menu содержит action `Rename…` и тот же `Connect` submenu.
 - Открывает единый rename dialog для выбранного блока
 - Rename не делает silent auto-fix: занятое имя и invalid stem показываются как явные ошибки
+
+### CollectionPicker
+
+`CollectionPicker` используется в hover menu, context menu и Detail action row
+для связи карточки с каналами. Он не использует checkbox UI. Строка канала сама
+по себе не toggles membership; toggle делает только правая action button.
+
+- Connected channel: action button видна всегда и показывает `Connected`; на
+  hover/focus строки текст замещается на `Disconnect`.
+- Unconnected channel: без hover/focus справа остаётся count; на hover/focus
+  count скрывается и появляется `Connect`.
+- `Connect`/`Disconnect` используют absolute overlay поверх строки:
+  `right-0 top-1/2 -translate-y-1/2 z-10 h-6 w-[10ch] rounded-1
+  bg-component-fill px-[1ch] font-semibold` и button hover outline
+  `outline-1 -outline-offset-1 outline-component-fill-hover`.
+- Overlay-кнопка не является flex item и не меняет ширину thumbnail strip или
+  положение gradient mask.
+- Видимый `Disconnect` использует destructive button semantics:
+  `text-destructive` без изменения серой заливки и outline-hover.
+- Клик по action button должен останавливать propagation/default, чтобы событие
+  не уходило в parent card, dropdown/context menu trigger или sidebar row.
+- UI оптимистически обновляет selected membership внутри открытого picker после
+  клика, пока backend mutation и snapshot reload догоняют состояние.
 
 ### RenameBlockDialog
 

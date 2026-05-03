@@ -1,5 +1,110 @@
 # Devlog
 
+## 03.05.2026 10:00 -03 [primary] — Sidebar preview strip eased mask
+
+### Goal
+
+Улучшить качество правого fade у sidebar thumbnail strip без изменения логики
+hover, selection и membership actions.
+
+### Completed
+
+- Заменён прежний `linear-gradient(to right, black 70%, transparent 100%)` на
+  один always-on multi-stop alpha mask с фиксированной физической шириной fade:
+  `52px` от правого края (`32px` thumbnail + `4px` gap + половина thumbnail).
+- Маска применяется к самому thumbnail strip через `maskImage` и
+  `WebkitMaskImage`, без дополнительных overlay-слоёв и без hover-gated
+  поведения.
+- Link-editor `Connect`/`Disconnect` больше не участвует в flex layout строки:
+  справа сохраняется только обычный `h-8 w-8` count slot, а кнопка рисуется
+  absolute overlay поверх строки. Поэтому появление кнопки не двигает
+  thumbnail strip и его mask/fade.
+- Обновлены frontend/design contracts:
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md),
+  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [PLAN.md](PLAN.md).
+
+### Verification
+
+- Не запускалась в этой итерации.
+
+## 03.05.2026 09:17 -03 [primary] — Membership action rows
+
+### Goal
+
+Заменить checkbox UI в membership rows на понятный status/action contract:
+`Connected` как состояние, `Connect`/`Disconnect` как действия по hover.
+
+### Completed
+
+- В строках каналов при открытом Detail удалён checkbox UI.
+- В `CollectionPicker` для hover menu, context menu и Detail action row удалён
+  checkbox UI.
+- Для linked channel правый action slot всегда показывает `Connected`; на
+  hover/focus строки кнопка замещается на `Disconnect`.
+- Для unlinked channel по умолчанию остаётся count; на hover/focus появляется
+  `Connect`.
+- Клик по `Connect`/`Disconnect` останавливает propagation/default у `NavLink`
+  или parent card/menu surface и вызывает только membership toggle.
+- `CollectionPicker` оптимистически обновляет видимый membership state после
+  клика, пока backend mutation и snapshot reload догоняют состояние.
+- В полном sidebar mode убран внутренний горизонтальный padding строк: названия
+  каналов, правые счётчики и link-editor action buttons стоят заподлицо с
+  краями navigation column.
+- Правые счётчики sidebar переведены на `font-mono text-sm`, а освобождённая
+  ширина остаётся центральной strip-зоне preview-карточек.
+- Добавлена 1px optical text compensation для sidebar rows:
+  `translate-x-px` на label text и `-translate-x-px` на right count text без
+  изменения layout box.
+- У sidebar navigation rows убрано hover/active-route выделение:
+  больше нет `hover:bg-*`, `bg-sidebar-accent` и
+  `text-sidebar-accent-foreground` на `Everything` и channel rows.
+- Видимое состояние `Disconnect` в membership actions переведено на
+  destructive button semantics: `text-destructive` при прежней серой заливке и
+  прежнем outline-hover.
+- Обновлены frontend/design contracts:
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md),
+  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [PLAN.md](PLAN.md).
+
+### Verification
+
+- Не запускалась в этой итерации.
+
+## 02.05.2026 21:56 -03 [primary] — Sidebar thumbnail hover preview
+
+### Goal
+
+Реализовать hover preview именно для миниатюр в левой колонке, не для inline
+images внутри статьи и не для `RELATED NOTES`.
+
+### Completed
+
+- `PreviewCard` теперь сохраняет `slug` из `listChannelPreviews`, чтобы
+  sidebar thumbnail мог быть привязан к реальному block data.
+- `Sidebar` показывает outline на конкретной `size-8` миниатюре:
+  `outline-1 -outline-offset-1 outline-component-fill-hover`, без layout shift.
+- Preview card открывается после `160ms` hover-intent delay; уход курсора с
+  миниатюры отменяет pending open.
+- Hover preview загружает настоящий `IndexedBlock` через `getBlock(slug)` и
+  рендерит существующий `InteractiveCardPreview` с `Source`, `Connect`, `More`;
+  placeholder без `slug` не показывает fake preview.
+- `InteractiveCardPreview` фиксирует surface radius через `border-radius:
+  var(--radius-1)` (3px), чтобы базовый feed-card radius `--radius-card` не
+  мог сбросить popup corners в 0px.
+- Sidebar hover preview получил лёгкую серую surface-заливку `dark:bg-accent`
+  только для тёмной темы; в светлой теме остаётся `bg-background` + shadow.
+- Click по миниатюре открывает Detail именно этого block slug, а не строку
+  канала.
+- Popup позиционируется от DOM-геометрии конкретной миниатюры: вниз при
+  наличии места, иначе вверх, с viewport margin и hover bridge.
+- Обновлены frontend/design contracts:
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md),
+  [PLAN.md](PLAN.md).
+
+### Verification
+
+- Не запускалась по явному требованию не гонять проверки до согласованного
+  решения.
+
 ## 02.05.2026 21:25 -03 [primary] — Detail hover preview contract checkpoint
 
 ### Goal

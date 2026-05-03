@@ -164,6 +164,7 @@ export function InteractiveCardPreview({
   vaultPath,
   thumbsRootPath,
   width = 240,
+  className,
   tags,
   currentTag,
   onToggleTag,
@@ -178,6 +179,7 @@ export function InteractiveCardPreview({
   vaultPath: string;
   thumbsRootPath?: string;
   width?: number;
+  className?: string;
   tags: import("@/types").TagCount[];
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
@@ -193,8 +195,8 @@ export function InteractiveCardPreview({
       data-block-slug={block.slug}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
-      className={cn("cursor-pointer rounded-1 shadow-lg", !onClick && "cursor-default")}
-      style={{ width }}
+      className={cn("cursor-pointer rounded-1 shadow-lg", !onClick && "cursor-default", className)}
+      style={{ width, borderRadius: "var(--radius-1)" }}
       onClick={() => onClick?.(block)}
       onKeyDown={(event) => {
         if (!onClick) return;

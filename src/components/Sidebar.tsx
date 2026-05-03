@@ -1,9 +1,8 @@
-import { useState, useRef, useCallback, useEffect, memo } from "react";
+import { useState, useRef, useCallback, useEffect, memo, type CSSProperties } from "react";
 import { NavLink, useLocation } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   ContextMenu,
@@ -27,9 +26,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { TagCount, PreviewCard } from "@/types";
+import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
 import type { DetailTopMenuMode } from "@/lib/appPreferences";
+import { getBlock } from "@/lib/commands";
 import { cn } from "@/lib/utils";
+import { InteractiveCardPreview } from "./Card";
 
 /** Convert a collection ref to a compact display title. */
 function titleFromTag(tag: string): string {
@@ -38,10 +39,60 @@ function titleFromTag(tag: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+const SIDEBAR_PREVIEW_WIDTH = 240;
+const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
+const SIDEBAR_PREVIEW_GAP = 8;
+const SIDEBAR_PREVIEW_VIEWPORT_MARGIN = 16;
+const SIDEBAR_PREVIEW_OPEN_DELAY_MS = 160;
+const SIDEBAR_PREVIEW_CLOSE_DELAY_MS = 120;
+const SIDEBAR_PREVIEW_THUMB_SIZE = 32;
+const SIDEBAR_PREVIEW_THUMB_GAP = 4;
+const SIDEBAR_PREVIEW_MASK_FADE_WIDTH =
+  SIDEBAR_PREVIEW_THUMB_SIZE * 1.5 + SIDEBAR_PREVIEW_THUMB_GAP;
+const sidebarPreviewMaskStop = (alpha: number, progress: number) => {
+  const offset =
+    Math.round(SIDEBAR_PREVIEW_MASK_FADE_WIDTH * (1 - progress) * 100) / 100;
+  return `rgba(0, 0, 0, ${alpha}) calc(100% - ${offset}px)`;
+};
+const SIDEBAR_PREVIEW_MASK_STOPS = [
+  "rgba(0, 0, 0, 1) 0%",
+  sidebarPreviewMaskStop(1, 0),
+  sidebarPreviewMaskStop(0.82, 0.14),
+  sidebarPreviewMaskStop(0.64, 0.24),
+  sidebarPreviewMaskStop(0.49, 0.33),
+  sidebarPreviewMaskStop(0.36, 0.45),
+  sidebarPreviewMaskStop(0.25, 0.57),
+  sidebarPreviewMaskStop(0.16, 0.69),
+  sidebarPreviewMaskStop(0.09, 0.81),
+  sidebarPreviewMaskStop(0.04, 0.9),
+  sidebarPreviewMaskStop(0.01, 0.97),
+  "rgba(0, 0, 0, 0) 100%",
+].join(", ");
+const SIDEBAR_PREVIEW_MASK_IMAGE = `linear-gradient(to right, ${SIDEBAR_PREVIEW_MASK_STOPS})`;
+const SIDEBAR_PREVIEW_MASK_STYLE: CSSProperties = {
+  maskImage: SIDEBAR_PREVIEW_MASK_IMAGE,
+  WebkitMaskImage: SIDEBAR_PREVIEW_MASK_IMAGE,
+};
+
+type SidebarPreviewTarget = {
+  key: string;
+  slug: string;
+};
+
+type SidebarPreviewPosition = {
+  top: number;
+  left: number;
+  bridge: CSSProperties;
+};
+
 interface SidebarProps {
   width: number;
   collapsed: boolean;
   isResizing: boolean;
+  vaultPath?: string;
+  thumbsRootPath?: string;
+  tags?: TagCount[];
+  currentTag?: string;
   orderedTags: TagCount[];
   channelPreviews: Map<string, PreviewCard[]>;
   totalBlocks: number;
@@ -51,6 +102,11 @@ interface SidebarProps {
   onDeleteTag: (tag: string) => void;
   onRenameTag: (oldTag: string, newTag: string) => void;
   onCreateChannel: (tag: string) => void;
+  onOpenBlock?: (block: IndexedBlock) => void;
+  onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign?: (tag: string, blockSlug: string) => void;
+  onRequestRename?: (block: LightBlock) => void;
+  onRequestDelete?: (slug: string) => void;
   onNavClick?: () => void;
   onScrollToTop?: () => void;
   /** Optional slot for a header banner (e.g. iCloud conflict surface). */
@@ -66,6 +122,10 @@ export function Sidebar({
   width,
   collapsed,
   isResizing,
+  vaultPath,
+  thumbsRootPath,
+  tags,
+  currentTag,
   orderedTags,
   channelPreviews,
   totalBlocks,
@@ -75,6 +135,11 @@ export function Sidebar({
   onDeleteTag,
   onRenameTag,
   onCreateChannel,
+  onOpenBlock,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
   onNavClick,
   onScrollToTop,
   headerSlot,
@@ -87,6 +152,14 @@ export function Sidebar({
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [linkMode, setLinkMode] = useState<"all" | "linked">("all");
   const navRef = useRef<HTMLElement>(null);
+  const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const previewOpenTimerRef = useRef<number | null>(null);
+  const previewCloseTimerRef = useRef<number | null>(null);
+  const [hoveredPreview, setHoveredPreview] = useState<SidebarPreviewTarget | null>(null);
+  const [hoverPreviewBlock, setHoverPreviewBlock] = useState<IndexedBlock | null>(null);
+  const [hoverPreviewPosition, setHoverPreviewPosition] = useState<SidebarPreviewPosition | null>(null);
+  const [hoverPreviewPinned, setHoverPreviewPinned] = useState(false);
   const location = useLocation();
 
   // Auto-scroll sidebar to the active channel (e.g. after Opt+Cmd+Arrow)
@@ -116,6 +189,169 @@ export function Sidebar({
     : orderedTags;
   const linkEditorNavPadding = detailTopMenuMode === "classic" ? "pt-12" : "pt-20";
   const [linkChromeEntered, setLinkChromeEntered] = useState(false);
+
+  const setPreviewTriggerRef = useCallback((key: string, node: HTMLElement | null) => {
+    if (node) {
+      previewTriggerRefs.current.set(key, node);
+    } else {
+      previewTriggerRefs.current.delete(key);
+    }
+  }, []);
+
+  const clearPreviewOpenTimer = useCallback(() => {
+    if (previewOpenTimerRef.current !== null) {
+      window.clearTimeout(previewOpenTimerRef.current);
+      previewOpenTimerRef.current = null;
+    }
+  }, []);
+
+  const clearPreviewCloseTimer = useCallback(() => {
+    if (previewCloseTimerRef.current !== null) {
+      window.clearTimeout(previewCloseTimerRef.current);
+      previewCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const closePreview = useCallback(() => {
+    clearPreviewOpenTimer();
+    clearPreviewCloseTimer();
+    setHoverPreviewPinned(false);
+    setHoveredPreview(null);
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer]);
+
+  const cancelPreviewClose = useCallback(() => {
+    clearPreviewCloseTimer();
+  }, [clearPreviewCloseTimer]);
+
+  const requestPreviewClose = useCallback(() => {
+    clearPreviewOpenTimer();
+    if (hoverPreviewPinned) return;
+    clearPreviewCloseTimer();
+    previewCloseTimerRef.current = window.setTimeout(() => {
+      previewCloseTimerRef.current = null;
+      setHoveredPreview(null);
+    }, SIDEBAR_PREVIEW_CLOSE_DELAY_MS);
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, hoverPreviewPinned]);
+
+  const noopToggleTag = useCallback((slug: string, tag: string, hasTag: boolean) => {
+    void slug;
+    void tag;
+    void hasTag;
+  }, []);
+  const noopCreateAndAssign = useCallback((tag: string, blockSlug: string) => {
+    void tag;
+    void blockSlug;
+  }, []);
+  const noopRequestRename = useCallback((block: LightBlock) => {
+    void block;
+  }, []);
+  const noopRequestDelete = useCallback((slug: string) => {
+    void slug;
+  }, []);
+
+  const schedulePreviewOpen = useCallback((target: SidebarPreviewTarget) => {
+    clearPreviewOpenTimer();
+    clearPreviewCloseTimer();
+    setHoveredPreview(null);
+    previewOpenTimerRef.current = window.setTimeout(() => {
+      previewOpenTimerRef.current = null;
+      if (!previewTriggerRefs.current.has(target.key)) return;
+      setHoveredPreview(target);
+    }, SIDEBAR_PREVIEW_OPEN_DELAY_MS);
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer]);
+
+  const openPreviewBlock = useCallback((target: SidebarPreviewTarget) => {
+    if (!onOpenBlock) return;
+    closePreview();
+    void getBlock(target.slug)
+      .then((block) => {
+        if (block) {
+          onOpenBlock(block);
+        }
+      })
+      .catch((error) => {
+        void error;
+      });
+  }, [closePreview, onOpenBlock]);
+
+  useEffect(() => () => {
+    clearPreviewOpenTimer();
+    clearPreviewCloseTimer();
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer]);
+
+  useEffect(() => {
+    if (!hoveredPreview) {
+      setHoverPreviewBlock(null);
+      setHoverPreviewPosition(null);
+      return;
+    }
+    let cancelled = false;
+    setHoverPreviewBlock(null);
+
+    const trigger = previewTriggerRefs.current.get(hoveredPreview.key);
+    if (trigger) {
+      setHoverPreviewPosition(
+        computeSidebarPreviewPosition(
+          trigger.getBoundingClientRect(),
+          previewRef.current?.getBoundingClientRect().height ?? SIDEBAR_PREVIEW_FALLBACK_HEIGHT,
+        ),
+      );
+    } else {
+      setHoverPreviewPosition(null);
+    }
+
+    void getBlock(hoveredPreview.slug)
+      .then((block) => {
+        if (cancelled) return;
+        setHoverPreviewBlock(block);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setHoverPreviewBlock(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hoveredPreview]);
+
+  useEffect(() => {
+    if (!hoveredPreview || !hoverPreviewBlock || !hoverPreviewPosition || !previewRef.current) {
+      return;
+    }
+    const trigger = previewTriggerRefs.current.get(hoveredPreview.key);
+    if (!trigger) return;
+
+    const nextPosition = computeSidebarPreviewPosition(
+      trigger.getBoundingClientRect(),
+      previewRef.current.getBoundingClientRect().height,
+    );
+    if (
+      Math.abs(nextPosition.top - hoverPreviewPosition.top) > 1 ||
+      Math.abs(nextPosition.left - hoverPreviewPosition.left) > 1
+    ) {
+      setHoverPreviewPosition(nextPosition);
+    }
+  }, [hoveredPreview, hoverPreviewBlock, hoverPreviewPosition]);
+
+  useEffect(() => {
+    if (!hoverPreviewPinned) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      const preview = previewRef.current;
+      const trigger = hoveredPreview
+        ? previewTriggerRefs.current.get(hoveredPreview.key)
+        : null;
+      if (preview?.contains(target) || trigger?.contains(target)) {
+        return;
+      }
+      closePreview();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [closePreview, hoverPreviewPinned, hoveredPreview]);
 
   useEffect(() => {
     if (!isLinkingBlock) {
@@ -170,6 +406,11 @@ export function Sidebar({
           label="Everything"
           count={totalBlocks}
           cards={channelPreviews.get("__all__") ?? []}
+          previewKeyPrefix="all"
+          onPreviewEnter={schedulePreviewOpen}
+          onPreviewLeave={requestPreviewClose}
+          onPreviewClick={openPreviewBlock}
+          onPreviewTriggerRef={setPreviewTriggerRef}
           compact={compact}
           end
           onClick={onNavClick}
@@ -190,12 +431,16 @@ export function Sidebar({
                 count={tc.count}
                 tag={tc.tag}
                 cards={channelPreviews.get(tc.tag) ?? []}
+                previewKeyPrefix={`tag:${tc.tag}`}
+                onPreviewEnter={schedulePreviewOpen}
+                onPreviewLeave={requestPreviewClose}
+                onPreviewClick={openPreviewBlock}
+                onPreviewTriggerRef={setPreviewTriggerRef}
                 compact={compact}
                 isDropDragging={isDropDragging}
                 isEditing={!isLinkingBlock && editingTag === tc.tag}
                 linkEditor={isLinkingBlock ? {
                   checked,
-                  entered: linkChromeEntered,
                   onToggle: () => onToggleLinkedTag(linkedBlockSlug, tc.tag, checked),
                 } : undefined}
                 onDoubleClick={() => setEditingTag(tc.tag)}
@@ -222,6 +467,54 @@ export function Sidebar({
         )}
 
       </nav>
+
+      {vaultPath && hoverPreviewPosition && hoverPreviewBlock && (
+        <>
+          <div
+            className="fixed z-40"
+            style={hoverPreviewPosition.bridge}
+            onMouseEnter={cancelPreviewClose}
+            onMouseLeave={requestPreviewClose}
+            data-sidebar-thumbnail-hover-bridge
+          />
+          <div
+            ref={previewRef}
+            className="fixed z-50"
+            style={{
+              top: hoverPreviewPosition.top,
+              left: hoverPreviewPosition.left,
+              width: SIDEBAR_PREVIEW_WIDTH,
+            }}
+            onMouseEnter={cancelPreviewClose}
+            onMouseLeave={requestPreviewClose}
+            data-sidebar-thumbnail-hover-preview
+          >
+            <InteractiveCardPreview
+              block={hoverPreviewBlock}
+              vaultPath={vaultPath}
+              thumbsRootPath={thumbsRootPath}
+              width={SIDEBAR_PREVIEW_WIDTH}
+              className="dark:bg-accent"
+              tags={tags ?? orderedTags}
+              currentTag={currentTag}
+              onToggleTag={onToggleTag ?? noopToggleTag}
+              onCreateAndAssign={onCreateAndAssign ?? noopCreateAndAssign}
+              onRequestRename={onRequestRename ?? noopRequestRename}
+              onRequestDelete={onRequestDelete ?? noopRequestDelete}
+              onInteractiveOpenChange={(open) => {
+                if (open) {
+                  setHoverPreviewPinned(true);
+                }
+              }}
+              onInteractionStart={() => setHoverPreviewPinned(true)}
+              onClick={(previewBlock) => openPreviewBlock({
+                key: hoveredPreview?.key ?? previewBlock.slug,
+                slug: previewBlock.slug,
+              })}
+            />
+          </div>
+        </>
+      )}
 
       {isLinkingBlock && detailTopMenuMode !== "classic" && (
         <SidebarLinkModeSwitch
@@ -260,6 +553,42 @@ function scrollActiveSidebarItemIntoView(nav: HTMLElement, active: HTMLElement) 
   } else {
     nav.scrollTop = Math.max(0, nextTop);
   }
+}
+
+function computeSidebarPreviewPosition(
+  triggerRect: DOMRect,
+  previewHeight: number,
+): SidebarPreviewPosition {
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const left = Math.max(
+    SIDEBAR_PREVIEW_VIEWPORT_MARGIN,
+    Math.min(
+      triggerRect.left,
+      viewportWidth - SIDEBAR_PREVIEW_VIEWPORT_MARGIN - SIDEBAR_PREVIEW_WIDTH,
+    ),
+  );
+  const canOpenDown =
+    triggerRect.bottom + SIDEBAR_PREVIEW_GAP + previewHeight <=
+    viewportHeight - SIDEBAR_PREVIEW_VIEWPORT_MARGIN;
+  const top = canOpenDown
+    ? triggerRect.bottom + SIDEBAR_PREVIEW_GAP
+    : Math.max(
+        SIDEBAR_PREVIEW_VIEWPORT_MARGIN,
+        triggerRect.top - SIDEBAR_PREVIEW_GAP - previewHeight,
+      );
+  const bridgeTop = canOpenDown ? triggerRect.bottom : top + previewHeight;
+  const bridgeBottom = canOpenDown ? top : triggerRect.top;
+  const bridgeLeft = Math.min(left, triggerRect.left);
+  const bridgeRight = Math.max(left + SIDEBAR_PREVIEW_WIDTH, triggerRect.right);
+  const bridge: CSSProperties = {
+    top: bridgeTop,
+    left: bridgeLeft,
+    width: bridgeRight - bridgeLeft,
+    height: Math.max(0, bridgeBottom - bridgeTop),
+  };
+
+  return { top, left, bridge };
 }
 
 const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
@@ -352,6 +681,11 @@ const NavItem = memo(function NavItem({
   label,
   count,
   cards = [],
+  previewKeyPrefix,
+  onPreviewEnter,
+  onPreviewLeave,
+  onPreviewClick,
+  onPreviewTriggerRef,
   compact,
   end,
   onClick,
@@ -361,6 +695,11 @@ const NavItem = memo(function NavItem({
   label: string;
   count: number;
   cards?: PreviewCard[];
+  previewKeyPrefix: string;
+  onPreviewEnter: (target: SidebarPreviewTarget) => void;
+  onPreviewLeave: () => void;
+  onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
   compact?: boolean;
   end?: boolean;
   onClick?: () => void;
@@ -381,39 +720,35 @@ const NavItem = memo(function NavItem({
           onClick?.();
         }
       }}
-      className={({ isActive }) =>
+      className={() =>
         compact
           ? cn(
               "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 text-base",
-              isActive
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "text-muted-foreground hover:bg-accent",
+              "text-muted-foreground",
             )
           : cn(
-              "flex items-center gap-2 border-b border-sidebar-border px-3 py-1 font-sans text-base",
-              isActive
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "text-muted-foreground hover:bg-accent",
+              "flex items-center gap-2 border-b border-sidebar-border py-1 font-sans text-base",
+              "text-muted-foreground",
             )
       }
     >
-      <span className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 truncate"}>{label}</span>
+      <span className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 translate-x-px truncate"}>{label}</span>
       {!compact && (
-        <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
-          {cards.map((card, i) => !card.hasThumb ? (
-            // Placeholder — thumb not yet on disk (just-saved block
-            // before Phase 1/2 ran). Never empty space.
-            <div key={i} className="size-8 shrink-0 bg-accent" />
-          ) : card.text ? (
-            <div key={i} className="size-8 shrink-0 bg-accent">
-              <img src={card.url} className="size-8 object-cover dark:invert" />
-            </div>
-          ) : (
-            <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" />
-          ))}
-        </div>
+        <SidebarPreviewStrip
+          cards={cards}
+          previewKeyPrefix={previewKeyPrefix}
+          onPreviewEnter={onPreviewEnter}
+          onPreviewLeave={onPreviewLeave}
+          onPreviewClick={onPreviewClick}
+          onPreviewTriggerRef={onPreviewTriggerRef}
+        />
       )}
-      <span className="w-8 shrink-0 text-right text-sm text-muted-foreground">{count || ""}</span>
+      <span className={cn(
+        "w-8 shrink-0 text-right font-mono text-sm text-muted-foreground",
+        !compact && "-translate-x-px",
+      )}>
+        {count || ""}
+      </span>
     </NavLink>
   );
 });
@@ -424,6 +759,11 @@ const TagNavItem = memo(function TagNavItem({
   count,
   tag,
   cards,
+  previewKeyPrefix,
+  onPreviewEnter,
+  onPreviewLeave,
+  onPreviewClick,
+  onPreviewTriggerRef,
   compact,
   isDropDragging,
   isEditing,
@@ -440,12 +780,16 @@ const TagNavItem = memo(function TagNavItem({
   count: number;
   tag: string;
   cards: PreviewCard[];
+  previewKeyPrefix: string;
+  onPreviewEnter: (target: SidebarPreviewTarget) => void;
+  onPreviewLeave: () => void;
+  onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
   compact?: boolean;
   isDropDragging: boolean;
   isEditing: boolean;
   linkEditor?: {
     checked: boolean;
-    entered: boolean;
     onToggle: () => void;
   };
   onDoubleClick: () => void;
@@ -545,85 +889,51 @@ const TagNavItem = memo(function TagNavItem({
             e.preventDefault();
             onDoubleClick();
           }}
-          className={({ isActive }) =>
+          className={() =>
             compact
               ? cn(
                   "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 text-base",
-                  isActive
-                    ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  "text-muted-foreground",
                 )
               : cn(
-                  "flex items-center gap-2 border-b border-sidebar-border px-3 py-1 font-sans text-base",
-                  isActive
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent",
+                  "flex items-center gap-2 border-b border-sidebar-border py-1 font-sans text-base",
+                  "text-muted-foreground",
                 )
           }
         >
-          <span className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 truncate"}>{label}</span>
+          <span className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 translate-x-px truncate"}>{label}</span>
           {!compact && (
-            <>
-              <div className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden" style={{ maskImage: "linear-gradient(to right, black 70%, transparent 100%)" }}>
-                {cards.map((card, i) => !card.hasThumb ? (
-                  <div key={i} className="size-8 shrink-0 bg-accent" />
-                ) : card.text ? (
-                  <div key={i} className="size-8 shrink-0 bg-accent">
-                    <img src={card.url} className="size-8 object-cover dark:invert" loading="lazy" />
-                  </div>
-                ) : (
-                  <img key={i} src={card.url} className="size-8 shrink-0 rounded-none object-cover" loading="lazy" />
-                ))}
-              </div>
-            </>
+            <SidebarPreviewStrip
+              cards={cards}
+              previewKeyPrefix={previewKeyPrefix}
+              onPreviewEnter={onPreviewEnter}
+              onPreviewLeave={onPreviewLeave}
+              onPreviewClick={onPreviewClick}
+              onPreviewTriggerRef={onPreviewTriggerRef}
+            />
           )}
           {isLinkEditor ? (
             <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
               <span
                 className={cn(
                   "absolute inset-y-0 right-0 flex items-center justify-end text-sm text-muted-foreground transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-                  linkEditor.checked && linkEditor.entered
+                  "font-mono",
+                  !compact && "-translate-x-px",
+                  linkEditor.checked
                     ? "opacity-0"
                     : "opacity-100 group-hover:opacity-0 group-focus-within:opacity-0",
                 )}
               >
                 {count || ""}
               </span>
-              <div
-                data-sidebar-link-checkbox-hit-area
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  linkEditor.onToggle();
-                }}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                className={cn(
-                  "absolute inset-0 flex cursor-pointer items-center justify-end transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-                  linkEditor.checked
-                    ? (linkEditor.entered
-                      ? "opacity-100 pointer-events-auto"
-                      : "opacity-0 pointer-events-none")
-                    : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
-                )}
-              >
-                <Checkbox
-                  checked={linkEditor.checked}
-                  onCheckedChange={linkEditor.onToggle}
-                  onClick={(event) => event.stopPropagation()}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onKeyDown={(event) => event.stopPropagation()}
-                  aria-label={`${linkEditor.checked ? "Remove from" : "Add to"} ${label}`}
-                />
-              </div>
             </div>
           ) : (
             <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
               <span
                 className={cn(
                   "absolute inset-y-0 right-0 flex items-center justify-end text-sm text-muted-foreground group-hover:opacity-0",
+                  "font-mono",
+                  !compact && "-translate-x-px",
                   menuOpen && "opacity-0",
                 )}
               >
@@ -659,6 +969,40 @@ const TagNavItem = memo(function TagNavItem({
             </div>
           )}
         </NavLink>
+        {linkEditor && (
+          <button
+            type="button"
+            data-sidebar-link-action
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              linkEditor.onToggle();
+            }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+            }}
+            className={cn(
+              "absolute right-0 top-1/2 z-10 inline-flex h-6 w-[10ch] -translate-y-1/2 cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+              linkEditor.checked
+                ? "opacity-100"
+                : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+            )}
+            aria-label={`${linkEditor.checked ? "Disconnect" : "Connect"} ${label}`}
+          >
+            {linkEditor.checked ? (
+              <>
+                <span className="group-hover:hidden group-focus-within:hidden">Connected</span>
+                <span className="hidden text-destructive group-hover:inline group-focus-within:inline">Disconnect</span>
+              </>
+            ) : (
+              "Connect"
+            )}
+          </button>
+        )}
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
@@ -692,6 +1036,82 @@ const TagNavItem = memo(function TagNavItem({
     </>
   );
 });
+
+function SidebarPreviewStrip({
+  cards,
+  previewKeyPrefix,
+  onPreviewEnter,
+  onPreviewLeave,
+  onPreviewClick,
+  onPreviewTriggerRef,
+}: {
+  cards: PreviewCard[];
+  previewKeyPrefix: string;
+  onPreviewEnter: (target: SidebarPreviewTarget) => void;
+  onPreviewLeave: () => void;
+  onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
+}) {
+  return (
+    <div
+      className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden"
+      style={SIDEBAR_PREVIEW_MASK_STYLE}
+    >
+      {cards.map((card, index) => {
+        const previewKey = `${previewKeyPrefix}:${card.slug ?? index}:${index}`;
+        const canPreview = card.hasThumb && !!card.slug;
+        return (
+          <div
+            key={previewKey}
+            ref={(node) => {
+              if (canPreview) {
+                onPreviewTriggerRef(previewKey, node);
+              }
+            }}
+            className={cn(
+              "size-8 shrink-0 overflow-hidden bg-accent",
+              canPreview &&
+                "cursor-pointer outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
+            )}
+            onMouseEnter={() => {
+              if (card.slug && canPreview) {
+                onPreviewEnter({ key: previewKey, slug: card.slug });
+              }
+            }}
+            onMouseLeave={() => {
+              if (canPreview) {
+                onPreviewLeave();
+              }
+            }}
+            onClick={(event) => {
+              if (!card.slug || !canPreview) return;
+              event.preventDefault();
+              event.stopPropagation();
+              onPreviewClick({ key: previewKey, slug: card.slug });
+            }}
+            onPointerDown={(event) => {
+              if (canPreview) {
+                event.stopPropagation();
+              }
+            }}
+            data-sidebar-preview-thumbnail={canPreview ? "trigger" : "placeholder"}
+          >
+            {card.hasThumb && (
+              <img
+                src={card.url}
+                className={cn(
+                  "size-8 object-cover",
+                  card.text ? "dark:invert" : "rounded-none",
+                )}
+                loading="lazy"
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function InlineInput({
   placeholder,

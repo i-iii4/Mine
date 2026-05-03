@@ -25,9 +25,9 @@ const defaultProps = {
   onCreateChannel: vi.fn(),
 };
 
-function sidebarTree(props = defaultProps) {
+function sidebarTree(props = defaultProps, initialEntries = ["/"]) {
   return (
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <TooltipProvider>
         <DndContext>
           <Sidebar {...props} />
@@ -37,8 +37,8 @@ function sidebarTree(props = defaultProps) {
   );
 }
 
-function renderSidebar(props = defaultProps) {
-  return render(sidebarTree(props));
+function renderSidebar(props = defaultProps, initialEntries = ["/"]) {
+  return render(sidebarTree(props, initialEntries));
 }
 
 describe("Sidebar", () => {
@@ -65,6 +65,38 @@ describe("Sidebar", () => {
     // Alpha has count 10, Beta has count 5
     expect(screen.getByText("10")).toBeInTheDocument();
     expect(screen.getByText("5")).toBeInTheDocument();
+  });
+
+  it("aligns full sidebar rows to the navigation edges with monospace counts", () => {
+    renderSidebar({ ...defaultProps, width: 600 });
+
+    const everythingLink = screen.getByRole("link", { name: /Everything/ });
+    expect(everythingLink).not.toHaveClass("px-3");
+    expect(screen.getByText("Everything")).toHaveClass("translate-x-px");
+    expect(screen.getByText("17")).toHaveClass("font-mono");
+    expect(screen.getByText("17")).toHaveClass("-translate-x-px");
+    expect(screen.getByText("10")).toHaveClass("font-mono");
+    expect(screen.getByText("10")).toHaveClass("-translate-x-px");
+  });
+
+  it("does not highlight sidebar nav rows on hover or active route", () => {
+    renderSidebar({ ...defaultProps, width: 600 }, ["/channel/alpha"]);
+
+    const everythingLink = screen.getByRole("link", { name: /Everything/ });
+    expect(everythingLink).not.toHaveClass("bg-sidebar-accent");
+    expect(everythingLink).not.toHaveClass("text-sidebar-accent-foreground");
+    expect(everythingLink).not.toHaveClass("hover:bg-accent");
+    expect(everythingLink).not.toHaveClass("hover:bg-sidebar-accent");
+
+    const alphaLink = screen.getByRole("link", { name: /Alpha/ });
+    expect(alphaLink).not.toHaveClass("bg-sidebar-accent");
+    expect(alphaLink).not.toHaveClass("text-sidebar-accent-foreground");
+    expect(alphaLink).not.toHaveClass("hover:bg-accent");
+    expect(alphaLink).not.toHaveClass("hover:bg-sidebar-accent");
+
+    const betaLink = screen.getByRole("link", { name: /Beta/ });
+    expect(betaLink).not.toHaveClass("hover:bg-accent");
+    expect(betaLink).not.toHaveClass("hover:bg-sidebar-accent");
   });
 
   it("keeps sidebar row action targets at row-control size", () => {
@@ -127,20 +159,26 @@ describe("Sidebar", () => {
     expect(screen.queryByRole("checkbox", { name: /Everything/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connected" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    const actions = screen.getAllByRole("button", { name: /Connect|Disconnect/ });
+    const alphaAction = actions.find((button) => button.getAttribute("aria-label") === "Disconnect Alpha")!;
+    const betaAction = actions.find((button) => button.getAttribute("aria-label") === "Connect Beta")!;
+
     await waitFor(() => {
       expect(screen.getByText("10")).toHaveClass("opacity-0");
-      expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement).toHaveClass("opacity-100");
+      expect(alphaAction).toHaveClass("opacity-100");
     });
+    expect(alphaAction).toHaveTextContent("Connected");
+    expect(alphaAction).toHaveClass("w-[10ch]");
+    expect(alphaAction).toHaveClass("absolute");
+    expect(alphaAction).toHaveClass("right-0");
+    expect(alphaAction.closest("a")).toBeNull();
     expect(screen.getByText("5")).not.toHaveClass("opacity-0");
-    expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement).toHaveClass("pointer-events-auto");
-    expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement?.parentElement).toHaveClass("h-8");
-    expect(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement?.parentElement).toHaveClass("w-8");
-    expect(screen.getByRole("checkbox", { name: /Add to Beta/ })).not.toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /Add to Beta/ }).parentElement).toHaveClass("opacity-0");
-    expect(screen.getByRole("checkbox", { name: /Add to Beta/ }).parentElement).toHaveClass("pointer-events-none");
+    expect(betaAction).toHaveClass("opacity-0");
+    expect(betaAction).toHaveClass("pointer-events-none");
+    expect(alphaAction.querySelector(".text-destructive")).toHaveTextContent("Disconnect");
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /Remove from Alpha/ }).parentElement!);
+    fireEvent.click(alphaAction);
     expect(onToggleLinkedTag).toHaveBeenCalledWith("open-block", "alpha", true);
     expect(onNavClick).not.toHaveBeenCalled();
     onToggleLinkedTag.mockClear();
@@ -149,7 +187,7 @@ describe("Sidebar", () => {
     expect(onNavClick).toHaveBeenCalledOnce();
     expect(onToggleLinkedTag).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /Add to Beta/ }));
+    fireEvent.click(betaAction);
     expect(onToggleLinkedTag).toHaveBeenCalledWith("open-block", "beta", false);
   });
 

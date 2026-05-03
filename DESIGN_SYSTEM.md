@@ -332,11 +332,41 @@ Content: `rounded-1 border bg-popover p-1`, тень — единая для в�
 - Connect: `DropdownMenu` со списком каналов (`CollectionPicker`)
 - More: `DropdownMenu` — Connect (подменю), Source, Remove from collection, Delete
 
+CollectionPicker membership rows:
+- Checkbox не используется.
+- Название канала слева остаётся обычным UI-шрифтом.
+- Правый slot имеет `w-[10ch]`; connected row всегда показывает кнопку
+  `Connected`, а на hover/focus строки текст замещается на `Disconnect`.
+- Unconnected row показывает count по умолчанию; на hover/focus count скрывается
+  и появляется `Connect`.
+- Action button: `h-6 w-[10ch] rounded-1 bg-component-fill px-[1ch]
+  font-semibold`, hover/focus outline `outline-1 -outline-offset-1
+  outline-component-fill-hover`.
+- Видимое состояние `Disconnect` использует destructive button semantics:
+  `text-destructive` при той же серой заливке и той же hover/focus outline.
+- Клик по action button не должен всплывать в parent card/menu surface.
+
 ### Hover Preview Surfaces
 
 Всплывающие preview-карточки используют ту же визуальную модель, что feed card
 preview при drag: `rounded-1` (3px), `border border-border`, `bg-background`,
 утилитарная `shadow-lg`. Ordinary feed cards остаются на `--radius-card`.
+
+Sidebar thumbnail preview:
+- Trigger — конкретная `size-8` миниатюра в левой колонке, не вся строка
+  канала.
+- Hover outline: `outline-1 -outline-offset-1 outline-component-fill-hover`.
+  Outline не должен сдвигать layout и не должен менять размеры strip.
+- Outline появляется мгновенно; сама preview card открывается после
+  hover-intent delay `160ms`, чтобы случайный проход курсора не создавал шум.
+- Preview строится только из реального block data (`slug -> IndexedBlock`), а
+  не из thumbnail URL.
+- Preview surface использует `InteractiveCardPreview`: `rounded-1`, стандартный
+  hover overlay и actions `Source`, `Connect`, `More`.
+- Sidebar preview surface получает `dark:bg-accent`: лёгкая серая заливка нужна
+  только в тёмной теме; в светлой теме остаётся `bg-background` + shadow.
+- Click по миниатюре открывает конкретную карточку, не строку канала.
+- Preview раскрывается вниз от миниатюры, если хватает места; иначе вверх.
 
 Related notes preview:
 - Trigger row остаётся compact button-shell с `rounded-1 border border-border bg-component-fill`.
@@ -463,13 +493,29 @@ SubContent (подменю) — та же тень.
 | Центральная | Превью-карточки | `flex-1 min-w-0`, `h-8 overflow-hidden` |
 | Правая | Счётчик + действия | `w-8 text-right` |
 
-Шрифт: `font-mono text-base` (14px). Строки разделены `border-b border-sidebar-border`. Паддинги навигации: `px-8 pt-20`.
+Шрифт названий: `font-sans text-base` (14px). Счётчики справа:
+`font-mono text-sm text-right`. Строки разделены
+`border-b border-sidebar-border`. Паддинги навигации: `px-8 pt-20`;
+строки в полном режиме не имеют собственного горизонтального padding, чтобы
+названия каналов, правые счётчики и link-editor action buttons стояли
+заподлицо с краями navigation column. Это отдаёт свободную ширину центральной
+полосе preview-карточек. Для визуальной компенсации glyph side bearings label
+text получает `translate-x-px`, а правый count text получает `-translate-x-px`;
+это не меняет layout box и не влияет на preview-strip ширину.
 Top inset должен жить на scroll-container (`data-sidebar-scroll`), а не в
 отдельной фиксированной header-плашке: если header slot (например iCloud
 conflict banner) ничего не рендерит, он не должен оставлять пустой блок над
 списком.
 
-Превью-карточки: `size-8 object-cover`, `gap-1` (4px). Градиентная маска (`mask-image: linear-gradient(to right, black 70%, transparent 100%)`). Текстовые thumbnail (PNG с прозрачным фоном) обёрнуты в `bg-accent` + `dark:invert`. Видео-блоки показывают первый кадр (H.264 декодирование через OpenH264).
+Превью-карточки: `size-8 object-cover`, `gap-1` (4px). Strip использует
+одну постоянную CSS mask, без дополнительных overlay-слоёв. Fade имеет
+физическую ширину `52px` от правого края (`32px` thumbnail + `4px` gap +
+половина thumbnail), а не процент от ширины strip. Внутри этих `52px`
+используется multi-stop alpha-кривая, чтобы справа не было визуального
+«разгона» градиента и чтобы маска не цепляла больше полутора карточек при
+широком sidebar. Текстовые thumbnail (PNG с прозрачным фоном) обёрнуты в
+`bg-accent` + `dark:invert`. Видео-блоки показывают первый кадр (H.264
+декодирование через OpenH264).
 
 #### Compact-режим (width < 320px)
 
@@ -480,15 +526,23 @@ conflict banner) ничего не рендерит, он не должен ос
 | Левая | Название канала | `flex-1 truncate` |
 | Правая | Счётчик + действия | `w-8 text-right` |
 
-Шрифт: `text-base` (14px), без `font-mono`. Стиль shadcn SidebarMenuButton: `rounded-1 p-2`. Без разделительных линий. Hover: `bg-accent`. Active: `bg-sidebar-accent`.
+Шрифт названий: `text-base` (14px), без `font-mono`. Правый счётчик:
+`font-mono text-sm text-right`. Стиль shadcn SidebarMenuButton: `rounded-1
+p-2`. Без разделительных линий. Channel rows не получают фонового или
+текстового выделения на hover/active.
 
 #### Общее
 
-Ширина по умолчанию: 300px. Диапазон ресайза: 220–600px. Порог сворачивания: 100px. Паддинг строки: `py-1` (4px).
+Ширина по умолчанию: 300px. Диапазон ресайза: 220–600px. Порог сворачивания: 100px. Паддинг строки в полном режиме: `py-1` (4px), без `px-*`.
 
 Действия: на hover счётчик скрывается, появляется иконка многоточия (DropdownMenu, `modal={false}`, `side="right"`). Dropdown содержит Rename и Delete.
 Hit area многоточия — `size-8` (32×32), даже если визуальная иконка `size-3`.
-Правая колонка строки (`w-8`) является минимальной кликабельной зоной row-action.
+Правая колонка строки (`w-8`) является минимальной кликабельной зоной row-action;
+обычный счётчик в этой колонке всегда `font-mono`.
+Sidebar navigation rows, включая `Everything` и каналы, не используют
+`hover:bg-*`, `bg-sidebar-accent` или `text-sidebar-accent-foreground`: выбор
+маршрута отражается состоянием приложения, но не визуальной плашкой строки.
+Hover остаётся только для row actions и thumbnail outline.
 
 #### Link-editor режим (Detail открыт)
 
@@ -521,22 +575,26 @@ Motion contract: верхний chrome в Detail и sidebar link-editor surface 
 возврат к grid: страница закрывается мгновенно, а exit дочёркивается отдельным
 неблокирующим chrome overlay.
 
-Checkbox behaviour: только прямой click/key на checkbox меняет membership.
-Клик по строке канала навигирует как обычный sidebar item. Правый слот канала
-по умолчанию показывает count. Для уже связанного канала checkbox виден всегда
-и count получает `opacity-0`. Для несвязанного канала count скрывается на
-hover/focus, а checkbox проявляется через `group-hover/group-focus-within`.
-Визуальный checkbox остаётся `size-4` (16×16), но его row hit area — `h-8 w-8`
-(32×32). Клик по этой hit area toggles membership и не должен вызывать
-навигацию строки. Count и checkbox обязаны жить в одном и том же `h-8 w-8`
-slot с одинаковым vertical centering; нельзя иметь отдельную baseline
-геометрию для count-mode и checkbox-mode, иначе count визуально прыгает на 1px
-при появлении активного checkbox.
+Membership action behaviour: checkbox в link-editor не используется. Клик по
+строке канала навигирует как обычный sidebar item; только прямой click/key по
+правой action button меняет membership. Count остаётся в обычном правом
+layout slot `h-8 w-8`; action button рисуется абсолютным overlay поверх строки
+и не участвует во flex-раскладке preview strip. Для уже связанного канала
+overlay всегда показывает серую кнопку `Connected`; на hover/focus строки текст
+замещается на `Disconnect`. Для несвязанного канала slot по умолчанию
+показывает count; на hover/focus count скрывается и появляется `Connect`.
+Action button: `absolute right-0 top-1/2 -translate-y-1/2 z-10 h-6 w-[10ch]
+rounded-1 bg-component-fill px-[1ch] font-semibold`, hover/focus outline
+`outline-1 -outline-offset-1 outline-component-fill-hover`.
+Видимый текст `Disconnect` использует `text-destructive`; `Connected` и
+`Connect` остаются `text-foreground`.
+Slot сохраняет `h-8` vertical centering. Count не должен прыгать при появлении
+action button.
 
 Stable preview invariant: обычный sidebar и link-editor используют один и тот
 же row component и один thumbnail strip. При открытии карточки нельзя
 размонтировать строки каналов или `<img>` thumbnail'ы; меняется только правый
-row-action slot (`count/menu` ↔ `checkbox`). Это убирает blink превью при
+row-action slot (`count/menu` ↔ `Connected/Connect/Disconnect`). Это убирает blink превью при
 переключении в Detail.
 
 ### Сетка

@@ -75,6 +75,7 @@ export function useChannelPreviewsEvents({ thumbsRootPath, limit }: Options): {
             ? `?v=${version}`
             : item.mtime > 0 ? `?m=${item.mtime}` : "";
           return {
+            slug: item.slug,
             url: `${baseUrl}${query}`,
             text: item.text,
             hasThumb: item.has_thumb,

@@ -1664,6 +1664,10 @@ export function AppWithVault({
         width={sidebarWidth}
         collapsed={sidebarCollapsed}
         isResizing={sidebarResizing}
+        vaultPath={vaultPath}
+        thumbsRootPath={thumbsRootPath ?? undefined}
+        tags={tags}
+        currentTag={currentTag}
         orderedTags={orderedTags}
         channelPreviews={channelPreviews}
         totalBlocks={totalBlocks}
@@ -1677,6 +1681,11 @@ export function AppWithVault({
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}
         onCreateChannel={handleCreateChannel}
+        onOpenBlock={openDetailBlock}
+        onToggleTag={handleToggleTag}
+        onCreateAndAssign={handleCreateTagFromMenu}
+        onRequestRename={setRenamingBlock}
+        onRequestDelete={requestDeleteBlock}
         onNavClick={handleDetailClose}
         onScrollToTop={handleScrollToTop}
         headerSlot={<VaultConflictsBanner vaultReady={vaultReady} />}

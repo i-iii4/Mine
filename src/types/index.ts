@@ -212,6 +212,7 @@ export interface PreviewItem {
 }
 
 export interface PreviewCard {
+  slug?: string;
   url: string;
   text: boolean;
   hasThumb: boolean;
