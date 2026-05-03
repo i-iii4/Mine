@@ -36,6 +36,10 @@ interface CardMoreMenuProps<TBlock extends LightBlock | IndexedBlock> extends Ca
 }
 
 type CardHoverMenuProps = CardMenuActionsProps<LightBlock>;
+type CardHoverMenuPropsWithState = CardHoverMenuProps & {
+  onInteractiveOpenChange?: (open: boolean) => void;
+  onInteractionStart?: () => void;
+};
 
 function stopProp(e: React.MouseEvent | React.PointerEvent) {
   e.stopPropagation();
@@ -159,12 +163,18 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   onCreateAndAssign,
   onRequestRename,
   onRequestDelete,
-}: CardHoverMenuProps) {
+  onInteractiveOpenChange,
+  onInteractionStart,
+}: CardHoverMenuPropsWithState) {
   const hasUrl = !!block.url;
   const [menuOpen, setMenuOpen] = useState(false);
   const [channelOpen, setChannelOpen] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const anyOpen = menuOpen || channelOpen;
+
+  useEffect(() => {
+    onInteractiveOpenChange?.(anyOpen);
+  }, [anyOpen, onInteractiveOpenChange]);
 
   const shouldLoadTags = menuOpen || channelOpen;
 
@@ -201,7 +211,12 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           onCreateAndAssign={onCreateAndAssign}
           onRequestRename={onRequestRename}
           onRequestDelete={onRequestDelete}
-          onOpenChange={setMenuOpen}
+          onOpenChange={(open) => {
+            if (open) {
+              onInteractionStart?.();
+            }
+            setMenuOpen(open);
+          }}
         />
       </div>
 
@@ -217,7 +232,10 @@ export const CardHoverMenu = memo(function CardHoverMenu({
             variant="default"
             size="default"
             className="flex-1"
-            onClick={() => { if (block.url) openUrl(block.url); }}
+            onClick={() => {
+              onInteractionStart?.();
+              if (block.url) openUrl(block.url);
+            }}
           >
             Source
             <ExternalLink className="size-3" />
@@ -225,7 +243,15 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         )}
 
         {/* Connect — низ право */}
-        <DropdownMenu onOpenChange={setChannelOpen} modal={false}>
+        <DropdownMenu
+          onOpenChange={(open) => {
+            if (open) {
+              onInteractionStart?.();
+            }
+            setChannelOpen(open);
+          }}
+          modal={false}
+        >
           <DropdownMenuTrigger asChild>
             <Button variant="default" size="default" className="flex-1">
               Connect

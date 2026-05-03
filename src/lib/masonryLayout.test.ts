@@ -7,17 +7,17 @@ import {
   getVisibleItemsFromIndex,
 } from "./masonryLayout";
 
-const MIN_COL = 240;
+const MIN_COL = 220;
 const GAP = 32;
 
 describe("masonryLayout", () => {
   it("computes the number of columns from the container width", () => {
-    expect(getMasonryColumnCount(1200, 240, 32)).toBe(4);
-    expect(getMasonryColumnCount(300, 240, 32)).toBe(1);
+    expect(getMasonryColumnCount(1200, 220, 32)).toBe(4);
+    expect(getMasonryColumnCount(300, 220, 32)).toBe(1);
   });
 
   it("places cards into the shortest column", () => {
-    const layout = computeMasonryLayout([100, 120, 80, 90], 900, 240, 32);
+    const layout = computeMasonryLayout([100, 120, 80, 90], 900, MIN_COL, GAP);
 
     expect(layout.columnCount).toBe(3);
     expect(layout.positions.map((position) => [position.column, position.top])).toEqual([
@@ -29,8 +29,24 @@ describe("masonryLayout", () => {
     expect(layout.totalHeight).toBe(202);
   });
 
+  it("derives max width from the next min-width threshold while preserving the configured gap", () => {
+    const layout = computeMasonryLayout([100, 100, 100], 1000, MIN_COL, GAP);
+
+    expect(layout.columnCount).toBe(4);
+    expect(layout.columnWidth).toBe(226);
+    expect(layout.positions[1]?.left).toBe(layout.columnWidth + GAP);
+
+    const singleColumn = computeMasonryLayout([100], 471, MIN_COL, GAP);
+    expect(singleColumn.columnCount).toBe(1);
+    expect(singleColumn.columnWidth).toBe(471);
+
+    const nextThreshold = computeMasonryLayout([100, 100], 472, MIN_COL, GAP);
+    expect(nextThreshold.columnCount).toBe(2);
+    expect(nextThreshold.columnWidth).toBe(MIN_COL);
+  });
+
   it("returns only items inside the viewport plus overscan", () => {
-    const layout = computeMasonryLayout([100, 100, 100, 100, 100], 600, 240, 32);
+    const layout = computeMasonryLayout([100, 100, 100, 100, 100], 600, MIN_COL, GAP);
     const visible = getVisibleMasonryItems(layout.positions, 90, 120, 20, 20);
 
     expect(visible.map((item) => item.index)).toEqual([0, 1, 2, 3]);

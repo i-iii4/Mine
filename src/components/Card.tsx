@@ -159,6 +159,73 @@ export function DragCardPreview({
   );
 }
 
+export function InteractiveCardPreview({
+  block,
+  vaultPath,
+  thumbsRootPath,
+  width = 240,
+  tags,
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
+  onInteractiveOpenChange,
+  onInteractionStart,
+  onClick,
+}: {
+  block: LightBlock;
+  vaultPath: string;
+  thumbsRootPath?: string;
+  width?: number;
+  tags: import("@/types").TagCount[];
+  currentTag?: string;
+  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestRename: (block: LightBlock) => void;
+  onRequestDelete: (slug: string) => void;
+  onInteractiveOpenChange?: (open: boolean) => void;
+  onInteractionStart?: () => void;
+  onClick?: (block: LightBlock) => void;
+}) {
+  return (
+    <CardFrame
+      data-block-slug={block.slug}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      className={cn("cursor-pointer rounded-1 shadow-lg", !onClick && "cursor-default")}
+      style={{ width }}
+      onClick={() => onClick?.(block)}
+      onKeyDown={(event) => {
+        if (!onClick) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick(block);
+        }
+      }}
+    >
+      <CardHoverMenu
+        block={block}
+        vaultPath={vaultPath}
+        tags={tags}
+        currentTag={currentTag}
+        onToggleTag={onToggleTag}
+        onCreateAndAssign={onCreateAndAssign}
+        onRequestRename={onRequestRename}
+        onRequestDelete={onRequestDelete}
+        onInteractiveOpenChange={onInteractiveOpenChange}
+        onInteractionStart={onInteractionStart}
+      />
+      <CardContent
+        block={block}
+        vaultPath={vaultPath}
+        thumbsRootPath={thumbsRootPath}
+        allowPlayback={false}
+      />
+    </CardFrame>
+  );
+}
+
 export const CardSkeleton = memo(function CardSkeleton({
   block,
 }: {

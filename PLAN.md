@@ -367,7 +367,9 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.22 | Визуальная стилизация: overlay titlebar + drag region, Geist Sans (UI) + Geist Mono (карточки, метаданные), острые карточки без заливки, GAP 32px, sidebar без заголовка с градиентным fade | [x] |
 | 7.23 | Иконки каналов в sidebar: стопка из 1–3 мини-карточек с реальными превью, веерная анимация при ховере | [x] |
 | 7.24 | Fullscreen Detail: двухслойный layout (scroll + fixed metadata), Geist Mono, top menu modes (`Classic` / `Island`), filename drag handle в sidebar | [x] |
-| 7.25 | Single-instance guard для desktop app: повторный запуск должен фокусировать существующее окно, а не создавать вторую инстанцию | [ ] |
+| 7.25 | Detail related-notes hover preview: row-key positioning, 3px preview radius, viewport-aware side/up placement, hover bridge, interactive card actions with pinned outside-click close | [~] |
+| 7.26 | Detail inline-image hover preview: image wrapper hover outline + resolver `image src/mediaRef -> extracted media block` + below/above interactive preview | [ ] |
+| 7.27 | Single-instance guard для desktop app: повторный запуск должен фокусировать существующее окно, а не создавать вторую инстанцию | [ ] |
 
 ### Phase 8 — Веб-клиппер (браузерное расширение) [COMPLETED]
 

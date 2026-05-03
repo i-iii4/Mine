@@ -5,10 +5,8 @@ import {
   useState,
   useMemo,
   type CSSProperties,
-  type Dispatch,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  type SetStateAction,
 } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import ReactMarkdown from "react-markdown";
@@ -48,15 +46,19 @@ import {
 import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
 import { CardMoreMenu } from "./CardHoverMenu";
-import { DragCardPreview } from "./Card";
+import { InteractiveCardPreview } from "./Card";
 import { CollectionPicker } from "./CollectionPicker";
 
 // Layout constants — shared between top chrome, scroll layer, and metadata layer.
-const DETAIL_CANVAS_CLASSES = "mx-auto w-[calc(100%-6rem)] max-w-[70rem]";
+const DETAIL_CANVAS_CLASSES = "mx-auto w-[calc(100%-4rem)] max-w-[70rem]";
 const DETAIL_GRID_CLASSES = `${DETAIL_CANVAS_CLASSES} grid grid-cols-[minmax(0,48rem)_20rem] gap-8`;
 const CLASSIC_LAYOUT_CLASSES = `${DETAIL_GRID_CLASSES} pt-12`;
 const ISLANDS_LAYOUT_CLASSES = `${DETAIL_GRID_CLASSES} pt-20`;
 const DETAIL_BOTTOM_SAFE_SPACE_CLASS = "pb-20";
+const HOVER_CARD_WIDTH = 240;
+const HOVER_CARD_FALLBACK_HEIGHT = 320;
+const HOVER_CARD_GAP = 8;
+const HOVER_CARD_VIEWPORT_MARGIN = 16;
 const ARTICLE_H1_CLASSES = "mt-0 mb-4 text-lg leading-6 font-semibold";
 const ARTICLE_SECTION_HEADING_CLASSES = "mt-6 mb-2 text-base leading-5 font-semibold";
 
@@ -88,6 +90,17 @@ type DetailInlineMediaExtraction = {
 function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock {
   return "tags" in block;
 }
+
+type HoverPreviewPosition = {
+  top: number;
+  left: number;
+  bridge: CSSProperties;
+};
+
+type HoveredRelatedNote = {
+  rowKey: string;
+  slug: string;
+};
 
 export function Detail({
   block,
@@ -328,7 +341,7 @@ export function Detail({
           data-detail-scroll
         >
           <div className={cn(layoutClasses, DETAIL_BOTTOM_SAFE_SPACE_CLASS)}>
-            <div className="min-w-0 pl-4" data-detail-article-column>
+            <div className="min-w-0 pl-2" data-detail-article-column>
               <BlockContent
                 block={block}
                 fullBlock={fullBlock}
@@ -364,6 +377,8 @@ export function Detail({
                 currentTag={currentTag}
                 onToggleTag={onToggleTag}
                 onCreateAndAssign={onCreateAndAssign}
+                onRequestRename={onRequestRename}
+                onRequestDelete={onRequestDelete}
                 onOpenRelatedNote={onOpenRelatedNote}
               />
             </div>
@@ -386,6 +401,8 @@ interface MetadataPanelProps {
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestRename: (block: LightBlock | IndexedBlock) => void;
+  onRequestDelete: (slug: string) => void;
   onOpenRelatedNote: (slug: string) => void;
 }
 
@@ -399,9 +416,13 @@ function MetadataPanel({
   currentTag,
   onToggleTag,
   onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
   onOpenRelatedNote,
 }: MetadataPanelProps) {
   const relatedNoteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const hoverPreviewRef = useRef<HTMLDivElement | null>(null);
+  const hoverPreviewCloseTimerRef = useRef<number | null>(null);
   const displayBlock = fullBlock ?? block;
   const indexWarning = getIndexWarning(displayBlock);
   const relatedNotes = useMemo(
@@ -414,8 +435,9 @@ function MetadataPanel({
   const relatedNotesKey = relatedNotes.join("\u0000");
   const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
   const [relatedNoteBlocks, setRelatedNoteBlocks] = useState<Map<string, IndexedBlock | null> | null>(null);
-  const [hoveredRelatedNoteSlug, setHoveredRelatedNoteSlug] = useState<string | null>(null);
-  const [hoverPreviewPosition, setHoverPreviewPosition] = useState<{ top: number; left: number } | null>(null);
+  const [hoveredRelatedNote, setHoveredRelatedNote] = useState<HoveredRelatedNote | null>(null);
+  const [hoverPreviewPosition, setHoverPreviewPosition] = useState<HoverPreviewPosition | null>(null);
+  const [hoverPreviewPinned, setHoverPreviewPinned] = useState(false);
 
   useEffect(() => {
     if (relatedNotes.length === 0) {
@@ -440,48 +462,142 @@ function MetadataPanel({
     };
   }, [relatedNotes, relatedNotesKey]);
 
+  const cancelHoverPreviewClose = useCallback(() => {
+    if (hoverPreviewCloseTimerRef.current == null) return;
+    window.clearTimeout(hoverPreviewCloseTimerRef.current);
+    hoverPreviewCloseTimerRef.current = null;
+  }, []);
+
+  const openRelatedNotePreview = useCallback((note: HoveredRelatedNote) => {
+    cancelHoverPreviewClose();
+    setHoveredRelatedNote(note);
+  }, [cancelHoverPreviewClose]);
+
+  const requestCloseRelatedNotePreview = useCallback(() => {
+    if (hoverPreviewPinned) return;
+    cancelHoverPreviewClose();
+    hoverPreviewCloseTimerRef.current = window.setTimeout(() => {
+      setHoveredRelatedNote(null);
+    }, 120);
+  }, [cancelHoverPreviewClose, hoverPreviewPinned]);
+
   useEffect(() => {
-    if (!hoveredRelatedNoteSlug) {
+    return () => {
+      cancelHoverPreviewClose();
+    };
+  }, [cancelHoverPreviewClose]);
+
+  useEffect(() => {
+    if (!hoveredRelatedNote) {
+      setHoverPreviewPinned(false);
+    }
+  }, [hoveredRelatedNote]);
+
+  const hoveredRelatedNoteBlock = hoveredRelatedNote
+    ? relatedNoteBlocks?.get(hoveredRelatedNote.slug) ?? null
+    : null;
+
+  useEffect(() => {
+    if (!hoveredRelatedNote) {
       setHoverPreviewPosition(null);
       return;
     }
-    const button = relatedNoteButtonRefs.current.get(hoveredRelatedNoteSlug);
+    const button = relatedNoteButtonRefs.current.get(hoveredRelatedNote.rowKey);
     if (!button) {
       setHoverPreviewPosition(null);
       return;
     }
 
-    const rect = button.getBoundingClientRect();
-    setHoverPreviewPosition({
-      top: Math.max(16, rect.top),
-      left: Math.max(16, rect.left - 240 - 16),
-    });
-  }, [hoveredRelatedNoteSlug]);
+    const triggerRect = button.getBoundingClientRect();
+    const previewHeight =
+      hoverPreviewRef.current?.getBoundingClientRect().height ??
+      HOVER_CARD_FALLBACK_HEIGHT;
+    setHoverPreviewPosition(computeHoverPreviewPosition(triggerRect, previewHeight));
+  }, [hoveredRelatedNote, hoveredRelatedNoteBlock]);
 
-  const hoveredRelatedNoteBlock = hoveredRelatedNoteSlug
-    ? relatedNoteBlocks?.get(hoveredRelatedNoteSlug) ?? null
-    : null;
+  useEffect(() => {
+    if (!hoveredRelatedNote || !hoverPreviewPosition || !hoverPreviewRef.current) {
+      return;
+    }
+    const button = relatedNoteButtonRefs.current.get(hoveredRelatedNote.rowKey);
+    if (!button) return;
+
+    const triggerRect = button.getBoundingClientRect();
+    const previewHeight = hoverPreviewRef.current.getBoundingClientRect().height;
+    const nextPosition = computeHoverPreviewPosition(triggerRect, previewHeight);
+    if (
+      Math.abs(nextPosition.top - hoverPreviewPosition.top) > 1 ||
+      Math.abs(nextPosition.left - hoverPreviewPosition.left) > 1
+    ) {
+      setHoverPreviewPosition(nextPosition);
+    }
+  }, [hoveredRelatedNote, hoverPreviewPosition, hoveredRelatedNoteBlock]);
+
+  useEffect(() => {
+    if (!hoverPreviewPinned) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      const preview = hoverPreviewRef.current;
+      const trigger = hoveredRelatedNote
+        ? relatedNoteButtonRefs.current.get(hoveredRelatedNote.rowKey)
+        : null;
+      if (preview?.contains(target) || trigger?.contains(target)) {
+        return;
+      }
+      setHoverPreviewPinned(false);
+      setHoveredRelatedNote(null);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+    };
+  }, [hoverPreviewPinned, hoveredRelatedNote]);
+
   const blockTypeValue = formatMetadataBlockType(displayBlock.block_type);
 
   return (
     <>
       {hoverPreviewPosition && hoveredRelatedNoteBlock && (
-        <div
-          className="pointer-events-none fixed z-30"
-          style={{
-            top: hoverPreviewPosition.top,
-            left: hoverPreviewPosition.left,
-            width: 240,
-          }}
-          data-related-note-hover-preview
-        >
-          <DragCardPreview
-            block={hoveredRelatedNoteBlock}
-            vaultPath={vaultPath}
-            thumbsRootPath={resolvedThumbsRoot}
-            width={240}
+        <>
+          <div
+            className="fixed z-30"
+            style={hoverPreviewPosition.bridge}
+            onMouseEnter={cancelHoverPreviewClose}
+            onMouseLeave={requestCloseRelatedNotePreview}
+            data-related-note-hover-bridge
           />
-        </div>
+          <div
+            ref={hoverPreviewRef}
+            className="fixed z-40"
+            style={{
+              top: hoverPreviewPosition.top,
+              left: hoverPreviewPosition.left,
+              width: HOVER_CARD_WIDTH,
+            }}
+            onMouseEnter={cancelHoverPreviewClose}
+            onMouseLeave={requestCloseRelatedNotePreview}
+            data-related-note-hover-preview
+          >
+            <InteractiveCardPreview
+              block={hoveredRelatedNoteBlock}
+              vaultPath={vaultPath}
+              thumbsRootPath={resolvedThumbsRoot}
+              width={HOVER_CARD_WIDTH}
+              tags={tags}
+              currentTag={currentTag}
+              onToggleTag={onToggleTag}
+              onCreateAndAssign={onCreateAndAssign}
+              onRequestRename={onRequestRename}
+              onRequestDelete={onRequestDelete}
+              onInteractiveOpenChange={setHoverPreviewPinned}
+              onInteractionStart={() => setHoverPreviewPinned(true)}
+              onClick={(previewBlock) => onOpenRelatedNote(previewBlock.slug)}
+            />
+          </div>
+        </>
       )}
       <div className="min-w-0 overflow-x-hidden">
         <ArticleAudioControls
@@ -495,7 +611,7 @@ function MetadataPanel({
             className="min-w-0 overflow-hidden rounded-1 border border-border bg-accent"
             data-detail-metadata-card
           >
-            <div className="p-4" data-detail-metadata-card-content>
+            <div className="px-2 pb-4 pt-4" data-detail-metadata-card-content>
               <MetadataTable>
                 {displayBlock.width != null && displayBlock.height != null && (
                   <MetadataField
@@ -529,13 +645,13 @@ function MetadataPanel({
               </MetadataTable>
             </div>
 
-          <DetailActionRow
-            block={displayBlock}
-            tags={tags}
-            currentTag={currentTag}
-            onToggleTag={onToggleTag}
-            onCreateAndAssign={onCreateAndAssign}
-          />
+            <DetailActionRow
+              block={displayBlock}
+              tags={tags}
+              currentTag={currentTag}
+              onToggleTag={onToggleTag}
+              onCreateAndAssign={onCreateAndAssign}
+            />
           </section>
 
           {relatedNotes.length > 0 && (
@@ -545,7 +661,8 @@ function MetadataPanel({
               resolvedThumbsRoot={resolvedThumbsRoot}
               onOpenRelatedNote={onOpenRelatedNote}
               relatedNoteButtonRefs={relatedNoteButtonRefs}
-              onHoveredRelatedNoteSlugChange={setHoveredRelatedNoteSlug}
+              onRelatedNotePreviewEnter={openRelatedNotePreview}
+              onRelatedNotePreviewLeave={requestCloseRelatedNotePreview}
             />
           )}
         </div>
@@ -554,10 +671,10 @@ function MetadataPanel({
   );
 }
 
-const METADATA_LABEL_CLASSES = "whitespace-nowrap font-sans text-sm leading-4 text-muted-foreground";
+const METADATA_LABEL_CLASSES = "whitespace-nowrap font-mono text-sm leading-4 text-muted-foreground";
 const METADATA_VALUE_BASE_CLASSES = "block min-w-0 font-sans text-sm leading-4 text-foreground";
 const RELATED_NOTE_ROW_SHELL_CLASSES =
-  "w-full min-w-0 overflow-hidden rounded-1 border border-border bg-component-fill p-[3px] font-mono text-base";
+  "w-full min-w-0 overflow-hidden rounded-1 border border-border bg-component-fill p-[3px] font-sans text-base";
 const RELATED_NOTE_ROW_CONTENT_CLASSES = "flex h-8 w-full min-w-0 items-center gap-2 overflow-hidden";
 
 type MetadataValueMode = "truncate" | "wrap";
@@ -565,7 +682,7 @@ type MetadataValueMode = "truncate" | "wrap";
 function MetadataTable({ children }: { children: ReactNode }) {
   return (
     <div
-      className="grid w-full grid-cols-[max-content_minmax(0,1fr)] items-start gap-x-4 gap-y-2"
+      className="w-full"
       data-metadata-table
     >
       {children}
@@ -573,19 +690,24 @@ function MetadataTable({ children }: { children: ReactNode }) {
   );
 }
 
+interface MetadataRowProps {
+  label: string;
+  children: ReactNode;
+}
+
 function MetadataRow({
   label,
   children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+}: MetadataRowProps) {
   return (
-    <div className="contents" data-metadata-row>
+    <div
+      className="relative grid w-full grid-cols-[max-content_minmax(0,1fr)] items-start gap-x-4 pb-2 after:absolute after:bottom-1 after:left-0 after:right-0 after:border-t after:border-border last:pb-0 last:after:hidden"
+      data-metadata-row
+    >
       <div className={METADATA_LABEL_CLASSES}>
         {label}
       </div>
-      <div className="min-w-0">{children}</div>
+      <div className="min-w-0 text-right">{children}</div>
     </div>
   );
 }
@@ -636,7 +758,7 @@ function MetadataLinkValue({
     <button
       type="button"
       onClick={onClick}
-      className={cn(METADATA_VALUE_BASE_CLASSES, "w-full truncate text-left hover:underline")}
+      className={cn(METADATA_VALUE_BASE_CLASSES, "w-full truncate text-right hover:underline")}
       title={value}
     >
       {value}
@@ -730,21 +852,24 @@ function RelatedNotesSection({
   resolvedThumbsRoot,
   onOpenRelatedNote,
   relatedNoteButtonRefs,
-  onHoveredRelatedNoteSlugChange,
+  onRelatedNotePreviewEnter,
+  onRelatedNotePreviewLeave,
 }: {
   relatedNotes: string[];
   relatedNoteBlocks: Map<string, IndexedBlock | null> | null;
   resolvedThumbsRoot: string;
   onOpenRelatedNote: (slug: string) => void;
   relatedNoteButtonRefs: { current: Map<string, HTMLButtonElement> };
-  onHoveredRelatedNoteSlugChange: Dispatch<SetStateAction<string | null>>;
+  onRelatedNotePreviewEnter: (note: HoveredRelatedNote) => void;
+  onRelatedNotePreviewLeave: () => void;
 }) {
   return (
     <section className="flex flex-col gap-1" data-related-notes-block>
       <div className={METADATA_LABEL_CLASSES}>Related notes</div>
       <div className="flex min-w-0 flex-col gap-1" data-related-notes-list>
-        {relatedNotes.map((slug) => {
+        {relatedNotes.map((slug, index) => {
           const baseSlug = baseRelatedNoteSlug(slug);
+          const rowKey = `${index}:${slug}`;
           const relatedBlock = relatedNoteBlocks?.get(baseSlug) ?? null;
           const rowLabel = relatedBlock ? getFallbackLabel(relatedBlock) : baseSlug;
 
@@ -765,7 +890,7 @@ function RelatedNotesSection({
 
           return (
             <button
-              key={baseSlug}
+              key={rowKey}
               type="button"
               onClick={() => onOpenRelatedNote(baseSlug)}
               className={cn(
@@ -774,19 +899,15 @@ function RelatedNotesSection({
               )}
               ref={(node) => {
                 if (node) {
-                  relatedNoteButtonRefs.current.set(baseSlug, node);
+                  relatedNoteButtonRefs.current.set(rowKey, node);
                 } else {
-                  relatedNoteButtonRefs.current.delete(baseSlug);
+                  relatedNoteButtonRefs.current.delete(rowKey);
                 }
               }}
-              onMouseEnter={() => onHoveredRelatedNoteSlugChange(baseSlug)}
-              onMouseLeave={() => onHoveredRelatedNoteSlugChange((current) => (
-                current === baseSlug ? null : current
-              ))}
-              onFocus={() => onHoveredRelatedNoteSlugChange(baseSlug)}
-              onBlur={() => onHoveredRelatedNoteSlugChange((current) => (
-                current === baseSlug ? null : current
-              ))}
+              onMouseEnter={() => onRelatedNotePreviewEnter({ rowKey, slug: baseSlug })}
+              onMouseLeave={onRelatedNotePreviewLeave}
+              onFocus={() => onRelatedNotePreviewEnter({ rowKey, slug: baseSlug })}
+              onBlur={onRelatedNotePreviewLeave}
               data-related-note-item="button"
             >
               <div className={RELATED_NOTE_ROW_CONTENT_CLASSES}>
@@ -820,6 +941,55 @@ function getIndexWarning(block: LightBlock | IndexedBlock): string | null {
 
 function baseRelatedNoteSlug(target: string): string {
   return target.split("#", 1)[0] ?? target;
+}
+
+function computeHoverPreviewPosition(
+  triggerRect: DOMRect,
+  previewHeight: number,
+): HoverPreviewPosition {
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const canOpenRight =
+    viewportWidth - triggerRect.right - HOVER_CARD_GAP - HOVER_CARD_VIEWPORT_MARGIN >=
+    HOVER_CARD_WIDTH;
+  const left = canOpenRight
+    ? triggerRect.right + HOVER_CARD_GAP
+    : Math.max(
+        HOVER_CARD_VIEWPORT_MARGIN,
+        triggerRect.left - HOVER_CARD_GAP - HOVER_CARD_WIDTH,
+      );
+  const canOpenDown =
+    triggerRect.top + previewHeight <=
+    viewportHeight - HOVER_CARD_VIEWPORT_MARGIN;
+  const top = canOpenDown
+    ? Math.max(HOVER_CARD_VIEWPORT_MARGIN, triggerRect.top)
+    : Math.max(
+        HOVER_CARD_VIEWPORT_MARGIN,
+        triggerRect.bottom - previewHeight,
+      );
+  const bridgeLeft = canOpenRight
+    ? triggerRect.right
+    : left + HOVER_CARD_WIDTH;
+  const bridgeWidth = Math.max(
+    HOVER_CARD_GAP,
+    canOpenRight
+      ? left - triggerRect.right
+      : triggerRect.left - (left + HOVER_CARD_WIDTH),
+  );
+
+  return {
+    top,
+    left,
+    bridge: {
+      left: bridgeLeft,
+      top: Math.min(triggerRect.top, top),
+      width: bridgeWidth,
+      height: Math.max(
+        triggerRect.height,
+        Math.abs(triggerRect.top - top) + previewHeight,
+      ),
+    },
+  };
 }
 
 function formatIndexWarning(warning: string): string {

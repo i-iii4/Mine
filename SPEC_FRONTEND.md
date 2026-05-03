@@ -411,14 +411,16 @@ that belongs to `storage::media_refs`.
   и fixed-слой (метаданные). Оба слоя используют один Detail canvas/grid
   contract, чтобы article column, right rail и top pill подчинялись одной
   горизонтальной системе.
-- Detail canvas: `mx-auto w-[calc(100%-6rem)] max-w-[70rem]`. `70rem` — это
+- Detail canvas: `mx-auto w-[calc(100%-4rem)] max-w-[70rem]`. `4rem` keeps
+  the article Detail canvas on the same 32px side inset contract as the feed.
+  `70rem` — это
   сумма article column `48rem`, gap `2rem` и right rail `20rem`; на широких
   экранах растут внешние поля, а не пустота между article и rail.
 - Detail body grid: `grid grid-cols-[minmax(0,48rem)_20rem] gap-8`. Article
   column занимает левую bounded колонку, right rail занимает фиксированную
   20rem колонку и доходит до правого края общего Detail canvas.
-- Article column adds `pl-4` inside the left grid column, so article body text
-  is inset 16px from the top chrome/canvas outer edge instead of sitting flush
+- Article column adds `pl-2` inside the left grid column, so article body text
+  has an extra 8px guard inset from the top chrome/canvas outer edge instead of sitting flush
   against the framed top pill.
 - Fixed rail допускает только vertical scroll (`overflow-y-auto`) и запрещает
   horizontal scroll (`overflow-x-hidden`); metadata/actions/related notes не
@@ -436,7 +438,8 @@ that belongs to `storage::media_refs`.
   `overflow-hidden rounded-1 border border-border bg-accent`. Радиус 3px
   следует interface-surface contract; surface использует тот же `bg-accent`,
   что нижний action bar.
-  Metadata content использует `p-4`, как article/social feed card content.
+  Metadata content использует `px-2 pb-4 pt-4`: horizontal inset matches the
+  action row inset, while top/bottom spacing preserves the compact table rhythm.
   Action row использует card-hover action inset contract `px-2 pb-2` и `gap-2`,
   matching `CardHoverMenu` `left-2 right-2 bottom-2 gap-2`; поэтому кнопки не
   выровнены по текстовому padding, как и в оригинальной карточке на главной.
@@ -454,8 +457,21 @@ that belongs to `storage::media_refs`.
   deduplicates by base slug.
 - `RELATED NOTES` rows use a compact button-shell with persistent fill/border,
   `8x8` thumbnail on the left, and filename fallback label on the right.
-  Hover/focus can show a feed-style card preview to the left of the metadata
-  column.
+  Hover/focus can show an interactive feed-style card preview. The preview:
+  uses `rounded-1`, is keyed by row identity rather than base slug so repeated
+  backlinks position independently, opens right when viewport space allows and
+  left otherwise, flips upward when it would overflow below, and keeps a hover
+  bridge between trigger row and preview. Preview actions reuse `CardHoverMenu`
+  (`Source`, `Connect`, `More`). Opening any action pins the preview until an
+  outside pointer-down.
+- Article inline image hover preview is a separate, not-yet-implemented feature.
+  It must not be added by copying the related-notes implementation. The required
+  contract is: image wrapper gets the same button-like hover/focus outline
+  (`outline-component-fill-hover`, `outline-1`, `-outline-offset-1`), preview
+  opens below or above the image depending on available vertical space, and a
+  resolver maps `image src/mediaRef` to an existing extracted media block before
+  interactive card actions are shown. If no media block exists, only the image
+  hover outline is allowed; a fake card preview is not valid.
 - Open Detail must refresh its hydrated `IndexedBlock` snapshot on
   `vault-refreshed`, so a newly added connector/link updates `RELATED NOTES`
   in-place without closing and reopening the page.

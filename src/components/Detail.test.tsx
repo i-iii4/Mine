@@ -112,7 +112,7 @@ describe("Detail", () => {
     expect(islandMenu).toHaveClass("pl-3");
     expect(islandMenu).toHaveClass("pr-1");
     expect(islandMenu?.parentElement).toHaveClass(
-      "w-[calc(100%-6rem)]",
+      "w-[calc(100%-4rem)]",
       "max-w-[70rem]",
     );
   });
@@ -345,7 +345,7 @@ describe("Detail", () => {
 
     const rail = container.querySelector("[data-metadata-scroll]");
     const articleColumn = container.querySelector("[data-detail-article-column]");
-    expect(articleColumn).toHaveClass("min-w-0", "pl-4");
+    expect(articleColumn).toHaveClass("min-w-0", "pl-2");
     expect(rail).toHaveClass(
       "min-w-0",
       "overflow-y-auto",
@@ -354,14 +354,14 @@ describe("Detail", () => {
     const spacer = container.querySelector("[data-detail-metadata-spacer]");
     expect(spacer).toHaveClass("min-w-0");
     expect(spacer?.parentElement).toHaveClass(
-      "w-[calc(100%-6rem)]",
+      "w-[calc(100%-4rem)]",
       "max-w-[70rem]",
       "grid",
       "grid-cols-[minmax(0,48rem)_20rem]",
       "gap-8",
     );
     expect(rail?.parentElement).toHaveClass(
-      "w-[calc(100%-6rem)]",
+      "w-[calc(100%-4rem)]",
       "max-w-[70rem]",
       "grid",
       "grid-cols-[minmax(0,48rem)_20rem]",

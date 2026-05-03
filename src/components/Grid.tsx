@@ -42,7 +42,7 @@ import { normalizeFeedPlayback } from "@/lib/feedPlayback";
 
 // ─── Layout constants ───────────────────────────────────────────────────────
 
-const COLUMN_MIN_WIDTH = 240;
+const COLUMN_MIN_WIDTH = 220;
 const GAP = 32;
 const OVERSCAN_BACKWARD_PX = 600;
 const OVERSCAN_FORWARD_PX = 2200;
@@ -133,7 +133,12 @@ function buildLayout(
     return computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null);
   });
 
-  return computeMasonryLayout(heights, parentWidth, COLUMN_MIN_WIDTH, GAP);
+  return computeMasonryLayout(
+    heights,
+    parentWidth,
+    COLUMN_MIN_WIDTH,
+    GAP,
+  );
 }
 
 // ─── Grid component ────────────────────────────────────────────────────────

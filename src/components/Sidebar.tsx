@@ -390,7 +390,7 @@ const NavItem = memo(function NavItem({
                 : "text-muted-foreground hover:bg-accent",
             )
           : cn(
-              "flex items-center gap-2 border-b border-sidebar-border px-3 py-1 font-mono text-base",
+              "flex items-center gap-2 border-b border-sidebar-border px-3 py-1 font-sans text-base",
               isActive
                 ? "bg-sidebar-accent text-sidebar-accent-foreground"
                 : "text-muted-foreground hover:bg-accent",
@@ -554,7 +554,7 @@ const TagNavItem = memo(function TagNavItem({
                     : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 )
               : cn(
-                  "flex items-center gap-2 border-b border-sidebar-border px-3 py-1 font-mono text-base",
+                  "flex items-center gap-2 border-b border-sidebar-border px-3 py-1 font-sans text-base",
                   isActive
                     ? "bg-sidebar-accent text-sidebar-accent-foreground"
                     : "text-muted-foreground hover:bg-accent",

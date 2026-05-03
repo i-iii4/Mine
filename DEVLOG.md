@@ -1,5 +1,32 @@
 # Devlog
 
+## 02.05.2026 21:25 -03 [primary] — Detail hover preview contract checkpoint
+
+### Goal
+
+Зафиксировать текущий Detail hover-preview scope перед добавлением более
+сложного hover preview для inline-картинок в article body.
+
+### Completed
+
+- Related notes preview переведён с passive drag-preview на interactive
+  feed-style preview surface: отдельный `InteractiveCardPreview`, 3px radius,
+  `CardHoverMenu` actions, hover bridge и outside-click close для pinned state.
+- Позиционирование related-notes preview переведено на row identity (`rowKey`),
+  чтобы повторяющиеся backlinks одного slug не переиспользовали позицию первой
+  строки.
+- Обновлены frontend/design contracts:
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md),
+  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [PLAN.md](PLAN.md).
+- Inline image hover preview намеренно оставлен отдельным незавершённым
+  функциональным блоком: перед показом interactive preview нужен resolver
+  `image src/mediaRef -> extracted media block`; без такого block допустим
+  только hover outline.
+
+### Verification
+
+- Не запускалась по явному требованию не гонять проверки до финального решения.
+
 ## 02.05.2026 20:12 -03 [primary] — Detail canvas, CJK selection extraction, feed card radius
 
 ### Goal

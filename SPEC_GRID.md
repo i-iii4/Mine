@@ -41,7 +41,7 @@ const supportsGridLanes = typeof CSS !== "undefined"
 ```css
 .grid {
   display: grid-lanes;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 32px;
 }
 
@@ -145,7 +145,7 @@ export function countLines(
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 
-export const COLUMN_MIN_WIDTH = 240;
+export const COLUMN_MIN_WIDTH = 220;
 export const GAP = 32;
 
 /**
@@ -181,7 +181,11 @@ export function computeCardHeight(
 
 ### `src/lib/masonryLayout.ts` — расширение
 
-Существующие функции `computeMasonryLayout`, `getMasonryColumnCount` остаются без изменений. Добавляются:
+`computeMasonryLayout` считает количество колонок от минимального контракта, а
+фактическая максимальная ширина карточки определяется алгоритмически как
+ширина колонки непосредственно перед добавлением следующей колонки. Layout
+использует всю ширину контейнера, чтобы свободный остаток не накапливался
+только справа. Также добавляются:
 
 ```ts
 /** Bucket-based visibility index для O(log N + k) visibility queries */

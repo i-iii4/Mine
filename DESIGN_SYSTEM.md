@@ -332,6 +332,30 @@ Content: `rounded-1 border bg-popover p-1`, тень — единая для в�
 - Connect: `DropdownMenu` со списком каналов (`CollectionPicker`)
 - More: `DropdownMenu` — Connect (подменю), Source, Remove from collection, Delete
 
+### Hover Preview Surfaces
+
+Всплывающие preview-карточки используют ту же визуальную модель, что feed card
+preview при drag: `rounded-1` (3px), `border border-border`, `bg-background`,
+утилитарная `shadow-lg`. Ordinary feed cards остаются на `--radius-card`.
+
+Related notes preview:
+- Trigger row остаётся compact button-shell с `rounded-1 border border-border bg-component-fill`.
+- Hover/focus outline trigger row: `outline-1 -outline-offset-1 outline-component-fill-hover`.
+- Preview открывается справа от trigger, если хватает места; иначе слева.
+- Если preview не помещается вниз, он раскрывается вверх, сохраняя связь с trigger.
+- Между trigger и preview есть невидимое hover-поле, чтобы курсор можно было
+  перевести без схлопывания.
+- При наведении на preview появляются стандартные `Source`, `Connect`, `More`;
+  interaction с ними закрепляет preview до outside click.
+
+Article inline image hover preview:
+- Это отдельный функциональный блок, не часть текущего Related notes preview.
+- Hover/focus outline применяется к wrapper изображения, не к самому `<img>`:
+  `outline-1 -outline-offset-1 outline-component-fill-hover`.
+- Preview можно показывать только если frontend может сопоставить image
+  `src/mediaRef` с реальным extracted media block. Без такого block показывается
+  только hover outline, без фальшивой карточки.
+
 ### Checkbox
 
 Radix-обёртка: `size-4 rounded-[2px] border border-primary`. Checked: `bg-primary text-primary-foreground` с иконкой галочки. Фокус: `border-foreground`.
@@ -517,7 +541,7 @@ row-action slot (`count/menu` ↔ `checkbox`). Это убирает blink пр�
 
 ### Сетка
 
-Masonry с round-robin распределением по колонкам. Gap: 32px (`--spacing-s5`). Минимальная ширина колонки: 240px. Ленивая подгрузка через IntersectionObserver.
+Masonry с round-robin распределением по колонкам. Gap: 32px (`--spacing-s5`). Минимальная ширина карточки: 220px; максимальная ширина не фиксируется токеном и определяется алгоритмически перед переходом к следующему числу колонок. Ленивая подгрузка через IntersectionObserver.
 
 Паддинги сетки: 32px по бокам (при развёрнутом сайдбаре), 72px (при свёрнутом — компенсация ширины).
 

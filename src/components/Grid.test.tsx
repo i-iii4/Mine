@@ -20,7 +20,7 @@ import type { LightBlock } from "@/types";
 // them, this test must be updated in lockstep — but since the test's
 // entire purpose is to verify Grid produces positions consistent with
 // a fresh buildLayout, the values must match.
-const TEST_COLUMN_MIN_WIDTH = 240;
+const TEST_COLUMN_MIN_WIDTH = 220;
 const TEST_GAP = 32;
 
 // ─── Test fixtures ──────────────────────────────────────────────────────────
