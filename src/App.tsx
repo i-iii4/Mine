@@ -40,6 +40,17 @@ function relatedNoteBlockAnchor(target: string): string | null {
   return blockId || null;
 }
 
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return target.closest("input, textarea, select, [contenteditable='true']") !== null;
+}
+
+function isOverlayKeyboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.closest("[role='dialog'], [data-radix-popper-content-wrapper]") !== null;
+}
+
 /** Pin the DragOverlay so the cursor tip sits just outside the top-left corner. */
 const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
   if (!activatorEvent || !draggingNodeRect) return transform;
@@ -324,6 +335,10 @@ export function AppWithVault({
   const [closingDetailTags, setClosingDetailTags] = useState<string[]>([]);
   const [focusedBlockId, setFocusedBlockId] = useState<number | null>(null);
   const [scrollToTopSignal, setScrollToTopSignal] = useState(0);
+  const [sidebarKeyboardNavigationFocus, setSidebarKeyboardNavigationFocus] = useState<{
+    rowKey: string;
+    sequence: number;
+  } | null>(null);
   const [activeDragBlock, setActiveDragBlock] = useState<LightBlock | null>(null);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
   const [activeDragInlineMedia, setActiveDragInlineMedia] = useState<InlineMediaDragPreview | null>(null);
@@ -432,12 +447,14 @@ export function AppWithVault({
   focusedRef.current = focusedBlockId;
   const activeBlocksRef = useRef(activeBlocks);
   activeBlocksRef.current = activeBlocks;
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
 
   useEffect(() => {
     if (selectedBlock || searchOpen) return; // Detail or search handles keys
 
     const handler = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.defaultPrevented || isEditableKeyboardTarget(e.target) || isOverlayKeyboardTarget(e.target)) return;
       if (e.metaKey || e.altKey || e.ctrlKey) return;
 
       const cur = focusedRef.current;
@@ -766,11 +783,12 @@ export function AppWithVault({
   const loadMoreBlocks = useCallback(async () => {
     if (loadingMoreBlocks || !hasMoreBlocks) return;
     const pathAtStart = vaultPathRef.current;
-    const tagAtStart = currentTag;
+    const tagAtStart = currentTagRef.current;
+    const offsetAtStart = blocksRef.current.length;
     setLoadingMoreBlocks(true);
     try {
-      const grid = await listGridBlocks(currentTag, blocks.length, GRID_PAGE_SIZE);
-      if (vaultPathRef.current !== pathAtStart || currentTag !== tagAtStart) {
+      const grid = await listGridBlocks(tagAtStart, offsetAtStart, GRID_PAGE_SIZE);
+      if (vaultPathRef.current !== pathAtStart || currentTagRef.current !== tagAtStart) {
         return;
       }
       setBlocks((prev) => {
@@ -788,14 +806,16 @@ export function AppWithVault({
       setHasMoreBlocks(grid.has_more);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("[LOAD_MORE] FAILED:", msg, err);
-      setLoadError(msg);
+      if (vaultPathRef.current === pathAtStart && currentTagRef.current === tagAtStart) {
+        console.error("[LOAD_MORE] FAILED:", msg, err);
+        setLoadError(msg);
+      }
     } finally {
-      if (vaultPathRef.current === pathAtStart && currentTag === tagAtStart) {
+      if (vaultPathRef.current === pathAtStart && currentTagRef.current === tagAtStart) {
         setLoadingMoreBlocks(false);
       }
     }
-  }, [blocks.length, currentTag, hasMoreBlocks, loadingMoreBlocks, routeKeyFor]);
+  }, [hasMoreBlocks, loadingMoreBlocks, routeKeyFor]);
 
   useEffect(() => {
     let cancelled = false;
@@ -864,8 +884,17 @@ export function AppWithVault({
         loadTaxonomySnapshotRef.current(),
       ]);
       if (cancelled) return;
-      lastRevalidatedRouteKeyRef.current = routeKeyFor(initialTag);
       initialRouteLoadDoneRef.current = true;
+      const activeTag = currentTagRef.current;
+      const activeRouteKey = routeKeyFor(activeTag);
+      lastRevalidatedRouteKeyRef.current = activeRouteKey;
+      if (activeTag !== initialTag) {
+        await loadGridSnapshotRef.current({
+          tag: activeTag,
+          preferCachedRoute: true,
+        });
+        if (cancelled) return;
+      }
       syncTimer = window.setTimeout(() => {
         void startVaultSync()
           .then((started) => {
@@ -1076,6 +1105,7 @@ export function AppWithVault({
   // Global keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || isEditableKeyboardTarget(e.target) || isOverlayKeyboardTarget(e.target)) return;
       if (!e.metaKey) return;
       if (e.key === "k") {
         e.preventDefault();
@@ -1237,24 +1267,51 @@ export function AppWithVault({
     const handler = (e: KeyboardEvent) => {
       if (!(e.metaKey && e.altKey)) return;
       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      if (
+        e.defaultPrevented
+        || selectedBlock
+        || searchOpen
+        || isEditableKeyboardTarget(e.target)
+        || isOverlayKeyboardTarget(e.target)
+      ) {
+        return;
+      }
       e.preventDefault();
       const idx = currentTag
         ? orderedTags.findIndex((t) => t.tag === currentTag)
         : -1;
+      let targetPath: string | null = null;
+      let targetRowKey: string | null = null;
       if (e.key === "ArrowUp") {
-        if (idx === 0) navigate("/");
-        else if (idx > 0) navigate(`/channel/${encodeURIComponent(orderedTags[idx - 1]!.tag)}`);
+        if (idx === 0) {
+          targetPath = "/";
+          targetRowKey = "all";
+        } else if (idx > 0) {
+          const targetTag = orderedTags[idx - 1]!.tag;
+          targetPath = `/channel/${encodeURIComponent(targetTag)}`;
+          targetRowKey = `tag:${targetTag}`;
+        }
       } else {
         if (idx === -1 && orderedTags.length > 0) {
-          navigate(`/channel/${encodeURIComponent(orderedTags[0]!.tag)}`);
+          const targetTag = orderedTags[0]!.tag;
+          targetPath = `/channel/${encodeURIComponent(targetTag)}`;
+          targetRowKey = `tag:${targetTag}`;
         } else if (idx >= 0 && idx < orderedTags.length - 1) {
-          navigate(`/channel/${encodeURIComponent(orderedTags[idx + 1]!.tag)}`);
+          const targetTag = orderedTags[idx + 1]!.tag;
+          targetPath = `/channel/${encodeURIComponent(targetTag)}`;
+          targetRowKey = `tag:${targetTag}`;
         }
       }
+      if (!targetPath || !targetRowKey) return;
+      setSidebarKeyboardNavigationFocus((current) => ({
+        rowKey: targetRowKey,
+        sequence: (current?.sequence ?? 0) + 1,
+      }));
+      navigate(targetPath);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [currentTag, orderedTags, navigate]);
+  }, [currentTag, orderedTags, navigate, searchOpen, selectedBlock]);
 
 
   // ── Channel management ─────────────────────────────────────────────────
@@ -1688,6 +1745,7 @@ export function AppWithVault({
         onRequestDelete={requestDeleteBlock}
         onNavClick={handleDetailClose}
         onScrollToTop={handleScrollToTop}
+        keyboardNavigationFocus={sidebarKeyboardNavigationFocus}
         headerSlot={<VaultConflictsBanner vaultReady={vaultReady} />}
         linkedBlockSlug={renderedLinkedBlockSlug}
         linkedTags={renderedLinkedTags}

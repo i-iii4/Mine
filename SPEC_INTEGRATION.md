@@ -165,13 +165,28 @@ enum CommandError {
 
 1. Сгенерировать slug из first body H1 / readable seed / url, without
    synthesizing `frontmatter.title`
-2. Разрешить конфликт slug (через `resolve_slug_conflict`)
+2. Разрешить конфликт slug по SQLite и фактическим файлам vault (`.md` и
+   optional media target); disk-only collisions не перезаписываются
 3. Создать `Block` с frontmatter
-4. Записать `.md` файл
-5. Скопировать медиафайл (если есть)
-6. Сгенерировать thumbnail (если изображение)
-7. Проиндексировать
-8. Вернуть `IndexedBlock`
+4. Проверить и нормализовать collection refs на IPC-границе
+5. Скопировать медиафайл create-new semantics (если есть)
+6. Записать `.md` файл create-new semantics; если запись падает после media
+   copy, удалить только что скопированный media файл
+7. Сгенерировать thumbnail (если изображение)
+8. Проиндексировать
+9. Вернуть `IndexedBlock`
+
+### Поведение vault conflict resolution
+
+`resolve_vault_conflict(base_slug, conflict_slug, action)` принимает только
+валидные slugs и выполняет файловые операции только если exact pair всё ещё
+существует в `vault_conflicts`. Команда не является произвольным
+rename/delete API: stale или несуществующая conflict-запись должна вернуть
+ошибку без изменения файлов.
+
+Incremental scan обязан обрабатывать iCloud-style conflict filenames так же,
+как full scan: conflict file записывается в `vault_conflicts` и не индексируется
+как обычный блок.
 
 ### Поведение extract_text_selection
 

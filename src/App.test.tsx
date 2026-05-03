@@ -232,6 +232,16 @@ function vaultOpenResult(overrides: Partial<VaultOpenResult> = {}): VaultOpenRes
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("AppWithVault", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -338,6 +348,70 @@ describe("AppWithVault", () => {
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
     expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(4, undefined, 0, 200);
+  });
+
+  it("loads the current route when navigation happens before the initial grid resolves", async () => {
+    const allSnapshot: GridSnapshot = {
+      blocks: [block(1, "alpha-block"), block(2, "beta-block")],
+      total_blocks: 2,
+      has_more: false,
+    };
+    const alphaSnapshot: GridSnapshot = {
+      blocks: [block(1, "alpha-block")],
+      total_blocks: 1,
+      has_more: false,
+    };
+    const allDeferred = deferred<GridSnapshot>();
+
+    commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit) => {
+      expect(offset).toBe(0);
+      expect(limit).toBe(200);
+      if ((tag ?? "__all__") === "__all__") {
+        return allDeferred.promise;
+      }
+      if (tag === "alpha") {
+        return alphaSnapshot;
+      }
+      return allSnapshot;
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("link", { name: "alpha" }));
+    allDeferred.resolve(allSnapshot);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
+    });
+    expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(1, undefined, 0, 200);
+    expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith("alpha", 0, 200);
+  });
+
+  it("does not switch channels with keyboard shortcut while Detail is open", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    });
+    const gridCallsBeforeShortcut = commandMocks.listGridBlocks.mock.calls.length;
+
+    fireEvent.keyDown(window, { key: "ArrowDown", metaKey: true, altKey: true });
+
+    expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeShortcut);
   });
 
   it("keeps sidebar channel order from channel positions when tag counts change", async () => {

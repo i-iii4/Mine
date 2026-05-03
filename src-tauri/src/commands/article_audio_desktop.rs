@@ -393,6 +393,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    #[ignore = "requires a live macOS AVSpeechSynthesizer runtime"]
     fn helper_generates_valid_wav_for_short_text() {
         let _lock = native_speech_test_lock()
             .lock()
@@ -415,6 +416,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    #[ignore = "requires a live macOS AVSpeechSynthesizer runtime"]
     fn helper_generates_valid_wav_for_long_text() {
         let _lock = native_speech_test_lock()
             .lock()
@@ -437,6 +439,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    #[ignore = "requires a live macOS AVSpeechSynthesizer runtime"]
     fn helper_uses_samantha_when_installed() {
         let _lock = native_speech_test_lock()
             .lock()
@@ -461,6 +464,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    #[ignore = "requires a live macOS AVSpeechSynthesizer runtime"]
     fn helper_uses_milena_when_installed() {
         let _lock = native_speech_test_lock()
             .lock()
@@ -485,6 +489,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    #[ignore = "requires a live macOS AVSpeechSynthesizer runtime"]
     fn helper_falls_back_to_system_voice_when_no_curated_voice_matches() {
         let _lock = native_speech_test_lock()
             .lock()

@@ -4,6 +4,8 @@
 // `Mine Collections` frontmatter field. Runtime identity is the wikilink
 // target, not a normalized tag.
 
+use crate::domain::vault::validate_slug;
+
 pub const MINE_COLLECTIONS_FIELD: &str = "Mine Collections";
 
 pub fn normalize_collection_ref(raw: &str) -> String {
@@ -26,6 +28,15 @@ pub fn collection_ref_from_canonical_value(raw: &str) -> Option<String> {
 
 pub fn collection_wikilink_value(collection_ref: &str) -> String {
     format!("[[{}]]", normalize_collection_ref(collection_ref))
+}
+
+pub fn validate_collection_ref(raw: &str) -> Result<String, String> {
+    let collection_ref = normalize_collection_ref(raw);
+    if collection_ref.is_empty() {
+        return Err("collection ref is empty".to_string());
+    }
+    validate_slug(&collection_ref).map_err(|error| error.to_string())?;
+    Ok(collection_ref)
 }
 
 pub fn render_collections(collections: &[String]) -> String {

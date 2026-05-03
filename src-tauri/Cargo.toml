@@ -41,6 +41,7 @@ notify = { version = "8", optional = true }
 
 # HTTP client (for Are.na import)
 ureq = { version = "2", features = ["json"] }
+url = "2"
 
 # Image processing
 image = "0.25"
@@ -57,6 +58,7 @@ base64 = "0.22"
 tiny_http = "0.12"
 http-range = "0.1"
 percent-encoding = "2"
+getrandom = "0.3"
 
 # Error handling
 thiserror = "2"

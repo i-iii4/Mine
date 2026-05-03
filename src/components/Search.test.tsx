@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act } from "react";
 import { Search } from "./Search";
 import type { IndexedBlock } from "@/types";
 import { invoke } from "@tauri-apps/api/core";
@@ -34,9 +35,20 @@ function block(id: number, title: string): IndexedBlock {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("Search", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it("renders nothing when closed", () => {
@@ -86,5 +98,45 @@ describe("Search", () => {
     fireEvent.click(screen.getByText("Clickable"));
     expect(onSelect).toHaveBeenCalledWith(b);
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("ignores stale responses after the query changes", async () => {
+    vi.useFakeTimers();
+    const slow = deferred<IndexedBlock[]>();
+    const fastBlock = block(2, "Fast Result");
+
+    mockInvoke.mockImplementation(async (_command, args) => {
+      const query = (args as { query?: string } | undefined)?.query;
+      if (query === "slow") {
+        return slow.promise;
+      }
+      if (query === "fast") {
+        return [fastBlock];
+      }
+      return [];
+    });
+
+    render(<Search open={true} onClose={vi.fn()} onSelect={vi.fn()} />);
+    const input = screen.getByPlaceholderText("Search blocks...");
+
+    fireEvent.change(input, { target: { value: "slow" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+
+    fireEvent.change(input, { target: { value: "fast" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+
+    expect(screen.getByText("Fast Result")).toBeInTheDocument();
+
+    await act(async () => {
+      slow.resolve([block(1, "Slow Result")]);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Slow Result")).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 });

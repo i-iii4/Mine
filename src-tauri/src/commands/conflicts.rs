@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::state::{AppState, CommandError};
+use crate::domain::vault::validate_slug;
 use crate::storage::index;
 use crate::watcher::handler;
 
@@ -69,6 +70,9 @@ pub fn resolve_vault_conflict(
     conflict_slug: String,
     action: ResolveAction,
 ) -> Result<(), CommandError> {
+    validate_slug(&base_slug).map_err(|e| CommandError::Internal(e.to_string()))?;
+    validate_slug(&conflict_slug).map_err(|e| CommandError::Internal(e.to_string()))?;
+
     let vault_state = state
         .vault_state
         .lock()
@@ -76,6 +80,14 @@ pub fn resolve_vault_conflict(
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     let vault_root = vs.vault.root().to_path_buf();
     let derived_arena = vs.vault.derived_root().to_path_buf();
+
+    let conflict_exists = index::vault_conflict_exists(&vs.conn, &base_slug, &conflict_slug)
+        .map_err(|e| CommandError::Internal(format!("vault_conflict_exists failed: {e:#}")))?;
+    if !conflict_exists {
+        return Err(CommandError::Internal(format!(
+            "vault conflict is no longer pending: {base_slug} / {conflict_slug}"
+        )));
+    }
 
     let base_path: PathBuf = vault_root.join(format!("{base_slug}.md"));
     let conflict_path: PathBuf = vault_root.join(format!("{conflict_slug}.md"));

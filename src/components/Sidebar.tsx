@@ -89,6 +89,11 @@ type SidebarPreviewPosition = {
   bridge: CSSProperties;
 };
 
+type SidebarKeyboardNavigationFocus = {
+  rowKey: string;
+  sequence: number;
+};
+
 interface SidebarProps {
   width: number;
   collapsed: boolean;
@@ -113,6 +118,7 @@ interface SidebarProps {
   onRequestDelete?: (slug: string) => void;
   onNavClick?: () => void;
   onScrollToTop?: () => void;
+  keyboardNavigationFocus?: SidebarKeyboardNavigationFocus | null;
   /** Optional slot for a header banner (e.g. iCloud conflict surface). */
   headerSlot?: React.ReactNode;
   linkedBlockSlug?: string | null;
@@ -146,6 +152,7 @@ export function Sidebar({
   onRequestDelete,
   onNavClick,
   onScrollToTop,
+  keyboardNavigationFocus,
   headerSlot,
   linkedBlockSlug,
   linkedTags = [],
@@ -161,6 +168,7 @@ export function Sidebar({
   const previewOpenTimerRef = useRef<number | null>(null);
   const previewCloseTimerRef = useRef<number | null>(null);
   const sidebarRowSwitchFrameRef = useRef<number | null>(null);
+  const sidebarKeyboardFocusTimerRef = useRef<number | null>(null);
   const sidebarRowFocusKeyRef = useRef<string | null>(null);
   const sidebarRowFocusModeRef = useRef(false);
   const [hoveredPreview, setHoveredPreview] = useState<SidebarPreviewTarget | null>(null);
@@ -230,14 +238,22 @@ export function Sidebar({
     }
   }, []);
 
+  const clearSidebarKeyboardFocusTimer = useCallback(() => {
+    if (sidebarKeyboardFocusTimerRef.current !== null) {
+      window.clearTimeout(sidebarKeyboardFocusTimerRef.current);
+      sidebarKeyboardFocusTimerRef.current = null;
+    }
+  }, []);
+
   const deactivateSidebarRowFocusMode = useCallback(() => {
     clearSidebarRowSwitchFrame();
+    clearSidebarKeyboardFocusTimer();
     sidebarRowFocusKeyRef.current = null;
     sidebarRowFocusModeRef.current = false;
     setSidebarRowSwitching(false);
     setSidebarRowFocusKey(null);
     setSidebarRowFocusMode(false);
-  }, [clearSidebarRowSwitchFrame]);
+  }, [clearSidebarKeyboardFocusTimer, clearSidebarRowSwitchFrame]);
 
   const activateSidebarRowFocus = useCallback((rowKey: string) => {
     const previousKey = sidebarRowFocusKeyRef.current;
@@ -295,6 +311,24 @@ export function Sidebar({
       deactivateSidebarRowFocusMode();
     }
   }, [deactivateSidebarRowFocusMode]);
+
+  useEffect(() => {
+    if (!keyboardNavigationFocus) return;
+    const rowKey = keyboardNavigationFocus.rowKey;
+    const rowIsVisible = rowKey === "all" || visibleTags.some((tc) => `tag:${tc.tag}` === rowKey);
+    if (!rowIsVisible) return;
+
+    clearSidebarKeyboardFocusTimer();
+    activateSidebarRowFocus(rowKey);
+    sidebarKeyboardFocusTimerRef.current = window.setTimeout(() => {
+      sidebarKeyboardFocusTimerRef.current = null;
+      deactivateSidebarRowFocusMode();
+    }, 1000);
+  }, [keyboardNavigationFocus?.sequence]);
+
+  useEffect(() => () => {
+    clearSidebarKeyboardFocusTimer();
+  }, [clearSidebarKeyboardFocusTimer]);
 
   const closePreview = useCallback(() => {
     clearPreviewOpenTimer();
@@ -716,6 +750,7 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
     >
       <button
         type="button"
+        aria-pressed={value === "all"}
         onClick={() => onChange("all")}
         className={cn(
           "flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] text-muted-foreground",
@@ -727,6 +762,7 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
       </button>
       <button
         type="button"
+        aria-pressed={value === "linked"}
         onClick={() => onChange("linked")}
         className={cn(
           "flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] text-muted-foreground",

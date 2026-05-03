@@ -40,6 +40,7 @@
 | notify | File watcher — отслеживание изменений в vault |
 | image + ab_glyph + imageproc | Генерация thumbnails (изображения — resize, статьи — text-to-image) |
 | ureq | Синхронный HTTP-клиент (импорт Are.na) |
+| url + getrandom + tiny_http | Native-host URL validation, upload token generation, local binary upload server |
 | React 19 | UI-фреймворк |
 | Vite | Сборка фронтенда, HMR |
 | TypeScript | Язык фронтенда |
@@ -229,6 +230,8 @@ bun install                    # Установка JS-зависимостей
 cargo tauri dev                # Запуск в режиме разработки (Rust + Vite)
 cargo tauri build              # Сборка .dmg/.app
 bun run lint                   # Линтинг фронтенда
+bun run test                   # Полная проверка: Vitest + Rust workspace tests
+bun run verify                 # Линтинг + полный test contract
 cargo clippy                   # Линтинг Rust
 ```
 

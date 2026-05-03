@@ -30,9 +30,16 @@ export function Search({ open, onClose, onSelect }: SearchProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<IndexedBlock[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const requestSeqRef = useRef(0);
+  const queryRef = useRef(query);
+  const openRef = useRef(open);
+
+  queryRef.current = query;
+  openRef.current = open;
 
   // Reset state when opened
   useEffect(() => {
+    requestSeqRef.current += 1;
     if (open) {
       setQuery("");
       setResults([]);
@@ -49,16 +56,31 @@ export function Search({ open, onClose, onSelect }: SearchProps) {
   // Debounced search via IPC
   const runSearch = useCallback((q: string) => {
     if (timerRef.current) clearTimeout(timerRef.current);
-    if (!q.trim()) {
+    const queryAtStart = q.trim();
+    const requestId = ++requestSeqRef.current;
+    if (!queryAtStart) {
       setResults([]);
       return;
     }
     timerRef.current = setTimeout(async () => {
       try {
-        const res = await searchCommand(q);
+        const res = await searchCommand(queryAtStart);
+        if (
+          requestSeqRef.current !== requestId
+          || queryRef.current.trim() !== queryAtStart
+          || !openRef.current
+        ) {
+          return;
+        }
         setResults(res);
       } catch {
-        setResults([]);
+        if (
+          requestSeqRef.current === requestId
+          && queryRef.current.trim() === queryAtStart
+          && openRef.current
+        ) {
+          setResults([]);
+        }
       }
     }, DEBOUNCE_MS);
   }, []);

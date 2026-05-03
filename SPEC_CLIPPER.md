@@ -18,7 +18,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 │  │  Popup UI  │  │  Content Script    │  │
 │  │            │  │                    │  │
 │  │ Type picker│  │ Meta extraction    │  │
-│  │ Channels   │  │ Readability.js     │  │
+│  │ Channels   │  │ Defuddle           │  │
 │  │ Preview    │  │ Selection capture  │  │
 │  │ Save btn   │  │ Image src capture  │  │
 │  └─────┬──────┘  └────────┬───────────┘  │
@@ -72,15 +72,15 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 
 ### 2. Article (полная статья)
 
-Извлекает текст статьи через Readability.js.
+Извлекает статью через Defuddle.
 
 | Field | Source |
 |---|---|
 | type | `article` |
 | url | Canonical URL страницы |
-| body H1 | Readability.title > og:title > `<title>` |
-| author | Readability.byline > `meta[name=author]` |
-| body | Readability.textContent (очищенный текст) |
+| body H1 | Defuddle title > og:title > `<title>` |
+| author | Defuddle author/byline > `meta[name=author]` |
+| body | Defuddle markdown/text content |
 | thumbnail | `og:image` |
 | source | `web-clipper` |
 
@@ -259,7 +259,7 @@ Popup/overlay init не ждёт тяжёлый article extraction. Старто
 
 `extractArticleAsync` запускается только после первого paint и только для типов, которым нужен body: `selection`, `article`, `content`, `video`. Для обычных страниц, которые по эвристике становятся `link` → default `Screenshot`, Defuddle/readability extraction не запускается на старте. Это защищает overlay от долгого открытия на DOM-heavy сайтах.
 
-Если пользователь переключился в Content и article body ещё грузится, Save не должен записывать пустую статью: UI возвращает inline error и остаётся открытым до завершения загрузки.
+Если пользователь переключился в Content и article body ещё грузится, Save не должен записывать пустую статью: UI возвращает inline error и остаётся открытым до завершения загрузки. Это правило распространяется и на `video`: YouTube/video clip не может быть сохранён как пустой content body, пока transcript/article extraction ещё находится в `articleLoading`.
 
 ### Content video preview
 
@@ -391,17 +391,19 @@ Content script извлекает метаданные из DOM текущей �
 | type | `og:type` (для эвристики) |
 | favicon | `link[rel=icon]` (отображение в popup, не сохраняется) |
 
-### Readability.js
+### Defuddle
 
-Используется только для типа Article. Библиотека включена в расширение (bundled, не CDN).
+Используется для Article/Content extraction. Библиотека включена в расширение
+(bundled, не CDN).
 
 Извлекает:
 - `title` — заголовок статьи; Mine writes it as first body H1, not as `title:` frontmatter
-- `byline` — автор
-- `textContent` — очищенный текст (без HTML)
+- `author` / `byline` — автор
+- `markdown` / `content` — очищенный article body
 - `excerpt` — краткое описание
 
-`Readability.isProbablyReaderable()` используется для эвристики автоопределения.
+Readerability эвристика может использоваться только как дешёвый signal для
+автоопределения типа; сам extraction source of truth — Defuddle.
 
 ## Native Messaging Protocol
 
@@ -590,7 +592,7 @@ Chrome ограничивает отдельное native messaging-сообще
 ### Lifecycle
 
 1. При старте native host привязывает TCP-listener к `127.0.0.1:0` (ОС выбирает свободный порт).
-2. Генерирует случайный 32-символьный hex-токен (`generate_token()`).
+2. Генерирует случайный 64-символьный hex-токен из 32 байт OS entropy (`generate_token()` через `getrandom`).
 3. Запускает `tiny_http::Server` в отдельном потоке.
 4. Порт и токен возвращаются попапу в ответе `get_status`.
 5. Сервер живёт до завершения процесса native host (завершается, когда Chrome закрывает канал stdio).
@@ -601,14 +603,14 @@ Chrome ограничивает отдельное native messaging-сообще
 - `Content-Type` — MIME-тип файла (`image/jpeg`, `image/png`, и т.д.)
 - Query `?filename=<name.ext>` — имя файла (используется санитайзер на стороне хоста)
 - Query `&vault_path=<absolute path>` — целевой vault для staging upload. Обязателен для новых extension builds: HTTP upload и последующий `save_block` должны работать с одним и тем же vault, даже если пользователь переключал пространство или native host был запущен до переключения.
-- Body — сырые байты файла (не base64)
+- Body — сырые байты файла (не base64), максимум `25 MiB`; превышение возвращает `413`
 
 Успешный ответ:
 ```json
 { "ok": true, "filename": "page-screenshot.jpg" }
 ```
 
-Файл сохраняется в корень указанного vault под staging-именем. Upload endpoint не перезаписывает существующий файл: если requested staging name уже занят, native host добавляет Obsidian-style suffix ` (N)` и возвращает фактически записанное имя. Финальное имя media определяет `save_block`: native host переименовывает staging-файл в `<slug>.<ext>` и дедуплицирует конфликт тем же suffix-правилом.
+Файл сохраняется в корень указанного vault под staging-именем. Upload endpoint не перезаписывает существующий файл: если requested staging name уже занят, native host добавляет Obsidian-style suffix ` (N)` и возвращает фактически записанное имя. Финальное имя media определяет `save_block`: native host переименовывает staging-файл в `<slug>.<ext>` и дедуплицирует конфликт тем же suffix-правилом. Все новые `.md` и media writes используют create-new semantics; если финальная запись блока падает, уже скопированные media файлы для этого блока удаляются.
 
 ### Интеграция с `save_block`
 
@@ -643,6 +645,7 @@ Chrome ограничивает отдельное native messaging-сообще
 - Слушает только `127.0.0.1`, не доступен извне.
 - Одноразовый токен, сгенерированный при каждом запуске, — защита от локальных процессов, которые не знают токен.
 - Имена файлов санируются (запрещены `..`, `/`, `\`).
+- Remote media fetch принимает только `http`/`https`, парсит URL через `url::Url`, отклоняет `localhost`, loopback/private/link-local/multicast/unspecified IPs и DNS-имена, которые резолвятся в такие адреса.
 - Расширение получает `host_permissions: ["http://127.0.0.1/*"]` в manifest — этим правом пользуется background/service worker, а не content-script overlay.
 
 ## Native Host Binary
@@ -677,6 +680,11 @@ native host source of truth — `com.mine.app/clipper/native-host`.
 
 Safari использует `SFSafariExtensionHandler` + App Group для native messaging. Бинарник тот же, но вызывается через XPC-обёртку внутри Safari App Extension.
 
+Implementation status 03.05.2026: Xcode scaffold существует, но
+`SafariWebExtensionHandler` ещё не прокидывает protocol messages в Rust native
+host. До отдельной Safari bridge implementation production save path считается
+Chrome/native-host only.
+
 ### Реализация
 
 Native host — отдельный Rust-бинарник (не Tauri). Переиспользует крейты из основного приложения:
@@ -690,6 +698,8 @@ Native host — отдельный Rust-бинарник (не Tauri). Пере�
 | `storage::files` | write_block_file |
 | `storage::thumbnails` | generate_thumbnail |
 | `ureq` | Скачивание медиафайлов и og:image |
+| `url` | Разбор и классификация remote media URL перед fetch |
+| `getrandom` | Случайный upload token |
 | `tiny_http` | Локальный HTTP-сервер для бинарных upload'ов (скриншоты, крупные файлы) |
 | `base64` | Декодирование data URL |
 
@@ -730,7 +740,7 @@ Native host читает путь к vault из файла конфигурац�
 extension/
 ├── manifest.json           # Manifest V3
 ├── background.js           # Service worker: context menus, native messaging
-├── content.js              # Content script: metadata extraction, Readability
+├── content.js              # Content script: metadata extraction, Defuddle
 ├── popup/                  # React popup (исходники, собирается Vite)
 │   ├── index.html          # HTML entry point для Vite
 │   ├── main.tsx            # React entry point
@@ -751,9 +761,7 @@ extension/
 │   ├── assets/             # JS + CSS бандлы
 │   └── fonts/              # Geist, Geist Mono (WOFF2)
 ├── lib/
-│   ├── readability.js      # Bundled Readability.js
-│   ├── readerable.js       # isProbablyReaderable
-│   └── turndown.browser.umd.js  # HTML → Markdown
+│   └── defuddle.js         # Bundled Defuddle article extractor
 └── icons/
     ├── icon-16.png
     ├── icon-24.png

@@ -4,6 +4,15 @@ import { Card } from "./Card";
 import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
 import type { LightBlock } from "@/types";
 
+vi.mock("@/lib/commands", () => ({
+  getBlock: vi.fn(async () => ({ tags: [] })),
+}));
+
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: vi.fn(),
+  revealItemInDir: vi.fn(),
+}));
+
 function block(overrides: Partial<LightBlock> = {}): LightBlock {
   return {
     id: 1,
@@ -61,6 +70,31 @@ describe("Card", () => {
     render(<Card block={b} vaultPath={VAULT} onClick={onClick} />);
     fireEvent.keyDown(screen.getByRole("button"), { key: " " });
     expect(onClick).toHaveBeenCalledWith(b);
+  });
+
+  it("does not open the card when a nested hover action receives keyboard input", () => {
+    const onClick = vi.fn();
+    render(
+      <Card
+        block={block()}
+        vaultPath={VAULT}
+        onClick={onClick}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    const sourceAction = screen
+      .getAllByRole("button", { name: /Source/ })
+      .find((button) => button.tagName === "BUTTON");
+    expect(sourceAction).toBeDefined();
+
+    fireEvent.keyDown(sourceAction!, { key: "Enter" });
+
+    expect(onClick).not.toHaveBeenCalled();
   });
 
   it("enforces the minimum height needed for hover actions", () => {

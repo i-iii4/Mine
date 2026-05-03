@@ -1,5 +1,5 @@
-import { beforeEach, describe, it, expect, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { DndContext } from "@dnd-kit/core";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -43,6 +43,7 @@ function renderSidebar(props = defaultProps, initialEntries = ["/"]) {
 
 describe("Sidebar", () => {
   beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.useRealTimers());
 
   it("renders Everything link with total block count", () => {
     renderSidebar();
@@ -126,6 +127,39 @@ describe("Sidebar", () => {
     expect(nav).not.toHaveAttribute("data-sidebar-row-switching");
   });
 
+  it("holds keyboard channel focus mode until one second after the last switch", () => {
+    vi.useFakeTimers();
+    const props = { ...defaultProps, width: 600 };
+    const { container, rerender } = renderSidebar({
+      ...props,
+      keyboardNavigationFocus: { rowKey: "tag:alpha", sequence: 1 },
+    }, ["/channel/alpha"]);
+
+    const nav = container.querySelector("[data-sidebar-scroll]")!;
+    const alphaRow = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+    const betaRow = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
+    expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
+    expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
+
+    act(() => vi.advanceTimersByTime(900));
+    rerender(sidebarTree({
+      ...props,
+      keyboardNavigationFocus: { rowKey: "tag:beta", sequence: 2 },
+    }, ["/channel/beta"]));
+
+    expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
+    expect(nav).toHaveAttribute("data-sidebar-row-switching", "true");
+    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-focused");
+    expect(betaRow).toHaveAttribute("data-sidebar-row-focused", "true");
+
+    act(() => vi.advanceTimersByTime(999));
+    expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
+    expect(betaRow).not.toHaveAttribute("data-sidebar-row-focused");
+  });
+
   it("does not replace sidebar counts with a hover ellipsis menu", () => {
     const { container } = renderSidebar();
 
@@ -183,8 +217,11 @@ describe("Sidebar", () => {
 
     expect(screen.getByRole("link", { name: /Everything/ })).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: /Everything/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Connected" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Connected" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     const actions = screen.getAllByRole("button", { name: /Connect|Disconnect/ });
     const alphaAction = actions.find((button) => button.getAttribute("aria-label") === "Disconnect Alpha")!;

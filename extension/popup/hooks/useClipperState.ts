@@ -626,7 +626,6 @@ export function useClipperState() {
     if (
       currentType === "content" &&
       articleLoading &&
-      metadata.detectedType !== "video" &&
       !metadata.selection?.length &&
       !articleData?.content
     ) {

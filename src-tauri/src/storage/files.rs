@@ -6,11 +6,14 @@
 // Contract: SPEC_STORAGE.md#storage/files
 
 use anyhow::{Context, Result};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
-use crate::domain::block::{derive_title_fields, serialize_block, strip_first_markdown_h1, Block, BlockType};
+use crate::domain::block::{
+    derive_title_fields, serialize_block, strip_first_markdown_h1, Block, BlockType,
+};
 use crate::domain::vault::VaultLayout;
 use crate::storage::{article_audio, index, media_refs, thumbnails};
 
@@ -28,6 +31,27 @@ pub fn write_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf> {
     }
 
     std::fs::write(&path, content)
+        .with_context(|| format!("failed to write block file: {}", path.display()))?;
+
+    Ok(path)
+}
+
+/// Write a new block file without overwriting an existing user file.
+pub fn write_new_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf> {
+    let path = vault.block_path(&block.slug);
+    let content = serialize_block(block);
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+    }
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .with_context(|| format!("failed to create block file: {}", path.display()))?;
+    file.write_all(content.as_bytes())
         .with_context(|| format!("failed to write block file: {}", path.display()))?;
 
     Ok(path)
@@ -118,6 +142,29 @@ pub fn copy_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Result
     let dest = vault.media_path(slug, ext);
 
     std::fs::copy(source, &dest)
+        .with_context(|| format!("failed to copy media to {}", dest.display()))?;
+
+    Ok(dest)
+}
+
+/// Copy a media file into the vault without overwriting an existing user file.
+pub fn copy_new_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Result<PathBuf> {
+    let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("bin");
+    let dest = vault.media_path(slug, ext);
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+    }
+
+    let mut src = std::fs::File::open(source)
+        .with_context(|| format!("failed to open media source: {}", source.display()))?;
+    let mut out = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&dest)
+        .with_context(|| format!("failed to create media file: {}", dest.display()))?;
+    std::io::copy(&mut src, &mut out)
         .with_context(|| format!("failed to copy media to {}", dest.display()))?;
 
     Ok(dest)
@@ -240,18 +287,38 @@ pub fn persist_new_block(
     block: &Block,
     source_file: Option<&Path>,
 ) -> Result<index::IndexedBlock> {
-    // Write .md file
-    write_block_file(vault, block)?;
+    let block_path = vault.block_path(&block.slug);
+    anyhow::ensure!(
+        !block_path.exists(),
+        "block file already exists: {}",
+        block_path.display()
+    );
 
-    // Copy media + generate thumbnail
+    // Copy media before creating the markdown file so a media-copy failure
+    // does not leave an orphaned block document behind.
+    let mut copied_media: Option<PathBuf> = None;
     if let Some(source) = source_file {
         let canonical = source
             .canonicalize()
             .with_context(|| format!("invalid file path: {}", source.display()))?;
         anyhow::ensure!(canonical.is_file(), "path is not a file");
 
-        copy_media_file(&canonical, vault, &block.slug)?;
+        copied_media = Some(copy_new_media_file(&canonical, vault, &block.slug)?);
+    }
 
+    if let Err(error) = write_new_block_file(vault, block) {
+        if let Some(path) = copied_media {
+            let _ = std::fs::remove_file(path);
+        }
+        return Err(error);
+    }
+
+    // Generate thumbnail after the source files exist. Thumbnail generation is
+    // best effort and never rolls back the user-owned block/media files.
+    if let Some(source) = source_file {
+        let canonical = source
+            .canonicalize()
+            .with_context(|| format!("invalid file path: {}", source.display()))?;
         let ext = canonical.extension().and_then(|e| e.to_str()).unwrap_or("");
         if is_image_ext(ext) {
             let media_dest = vault.media_path(&block.slug, ext);
@@ -296,7 +363,7 @@ pub fn persist_new_reference_block(
     vault: &VaultLayout,
     block: &Block,
 ) -> Result<index::IndexedBlock> {
-    write_block_file(vault, block)?;
+    write_new_block_file(vault, block)?;
     let _ = thumbnails::generate_for_block(block, vault);
     index::upsert_block(conn, block, Some(vault.root()))?;
     let _ = index::sync_thumb_metadata(
@@ -375,6 +442,22 @@ mod tests {
         assert_eq!(parsed.frontmatter.tags, vec!["test"]);
     }
 
+    #[test]
+    fn write_new_block_file_refuses_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let block = make_test_block("sunset");
+        std::fs::write(vault.block_path("sunset"), "existing").unwrap();
+
+        let result = write_new_block_file(&vault, &block);
+
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("sunset")).unwrap(),
+            "existing"
+        );
+    }
+
     // ── scan_md_files ────────────────────────────────────────────────────
 
     #[test]
@@ -431,6 +514,24 @@ mod tests {
 
         let content = std::fs::read(&dest).unwrap();
         assert_eq!(content, b"fake png data");
+    }
+
+    #[test]
+    fn copy_new_media_file_refuses_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+
+        let source = dir.path().join("original.png");
+        std::fs::write(&source, b"new data").unwrap();
+        std::fs::write(vault.media_path("my-image", "png"), b"existing data").unwrap();
+
+        let result = copy_new_media_file(&source, &vault, "my-image");
+
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read(vault.media_path("my-image", "png")).unwrap(),
+            b"existing data"
+        );
     }
 
     // ── delete_block_files ───────────────────────────────────────────────

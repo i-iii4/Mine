@@ -1885,6 +1885,24 @@ pub fn list_vault_conflicts(conn: &Connection) -> Result<Vec<VaultConflict>> {
         .context("failed to list vault conflicts")
 }
 
+/// Return true when the exact conflict pair is still pending.
+pub fn vault_conflict_exists(
+    conn: &Connection,
+    base_slug: &str,
+    conflict_slug: &str,
+) -> Result<bool> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*)
+             FROM vault_conflicts
+             WHERE base_slug = ?1 AND conflict_slug = ?2",
+            params![base_slug, conflict_slug],
+            |row| row.get(0),
+        )
+        .context("failed to check vault conflict")?;
+    Ok(count > 0)
+}
+
 /// Clear a single conflict entry after user resolution.
 pub fn clear_vault_conflict(conn: &Connection, base_slug: &str, conflict_slug: &str) -> Result<()> {
     conn.execute(
@@ -4057,6 +4075,20 @@ mod tests {
 
         let after = list_blocks_light(&conn).unwrap();
         assert_eq!(after[0].feed_playback, None);
+    }
+
+    // ── vault_conflicts ─────────────────────────────────────────────────
+
+    #[test]
+    fn vault_conflict_exists_tracks_exact_pair() {
+        let conn = test_conn();
+        record_vault_conflict(&conn, "note", "note-conflicted").unwrap();
+
+        assert!(vault_conflict_exists(&conn, "note", "note-conflicted").unwrap());
+        assert!(!vault_conflict_exists(&conn, "note", "other-conflicted").unwrap());
+
+        clear_vault_conflict(&conn, "note", "note-conflicted").unwrap();
+        assert!(!vault_conflict_exists(&conn, "note", "note-conflicted").unwrap());
     }
 
     // ── resolve_unique_slug ─────────────────────────────────────────────

@@ -12,7 +12,7 @@ use crate::domain::block::{
     parse_block, parse_markdown_document, serialize_block, Block, BlockType, DateTime, Frontmatter,
 };
 use crate::domain::channel::Channel;
-use crate::domain::collection::normalize_collection_ref;
+use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::storage::{db, files, index};
 use crate::util::append_startup_trace;
 
@@ -125,6 +125,7 @@ pub fn create_channel(
     let now = crate::commands::state::now_iso8601();
     let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
 
+    let tag = validate_collection_ref(&tag).map_err(CommandError::Internal)?;
     let mut channel = Channel::new(&tag, title.as_deref(), dt)
         .map_err(|e| CommandError::Internal(e.to_string()))?;
 
@@ -187,6 +188,7 @@ pub fn reorder_channels(
         if tag.is_empty() {
             continue;
         }
+        validate_collection_ref(&tag).map_err(CommandError::Internal)?;
         if !existing_tags.contains(tag.as_str()) {
             let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
             let channel =
@@ -200,9 +202,14 @@ pub fn reorder_channels(
 
     let positions: Vec<(String, u32)> = items
         .into_iter()
-        .map(|item| (normalize_collection_ref(&item.tag), item.position))
-        .filter(|(tag, _)| !tag.is_empty())
+        .filter_map(|item| {
+            let tag = normalize_collection_ref(&item.tag);
+            (!tag.is_empty()).then_some((tag, item.position))
+        })
         .collect();
+    for (tag, _) in &positions {
+        validate_collection_ref(tag).map_err(CommandError::Internal)?;
+    }
 
     index::update_channel_positions(&vs.conn, &positions)?;
 
@@ -243,8 +250,10 @@ pub fn rename_channel(
     if normalized_new.is_empty() {
         return Err(CommandError::Internal("new collection ref is empty".into()));
     }
+    validate_collection_ref(&normalized_new).map_err(CommandError::Internal)?;
 
     let normalized_old = normalize_collection_ref(&old_tag);
+    validate_collection_ref(&normalized_old).map_err(CommandError::Internal)?;
     if normalized_old == normalized_new {
         // Same tag after normalization — no-op
         let channels = index::list_channels(&vs.conn)?;
@@ -454,6 +463,7 @@ pub fn delete_channel(state: State<'_, AppState>, tag: String) -> Result<bool, C
     if tag.is_empty() {
         return Err(CommandError::Internal("collection ref is empty".into()));
     }
+    validate_collection_ref(&tag).map_err(CommandError::Internal)?;
 
     let md_path = vs.vault.block_path(&tag);
     if md_path.exists() {

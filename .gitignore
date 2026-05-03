@@ -8,10 +8,8 @@ src-tauri/target/
 # Cargo workspace output — cargo may write to root target/ when run from
 # the worktree root (e.g. cargo tauri dev), not only from src-tauri/.
 target/
-Cargo.lock
 
 # Bun
-bun.lock
 
 # Environment
 .env

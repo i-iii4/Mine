@@ -580,9 +580,13 @@ that belongs to `storage::media_refs`.
   in-place without closing and reopening the page.
 - После успешного rename Detail продолжает показывать тот же блок уже под новым slug; visible title меняется только если изменился body H1 or legacy `frontmatter.title`, а filename-only surfaces используют новый `fallback_label`
 - Markdown body H1 не полагается на prose-default sizes; Detail задаёт `text-lg leading-6 font-semibold` для `h1` и `text-base leading-5 font-semibold` для `h2-h6`, чтобы article typography не выходила за рамки дизайн-системы
-- Кнопка X справа вверху, Esc для закрытия
-- Стрелки влево/вправо — линейная навигация между блоками
-- Detail — plain div с `absolute inset-0 z-10` (не Radix Dialog)
+- Кнопка X справа вверху, Esc для закрытия. Escape не должен закрывать Detail,
+  если событие принадлежит вложенному menu/listbox/input/contenteditable
+  surface.
+- Стрелки внутри Detail остаются нативными для reading surface и не делают
+  линейную навигацию между блоками.
+- Detail — plain div с `absolute inset-0 z-10` (не Radix Dialog), но с
+  `role="dialog"` и accessible name по текущему filename.
 - Close Detail должен быть мгновенным для navigation state: `selectedBlock`
   сбрасывается сразу, grid/sidebar становятся interactive immediately, а exit
   верхнего chrome доигрывается через отдельный closing snapshot без ожидания
@@ -600,12 +604,17 @@ that belongs to `storage::media_refs`.
 - При закрытии Detail фокус возвращается на последнюю просмотренную карточку
 
 #### Detail
-- Стрелки влево/вправо — линейная навигация (prev/next по массиву `activeBlocks`)
-- Capture phase + `stopPropagation` — не даёт стрелкам дойти до dnd-kit и браузера
-- Модификаторы (Cmd/Alt/Ctrl) пропускаются — не перехватывают Opt+Cmd+Arrow
+- Escape закрывает Detail, кроме случаев, когда keyboard event уже
+  defaultPrevented или пришёл из вложенного menu/listbox/input/contenteditable.
+- Стрелки не перехватываются: чтение статьи не должно случайно переключать
+  карточки.
+- Модификаторы (Cmd/Alt/Ctrl) пропускаются — Detail не перехватывает
+  системные/browser shortcuts.
 
 #### Переключение каналов
 - Opt+Cmd+Up/Down — навигация по `orderedTags` (All → каналы по порядку)
+- Shortcut не срабатывает, когда открыт Detail, Search, overlay/dialog/menu, или
+  фокус находится в input/textarea/select/contenteditable.
 - Автоподскрол сайдбара к активному каналу (`[aria-current="page"]`)
 - При переключении Detail закрывается (`useEffect` на `location.pathname`)
 

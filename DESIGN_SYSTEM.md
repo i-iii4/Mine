@@ -331,6 +331,9 @@ Content: `rounded-1 border bg-popover p-1`, тень — единая для в�
 **Появление:** `opacity-0 group-hover:opacity-100 transition-opacity`
 
 **Поведение:**
+- Parent card открывается по keyboard только когда `keydown` пришёл с самой
+  card surface (`event.target === event.currentTarget`); вложенные action
+  buttons не должны keyboard-bubble в open Detail.
 - `stopPropagation` на контейнере — клик по кнопкам не открывает Detail
 - Source: `window.open(url)`. Disabled если `block.url` нет
 - Connect: `DropdownMenu` со списком каналов (`CollectionPicker`)

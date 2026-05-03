@@ -117,6 +117,83 @@ describe("Detail", () => {
     );
   });
 
+  it("names the detail dialog with the active filename", () => {
+    render(
+      <Detail
+        block={block({ media_file: "article-cover.jpg" })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "article-cover.jpg" })).toBeInTheDocument();
+  });
+
+  it("does not close Detail when Escape belongs to a nested menu surface", () => {
+    const onClose = vi.fn();
+    render(
+      <Detail
+        block={block()}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={onClose}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+    const menu = document.createElement("div");
+    menu.setAttribute("role", "menu");
+    document.body.append(menu);
+
+    fireEvent.keyDown(menu, { key: "Escape" });
+
+    expect(onClose).not.toHaveBeenCalled();
+    menu.remove();
+  });
+
+  it("does not navigate cards with arrow keys in Detail view", () => {
+    const onClose = vi.fn();
+    const onNavigate = vi.fn();
+    render(
+      <Detail
+        block={block()}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={onClose}
+        onNavigate={onNavigate}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    fireEvent.keyDown(document, { key: "ArrowLeft" });
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    expect(onNavigate).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it("animates the classic header and its separator as separate chrome layers", () => {
     const { container } = render(
       <Detail

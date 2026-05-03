@@ -161,6 +161,42 @@ Goal: устранить две подтверждённые архитекту�
   - extension toolbar icon — белый круг с чёрной `m`;
   - Instagram overlay отделён от toolbar icon: content script рисует круглую белую кнопку и вставляет glyph-only `clipper-overlay-32.png`.
 
+### Current audit hardening — 03.05.2026 [COMPLETED]
+
+- Frontend async route/search guards:
+  - initial route load and pagination ignore stale responses;
+  - Search ignores out-of-order responses after query/open state changes;
+  - global channel shortcuts do not fire inside Detail, Search, overlays,
+    editable fields, or defaultPrevented events.
+- Frontend interaction/a11y:
+  - Detail keeps arrow keys native to the reading surface and only Escape closes
+    the overlay;
+  - Detail has an accessible dialog name;
+  - Escape from nested menu/listbox/input surfaces does not close Detail;
+  - card hover action buttons do not keyboard-bubble into parent card open;
+  - All/Connected link mode buttons expose `aria-pressed`.
+- Storage/native-host hardening:
+  - block creation and native-host saves check disk-only slug/media collisions;
+  - new `.md` and media writes use create-new semantics;
+  - media copied before a failed final block write is rolled back;
+  - collection refs are validated at IPC/native-host boundaries;
+  - vault conflict resolution requires valid slugs and an existing pending
+    `vault_conflicts` pair;
+  - incremental scan diverts iCloud-style conflict files like full scan.
+- Clipper/native-host security:
+  - video/content saves cannot persist empty body while extraction is loading;
+  - save-link context menu path is registered;
+  - background upload has `AbortController` timeout;
+  - upload tokens use OS randomness, body size is capped at `25 MiB`;
+  - remote media fetch rejects private/loopback/link-local/multicast targets.
+- Verification contract:
+  - `bun run test` now runs Vitest and Rust workspace tests with `--locked`;
+  - `bun.lock` and `Cargo.lock` are tracked inputs.
+
+Remaining gap: Safari App Extension native bridge is still a scaffold/stub and
+requires a separate implementation before Safari save path can be considered
+production-ready.
+
 ### Current known product compatibility gap
 
 - **Obsidian Markdown compatibility.**

@@ -6,7 +6,8 @@ use tauri::{AppHandle, State};
 
 use crate::commands::state::{current_vault_layout, AppState, CommandError};
 use crate::domain::block::{parse_markdown_document, DateTime};
-use crate::domain::collection::normalize_collection_ref;
+use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
+use crate::domain::vault::validate_slug;
 use crate::storage::index::TagCount;
 use crate::storage::{db, files, index};
 use crate::util::append_startup_trace;
@@ -40,6 +41,7 @@ pub fn add_tag(state: State<'_, AppState>, slug: String, tag: String) -> Result<
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
 
     let path = vs.vault.block_path(&slug);
     let (_, content) = files::read_block_file(&vs.vault, &path)?;
@@ -53,6 +55,7 @@ pub fn add_tag(state: State<'_, AppState>, slug: String, tag: String) -> Result<
             "collection ref is empty".to_string(),
         ));
     }
+    validate_collection_ref(&collection_ref).map_err(CommandError::Internal)?;
 
     if !block.frontmatter.tags.contains(&collection_ref) {
         block.frontmatter.tags.push(collection_ref);
@@ -86,6 +89,7 @@ pub fn remove_tag(
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
 
     let path = vs.vault.block_path(&slug);
     let (_, content) = files::read_block_file(&vs.vault, &path)?;
@@ -94,6 +98,9 @@ pub fn remove_tag(
     let mut block = parsed.block;
 
     let collection_ref = normalize_collection_ref(&tag);
+    if !collection_ref.is_empty() {
+        validate_collection_ref(&collection_ref).map_err(CommandError::Internal)?;
+    }
     block.frontmatter.tags.retain(|t| t != &collection_ref);
     files::normalize_block_media_refs_for_index(&vs.vault, &mut block);
 
@@ -132,6 +139,8 @@ pub fn rename_tag(
     if normalized_new.is_empty() {
         return Err(CommandError::Internal("new collection ref is empty".into()));
     }
+    validate_collection_ref(&normalized_old).map_err(CommandError::Internal)?;
+    validate_collection_ref(&normalized_new).map_err(CommandError::Internal)?;
     if normalized_old == normalized_new {
         return Ok(());
     }
@@ -180,6 +189,7 @@ pub fn delete_tag_from_all(state: State<'_, AppState>, tag: String) -> Result<()
     if normalized.is_empty() {
         return Ok(());
     }
+    validate_collection_ref(&normalized).map_err(CommandError::Internal)?;
 
     let affected_blocks = index::list_blocks_by_tag(&vs.conn, &normalized)?;
     for indexed_block in &affected_blocks {

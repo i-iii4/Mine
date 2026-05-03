@@ -94,6 +94,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
 
   const handleClick = () => onClick(block);
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       onClick(block);

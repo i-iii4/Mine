@@ -110,7 +110,6 @@ export function Detail({
   detailTopMenuMode = "island",
   isClosing = false,
   onClose,
-  onNavigate,
   tags,
   currentTag,
   onToggleTag,
@@ -189,22 +188,18 @@ export function Detail({
 
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // ESC to close, left/right arrows to navigate cards
-  // Up/Down arrows left for native scroll of Detail content
+  // ESC closes Detail. Arrow keys remain native to the reading surface.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
+      if (shouldIgnoreDetailEscape(e)) return;
       if (e.metaKey || e.altKey || e.ctrlKey) return;
-      if (e.key === "Escape") { onClose(); return; }
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        e.preventDefault();
-        e.stopPropagation();
-        onNavigate(e.key === "ArrowLeft" ? "prev" : "next");
+      if (e.key === "Escape") {
+        onClose();
       }
     };
     document.addEventListener("keydown", handler, true);
     return () => document.removeEventListener("keydown", handler, true);
-  }, [onClose, onNavigate]);
+  }, [onClose]);
 
   // Auto-focus the panel so keyboard events work immediately
   useEffect(() => {
@@ -227,6 +222,8 @@ export function Detail({
       )}
       role="dialog"
       aria-modal="false"
+      aria-label={filename}
+      data-detail-root
     >
       {isFloatingTopMenu ? (
         <div
@@ -1324,7 +1321,15 @@ function ArticleBody({
   const components: Components = useMemo(
     () => ({
       p: ({ node, ...props }) => (
-        <p {...markdownBlockPositionProps(node)} {...props} />
+        paragraphContainsBlockMedia(node) ? (
+          <div
+            {...markdownBlockPositionProps(node)}
+            {...props}
+            className={cn("my-5 leading-5", props.className)}
+          />
+        ) : (
+          <p {...markdownBlockPositionProps(node)} {...props} />
+        )
       ),
       li: ({ node, ...props }) => (
         <li {...markdownBlockPositionProps(node)} {...props} />
@@ -1695,12 +1700,43 @@ function firstSelectionClientRect(selection: Selection): DOMRect | null {
   return null;
 }
 
+function shouldIgnoreDetailEscape(event: KeyboardEvent): boolean {
+  if (event.defaultPrevented) return true;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return false;
+  if (
+    target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement
+    || target.isContentEditable
+  ) {
+    return true;
+  }
+  return !!target.closest(
+    "[data-radix-popper-content-wrapper], [role='menu'], [role='listbox']",
+  );
+}
+
 type MarkdownPositionedNode = {
   position?: {
     start?: { offset?: number };
     end?: { offset?: number };
   };
 };
+
+type MarkdownElementNode = {
+  type?: string;
+  tagName?: string;
+  children?: MarkdownElementNode[];
+};
+
+function paragraphContainsBlockMedia(node: unknown): boolean {
+  const element = node as MarkdownElementNode | undefined;
+  return (element?.children ?? []).some((child) => {
+    if (child.type !== "element") return false;
+    return child.tagName === "img" || child.tagName === "video";
+  });
+}
 
 function markdownBlockPositionProps(
   node: unknown,

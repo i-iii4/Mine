@@ -421,8 +421,8 @@ iOS UI contract:
 | DB | Поисковый индекс, collection-ref cache, список каналов | rusqlite + FTS5 |
 | Thumbnail Generator | Превью 240px: изображения (resize), статьи (text-to-image) | Rust, image + ab_glyph + imageproc |
 | Import | Импорт каналов из Are.na | Rust, ureq (sync HTTP) |
-| Web Clipper | Chrome/Safari расширение: сохранение из браузера | Manifest V3, Readability.js, TurndownService |
-| Native Host | Мост между расширением и vault (stdin/stdout JSON + локальный HTTP upload) | Rust (bin/native_host.rs), ureq, tiny_http |
+| Web Clipper | Chrome/Safari расширение: сохранение из браузера | Manifest V3, Defuddle, native messaging |
+| Native Host | Мост между расширением и vault (stdin/stdout JSON + локальный HTTP upload) | Rust (bin/native_host.rs), ureq, tiny_http, url, getrandom |
 | Vault | Пользовательские файлы на диске | Файловая система |
 
 ### Frontend rendering model
@@ -779,6 +779,22 @@ runtime. A card should link to `[[Красивый веб]]`, and the collection
 should be `Красивый веб.md`. Legacy encodings are inputs to migration, not a
 second permanent format.
 
+### 015: Native-host write and fetch hardening
+
+| Approach | Problem |
+|---|---|
+| Trust SQLite-only slug collision checks | Disk-only files can be overwritten when the index is stale or empty |
+| Write markdown first, then media | Media-copy failures leave orphan `.md` files; later retries see inconsistent state |
+| String-prefix URL checks for downloaded media | Private-network / localhost URLs and ambiguous host forms can bypass intent |
+| **Disk-inclusive slug checks + create-new writes + parsed URL validation** (chosen) | Slightly more IO per save, but preserves the filesystem as source of truth and rejects unsafe native-host fetches before download |
+
+Rationale: browser input is untrusted even when it comes from the extension UI.
+The native host must be authoritative for slug uniqueness, collection refs,
+new-file creation, upload limits, and media-fetch boundaries. New block writes
+now avoid overwriting existing `.md` or media files, roll back copied media when
+the final block write fails, and validate remote fetch hosts through parsed
+HTTP(S) URLs plus DNS/IP checks before `ureq` runs.
+
 ## Dependencies
 
 | Package | Version | Purpose | License |
@@ -792,6 +808,9 @@ second permanent format.
 | serde | latest | Сериализация | MIT/Apache-2.0 |
 | serde_yaml | latest | Парсинг YAML frontmatter | MIT/Apache-2.0 |
 | thiserror | latest | Типизированные ошибки | MIT/Apache-2.0 |
+| url | 2.x | URL parsing and host classification in native host | MIT/Apache-2.0 |
+| getrandom | 0.3.x | OS random bytes for native-host upload tokens | MIT/Apache-2.0 |
+| tiny_http | latest | Local HTTP upload server for extension binary payloads | MIT/Apache-2.0 |
 | react | 19.x | UI-фреймворк | MIT |
 | vite | latest | Сборщик | MIT |
 | ureq | 2.x | Синхронный HTTP-клиент (импорт Are.na) | MIT/Apache-2.0 |
@@ -807,6 +826,5 @@ second permanent format.
 | react-markdown | latest | Рендеринг markdown в Detail.tsx | MIT |
 | remark-gfm | latest | GFM-расширение для react-markdown | MIT |
 | @tailwindcss/typography | latest | Стилизация prose-контента | MIT |
-| Readability.js | 0.6.x | Извлечение статей (content script) | Apache-2.0 |
-| TurndownService | 7.x | HTML → Markdown (content script) | MIT |
+| Defuddle | bundled | Извлечение статей и Markdown-конвертация в content script | MIT |
 | eslint + typescript-eslint | 10.x | Линтинг фронтенда (TypeScript) | MIT |

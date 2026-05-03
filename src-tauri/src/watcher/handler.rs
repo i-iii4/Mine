@@ -216,6 +216,20 @@ pub fn incremental_scan(
         .context("failed to begin transaction for incremental_scan")?;
 
     for path in &paths {
+        // Keep incremental scan behavior identical to full_scan and
+        // index_md_file: iCloud conflict copies are surfaced in
+        // vault_conflicts, not indexed as independent blocks.
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            if let Some(base_slug) = crate::domain::vault::detect_icloud_conflict(stem) {
+                let _ = index::record_vault_conflict(&tx, &base_slug, stem);
+                log::info!(
+                    "iCloud conflict detected during incremental scan: {} (base slug: {})",
+                    stem,
+                    base_slug
+                );
+                continue;
+            }
+        }
         if let Some(slug) = path_to_slug(vault, path) {
             live_slugs.insert(slug.clone());
             if let Some(indexed_at) = indexed_at_map.get(&slug) {
@@ -1556,6 +1570,27 @@ mod tests {
             .unwrap()
             .is_none());
         assert_eq!(index::list_vault_conflicts(&conn).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn incremental_scan_diverts_icloud_conflict_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+
+        write_md_file_with_body(&vault, "Doc", "link", &[], "body");
+        write_md_file_with_body(&vault, "Doc (conflicted copy)", "link", &[], "body");
+
+        incremental_scan(&conn, &vault, None, None).unwrap();
+
+        assert!(index::get_block(&conn, "Doc").unwrap().is_some());
+        assert!(index::get_block(&conn, "Doc (conflicted copy)")
+            .unwrap()
+            .is_none());
+        let conflicts = index::list_vault_conflicts(&conn).unwrap();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].base_slug, "Doc");
+        assert_eq!(conflicts[0].conflict_slug, "Doc (conflicted copy)");
     }
 
     #[test]

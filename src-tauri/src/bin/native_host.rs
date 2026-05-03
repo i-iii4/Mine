@@ -13,17 +13,19 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::net::{IpAddr, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use mine_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use mine_lib::domain::channel::Channel;
-use mine_lib::domain::collection::normalize_collection_ref;
+use mine_lib::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use mine_lib::domain::vault::{resolve_slug_conflict, VaultLayout};
 use mine_lib::storage::{db, files, index, thumbnails};
 use mine_lib::util::now_iso8601;
 use percent_encoding::percent_decode_str;
+use url::{Host, Url};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -428,6 +430,60 @@ fn collection_ref_title(collection_ref: &str) -> String {
     }
 }
 
+fn existing_vault_stems(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+) -> Result<HashSet<String>, String> {
+    let mut existing: HashSet<String> = index::list_blocks(conn)
+        .map_err(|e| e.to_string())?
+        .iter()
+        .map(|b| b.slug.clone())
+        .collect();
+    collect_vault_file_stems(vault, vault.root(), &mut existing)?;
+    Ok(existing)
+}
+
+fn collect_vault_file_stems(
+    vault: &VaultLayout,
+    dir: &Path,
+    existing: &mut HashSet<String>,
+) -> Result<(), String> {
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|e| e.to_string())?;
+        if file_type.is_dir() {
+            if files::is_ignored_vault_dir(&path) {
+                continue;
+            }
+            collect_vault_file_stems(vault, &path, existing)?;
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        if let Ok(stem) = vault.slug_for_path(&path) {
+            existing.insert(stem);
+        }
+    }
+    Ok(())
+}
+
+fn normalize_collection_list(raw_tags: Vec<String>) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for raw in raw_tags {
+        let normalized = normalize_collection_ref(&raw);
+        if normalized.is_empty() {
+            continue;
+        }
+        let collection_ref = validate_collection_ref(&normalized)?;
+        if !out.contains(&collection_ref) {
+            out.push(collection_ref);
+        }
+    }
+    Ok(out)
+}
+
 fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     let p: SaveBlockParams = match serde_json::from_value(params) {
         Ok(p) => p,
@@ -446,11 +502,10 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
 
     // Generate slug
     let raw_slug = mine_lib::domain::block::suggest_slug(p.title.as_deref(), p.url.as_deref());
-    let existing: HashSet<String> = index::list_blocks(&conn)
-        .unwrap_or_default()
-        .iter()
-        .map(|b| b.slug.clone())
-        .collect();
+    let existing = match existing_vault_stems(&conn, vault) {
+        Ok(existing) => existing,
+        Err(e) => return send_error(&format!("failed to inspect existing vault files: {e}")),
+    };
     let slug = match resolve_slug_conflict(&raw_slug, &existing) {
         Ok(s) => s,
         Err(e) => return send_error(&format!("{e}")),
@@ -484,7 +539,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
                 Ok((bytes, ext)) => {
                     let dest_name = format!("{}.{}", slug, ext);
                     let dest_path = vault.root().join(&dest_name);
-                    match std::fs::write(&dest_path, &bytes) {
+                    match write_new_bytes(&dest_path, &bytes) {
                         Ok(()) => {
                             media_file = Some(dest_name);
                         }
@@ -548,10 +603,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         }
     };
     let body = if should_write_body_h1(bt, p.url.as_deref()) {
-        mine_lib::domain::block::ensure_body_starts_with_h1(
-            &body,
-            p.title.as_deref().unwrap_or(""),
-        )
+        mine_lib::domain::block::ensure_body_starts_with_h1(&body, p.title.as_deref().unwrap_or(""))
     } else {
         body
     };
@@ -577,6 +629,11 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         );
     }
 
+    let tags = match normalize_collection_list(p.tags.unwrap_or_default()) {
+        Ok(tags) => tags,
+        Err(error) => return send_error(&format!("invalid collection ref: {error}")),
+    };
+
     let block = Block {
         slug: slug.clone(),
         frontmatter: Frontmatter {
@@ -586,13 +643,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             url: p.url,
             file: media_file,
             thumbnail: thumbnail_file,
-            tags: p
-                .tags
-                .unwrap_or_default()
-                .iter()
-                .map(|t| normalize_collection_ref(t))
-                .filter(|t| !t.is_empty())
-                .collect(),
+            tags,
             related_notes: Vec::new(),
             source_media: None,
             saved_at,
@@ -608,7 +659,8 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     };
 
     // Write .md file
-    if let Err(e) = files::write_block_file(vault, &block) {
+    if let Err(e) = files::write_new_block_file(vault, &block) {
+        cleanup_new_block_media(vault, &block);
         return send_error(&format!("failed to write block file: {e}"));
     }
 
@@ -644,6 +696,21 @@ fn should_write_body_h1(block_type: BlockType, url: Option<&str>) -> bool {
     }
 }
 
+fn cleanup_new_block_media(vault: &VaultLayout, block: &Block) {
+    for name in [
+        block.frontmatter.file.as_deref(),
+        block.frontmatter.thumbnail.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let path = vault.root().join(name);
+        if path.starts_with(vault.root()) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 fn is_social_status_url(url: &str) -> bool {
     let lower = url.to_lowercase();
     ((lower.contains("twitter.com/") || lower.contains("x.com/")) && lower.contains("/status/"))
@@ -669,7 +736,12 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
     };
     let title = p.title.or_else(|| Some(title_from_raw_channel_tag(&p.tag)));
 
-    let mut channel = match Channel::new(&p.tag, title.as_deref(), created_at) {
+    let tag = match validate_collection_ref(&p.tag) {
+        Ok(tag) => tag,
+        Err(error) => return send_error(&format!("invalid collection ref: {error}")),
+    };
+
+    let mut channel = match Channel::new(&tag, title.as_deref(), created_at) {
         Ok(channel) => channel,
         Err(e) => return send_error(&format!("invalid channel: {e}")),
     };
@@ -678,8 +750,16 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         Err(e) => return send_error(&format!("failed to resolve channel position: {e}")),
     };
 
+    let existing = match existing_vault_stems(&conn, vault) {
+        Ok(existing) => existing,
+        Err(e) => return send_error(&format!("failed to inspect existing vault files: {e}")),
+    };
+    if existing.contains(&channel.tag) {
+        return send_error(&format!("channel file already exists: {}", channel.tag));
+    }
+
     let block = channel_to_block(&channel);
-    if let Err(e) = files::write_block_file(vault, &block) {
+    if let Err(e) = files::write_new_block_file(vault, &block) {
         return send_error(&format!("failed to write channel file: {e}"));
     }
 
@@ -743,6 +823,12 @@ fn finalize_uploaded_filename(
     uploaded: &str,
     final_stem: &str,
 ) -> Result<String, String> {
+    let uploaded_normalized = uploaded.replace('\\', "/");
+    let uploaded = std::path::Path::new(&uploaded_normalized)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| format!("invalid pre-uploaded filename: {uploaded}"))?;
     let src = vault_root.join(uploaded);
     if !src.exists() {
         return Err(format!("pre-uploaded file not found: {uploaded}"));
@@ -817,6 +903,18 @@ fn decode_data_url(data_url: &str) -> anyhow::Result<(Vec<u8>, String)> {
     Ok((bytes, ext.to_string()))
 }
 
+fn write_new_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(bytes)?;
+    Ok(())
+}
+
 fn ext_from_url(url: &str) -> &str {
     let path = url.split('?').next().unwrap_or(url);
     let path = path.split('#').next().unwrap_or(path);
@@ -828,39 +926,64 @@ fn ext_from_url(url: &str) -> &str {
 
 /// Validate that a URL is safe to fetch (http/https only, no private IPs).
 fn validate_fetch_url(url: &str) -> anyhow::Result<()> {
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        anyhow::bail!("only http:// and https:// URLs are allowed, got: {}", url);
+    let parsed = Url::parse(url).map_err(|e| anyhow::anyhow!("invalid URL: {e}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => anyhow::bail!("only http:// and https:// URLs are allowed, got: {}", other),
     }
-    // Extract host: skip "http(s)://" and take until "/" or ":"
-    let after_scheme = if url.starts_with("https://") {
-        &url[8..]
-    } else {
-        &url[7..]
-    };
-    let host = after_scheme
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .split(':')
-        .next()
-        .unwrap_or("");
-    let lower = host.to_lowercase();
-    if lower == "localhost"
-        || lower.starts_with("127.")
-        || lower == "[::1]"
-        || lower.starts_with("10.")
-        || lower.starts_with("192.168.")
-        || lower.starts_with("169.254.")
-        || (lower.starts_with("172.")
-            && lower
-                .split('.')
-                .nth(1)
-                .and_then(|s| s.parse::<u8>().ok())
-                .is_some_and(|n| (16..=31).contains(&n)))
-    {
-        anyhow::bail!("private/loopback addresses are not allowed: {}", host);
+
+    let host = parsed
+        .host()
+        .ok_or_else(|| anyhow::anyhow!("URL has no host"))?;
+    match host {
+        Host::Ipv4(addr) => validate_public_ip(IpAddr::V4(addr))?,
+        Host::Ipv6(addr) => validate_public_ip(IpAddr::V6(addr))?,
+        Host::Domain(domain) => {
+            let lower = domain.trim_end_matches('.').to_ascii_lowercase();
+            if lower == "localhost" || lower.ends_with(".localhost") {
+                anyhow::bail!("private/loopback hosts are not allowed: {}", domain);
+            }
+            let port = parsed
+                .port_or_known_default()
+                .ok_or_else(|| anyhow::anyhow!("URL has no resolvable port"))?;
+            let mut resolved_any = false;
+            for addr in (domain, port)
+                .to_socket_addrs()
+                .map_err(|e| anyhow::anyhow!("failed to resolve host {domain}: {e}"))?
+            {
+                resolved_any = true;
+                validate_public_ip(addr.ip())?;
+            }
+            if !resolved_any {
+                anyhow::bail!("host did not resolve: {}", domain);
+            }
+        }
     }
     Ok(())
+}
+
+fn validate_public_ip(ip: IpAddr) -> anyhow::Result<()> {
+    match ip {
+        IpAddr::V4(addr)
+            if addr.is_private()
+                || addr.is_loopback()
+                || addr.is_link_local()
+                || addr.is_broadcast()
+                || addr.is_unspecified() =>
+        {
+            anyhow::bail!("private/loopback addresses are not allowed: {}", addr);
+        }
+        IpAddr::V6(addr)
+            if addr.is_loopback()
+                || addr.is_unspecified()
+                || addr.is_unique_local()
+                || addr.is_unicast_link_local()
+                || addr.is_multicast() =>
+        {
+            anyhow::bail!("private/loopback addresses are not allowed: {}", addr);
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Per-request timeout for inline-media downloads. ureq 2.x default is
@@ -887,9 +1010,20 @@ fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Re
         {
             Ok(resp) => {
                 let mut reader = resp.into_reader();
-                let mut file = std::fs::File::create(dest)?;
-                std::io::copy(&mut reader, &mut file)?;
-                return Ok(());
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(dest)?;
+                match std::io::copy(&mut reader, &mut file) {
+                    Ok(_) => return Ok(()),
+                    Err(error) => {
+                        let _ = std::fs::remove_file(dest);
+                        return Err(error.into());
+                    }
+                }
             }
             Err(e) => last_err = Some(e),
         }
@@ -1497,12 +1631,16 @@ struct UploadServer {
 }
 
 fn generate_token() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    format!("{:032x}", seed ^ 0xdeadbeef_cafebabe_u128)
+    let mut bytes = [0u8; 32];
+    if getrandom::fill(&mut bytes).is_err() {
+        return String::new();
+    }
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
 }
 
 fn start_upload_server() -> Option<UploadServer> {
@@ -1515,6 +1653,9 @@ fn start_upload_server() -> Option<UploadServer> {
         return None;
     }
     let token = generate_token();
+    if token.is_empty() {
+        return None;
+    }
     let token_clone = token.clone();
 
     // Seed shared vault path used by the upload handler
@@ -1535,6 +1676,7 @@ fn start_upload_server() -> Option<UploadServer> {
 }
 
 static UPLOAD_VAULT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+const MAX_UPLOAD_BYTES: u64 = 25 * 1024 * 1024;
 
 fn form_url_decode(value: &str) -> String {
     let value = value.replace('+', " ");
@@ -1668,9 +1810,24 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
 
     // Read body
     let mut body = Vec::new();
-    if let Err(e) = request.as_reader().read_to_end(&mut body) {
+    if let Err(e) = request
+        .as_reader()
+        .take(MAX_UPLOAD_BYTES + 1)
+        .read_to_end(&mut body)
+    {
         let response = tiny_http::Response::from_string(format!("Read error: {e}"))
             .with_status_code(500)
+            .with_header(
+                "Access-Control-Allow-Origin: *"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
+        let _ = request.respond(response);
+        return;
+    }
+    if body.len() as u64 > MAX_UPLOAD_BYTES {
+        let response = tiny_http::Response::from_string("Upload too large")
+            .with_status_code(413)
             .with_header(
                 "Access-Control-Allow-Origin: *"
                     .parse::<tiny_http::Header>()
@@ -1709,7 +1866,7 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
         }
     };
     let dest = vault_root.join(&filename);
-    if let Err(e) = std::fs::write(&dest, &body) {
+    if let Err(e) = write_new_bytes(&dest, &body) {
         let response = tiny_http::Response::from_string(format!("Write error: {e}"))
             .with_status_code(500)
             .with_header(
@@ -2043,6 +2200,34 @@ mod tests {
         let result = finalize_uploaded_filename(tmp.path(), "upload", "Plain");
         assert_eq!(result, Ok("Plain".to_string()));
         assert!(tmp.path().join("Plain").exists());
+    }
+
+    #[test]
+    fn existing_vault_stems_includes_disk_only_markdown_and_media() {
+        let tmp = TempDir::new().unwrap();
+        let vault = VaultLayout::new(tmp.path().to_path_buf());
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+
+        std::fs::write(vault.block_path("Disk Only"), "---\n---").unwrap();
+        std::fs::write(vault.media_path("Orphan Media", "jpg"), b"image").unwrap();
+
+        let existing = existing_vault_stems(&conn, &vault).unwrap();
+
+        assert!(existing.contains("Disk Only"));
+        assert!(existing.contains("Orphan Media"));
+    }
+
+    #[test]
+    fn validate_fetch_url_rejects_private_hosts() {
+        assert!(validate_fetch_url("http://127.0.0.1/image.jpg").is_err());
+        assert!(validate_fetch_url("http://10.0.0.2/image.jpg").is_err());
+        assert!(validate_fetch_url("http://localhost/image.jpg").is_err());
+        assert!(validate_fetch_url("http://[::1]/image.jpg").is_err());
+    }
+
+    #[test]
+    fn validate_fetch_url_allows_public_ip() {
+        assert!(validate_fetch_url("https://93.184.216.34/image.jpg").is_ok());
     }
 
     #[test]

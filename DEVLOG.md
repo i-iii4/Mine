@@ -1,5 +1,67 @@
 # Devlog
 
+## 03.05.2026 14:49 -03 [primary] — Audit hardening pass
+
+### Goal
+
+Закрыть первый пакет findings после глубокого аудита кода/документации:
+frontend race conditions, keyboard/interaction arbitration, native-host
+write/fetch hardening, and verification contract.
+
+### Completed
+
+- Frontend:
+  - stale initial route and pagination responses больше не подмешиваются в
+    текущий маршрут;
+  - Search защищён request sequence guard от out-of-order async responses;
+  - Opt+Cmd channel navigation не срабатывает в Detail/Search/overlay/editable
+    contexts;
+  - Detail больше не перехватывает стрелки для navigation, имеет accessible
+    dialog name и не закрывается Escape из вложенных menu/listbox/input
+    surfaces;
+  - markdown image paragraphs в Detail больше не рендерят invalid `p > div`;
+  - nested card hover actions не открывают parent card по keyboard bubbling;
+  - All/Connected link-mode buttons получили `aria-pressed`.
+- Backend/storage:
+  - `create_block` и native-host save учитывают disk-only `.md`/media collisions;
+  - новые `.md`/media writes используют create-new semantics;
+  - media copy выполняется до final `.md` write и откатывается при failed block
+    write;
+  - collection refs/slugs валидируются на IPC/native-host boundaries;
+  - `resolve_vault_conflict` работает только с валидными slugs и существующей
+    pending `vault_conflicts` pair;
+  - incremental scan теперь divert'ит iCloud conflict files как full scan.
+- Clipper/native-host:
+  - video/content save больше не может сохранить пустой body while extraction is
+    loading;
+  - добавлен context-menu path `save-link`;
+  - background upload timeout теперь abort'ит fetch;
+  - upload token генерируется через OS randomness, body capped at `25 MiB`;
+  - remote media fetch парсит URL, резолвит domains и отклоняет
+    private/loopback/link-local/multicast targets.
+- Verification:
+  - `bun run test` теперь запускает Vitest + `cargo test --workspace
+    --all-targets --locked`;
+  - `bun.lock` и `Cargo.lock` выведены из `.gitignore` и будут tracked.
+- Обновлены contracts:
+  [AGENTS.md](AGENTS.md), [ARCHITECTURE.md](ARCHITECTURE.md),
+  [SPEC_CLIPPER.md](SPEC_CLIPPER.md), [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md),
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md),
+  [PLAN.md](PLAN.md).
+
+### Verification
+
+- `bun run lint` — passed.
+- `bun run test` — Vitest 25 files / 242 tests passed; Rust workspace:
+  `mine` lib 479 passed / 5 ignored native speech integration tests, migration
+  bins 7 passed, native-host 54 passed.
+- `git diff --check` — clean.
+
+### Known remaining gap
+
+- Safari App Extension native bridge remains scaffold/stub; production save path
+  is Chrome/native-host until the Safari XPC/native bridge is implemented.
+
 ## 03.05.2026 12:27 -03 [primary] — Finalize sidebar row focus contract
 
 ### Goal

@@ -15,7 +15,7 @@ use crate::domain::block::{
     compute_body_hash, iter_inline_media_references, parse_markdown_document, suggest_slug, Block,
     BlockType, DateTime, Frontmatter,
 };
-use crate::domain::collection::normalize_collection_ref;
+use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::domain::markdown::{rename_inline_media_references, rename_wikilink_targets};
 use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultLayout};
 use crate::storage::index::IndexedBlock;
@@ -273,26 +273,35 @@ pub fn create_block(
 
     let bt = BlockType::from_str(&block_type).map_err(|e| CommandError::Internal(e.to_string()))?;
 
-    // Generate unique slug
-    let raw_slug = crate::domain::block::suggest_slug(title.as_deref(), url.as_deref());
-    let slug = index::resolve_unique_slug(&vs.conn, &raw_slug)?;
-
-    // Determine media file name
-    let media_file = file_path.as_ref().map(|fp| {
-        let ext = std::path::Path::new(fp)
+    let media_ext = file_path.as_ref().map(|fp| {
+        std::path::Path::new(fp)
             .extension()
             .and_then(|e| e.to_str())
-            .unwrap_or("bin");
-        format!("{}.{}", slug, ext)
+            .unwrap_or("bin")
+            .to_string()
     });
+
+    // Generate unique slug across both the index and existing vault files.
+    let raw_slug = crate::domain::block::suggest_slug(title.as_deref(), url.as_deref());
+    let slug = resolve_unique_block_slug(&vs.conn, &vs.vault, &raw_slug, media_ext.as_deref())?;
+
+    // Determine media file name
+    let media_file = media_ext.as_ref().map(|ext| format!("{}.{}", slug, ext));
 
     let now = crate::commands::state::now_iso8601();
     let saved_at = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
-    let collections = tags
-        .iter()
-        .map(|tag| normalize_collection_ref(tag))
-        .filter(|tag| !tag.is_empty())
-        .collect();
+    let mut collections = Vec::new();
+    for tag in &tags {
+        let collection_ref = normalize_collection_ref(tag);
+        if collection_ref.is_empty() {
+            continue;
+        }
+        let collection_ref =
+            validate_collection_ref(&collection_ref).map_err(CommandError::Internal)?;
+        if !collections.contains(&collection_ref) {
+            collections.push(collection_ref);
+        }
+    }
 
     let block = Block {
         slug,
@@ -487,6 +496,8 @@ fn extract_inline_media_inner(
             reason: "target collection is empty".to_string(),
         });
     }
+    validate_collection_ref(&target_tag)
+        .map_err(|reason| InlineMediaExtractError::InvalidMediaRef { reason })?;
 
     let source_path = vault.block_path(&source_slug);
     if !source_path.exists() {
@@ -600,6 +611,8 @@ fn extract_text_selection_inner(
             reason: "target collection is empty".to_string(),
         });
     }
+    validate_collection_ref(&target_tag)
+        .map_err(|reason| TextSelectionExtractError::InvalidCollectionRef { reason })?;
 
     let selected_text = selected_text.trim();
     if selected_text.is_empty() {
@@ -1524,6 +1537,26 @@ fn resolve_unique_text_selection_slug(
     )
 }
 
+fn resolve_unique_block_slug(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    raw_slug: &str,
+    media_ext: Option<&str>,
+) -> anyhow::Result<String> {
+    let first = index::resolve_unique_slug(conn, raw_slug)?;
+    for candidate in std::iter::once(first).chain((2..=1000).map(|n| format!("{raw_slug} ({n})"))) {
+        validate_slug(&candidate)?;
+        if index::slug_exists(conn, &candidate)? || vault.block_path(&candidate).exists() {
+            continue;
+        }
+        if media_ext.is_some_and(|ext| vault.media_path(&candidate, ext).exists()) {
+            continue;
+        }
+        return Ok(candidate);
+    }
+    anyhow::bail!("could not resolve block filename for '{}'", raw_slug)
+}
+
 fn extraction_slug_seed(media_ref: &str) -> String {
     std::path::Path::new(media_ref)
         .file_stem()
@@ -1887,10 +1920,9 @@ mod tests {
         );
         assert!(!vault.root().join("Pulled Frame.png").exists());
 
-        let (_, extracted_content) = files::read_block_file(&vault, &vault.block_path("photo (2)"))
-            .unwrap();
-        let extracted =
-            crate::domain::block::parse_block("photo (2)", &extracted_content).unwrap();
+        let (_, extracted_content) =
+            files::read_block_file(&vault, &vault.block_path("photo (2)")).unwrap();
+        let extracted = crate::domain::block::parse_block("photo (2)", &extracted_content).unwrap();
         assert_eq!(
             extracted.frontmatter.related_notes,
             vec!["Source Article".to_string()]
@@ -2297,7 +2329,9 @@ mod tests {
                     .as_ref()
             )
         );
-        assert!(vault.article_audio_asset_path("Renamed Name", "wav").exists());
+        assert!(vault
+            .article_audio_asset_path("Renamed Name", "wav")
+            .exists());
         assert!(vault.article_audio_state_path("Renamed Name").exists());
     }
 

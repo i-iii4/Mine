@@ -49,7 +49,7 @@ export function FeedVideoSurface({
     [posterCandidates, posterSrc],
   );
   const usesBlobTimeout = playback.profile === "standard";
-  const directFailurePhase: "loading_blob" = "loading_blob";
+  const directFailurePhase = "loading_blob" as const;
   useEffect(() => {
     setPhase(allowPlayback ? "loading_direct" : "poster");
     setBlobUrl(null);
