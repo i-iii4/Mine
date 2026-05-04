@@ -7,7 +7,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ActionButton } from "@/components/ActionButton";
-import { DETAIL_TOP_MENU_MODES, type DetailTopMenuMode } from "@/lib/appPreferences";
+import {
+  CHANNEL_DISPLAY_MODES,
+  DETAIL_TOP_MENU_MODES,
+  type ChannelDisplayMode,
+  type DetailTopMenuMode,
+} from "@/lib/appPreferences";
 
 type ThemeMode = "system" | "light" | "dark";
 
@@ -34,12 +39,16 @@ export interface ThemeMenuHandle {
 
 interface ThemeMenuButtonProps {
   detailTopMenuMode: DetailTopMenuMode;
+  channelDisplayMode: ChannelDisplayMode;
   onDetailTopMenuModeChange: (mode: DetailTopMenuMode) => void;
+  onChannelDisplayModeChange: (mode: ChannelDisplayMode) => void;
 }
 
 export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>(function ThemeMenuButton({
   detailTopMenuMode,
+  channelDisplayMode,
   onDetailTopMenuModeChange,
+  onChannelDisplayModeChange,
 }, ref) {
   const [theme, setTheme] = useState<ThemeMode>(getStoredTheme);
   const [open, setOpen] = useState(false);
@@ -60,6 +69,10 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>
   const detailTopMenuLabels: Record<DetailTopMenuMode, string> = {
     classic: "Article menu: Classic",
     island: "Article menu: Island",
+  };
+  const channelDisplayLabels: Record<ChannelDisplayMode, string> = {
+    row: "Channels: Rows",
+    card: "Channels: Cards",
   };
 
   return (
@@ -92,6 +105,16 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>
             className={detailTopMenuMode === mode ? "bg-accent" : ""}
           >
             {detailTopMenuLabels[mode]}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        {CHANNEL_DISPLAY_MODES.map((mode) => (
+          <DropdownMenuItem
+            key={mode}
+            onSelect={() => onChannelDisplayModeChange(mode)}
+            className={channelDisplayMode === mode ? "bg-accent" : ""}
+          >
+            {channelDisplayLabels[mode]}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

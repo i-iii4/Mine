@@ -4,9 +4,14 @@ import {
   useCallback,
   useEffect,
   memo,
+  forwardRef,
   type CSSProperties,
+  type ComponentPropsWithoutRef,
   type FocusEvent as ReactFocusEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type Ref,
 } from "react";
 import { NavLink, useLocation } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
@@ -30,7 +35,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
-import type { DetailTopMenuMode } from "@/lib/appPreferences";
+import type { ChannelDisplayMode, DetailTopMenuMode } from "@/lib/appPreferences";
 import { getBlock } from "@/lib/commands";
 import { cn } from "@/lib/utils";
 import { InteractiveCardPreview } from "./Card";
@@ -48,35 +53,52 @@ const SIDEBAR_PREVIEW_GAP = 8;
 const SIDEBAR_PREVIEW_VIEWPORT_MARGIN = 16;
 const SIDEBAR_PREVIEW_OPEN_DELAY_MS = 160;
 const SIDEBAR_PREVIEW_CLOSE_DELAY_MS = 120;
-const SIDEBAR_THUMBNAIL_HOVER_PREVIEW_ENABLED = false;
-const SIDEBAR_PREVIEW_THUMB_SIZE = 32;
-const SIDEBAR_PREVIEW_THUMB_GAP = 4;
-const SIDEBAR_PREVIEW_MASK_FADE_WIDTH =
-  (SIDEBAR_PREVIEW_THUMB_SIZE + SIDEBAR_PREVIEW_THUMB_GAP) * 2;
-const sidebarPreviewMaskStop = (alpha: number, progress: number) => {
-  const offset =
-    Math.round(SIDEBAR_PREVIEW_MASK_FADE_WIDTH * (1 - progress) * 100) / 100;
-  return `rgba(0, 0, 0, ${alpha}) calc(100% - ${offset}px)`;
+const SIDEBAR_ROW_TITLE_COLUMN_WIDTH = 150;
+const SIDEBAR_PREVIEW_DIVIDER_GAP = 4;
+const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = 80;
+const SIDEBAR_ROW_ACTION_BUTTON_GAP = 8;
+const SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET =
+  SIDEBAR_ROW_ACTION_BUTTON_WIDTH + SIDEBAR_ROW_ACTION_BUTTON_GAP;
+const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = 24;
+const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = 24;
+const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH =
+  SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET + SIDEBAR_PREVIEW_DIVIDER_GAP;
+const createRightFadeMaskStyle = (fadeWidth: number, clearTailWidth: number) => {
+  const rightFadeMaskStop = (alpha: number, progress: number) => {
+    const offset =
+      clearTailWidth
+      + Math.round(fadeWidth * (1 - progress) * 100) / 100;
+    return `rgba(0, 0, 0, ${alpha}) calc(100% - ${offset}px)`;
+  };
+  const stops = [
+    "rgba(0, 0, 0, 1) 0%",
+    `rgba(0, 0, 0, 1) calc(100% - ${clearTailWidth + fadeWidth}px)`,
+    rightFadeMaskStop(0.82, 0.14),
+    rightFadeMaskStop(0.64, 0.24),
+    rightFadeMaskStop(0.49, 0.33),
+    rightFadeMaskStop(0.36, 0.45),
+    rightFadeMaskStop(0.25, 0.57),
+    rightFadeMaskStop(0.16, 0.69),
+    rightFadeMaskStop(0.09, 0.81),
+    rightFadeMaskStop(0.04, 0.9),
+    rightFadeMaskStop(0.01, 0.97),
+    `rgba(0, 0, 0, 0) calc(100% - ${clearTailWidth}px)`,
+    "rgba(0, 0, 0, 0) 100%",
+  ].join(", ");
+  const gradient = `linear-gradient(to right, ${stops})`;
+  return {
+    maskImage: gradient,
+    WebkitMaskImage: gradient,
+  } as CSSProperties;
 };
-const SIDEBAR_PREVIEW_MASK_STOPS = [
-  "rgba(0, 0, 0, 1) 0%",
-  sidebarPreviewMaskStop(1, 0),
-  sidebarPreviewMaskStop(0.82, 0.14),
-  sidebarPreviewMaskStop(0.64, 0.24),
-  sidebarPreviewMaskStop(0.49, 0.33),
-  sidebarPreviewMaskStop(0.36, 0.45),
-  sidebarPreviewMaskStop(0.25, 0.57),
-  sidebarPreviewMaskStop(0.16, 0.69),
-  sidebarPreviewMaskStop(0.09, 0.81),
-  sidebarPreviewMaskStop(0.04, 0.9),
-  sidebarPreviewMaskStop(0.01, 0.97),
-  "rgba(0, 0, 0, 0) 100%",
-].join(", ");
-const SIDEBAR_PREVIEW_MASK_IMAGE = `linear-gradient(to right, ${SIDEBAR_PREVIEW_MASK_STOPS})`;
-const SIDEBAR_PREVIEW_MASK_STYLE: CSSProperties = {
-  maskImage: SIDEBAR_PREVIEW_MASK_IMAGE,
-  WebkitMaskImage: SIDEBAR_PREVIEW_MASK_IMAGE,
-};
+const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
+  SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH,
+  SIDEBAR_PREVIEW_DIVIDER_GAP,
+);
+const SIDEBAR_PREVIEW_MASK_STYLE = createRightFadeMaskStyle(
+  SIDEBAR_PREVIEW_MASK_FADE_WIDTH,
+  SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH,
+);
 
 type SidebarPreviewTarget = {
   key: string;
@@ -125,7 +147,30 @@ interface SidebarProps {
   linkedTags?: string[];
   onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
   detailTopMenuMode?: DetailTopMenuMode;
+  channelDisplayMode?: ChannelDisplayMode;
   detailChromeClosing?: boolean;
+}
+
+function buildSidebarRowOrder(visibleTags: TagCount[]): string[] {
+  return ["all", ...visibleTags.map((tc) => `tag:${tc.tag}`)];
+}
+
+function createSidebarSeamAccentSet(
+  orderedRowKeys: string[],
+  focusedRowKey: string | null,
+  channelDisplayMode: ChannelDisplayMode,
+): Set<string> {
+  if (!focusedRowKey) return new Set();
+  if (channelDisplayMode === "card") {
+    return new Set();
+  }
+  const focusedIndex = orderedRowKeys.indexOf(focusedRowKey);
+  if (focusedIndex === -1) return new Set();
+  const accentKeys = new Set<string>([focusedRowKey]);
+  if (focusedIndex > 0) {
+    accentKeys.add(orderedRowKeys[focusedIndex - 1]!);
+  }
+  return accentKeys;
 }
 
 export function Sidebar({
@@ -158,6 +203,7 @@ export function Sidebar({
   linkedTags = [],
   onToggleLinkedTag,
   detailTopMenuMode = "island",
+  channelDisplayMode = "row",
   detailChromeClosing = false,
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
@@ -206,6 +252,12 @@ export function Sidebar({
   const visibleTags = isLinkEditorActive && linkMode === "linked"
     ? orderedTags.filter((tc) => linkedTagSet.has(tc.tag))
     : orderedTags;
+  const orderedRowKeys = buildSidebarRowOrder(visibleTags);
+  const seamAccentKeys = createSidebarSeamAccentSet(
+    orderedRowKeys,
+    sidebarRowFocusMode ? sidebarRowFocusKey : null,
+    channelDisplayMode,
+  );
   const linkEditorNavPadding = detailTopMenuMode === "classic" ? "pt-12" : "pt-20";
   const [linkChromeEntered, setLinkChromeEntered] = useState(false);
 
@@ -512,11 +564,12 @@ export function Sidebar({
       <nav
         ref={navRef}
         className={cn(
-          "flex-1 overflow-y-auto",
+          "relative flex-1 overflow-y-auto",
           isLinkingBlock ? linkEditorNavPadding : "pt-20",
           compact ? "px-2" : "px-8",
         )}
         data-sidebar-scroll
+        data-sidebar-link-editor-mode={isLinkEditorActive ? "true" : undefined}
         data-sidebar-row-focus-mode={sidebarRowFocusMode ? "true" : undefined}
         data-sidebar-row-switching={sidebarRowSwitching ? "true" : undefined}
         onPointerMove={handleSidebarPointerMove}
@@ -526,79 +579,101 @@ export function Sidebar({
       >
         {!isLinkingBlock && headerSlot}
 
-        <NavItem
-          to="/"
-          label="Everything"
-          count={totalBlocks}
-          cards={channelPreviews.get("__all__") ?? []}
-          previewKeyPrefix="all"
-          onPreviewEnter={schedulePreviewOpen}
-          onPreviewLeave={requestPreviewClose}
-          onPreviewClick={openPreviewBlock}
-          onPreviewTriggerRef={setPreviewTriggerRef}
-          compact={compact}
-          end
-          onClick={onNavClick}
-          onSameClick={isLinkEditorActive ? onNavClick : onScrollToTop}
-          rowKey="all"
-          isSidebarRowFocused={sidebarRowFocusKey === "all"}
-        />
-
-        <SortableContext
-          items={visibleTags.map((tc) => `tag:${tc.tag}`)}
-          strategy={verticalListSortingStrategy}
-        >
-          {visibleTags.map((tc) => {
-            const checked = linkedTagSet.has(tc.tag);
-            return (
-              <TagNavItem
-                key={tc.tag}
-                to={`/channel/${encodeURIComponent(tc.tag)}`}
-                label={titleFromTag(tc.tag)}
-                count={tc.count}
-                tag={tc.tag}
-                cards={channelPreviews.get(tc.tag) ?? []}
-                previewKeyPrefix={`tag:${tc.tag}`}
-                onPreviewEnter={schedulePreviewOpen}
-                onPreviewLeave={requestPreviewClose}
-                onPreviewClick={openPreviewBlock}
-                onPreviewTriggerRef={setPreviewTriggerRef}
-                compact={compact}
-                isDropDragging={isDropDragging}
-                isEditing={!isLinkEditorActive && editingTag === tc.tag}
-                linkEditor={isLinkEditorActive ? {
-                  checked,
-                  onToggle: () => onToggleLinkedTag(linkedBlockSlug, tc.tag, checked),
-                } : undefined}
-                onDoubleClick={() => setEditingTag(tc.tag)}
-                onRenameSubmit={(v) => handleRename(tc.tag, v)}
-                onRenameCancel={() => setEditingTag(null)}
-                onDelete={() => onDeleteTag(tc.tag)}
-                onClick={onNavClick}
-                onSameClick={isLinkEditorActive ? undefined : onScrollToTop}
-                rowKey={`tag:${tc.tag}`}
-                isSidebarRowFocused={sidebarRowFocusKey === `tag:${tc.tag}`}
+        <div className="relative" data-sidebar-rows>
+          {!compact && channelDisplayMode === "row" && (
+            <div className="pointer-events-none absolute inset-0" data-sidebar-guidelines>
+              <span
+                aria-hidden="true"
+                data-sidebar-guideline="left"
+                className="absolute inset-y-0 w-px bg-sidebar-border"
+                style={{ left: `${SIDEBAR_ROW_TITLE_COLUMN_WIDTH}px` }}
               />
-            );
-          })}
-        </SortableContext>
+              <span
+                aria-hidden="true"
+                data-sidebar-guideline="right"
+                className="absolute inset-y-0 w-px bg-sidebar-border"
+                style={{ right: `${SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET}px` }}
+              />
+            </div>
+          )}
 
-        {isCreatingChannel && (
-          <InlineInput
-            defaultValue=""
-            placeholder="New channel..."
-            onSubmit={(value) => {
-              onCreateChannel(value);
-              onSetCreatingChannel(false);
-            }}
-            onCancel={() => onSetCreatingChannel(false)}
+          <NavItem
+            to="/"
+            label="Everything"
+            count={totalBlocks}
+            cards={channelPreviews.get("__all__") ?? []}
+            previewKeyPrefix="all"
+            onPreviewEnter={schedulePreviewOpen}
+            onPreviewLeave={requestPreviewClose}
+            onPreviewClick={openPreviewBlock}
+            onPreviewTriggerRef={setPreviewTriggerRef}
+            compact={compact}
+            end
+            onClick={onNavClick}
+            onSameClick={isLinkEditorActive ? onNavClick : onScrollToTop}
+            rowKey="all"
+            isSidebarRowFocused={sidebarRowFocusKey === "all"}
+            isSidebarRowSeamAccent={seamAccentKeys.has("all")}
+            channelDisplayMode={channelDisplayMode}
           />
-        )}
+
+          <SortableContext
+            items={visibleTags.map((tc) => `tag:${tc.tag}`)}
+            strategy={verticalListSortingStrategy}
+          >
+            {visibleTags.map((tc) => {
+              const checked = linkedTagSet.has(tc.tag);
+              return (
+                <TagNavItem
+                  key={tc.tag}
+                  to={`/channel/${encodeURIComponent(tc.tag)}`}
+                  label={titleFromTag(tc.tag)}
+                  count={tc.count}
+                  tag={tc.tag}
+                  cards={channelPreviews.get(tc.tag) ?? []}
+                  previewKeyPrefix={`tag:${tc.tag}`}
+                  onPreviewEnter={schedulePreviewOpen}
+                  onPreviewLeave={requestPreviewClose}
+                  onPreviewClick={openPreviewBlock}
+                  onPreviewTriggerRef={setPreviewTriggerRef}
+                  compact={compact}
+                  isDropDragging={isDropDragging}
+                  isEditing={!isLinkEditorActive && editingTag === tc.tag}
+                  linkEditor={isLinkEditorActive ? {
+                    checked,
+                    onToggle: () => onToggleLinkedTag(linkedBlockSlug, tc.tag, checked),
+                  } : undefined}
+                  onDoubleClick={() => setEditingTag(tc.tag)}
+                  onRenameSubmit={(v) => handleRename(tc.tag, v)}
+                  onRenameCancel={() => setEditingTag(null)}
+                  onDelete={() => onDeleteTag(tc.tag)}
+                  onClick={onNavClick}
+                  onSameClick={isLinkEditorActive ? undefined : onScrollToTop}
+                  rowKey={`tag:${tc.tag}`}
+                  isSidebarRowFocused={sidebarRowFocusKey === `tag:${tc.tag}`}
+                  isSidebarRowSeamAccent={seamAccentKeys.has(`tag:${tc.tag}`)}
+                  channelDisplayMode={channelDisplayMode}
+                />
+              );
+            })}
+          </SortableContext>
+
+          {isCreatingChannel && (
+            <InlineInput
+              defaultValue=""
+              placeholder="New channel..."
+              onSubmit={(value) => {
+                onCreateChannel(value);
+                onSetCreatingChannel(false);
+              }}
+              onCancel={() => onSetCreatingChannel(false)}
+            />
+          )}
+        </div>
 
       </nav>
 
-      {SIDEBAR_THUMBNAIL_HOVER_PREVIEW_ENABLED
-        && vaultPath
+      {vaultPath
         && hoverPreviewPosition
         && hoverPreviewBlock && (
         <>
@@ -753,8 +828,7 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
         aria-pressed={value === "all"}
         onClick={() => onChange("all")}
         className={cn(
-          "flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] text-muted-foreground",
-          isIsland && "hover:text-foreground",
+          "flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] text-muted-foreground hover:text-foreground",
           value === "all" && "bg-component-fill-inner text-foreground",
         )}
       >
@@ -765,8 +839,7 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
         aria-pressed={value === "linked"}
         onClick={() => onChange("linked")}
         className={cn(
-          "flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] text-muted-foreground",
-          isIsland && "hover:text-foreground",
+          "flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] text-muted-foreground hover:text-foreground",
           value === "linked" && "bg-component-fill-inner text-foreground",
         )}
       >
@@ -810,6 +883,369 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
   );
 });
 
+function assignRef<T>(ref: Ref<T> | undefined, value: T) {
+  if (!ref) return;
+  if (typeof ref === "function") {
+    ref(value);
+    return;
+  }
+  ref.current = value;
+}
+
+type SidebarRowFrameProps = {
+  compact?: boolean;
+  channelDisplayMode: ChannelDisplayMode;
+  rowKey: string;
+  isCurrentRoute: boolean;
+  isLinked?: boolean;
+  isSidebarRowFocused: boolean;
+  isSidebarRowSeamAccent: boolean;
+  className?: string;
+  style?: CSSProperties;
+  nodeRef?: (node: HTMLDivElement | null) => void;
+  textDropTag?: string;
+  children: ReactNode;
+} & Omit<ComponentPropsWithoutRef<"div">, "children" | "style" | "className">;
+
+const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(function SidebarRowFrame({
+  compact,
+  channelDisplayMode,
+  rowKey,
+  isCurrentRoute,
+  isLinked = false,
+  isSidebarRowFocused,
+  isSidebarRowSeamAccent,
+  className,
+  style,
+  nodeRef,
+  textDropTag,
+  children,
+  ...domProps
+}, forwardedRef) {
+  const isChannelCard = channelDisplayMode === "card";
+  const setRefs = useCallback((node: HTMLDivElement | null) => {
+    assignRef(forwardedRef, node);
+    nodeRef?.(node);
+  }, [forwardedRef, nodeRef]);
+
+  return (
+    <div
+      ref={setRefs}
+      style={style}
+      {...domProps}
+      data-sidebar-row=""
+      data-sidebar-row-surface={!compact && !isChannelCard ? "" : undefined}
+      data-sidebar-row-key={rowKey}
+      data-sidebar-row-active={isCurrentRoute ? "true" : undefined}
+      data-sidebar-row-linked={isLinked ? "true" : undefined}
+      data-sidebar-row-focused={isSidebarRowFocused ? "true" : undefined}
+      data-sidebar-row-seam-accent={!compact && !isChannelCard && isSidebarRowSeamAccent ? "true" : undefined}
+      data-sidebar-text-drop-tag={textDropTag}
+      className={cn(
+        "group relative rounded-1",
+        isChannelCard && "mb-2 overflow-hidden border border-border bg-accent p-2 last:mb-0",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+});
+
+function SidebarRowBody({
+  to,
+  end,
+  label,
+  count,
+  cards,
+  previewKeyPrefix,
+  onPreviewEnter,
+  onPreviewLeave,
+  onPreviewClick,
+  onPreviewTriggerRef,
+  compact,
+  channelDisplayMode,
+  isCurrentRoute,
+  isDragging = false,
+  isDropDragging = false,
+  onClick,
+  onSameClick,
+  onDoubleClick,
+  linkEditor,
+}: {
+  to: string;
+  end?: boolean;
+  label: string;
+  count: number;
+  cards: PreviewCard[];
+  previewKeyPrefix: string;
+  onPreviewEnter: (target: SidebarPreviewTarget) => void;
+  onPreviewLeave: () => void;
+  onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
+  compact?: boolean;
+  channelDisplayMode: ChannelDisplayMode;
+  isCurrentRoute: boolean;
+  isDragging?: boolean;
+  isDropDragging?: boolean;
+  onClick?: () => void;
+  onSameClick?: () => void;
+  onDoubleClick?: () => void;
+  linkEditor?: {
+    checked: boolean;
+    onToggle: () => void;
+  };
+}) {
+  const isChannelCard = channelDisplayMode === "card";
+  const isLinkEditor = !!linkEditor;
+  const handleNavLinkClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
+    if (isDragging || isDropDragging) {
+      e.preventDefault();
+      return;
+    }
+    if (isCurrentRoute && onSameClick) {
+      e.preventDefault();
+      onSameClick();
+    } else {
+      onClick?.();
+    }
+  };
+  const handleNavLinkDoubleClick = onDoubleClick ? (e: ReactMouseEvent<HTMLAnchorElement>) => {
+    if (isLinkEditor) return;
+    e.preventDefault();
+    onDoubleClick();
+  } : undefined;
+
+  if (isChannelCard && !compact) {
+    return (
+      <div className="flex flex-col gap-2 font-sans text-base text-muted-foreground">
+        <NavLink
+          to={to}
+          end={end}
+          draggable="false"
+          onClick={handleNavLinkClick}
+          onDoubleClick={handleNavLinkDoubleClick}
+          className="block"
+        >
+          <SidebarPreviewStrip
+            cards={cards}
+            previewKeyPrefix={previewKeyPrefix}
+            onPreviewEnter={onPreviewEnter}
+            onPreviewLeave={onPreviewLeave}
+            onPreviewClick={onPreviewClick}
+            onPreviewTriggerRef={onPreviewTriggerRef}
+            stacked
+            allowHoverPreview
+          />
+        </NavLink>
+        <div className="flex items-center gap-2">
+          <NavLink
+            to={to}
+            end={end}
+            draggable="false"
+            onClick={handleNavLinkClick}
+            onDoubleClick={handleNavLinkDoubleClick}
+            className="min-w-0 flex flex-1 items-center gap-2"
+          >
+            <span
+              data-sidebar-row-text=""
+              className="truncate"
+            >
+              {label}
+            </span>
+            <span
+              className="shrink-0 font-mono text-sm text-muted-foreground"
+              data-sidebar-row-text=""
+            >
+              {count || ""}
+            </span>
+          </NavLink>
+          <div
+            data-sidebar-card-action-slot=""
+            className="flex h-6 w-[10ch] shrink-0 items-center justify-end"
+          >
+            {linkEditor ? (
+              <button
+                type="button"
+                data-sidebar-link-action
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  linkEditor.onToggle();
+                }}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                }}
+                className={cn(
+                  "inline-flex h-6 w-[10ch] shrink-0 cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+                  linkEditor.checked
+                    ? "opacity-100"
+                    : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+                )}
+                aria-label={`${linkEditor.checked ? "Disconnect" : "Connect"} ${label}`}
+              >
+                {linkEditor.checked ? (
+                  <>
+                    <span className="group-hover:hidden group-focus-within:hidden">Connected</span>
+                    <span className="hidden text-destructive group-hover:inline group-focus-within:inline">Disconnect</span>
+                  </>
+                ) : (
+                  "Connect"
+                )}
+              </button>
+            ) : (
+              <span aria-hidden="true" className="block h-6 w-[10ch] opacity-0" />
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <NavLink
+        to={to}
+        end={end}
+        draggable="false"
+        onClick={handleNavLinkClick}
+        onDoubleClick={handleNavLinkDoubleClick}
+        className={() =>
+          compact
+            ? cn(
+                "flex w-full items-center gap-2 overflow-hidden text-base",
+                isChannelCard ? "rounded-[3px] px-[5px] py-[3px]" : "rounded-1 p-2",
+                "text-muted-foreground",
+              )
+            : cn("relative flex items-center font-sans text-base text-muted-foreground", isChannelCard ? "h-8 rounded-[3px] px-[5px]" : "py-1")
+        }
+      >
+        <span
+          data-sidebar-row-text=""
+          data-sidebar-title-fade-width={compact ? undefined : String(SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH)}
+          data-sidebar-title-protected-width={compact ? undefined : String(SIDEBAR_PREVIEW_DIVIDER_GAP)}
+          className={
+            compact
+              ? "flex-1 truncate"
+              : "min-w-[100px] max-w-[150px] flex-1 translate-x-px overflow-hidden whitespace-nowrap"
+          }
+          style={compact ? undefined : SIDEBAR_ROW_TEXT_MASK_STYLE}
+        >
+          {label}
+        </span>
+        {!compact && (
+          <div
+            className="relative min-w-0 flex-1"
+            data-sidebar-preview-rail
+            style={{ paddingLeft: `${SIDEBAR_PREVIEW_DIVIDER_GAP}px` }}
+          >
+            <SidebarPreviewStrip
+              cards={cards}
+              previewKeyPrefix={previewKeyPrefix}
+              onPreviewEnter={onPreviewEnter}
+              onPreviewLeave={onPreviewLeave}
+              onPreviewClick={onPreviewClick}
+              onPreviewTriggerRef={onPreviewTriggerRef}
+              allowHoverPreview={false}
+            />
+          </div>
+        )}
+        {compact && isLinkEditor && (
+          <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
+            <span
+              className={cn(
+                "absolute inset-y-0 right-0 flex items-center justify-end text-sm transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                "font-mono",
+                "text-muted-foreground",
+                !compact && "-translate-x-px",
+                linkEditor.checked
+                  ? "opacity-0"
+                  : "opacity-100 group-hover:opacity-0 group-focus-within:opacity-0",
+              )}
+              data-sidebar-row-text=""
+            >
+              {count || ""}
+            </span>
+          </div>
+        )}
+        {compact && !isLinkEditor && (
+          <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
+            <span
+              className={cn(
+                "absolute inset-y-0 right-0 flex items-center justify-end text-sm",
+                "font-mono",
+                "text-muted-foreground",
+                !compact && "-translate-x-px",
+              )}
+              data-sidebar-row-text=""
+            >
+              {count || ""}
+            </span>
+          </div>
+        )}
+        {!compact && (
+          <span
+            className={cn(
+              "absolute inset-y-0 right-0 flex w-8 items-center justify-end text-right text-sm font-mono text-muted-foreground",
+              "-translate-x-px",
+              isLinkEditor
+                ? cn(
+                    "transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                    linkEditor?.checked
+                      ? "opacity-0"
+                      : "opacity-100 group-hover:opacity-0 group-focus-within:opacity-0",
+                  )
+                : "opacity-100",
+            )}
+            data-sidebar-row-text=""
+          >
+            {count || ""}
+          </span>
+        )}
+      </NavLink>
+      {linkEditor && (
+        <button
+          type="button"
+          data-sidebar-link-action
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            linkEditor.onToggle();
+          }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+          }}
+          className={cn(
+            "absolute top-1/2 z-10 inline-flex h-6 w-[10ch] -translate-y-1/2 cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+            "right-0",
+            linkEditor.checked
+              ? "opacity-100"
+              : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+          )}
+          aria-label={`${linkEditor.checked ? "Disconnect" : "Connect"} ${label}`}
+        >
+          {linkEditor.checked ? (
+            <>
+              <span className="group-hover:hidden group-focus-within:hidden">Connected</span>
+              <span className="hidden text-destructive group-hover:inline group-focus-within:inline">Disconnect</span>
+            </>
+          ) : (
+            "Connect"
+          )}
+        </button>
+      )}
+    </>
+  );
+}
+
 const NavItem = memo(function NavItem({
   to,
   label,
@@ -826,6 +1262,8 @@ const NavItem = memo(function NavItem({
   onSameClick,
   rowKey,
   isSidebarRowFocused,
+  isSidebarRowSeamAccent,
+  channelDisplayMode,
 }: {
   to: string;
   label: string;
@@ -842,60 +1280,39 @@ const NavItem = memo(function NavItem({
   onSameClick?: () => void;
   rowKey: string;
   isSidebarRowFocused: boolean;
+  isSidebarRowSeamAccent: boolean;
+  channelDisplayMode: ChannelDisplayMode;
 }) {
   const loc = useLocation();
   const isCurrentRoute = end ? loc.pathname === to : loc.pathname.startsWith(to);
 
   return (
-    <NavLink
-      to={to}
-      end={end}
-      data-sidebar-row=""
-      data-sidebar-row-key={rowKey}
-      data-sidebar-row-focused={isSidebarRowFocused ? "true" : undefined}
-      onClick={(e) => {
-        if (isCurrentRoute && onSameClick) {
-          e.preventDefault();
-          onSameClick();
-        } else {
-          onClick?.();
-        }
-      }}
-      className={() =>
-        compact
-          ? cn(
-              "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 text-base",
-              "text-foreground",
-            )
-          : cn(
-              "flex items-center gap-2 border-b border-sidebar-border py-1 font-sans text-base",
-              "text-foreground",
-            )
-      }
+    <SidebarRowFrame
+      compact={compact}
+      channelDisplayMode={channelDisplayMode}
+      rowKey={rowKey}
+      isCurrentRoute={isCurrentRoute}
+      isSidebarRowFocused={isSidebarRowFocused}
+      isSidebarRowSeamAccent={isSidebarRowSeamAccent}
     >
-      <span
-        data-sidebar-row-text=""
-        className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 translate-x-px truncate"}
-      >
-        {label}
-      </span>
-      {!compact && (
-        <SidebarPreviewStrip
-          cards={cards}
-          previewKeyPrefix={previewKeyPrefix}
-          onPreviewEnter={onPreviewEnter}
-          onPreviewLeave={onPreviewLeave}
-          onPreviewClick={onPreviewClick}
-          onPreviewTriggerRef={onPreviewTriggerRef}
-        />
-      )}
-      <span className={cn(
-        "w-8 shrink-0 text-right font-mono text-sm text-foreground",
-        !compact && "-translate-x-px",
-      )} data-sidebar-row-text="">
-        {count || ""}
-      </span>
-    </NavLink>
+      <SidebarRowBody
+        to={to}
+        end={end}
+        label={label}
+        count={count}
+        cards={cards}
+        previewKeyPrefix={previewKeyPrefix}
+        onPreviewEnter={onPreviewEnter}
+        onPreviewLeave={onPreviewLeave}
+        onPreviewClick={onPreviewClick}
+        onPreviewTriggerRef={onPreviewTriggerRef}
+        compact={compact}
+        channelDisplayMode={channelDisplayMode}
+        isCurrentRoute={isCurrentRoute}
+        onClick={onClick}
+        onSameClick={onSameClick}
+      />
+    </SidebarRowFrame>
   );
 });
 
@@ -922,6 +1339,8 @@ const TagNavItem = memo(function TagNavItem({
   onSameClick,
   rowKey,
   isSidebarRowFocused,
+  isSidebarRowSeamAccent,
+  channelDisplayMode,
 }: {
   to: string;
   label: string;
@@ -948,11 +1367,14 @@ const TagNavItem = memo(function TagNavItem({
   onSameClick?: () => void;
   rowKey: string;
   isSidebarRowFocused: boolean;
+  isSidebarRowSeamAccent: boolean;
+  channelDisplayMode: ChannelDisplayMode;
 }) {
   const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const isLinkEditor = !!linkEditor;
   const isCurrentRoute = location.pathname === to || location.pathname.startsWith(`${to}/`);
+  const isChannelCard = channelDisplayMode === "card";
 
   const {
     setNodeRef,
@@ -965,16 +1387,10 @@ const TagNavItem = memo(function TagNavItem({
   } = useSortable({ id: `tag:${tag}` });
 
   // Phase C virtualization (SPEC_THUMBNAILS.md §Virtualized Sidebar).
-  // `content-visibility: auto` lets WKWebView skip layout + paint for
-  // channel rows that aren't in the viewport. `contain-intrinsic-size`
-  // gives the browser a height hint so the scrollbar stays stable and
-  // scroll-to-anchor navigation (Opt+Cmd+Arrow) still lands on the
-  // correct row before the item is materialized.
-  //
-  // Intrinsic size: ~42px for non-compact rows (py-1 + 32px thumbs +
-  // border), ~36px for compact. Use the larger value as a safe
-  // over-estimate — slight scrollbar drift is preferable to the browser
-  // shrinking the row and jumping scroll position after materialization.
+  // `content-visibility: auto` is only valid for the legacy row layout.
+  // Card-mode rows are taller and use a different internal flow, so
+  // reusing the 42px intrinsic placeholder there causes WKWebView to
+  // produce unstable geometry and visible layout gaps.
   //
   // Disabled while dragging onto tags so dnd-kit's
   // getBoundingClientRect calls on drop targets always return real
@@ -982,7 +1398,7 @@ const TagNavItem = memo(function TagNavItem({
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    ...(!isDropDragging && !isDragging
+    ...(!isChannelCard && !isDropDragging && !isDragging
       ? {
           contentVisibility: "auto" as const,
           containIntrinsicSize: "auto 42px",
@@ -1005,138 +1421,46 @@ const TagNavItem = memo(function TagNavItem({
     <>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div
-            ref={setNodeRef}
-            style={style}
-            {...(!isLinkEditor ? attributes : {})}
-            {...(!isLinkEditor ? listeners : {})}
-            data-sidebar-row=""
-            data-sidebar-row-key={rowKey}
-            data-sidebar-row-focused={isSidebarRowFocused ? "true" : undefined}
-            data-sidebar-text-drop-tag={tag}
+          <SidebarRowFrame
+            compact={compact}
+            channelDisplayMode={channelDisplayMode}
+            rowKey={rowKey}
+            isCurrentRoute={isCurrentRoute}
+            isLinked={linkEditor?.checked}
+            isSidebarRowFocused={isSidebarRowFocused}
+            isSidebarRowSeamAccent={isSidebarRowSeamAccent}
             className={cn(
-              "group relative rounded-1",
               isDragging && "opacity-30",
               "data-[selected-text-over=true]:ring-2 data-[selected-text-over=true]:ring-ring data-[selected-text-over=true]:ring-inset",
               isOver && !isDragging && isDropDragging && "ring-2 ring-ring ring-inset",
             )}
+            style={style}
+            nodeRef={setNodeRef}
+            textDropTag={tag}
+            {...(!isLinkEditor ? attributes : {})}
+            {...(!isLinkEditor ? listeners : {})}
           >
-        <NavLink
-          to={to}
-          draggable="false"
-          onClick={(e) => {
-            if (isDragging || isDropDragging) {
-              e.preventDefault();
-              return;
-            }
-            if (isCurrentRoute && onSameClick) {
-              e.preventDefault();
-              onSameClick();
-            } else {
-              onClick?.();
-            }
-          }}
-          onDoubleClick={(e) => {
-            if (isLinkEditor) return;
-            e.preventDefault();
-            onDoubleClick();
-          }}
-          className={() =>
-            compact
-              ? cn(
-                  "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 text-base",
-                  "text-foreground",
-                )
-              : cn(
-                  "flex items-center gap-2 border-b border-sidebar-border py-1 font-sans text-base",
-                  "text-foreground",
-                )
-          }
-        >
-          <span
-            data-sidebar-row-text=""
-            className={compact ? "flex-1 truncate" : "min-w-[100px] max-w-[150px] flex-1 translate-x-px truncate"}
-          >
-            {label}
-          </span>
-          {!compact && (
-            <SidebarPreviewStrip
+            <SidebarRowBody
+              to={to}
+              label={label}
+              count={count}
               cards={cards}
               previewKeyPrefix={previewKeyPrefix}
               onPreviewEnter={onPreviewEnter}
               onPreviewLeave={onPreviewLeave}
               onPreviewClick={onPreviewClick}
               onPreviewTriggerRef={onPreviewTriggerRef}
+              compact={compact}
+              channelDisplayMode={channelDisplayMode}
+              isCurrentRoute={isCurrentRoute}
+              isDragging={isDragging}
+              isDropDragging={isDropDragging}
+              onClick={onClick}
+              onSameClick={onSameClick}
+              onDoubleClick={onDoubleClick}
+              linkEditor={linkEditor}
             />
-          )}
-          {isLinkEditor ? (
-            <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
-              <span
-                className={cn(
-                  "absolute inset-y-0 right-0 flex items-center justify-end text-sm transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-                  "font-mono",
-                  "text-foreground",
-                  !compact && "-translate-x-px",
-                  linkEditor.checked
-                    ? "opacity-0"
-                    : "opacity-100 group-hover:opacity-0 group-focus-within:opacity-0",
-                )}
-                data-sidebar-row-text=""
-              >
-                {count || ""}
-              </span>
-            </div>
-          ) : (
-            <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
-              <span
-                className={cn(
-                  "absolute inset-y-0 right-0 flex items-center justify-end text-sm",
-                  "font-mono",
-                  "text-foreground",
-                  !compact && "-translate-x-px",
-                )}
-                data-sidebar-row-text=""
-              >
-                {count || ""}
-              </span>
-            </div>
-          )}
-        </NavLink>
-        {linkEditor && (
-          <button
-            type="button"
-            data-sidebar-link-action
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              linkEditor.onToggle();
-            }}
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onKeyDown={(event) => {
-              event.stopPropagation();
-            }}
-            className={cn(
-              "absolute right-0 top-1/2 z-10 inline-flex h-6 w-[10ch] -translate-y-1/2 cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
-              linkEditor.checked
-                ? "opacity-100"
-                : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
-            )}
-            aria-label={`${linkEditor.checked ? "Disconnect" : "Connect"} ${label}`}
-          >
-            {linkEditor.checked ? (
-              <>
-                <span className="group-hover:hidden group-focus-within:hidden">Connected</span>
-                <span className="hidden text-destructive group-hover:inline group-focus-within:inline">Disconnect</span>
-              </>
-            ) : (
-              "Connect"
-            )}
-          </button>
-        )}
-          </div>
+          </SidebarRowFrame>
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuItem onSelect={onDoubleClick}>
@@ -1177,6 +1501,8 @@ function SidebarPreviewStrip({
   onPreviewLeave,
   onPreviewClick,
   onPreviewTriggerRef,
+  stacked = false,
+  allowHoverPreview = false,
 }: {
   cards: PreviewCard[];
   previewKeyPrefix: string;
@@ -1184,16 +1510,23 @@ function SidebarPreviewStrip({
   onPreviewLeave: () => void;
   onPreviewClick: (target: SidebarPreviewTarget) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
+  stacked?: boolean;
+  allowHoverPreview?: boolean;
 }) {
   return (
     <div
       data-sidebar-thumbnail-strip=""
-      className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden"
-      style={SIDEBAR_PREVIEW_MASK_STYLE}
+      data-sidebar-preview-fade-width={stacked ? undefined : String(SIDEBAR_PREVIEW_MASK_FADE_WIDTH)}
+      data-sidebar-preview-protected-width={stacked ? undefined : String(SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH)}
+      className={cn(
+        "flex h-8 items-end gap-1 overflow-hidden",
+        stacked ? "w-full" : "min-w-0 flex-1",
+      )}
+      style={stacked ? undefined : SIDEBAR_PREVIEW_MASK_STYLE}
     >
       {cards.map((card, index) => {
         const previewKey = `${previewKeyPrefix}:${card.slug ?? index}:${index}`;
-        const canPreview = SIDEBAR_THUMBNAIL_HOVER_PREVIEW_ENABLED
+        const canPreview = allowHoverPreview
           && card.hasThumb
           && !!card.slug;
         return (

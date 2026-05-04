@@ -1,5 +1,42 @@
 # Devlog
 
+## 04.05.2026 18:32 -03 [primary] — Sidebar display modes and row geometry contracts
+
+### Goal
+
+Довести левый sidebar до явного визуального контракта: единый row primitive
+для `Everything` и каналов, альтернативный card-mode через Settings,
+стабильная link-editor геометрия, общие vertical guidelines, и корректный fade
+для preview strip и title text без layout shift.
+
+### Completed
+
+- Sidebar получил persisted setting `Channels: Rows / Cards` в Settings menu.
+- `Everything` и channel rows переведены на общий `SidebarRowFrame` /
+  `SidebarRowBody`, так что visual shell больше не живёт в двух разных
+  деревьях.
+- Card-mode оформлен как отдельный surface contract:
+  `border border-border bg-accent p-2 mb-2`, stacked previews сверху, нижняя
+  строка `title + count` слева и trailing action slot `w-[10ch]` справа.
+- Hover preview на sidebar thumbnails включён только в card-mode.
+- Row-mode получил две общие continuous vertical guide lines:
+  левая на `150px`, правая на `88px` от правого края content area.
+- Preview strip в row-mode теперь использует фиксированный fade `24px` и
+  protected area `92px` (`80px` button + `8px` gap + `4px` transparent tail).
+- Title text в row-mode больше не использует жёсткое ellipsis: он переведён на
+  тот же right-fade contract (`24px` fade + `4px` tail), но сохранил старую
+  responsive-логику `min-w-[100px] max-w-[150px] flex-1`, поэтому сначала
+  сжимаются миниатюры, а текст начинает ужиматься только потом.
+- Виртуализация `content-visibility` отключена только для card-mode, чтобы
+  убрать WKWebView layout gaps у высоких карточек.
+- Документация синхронизирована в [SPEC_FRONTEND.md](SPEC_FRONTEND.md) и
+  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md).
+
+### Verification
+
+- `bunx vitest run src/components/Sidebar.test.tsx` — passed (`21/21`).
+- `bun run build` — passed.
+
 ## 03.05.2026 14:49 -03 [primary] — Audit hardening pass
 
 ### Goal

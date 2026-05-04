@@ -86,9 +86,9 @@ typography must stay inside the 12/14/18px design-system scale.
 
 | Роль | Токен | Светлая | Тёмная | Утилита |
 |---|---|---|---|---|
-| Основной | `--foreground` | #333333 | #E4E4E4 | `text-foreground` |
-| Вторичный | `--muted-foreground` | #777777 | #888888 | `text-muted-foreground` |
-| Третичный | `--tertiary-foreground` | #999999 | #555555 | `text-tertiary-foreground` |
+| Основной | `--foreground` | #0A0A0A | #FAFAFA | `text-foreground` |
+| Вторичный | `--muted-foreground` | #777777 | #9A9A9A | `text-muted-foreground` |
+| Третичный | `--tertiary-foreground` | #B0B0B0 | #666666 | `text-tertiary-foreground` |
 
 **Правило:** иерархия через яркость, не через размер или цвет. Плейсхолдеры — tertiary, мета-информация — muted.
 
@@ -123,14 +123,27 @@ typography must stay inside the 12/14/18px design-system scale.
 
 ## Границы
 
-Один цвет для всех разделителей: `--border`, `--input`, `--sidebar-border`. Уровень +3 шкалы поверхностей.
+Базовый цвет для разделителей: `--border`, `--input`, `--sidebar-border`.
+Уровень +3 шкалы поверхностей.
 
 | Тема | oklch | Толщина |
 |---|---|---|
 | Светлая | oklch(0.95 0 0) | 1px |
 | Тёмная | oklch(0.2311 0 0) | 1px |
 
-**Правило:** все линии — один цвет. `--border`, `--input`, `--sidebar-border` указывают на одно значение.
+Локальное исключение для hover/focus separator state в sidebar:
+
+| Токен | Светлая | Тёмная | Где |
+|---|---|---|---|
+| `--border-accent` | oklch(0.145 0 0 / 12%) | oklch(0.985 0 0 / 16%) | Hover/focus color для sidebar row separator |
+
+**Правило:** по умолчанию все линии используют `--border`. `--border-accent`
+разрешён только для состояния hover/focus у sidebar row separator, где линия
+должна слегка поддержать bright text, но не спорить с ним. Реализация должна
+идти через один и тот же separator system: каждая строка владеет только своей
+нижней seam line, а hover/focus перекрашивает seam текущей и предыдущей
+строки. Так визуально подсвечиваются обе направляющие hovered row без второй
+линии и без изменения толщины.
 
 ## Оверлеи
 
@@ -170,11 +183,15 @@ Sidebar navigation rows do not render a selected background. The active route
 lives in router state; the table-like sidebar keeps one visual row model for
 default, hover and active route states.
 
-Default row text and right counts use `text-foreground`. On row hover/focus the
-sidebar enters row focus mode: every non-focused row label/count uses
-`text-muted-foreground`, while the focused row stays `text-foreground`.
-Thumbnail strips follow the same focus model by opacity: non-focused strips use
-`opacity: 0.9`, focused strip stays `1`. Enter/exit uses `180ms
+Default row text and right counts use `text-muted-foreground`. The selected
+route row (`Everything` or the current channel) always stays
+`text-foreground`. On row hover/focus the sidebar only brightens the focused
+row text to `text-foreground`; all other row labels/counts stay
+`text-muted-foreground`. The selected route also remains `text-foreground` if
+another row is currently focused. Thumbnail strips do not participate in this
+state and stay visually unchanged. The row separator is a single owned seam per
+row; hover/focus changes the color of the hovered row seam and the previous row
+seam to `border-accent`, never their thickness. Enter/exit uses `180ms
 cubic-bezier(0.22, 1, 0.36, 1)`; switching directly between rows inside focus
 mode disables transition for that switch frame.
 
@@ -485,20 +502,22 @@ SubContent (подменю) — та же тень.
 |---|---|---|---|
 | ⌘⇧O | Имя vault | Выбор папки через нативный диалог | слева |
 | ⌘⇧N | New Channel | Инлайн-инпут в сайдбаре | слева |
-| ⌘, | Settings | DropdownMenu переключения темы | слева |
+| ⌘, | Settings | DropdownMenu переключения темы, article menu mode и channel display mode | слева |
 | ⌘K | Search | Открытие Command palette | справа |
 
 ### Сайдбар
 
-Два режима отображения, переключаемых по ширине сайдбара (порог 320px).
+Есть два независимых переключателя:
+- layout width mode: compact/non-compact по ширине сайдбара (порог 320px);
+- channel display mode: `Rows` / `Cards` из Settings.
 
 #### Полный режим (width >= 320px)
 
-Три колонки в каждой строке:
+`Rows`-mode: три колонки в каждой строке.
 
 | Колонка | Содержимое | Ширина |
 |---|---|---|
-| Левая | Название канала | `min-w-[100px] max-w-[150px] flex-1 truncate` |
+| Левая | Название канала | `min-w-[100px] max-w-[150px] flex-1` |
 | Центральная | Превью-карточки | `flex-1 min-w-0`, `h-8 overflow-hidden` |
 | Правая | Счётчик + действия | `w-8 text-right` |
 
@@ -518,14 +537,43 @@ conflict banner) ничего не рендерит, он не должен ос
 
 Превью-карточки: `size-8 object-cover`, `gap-1` (4px). Strip использует
 одну постоянную CSS mask, без дополнительных overlay-слоёв. Fade имеет
-физическую ширину `72px` от правого края: две preview-ячейки
-(`32px` thumbnail + `4px` gap) × 2. Это не процент от ширины strip, поэтому
-защитная область одинаковая на главной и в Detail. Внутри этих `72px`
-используется multi-stop alpha-кривая, чтобы справа не было визуального
-«разгона» градиента и чтобы контент полностью растворялся перед зоной
-абсолютной action button. Текстовые thumbnail (PNG с прозрачным фоном) обёрнуты в
+физическую ширину `24px` от правого края. Это не процент от ширины strip, поэтому
+защитная область одинаковая на главной и в Detail. После fade у strip есть
+чистый прозрачный tail, чтобы суммарная protected area от конца fade до
+правого края строки была `92px` (`Connect/Connected` ширина `80px` +
+`8px` gap до линии + `4px` прозрачный буфер). Внутри самих `24px`
+используется multi-stop alpha-кривая,
+чтобы справа не было визуального «разгона» градиента и чтобы контент
+полностью растворялся перед зоной абсолютной action button. В row-mode у
+sidebar list есть две общие continuous vertical guide lines: левая на
+`150px` от начала content area и правая на `88px` от правого края content
+area: `80px` ширина `Connect/Connected` + `8px` gap до кнопки. Это не
+обрывки по строкам. Между левой направляющей и первой миниатюрой обязателен
+`4px` inset. В точке правой направляющей превью уже должно быть полностью
+растворено; последние `4px` перед этой линией — прозрачный запас. Текстовые
+thumbnail (PNG с прозрачным фоном) обёрнуты в
 `bg-accent` + `dark:invert`. Видео-блоки показывают первый кадр (H.264
 декодирование через OpenH264).
+Title text использует тот же right-fade mask contract, что и preview strip:
+`24px` fade + `4px` прозрачный tail перед левой направляющей. Это не
+`text-overflow: ellipsis`. Responsive contract двуступенчатый: пока ширина
+сжимается, сначала деградирует central preview rail; только когда rail
+упирается в минимум, начинает сужаться title slot в диапазоне `100–150px`.
+
+`Cards`-mode для non-compact sidebar:
+
+| Слой | Контракт |
+|---|---|
+| Surface | `border border-border bg-accent p-2 mb-2 last:mb-0` |
+| Верх | stacked thumbnail strip `w-full`, без row-mode mask |
+| Низ | `flex items-center gap-2` |
+| Левый блок | `NavLink min-w-0 flex flex-1 items-center gap-2` для `title + count` |
+| Правый блок | `data-sidebar-card-action-slot`, `w-[10ch] justify-end` |
+
+`Everything` использует тот же card shell, что и каналы. Shared vertical
+guidelines, seam accent и row-mode strip mask в этом режиме не применяются.
+Hover preview на миниатюрах включён только здесь: интерактивной целью служит
+отдельная `size-8` миниатюра, а не вся карточка.
 
 #### Compact-режим (width < 320px)
 
@@ -554,13 +602,17 @@ Sidebar navigation rows, включая `Everything` и каналы, не ис�
 Обычный count slot не меняется по hover.
 
 Row focus-mode:
-- Без hover/focus все row labels и counts используют `text-foreground`.
+- Без hover/focus все row labels и counts используют `text-muted-foreground`.
+- Текущий выбранный route (`Everything` или активный канал) всегда использует
+  `text-foreground`.
 - Когда курсор или keyboard focus находится внутри строки, sidebar получает
   `data-sidebar-row-focus-mode="true"`.
-- Все неактивные row labels/counts переходят в `text-muted-foreground`, а
-  focused row остаётся `text-foreground`.
-- Все неактивные thumbnail strips получают `opacity: 0.9`, focused strip
-  остаётся `opacity: 1`.
+- Focused row становится `text-foreground`, остальные row labels/counts
+  остаются `text-muted-foreground`.
+- Активный route остаётся `text-foreground`, даже если focus находится на
+  другой строке.
+- Thumbnail strips и preview cards вообще не участвуют в этом state и
+  остаются визуально неизменными.
 - Вход/выход из focus-mode анимируется `180ms cubic-bezier(0.22, 1, 0.36, 1)`.
   Переключение между строками внутри уже активного focus-mode идёт мгновенно
   через `data-sidebar-row-switching="true"` на один animation frame.
@@ -582,8 +634,8 @@ sidebar.
 Содержимое surface: `Channels:` + selector `All / Connected`. `Channels:`
 использует `font-mono text-sm text-muted-foreground`. Selector повторяет
 ActionButton geometry: outer `h-6 p-[2px] rounded-1`, segments `h-5
-px-[1ch] rounded-[2px]`. В `island` hover не заливает outer control; меняется
-только яркость текста segment (`hover:text-foreground`).
+px-[1ch] rounded-[2px] text-muted-foreground`. В `island` hover не заливает
+outer control; меняется только яркость текста segment (`hover:text-foreground`).
 
 Island surfaces используют только лёгкий glass effect: `bg-accent/80
 backdrop-blur-sm backdrop-saturate-150`, без теней и градиентов. Эффект
@@ -604,7 +656,10 @@ Membership action behaviour: checkbox в link-editor не используетс
 строке канала навигирует как обычный sidebar item; только прямой click/key по
 правой action button меняет membership. Count остаётся в обычном правом
 layout slot `h-8 w-8`; action button рисуется абсолютным overlay поверх строки
-и не участвует во flex-раскладке preview strip. Для уже связанного канала
+и не участвует во flex-раскладке preview strip. В link-editor яркость sidebar
+rows больше не следует route/hover contract: `text-foreground` получают только
+уже связанные каналы, все остальные строки остаются `text-muted-foreground`.
+Для уже связанного канала
 overlay всегда показывает серую кнопку `Connected`; на hover/focus строки текст
 замещается на `Disconnect`. Для несвязанного канала slot по умолчанию
 показывает count; на hover/focus count скрывается и появляется `Connect`.

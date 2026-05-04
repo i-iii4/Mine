@@ -256,6 +256,10 @@ Vault-пикер — не маршрут, а состояние: если `vault
 
 ### Sidebar
 
+Display mode persists in local preferences via `channelDisplayMode`:
+- `Rows` — default table-like sidebar
+- `Cards` — alternative channel card layout for non-compact sidebar only
+
 Обычный режим:
 1. Пункт `Everything` — навигация на `/`
 2. Список каналов (из `listChannels()`) — навигация на `/channel/:tag`
@@ -265,11 +269,15 @@ Vault-пикер — не маршрут, а состояние: если `vault
 Активный route сохраняется в router state, но sidebar navigation rows,
 включая `Everything` и строки каналов, не получают визуальную hover/active
 плашку: без `hover:bg-*`, `bg-sidebar-accent` и
-`text-sidebar-accent-foreground`. Default label/count color — `text-foreground`.
-На hover/focus конкретной строки sidebar входит в row focus-mode: неактивные
-row labels/counts становятся `text-muted-foreground`, неактивные thumbnail
-strips получают `opacity: 0.9`, а focused row остаётся `text-foreground` и
-`opacity: 1`. Вход/выход анимируется `180ms cubic-bezier(0.22, 1, 0.36, 1)`;
+`text-sidebar-accent-foreground`. Default label/count color — `text-muted-foreground`.
+Текущий выбранный route (`Everything` или активный канал) всегда остаётся
+`text-foreground`, даже без hover surface. На hover/focus конкретной строки
+sidebar поднимает только текст focused row до `text-foreground`; все остальные
+row labels/counts остаются `text-muted-foreground`. Выбранный route также
+остаётся `text-foreground`, даже если hover/focus находится на другой строке.
+Thumbnail strips и превью-карточки не участвуют в этом state и не меняют ни
+opacity, ни layout. Вход/выход text-state анимируется
+`180ms cubic-bezier(0.22, 1, 0.36, 1)`;
 переключение между строками внутри уже активного focus-mode происходит
 мгновенно через `data-sidebar-row-switching="true"` на один animation frame.
 Каналы отсортированы по `channels.position`.
@@ -288,6 +296,14 @@ versioned collection-index backfill до формирования стабиль
 3. `All` показывает все каналы; `Connected` показывает только каналы, связанные
    с открытым блоком.
 4. Строка канала продолжает работать как навигация на `/channel/:tag`.
+4a. Visual highlight в link-editor привязан только к membership: связанные
+   каналы (`Connected`) используют `text-foreground`, все остальные остаются
+   `text-muted-foreground`. Обычный sidebar route highlight и row focus-mode
+   внутри link-editor не применяются для текста. Separator contract общий для
+   всех режимов sidebar: у каждой строки есть только нижняя seam-owner line.
+   По hover/focus accent получают seam текущей строки и seam предыдущей строки,
+   так что визуально подсвечиваются обе направляющие hovered row без второй
+   линии и без изменения толщины.
 5. Правый action slot строки управляет membership через текстовую кнопку, не
    через checkbox. Нажатие на строку вне action slot не меняет membership.
 6. Если канал уже связан с открытым блоком, action slot всегда показывает
@@ -338,18 +354,45 @@ preview-карточек. Из-за font side bearings применяется т
 оптическая компенсация, не layout shift: label text получает `translate-x-px`,
 а правый count text получает `-translate-x-px`.
 Thumbnail strip использует один постоянный CSS mask на самом strip element.
-Fade начинается от правого края и имеет фиксированную физическую ширину `72px`:
-две preview-ячейки (`32px` thumbnail + `4px` gap) × 2, а не процент от ширины
-strip. Внутри этой зоны применяется eased multi-stop alpha fade. Это не
-отдельный overlay layer и не hover-gated state; ordinary sidebar и link-editor
-режим должны видеть один и тот же strip fade и одинаковую защитную область,
-если отдельный контракт явно не оговорён.
+В row-mode у списка есть две общие непрерывные вертикальные направляющие:
+левая на `150px` от начала content area (граница `title` → `strip`) и правая
+на `88px` от правого края content area: `80px` ширина `Connect/Connected` +
+`8px` gap до кнопки. Это не per-row fragments. Между левой направляющей и
+первой миниатюрой всегда `4px` воздуха.
+Fade начинается от правого края и имеет фиксированную физическую ширину
+`24px`, а не процент от ширины strip. Внутри этой зоны применяется eased
+multi-stop alpha fade,
+после которого у strip есть чистый прозрачный tail, чтобы суммарная
+защищённая область от конца fade до правого края строки была `92px`
+(`Connect/Connected` ширина `80px` + `8px` gap до линии + `4px` прозрачный
+буфер у самой линии). Это не отдельный overlay
+layer и не hover-gated state; ordinary sidebar и link-editor режим должны
+видеть один и тот же strip fade и одинаковую защищённую область. В точке
+правой направляющей preview уже должна быть полностью растворена; последние
+`4px` перед линией — гарантированно прозрачный запас.
 Hover navigation row не должен менять background. Обычный sidebar count slot не
 должен заменяться hover-многоточием или другим action trigger; Rename/Delete
 остаются в `ContextMenu` строки. Active route не должен иметь отдельный
-selected background. Text/thumbnail changes on hover are limited to the shared
-row focus-mode contract above; they must not introduce layout shift or change
-thumbnail strip width.
+selected background. Hover/selection меняют только яркость текста строки; ни
+thumbnail strip, ни preview cards не должны участвовать в этом contract и не
+могут менять ширину, opacity или layout.
+Title text в row-mode не должен уходить в жёсткое ellipsis. Он использует тот
+же right-fade contract, что и preview strip: fade `24px` + `4px` прозрачный
+tail перед левой направляющей. Title slot остаётся responsive
+`min-w-[100px] max-w-[150px] flex-1`: пока хватает места, сначала сужается
+preview strip, и только после этого начинает ужиматься текстовая колонка.
+
+Альтернативный `Cards`-mode применяется только в non-compact sidebar. В этом
+режиме и `Everything`, и каналы используют один и тот же card shell:
+`border border-border bg-accent p-2 mb-2`, без shared seam separators и без
+row focus-mode seam accent. Внутри карточки:
+1. верхняя строка — stacked thumbnail strip (`w-full`) без row-mode mask;
+2. нижняя строка — `title + count` слева и отдельный trailing action slot
+   `w-[10ch]` справа;
+3. `Connect/Connected/Disconnect` живёт в том же trailing slot, не меняя
+   геометрию карточки при открытии Detail.
+В card-mode hover preview на миниатюрах включён: trigger'ом является сама
+миниатюра, а не вся строка.
 
 **Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время любого drag-to-channel (`isDropDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию и hover-ring работал одинаково для карточек и inline-media. `SortableContext` получает полный список channels IDs независимо от видимости.
 

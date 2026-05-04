@@ -80,51 +80,116 @@ describe("Sidebar", () => {
     expect(screen.getByText("10")).toHaveClass("-translate-x-px");
   });
 
-  it("uses foreground rows by default and activates row focus mode without background highlight", () => {
+  it("renders channels as discrete cards when card display mode is enabled", () => {
+    const previews = new Map([
+      ["__all__", [{ url: "asset://localhost/thumbs/all-a.jpg", text: false, hasThumb: true }]],
+      ["alpha", [{ url: "asset://localhost/thumbs/alpha-a.jpg", text: false, hasThumb: true }]],
+    ]);
+    const { container } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      channelDisplayMode: "card",
+      channelPreviews: previews,
+    });
+
+    const everythingRow = container.querySelector('[data-sidebar-row-key="all"]')!;
+    const everythingLink = screen.getByRole("link", { name: /Everything/ });
+    const alphaRow = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+    const alphaLink = screen.getByRole("link", { name: /Alpha/ });
+    const strips = container.querySelectorAll("[data-sidebar-thumbnail-strip]");
+    const alphaActionSlot = alphaRow.querySelector("[data-sidebar-card-action-slot]")!;
+
+    expect(everythingRow).not.toHaveAttribute("data-sidebar-row-surface");
+    expect(everythingRow).toHaveClass("border");
+    expect(everythingRow).toHaveClass("border-border");
+    expect(everythingRow).toHaveClass("bg-accent");
+    expect(everythingRow).toHaveClass("p-2");
+    expect(everythingRow).toHaveClass("mb-2");
+    expect(everythingLink).toHaveClass("flex-1");
+    expect(everythingLink).toHaveClass("items-center");
+    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-surface");
+    expect(alphaRow).toHaveClass("border");
+    expect(alphaRow).toHaveClass("border-border");
+    expect(alphaRow).toHaveClass("bg-accent");
+    expect(alphaRow).toHaveClass("p-2");
+    expect(alphaRow).toHaveClass("mb-2");
+    expect(alphaRow.style.contentVisibility).toBe("");
+    expect(alphaRow.style.containIntrinsicSize).toBe("");
+    expect(alphaLink).toHaveClass("flex-1");
+    expect(alphaLink).toHaveClass("items-center");
+    expect(strips[0]).toHaveClass("w-full");
+    expect(strips[1]).toHaveClass("w-full");
+    expect(alphaActionSlot).toHaveClass("w-[10ch]");
+    expect(alphaActionSlot).toHaveClass("justify-end");
+    expect(alphaActionSlot.querySelector("button")).toBeNull();
+
+    fireEvent.pointerMove(alphaRow);
+    expect(everythingRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
+    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
+  });
+
+  it("keeps rows muted by default while selected and focused rows use the bright sidebar state", () => {
     const { container } = renderSidebar({ ...defaultProps, width: 600 }, ["/channel/alpha"]);
 
     const everythingLink = screen.getByRole("link", { name: /Everything/ });
+    const everythingRow = container.querySelector('[data-sidebar-row-key="all"]')!;
     expect(everythingLink).not.toHaveClass("bg-sidebar-accent");
     expect(everythingLink).not.toHaveClass("text-sidebar-accent-foreground");
     expect(everythingLink).not.toHaveClass("hover:bg-accent");
     expect(everythingLink).not.toHaveClass("hover:bg-sidebar-accent");
-    expect(everythingLink).toHaveClass("text-foreground");
-    expect(screen.getByText("17")).toHaveClass("text-foreground");
+    expect(everythingRow).toHaveAttribute("data-sidebar-row-surface", "");
+    expect(everythingLink).toHaveClass("text-muted-foreground");
+    expect(screen.getByText("17")).toHaveClass("text-muted-foreground");
 
     const alphaLink = screen.getByRole("link", { name: /Alpha/ });
     expect(alphaLink).not.toHaveClass("bg-sidebar-accent");
     expect(alphaLink).not.toHaveClass("text-sidebar-accent-foreground");
     expect(alphaLink).not.toHaveClass("hover:bg-accent");
     expect(alphaLink).not.toHaveClass("hover:bg-sidebar-accent");
-    expect(alphaLink).toHaveClass("text-foreground");
-    expect(screen.getByText("10")).toHaveClass("text-foreground");
+    expect(alphaLink).toHaveClass("text-muted-foreground");
+    expect(screen.getByText("10")).toHaveClass("text-muted-foreground");
 
     const betaLink = screen.getByRole("link", { name: /Beta/ });
     expect(betaLink).not.toHaveClass("hover:bg-accent");
     expect(betaLink).not.toHaveClass("hover:bg-sidebar-accent");
-    expect(betaLink).toHaveClass("text-foreground");
-    expect(screen.getByText("5")).toHaveClass("text-foreground");
+    expect(betaLink).toHaveClass("text-muted-foreground");
+    expect(screen.getByText("5")).toHaveClass("text-muted-foreground");
 
     const nav = container.querySelector("[data-sidebar-scroll]")!;
+    const allRow = everythingRow;
     const alphaRow = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
     const betaRow = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
+    expect(alphaRow).toHaveAttribute("data-sidebar-row-surface", "");
+    expect(alphaRow).toHaveAttribute("data-sidebar-row-active", "true");
+    expect(allRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
+    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
+    expect(betaRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
     expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
     expect(alphaRow).not.toHaveAttribute("data-sidebar-row-focused");
 
     fireEvent.pointerMove(alphaRow);
     expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
+    expect(allRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
+    expect(alphaRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
+    expect(betaRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
     expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
     expect(betaRow).not.toHaveAttribute("data-sidebar-row-focused");
 
     fireEvent.pointerMove(betaRow);
     expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
     expect(nav).toHaveAttribute("data-sidebar-row-switching", "true");
+    expect(allRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
+    expect(alphaRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
+    expect(betaRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
     expect(alphaRow).not.toHaveAttribute("data-sidebar-row-focused");
     expect(betaRow).toHaveAttribute("data-sidebar-row-focused", "true");
 
     fireEvent.pointerLeave(nav);
     expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
     expect(nav).not.toHaveAttribute("data-sidebar-row-switching");
+    expect(allRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
+    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
+    expect(betaRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
   });
 
   it("holds keyboard channel focus mode until one second after the last switch", () => {
@@ -207,7 +272,7 @@ describe("Sidebar", () => {
   it("renders link editor when a block is open", async () => {
     const onToggleLinkedTag = vi.fn();
     const onNavClick = vi.fn();
-    renderSidebar({
+    const { container } = renderSidebar({
       ...defaultProps,
       linkedBlockSlug: "open-block",
       linkedTags: ["alpha"],
@@ -221,6 +286,20 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "Connected" })).toHaveAttribute(
       "aria-pressed",
       "false",
+    );
+    expect(container.querySelector("[data-sidebar-scroll]")).toHaveAttribute(
+      "data-sidebar-link-editor-mode",
+      "true",
+    );
+    expect(container.querySelector('[data-sidebar-row-key="tag:alpha"]')).toHaveAttribute(
+      "data-sidebar-row-linked",
+      "true",
+    );
+    expect(container.querySelector('[data-sidebar-row-key="tag:alpha"]')).not.toHaveAttribute(
+      "data-sidebar-row-seam-accent",
+    );
+    expect(container.querySelector('[data-sidebar-row-key="tag:beta"]')).not.toHaveAttribute(
+      "data-sidebar-row-linked",
     );
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     const actions = screen.getAllByRole("button", { name: /Connect|Disconnect/ });
@@ -292,7 +371,7 @@ describe("Sidebar", () => {
     expect(after).toBe(before);
   });
 
-  it("keeps sidebar thumbnail hover preview card disabled behind a feature flag", () => {
+  it("keeps row-mode thumbnail hover preview disabled", () => {
     const previews = new Map([
       ["alpha", [{
         url: "asset://localhost/thumbs/alpha-a.jpg",
@@ -312,6 +391,108 @@ describe("Sidebar", () => {
     expect(thumbnail).not.toHaveClass("cursor-pointer");
     fireEvent.mouseEnter(thumbnail!);
     expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
+  });
+
+  it("renders continuous sidebar guidelines and keeps the protected action area in row mode", () => {
+    const previews = new Map([
+      ["alpha", [{
+        url: "asset://localhost/thumbs/alpha-a.jpg",
+        text: false,
+        hasThumb: true,
+        slug: "alpha-a",
+      }]],
+    ]);
+    const { container } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      channelPreviews: previews,
+    });
+
+    const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLDivElement;
+    const rows = container.querySelector("[data-sidebar-rows]") as HTMLDivElement;
+    const title = row.querySelector("[data-sidebar-row-text]") as HTMLSpanElement;
+    const rail = row.querySelector("[data-sidebar-preview-rail]") as HTMLDivElement;
+    const strip = container.querySelector("[data-sidebar-thumbnail-strip]") as HTMLDivElement;
+    const leftDivider = rows.querySelector('[data-sidebar-guideline="left"]') as HTMLSpanElement;
+    const rightDivider = rows.querySelector('[data-sidebar-guideline="right"]') as HTMLSpanElement;
+
+    expect(leftDivider).toHaveClass("bg-sidebar-border");
+    expect(leftDivider).toHaveStyle({ left: "150px" });
+    expect(title).toHaveAttribute("data-sidebar-title-fade-width", "24");
+    expect(title).toHaveAttribute("data-sidebar-title-protected-width", "4");
+    expect(title).toHaveClass("min-w-[100px]");
+    expect(title).toHaveClass("max-w-[150px]");
+    expect(title).toHaveClass("flex-1");
+    expect(title).not.toHaveClass("truncate");
+    expect(rail).toHaveStyle({ paddingLeft: "4px" });
+    expect(rightDivider).toHaveClass("bg-sidebar-border");
+    expect(rightDivider).toHaveStyle({ right: "88px" });
+    expect(strip).toHaveAttribute("data-sidebar-preview-fade-width", "24");
+    expect(strip).toHaveAttribute("data-sidebar-preview-protected-width", "92");
+  });
+
+  it("enables thumbnail hover preview triggers only in card mode", () => {
+    const previews = new Map([
+      ["__all__", [{
+        url: "asset://localhost/thumbs/all-a.jpg",
+        text: false,
+        hasThumb: true,
+        slug: "all-a",
+      }]],
+      ["alpha", [{
+        url: "asset://localhost/thumbs/alpha-a.jpg",
+        text: false,
+        hasThumb: true,
+        slug: "alpha-a",
+      }]],
+    ]);
+    const { container } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      channelDisplayMode: "card",
+      channelPreviews: previews,
+    });
+
+    const thumbnails = container.querySelectorAll("[data-sidebar-preview-thumbnail]");
+    expect(thumbnails[0]).toHaveAttribute("data-sidebar-preview-thumbnail", "trigger");
+    expect(thumbnails[1]).toHaveAttribute("data-sidebar-preview-thumbnail", "trigger");
+  });
+
+  it("places card-mode link actions in the trailing slot of the title row", async () => {
+    const props = {
+      ...defaultProps,
+      width: 600,
+      channelDisplayMode: "card",
+      linkedBlockSlug: "open-block",
+      linkedTags: ["alpha"],
+      onToggleLinkedTag: vi.fn(),
+    };
+    const { container, rerender } = renderSidebar(props);
+
+    const alphaLink = screen.getByRole("link", { name: /Alpha/ });
+    const alphaAction = screen.getByRole("button", { name: "Disconnect Alpha" });
+    const alphaActionSlot = container.querySelector('[data-sidebar-row-key="tag:alpha"] [data-sidebar-card-action-slot]')!;
+    await waitFor(() => {
+      expect(alphaAction).toHaveClass("opacity-100");
+    });
+    expect(alphaLink).toHaveClass("flex-1");
+    expect(alphaLink).toHaveClass("items-center");
+    expect(alphaAction).not.toHaveClass("absolute");
+    expect(alphaAction).toHaveClass("shrink-0");
+    expect(alphaActionSlot).toHaveClass("w-[10ch]");
+    expect(alphaActionSlot).toHaveClass("justify-end");
+    expect(alphaAction.parentElement).toBe(alphaActionSlot);
+    expect(alphaAction.closest("a")).toBeNull();
+
+    rerender(sidebarTree({
+      ...props,
+      linkedBlockSlug: undefined,
+      linkedTags: [],
+    }));
+    const collapsedSlot = container.querySelector('[data-sidebar-row-key="tag:alpha"] [data-sidebar-card-action-slot]')!;
+    expect(collapsedSlot).toHaveClass("w-[10ch]");
+    expect(collapsedSlot).toHaveClass("justify-end");
+    expect(collapsedSlot.querySelector("button")).toBeNull();
   });
 
   it("filters link editor to linked channels", () => {
@@ -344,7 +525,8 @@ describe("Sidebar", () => {
     expect(
       container.querySelector("[data-sidebar-link-mode-bar] span[aria-hidden='true']"),
     ).toHaveClass("detail-top-bar-line-enter");
-    expect(screen.getByText("Channels:")).toBeInTheDocument();
+    expect(screen.getByText("Channels:")).toHaveClass("text-muted-foreground");
+    expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("text-muted-foreground");
     expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-12");
   });
 
@@ -374,8 +556,9 @@ describe("Sidebar", () => {
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("gap-2");
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("pl-3");
     expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("pr-[2px]");
-    expect(screen.getByText("Channels:")).toBeInTheDocument();
+    expect(screen.getByText("Channels:")).toHaveClass("text-muted-foreground");
     expect(container.querySelector("[data-sidebar-link-mode-control]")).not.toHaveClass("hover:bg-component-fill-hover");
+    expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("text-muted-foreground");
     expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("hover:text-foreground");
     expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-20");
     expect(container.querySelector("aside")?.lastElementChild).toBe(

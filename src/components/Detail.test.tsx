@@ -391,6 +391,7 @@ describe("Detail", () => {
       "grid-cols-[max-content_minmax(0,1fr)]",
       "gap-x-4",
       "pb-2",
+      "after:border-border",
     );
     const metadataRows = container.querySelectorAll("[data-metadata-row]");
     expect(metadataRows.length).toBeGreaterThan(0);
