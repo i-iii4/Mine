@@ -11,6 +11,7 @@ function block(id: number, title: string): IndexedBlock {
   return {
     id,
     slug: title.toLowerCase().replace(/ /g, "-"),
+    card_kind: "media",
     block_type: "link",
     title,
     description: null,
@@ -82,6 +83,25 @@ describe("Search", () => {
       expect(screen.getByText("Result One")).toBeInTheDocument();
       expect(screen.getByText("Result Two")).toBeInTheDocument();
     });
+  });
+
+  it("shows card_kind badges instead of legacy block_type badges", async () => {
+    mockInvoke.mockResolvedValue([
+      { ...block(1, "Article Result"), card_kind: "article", block_type: "image" },
+      { ...block(2, "Media Result"), card_kind: "media", block_type: "article" },
+      { ...block(3, "Channel Result"), card_kind: "channel", block_type: "file" },
+    ]);
+    render(<Search open={true} onClose={vi.fn()} onSelect={vi.fn()} />);
+    const input = screen.getByPlaceholderText("Search blocks...");
+    fireEvent.change(input, { target: { value: "result" } });
+    await waitFor(() => {
+      expect(screen.getByText("ART")).toBeInTheDocument();
+      expect(screen.getByText("MEDIA")).toBeInTheDocument();
+      expect(screen.getByText("CH")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("IMG")).not.toBeInTheDocument();
+    expect(screen.queryByText("TXT")).not.toBeInTheDocument();
+    expect(screen.queryByText("FILE")).not.toBeInTheDocument();
   });
 
   it("selects result on click", async () => {

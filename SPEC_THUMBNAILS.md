@@ -174,7 +174,7 @@ Runs inside native host `handle_save_block` **before** the response is sent to t
 
 ```rust
 struct SaveBlockParams {
-    block_type: BlockType,  // Image | Article | Video | Link | ...
+    block_type: BlockType,  // legacy compatibility input
     title: Option<String>,  // legacy compatibility input only
     body: String,
     image_url: Option<String>,  // main media URL for image-type blocks
@@ -187,11 +187,11 @@ struct SaveBlockParams {
 После download и localize_body_images, Phase 1 определяет **first media file** для thumb:
 
 ```
-if block_type == Image && downloaded main media exists:
+if frontmatter.file points to an existing image/video:
     candidate = downloaded main media path
 elif block has frontmatter.thumbnail field pointing to local file:
     candidate = vault/<thumbnail field>
-elif block_type == Article:
+elif derived card_kind == Article:
     candidate = first local embedded media in body (`![[local_file]]`, `![[local_file|alt]]`, legacy `![](local_file)`) via `find_first_local_media`
 else:
     candidate = None

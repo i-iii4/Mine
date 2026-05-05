@@ -1,6 +1,6 @@
 # SPEC: Frontend
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 ## Overview
 
@@ -16,14 +16,15 @@ React 19 + TypeScript + TailwindCSS v4 фронтенд для Mine. Работ�
 interface IndexedBlock {
   id: number;
   slug: string;
-  block_type: "image" | "article" | "link" | "video" | "file";
+  block_type: "image" | "article" | "link" | "video" | "file" | "channel"; // legacy frontmatter.type
+  card_kind: "article" | "media" | "channel"; // derived runtime/card kind
   title: string | null; // legacy frontmatter.title; not canonical for new writes
   content_heading: string | null; // first body H1, if present
   display_title: string | null; // first body H1, then legacy title; null for untitled cards
   fallback_label: string; // filename stem / media filename for non-title surfaces
   description: string | null;
   url: string | null;
-  media_file: string | null;
+  media_file: string | null; // normalized from canonical file wikilink/raw legacy frontmatter
   thumbnail: string | null;
   saved_at: string;
   source: string | null;
@@ -43,6 +44,12 @@ Frontend title rendering follows [SPEC_DISPLAY_TITLE.md](./SPEC_DISPLAY_TITLE.md
 card title slots use `display_title` and render it as one line with ellipsis.
 If `display_title` is null, social/quote/media cards do not invent a title
 slot; utility surfaces can still show `fallback_label`.
+
+`card_kind` is the source of truth for card/search/detail routing. `block_type`
+is still delivered for compatibility and diagnostics, but the frontend must
+not branch on legacy source types such as `image`, `link`, `video`, or `file`.
+Media presentation is resolved from `card_kind`, `media_file`, `thumbnail`,
+`preview_manifest`, dimensions, URL, and file extension.
 
 ### TagCount
 
@@ -446,19 +453,17 @@ handle ставит `body.sidebar-resizing`, вызывает `preventDefault()`
 
 ### Card
 
-Диспатчер по `block_type`:
+Диспатчер по derived runtime/card kind (`card_kind` API field):
 
 | Тип | Отображение |
 |---|---|
-| `image` | Thumbnail с сохранением пропорций. Заголовок при наведении |
-| `link` | Thumbnail (или заглушка) + заголовок + домен из url |
-| `article` | Первые ~3 строки текста из body. Заголовок сверху |
-| `video` | Thumbnail + иконка play. Заголовок внизу |
-| `file` | Иконка типа файла + имя + расширение |
+| `article` | Body preview, optional body-derived media preview, display title if present |
+| `media` | Resolved `media_file` / thumbnail / extension-specific affordance; no synthetic title |
+| `channel` | Not rendered in feed/grid/search results as a normal card |
 
 Thumbnail отображается через `convertFileSrc(vaultPath + "/.arena/cache/thumbs/" + slug + ".jpg")`.
 
-Медиафайлы (для image-карточек без thumbnail): `convertFileSrc(vaultPath + "/" + media_file)`.
+Медиафайлы (для media-карточек без thumbnail): `convertFileSrc(vaultPath + "/" + media_file)`.
 
 Article inline media renders from backend-derived paths. For bare Obsidian
 embeds such as `![[01.jpg]]`, Detail first asks `preview_manifest.tiles` for a

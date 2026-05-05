@@ -7,6 +7,7 @@ import {
   previewAssetUrl,
   thumbnailUrl,
   domainFromUrl,
+  isSafeUrl,
   legacyThumbsRoot,
 } from "@/lib/assets";
 import {
@@ -295,9 +296,9 @@ export function CardContent({
   const content = (() => {
     switch (descriptor.variant) {
       case "image":
-        return <ImageCard block={block} descriptor={descriptor} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
+        return <ImageCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
       case "link":
-        return <LinkCard block={block} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
+        return <LinkCard block={block} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
       case "article-text":
       case "article-media":
         return <ArticleCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
@@ -320,6 +321,22 @@ export function CardContent({
 
 function resolveFeedMediaSrc(vaultPath: string, src: string): string {
   return src.startsWith("http://") || src.startsWith("https://") ? src : mediaUrl(vaultPath, src);
+}
+
+function resolveOptionalMediaReference(vaultPath: string, src: string | null): string | null {
+  if (!src) return null;
+  return isSafeUrl(src) ? src : mediaUrl(vaultPath, src);
+}
+
+function uniqueUrls(urls: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const url of urls) {
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    result.push(url);
+  }
+  return result;
 }
 
 function GalleryTileImage({
@@ -452,12 +469,14 @@ function GalleryTiles({
 const ImageCard = memo(function ImageCard({
   block,
   descriptor,
+  previewManifest,
   vaultPath,
   thumbsRootPath,
   measurementMode = false,
 }: {
   block: LightBlock;
   descriptor: CardLayoutDescriptor;
+  previewManifest: ReturnType<typeof parsePreviewManifest>;
   vaultPath: string;
   thumbsRootPath: string;
   measurementMode?: boolean;
@@ -480,11 +499,22 @@ const ImageCard = memo(function ImageCard({
   // any loader state — the <img> element just walks through the
   // candidate list via onError.
   const sources = useMemo(() => {
-    const list: string[] = [];
-    if (block.media_file) list.push(mediaUrl(vaultPath, block.media_file));
-    list.push(thumbnailUrl(thumbsRootPath, block.slug));
-    return list;
-  }, [block.media_file, block.slug, vaultPath, thumbsRootPath]);
+    return uniqueUrls([
+      resolveOptionalMediaReference(vaultPath, block.media_file),
+      previewManifest?.primaryPreviewPath
+        ? previewAssetUrl(thumbsRootPath, previewManifest.primaryPreviewPath)
+        : null,
+      resolveOptionalMediaReference(vaultPath, block.thumbnail),
+      thumbnailUrl(thumbsRootPath, block.slug),
+    ]);
+  }, [
+    block.media_file,
+    block.slug,
+    block.thumbnail,
+    previewManifest?.primaryPreviewPath,
+    vaultPath,
+    thumbsRootPath,
+  ]);
 
   const [sourceIndex, setSourceIndex] = useState(0);
   const sourcesKey = sources.join("|");
@@ -559,26 +589,47 @@ const LINK_COLORS = [
 
 const LinkCard = memo(function LinkCard({
   block,
+  previewManifest,
+  vaultPath,
   thumbsRootPath,
   measurementMode = false,
 }: {
   block: LightBlock;
+  previewManifest: ReturnType<typeof parsePreviewManifest>;
+  vaultPath: string;
   thumbsRootPath: string;
   measurementMode?: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const [thumbLoaded, setThumbLoaded] = useState(false);
-  const [thumbError, setThumbError] = useState(false);
-  const thumb = thumbnailUrl(thumbsRootPath, block.slug);
   const domain = block.url ? domainFromUrl(block.url) : null;
   const navigationLabel = getNavigationLabel(block);
+  const sources = useMemo(
+    () => uniqueUrls([
+      previewManifest?.primaryPreviewPath
+        ? previewAssetUrl(thumbsRootPath, previewManifest.primaryPreviewPath)
+        : null,
+      resolveOptionalMediaReference(vaultPath, block.thumbnail),
+      thumbnailUrl(thumbsRootPath, block.slug),
+    ]),
+    [block.slug, block.thumbnail, previewManifest?.primaryPreviewPath, thumbsRootPath, vaultPath],
+  );
+  const [sourceIndex, setSourceIndex] = useState(0);
+  const sourcesKey = sources.join("|");
+  const thumb = sources[sourceIndex] ?? null;
+  const thumbError = thumb === null;
+
+  useEffect(() => {
+    setThumbLoaded(false);
+    setSourceIndex(0);
+  }, [sourcesKey]);
 
   // Retry failed loads when vault data refreshes (e.g. iCloud files downloaded)
   useEffect(() => {
     if (!thumbError) return;
     const handler = () => {
       setThumbLoaded(false);
-      setThumbError(false);
+      setSourceIndex(0);
     };
     window.addEventListener("vault-refreshed", handler);
     return () => window.removeEventListener("vault-refreshed", handler);
@@ -615,7 +666,7 @@ const LinkCard = memo(function LinkCard({
         )}
         {!measurementMode && (
           <img
-            src={thumb}
+            src={thumb ?? ""}
             alt=""
             className={cn(
               "absolute inset-0 h-full w-full object-cover transition-opacity",
@@ -624,7 +675,10 @@ const LinkCard = memo(function LinkCard({
             loading={imgLoading}
             draggable={false}
             onLoad={() => setThumbLoaded(true)}
-            onError={() => setThumbError(true)}
+            onError={() => {
+              setThumbLoaded(false);
+              setSourceIndex((i) => i + 1);
+            }}
           />
         )}
       </div>
@@ -908,12 +962,15 @@ const VideoCard = memo(function VideoCard({
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const shouldAutoplay = !measurementMode && allowPlayback && playback !== null;
-  const posterCandidates = buildFeedVideoPosterCandidates({
-    slug: block.slug,
-    thumbsRootPath,
-    previewManifest,
-    playback,
-  });
+  const posterCandidates = uniqueUrls([
+    ...buildFeedVideoPosterCandidates({
+      slug: block.slug,
+      thumbsRootPath,
+      previewManifest,
+      playback,
+    }),
+    resolveOptionalMediaReference(vaultPath, block.thumbnail),
+  ]);
 
   return (
     <div className="relative aspect-video">

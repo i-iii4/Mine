@@ -2,10 +2,12 @@
 // Manually maintained until specta type generation is set up (Phase 7).
 
 export type BlockType = "image" | "article" | "link" | "video" | "file" | "channel";
+export type CardKind = "article" | "media" | "channel";
 
 export interface IndexedBlock {
   id: number;
   slug: string;
+  card_kind: CardKind;
   block_type: BlockType;
   title: string | null;
   content_heading?: string | null;
@@ -45,6 +47,7 @@ export interface IndexedBlock {
 export interface LightBlock {
   id: number;
   slug: string;
+  card_kind: CardKind;
   block_type: BlockType;
   title: string | null;
   content_heading?: string | null;

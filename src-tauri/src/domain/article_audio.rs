@@ -7,7 +7,9 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use whatlang::{detect, Lang};
 
-use crate::domain::block::{derive_title_fields, strip_first_markdown_h1, Block, BlockType};
+use crate::domain::block::{
+    derive_card_kind, derive_title_fields, strip_first_markdown_h1, Block, CardKind,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedArticleSpeech {
@@ -31,7 +33,7 @@ pub enum ArticleAudioPrepError {
 pub fn prepare_article_speech(
     block: &Block,
 ) -> Result<PreparedArticleSpeech, ArticleAudioPrepError> {
-    if block.frontmatter.block_type != BlockType::Article {
+    if derive_card_kind(block) != CardKind::Article {
         return Err(ArticleAudioPrepError::NotArticle {
             slug: block.slug.clone(),
         });
@@ -43,7 +45,8 @@ pub fn prepare_article_speech(
     }
 
     let mut sections = Vec::new();
-    let title_fields = derive_title_fields(&block.slug, block.frontmatter.title.as_deref(), &block.body);
+    let title_fields =
+        derive_title_fields(&block.slug, block.frontmatter.title.as_deref(), &block.body);
     if let Some(title) = title_fields.display_title.as_deref() {
         let title = normalize_inline_markup(title);
         if !title.is_empty() {
@@ -326,7 +329,7 @@ fn collapse_paragraphs(paragraphs: Vec<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::block::{DateTime, Frontmatter};
+    use crate::domain::block::{BlockType, DateTime, Frontmatter};
 
     fn article(body: &str) -> Block {
         Block {

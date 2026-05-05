@@ -1,5 +1,66 @@
 # Devlog
 
+## 05.05.2026 20:25 -03 [implementation] — Derived card kind media contract
+
+### Completed
+
+- Implemented `card_kind = article | media | channel` across SQLite,
+  backend DTOs, search filters, grid queries, detail/search/feed frontend
+  routing, thumbnails, article audio, and watcher paths.
+- Kept `type`/`block_type` as legacy source metadata; feed/detail/search now
+  use `card_kind` as source of truth.
+- Canonicalized primary media writes to `file: "[[name.ext]]"` while keeping
+  legacy raw `file: name.ext` readable.
+- Added `migrate-primary-file-to-wikilinks` with dry-run/apply, backups, and
+  idempotence checks.
+- Updated inline-media extraction to create empty-body media cards pointing at
+  existing shared media via canonical `file`.
+- Migrated the active Mine vault:
+  `/Users/i_iii/Library/Mobile Documents/com~apple~CloudDocs/Mine`.
+  Dry-run after apply reports `0 would change`; backup:
+  `.mine-migration-backup/2026-05-05T23-21-02Z`.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --locked`
+- `bun run test:frontend`
+- `bun run build`
+- `git diff --check`
+
+## 05.05.2026 20:10 -03 [docs] — Media contract documentation sync
+
+### Goal
+
+Синхронизировать документацию с новым media contract после реализации:
+`type` больше не является source-of-truth для feed/detail/search, primary
+media пишет canonical Obsidian `file` wikilinks, а runtime card kind выводится
+из body emptiness.
+
+### Completed
+
+- Зафиксирован derived card kind: `channel` для `type: channel`, `article` для
+  непустого body, `media` для пустого body.
+- Уточнено, что legacy/source `type` остаётся в Markdown как compatibility
+  metadata, но не управляет feed/detail/search для обычных карточек.
+- Canonical write path для primary media описан как
+  `file: "[[name.ext]]"`; legacy `file: name.ext` остаётся read-compatible.
+- Migration boundary зафиксирован: existing content migration rewrites
+  frontmatter `file` only; body не меняется, поэтому singleton embed bodies
+  become article.
+- Inline-media extraction теперь документирован как empty-body media-card с
+  canonical `file` wikilink.
+- Обновлены docs:
+  [ARCHITECTURE.md](ARCHITECTURE.md), [SPEC_BLOCK.md](SPEC_BLOCK.md),
+  [SPEC_STORAGE.md](SPEC_STORAGE.md), [SPEC_FRONTEND.md](SPEC_FRONTEND.md),
+  [SPEC_CLIPPER.md](SPEC_CLIPPER.md),
+  [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md),
+  [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md),
+  [PLAN.md](PLAN.md).
+
+### Verification
+
+- Docs-only change; code tests not run.
+
 ## 05.05.2026 09:37 -03 [primary] — Suppress accidental native selection in app chrome
 
 ### Goal

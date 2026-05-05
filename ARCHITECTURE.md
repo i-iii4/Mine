@@ -11,7 +11,7 @@ Mine решает это: визуальный букмаркинг с лока�
 ### Ключевые принципы
 
 1. **Файлы — источник правды.** SQLite — только индекс, как Spotlight для macOS
-2. **Всё — Markdown.** Mine-authored blocks используют `.md` с frontmatter; обычные Obsidian `.md` без frontmatter читаются как implicit articles. Медиафайлы рядом
+2. **Всё — Markdown.** Mine-authored blocks используют `.md` с frontmatter; обычные Obsidian `.md` без frontmatter читаются как implicit articles. Медиафайлы рядом. Runtime card kind выводится из Markdown body state и `type: channel`, а не из non-channel `type:` metadata
 3. **Коллекции — это Obsidian-страницы.** Membership хранится в `Mine Collections` как quoted wikilinks на collection pages; `tags` остаётся пользовательским Obsidian-полем
 4. **Плоская структура.** Все файлы в корне vault. Позже — изолированные проекты (отдельные vault'ы)
 5. **Индекс восстановим.** Удаление `.arena/index.db` не приводит к потере данных
@@ -20,7 +20,20 @@ Mine решает это: визуальный букмаркинг с лока�
 
 ## Data model
 
-### Блок = пара файлов: `.md` (метаданные) + медиафайл (опционально)
+### Блок = `.md` source + медиафайл (опционально)
+
+`type` пока остаётся в frontmatter как compatibility/source hint, но больше не
+является source-of-truth для feed/detail/search. Исключение — collection page с
+`type: channel`: это временный явный маркер коллекции. Для обычных карточек
+runtime/card kind выводится так:
+
+- `channel` — collection document (`type: channel`);
+- `article` — body после frontmatter непустой;
+- `media` — body пустой.
+
+`file` на новых write path записывается в Obsidian form:
+`file: "[[image.png]]"`. Read path остаётся backward-compatible с legacy
+`file: image.png`.
 
 #### Ссылка (link)
 ```markdown
@@ -69,7 +82,7 @@ source: browser-extension
 ```markdown
 ---
 type: image
-file: sunset-tokyo.jpg
+file: "[[sunset-tokyo.jpg]]"
 url: https://unsplash.com/photo/abc
 width: 3840
 height: 2160
@@ -81,13 +94,15 @@ saved_at: 2026-02-26T14:30:00Z
 source: browser-extension
 ---
 ```
-Тело пустое. Рядом лежит `sunset-tokyo.jpg`. На фронте — только картинка. Детальный вид через клик показывает атрибуты.
+Тело пустое, поэтому runtime card kind — `media`. Рядом лежит
+`sunset-tokyo.jpg`. На фронте — только картинка. Детальный вид через клик
+показывает атрибуты.
 
 #### Видео / PDF / файл
 ```markdown
 ---
 type: video
-file: demo-reel.mp4
+file: "[[demo-reel.mp4]]"
 url: https://youtube.com/watch?v=xxx
 thumbnail: demo-reel-thumb.jpg
 Mine Collections:
@@ -486,11 +501,11 @@ Frontend: drop event → Tauri command `add_block`
     ▼
 Rust: копирует медиафайл в vault root
     │
-    ├──► Создаёт .md файл с frontmatter (type, file, Mine Collections, saved_at)
+    ├──► Создаёт .md файл с frontmatter (`type` hint, canonical `file` wikilink, Mine Collections, saved_at)
     │
     ├──► Thumbnail Generator: превью → .arena/cache/thumbs/
     │
-    └──► Indexer: парсит frontmatter → SQLite (блок, collection refs, FTS)
+    └──► Indexer: парсит Markdown/frontmatter → derives card kind → SQLite (блок, collection refs, FTS)
     │
     ▼
 Frontend: получает событие → обновляет сетку
@@ -504,8 +519,8 @@ File watcher (notify) обнаруживает изменение
     ▼
 Indexer: определяет тип (create/modify/delete)
     │
-    ├──► .md файл создан: парсит frontmatter → индексирует
-    ├──► .md файл изменён: перечитывает frontmatter → обновляет индекс
+    ├──► .md файл создан: парсит Markdown/frontmatter → derives card kind → индексирует
+    ├──► .md файл изменён: перечитывает Markdown/frontmatter → обновляет индекс
     ├──► медиафайл создан: генерирует thumbnail (ждёт .md для полной индексации)
     └──► файл удалён: удаляет из индекса + thumbnail
     │
@@ -531,11 +546,12 @@ Tauri event → Frontend обновляет UI
 CREATE TABLE blocks (
     id INTEGER PRIMARY KEY,
     path TEXT UNIQUE NOT NULL,           -- относительный путь .md от vault root
-    block_type TEXT NOT NULL,            -- image, article, link, video, file
+    block_type TEXT NOT NULL,            -- legacy frontmatter.type
+    card_kind TEXT NOT NULL,             -- derived card kind: article, media, channel
     title TEXT,                          -- legacy frontmatter.title fallback
     description TEXT,
     url TEXT,                            -- source URL (для ссылок и статей)
-    media_file TEXT,                     -- имя связанного медиафайла
+    media_file TEXT,                     -- normalized from frontmatter file wikilink/raw value
     mime_type TEXT,
     size_bytes INTEGER,
     width INTEGER,                       -- для изображений/видео

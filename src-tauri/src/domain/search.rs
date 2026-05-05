@@ -5,7 +5,7 @@
 //
 // Contract: SPEC_DOMAIN.md#domain/search
 
-use super::block::BlockType;
+use super::block::CardKind;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -21,8 +21,8 @@ pub struct SearchQuery {
 /// A typed search filter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchFilter {
-    /// Filter by block type: `type:image`.
-    Type(BlockType),
+    /// Filter by derived card kind: `type:media`.
+    Type(CardKind),
     /// Filter by tag: `tag:design`.
     Tag(String),
 }
@@ -44,7 +44,7 @@ impl SearchQuery {
 /// Parse a search string into a structured query.
 ///
 /// Recognized filters:
-/// - `type:image` (or article, link, video, file)
+/// - `type:media` (or article, channel; legacy image/link/video/file aliases map to media)
 /// - `tag:design`
 ///
 /// Unknown filter prefixes (e.g. `foo:bar`) are treated as plain text.
@@ -76,8 +76,8 @@ fn try_parse_filter(token: &str) -> Option<SearchFilter> {
 
     match prefix {
         "type" => {
-            let bt = BlockType::from_str(value).ok()?;
-            Some(SearchFilter::Type(bt))
+            let card_kind = parse_card_kind_filter(value)?;
+            Some(SearchFilter::Type(card_kind))
         }
         "tag" => {
             if value.is_empty() {
@@ -87,6 +87,15 @@ fn try_parse_filter(token: &str) -> Option<SearchFilter> {
             }
         }
         _ => None, // Unknown prefix: treat as text
+    }
+}
+
+fn parse_card_kind_filter(value: &str) -> Option<CardKind> {
+    match value {
+        "article" => Some(CardKind::Article),
+        "media" | "image" | "link" | "video" | "file" => Some(CardKind::Media),
+        "channel" => Some(CardKind::Channel),
+        _ => None,
     }
 }
 
@@ -118,7 +127,7 @@ mod tests {
         // S3
         let q = parse_search_query("type:image");
         assert_eq!(q.text, "");
-        assert_eq!(q.filters, vec![SearchFilter::Type(BlockType::Image)]);
+        assert_eq!(q.filters, vec![SearchFilter::Type(CardKind::Media)]);
     }
 
     #[test]
@@ -126,7 +135,7 @@ mod tests {
         // S4
         let q = parse_search_query("type:image sunset");
         assert_eq!(q.text, "sunset");
-        assert_eq!(q.filters, vec![SearchFilter::Type(BlockType::Image)]);
+        assert_eq!(q.filters, vec![SearchFilter::Type(CardKind::Media)]);
     }
 
     #[test]
@@ -151,7 +160,7 @@ mod tests {
         assert_eq!(
             q.filters,
             vec![
-                SearchFilter::Type(BlockType::Image),
+                SearchFilter::Type(CardKind::Media),
                 SearchFilter::Tag("design".to_string()),
             ]
         );
@@ -178,17 +187,19 @@ mod tests {
         // S9
         let q = parse_search_query("  type:image  sunset  ");
         assert_eq!(q.text, "sunset");
-        assert_eq!(q.filters, vec![SearchFilter::Type(BlockType::Image)]);
+        assert_eq!(q.filters, vec![SearchFilter::Type(CardKind::Media)]);
     }
 
     #[test]
-    fn all_block_types() {
+    fn all_card_kind_filters_and_legacy_media_aliases() {
         for (input, expected) in [
-            ("type:image", BlockType::Image),
-            ("type:article", BlockType::Article),
-            ("type:link", BlockType::Link),
-            ("type:video", BlockType::Video),
-            ("type:file", BlockType::File),
+            ("type:media", CardKind::Media),
+            ("type:image", CardKind::Media),
+            ("type:link", CardKind::Media),
+            ("type:video", CardKind::Media),
+            ("type:file", CardKind::Media),
+            ("type:article", CardKind::Article),
+            ("type:channel", CardKind::Channel),
         ] {
             let q = parse_search_query(input);
             assert_eq!(q.filters, vec![SearchFilter::Type(expected)]);
@@ -224,7 +235,7 @@ mod tests {
             q.filters,
             vec![
                 SearchFilter::Tag("b".to_string()),
-                SearchFilter::Type(BlockType::Image),
+                SearchFilter::Type(CardKind::Media),
                 SearchFilter::Tag("a".to_string()),
             ]
         );

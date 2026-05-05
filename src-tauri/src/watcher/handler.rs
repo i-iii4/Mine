@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::domain::block::{
-    compute_body_hash, iter_inline_media_references, parse_block, parse_markdown_document, Block,
-    BlockType, DateTime,
+    compute_body_hash, derive_card_kind, iter_inline_media_references, parse_block,
+    parse_markdown_document, Block, BlockType, CardKind, DateTime,
 };
 use crate::domain::vault::VaultLayout;
 use crate::storage::{article_audio, db, files, index, thumbnails};
@@ -533,7 +533,7 @@ pub fn index_md_file(
         // text-ness classification mirrors list_channel_previews so
         // incremental updates and the initial bulk load agree.
         if let Some(app) = app {
-            let is_text = job.block.frontmatter.block_type == BlockType::Article
+            let is_text = derive_card_kind(&job.block) == CardKind::Article
                 && job.block.frontmatter.file.is_none()
                 && job.block.frontmatter.thumbnail.is_none()
                 && thumbnails::find_first_local_media(&job.block.body, thumbnails::is_image_ext)
@@ -799,6 +799,7 @@ const RENAME_MATCH_WINDOW_MS: u64 = 500;
 
 #[derive(Debug, Clone)]
 struct PendingRemove {
+    vault_root: PathBuf,
     slug: String,
     body_hash: Option<String>,
     /// Tags captured before removal so the eventual `block:removed` event
@@ -819,17 +820,17 @@ fn push_pending_remove(entry: PendingRemove) {
 }
 
 /// Remove and return the first pending entry whose body hash matches.
-fn take_pending_by_hash(hash: &str) -> Option<PendingRemove> {
+fn take_pending_by_hash(vault: &VaultLayout, hash: &str) -> Option<PendingRemove> {
     let mut q = pending_queue().lock().ok()?;
     let pos = q
         .iter()
-        .position(|p| p.body_hash.as_deref() == Some(hash))?;
+        .position(|p| p.vault_root == vault.root() && p.body_hash.as_deref() == Some(hash))?;
     Some(q.remove(pos))
 }
 
 /// Drain entries whose deadline has already passed. Caller commits each
 /// as a real block removal.
-fn drain_expired_pending() -> Vec<PendingRemove> {
+fn drain_expired_pending(vault: &VaultLayout) -> Vec<PendingRemove> {
     let now = Instant::now();
     let mut q = match pending_queue().lock() {
         Ok(g) => g,
@@ -837,7 +838,7 @@ fn drain_expired_pending() -> Vec<PendingRemove> {
     };
     let mut expired = Vec::new();
     q.retain(|p| {
-        if p.deadline <= now {
+        if p.vault_root == vault.root() && p.deadline <= now {
             expired.push(p.clone());
             false
         } else {
@@ -853,7 +854,18 @@ fn drain_expired_pending() -> Vec<PendingRemove> {
 #[cfg(test)]
 fn flush_pending_for_test(conn: &Connection, vault: &VaultLayout, app: Option<&AppHandle>) {
     let pending: Vec<PendingRemove> = match pending_queue().lock() {
-        Ok(mut g) => g.drain(..).collect(),
+        Ok(mut g) => {
+            let mut matching = Vec::new();
+            g.retain(|p| {
+                if p.vault_root == vault.root() {
+                    matching.push(p.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            matching
+        }
         Err(_) => return,
     };
     for p in pending {
@@ -994,7 +1006,7 @@ pub fn handle_event(
     // Before any dispatch, commit removals whose rename-match window
     // expired. Keeps the pending queue bounded and ensures deferred
     // deletes are eventually visible to the frontend.
-    for expired in drain_expired_pending() {
+    for expired in drain_expired_pending(vault) {
         commit_deferred_removal(conn, vault, &expired, app);
     }
 
@@ -1007,7 +1019,7 @@ pub fn handle_event(
                 let already_indexed = index::get_block(conn, &new_slug).ok().flatten().is_some();
                 if !already_indexed {
                     if let Ok(body_hash) = read_body_hash_from_md(vault, path) {
-                        if let Some(pending) = take_pending_by_hash(&body_hash) {
+                        if let Some(pending) = take_pending_by_hash(vault, &body_hash) {
                             return perform_rename_match(
                                 conn, vault, &pending, &new_slug, path, app,
                             );
@@ -1032,6 +1044,7 @@ pub fn handle_event(
                     .map(|b| b.tags)
                     .unwrap_or_default();
                 push_pending_remove(PendingRemove {
+                    vault_root: vault.root().to_path_buf(),
                     slug,
                     body_hash,
                     tags,

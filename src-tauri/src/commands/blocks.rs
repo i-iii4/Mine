@@ -12,8 +12,8 @@ use thiserror::Error;
 
 use crate::commands::state::{current_vault_layout, AppState, CommandError};
 use crate::domain::block::{
-    compute_body_hash, iter_inline_media_references, parse_markdown_document, suggest_slug, Block,
-    BlockType, DateTime, Frontmatter,
+    compute_body_hash, derive_card_kind, iter_inline_media_references, parse_markdown_document,
+    suggest_slug, Block, BlockType, CardKind, DateTime, Frontmatter,
 };
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::domain::markdown::{rename_inline_media_references, rename_wikilink_targets};
@@ -511,10 +511,11 @@ fn extract_inline_media_inner(
             message: format!("failed to parse source block: {e}"),
         })?;
     let source_block = parsed.block;
-    if source_block.frontmatter.block_type != BlockType::Article {
+    let source_card_kind = derive_card_kind(&source_block);
+    if source_card_kind != CardKind::Article {
         return Err(InlineMediaExtractError::SourceNotArticle {
             source_slug: source_block.slug,
-            block_type: source_block.frontmatter.block_type.as_str().to_string(),
+            block_type: source_card_kind.as_str().to_string(),
         });
     }
 
@@ -582,7 +583,7 @@ fn extract_inline_media_inner(
             color: None,
             icon: None,
         },
-        body: format!("![[{media_file}]]"),
+        body: String::new(),
     };
 
     let indexed =
@@ -633,10 +634,11 @@ fn extract_text_selection_inner(
     let source_origin = parsed.origin.clone();
     let source_index_warning = parsed.index_warning.clone();
     let source_block = parsed.block;
-    if source_block.frontmatter.block_type != BlockType::Article {
+    let source_card_kind = derive_card_kind(&source_block);
+    if source_card_kind != CardKind::Article {
         return Err(TextSelectionExtractError::SourceNotArticle {
             source_slug: source_block.slug,
-            block_type: source_block.frontmatter.block_type.as_str().to_string(),
+            block_type: source_card_kind.as_str().to_string(),
         });
     }
 
@@ -1932,7 +1934,7 @@ mod tests {
             extracted.frontmatter.source_media.as_deref(),
             Some("photo.png")
         );
-        assert_eq!(extracted.body, "![[photo.png]]");
+        assert!(extracted.body.is_empty());
 
         let (_, source_content) =
             files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();

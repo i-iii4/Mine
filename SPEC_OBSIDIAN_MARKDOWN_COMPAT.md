@@ -59,8 +59,9 @@ Body.
 ```
 
 Это полный Mine block. Frontmatter является source of truth для explicit
-metadata, но видимый заголовок живёт в body H1. Existing `frontmatter.title`
-остаётся legacy read fallback.
+metadata such as URL, collections, primary media, and saved timestamp, but not
+for feed/detail/search card kind. Visible heading lives in body H1. Existing
+`frontmatter.title` остаётся legacy read fallback.
 
 ### Foreign Markdown
 
@@ -106,23 +107,26 @@ Indexer строит `Block` из `.md` файла через двухступе
 
 | Field | Explicit source | Fallback source |
 |---|---|---|
-| `type` | known Mine `frontmatter.type` | `article` |
+| runtime/card kind | `type: channel` only | non-empty body → `article`; empty body → `media` |
+| source `type` metadata | known Mine `frontmatter.type` | absent |
 | display title | first H1 in body | legacy `frontmatter.title` → filename stem |
 | `saved_at` | `frontmatter.saved_at` | filesystem creation time → modified time |
 | Mine collections | `frontmatter["Mine Collections"]` wikilinks | empty list in post-migration runtime; legacy `frontmatter.tags` is migration-only |
 | Obsidian tags | `frontmatter.tags` | empty list |
 | `url` | `frontmatter.url` | `null` |
 | `description` | `frontmatter.description` | `null` |
-| `file` | `frontmatter.file` | `null` |
+| `file` | `frontmatter.file` canonical `[[...]]` or legacy raw value | `null` |
 | `thumbnail` | `frontmatter.thumbnail` | `null` |
 | `author` | `frontmatter.author` | `null` |
 | `body` | text after closing frontmatter | whole file for foreign Markdown |
 
 Rules:
 
-- If `frontmatter.type` exists and is a known Mine block type, it wins.
+- If `frontmatter.type` is `channel`, the document is a collection document.
+- Other known `frontmatter.type` values are preserved as compatibility/source
+  metadata, but runtime/card kind is derived from body emptiness.
 - If `frontmatter.type` exists but is unknown to Mine, it is preserved as user
-  YAML and the indexed block falls back to `article` with an index warning.
+  YAML; the indexed runtime kind is still body-derived with an index warning.
 - If body contains a first H1, it is the preferred display title.
 - If no H1 exists and `frontmatter.title` exists, legacy title is used as a
   compatibility fallback.
@@ -142,6 +146,8 @@ Rules:
   `frontmatter.tags` as collections.
 - Missing optional fields stay missing; Mine does not synthesize `url`,
   `file`, `thumbnail`, `author`, `width`, or `height`.
+- `frontmatter.file` accepts both `file: "[[name.ext]]"` and legacy
+  `file: name.ext`; new writes use the canonical wikilink form.
 
 ### Derived-only Fields
 
@@ -154,6 +160,8 @@ Markdown unless the user explicitly owns that metadata in Mine:
   `invalid_saved_at`, `malformed_frontmatter`, or `unsupported_tag_shape`;
 - media-derived fields such as `first_image`, `media_urls`,
   `preview_manifest`, and `media_dimensions`.
+- runtime/card kind (`article`, `media`, `channel`) derived from body emptiness
+  and `type: channel`.
 
 `source` is not a required compatibility field. If a user file already contains
 `source`, Mine preserves it, but Mine must not inject a `source` marker just to
@@ -327,8 +335,10 @@ table as Mine blocks, using the derived read model.
 For an indexed Markdown file:
 
 - `slug` = filename stem;
-- `block_type` = known Mine `frontmatter.type` if present, otherwise
-  `article`;
+- `block_type` / card kind = `channel` for `type: channel`; otherwise
+  `article` when body is non-empty and `media` when body is empty;
+- known non-channel `frontmatter.type` values are compatibility/source
+  metadata and must not drive feed/detail/search;
 - `display_title` / equivalent read-model value = first H1, then valid legacy
   `frontmatter.title`, then filename stem fallback;
 - `frontmatter.title` is indexed only as legacy metadata and must not be
@@ -337,7 +347,8 @@ For an indexed Markdown file:
   fallback;
 - `index_warning` = warning code when metadata was downgraded or skipped,
   otherwise null;
-- `media_file` = null;
+- `media_file` = normalized `frontmatter.file` when present, whether source
+  used canonical `[[...]]` or legacy raw syntax;
 - `thumbnail` = null;
 - `body` = full markdown for foreign/malformed Markdown; text after closing
   fence for valid partial/Mine frontmatter;
@@ -363,8 +374,9 @@ Foreign Markdown uses the existing article thumbnail cascade:
 1. First local embedded image/video in body (`![[...]]` or legacy markdown).
 2. Text thumbnail fallback if no local media exists.
 
-The preview pipeline must not require `frontmatter.file` or `type: article` to
-exist in source text. It consumes the derived `Block` read model.
+The preview pipeline must not require raw `type: article` to exist in source
+text. It consumes the derived `Block` read model. When `frontmatter.file`
+exists, both canonical `[[...]]` and legacy raw filename syntax are accepted.
 
 ## Frontend Display
 
@@ -519,17 +531,36 @@ source `.md` no longer exists in the vault.
 
 | Situation | Behavior |
 |---|---|
-| `.md` has no frontmatter | valid implicit article |
-| `.md` has valid partial frontmatter | valid article unless known explicit Mine `type` says otherwise |
+| `.md` has no frontmatter | valid implicit article when body is non-empty; valid media when empty |
+| `.md` has valid partial frontmatter | runtime kind derives from body unless `type: channel` |
 | `.md` starts with `---` but has no closing fence | valid implicit article; whole file is body |
 | `.md` starts frontmatter but YAML invalid | valid implicit article with `index_warning`; whole file is body |
-| `.md` has unknown explicit `type` | valid implicit article with `index_warning`; original value preserved |
-| `.md` has invalid explicit `saved_at` | valid article with filesystem date fallback and `index_warning` |
-| `.md` has unsupported `tags` shape | valid article with best-effort tags and `index_warning` |
+| `.md` has unknown explicit `type` | valid body-derived card with `index_warning`; original value preserved |
+| `.md` has invalid explicit `saved_at` | valid body-derived card with filesystem date fallback and `index_warning` |
+| `.md` has unsupported `tags` shape | valid body-derived card with best-effort tags and `index_warning` |
 | `.md` has both `tags` and `Mine Collections` | `Mine Collections` drives Mine collections; `tags` remains Obsidian metadata |
 | legacy Mine `.md` has `tags` but no `Mine Collections` | migration tool can convert it; post-migration runtime may show a diagnostic instead of silently treating `tags` as collections |
 | embedded media file missing | article still indexes; preview falls back to next media or text |
 | filesystem date unavailable | use modified time |
+
+## Migration To Canonical `file` Wikilinks
+
+Existing content migration for the media contract rewrites only the
+frontmatter `file` value:
+
+```diff
+- file: image.png
++ file: "[[image.png]]"
+```
+
+Rules:
+
+- body bytes are never changed by this migration;
+- legacy raw `file: image.png` remains readable forever;
+- existing singleton embed bodies such as `![[image.png]]` are body content and
+  therefore derive `article`, not `media`;
+- new inline-media extraction creates a media-card with empty body and
+  canonical `file: "[[image.png]]"` instead of writing a singleton embed body.
 
 ## Migration To Obsidian-Linked `Mine Collections`
 
@@ -600,7 +631,11 @@ Rollback is file-level: restore the timestamped backup and rebuild the index.
 - `parse_markdown_document_saved_at_from_file_metadata`.
 - `parse_markdown_document_hr_at_top_without_closing_fence_is_foreign`.
 - `parse_markdown_document_empty_frontmatter_body_after_closing_fence`.
-- `parse_markdown_document_unknown_type_downgrades_to_article_with_warning`.
+- `parse_markdown_document_unknown_type_preserved_with_body_derived_kind_warning`.
+- `parse_markdown_document_type_channel_derives_channel`.
+- `parse_markdown_document_non_channel_type_with_body_derives_article`.
+- `parse_markdown_document_empty_body_derives_media`.
+- `parse_markdown_document_frontmatter_file_wikilink_and_raw_are_equivalent`.
 - `parse_markdown_document_invalid_saved_at_uses_filesystem_with_warning`.
 - `parse_markdown_document_malformed_yaml_indexes_with_warning`.
 - `parse_markdown_document_obsidian_tags_are_user_metadata`.
@@ -614,7 +649,10 @@ Rollback is file-level: restore the timestamped backup and rebuild the index.
 - full scan no longer counts no-frontmatter file as error.
 - implicit article with `![[image.jpg]]` fills `first_image`,
   `media_urls`, `preview_manifest`.
-- existing Mine frontmatter behavior remains unchanged.
+- existing Mine frontmatter metadata remains readable, but non-channel
+  `type` no longer drives feed/detail/search card kind.
+- canonical file migration rewrites frontmatter `file` only and leaves body
+  bytes unchanged.
 - stale DB row is replaced when file changes from Mine block to foreign
   Markdown and is reindexed.
 - mass import of 10k foreign Markdown files completes within the agreed

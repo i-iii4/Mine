@@ -2,12 +2,22 @@ import { describe, expect, it } from "vitest";
 import type { LightBlock } from "@/types";
 import { deriveCardLayoutDescriptor, deriveContentCardSlots } from "./cardLayout";
 
+function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["card_kind"] {
+  return blockType === "article"
+    ? "article"
+    : blockType === "channel"
+      ? "channel"
+      : "media";
+}
+
 function makeBlock(
   overrides: Partial<LightBlock> & { block_type: LightBlock["block_type"] },
 ): LightBlock {
+  const cardKind = overrides.card_kind ?? cardKindForBlockType(overrides.block_type);
   return {
     id: 1,
     slug: "test",
+    card_kind: cardKind,
     title: null,
     url: null,
     media_file: null,
@@ -296,5 +306,64 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.variant).toBe("video");
     expect(descriptor.mediaItems[0]?.isVideo).toBe(false);
     expect(descriptor.mediaItems[0]?.isVideoPoster).toBe(true);
+  });
+
+  it("uses card_kind article even when legacy block_type says image", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        card_kind: "article",
+        block_type: "image",
+        body: "![[photo.jpg]]",
+        media_file: "photo.jpg",
+      }),
+    );
+    expect(descriptor.variant).toBe("article-media");
+    expect(descriptor.previewText).toBe("");
+  });
+
+  it("uses media metadata instead of legacy block_type for media cards", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        card_kind: "media",
+        block_type: "article",
+        media_file: "photo.jpg",
+        width: 1200,
+        height: 800,
+      }),
+    );
+    expect(descriptor.variant).toBe("image");
+    expect(descriptor.primaryAspectRatio).toBeCloseTo(1200 / 800);
+  });
+
+  it("keeps url-only media with image preview on the link shell", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        card_kind: "media",
+        block_type: "image",
+        url: "https://example.com/story",
+        preview_manifest: JSON.stringify({
+          kind: "image",
+          primary_preview_path: "story.jpg",
+          width: 1200,
+          height: 630,
+          tiles: [],
+          overflow_count: 0,
+        }),
+      }),
+    );
+    expect(descriptor.variant).toBe("link");
+  });
+
+  it("uses channel card_kind instead of legacy media block_type", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        card_kind: "channel",
+        block_type: "video",
+        title: "References",
+        body: "Collection page",
+      }),
+    );
+    expect(descriptor.variant).toBe("article-text");
+    expect(descriptor.titleText).toBe("References");
   });
 });

@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::article_audio::{prepare_article_speech, PreparedArticleSpeech};
-use crate::domain::block::{parse_markdown_document, Block, BlockType, DateTime};
+use crate::domain::block::{derive_card_kind, parse_markdown_document, Block, CardKind, DateTime};
 use crate::domain::vault::VaultLayout;
 use crate::storage::files;
 
@@ -138,7 +138,7 @@ pub fn resolve_state_for_prepared(
 }
 
 pub fn invalidate_for_block(vault: &VaultLayout, block: &Block) -> Result<bool> {
-    if block.frontmatter.block_type != BlockType::Article {
+    if derive_card_kind(block) != CardKind::Article {
         return delete_all_artifacts(vault, &block.slug);
     }
 
@@ -398,7 +398,7 @@ pub(crate) fn write_test_state_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::block::Frontmatter;
+    use crate::domain::block::{BlockType, Frontmatter};
 
     fn vault() -> VaultLayout {
         let root = tempfile::tempdir().unwrap();

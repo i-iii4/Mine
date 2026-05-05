@@ -14,8 +14,9 @@
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 import { countLines } from "./wordWrap";
-import { deriveCardLayoutDescriptor, deriveContentCardSlots } from "./cardLayout";
+import { deriveCardLayoutDescriptor, deriveContentCardSlots, getRuntimeCardKind, parsePreviewManifest } from "./cardLayout";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "./cardTypography";
+import { parseMediaDimensions } from "./mediaDimensions";
 
 export interface FeedPlaybackSurfaceEnvelope {
   topOffsetPx: number;
@@ -142,11 +143,41 @@ const ARTICLE_IMAGE_ASPECT = 9 / 16;
 
 // ─── Image-card fallback when no width/height metadata ──────────────────────
 
+function explicitImageAspectRatio(block: LightBlock): number | null {
+  const dims = parseMediaDimensions(block);
+  if (dims && block.media_file) {
+    const entry = dims[block.media_file];
+    if (entry) {
+      const [width, height] = entry;
+      if (width > 0 && height > 0) {
+        return width / height;
+      }
+    }
+  }
+
+  const previewManifest = parsePreviewManifest(block);
+  if (
+    previewManifest?.width &&
+    previewManifest.height &&
+    previewManifest.width > 0 &&
+    previewManifest.height > 0
+  ) {
+    return previewManifest.width / previewManifest.height;
+  }
+
+  if (block.width && block.height && block.width > 0 && block.height > 0) {
+    return block.width / block.height;
+  }
+
+  return null;
+}
+
 function computeImageHeight(block: LightBlock, columnWidth: number): number {
   const iw = innerWidth(columnWidth);
-  if (block.width && block.height && block.width > 0) {
+  const aspectRatio = explicitImageAspectRatio(block);
+  if (aspectRatio) {
     return (
-      Math.max(IMAGE_MIN_HEIGHT, Math.round(iw * (block.height / block.width))) +
+      Math.max(IMAGE_MIN_HEIGHT, Math.round(iw / aspectRatio)) +
       CARD_BORDER_HEIGHT
     );
   }
@@ -316,9 +347,13 @@ export function computeFeedPlaybackSurfaceEnvelope(
 ): FeedPlaybackSurfaceEnvelope | null {
   const descriptor = deriveCardLayoutDescriptor(block);
   const iw = innerWidth(columnWidth);
+  const cardKind = getRuntimeCardKind(block);
 
-  switch (block.block_type) {
-    case "video":
+  switch (cardKind) {
+    case "media":
+      if (descriptor.variant !== "video") {
+        return null;
+      }
       return {
         topOffsetPx: CARD_BORDER_TOP,
         heightPx: Math.round(iw * THUMBNAIL_ASPECT),
@@ -359,6 +394,9 @@ export function computeFeedPlaybackSurfaceEnvelope(
       return null;
     }
 
+    case "channel":
+      return null;
+
     default:
       return null;
   }
@@ -389,30 +427,35 @@ export function computeCardHeight(
   wordWidths: WordWidths | null,
 ): number {
   const descriptor = deriveCardLayoutDescriptor(block);
+  const cardKind = getRuntimeCardKind(block);
   const rawHeight = (() => {
-    switch (block.block_type) {
-      case "image":
-        return computeImageHeight(block, columnWidth);
-
-      case "video":
-        return (
-          Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) + CARD_BORDER_HEIGHT
-        );
-
-      case "link":
-        return (
-          Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) +
-          LINK_FOOTER_HEIGHT +
-          CARD_BORDER_HEIGHT
-        );
-
-      case "file":
-        return FILE_CARD_HEIGHT + CARD_BORDER_HEIGHT;
-
+    switch (cardKind) {
+      case "media":
+        switch (descriptor.variant) {
+          case "image":
+            return computeImageHeight(block, columnWidth);
+          case "video":
+            return (
+              Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) + CARD_BORDER_HEIGHT
+            );
+          case "link":
+            return (
+              Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) +
+              LINK_FOOTER_HEIGHT +
+              CARD_BORDER_HEIGHT
+            );
+          case "file":
+            return FILE_CARD_HEIGHT + CARD_BORDER_HEIGHT;
+          default:
+            return DEFAULT_CARD_HEIGHT;
+        }
       case "article":
         if (descriptor.variant.startsWith("social")) {
           return computeSocialHeight(block, columnWidth, wordWidths);
         }
+        return computeArticleHeight(block, columnWidth, wordWidths);
+
+      case "channel":
         return computeArticleHeight(block, columnWidth, wordWidths);
 
       default:

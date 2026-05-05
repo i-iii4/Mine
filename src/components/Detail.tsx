@@ -39,6 +39,7 @@ import {
   findPreviewTileForSource,
   normalizeFeedPreviewManifest,
 } from "@/lib/feedPreview";
+import { deriveCardLayoutDescriptor } from "@/lib/cardLayout";
 import {
   setActiveMineTextSelectionDragPayload,
   type MineTextSelectionDragPayload,
@@ -553,7 +554,7 @@ function MetadataPanel({
     };
   }, [hoverPreviewPinned, hoveredRelatedNote]);
 
-  const blockTypeValue = formatMetadataBlockType(displayBlock.block_type);
+  const cardKindValue = formatMetadataCardKind(displayBlock.card_kind);
 
   return (
     <>
@@ -599,7 +600,7 @@ function MetadataPanel({
       <div className="min-w-0 overflow-x-hidden">
         <ArticleAudioControls
           slug={displayBlock.slug}
-          blockType={displayBlock.block_type}
+          blockType={displayBlock.card_kind === "article" ? "article" : displayBlock.card_kind}
           url={displayBlock.url}
         />
 
@@ -617,7 +618,7 @@ function MetadataPanel({
                   />
                 )}
                 <MetadataField label="Date" value={formattedDate} />
-                <MetadataField label="Type" value={blockTypeValue} />
+                <MetadataField label="Type" value={cardKindValue} />
 
                 {indexWarning && (
                   <MetadataField
@@ -929,8 +930,8 @@ function RelatedNotesSection({
   );
 }
 
-function formatMetadataBlockType(blockType: LightBlock["block_type"] | IndexedBlock["block_type"]): string {
-  return blockType.charAt(0).toUpperCase() + blockType.slice(1);
+function formatMetadataCardKind(cardKind: LightBlock["card_kind"] | IndexedBlock["card_kind"]): string {
+  return cardKind.charAt(0).toUpperCase() + cardKind.slice(1);
 }
 
 function getIndexWarning(block: LightBlock | IndexedBlock): string | null {
@@ -1012,6 +1013,30 @@ function youtubeEmbedUrl(url: string): string | null {
   return match ? `https://www.youtube.com/embed/${match[1]}` : null;
 }
 
+function resolveDetailMediaReference(vaultPath: string, src: string | null): string | null {
+  if (!src) return null;
+  return isSafeUrl(src) ? src : mediaUrl(vaultPath, src);
+}
+
+function detailPreviewImageSource({
+  block,
+  previewManifest,
+  vaultPath,
+  thumbsRootPath,
+}: {
+  block: LightBlock | IndexedBlock;
+  previewManifest: ReturnType<typeof normalizeFeedPreviewManifest>;
+  vaultPath: string;
+  thumbsRootPath: string;
+}): string {
+  return resolveDetailMediaReference(vaultPath, block.media_file)
+    ?? (previewManifest?.primaryPreviewPath
+      ? previewAssetUrl(thumbsRootPath, previewManifest.primaryPreviewPath)
+      : null)
+    ?? resolveDetailMediaReference(vaultPath, block.thumbnail)
+    ?? thumbnailUrl(thumbsRootPath, block.slug);
+}
+
 // ─── Block content renderers ────────────────────────────────────────────────
 
 function BlockContent({
@@ -1034,6 +1059,10 @@ function BlockContent({
     () => normalizeFeedPreviewManifest((fullBlock ?? block).preview_manifest),
     [block, fullBlock],
   );
+  const descriptor = useMemo(
+    () => deriveCardLayoutDescriptor(fullBlock ?? block),
+    [block, fullBlock],
+  );
   // Lazy-load full body if truncated (LightBlock carries only a short preview).
   const [fullBody, setFullBody] = useState<string | null>(fullBlock?.body ?? null);
   useEffect(() => {
@@ -1053,54 +1082,7 @@ function BlockContent({
   const displayTitle = getDisplayTitle(block);
   const navigationLabel = getNavigationLabel(block);
 
-  switch (block.block_type) {
-    case "image": {
-      const src = block.media_file
-        ? mediaUrl(vaultPath, block.media_file)
-        : thumbnailUrl(resolvedThumbsRoot, block.slug);
-      return (
-        <div className="flex min-h-full items-center justify-center">
-          <img
-            src={src}
-            alt={navigationLabel}
-            className="max-h-[85vh] object-contain"
-            draggable={false}
-          />
-        </div>
-      );
-    }
-    case "link": {
-      const src = block.media_file
-        ? mediaUrl(vaultPath, block.media_file)
-        : thumbnailUrl(resolvedThumbsRoot, block.slug);
-      return (
-        <div>
-          <div className="aspect-video bg-accent">
-            <img
-              src={src}
-              alt=""
-              className="h-full w-full object-contain"
-              draggable={false}
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = "none";
-              }}
-            />
-          </div>
-          <div className="py-4">
-            {displayTitle && (
-              <h2 className="text-lg font-semibold text-foreground">
-                {displayTitle}
-              </h2>
-            )}
-            {description && (
-              <p className="mt-2 text-base text-muted-foreground">
-                {description}
-              </p>
-            )}
-          </div>
-        </div>
-      );
-    }
+  switch (block.card_kind) {
     case "article": {
       return (
         <div>
@@ -1117,45 +1099,129 @@ function BlockContent({
         </div>
       );
     }
-    case "video": {
-      const embedUrl = block.url ? youtubeEmbedUrl(block.url) : null;
-      const localSrc = block.media_file
-        ? mediaUrl(vaultPath, block.media_file)
-        : null;
-      return (
-        <div className="flex min-h-full flex-col">
-          <div className="flex flex-1 items-center justify-center bg-black">
-            {embedUrl ? (
-              <iframe
-                src={embedUrl}
-                className="aspect-video w-full max-h-[85vh]"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              />
-            ) : localSrc ? (
-              <video controls className="max-h-[85vh]" draggable={false}>
-                <source src={localSrc} />
-              </video>
-            ) : (
-              <div className="flex aspect-video items-center justify-center text-muted-foreground">
-                No video file
-              </div>
-            )}
+
+    case "channel": {
+      if (body.trim()) {
+        return (
+          <div>
+            <ArticleBody
+              body={body}
+              vaultPath={vaultPath}
+              thumbsRootPath={resolvedThumbsRoot}
+              previewManifest={previewManifest}
+              sourceSlug={block.slug}
+              sourceBodyHash={fullBlock?.body_hash ?? (isIndexedBlock(block) ? block.body_hash : null)}
+              scrollAnchor={scrollAnchor}
+              onTextSelectionDrop={onTextSelectionDrop}
+            />
           </div>
-          {body && (
-            <div className="p-6">
-              <ArticleBody
-                body={body}
-                vaultPath={vaultPath}
-                thumbsRootPath={resolvedThumbsRoot}
-                previewManifest={previewManifest}
-              />
-            </div>
-          )}
+        );
+      }
+      return (
+        <div className="flex min-h-full items-center justify-center">
+          <h2 className="text-lg font-semibold text-foreground">
+            {displayTitle ?? navigationLabel}
+          </h2>
         </div>
       );
     }
-    case "file":
+
+    case "media": {
+      if (descriptor.variant === "image") {
+        const src = detailPreviewImageSource({
+          block,
+          previewManifest,
+          vaultPath,
+          thumbsRootPath: resolvedThumbsRoot,
+        });
+        return (
+          <div className="flex min-h-full items-center justify-center">
+            <img
+              src={src}
+              alt={navigationLabel}
+              className="max-h-[85vh] object-contain"
+              draggable={false}
+            />
+          </div>
+        );
+      }
+
+      if (descriptor.variant === "link") {
+        const src = detailPreviewImageSource({
+          block,
+          previewManifest,
+          vaultPath,
+          thumbsRootPath: resolvedThumbsRoot,
+        });
+        return (
+          <div>
+            <div className="aspect-video bg-accent">
+              <img
+                src={src}
+                alt=""
+                className="h-full w-full object-contain"
+                draggable={false}
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none";
+                }}
+              />
+            </div>
+            <div className="py-4">
+              {displayTitle && (
+                <h2 className="text-lg font-semibold text-foreground">
+                  {displayTitle}
+                </h2>
+              )}
+              {description && (
+                <p className="mt-2 text-base text-muted-foreground">
+                  {description}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      if (descriptor.variant === "video") {
+        const embedUrl = block.url ? youtubeEmbedUrl(block.url) : null;
+        const videoSourcePath =
+          descriptor.mediaItems.find((item) => item.isVideo)?.sourcePath ??
+          null;
+        const localSrc = resolveDetailMediaReference(vaultPath, videoSourcePath);
+        return (
+          <div className="flex min-h-full flex-col">
+            <div className="flex flex-1 items-center justify-center bg-black">
+              {embedUrl ? (
+                <iframe
+                  src={embedUrl}
+                  className="aspect-video w-full max-h-[85vh]"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              ) : localSrc ? (
+                <video controls className="max-h-[85vh]" draggable={false}>
+                  <source src={localSrc} />
+                </video>
+              ) : (
+                <div className="flex aspect-video items-center justify-center text-muted-foreground">
+                  No video file
+                </div>
+              )}
+            </div>
+            {body && (
+              <div className="p-6">
+                <ArticleBody
+                  body={body}
+                  vaultPath={vaultPath}
+                  thumbsRootPath={resolvedThumbsRoot}
+                  previewManifest={previewManifest}
+                />
+              </div>
+            )}
+          </div>
+        );
+      }
+
       return (
         <div className="flex min-h-full flex-col items-center justify-center gap-3">
           <div className="flex h-16 w-16 items-center justify-center rounded-1 bg-accent text-lg font-semibold text-muted-foreground">
@@ -1169,6 +1235,7 @@ function BlockContent({
           )}
         </div>
       );
+    }
   }
 }
 

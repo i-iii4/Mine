@@ -595,14 +595,14 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             }
         }
 
-        if bt == BlockType::Article && !raw.is_empty() {
+        if !raw.trim().is_empty() {
             let page_url = p.url.as_deref().unwrap_or("");
             localize_body_images(&raw, vault, &slug, page_url)
         } else {
             raw
         }
     };
-    let body = if should_write_body_h1(bt, p.url.as_deref()) {
+    let body = if !body.trim().is_empty() && should_write_body_h1(bt, p.url.as_deref()) {
         mine_lib::domain::block::ensure_body_starts_with_h1(&body, p.title.as_deref().unwrap_or(""))
     } else {
         body

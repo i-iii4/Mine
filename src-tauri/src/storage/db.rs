@@ -72,6 +72,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             slug TEXT UNIQUE NOT NULL,
             block_type TEXT NOT NULL,
+            card_kind TEXT NOT NULL DEFAULT 'media',
             title TEXT,
             content_heading TEXT,
             display_title TEXT,
@@ -103,6 +104,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_blocks_saved_at ON blocks(saved_at DESC);
         CREATE INDEX IF NOT EXISTS idx_blocks_type ON blocks(block_type);
+        CREATE INDEX IF NOT EXISTS idx_blocks_card_kind ON blocks(card_kind);
 
         CREATE TABLE IF NOT EXISTS block_tags (
             block_id INTEGER NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
@@ -221,6 +223,19 @@ fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_mtime INTEGER");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN origin TEXT");
     let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN index_warning TEXT");
+    let _ =
+        conn.execute_batch("ALTER TABLE blocks ADD COLUMN card_kind TEXT NOT NULL DEFAULT 'media'");
+    let _ = conn.execute_batch(
+        "UPDATE blocks
+            SET card_kind = CASE
+                WHEN block_type = 'channel' THEN 'channel'
+                WHEN trim(coalesce(body, '')) != '' THEN 'article'
+                ELSE 'media'
+            END
+          WHERE card_kind IS NULL",
+    );
+    let _ =
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_blocks_card_kind ON blocks(card_kind)");
 
     // Migration: add body_hash column. SHA-256 over the block body, used by
     // Phase 18.G watcher rename detection to match a Remove+Create event

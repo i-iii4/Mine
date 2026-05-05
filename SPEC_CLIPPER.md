@@ -8,6 +8,14 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 
 Поддерживаемые браузеры: Chrome (Manifest V3), Safari (через xcrun safari-web-extension-converter).
 
+Popup UI and native messaging request names still use the existing clip-type
+vocabulary (`link`, `article`, `image`, `video`, `file`, `screenshot`) because
+those are creation modes. Native host may persist `type` as compatibility
+metadata, but feed/detail/search runtime kind is derived by the storage
+contract: non-empty body → `article`, empty body → `media`, `type: channel` →
+`channel`. New native-host media writes serialize `file` as
+`file: "[[name.ext]]"` while accepting legacy `file: name.ext` on read.
+
 ## Architecture
 
 ```
@@ -68,7 +76,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 | thumbnail | Скачивается: `og:image` > `twitter:image` |
 | source | `web-clipper` |
 
-Результат: `.md` (type: link, body starts with H1 when a real page title exists) + миниатюра (если есть og:image). New link clips do not write `title:` frontmatter.
+Результат: `.md` (compat `type: link`, body starts with H1 when a real page title exists) + миниатюра (если есть og:image). Runtime card kind derives `article` because body is non-empty. New link clips do not write `title:` frontmatter.
 
 ### 2. Article (полная статья)
 
@@ -84,7 +92,7 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 | thumbnail | `og:image` |
 | source | `web-clipper` |
 
-Результат: `.md` (type: article, body starts with H1 when a real article title exists, then cleaned article text) + миниатюра. New article clips do not write `title:` frontmatter.
+Результат: `.md` (compat `type: article`, body starts with H1 when a real article title exists, then cleaned article text) + миниатюра. Runtime card kind derives `article`. New article clips do not write `title:` frontmatter.
 
 ### 3. Selection (выделенный текст)
 
@@ -124,11 +132,11 @@ Popup и save() используют одну чистую функцию — `r
 |---|---|
 | type | `image` |
 | url | URL страницы (источник) |
-| file | Скачивается по `img.src` |
+| file | Скачивается по `img.src`; frontmatter writes canonical `[[file]]` |
 | width/height | `img.naturalWidth` / `img.naturalHeight` |
 | source | `web-clipper` |
 
-Результат: `.md` (type: image) + скачанный файл + thumbnail.
+Результат: `.md` (compat `type: image`, empty body, `file: "[[...]]"`) + скачанный файл + thumbnail. Runtime card kind derives `media`.
 Image clips do not write generated `title:`. Alt/title attributes may be used
 as filename seeds or future captions, but not as automatic frontmatter title.
 
@@ -144,7 +152,7 @@ as filename seeds or future captions, but not as automatic frontmatter title.
 | thumbnail | `og:image` |
 | source | `web-clipper` |
 
-Результат: `.md` (type: video, optional body H1 for a real page title) + миниатюра. Local/anonymous videos do not get synthetic title.
+Результат: `.md` (compat `type: video`, optional body H1 for a real page title) + миниатюра. Page-title videos with body derive `article`; local/anonymous videos with empty body derive `media` and do not get synthetic title.
 
 ### 6. File (файл по прямой ссылке)
 
@@ -154,10 +162,10 @@ as filename seeds or future captions, but not as automatic frontmatter title.
 |---|---|
 | type | `file` |
 | url | URL файла |
-| file | Скачивается native host'ом |
+| file | Скачивается native host'ом; frontmatter writes canonical `[[file]]` |
 | source | `web-clipper` |
 
-Результат: `.md` (type: file) + скачанный файл.
+Результат: `.md` (compat `type: file`, empty body, `file: "[[...]]"`) + скачанный файл. Runtime card kind derives `media`.
 File clips use the downloaded filename as identity/fallback label, not as
 generated `title:` frontmatter.
 
@@ -175,11 +183,12 @@ generated `title:` frontmatter.
 |---|---|
 | type | `image` |
 | url | URL страницы (для ссылки на источник) |
-| file | JPEG/PNG, залит через HTTP upload, имя передаётся в save_block как `pre_uploaded_file` |
+| file | JPEG/PNG, залит через HTTP upload, имя передаётся в save_block как `pre_uploaded_file`; frontmatter writes canonical `[[file]]` |
 | source | `web-clipper` |
 
 Screenshot clips do not write generated `title:`. If the user explicitly adds a
-caption/heading in a future UI, it should be written to Markdown body.
+caption/heading in a future UI, it should be written to Markdown body. Current
+empty-body screenshot clips derive runtime card kind `media`.
 
 Почему отдельный HTTP-канал, а не native messaging: Chrome ограничивает native messaging-сообщения 1 МБ, а скриншот Retina-viewport легко выходит за этот порог.
 
@@ -524,7 +533,7 @@ Response:
 }
 ```
 
-Для типа `image`:
+Для creation mode `image`:
 ```json
 {
   "action": "save_block",
@@ -538,9 +547,15 @@ Response:
 }
 ```
 
-Native host скачивает `image_url`, сохраняет файл, генерирует thumbnail.
+Native host скачивает `image_url`, сохраняет файл, генерирует thumbnail, and
+writes canonical frontmatter `file: "[[resolved-name.ext]]"`.
 
-Инвариант для `block_type=image`: блок не может быть записан без разрешённого media. Save считается успешным только если native host получил `media_file` через `image_url` / data URL / `pre_uploaded_file` либо валидный `thumbnail`. Если источник отсутствует или скачивание/финализация media не удались, native host возвращает `ok:false`, а `.md` не создаётся. Это защищает vault от orphan image-записей без `file:`.
+Инвариант для media creation modes: блок не может быть записан без
+разрешённого media. Save считается успешным только если native host получил
+`media_file` через `image_url` / data URL / `pre_uploaded_file` либо валидный
+`thumbnail`. Если источник отсутствует или скачивание/финализация media не
+удались, native host возвращает `ok:false`, а `.md` не создаётся. Это защищает
+vault от orphan media-записей без `file:`.
 
 ##### Article inline-media pipeline
 
@@ -726,8 +741,8 @@ Native host читает путь к vault из файла конфигурац�
 |---|---|
 | Vault not configured | Response: `{"ok": false, "error": "Vault not configured"}`. Popup показывает сообщение |
 | Native host not found | Chrome показывает ошибку подключения. Popup показывает «Native host not installed» |
-| Image media source missing | `block_type=image` не создаётся. Popup показывает inline error, main UI остаётся открытым |
-| Image media download/upload/finalize failed | Response: `{"ok": false, "error": "..."}`. `.md` не создаётся, чтобы не получить orphan image block без `file:` |
+| Media source missing | media creation request не создаётся. Popup показывает inline error, main UI остаётся открытым |
+| Media download/upload/finalize failed | Response: `{"ok": false, "error": "..."}`. `.md` не создаётся, чтобы не получить orphan media card без `file:` |
 | Link/video thumbnail download failed | Блок может быть создан без thumbnail; media failure для preview не ломает сохранение самой ссылки/видео |
 | Screenshot upload failed | Popup показывает inline error в `StatusBar` и сохраняет preview/tags/display heading для retry |
 | SQLite locked | Retry через 100мс, до 3 попыток. Затем ошибка |

@@ -14,8 +14,8 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use crate::domain::block::{
-    derive_title_fields, iter_inline_media_references, iter_inline_media_sources,
-    strip_first_markdown_h1, Block, BlockType,
+    derive_card_kind, derive_title_fields, iter_inline_media_references, iter_inline_media_sources,
+    strip_first_markdown_h1, Block, CardKind,
 };
 use crate::domain::vault::VaultLayout;
 use crate::storage::media_refs;
@@ -25,6 +25,10 @@ pub const DEFAULT_MAX_SIZE: u32 = 480;
 const COMPOSITE_TILE_LIMIT: usize = 4;
 
 const JPEG_QUALITY: u8 = 85;
+
+fn is_article_card(block: &Block) -> bool {
+    derive_card_kind(block) == CardKind::Article
+}
 
 /// Write a thumbnail to `dest` atomically: encode into a per-process,
 /// per-call temp file in the same directory, then rename onto the final
@@ -167,7 +171,7 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
     // 3. Article body: first embedded media in markdown order. If the
     //    article starts with a video and later includes images, the feed
     //    poster must still be derived from the video source.
-    if block.frontmatter.block_type == BlockType::Article {
+    if is_article_card(block) {
         if let Some((_media_name, media_path, media_kind)) =
             find_first_existing_article_media(block, vault)
         {
@@ -211,7 +215,7 @@ fn preview_dependency_paths(block: &Block, vault: &VaultLayout) -> Vec<std::path
         }
     }
 
-    if block.frontmatter.block_type == BlockType::Article {
+    if is_article_card(block) {
         if let Some((_media_name, media_path, media_kind)) =
             find_first_existing_article_media(block, vault)
         {
@@ -1008,7 +1012,7 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
     //      poster even when later images exist. Otherwise multi-image
     //      articles/social posts prefer a composite JPEG preview; then a
     //      single image; then a later video frame.
-    if block.frontmatter.block_type == BlockType::Article {
+    if is_article_card(block) {
         if let Some((_media_name, media_path, media_kind)) =
             find_first_existing_article_media(block, vault)
         {
@@ -1169,7 +1173,7 @@ fn find_first_existing_article_media(
     block: &Block,
     vault: &VaultLayout,
 ) -> Option<(String, std::path::PathBuf, &'static str)> {
-    if block.frontmatter.block_type != BlockType::Article {
+    if !is_article_card(block) {
         return None;
     }
     for reference in iter_inline_media_references(&block.body) {
@@ -1199,7 +1203,7 @@ fn collect_article_preview_images(
     vault: &VaultLayout,
     limit: usize,
 ) -> Vec<std::path::PathBuf> {
-    if block.frontmatter.block_type != BlockType::Article || limit == 0 {
+    if !is_article_card(block) || limit == 0 {
         return Vec::new();
     }
 
@@ -1234,6 +1238,7 @@ fn resolve_block_media_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::block::BlockType;
 
     /// Create a solid-color test image of given dimensions.
     fn create_test_image_with_color(path: &Path, width: u32, height: u32, color: [u8; 3]) {

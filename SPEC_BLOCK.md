@@ -17,9 +17,14 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.m
 
 ## Типы
 
-### BlockType
+### Source type and runtime card kind
 
-Перечисление типов блоков.
+Persisted `type` remains in Mine-authored Markdown for compatibility and import
+provenance, but it is not the source of truth for feed/detail/search card
+selection. The only runtime-special `type` value is `channel`, used as a
+temporary explicit marker for collection documents.
+
+Persisted/source type:
 
 ```rust
 enum BlockType {
@@ -28,10 +33,9 @@ enum BlockType {
     Link,     // Ссылка (URL без текстового контента)
     Video,    // Видео (MP4, MOV)
     File,     // Произвольный файл (PDF, ZIP, etc.)
+    Channel,  // Collection page marker
 }
 ```
-
-**Определяется по:** полю `type` в frontmatter.
 
 **Маппинг строк:**
 - `"image"` → `Image`
@@ -39,8 +43,29 @@ enum BlockType {
 - `"link"` → `Link`
 - `"video"` → `Video`
 - `"file"` → `File`
+- `"channel"` → `Channel`
 
 Любое другое значение — ошибка `InvalidBlockType`.
+
+Runtime/card kind:
+
+```rust
+enum RuntimeCardKind {
+    Article, // body после frontmatter непустой
+    Media,   // body пустой
+    Channel, // collection document (`type: channel`)
+}
+```
+
+Derivation:
+
+1. `frontmatter.type == channel` → `RuntimeCardKind::Channel`.
+2. Otherwise non-empty body → `RuntimeCardKind::Article`.
+3. Otherwise empty body → `RuntimeCardKind::Media`.
+
+Legacy `type: image/link/video/file/article` may still guide import/write
+validation and migration, but feed/detail/search must consume the derived
+runtime/card kind.
 
 ### Frontmatter
 
@@ -52,7 +77,7 @@ struct Frontmatter {
     title: Option<String>,       // legacy read fallback; new write paths do not synthesize it
     description: Option<String>,
     url: Option<String>,
-    file: Option<String>,        // имя связанного медиафайла
+    file: Option<String>,        // canonical write: Obsidian wikilink string
     thumbnail: Option<String>,   // имя файла-миниатюры
     tags: Vec<String>,           // legacy physical field; semantic value is CollectionRef
     saved_at: DateTime,          // обязательное
@@ -68,13 +93,13 @@ struct Frontmatter {
 **Обязательные поля:** `block_type`, `saved_at`.
 **Поведение при отсутствии обязательного поля:** ошибка `MissingRequiredField`.
 
-Status: this is the original strict Mine block model. Obsidian compatibility
-layers add optional implicit articles, collection membership is stored in
-`Mine Collections` wikilinks, and visible titles are moving to body H1 instead
-of generated `frontmatter.title`. The in-memory field remains `tags` as a
-legacy physical/API name, but its semantic value is `CollectionRef`. See
-`SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`, `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md`, and
-`SPEC_DISPLAY_TITLE.md`.
+Status: this is the strict Mine-authored frontmatter model. Obsidian
+compatibility layers add optional implicit articles, collection membership is
+stored in `Mine Collections` wikilinks, visible titles live in body H1, and
+runtime card kind is derived from body emptiness except for `type: channel`.
+The in-memory field remains `tags` as a legacy physical/API name, but its
+semantic value is `CollectionRef`. See `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`,
+`SPEC_COLLECTIONS_OBSIDIAN_LINKS.md`, and `SPEC_DISPLAY_TITLE.md`.
 
 ### Block
 
@@ -90,7 +115,7 @@ struct Block {
     frontmatter: Frontmatter,
 
     /// Тело .md файла (после frontmatter). Может быть пустым.
-    /// Для type=article содержит текст. Для type=image/link/video/file — пустое.
+    /// Non-empty body derives article runtime kind; empty body derives media.
     body: String,
 }
 ```
@@ -129,6 +154,8 @@ fn parse_frontmatter(yaml: &str) -> Result<Frontmatter, BlockError>
 - Неизвестный `type` → `BlockError::InvalidBlockType { value }`
 - Отсутствует `saved_at` → `BlockError::MissingRequiredField { field: "saved_at" }`
 - Невалидный `saved_at` → `BlockError::InvalidDateTime { value }`
+- `file` accepts canonical `[[name.ext]]` and legacy raw `name.ext`; parser
+  normalizes the in-memory value to the referenced filename/path
 - `Mine Collections` отсутствует → `tags = vec![]` (не ошибка)
 - `Mine Collections` содержит не-строки → `BlockError::InvalidTagValue`
 - `Mine Related Notes` accepts string list values, normalizes Obsidian
@@ -154,7 +181,8 @@ fn parse_block(slug: &str, content: &str) -> Result<Block, BlockError>
 - Один `---` (нет закрывающего) → `BlockError::UnclosedFrontmatter`
 - Frontmatter парсится через `parse_frontmatter`
 - Body: всё после второго `---`, с удалением одного ведущего `\n`
-- Body может быть пустым (нормально для image, link, video, file)
+- Body может быть пустым; empty body derives `media`, non-empty body derives
+  `article`
 - Пустой slug → `BlockError::EmptySlug`
 
 ### serialize_frontmatter
@@ -168,6 +196,9 @@ fn serialize_frontmatter(frontmatter: &Frontmatter) -> String
 **Поведение:**
 - Всегда включает `type` и `saved_at`
 - `None` поля не включаются в вывод
+- `file` writes canonical Obsidian wikilink syntax, for example
+  `file: "[[image.png]]"`; legacy raw filename input is not re-emitted on new
+  writes
 - Пустой `tags` vec — поле `Mine Collections` не включается
 - Непустой `tags` vec serializes as quoted wikilinks under `Mine Collections`
 - Непустой `related_notes` serializes as quoted wikilinks under
@@ -177,6 +208,22 @@ fn serialize_frontmatter(frontmatter: &Frontmatter) -> String
   write paths must not synthesize it from filename, selected text, tweet text,
   alt text, or URL metadata
 - Порядок полей: type, legacy title (only when present), description, url, file, thumbnail, Mine Collections, Mine Related Notes, Mine Source Media, saved_at, source, width, height, author
+
+### derive_runtime_card_kind
+
+Derives the read-model card kind used by feed/detail/search.
+
+```rust
+fn derive_runtime_card_kind(frontmatter: &Frontmatter, body: &str) -> RuntimeCardKind
+```
+
+Rules:
+
+- `type: channel` always derives `channel`.
+- Any non-empty body derives `article`, even if legacy/source `type` says
+  `image`, `video`, `file`, or `link`.
+- Empty body derives `media`.
+- The function does not rewrite frontmatter.
 
 ### Display title
 
@@ -189,7 +236,8 @@ Mine derives visible title from content:
 
 New Mine-authored blocks write real page/article titles as body H1, not as
 `title:`. Social clips, text-selection quote cards, image/video/file imports,
-and inline-media extraction must not generate artificial titles. See
+and inline-media extraction media-cards must not generate artificial titles.
+See
 `SPEC_DISPLAY_TITLE.md`.
 
 ### serialize_block

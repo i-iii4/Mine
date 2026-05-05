@@ -40,7 +40,7 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 ```markdown
 ---
 type: image
-file: Source Article (image 1).jpg
+file: "[[Source Article (image 1).jpg]]"
 url: https://example.com/source-article
 Mine Collections:
   - "[[Inspiration]]"
@@ -50,8 +50,6 @@ Mine Source Media: Source Article (image 1).jpg
 saved_at: 2026-04-28T12:00:00Z
 source: inline-media-extraction
 ---
-
-![[Source Article (image 1).jpg]]
 ```
 
 ### Поля
@@ -171,9 +169,10 @@ async extract_inline_media(
    `suggest_slug` and `resolve_unique_slug`, while rejecting candidates whose
    `<slug>.<ext>` path already exists as the shared media file.
 5. Do not copy source media.
-6. Create new image block with fields from `Source Format`, without generated
-   `title:` frontmatter.
-7. Write `.md` with `file: <media_ref>` and body `![[<media_ref>]]`.
+6. Create a new compatibility `type: image` block with fields from `Source
+   Format`, without generated `title:` frontmatter.
+7. Write `.md` with canonical `file: "[[<media_ref>]]"` and empty body, so the
+   derived runtime card kind is `media`.
 8. Generate thumbnail from the existing referenced media file.
 9. Index block, including `Mine Collections`, `Mine Related Notes`, media dimensions and preview manifest.
 10. Emit `block:added` and `thumb:updated` through existing event paths.
@@ -302,7 +301,7 @@ Sidebar drop targets use the same hover contract for card drags and inline-media
 
 Извлечённый блок должен быть полезен как обычный Markdown-файл:
 
-1. Obsidian preview shows the extracted image from body `![[file]]`.
+1. Obsidian properties show `file` as a wikilink to the extracted image.
 2. Obsidian properties show `Mine Related Notes` as a link to the source note.
 3. No hidden IDs or UUIDs are introduced.
 4. Filename-first identity remains unchanged.
@@ -335,7 +334,8 @@ Sidebar drop targets use the same hover contract for card drags and inline-media
 2. Drag image to a sidebar collection.
 3. Verify new card appears in that collection.
 4. Open new card and verify it displays the same image file as the source article.
-5. Open new `.md` in Obsidian and verify body contains exactly one media embed.
+5. Open new `.md` in Obsidian and verify body is empty and `file` is a
+   wikilink to the media.
 6. Verify frontmatter contains `Mine Related Notes` with source wikilink.
 7. Verify original article file is byte-for-byte unchanged.
 8. Rename source article in Mine and verify extracted block's `Mine Related Notes` updates.
@@ -345,7 +345,8 @@ Sidebar drop targets use the same hover contract for card drags and inline-media
 - [ ] Local inline image in Detail can be dragged independently from the source article block.
 - [ ] Dropping on sidebar collection creates a new image block in that collection.
 - [ ] New block references the same media file as the source article; no copied media file is created.
-- [ ] New block body contains only `![[source-media-ref]]`.
+- [ ] New block body is empty.
+- [ ] New block `file` frontmatter is `[[source-media-ref]]`.
 - [ ] New block frontmatter contains source URL if available.
 - [ ] New block frontmatter contains one-way `Mine Related Notes` link to source article.
 - [ ] Source article `.md` is not modified.

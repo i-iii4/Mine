@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 
 use crate::domain::block::{
-    derive_title_fields, serialize_block, strip_first_markdown_h1, Block, BlockType,
+    derive_card_kind, derive_title_fields, serialize_block, strip_first_markdown_h1, Block,
+    CardKind,
 };
 use crate::domain::vault::VaultLayout;
 use crate::storage::{article_audio, index, media_refs, thumbnails};
@@ -329,7 +330,7 @@ pub fn persist_new_block(
                 thumbnails::DEFAULT_MAX_SIZE,
             );
         }
-    } else if block.frontmatter.block_type == BlockType::Article {
+    } else if derive_card_kind(block) == CardKind::Article {
         let thumb_dest = vault.thumb_path(&block.slug);
         let title_fields =
             derive_title_fields(&block.slug, block.frontmatter.title.as_deref(), &block.body);

@@ -1,6 +1,6 @@
 # SPEC: storage layer
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 Персистентный слой: SQLite-индекс, файловые операции, thumbnail-генерация.
 Зависит от domain/ для типов. Не зависит от commands/ и watcher/.
@@ -25,7 +25,8 @@ open_memory() -> Result<Connection>                  // для тестов
 CREATE TABLE blocks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     slug TEXT UNIQUE NOT NULL,
-    block_type TEXT NOT NULL,
+    block_type TEXT NOT NULL, -- legacy frontmatter.type
+    card_kind TEXT NOT NULL DEFAULT 'media', -- derived runtime card kind: article/media/channel
     title TEXT, -- legacy frontmatter.title only; new writes do not synthesize it
     description TEXT,
     url TEXT,
@@ -97,14 +98,15 @@ generated `frontmatter.title`.
 struct IndexedBlock {
     id: i64,
     slug: String,
-    block_type: BlockType,
+    block_type: BlockType, // legacy frontmatter.type
+    card_kind: RuntimeCardKind, // derived source of truth for feed/detail/search
     title: Option<String>, // legacy frontmatter.title
     content_heading: Option<String>, // first body H1
     display_title: Option<String>, // content_heading, then legacy title
     fallback_label: String, // filename stem/media filename for utility surfaces
     description: Option<String>,
     url: Option<String>,
-    media_file: Option<String>,
+    media_file: Option<String>, // normalized from frontmatter.file wikilink/raw value
     thumbnail: Option<String>,
     saved_at: String,
     source: Option<String>,
@@ -125,13 +127,14 @@ struct IndexedBlock {
 struct LightBlock {
     id: i64,
     slug: String,
-    block_type: BlockType,
+    block_type: BlockType, // legacy frontmatter.type
+    card_kind: RuntimeCardKind, // derived source of truth for feed/detail/search
     title: Option<String>, // legacy frontmatter.title
     content_heading: Option<String>,
     display_title: Option<String>,
     fallback_label: String,
     url: Option<String>,
-    media_file: Option<String>,
+    media_file: Option<String>, // normalized from frontmatter.file wikilink/raw value
     thumbnail: Option<String>,
     saved_at: String,
     width: Option<u32>,
@@ -160,6 +163,19 @@ columns (`first_image`, `media_urls`, `media_dimensions`, `preview_manifest`,
 rebuilds those cached columns from `body` and `media_file` without rewriting
 source Markdown. Bulk backfill uses a cached basename resolver so vault-wide
 attachment lookup is built once per pass, not once per note.
+
+### Runtime/card kind derivation
+
+Storage must not use `frontmatter.type` as the read-model source of truth for
+feed/detail/search. During indexing:
+
+1. `type: channel` derives `card_kind = channel`.
+2. Any other block with non-empty body derives `article`.
+3. Any other block with empty body derives `media`.
+
+The physical `block_type` column keeps the parsed legacy/source type
+(`image`, `link`, `video`, `file`, `article`, `channel`) for compatibility and
+diagnostics. Normal UI read models use `card_kind`, not `block_type`.
 
 ### Функции
 
@@ -226,7 +242,8 @@ a normalized tag. Legacy normalized values are migration inputs only.
 ### Поведение search_blocks
 
 - Свободный текст: `WHERE blocks_fts MATCH ?`
-- Фильтр type: `WHERE block_type = ?`
+- Фильтр type/card kind: against derived runtime card kind, not raw
+  `frontmatter.type`
 - Фильтр tag: `JOIN block_tags WHERE tag = ?`
 - Комбинация: AND между фильтрами
 
@@ -257,6 +274,9 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
 - Записывает в `vault/slug.md`
 - Создаёт директории при необходимости
 - `slug` должен приходить из `domain::block::suggest_slug`: human-readable Unicode stem, NFC-normalized, bounded by `100` chars и `220` NFD bytes. Storage не должен повторно обрезать имя или строить media path из legacy title: source media references берутся из `frontmatter.file`.
+- New writes serialize `frontmatter.file` as an Obsidian wikilink string
+  (`file: "[[name.ext]]"`). Legacy raw `file: name.ext` remains accepted on
+  read and is normalized in the indexed read model.
 
 ### Поведение scan_md_files
 
@@ -278,6 +298,8 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
 - `storage::media_refs` is the single backend resolver for local media
   references used by index, thumbnails, media dimensions, thumb upgrades, and
   inline-media extraction.
+- `frontmatter.file` accepts canonical `[[name.ext]]` and legacy raw
+  `name.ext`; both resolve through the same frontmatter media resolver.
 - `![alt](path)` follows Markdown semantics: `path` is note-relative only.
 - `![[name.ext]]` follows Obsidian attachment semantics: same-directory path
   first, then basename lookup through the vault, excluding hidden/service/build
@@ -303,7 +325,9 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
 - Не копирует media-файл и не объявляет новый блок владельцем `frontmatter.file`.
 - Генерирует thumbnail через общий `generate_for_block`, то есть из уже существующего файла, на который указывает `frontmatter.file`.
 - Индексирует блок и синхронизирует thumbnail metadata так же, как `persist_new_block`.
-- Используется для inline-media extraction: новый блок копирует ссылку на media из исходной статьи, а не бинарный файл.
+- Используется для inline-media extraction: новый media-card копирует ссылку
+  на media из исходной статьи, а не бинарный файл, и пишет empty body. Source
+  article body is not changed.
 - Will be used for text-selection extraction: новый article-блок копирует
   selected text snapshot и related-note reference; media copy не выполняется.
 
@@ -378,6 +402,7 @@ is_video_ext(ext: &str) -> bool
 Единая точка входа для thumbnail generation. Вызывается и из native host (Phase 1 at save time), и из watcher handler (full_scan, index_md_file). Cascade из 5 уровней с graceful fallback chain:
 
 1. `frontmatter.file` указывает на existing image → `generate_thumbnail`
+   (`file` may be canonical `[[...]]` or legacy raw syntax on read)
 2. `frontmatter.file` указывает на existing video → `generate_video_thumbnail` (с fallback к text при ошибке)
 3. `frontmatter.thumbnail` field указывает на existing image → `generate_thumbnail`
 4. First existing local embedded media in body (`![[local_file]]`, `![[local_file|alt]]`, legacy `![](local_file)`) in markdown order:
@@ -386,7 +411,7 @@ is_video_ext(ext: &str) -> bool
 5. Later body media fallback:
    - usable article images → composite или single-image thumbnail
    - first local video → `generate_video_thumbnail` (с fallback к text при ошибке)
-6. Block is Article → `generate_text_thumbnail` (всегда успешно)
+6. Runtime card kind is `article` → `generate_text_thumbnail` (всегда успешно)
 
 Для inline video `preview_manifest.tiles[].preview_path` не должен указывать
 на derived `<video-stem>.jpg`, пока такой per-video thumbnail реально не

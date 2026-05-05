@@ -6,8 +6,9 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 Зафиксировать контракт использования Obsidian-style wikilink syntax
 `![[name]]` / `![[name|alt]]` в теле markdown-файлов vault'а для
-локально-сохранённых медиа. Canonical форма на write path, backward
-compatible на read path, опциональная migration для legacy блоков.
+локально-сохранённых медиа, and `file: "[[name]]"` in frontmatter for primary
+media files. Canonical форма на write path, backward compatible на read path,
+опциональная migration для legacy блоков.
 
 ## Motivation
 
@@ -70,6 +71,23 @@ source view.
   Markdown block inside the target note and must be preserved by parsing,
   rendering, related-note metadata, and rename rewrites.
 
+### Frontmatter primary media
+
+```yaml
+file: "[[name.ext]]"
+```
+
+- Canonical write form for new primary media references.
+- The value is a quoted Obsidian wikilink string.
+- Legacy raw form remains valid on read:
+
+```yaml
+file: name.ext
+```
+
+Parser normalizes both forms to the same resolved media reference in the
+indexed read model.
+
 ### Reserved characters
 
 - `]]` — forbidden внутри `name` или `alt`. Writer делает fallback
@@ -95,6 +113,15 @@ downloaded inline media в body.
 4. Pathological filenames с `]]` внутри — fallback на
    `![alt](encoded-url)` через `encode_markdown_url_component`.
 
+Primary media writes use the same Obsidian filename identity in frontmatter:
+
+- native host and app write paths serialize `frontmatter.file` as
+  `file: "[[name.ext]]"`;
+- `thumbnail` remains a normal derived/metadata filename field unless a
+  specific thumbnail wikilink migration is introduced later;
+- writer must not mirror a primary media file into body just to make a media
+  card render.
+
 ### Read path (oba syntax)
 
 Любая функция, извлекающая media references из body, обязана
@@ -116,6 +143,9 @@ downloaded inline media в body.
 Каждая из них обрабатывает оба syntax независимо, возвращает
 filesystem-form строку (wikilink name as-is, markdown URL percent-decoded
 если local, remote URL как есть).
+
+Frontmatter `file` read path must likewise support both canonical
+`[[name.ext]]` and legacy `name.ext` through the shared media resolver.
 
 ### Render path (frontend)
 
@@ -166,6 +196,21 @@ Rewrites legacy `![alt](percent-encoded-local-url)` в `![[decoded-name|alt]]`
 Transformation — pure function `domain::markdown::convert_markdown_images_to_wikilinks`.
 Stable: applying дважды даёт тот же результат (idempotent).
 
+### Frontmatter `file` migration
+
+The media-contract migration for existing content rewrites only the
+frontmatter `file` field:
+
+```diff
+- file: image.png
++ file: "[[image.png]]"
+```
+
+It must not rewrite body bytes. Existing singleton embed bodies such as
+`![[image.png]]` remain body content and therefore derive `article` runtime
+kind. New inline-media extraction creates an empty-body media-card with
+`file: "[[image.png]]"` instead of writing a singleton embed body.
+
 ## Invariants
 
 1. **URL ≡ filename**: в body файл ссылается внутри `[[...]]`
@@ -182,6 +227,8 @@ Stable: applying дважды даёт тот же результат (idempoten
 6. **Block-reference preservation**: `#^block-id` fragments are part of the
    human-readable link target and must survive parse/render/rename. In-app
    rename rewrites only the note target: `[[Old#^id]]` → `[[New#^id]]`.
+7. **Primary media canonicalization**: new `file` writes use quoted Obsidian
+   wikilinks; legacy raw `file` values continue to read without migration.
 
 ## Testing plan
 

@@ -153,7 +153,7 @@ sunset-tokyo.jpg            ← само изображение
 **Frontmatter:**
 ```yaml
 type: image
-file: sunset-tokyo.jpg
+file: "[[sunset-tokyo.jpg]]"
 url: https://unsplash.com/photo/abc
 width: 3840
 height: 2160

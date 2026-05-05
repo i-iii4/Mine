@@ -121,6 +121,38 @@ impl BlockType {
     }
 }
 
+/// Runtime card category derived from the Markdown document shape.
+///
+/// `type` remains legacy source metadata in frontmatter. Feed/detail rendering
+/// should use this derived category instead: bodyful notes are articles,
+/// bodyless notes are media shells, and collection pages are channels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CardKind {
+    Article,
+    Media,
+    Channel,
+}
+
+impl CardKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Article => "article",
+            Self::Media => "media",
+            Self::Channel => "channel",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "article" => Some(Self::Article),
+            "media" => Some(Self::Media),
+            "channel" => Some(Self::Channel),
+            _ => None,
+        }
+    }
+}
+
 /// An ISO 8601 date/time string, validated on construction.
 ///
 /// Accepted formats:
@@ -228,7 +260,7 @@ pub fn parse_frontmatter(yaml: &str) -> Result<Frontmatter, BlockError> {
     let title = get_opt_string(&value, "title");
     let description = get_opt_string(&value, "description");
     let url = get_opt_string(&value, "url");
-    let file = get_opt_string(&value, "file");
+    let file = get_opt_string(&value, "file").and_then(|raw| normalize_attachment_reference(&raw));
     let thumbnail = get_opt_string(&value, "thumbnail");
     let source = get_opt_string(&value, "source");
     let author = get_opt_string(&value, "author");
@@ -357,6 +389,16 @@ pub fn parse_markdown_document(
     }
 }
 
+pub fn derive_card_kind(block: &Block) -> CardKind {
+    if block.frontmatter.block_type == BlockType::Channel {
+        CardKind::Channel
+    } else if block.body.trim().is_empty() {
+        CardKind::Media
+    } else {
+        CardKind::Article
+    }
+}
+
 /// Derive the human display fallback from a path-based slug.
 ///
 /// Recursive vault support made `slug` a vault-relative path
@@ -366,7 +408,11 @@ pub fn fallback_title_from_slug(slug: &str) -> String {
     slug.rsplit('/').next().unwrap_or(slug).to_string()
 }
 
-pub fn derive_title_fields(slug: &str, legacy_title: Option<&str>, body: &str) -> DerivedTitleFields {
+pub fn derive_title_fields(
+    slug: &str,
+    legacy_title: Option<&str>,
+    body: &str,
+) -> DerivedTitleFields {
     let content_heading = extract_first_markdown_h1(body);
     let legacy_title = normalize_optional_title(legacy_title);
     let fallback_label = fallback_title_from_slug(slug);
@@ -675,6 +721,48 @@ fn truncate_preview_text(text: &str, max_chars: usize) -> String {
     truncated
 }
 
+/// Normalize a primary attachment frontmatter value into a filesystem target.
+///
+/// Accepts both the legacy Mine form (`file: image.png`) and the canonical
+/// Obsidian form (`file: "[[image.png]]"` or `file: "![[image.png]]"`).
+/// Aliases after `|` are ignored because `file` is an attachment reference,
+/// not display text.
+pub fn normalize_attachment_reference(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let bracketed = trimmed
+        .strip_prefix("![[")
+        .and_then(|value| value.strip_suffix("]]"))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("[[")
+                .and_then(|value| value.strip_suffix("]]"))
+        });
+
+    let target = bracketed.unwrap_or(trimmed);
+    let target = target.split('|').next().unwrap_or(target).trim();
+
+    if target.is_empty() {
+        None
+    } else if bracketed.is_some() {
+        Some(target.to_string())
+    } else {
+        Some(normalize_local_markdown_url(target))
+    }
+}
+
+pub fn canonical_attachment_wikilink(raw: &str) -> String {
+    let target = normalize_attachment_reference(raw).unwrap_or_else(|| raw.trim().to_string());
+    if target.contains("]]") {
+        target
+    } else {
+        format!("[[{target}]]")
+    }
+}
+
 /// Serialize a Frontmatter struct back to a YAML string.
 pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
     let mut lines = Vec::new();
@@ -694,7 +782,10 @@ pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
         lines.push(format!("url: {}", yaml_quote(v)));
     }
     if let Some(ref v) = frontmatter.file {
-        lines.push(format!("file: {}", yaml_quote(v)));
+        lines.push(format!(
+            "file: {}",
+            yaml_quote(&canonical_attachment_wikilink(v))
+        ));
     }
     if let Some(ref v) = frontmatter.thumbnail {
         lines.push(format!("thumbnail: {}", yaml_quote(v)));
@@ -1186,7 +1277,8 @@ fn parse_frontmatter_compat(
             title: get_opt_string(&value, "title"),
             description: get_opt_string(&value, "description"),
             url: get_opt_string(&value, "url"),
-            file: get_opt_string(&value, "file"),
+            file: get_opt_string(&value, "file")
+                .and_then(|raw| normalize_attachment_reference(&raw)),
             thumbnail: get_opt_string(&value, "thumbnail"),
             tags,
             related_notes: parse_related_notes(&value),
@@ -1625,6 +1717,66 @@ mod tests {
     }
 
     #[test]
+    fn parse_frontmatter_normalizes_file_wikilink() {
+        let yaml = indoc::indoc! {r#"
+            type: image
+            file: "[[Assets/photo 1.png|Photo]]"
+            saved_at: 2026-02-26T14:30:00Z
+        "#};
+        let fm = parse_frontmatter(yaml).unwrap();
+        assert_eq!(fm.file.as_deref(), Some("Assets/photo 1.png"));
+    }
+
+    #[test]
+    fn parse_frontmatter_accepts_bang_file_wikilink() {
+        let yaml = indoc::indoc! {r#"
+            type: image
+            file: "![[photo.png]]"
+            saved_at: 2026-02-26T14:30:00Z
+        "#};
+        let fm = parse_frontmatter(yaml).unwrap();
+        assert_eq!(fm.file.as_deref(), Some("photo.png"));
+    }
+
+    #[test]
+    fn derive_card_kind_uses_body_presence_not_legacy_type() {
+        let media = Block {
+            slug: "media".to_string(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Article,
+                title: None,
+                description: None,
+                url: None,
+                file: Some("photo.png".to_string()),
+                thumbnail: None,
+                tags: vec![],
+                related_notes: Vec::new(),
+                source_media: None,
+                saved_at: DateTime::new("2026-02-26T14:30:00Z").unwrap(),
+                source: None,
+                width: None,
+                height: None,
+                author: None,
+                position: None,
+                color: None,
+                icon: None,
+            },
+            body: String::new(),
+        };
+        assert_eq!(derive_card_kind(&media), CardKind::Media);
+
+        let article = Block {
+            slug: "article".to_string(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Image,
+                ..media.frontmatter.clone()
+            },
+            body: "![[photo.png]]".to_string(),
+        };
+        assert_eq!(derive_card_kind(&article), CardKind::Article);
+    }
+
+    #[test]
     fn parse_markdown_document_no_frontmatter_defaults_article() {
         let parsed =
             parse_markdown_document("Plain Note", "# Heading\n\nBody", fallback_dt()).unwrap();
@@ -1667,10 +1819,7 @@ mod tests {
     #[test]
     fn strip_first_markdown_h1_removes_only_the_leading_h1_line() {
         let body = "# Heading\n\nParagraph\n\n## Subheading";
-        assert_eq!(
-            strip_first_markdown_h1(body),
-            "Paragraph\n\n## Subheading"
-        );
+        assert_eq!(strip_first_markdown_h1(body), "Paragraph\n\n## Subheading");
     }
 
     #[test]
@@ -2013,6 +2162,31 @@ mod tests {
         assert!(yaml.contains("- \"[[tag1]]\""));
         assert!(yaml.contains("- \"[[tag2]]\""));
         assert!(yaml.contains("author: Author"));
+    }
+
+    #[test]
+    fn serialize_frontmatter_writes_file_as_wikilink() {
+        let fm = Frontmatter {
+            block_type: BlockType::Image,
+            title: None,
+            description: None,
+            url: None,
+            file: Some("photo.png".to_string()),
+            thumbnail: None,
+            tags: vec![],
+            related_notes: Vec::new(),
+            source_media: None,
+            saved_at: DateTime::new("2026-02-26T14:30:00Z").unwrap(),
+            source: None,
+            width: None,
+            height: None,
+            author: None,
+            position: None,
+            color: None,
+            icon: None,
+        };
+        let yaml = serialize_frontmatter(&fm);
+        assert!(yaml.contains("file: \"[[photo.png]]\""));
     }
 
     #[test]

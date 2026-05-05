@@ -164,12 +164,14 @@ export function computeCardHeight(
 ): number;
 ```
 
-Для каждого `block_type`:
+Для каждого `card_kind`:
 
-- **image** — `columnWidth * (block.height / block.width)` если `block.width/height` задано; иначе `DEFAULT_CARD_HEIGHT` (240) как conservative fallback
-- **video** — `columnWidth * 9 / 16` (фиксированный 16:9 + play overlay)
-- **link** — `columnWidth * 9 / 16 + 76` (16:9 thumbnail + 76px text)
-- **file** — `88` (фиксированная высота)
+- **media** — presentation variant выводится из `media_file`, `thumbnail`,
+  `preview_manifest`, URL и file extension:
+  - image: `columnWidth * aspectRatio`, если metadata есть; иначе conservative fallback
+  - video: `columnWidth * 9 / 16` (fixed 16:9 + play overlay)
+  - link: `columnWidth * 9 / 16 + 76` (16:9 thumbnail + 76px text)
+  - file: fixed compact height
 - **article** — используется `wordWidths`:
   - `displayTitleLines = min(2, countLines(wordWidths.displayTitle, wordWidths.space, columnWidth - 32))`
   - `previewLines = min(block.first_image ? 3 : 8, countLines(wordWidths.preview, wordWidths.space, columnWidth - 32))`

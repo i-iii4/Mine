@@ -43,11 +43,22 @@ vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(),
 }));
 
+function cardKindForBlockType(blockType: IndexedBlock["block_type"]): IndexedBlock["card_kind"] {
+  return blockType === "article"
+    ? "article"
+    : blockType === "channel"
+      ? "channel"
+      : "media";
+}
+
 function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
+  const blockType = overrides.block_type ?? "article";
+  const cardKind = overrides.card_kind ?? cardKindForBlockType(blockType);
   return {
     id: 1,
     slug: "test-block",
-    block_type: "article",
+    card_kind: cardKind,
+    block_type: blockType,
     title: "Test Block",
     description: null,
     url: "https://example.com/article",
@@ -866,6 +877,8 @@ describe("Detail", () => {
 
   it("decodes local wikilink video paths before handing them to VideoFromBlob", () => {
     const b = block({
+      card_kind: "article",
+      block_type: "image",
       body: "![[Clip (video 1).mp4]]",
     });
 
@@ -893,6 +906,67 @@ describe("Detail", () => {
     expect(screen.getByTestId("video-from-blob")).toHaveAttribute("data-autoplay", "true");
     expect(screen.getByTestId("video-from-blob")).toHaveAttribute("data-muted", "true");
     expect(screen.getByTestId("video-from-blob")).toHaveAttribute("data-loop", "true");
+  });
+
+  it("renders media detail from card_kind instead of legacy block_type", () => {
+    const b = block({
+      card_kind: "media",
+      block_type: "article",
+      title: "Photo",
+      media_file: "photo.jpg",
+      body: "This markdown body must not drive media rendering.",
+    });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    const image = container.querySelector("img");
+    expect(image).toHaveAttribute("src", "asset://localhost//tmp/test-vault/photo.jpg");
+    expect(container.querySelector("[data-article-body]")).toBeNull();
+  });
+
+  it("renders non-image media files as a file shell even with article legacy type", () => {
+    const b = block({
+      card_kind: "media",
+      block_type: "article",
+      title: "Report",
+      url: null,
+      media_file: "report.pdf",
+      body: "# Report body",
+    });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("PDF")).toBeInTheDocument();
+    expect(screen.getAllByText("report.pdf").length).toBeGreaterThanOrEqual(1);
+    expect(container.querySelector("[data-article-body]")).toBeNull();
   });
 
   it("renders article headings with design-system typography instead of prose defaults", () => {

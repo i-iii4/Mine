@@ -12,9 +12,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::block::{
-    build_preview_text, derive_title_fields, extract_wikilinks, iter_inline_media_references,
-    normalize_local_markdown_url, parse_markdown_document, strip_first_markdown_h1, Block,
-    BlockType, DateTime, Frontmatter,
+    build_preview_text, derive_card_kind, derive_title_fields, extract_wikilinks,
+    iter_inline_media_references, normalize_local_markdown_url, parse_markdown_document,
+    strip_first_markdown_h1, Block, BlockType, CardKind, DateTime, Frontmatter,
     FEED_PREVIEW_TEXT_BUFFER_CHARS,
 };
 use crate::domain::channel::Channel;
@@ -36,6 +36,7 @@ pub struct IndexedBlock {
     pub id: i64,
     pub slug: String,
     pub block_type: BlockType,
+    pub card_kind: CardKind,
     pub title: Option<String>,
     pub content_heading: Option<String>,
     pub display_title: Option<String>,
@@ -109,6 +110,7 @@ pub struct LightBlock {
     pub id: i64,
     pub slug: String,
     pub block_type: BlockType,
+    pub card_kind: CardKind,
     pub title: Option<String>,
     pub content_heading: Option<String>,
     pub display_title: Option<String>,
@@ -494,71 +496,62 @@ fn serialize_feed_preview_manifest(
     media_urls: Option<&str>,
 ) -> Option<String> {
     let dims = parse_media_dimensions_json(media_dimensions);
+    let card_kind = derive_card_kind(block);
 
-    let manifest = match block.frontmatter.block_type {
-        BlockType::Image => {
+    let manifest = match card_kind {
+        CardKind::Media => {
             let (preview_width, preview_height) =
                 dimensions_for_src(&dims, block.frontmatter.file.as_deref(), width, height);
-            FeedPreviewManifest {
-                kind: FeedPreviewKind::Image,
-                primary_preview_path: Some(primary_preview_path(&block.slug)),
-                width: preview_width,
-                height: preview_height,
-                tiles: Vec::new(),
-                overflow_count: 0,
-            }
-        }
-        BlockType::Link => FeedPreviewManifest {
-            kind: if block.frontmatter.thumbnail.is_some() {
-                FeedPreviewKind::Image
-            } else {
-                FeedPreviewKind::Text
-            },
-            primary_preview_path: block
-                .frontmatter
-                .thumbnail
-                .as_ref()
-                .map(|_| primary_preview_path(&block.slug)),
-            width: None,
-            height: None,
-            tiles: Vec::new(),
-            overflow_count: 0,
-        },
-        BlockType::Video => FeedPreviewManifest {
-            kind: FeedPreviewKind::VideoPoster,
-            primary_preview_path: Some(primary_preview_path(&block.slug)),
-            width,
-            height,
-            tiles: block
+
+            if block
                 .frontmatter
                 .file
                 .as_deref()
-                .map(|src| {
-                    vec![FeedPreviewTile {
-                        source_path: src.to_string(),
-                        preview_path: Some(primary_preview_path(&block.slug)),
-                        width,
-                        height,
-                        is_video: true,
-                        is_video_poster: true,
-                    }]
-                })
-                .or_else(|| {
-                    block.frontmatter.thumbnail.as_deref().map(|src| {
-                        vec![FeedPreviewTile {
-                            source_path: src.to_string(),
-                            preview_path: Some(primary_preview_path(&block.slug)),
-                            width,
-                            height,
-                            is_video: false,
-                            is_video_poster: true,
-                        }]
-                    })
-                })
-                .unwrap_or_default(),
-            overflow_count: 0,
-        },
-        BlockType::File | BlockType::Channel => FeedPreviewManifest {
+                .is_some_and(is_video_media)
+            {
+                FeedPreviewManifest {
+                    kind: FeedPreviewKind::VideoPoster,
+                    primary_preview_path: Some(primary_preview_path(&block.slug)),
+                    width: preview_width,
+                    height: preview_height,
+                    tiles: block
+                        .frontmatter
+                        .file
+                        .as_deref()
+                        .map(|src| {
+                            vec![FeedPreviewTile {
+                                source_path: src.to_string(),
+                                preview_path: Some(primary_preview_path(&block.slug)),
+                                width: preview_width,
+                                height: preview_height,
+                                is_video: true,
+                                is_video_poster: true,
+                            }]
+                        })
+                        .unwrap_or_default(),
+                    overflow_count: 0,
+                }
+            } else if block.frontmatter.file.is_some() || block.frontmatter.thumbnail.is_some() {
+                FeedPreviewManifest {
+                    kind: FeedPreviewKind::Image,
+                    primary_preview_path: Some(primary_preview_path(&block.slug)),
+                    width: preview_width,
+                    height: preview_height,
+                    tiles: Vec::new(),
+                    overflow_count: 0,
+                }
+            } else {
+                FeedPreviewManifest {
+                    kind: FeedPreviewKind::Text,
+                    primary_preview_path: None,
+                    width: None,
+                    height: None,
+                    tiles: Vec::new(),
+                    overflow_count: 0,
+                }
+            }
+        }
+        CardKind::Channel => FeedPreviewManifest {
             kind: FeedPreviewKind::Text,
             primary_preview_path: None,
             width: None,
@@ -566,7 +559,7 @@ fn serialize_feed_preview_manifest(
             tiles: Vec::new(),
             overflow_count: 0,
         },
-        BlockType::Article => {
+        CardKind::Article => {
             if is_social_url(block.frontmatter.url.as_deref()) {
                 let mut tiles = extract_social_preview_tiles(&block.body, &dims, media_urls);
                 if tiles.is_empty() {
@@ -798,7 +791,7 @@ fn feed_autoplay_profile_for_source(
 
 fn serialize_feed_playback(
     vault_root: Option<&Path>,
-    block_type: BlockType,
+    card_kind: CardKind,
     media_file: Option<&str>,
     width: Option<u32>,
     height: Option<u32>,
@@ -812,8 +805,8 @@ fn serialize_feed_playback(
     let manifest = parse_feed_preview_manifest(preview_manifest)?;
     let poster_preview_path = manifest.primary_preview_path?;
 
-    let (source_path, playback_width, playback_height) = match block_type {
-        BlockType::Video => {
+    let (source_path, playback_width, playback_height) = match card_kind {
+        CardKind::Media => {
             let source_path = media_file?;
             let container = autoplay_container_for_source(source_path)?;
             let profile = feed_autoplay_profile_for_source(vault_root, source_path, width, height)?;
@@ -828,7 +821,7 @@ fn serialize_feed_playback(
             };
             return serde_json::to_string(&descriptor).ok();
         }
-        BlockType::Article => {
+        CardKind::Article => {
             if manifest.kind != FeedPreviewKind::VideoPoster
                 || manifest.overflow_count != 0
                 || manifest.tiles.len() != 1
@@ -846,7 +839,7 @@ fn serialize_feed_playback(
                 tile.height.or(manifest.height),
             )
         }
-        _ => return None,
+        CardKind::Channel => return None,
     };
 
     let container = autoplay_container_for_source(&source_path)?;
@@ -912,6 +905,28 @@ fn row_to_preview_block(
     })
 }
 
+fn parse_block_type_row(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<BlockType> {
+    let raw: String = row.get(index)?;
+    BlockType::from_str(&raw).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            format!("unknown block_type: {}", raw).into(),
+        )
+    })
+}
+
+fn parse_card_kind_row(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<CardKind> {
+    let raw: String = row.get(index)?;
+    CardKind::from_str(&raw).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            format!("unknown card_kind: {}", raw).into(),
+        )
+    })
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /// Insert or update a block in the index. Returns the block's row id.
@@ -963,11 +978,9 @@ fn upsert_block_inner(
     origin: Option<&str>,
     index_warning: Option<&str>,
 ) -> Result<i64> {
-    let title_fields = derive_title_fields(
-        &block.slug,
-        block.frontmatter.title.as_deref(),
-        &block.body,
-    );
+    let title_fields =
+        derive_title_fields(&block.slug, block.frontmatter.title.as_deref(), &block.body);
+    let card_kind = derive_card_kind(block);
     let preview_body = strip_first_markdown_h1(&block.body);
     let first_image = extract_first_image(block, vault_root);
     let media_urls = extract_media_urls(block, vault_root);
@@ -1036,7 +1049,7 @@ fn upsert_block_inner(
     );
     let feed_playback = serialize_feed_playback(
         vault_root,
-        block.frontmatter.block_type,
+        card_kind,
         block.frontmatter.file.as_deref(),
         width,
         height,
@@ -1052,13 +1065,14 @@ fn upsert_block_inner(
     let preview_text = build_preview_text(&preview_body, FEED_PREVIEW_TEXT_BUFFER_CHARS);
 
     conn.execute(
-        "INSERT INTO blocks (slug, block_type, title, content_heading, display_title, fallback_label, description, url, media_file,
+        "INSERT INTO blocks (slug, block_type, card_kind, title, content_heading, display_title, fallback_label, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body, first_image,
             media_urls, media_dimensions, preview_manifest, feed_playback, related_notes, preview_text, preview_text_cap,
             body_hash, origin, index_warning, media_index_version, collection_index_version)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
+            card_kind = excluded.card_kind,
             title = excluded.title,
             content_heading = excluded.content_heading,
             display_title = excluded.display_title,
@@ -1090,6 +1104,7 @@ fn upsert_block_inner(
         params![
             block.slug,
             block.frontmatter.block_type.as_str(),
+            card_kind.as_str(),
             title_fields.legacy_title,
             title_fields.content_heading,
             title_fields.display_title,
@@ -1202,21 +1217,14 @@ pub fn sync_thumb_metadata(
 
     let feed_playback = conn
         .query_row(
-            "SELECT block_type, media_file, width, height, preview_manifest
+            "SELECT card_kind, media_file, width, height, preview_manifest
              FROM blocks WHERE slug = ?1",
             [slug],
             |row| {
-                let raw_type: String = row.get(0)?;
-                let block_type = BlockType::from_str(&raw_type).map_err(|_| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        0,
-                        rusqlite::types::Type::Text,
-                        format!("unknown block_type: {}", raw_type).into(),
-                    )
-                })?;
+                let card_kind = parse_card_kind_row(row, 0)?;
                 Ok(serialize_feed_playback(
                     vault_root,
-                    block_type,
+                    card_kind,
                     row.get::<_, Option<String>>(1)?.as_deref(),
                     row.get::<_, Option<i64>>(2)?.map(|v| v as u32),
                     row.get::<_, Option<i64>>(3)?.map(|v| v as u32),
@@ -1257,7 +1265,7 @@ pub fn backfill_missing_thumb_metadata(conn: &Connection, vault: &VaultLayout) -
         "SELECT slug
          FROM blocks
          WHERE slug != ''
-           AND block_type != 'channel'
+           AND card_kind != 'channel'
            AND (thumb_format IS NULL OR thumb_mtime IS NULL)",
     )?;
 
@@ -1285,7 +1293,7 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
         "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, thumb_format
          FROM blocks
          WHERE slug != ''
-           AND block_type != 'channel'
+           AND card_kind != 'channel'
            AND (media_index_version IS NULL OR media_index_version < ?1)
            AND (media_file IS NOT NULL
                 OR thumbnail IS NOT NULL
@@ -1359,7 +1367,7 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
         let thumb_format = raw_thumb_format.as_deref().and_then(ThumbFormat::from_db);
         let feed_playback = serialize_feed_playback(
             Some(vault.root()),
-            block.frontmatter.block_type,
+            derive_card_kind(&block),
             block.frontmatter.file.as_deref(),
             width,
             height,
@@ -1402,7 +1410,7 @@ pub fn backfill_collection_index(conn: &Connection, vault: &VaultLayout) -> Resu
         "SELECT slug
          FROM blocks
          WHERE slug != ''
-           AND block_type != 'channel'
+           AND card_kind != 'channel'
            AND (collection_index_version IS NULL OR collection_index_version < ?1)",
     )?;
 
@@ -1482,7 +1490,7 @@ pub fn backfill_missing_preview_manifest(conn: &Connection) -> Result<usize> {
         "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, media_dimensions, media_urls
          FROM blocks
          WHERE slug != ''
-           AND block_type != 'channel'
+           AND card_kind != 'channel'
            AND preview_manifest IS NULL",
     )?;
 
@@ -1553,10 +1561,10 @@ pub fn backfill_missing_preview_manifest(conn: &Connection) -> Result<usize> {
 /// when the current policy no longer allows autoplay for a block.
 pub fn backfill_missing_feed_playback(conn: &Connection, vault: &VaultLayout) -> Result<usize> {
     let mut stmt = conn.prepare(
-        "SELECT slug, block_type, media_file, width, height, preview_manifest, thumb_format, feed_playback
+        "SELECT slug, card_kind, media_file, width, height, preview_manifest, thumb_format, feed_playback
          FROM blocks
          WHERE slug != ''
-           AND block_type IN ('video', 'article')",
+           AND card_kind IN ('media', 'article')",
     )?;
 
     let rows = stmt
@@ -1577,7 +1585,7 @@ pub fn backfill_missing_feed_playback(conn: &Connection, vault: &VaultLayout) ->
     let mut updated = 0usize;
     for (
         slug,
-        raw_type,
+        raw_card_kind,
         media_file,
         width,
         height,
@@ -1586,12 +1594,13 @@ pub fn backfill_missing_feed_playback(conn: &Connection, vault: &VaultLayout) ->
         current_feed_playback,
     ) in rows
     {
-        let block_type = BlockType::from_str(&raw_type)
-            .with_context(|| format!("unknown block_type in feed playback backfill: {raw_type}"))?;
+        let card_kind = CardKind::from_str(&raw_card_kind).with_context(|| {
+            format!("unknown card_kind in feed playback backfill: {raw_card_kind}")
+        })?;
         let thumb_format = raw_thumb_format.as_deref().and_then(ThumbFormat::from_db);
         let next_feed_playback = serialize_feed_playback(
             Some(vault.root()),
-            block_type,
+            card_kind,
             media_file.as_deref(),
             width.map(|value| value as u32),
             height.map(|value| value as u32),
@@ -1650,12 +1659,23 @@ pub fn backfill_missing_preview_text(conn: &Connection, vault: &VaultLayout) -> 
     let fallback_saved_at = DateTime::new("1970-01-01T00:00:00Z")?;
     let mut updated = 0usize;
 
-    for (id, slug, stored_title, stored_body, stored_heading, stored_display_title, stored_fallback_label) in rows {
+    for (
+        id,
+        slug,
+        stored_title,
+        stored_body,
+        stored_heading,
+        stored_display_title,
+        stored_fallback_label,
+    ) in rows
+    {
         let (legacy_title, body) = match std::fs::read_to_string(vault.block_path(&slug)) {
-            Ok(content) => match parse_markdown_document(&slug, &content, fallback_saved_at.clone()) {
-                Ok(parsed) => (parsed.block.frontmatter.title, parsed.block.body),
-                Err(_) => (stored_title.clone(), stored_body.clone()),
-            },
+            Ok(content) => {
+                match parse_markdown_document(&slug, &content, fallback_saved_at.clone()) {
+                    Ok(parsed) => (parsed.block.frontmatter.title, parsed.block.body),
+                    Err(_) => (stored_title.clone(), stored_body.clone()),
+                }
+            }
             Err(_) => (stored_title.clone(), stored_body.clone()),
         };
         let title_fields = derive_title_fields(&slug, legacy_title.as_deref(), &body);
@@ -1918,7 +1938,7 @@ pub fn clear_vault_conflict(conn: &Connection, base_slug: &str, conflict_slug: &
 /// Body is truncated to a short preview to reduce IPC payload for large vaults.
 pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
     let mut stmt = conn.prepare(
-        "SELECT id, slug, block_type, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
+        "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
                 thumbnail, saved_at, width, height, author,
                 SUBSTR(body, 1, ?1), preview_text, first_image, media_urls, media_dimensions, preview_manifest, feed_playback
          FROM blocks ORDER BY saved_at DESC",
@@ -1929,34 +1949,26 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
             Ok(LightBlock {
                 id: row.get(0)?,
                 slug: row.get(1)?,
-                block_type: {
-                    let raw: String = row.get(2)?;
-                    BlockType::from_str(&raw).map_err(|_| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            2,
-                            rusqlite::types::Type::Text,
-                            format!("unknown block_type: {}", raw).into(),
-                        )
-                    })?
-                },
-                title: row.get(3)?,
-                content_heading: row.get(4)?,
-                display_title: row.get(5)?,
-                fallback_label: row.get(6)?,
-                url: row.get(7)?,
-                media_file: row.get(8)?,
-                thumbnail: row.get(9)?,
-                saved_at: row.get(10)?,
-                width: row.get::<_, Option<i64>>(11)?.map(|v| v as u32),
-                height: row.get::<_, Option<i64>>(12)?.map(|v| v as u32),
-                author: row.get(13)?,
-                body: row.get(14)?,
-                preview_text: row.get(15)?,
-                first_image: row.get(16)?,
-                media_urls: row.get(17)?,
-                media_dimensions: row.get(18)?,
-                preview_manifest: row.get(19)?,
-                feed_playback: row.get(20)?,
+                block_type: parse_block_type_row(row, 2)?,
+                card_kind: parse_card_kind_row(row, 3)?,
+                title: row.get(4)?,
+                content_heading: row.get(5)?,
+                display_title: row.get(6)?,
+                fallback_label: row.get(7)?,
+                url: row.get(8)?,
+                media_file: row.get(9)?,
+                thumbnail: row.get(10)?,
+                saved_at: row.get(11)?,
+                width: row.get::<_, Option<i64>>(12)?.map(|v| v as u32),
+                height: row.get::<_, Option<i64>>(13)?.map(|v| v as u32),
+                author: row.get(14)?,
+                body: row.get(15)?,
+                preview_text: row.get(16)?,
+                first_image: row.get(17)?,
+                media_urls: row.get(18)?,
+                media_dimensions: row.get(19)?,
+                preview_manifest: row.get(20)?,
+                feed_playback: row.get(21)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1976,23 +1988,23 @@ pub fn list_grid_blocks(
     let fetch_limit = limit.saturating_add(1);
     let sql = match tag {
         Some(_) => {
-            "SELECT b.id, b.slug, b.block_type, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.url, b.media_file,
+            "SELECT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.url, b.media_file,
                     b.thumbnail, b.saved_at, b.width, b.height, b.author,
-                    CASE WHEN b.block_type = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
+                    CASE WHEN b.card_kind = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
                     b.preview_text, b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest, b.feed_playback
              FROM blocks b
              INNER JOIN block_tags bt ON bt.block_id = b.id
-             WHERE b.block_type != 'channel' AND bt.tag = ?2
+             WHERE b.card_kind != 'channel' AND bt.tag = ?2
              ORDER BY b.saved_at DESC
              LIMIT ?3 OFFSET ?4"
         }
         None => {
-            "SELECT id, slug, block_type, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
+            "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
                     thumbnail, saved_at, width, height, author,
-                    CASE WHEN block_type = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
+                    CASE WHEN card_kind = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
                     preview_text, first_image, media_urls, media_dimensions, preview_manifest, feed_playback
              FROM blocks
-             WHERE block_type != 'channel'
+             WHERE card_kind != 'channel'
              ORDER BY saved_at DESC
              LIMIT ?2 OFFSET ?3"
         }
@@ -2003,34 +2015,26 @@ pub fn list_grid_blocks(
         Ok(LightBlock {
             id: row.get(0)?,
             slug: row.get(1)?,
-            block_type: {
-                let raw: String = row.get(2)?;
-                BlockType::from_str(&raw).map_err(|_| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        2,
-                        rusqlite::types::Type::Text,
-                        format!("unknown block_type: {}", raw).into(),
-                    )
-                })?
-            },
-            title: row.get(3)?,
-            content_heading: row.get(4)?,
-            display_title: row.get(5)?,
-            fallback_label: row.get(6)?,
-            url: row.get(7)?,
-            media_file: row.get(8)?,
-            thumbnail: row.get(9)?,
-            saved_at: row.get(10)?,
-            width: row.get::<_, Option<i64>>(11)?.map(|v| v as u32),
-            height: row.get::<_, Option<i64>>(12)?.map(|v| v as u32),
-            author: row.get(13)?,
-            body: row.get(14)?,
-            preview_text: row.get(15)?,
-            first_image: row.get(16)?,
-            media_urls: row.get(17)?,
-            media_dimensions: row.get(18)?,
-            preview_manifest: row.get(19)?,
-            feed_playback: row.get(20)?,
+            block_type: parse_block_type_row(row, 2)?,
+            card_kind: parse_card_kind_row(row, 3)?,
+            title: row.get(4)?,
+            content_heading: row.get(5)?,
+            display_title: row.get(6)?,
+            fallback_label: row.get(7)?,
+            url: row.get(8)?,
+            media_file: row.get(9)?,
+            thumbnail: row.get(10)?,
+            saved_at: row.get(11)?,
+            width: row.get::<_, Option<i64>>(12)?.map(|v| v as u32),
+            height: row.get::<_, Option<i64>>(13)?.map(|v| v as u32),
+            author: row.get(14)?,
+            body: row.get(15)?,
+            preview_text: row.get(16)?,
+            first_image: row.get(17)?,
+            media_urls: row.get(18)?,
+            media_dimensions: row.get(19)?,
+            preview_manifest: row.get(20)?,
+            feed_playback: row.get(21)?,
         })
     };
 
@@ -2060,7 +2064,7 @@ pub fn list_grid_blocks(
 /// Count non-channel blocks for the "Everything" sidebar row.
 pub fn count_grid_blocks(conn: &Connection) -> Result<usize> {
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM blocks WHERE block_type != 'channel'",
+        "SELECT COUNT(*) FROM blocks WHERE card_kind != 'channel'",
         [],
         |row| row.get(0),
     )?;
@@ -2074,7 +2078,7 @@ pub fn get_block_indexed_at_map(
     let mut stmt = conn.prepare(
         "SELECT slug, COALESCE(CAST(strftime('%s', indexed_at) AS INTEGER), 0)
          FROM blocks
-         WHERE slug != '' AND block_type != 'channel'",
+         WHERE slug != '' AND card_kind != 'channel'",
     )?;
     let rows = stmt.query_map([], |row| {
         let slug: String = row.get(0)?;
@@ -2095,7 +2099,7 @@ pub fn list_preview_blocks(conn: &Connection, limit: usize) -> Result<Vec<Previe
     let mut stmt = conn.prepare(
         "SELECT slug, thumb_format, thumb_mtime
          FROM blocks
-         WHERE slug != '' AND block_type != 'channel'
+         WHERE slug != '' AND card_kind != 'channel'
          ORDER BY saved_at DESC
          LIMIT ?1",
     )?;
@@ -2128,7 +2132,7 @@ pub fn list_preview_blocks_by_tag(
                     ) AS row_num
              FROM block_tags bt
              JOIN blocks b ON b.id = bt.block_id
-             WHERE b.slug != '' AND b.block_type != 'channel'
+             WHERE b.slug != '' AND b.card_kind != 'channel'
          )
          WHERE row_num <= ?1
          ORDER BY tag, row_num",
@@ -2156,7 +2160,7 @@ pub fn list_pending_thumb_upgrade_blocks(
         "SELECT slug, media_file, thumbnail, first_image, media_urls
          FROM blocks
          WHERE slug != ''
-           AND block_type != 'channel'
+           AND card_kind != 'channel'
          ORDER BY saved_at DESC",
     )?;
 
@@ -2179,7 +2183,7 @@ pub fn list_pending_thumb_upgrade_blocks(
 pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, slug, block_type, title, content_heading, display_title, COALESCE(fallback_label, slug), description, url, media_file,
+            "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), description, url, media_file,
                     thumbnail, saved_at, source, width, height, author, body, preview_text, first_image, media_urls,
                     media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning
              FROM blocks WHERE slug = ?1",
@@ -2200,7 +2204,7 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
 /// List all blocks, ordered by saved_at descending (newest first).
 pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
-        "SELECT id, slug, block_type, title, content_heading, display_title, COALESCE(fallback_label, slug), description, url, media_file,
+        "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), description, url, media_file,
                 thumbnail, saved_at, source, width, height, author, body, preview_text, first_image, media_urls,
                 media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning
          FROM blocks ORDER BY saved_at DESC",
@@ -2211,7 +2215,7 @@ pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
 /// List blocks with a specific tag, ordered by saved_at descending.
 pub fn list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
-        "SELECT b.id, b.slug, b.block_type, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.description, b.url,
+        "SELECT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
                 b.height, b.author, b.body, b.preview_text, b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest,
                 b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning
@@ -2244,7 +2248,7 @@ pub fn get_all_tags(conn: &Connection) -> Result<Vec<TagCount>> {
 ///
 /// Builds SQL dynamically:
 /// - Free text: JOIN blocks_fts WHERE MATCH ?
-/// - Type filter: WHERE block_type = ?
+/// - Type filter: WHERE card_kind = ?
 /// - Tag filter: JOIN block_tags WHERE tag = ?
 /// - Multiple filters: AND between all conditions
 pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<IndexedBlock>> {
@@ -2277,15 +2281,15 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
                 param_values.push(tag.clone());
                 tag_alias_idx += 1;
             }
-            SearchFilter::Type(bt) => {
-                conditions.push(format!("b.block_type = ?{}", param_values.len() + 1));
-                param_values.push(bt.as_str().to_string());
+            SearchFilter::Type(card_kind) => {
+                conditions.push(format!("b.card_kind = ?{}", param_values.len() + 1));
+                param_values.push(card_kind.as_str().to_string());
             }
         }
     }
 
     let mut sql = String::from(
-        "SELECT DISTINCT b.id, b.slug, b.block_type, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.description, b.url,
+        "SELECT DISTINCT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
                 b.height, b.author, b.body, b.preview_text, b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest,
                 b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning
@@ -2474,7 +2478,7 @@ fn load_bidirectional_related_notes(
              JOIN blocks tb
                ON tb.slug = {normalized_target}
              WHERE w.source_id = ?1
-               AND tb.block_type != 'channel'
+               AND tb.card_kind != 'channel'
                AND tb.slug != ?2
 
              UNION
@@ -2484,7 +2488,7 @@ fn load_bidirectional_related_notes(
              JOIN blocks sb
                ON sb.id = w.source_id
              WHERE {normalized_target} = ?2
-               AND sb.block_type != 'channel'
+               AND sb.card_kind != 'channel'
                AND sb.slug != ?2
          )
          ORDER BY saved_at DESC, slug ASC",
@@ -2508,40 +2512,32 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
     Ok(IndexedBlock {
         id: row.get(0)?,
         slug: row.get(1)?,
-        block_type: {
-            let raw: String = row.get(2)?;
-            BlockType::from_str(&raw).map_err(|_| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    2,
-                    rusqlite::types::Type::Text,
-                    format!("unknown block_type: {}", raw).into(),
-                )
-            })?
-        },
-        title: row.get(3)?,
-        content_heading: row.get(4)?,
-        display_title: row.get(5)?,
-        fallback_label: row.get(6)?,
-        description: row.get(7)?,
-        url: row.get(8)?,
-        media_file: row.get(9)?,
-        thumbnail: row.get(10)?,
-        saved_at: row.get(11)?,
-        source: row.get(12)?,
-        width: row.get::<_, Option<i64>>(13)?.map(|v| v as u32),
-        height: row.get::<_, Option<i64>>(14)?.map(|v| v as u32),
-        author: row.get(15)?,
-        body: row.get(16)?,
-        preview_text: row.get(17)?,
-        first_image: row.get(18)?,
-        media_urls: row.get(19)?,
-        media_dimensions: row.get(20)?,
-        preview_manifest: row.get(21)?,
-        feed_playback: row.get(22)?,
-        related_notes: parse_related_notes_json(row.get(23)?),
-        body_hash: row.get(24)?,
-        origin: row.get(25)?,
-        index_warning: row.get(26)?,
+        block_type: parse_block_type_row(row, 2)?,
+        card_kind: parse_card_kind_row(row, 3)?,
+        title: row.get(4)?,
+        content_heading: row.get(5)?,
+        display_title: row.get(6)?,
+        fallback_label: row.get(7)?,
+        description: row.get(8)?,
+        url: row.get(9)?,
+        media_file: row.get(10)?,
+        thumbnail: row.get(11)?,
+        saved_at: row.get(12)?,
+        source: row.get(13)?,
+        width: row.get::<_, Option<i64>>(14)?.map(|v| v as u32),
+        height: row.get::<_, Option<i64>>(15)?.map(|v| v as u32),
+        author: row.get(16)?,
+        body: row.get(17)?,
+        preview_text: row.get(18)?,
+        first_image: row.get(19)?,
+        media_urls: row.get(20)?,
+        media_dimensions: row.get(21)?,
+        preview_manifest: row.get(22)?,
+        feed_playback: row.get(23)?,
+        related_notes: parse_related_notes_json(row.get(24)?),
+        body_hash: row.get(25)?,
+        origin: row.get(26)?,
+        index_warning: row.get(27)?,
         tags: Vec::new(), // filled by caller
     })
 }
@@ -3123,7 +3119,7 @@ mod tests {
     }
 
     #[test]
-    fn search_by_type_filter() {
+    fn search_by_type_filter_uses_derived_card_kind() {
         let conn = test_conn();
         upsert_block(
             &conn,
@@ -3133,18 +3129,18 @@ mod tests {
         .unwrap();
         upsert_block(
             &conn,
-            &make_block_full("art", "article", None, "2026-01-01T00:00:00Z", &[], ""),
+            &make_block_full("art", "image", None, "2026-01-01T00:00:00Z", &[], "body"),
             None,
         )
         .unwrap();
 
         let query = SearchQuery {
             text: String::new(),
-            filters: vec![SearchFilter::Type(BlockType::Image)],
+            filters: vec![SearchFilter::Type(CardKind::Article)],
         };
         let results = search_blocks(&conn, &query).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].slug, "img");
+        assert_eq!(results[0].slug, "art");
     }
 
     #[test]
@@ -3899,7 +3895,10 @@ mod tests {
             .unwrap();
         assert!(title.is_none());
         assert!(display_title.is_none());
-        assert_eq!(fallback_label.as_deref(), Some("12.04.2026 Встреча с Владом"));
+        assert_eq!(
+            fallback_label.as_deref(),
+            Some("12.04.2026 Встреча с Владом")
+        );
         assert_eq!(
             preview_text.as_deref(),
             Some("Мои задачи Создать plan.md проекта")

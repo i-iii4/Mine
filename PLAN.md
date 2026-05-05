@@ -1026,6 +1026,20 @@ Specification: [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md).
 | 22.6 | Compatibility and migration boundary | [x] | Existing `frontmatter.title` remains read fallback; no automatic vault-wide rewrite |
 | 22.7 | Manual QA | [ ] | Fresh clipper save paths + old vault fallback behavior on a real Obsidian vault |
 
+### Phase 23 — Media Contract / Derived Card Kind [COMPLETE]
+
+Goal: demote non-channel `type` to compatibility metadata and make feed/detail/search consume a derived runtime card kind. Preserve Markdown-first source files by writing primary media as Obsidian wikilinks in `file`, while keeping legacy raw `file` values readable.
+
+| # | Slice | Status | Scope |
+|---|---|---|---|
+| 23.1 | Type demotion | [x] | `type` remains in Markdown as source/compat metadata; only `type: channel` is a runtime marker |
+| 23.2 | Derived runtime kind | [x] | `channel` for collection docs, `article` for non-empty body, `media` for empty body; feed/detail/search use the derived kind |
+| 23.3 | Canonical file wikilinks | [x] | New writes serialize `file: "[[name.ext]]"`; parser remains compatible with `file: name.ext` |
+| 23.4 | Existing content migration boundary | [x] | Migration rewrites frontmatter `file` only; body bytes are unchanged, so singleton embed bodies become article |
+| 23.5 | Inline-media extraction output | [x] | New extraction creates empty-body media-card with canonical `file` wikilink instead of singleton embed body |
+| 23.6 | Clipper/native-host contract | [x] | Popup creation modes mostly unchanged; native-host writer is authoritative for canonical `file` wikilinks |
+| 23.7 | Manual QA | [ ] | Real-vault migration + fresh clipper media save + existing singleton embed body behavior |
+
 ### Backlog
 
 | Task | Description |

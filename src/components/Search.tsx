@@ -15,7 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { IndexedBlock } from "@/types";
+import type { CardKind, IndexedBlock } from "@/types";
 import { getNavigationLabel } from "@/lib/displayTitle";
 
 const DEBOUNCE_MS = 200;
@@ -117,7 +117,7 @@ export function Search({ open, onClose, onSelect }: SearchProps) {
                 }}
                 className="gap-3"
               >
-                <TypeBadge type={block.block_type} />
+                <TypeBadge kind={block.card_kind} />
                 <span className="truncate text-foreground">
                   {getNavigationLabel(block)}
                 </span>
@@ -135,17 +135,15 @@ export function Search({ open, onClose, onSelect }: SearchProps) {
   );
 }
 
-function TypeBadge({ type }: { type: string }) {
-  const labels: Record<string, string> = {
-    image: "IMG",
-    link: "URL",
-    article: "TXT",
-    video: "VID",
-    file: "FILE",
+function TypeBadge({ kind }: { kind: CardKind }) {
+  const labels: Record<CardKind, string> = {
+    article: "ART",
+    media: "MEDIA",
+    channel: "CH",
   };
   return (
     <Badge variant="secondary" className="text-sm font-semibold text-muted-foreground">
-      {labels[type] ?? type.toUpperCase()}
+      {labels[kind]}
     </Badge>
   );
 }

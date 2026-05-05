@@ -8,10 +8,20 @@ import {
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 
+function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["card_kind"] {
+  return blockType === "article"
+    ? "article"
+    : blockType === "channel"
+      ? "channel"
+      : "media";
+}
+
 function makeBlock(overrides: Partial<LightBlock> & { block_type: LightBlock["block_type"] }): LightBlock {
+  const cardKind = overrides.card_kind ?? cardKindForBlockType(overrides.block_type);
   return {
     id: 1,
     slug: "test",
+    card_kind: cardKind,
     title: null,
     url: null,
     media_file: null,
@@ -49,15 +59,28 @@ describe("computeCardHeight — image", () => {
   });
 
   it("falls back to DEFAULT_CARD_HEIGHT without metadata", () => {
-    const block = makeBlock({ block_type: "image", width: null, height: null });
+    const block = makeBlock({ block_type: "image", width: null, height: null, thumbnail: "thumb.jpg" });
     const h = computeCardHeight(block, 280, null);
     expect(h).toBe(DEFAULT_CARD_HEIGHT);
+  });
+
+  it("uses card_kind media with image metadata even when legacy type says article", () => {
+    const block = makeBlock({
+      card_kind: "media",
+      block_type: "article",
+      media_file: "photo.jpg",
+      width: 1600,
+      height: 900,
+    });
+    expect(computeCardHeight(block, 280, null)).toBe(
+      Math.round(278 * (900 / 1600)) + CARD_BORDER,
+    );
   });
 });
 
 describe("computeCardHeight — video / link / file", () => {
   it("video uses 16:9 aspect", () => {
-    const block = makeBlock({ block_type: "video" });
+    const block = makeBlock({ block_type: "video", media_file: "clip.mp4" });
     // inner width 320 - 2 = 318; height = round(318 * 9/16) + border
     expect(computeCardHeight(block, 320, null)).toBe(
       Math.round(318 * 9 / 16) + CARD_BORDER,
@@ -65,7 +88,7 @@ describe("computeCardHeight — video / link / file", () => {
   });
 
   it("link adds footer height to thumbnail", () => {
-    const block = makeBlock({ block_type: "link" });
+    const block = makeBlock({ block_type: "link", url: "https://example.com" });
     const expected = Math.round(318 * 9 / 16) + 76 + CARD_BORDER;
     expect(computeCardHeight(block, 320, null)).toBe(expected);
   });
@@ -79,7 +102,7 @@ describe("computeCardHeight — video / link / file", () => {
 
 describe("computeFeedPlaybackSurfaceEnvelope", () => {
   it("returns the dedicated video surface inside the bordered card frame", () => {
-    const block = makeBlock({ block_type: "video" });
+    const block = makeBlock({ block_type: "video", media_file: "clip.mp4" });
     expect(computeFeedPlaybackSurfaceEnvelope(block, 320)).toEqual({
       topOffsetPx: 1,
       heightPx: Math.round(318 * 9 / 16),
@@ -160,6 +183,17 @@ describe("computeFeedPlaybackSurfaceEnvelope", () => {
     });
 
     expect(computeFeedPlaybackSurfaceEnvelope(block, 280)).toBeNull();
+  });
+
+  it("does not use legacy video type when card_kind is article", () => {
+    const block = makeBlock({
+      card_kind: "article",
+      block_type: "video",
+      body: "Plain article",
+      media_file: "clip.mp4",
+    });
+
+    expect(computeFeedPlaybackSurfaceEnvelope(block, 320)).toBeNull();
   });
 });
 

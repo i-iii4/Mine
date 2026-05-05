@@ -13,11 +13,22 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   revealItemInDir: vi.fn(),
 }));
 
+function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["card_kind"] {
+  return blockType === "article"
+    ? "article"
+    : blockType === "channel"
+      ? "channel"
+      : "media";
+}
+
 function block(overrides: Partial<LightBlock> = {}): LightBlock {
+  const blockType = overrides.block_type ?? "link";
+  const cardKind = overrides.card_kind ?? cardKindForBlockType(blockType);
   return {
     id: 1,
     slug: "test-block",
-    block_type: "link",
+    card_kind: cardKind,
+    block_type: blockType,
     title: "Test Block",
     description: "A test block",
     url: "https://example.com",
@@ -139,7 +150,7 @@ describe("Card", () => {
   });
 
   it("renders image card alt text from the title", () => {
-    const b = block({ block_type: "image", title: "Sunset" });
+    const b = block({ block_type: "image", title: "Sunset", media_file: "sunset.jpg" });
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     expect(screen.getByRole("img")).toHaveAttribute("alt", "Sunset");
   });
@@ -443,11 +454,21 @@ describe("Card", () => {
     expect(container.querySelector("svg path[d]")).toBeNull();
   });
 
-  it("renders legacy poster-only video cards as an image with play affordance", () => {
+  it("renders poster-only video cards from preview metadata with play affordance", () => {
     const b = block({
       block_type: "video",
       title: "YouTube Video",
       media_file: "poster.jpg",
+      preview_manifest: JSON.stringify({
+        kind: "video_poster",
+        primary_preview_path: "test-block.jpg",
+        width: 1280,
+        height: 720,
+        tiles: [
+          { source_path: "poster.jpg", preview_path: "test-block.jpg", width: 1280, height: 720, is_video: false, is_video_poster: true },
+        ],
+        overflow_count: 0,
+      }),
     });
     const { container } = render(
       <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
@@ -623,9 +644,37 @@ describe("Card", () => {
     const b = block({
       block_type: "file",
       title: "Unknown",
+      url: null,
       media_file: null,
     });
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     expect(screen.getByText("FILE")).toBeInTheDocument();
+  });
+
+  it("renders media by card_kind and image metadata when legacy type is article", () => {
+    const b = block({
+      card_kind: "media",
+      block_type: "article",
+      title: "Photo",
+      media_file: "photo.jpg",
+    });
+    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "src",
+      expect.stringContaining("photo.jpg"),
+    );
+    expect(screen.queryByText("Photo")).not.toBeInTheDocument();
+  });
+
+  it("keeps singleton media embeds on the article renderer", () => {
+    const b = block({
+      card_kind: "article",
+      block_type: "image",
+      title: "Embedded note",
+      body: "![[photo.jpg]]",
+      media_file: "photo.jpg",
+    });
+    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(screen.getByText("Embedded note")).toBeInTheDocument();
   });
 });

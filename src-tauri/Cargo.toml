@@ -95,6 +95,10 @@ path = "src/bin/migrate_body_to_wikilinks.rs"
 name = "migrate-collections-to-wikilinks"
 path = "src/bin/migrate_collections_to_wikilinks.rs"
 
+[[bin]]
+name = "migrate-primary-file-to-wikilinks"
+path = "src/bin/migrate_primary_file_to_wikilinks.rs"
+
 [dev-dependencies]
 indoc = "2"
 tempfile = "3"
