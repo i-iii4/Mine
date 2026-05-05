@@ -512,10 +512,6 @@ SubContent (подменю) — та же тень.
 | Центральная | Превью-карточки | `flex-1 min-w-0`, `h-8 overflow-hidden` |
 | Правая | Счётчик + действия | `w-8 text-right` |
 
-Перед строками sidebar рендерит space title (`text-lg leading-6
-font-semibold`) в той же navigation column. Вертикальный ритм:
-`pt-20` от top bar до space title и `mt-20` от title block до списка строк.
-
 Шрифт названий: `font-sans text-base` (14px). Счётчики справа:
 `font-mono text-sm text-right`. Строки разделены
 `border-b border-sidebar-border`. Паддинги навигации: `px-8 pt-20`;
@@ -525,10 +521,10 @@ font-semibold`) в той же navigation column. Вертикальный ри�
 полосе preview-карточек. Для визуальной компенсации glyph side bearings label
 text получает `translate-x-px`, а правый count text получает `-translate-x-px`;
 это не меняет layout box и не влияет на preview-strip ширину.
-Top rhythm должен жить внутри scroll-container (`data-sidebar-scroll`), а не в
+Top inset должен жить на scroll-container (`data-sidebar-scroll`), а не в
 отдельной фиксированной header-плашке: если header slot (например iCloud
-conflict banner) ничего не рендерит, он не должен оставлять пустой fixed block
-над списком.
+conflict banner) ничего не рендерит, он не должен оставлять пустой блок над
+списком.
 
 Превью-карточки: `size-8 object-cover`, `gap-1` (4px). Strip использует
 одну постоянную CSS mask, без дополнительных overlay-слоёв. Fade имеет
@@ -662,11 +658,6 @@ row-action slot (`count/menu` ↔ `Connected/Connect/Disconnect`). Это уби
 Masonry с round-robin распределением по колонкам. Gap: 32px (`--spacing-s5`). Минимальная ширина карточки: 220px; максимальная ширина не фиксируется токеном и определяется алгоритмически перед переходом к следующему числу колонок. Ленивая подгрузка через IntersectionObserver.
 
 Паддинги сетки: 32px по бокам (при развёрнутом сайдбаре), 72px (при свёрнутом — компенсация ширины).
-
-Над masonry рендерится current-channel title (`text-lg leading-6
-font-semibold`): `Everything` для общего feed или название текущего канала.
-Вертикальный ритм совпадает с sidebar: `80px` от top bar до title и `80px` от
-title до первых карточек.
 
 Карточки: `border border-border`, без скругления (`rounded-0`). Обводка = +1 уровень к фону. Hover — inset border 2px цветом `primary-hover` через `::after` псевдоэлемент (обходит `overflow-hidden`, перекрывает изображения).
 

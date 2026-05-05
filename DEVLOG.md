@@ -1,31 +1,5 @@
 # Devlog
 
-## 05.05.2026 18:31 -03 [primary] — Add space and channel titles to feed rhythm
-
-### Goal
-
-Выстроить верхний ритм main/sidebar: `80px → title → 80px → content`.
-В sidebar title должен быть именем текущего space, а в main grid — текущим
-каналом (`Everything` или active channel).
-
-### Completed
-
-- `App` выводит `spaceTitle` из имени текущего vault/space и передаёт его в
-  `Sidebar`.
-- `Sidebar` показывает space title внутри scroll-container после `pt-20`, а
-  список строк начинается через `mt-20`.
-- `Grid` показывает current-channel title над masonry; layout cards сохраняют
-  отдельный `80px` inset от heading.
-- Обновлены layout contracts в [SPEC_FRONTEND.md](SPEC_FRONTEND.md) и
-  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md).
-
-### Verification
-
-- `bun run test:frontend src/components/Grid.test.tsx src/components/Sidebar.test.tsx` — passed (`37/37`).
-- `bun run build` — passed.
-- `bun run lint` — passed.
-- `git diff --check` — clean.
-
 ## 05.05.2026 09:37 -03 [primary] — Suppress accidental native selection in app chrome
 
 ### Goal

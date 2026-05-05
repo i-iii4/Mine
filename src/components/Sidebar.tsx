@@ -106,7 +106,6 @@ interface SidebarProps {
   totalBlocks: number;
   isDropDragging: boolean;
   isCreatingChannel: boolean;
-  spaceTitle?: string;
   onSetCreatingChannel: (v: boolean) => void;
   onDeleteTag: (tag: string) => void;
   onRenameTag: (oldTag: string, newTag: string) => void;
@@ -150,7 +149,6 @@ export function Sidebar({
   totalBlocks,
   isDropDragging,
   isCreatingChannel,
-  spaceTitle = "Space",
   onSetCreatingChannel,
   onDeleteTag,
   onRenameTag,
@@ -367,23 +365,9 @@ export function Sidebar({
         onFocusCapture={handleSidebarFocusCapture}
         onBlurCapture={handleSidebarBlurCapture}
       >
-        {!isLinkingBlock && (
-          <div className="min-w-0" data-sidebar-space-header>
-            <h1
-              className="truncate text-lg leading-6 font-semibold text-foreground"
-              data-sidebar-space-title
-            >
-              {spaceTitle}
-            </h1>
-            {headerSlot && (
-              <div className="mt-3" data-sidebar-header-slot>
-                {headerSlot}
-              </div>
-            )}
-          </div>
-        )}
+        {!isLinkingBlock && headerSlot}
 
-        <div className={cn("relative", !isLinkingBlock && "mt-20")} data-sidebar-rows>
+        <div className="relative" data-sidebar-rows>
           {!compact && (
             <div className="pointer-events-none absolute inset-0" data-sidebar-guidelines>
               <span
