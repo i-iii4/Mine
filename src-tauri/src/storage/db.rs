@@ -104,7 +104,6 @@ fn create_schema(conn: &Connection) -> Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_blocks_saved_at ON blocks(saved_at DESC);
         CREATE INDEX IF NOT EXISTS idx_blocks_type ON blocks(block_type);
-        CREATE INDEX IF NOT EXISTS idx_blocks_card_kind ON blocks(card_kind);
 
         CREATE TABLE IF NOT EXISTS block_tags (
             block_id INTEGER NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
@@ -170,32 +169,6 @@ fn create_schema(conn: &Connection) -> Result<()> {
                 old.description,
                 old.body
             );
-        END;
-
-        CREATE TRIGGER blocks_au AFTER UPDATE ON blocks BEGIN
-            INSERT INTO blocks_fts(blocks_fts, rowid, title, description, body)
-            VALUES (
-                'delete',
-                old.id,
-                trim(
-                    coalesce(old.display_title, '')
-                    || ' ' || coalesce(old.title, '')
-                    || ' ' || coalesce(old.fallback_label, '')
-                ),
-                old.description,
-                old.body
-            );
-            INSERT INTO blocks_fts(rowid, title, description, body)
-            VALUES (
-                new.id,
-                trim(
-                    coalesce(new.display_title, '')
-                    || ' ' || coalesce(new.title, '')
-                    || ' ' || coalesce(new.fallback_label, '')
-                ),
-                new.description,
-                new.body
-            );
         END;",
     )?;
 
@@ -231,11 +204,38 @@ fn create_schema(conn: &Connection) -> Result<()> {
                 WHEN block_type = 'channel' THEN 'channel'
                 WHEN trim(coalesce(body, '')) != '' THEN 'article'
                 ELSE 'media'
-            END
-          WHERE card_kind IS NULL",
+            END",
     );
     let _ =
         conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_blocks_card_kind ON blocks(card_kind)");
+
+    conn.execute_batch(
+        "CREATE TRIGGER blocks_au AFTER UPDATE ON blocks BEGIN
+            INSERT INTO blocks_fts(blocks_fts, rowid, title, description, body)
+            VALUES (
+                'delete',
+                old.id,
+                trim(
+                    coalesce(old.display_title, '')
+                    || ' ' || coalesce(old.title, '')
+                    || ' ' || coalesce(old.fallback_label, '')
+                ),
+                old.description,
+                old.body
+            );
+            INSERT INTO blocks_fts(rowid, title, description, body)
+            VALUES (
+                new.id,
+                trim(
+                    coalesce(new.display_title, '')
+                    || ' ' || coalesce(new.title, '')
+                    || ' ' || coalesce(new.fallback_label, '')
+                ),
+                new.description,
+                new.body
+            );
+        END;",
+    )?;
 
     // Migration: add body_hash column. SHA-256 over the block body, used by
     // Phase 18.G watcher rename detection to match a Remove+Create event
@@ -412,6 +412,110 @@ mod tests {
         let conn = open_memory().unwrap();
         create_schema(&conn).unwrap();
         create_schema(&conn).unwrap();
+    }
+
+    #[test]
+    fn migrates_existing_blocks_table_without_card_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("legacy.db");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE blocks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slug TEXT UNIQUE NOT NULL,
+                    block_type TEXT NOT NULL,
+                    title TEXT,
+                    content_heading TEXT,
+                    display_title TEXT,
+                    fallback_label TEXT,
+                    description TEXT,
+                    url TEXT,
+                    media_file TEXT,
+                    thumbnail TEXT,
+                    saved_at TEXT NOT NULL,
+                    source TEXT,
+                    width INTEGER,
+                    height INTEGER,
+                    author TEXT,
+                    body TEXT DEFAULT '',
+                    preview_text TEXT,
+                    preview_text_cap INTEGER,
+                    body_hash TEXT,
+                    origin TEXT,
+                    index_warning TEXT,
+                    preview_manifest TEXT,
+                    feed_playback TEXT,
+                    media_index_version INTEGER,
+                    collection_index_version INTEGER,
+                    related_notes TEXT,
+                    thumb_format TEXT,
+                    thumb_mtime INTEGER,
+                    indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO blocks (slug, block_type, saved_at, body)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params!["legacy-media", "image", "2026-01-01T00:00:00Z", ""],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO blocks (slug, block_type, saved_at, body)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![
+                    "legacy-article",
+                    "image",
+                    "2026-01-01T00:00:00Z",
+                    "# Heading"
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO blocks (slug, block_type, saved_at, body)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params!["legacy-channel", "channel", "2026-01-01T00:00:00Z", ""],
+            )
+            .unwrap();
+        }
+
+        let conn = open_or_create(&db_path).unwrap();
+
+        let media: String = conn
+            .query_row(
+                "SELECT card_kind FROM blocks WHERE slug = 'legacy-media'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let article: String = conn
+            .query_row(
+                "SELECT card_kind FROM blocks WHERE slug = 'legacy-article'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let channel: String = conn
+            .query_row(
+                "SELECT card_kind FROM blocks WHERE slug = 'legacy-channel'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'idx_blocks_card_kind'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(media, "media");
+        assert_eq!(article, "article");
+        assert_eq!(channel, "channel");
+        assert_eq!(index_count, 1);
     }
 
     #[test]
