@@ -514,9 +514,7 @@ SubContent (подменю) — та же тень.
 
 Перед строками sidebar рендерит space title (`text-lg leading-6
 font-semibold`) в той же navigation column. Вертикальный ритм:
-`80px` от top bar до space title, `32px` от title до full-width divider и
-`32px` от divider до списка строк. `bg-accent` top band заканчивается на
-divider; нижний `32px` gap уже лежит на обычном фоне.
+`pt-20` от top bar до space title и `mt-20` от title block до списка строк.
 
 Шрифт названий: `font-sans text-base` (14px). Счётчики справа:
 `font-mono text-sm text-right`. Строки разделены
@@ -667,9 +665,8 @@ Masonry с round-robin распределением по колонкам. Gap: 
 
 Над masonry рендерится current-channel title (`text-lg leading-6
 font-semibold`): `Everything` для общего feed или название текущего канала.
-Вертикальный ритм совпадает с sidebar: `80px` от top bar до title, `32px` от
-title до full-width divider и `32px` от divider до первых карточек. `bg-accent`
-top band заканчивается на divider; нижний gap до карточек не заливается.
+Вертикальный ритм совпадает с sidebar: `80px` от top bar до title и `80px` от
+title до первых карточек.
 
 Карточки: `border border-border`, без скругления (`rounded-0`). Обводка = +1 уровень к фону. Hover — inset border 2px цветом `primary-hover` через `::after` псевдоэлемент (обходит `overflow-hidden`, перекрывает изображения).
 

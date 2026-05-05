@@ -1,31 +1,5 @@
 # Devlog
 
-## 05.05.2026 19:10 -03 [primary] — Add full-width top dividers and accent header bands
-
-### Goal
-
-Уточнить верхний layout rhythm: линия должна идти на всю ширину main/sidebar
-area, а `bg-accent` заливка верхней зоны должна заканчиваться на этой линии.
-От линии до карточек/grid и sidebar rows остаётся `32px` на обычном фоне.
-
-### Completed
-
-- Top Tauri bar получил `bg-accent`, чтобы совпадать с нижним action bar.
-- `Grid` top band теперь: `80px → current-channel title → 32px → full-width
-  divider`; затем `32px` обычного фона до masonry cards.
-- `Sidebar` top band теперь: `80px → space title → 32px → full-width divider`;
-  затем `32px` обычного фона до списка.
-- Обновлены проверки top rhythm для Grid и Sidebar.
-- Обновлены contracts в [SPEC_FRONTEND.md](SPEC_FRONTEND.md) и
-  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md).
-
-### Verification
-
-- `bun run test:frontend src/components/Grid.test.tsx src/components/Sidebar.test.tsx` — passed (`37/37`).
-- `bun run build` — passed.
-- `bun run lint` — passed.
-- `git diff --check` — clean.
-
 ## 05.05.2026 18:31 -03 [primary] — Add space and channel titles to feed rhythm
 
 ### Goal

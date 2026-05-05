@@ -277,10 +277,7 @@ must not expose a channel display-mode selector.
 
 Обычный режим:
 0. Sidebar показывает `spaceTitle` (имя текущего vault/space) после верхнего
-   inset `80px`; затем через `32px` идёт horizontal divider, и список
-   начинается ещё через `32px` после divider. Divider идёт на всю ширину
-   sidebar; `bg-accent` top band заканчивается на divider, а нижний gap до
-   списка уже лежит на обычном фоне.
+   inset `80px`; список начинается ещё через `80px` после заголовка.
 1. Пункт `Everything` — навигация на `/`
 2. Список каналов (из `listChannels()`) — навигация на `/channel/:tag`
 3. Каждый канал: название + счётчик блоков + до 20 превью-карточек
@@ -406,14 +403,11 @@ preview strip, и только после этого начинает ужима
 
 **Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`), а не через polling `listChannelPreviews`. Initial state грузится один раз при mount через `listChannelPreviews(20)`, потом инкрементально патчится `useChannelPreviewsEvents` hook'ом. Latency add block → visible in sidebar: ~110ms (native host write + watcher debounce + IPC event + React update). Cache-bust: initial load использует `?m=<mtime>` (unix timestamp thumb-файла из Rust `stat()`), real-time updates используют `?v=<counter>` (per-slug version counter, инкрементируется на `thumb:updated`). Два механизма дополняют друг друга: `?m=` покрывает межсессионные изменения (Phase 2 worker перезаписал PNG→JPEG), `?v=` покрывает live-обновления внутри сессии.
 
-**Main sidebar top rhythm.** На главной sidebar top band живёт внутри
-`data-sidebar-scroll`: `80px` до `spaceTitle`, `32px` до divider, `32px` до
-первой строки. Этот band использует `bg-accent`, тот же light surface, что и
-нижний action bar, и заканчивается ровно на full-width divider; gap после
-divider не заливается `bg-accent`. Верхний Tauri bar тоже `bg-accent`. Не
-создавать отдельную пустую fixed header surface для опциональных баннеров: если
-banner component возвращает `null`, он не должен оставлять белую плашку,
-которая обрезает scroll-content.
+**Main sidebar top rhythm.** На главной sidebar использует `pt-20` прямо на
+`data-sidebar-scroll`, затем показывает `spaceTitle`, затем отделяет список
+строк ещё одним `mt-20`. Не создавать отдельную пустую fixed header surface
+для опциональных баннеров: если banner component возвращает `null`, он не
+должен оставлять белую плашку, которая обрезает scroll-content.
 
 **Thumbnail upgrade.** Для блоков с inline media которое Rust не умеет декодировать (WebP VP8X, HEIC, AVIF, HEVC), Rust Phase 1 пишет text placeholder на диск. Main app через `useThumbnailUpgrade` hook подписан на `thumb:upgrade-requested` event и отправляет работу в Web Worker (`src/workers/thumbWorker.ts`). Worker декодирует через `createImageBitmap` (native browser decoder, поддерживает все форматы которые WebView рендерит) → `OffscreenCanvas.convertToBlob('image/jpeg', 0.85)` → IPC `save_thumb` → Rust пишет поверх placeholder. После `thumb:updated` event sidebar cache-bust'ит `<img>` URL. Полная архитектура: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md).
 
@@ -424,11 +418,7 @@ banner component возвращает `null`, он не должен остав�
 - Над сеткой есть current-channel heading: `Everything` на `/`, либо
   compact title текущего `/channel/:tag`.
 - Вертикальный ритм feed: `80px` от нижней границы top bar до heading, затем
-  `32px` до horizontal divider и `32px` от divider до masonry cards.
-- Divider идёт на всю ширину main grid area. Feed top band (`heading + gap до
-  divider`) использует `bg-accent`, тот же light surface, что и нижний action
-  bar, и заканчивается на divider; `32px` gap от divider до cards не заливается
-  `bg-accent`.
+  `80px` от heading до masonry cards.
 - Количество столбцов: адаптивное, на основе ширины контейнера (`ResizeObserver`, минимум 240px на столбец)
 - Layout считается чистой функцией: `containerWidth + estimatedHeights -> positions[]`
 - Карточки позиционируются абсолютно (`translate(x, y)`), контейнер имеет вычисленную `totalHeight`
