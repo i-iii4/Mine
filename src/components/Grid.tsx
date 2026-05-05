@@ -54,7 +54,8 @@ const COMMIT_LOOKAHEAD_BLOCKS = 24;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
 const GRID_TITLE_TOP_INSET_PX = 80;
-const GRID_CONTENT_TOP_INSET_PX = 80;
+const GRID_TITLE_DIVIDER_GAP_PX = 32;
+const GRID_DIVIDER_CONTENT_GAP_PX = 32;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -616,6 +617,7 @@ export function Grid({
     ],
   );
   const currentChannelTitle = currentTag ? titleFromTag(currentTag) : "Everything";
+  const gridSidePadding = sidebarCollapsed ? 72 : 32;
 
   return (
     <ContextMenu>
@@ -625,8 +627,8 @@ export function Grid({
           onContextMenu={handleContextMenu}
           className="h-full overflow-x-hidden overflow-y-auto pb-8"
           style={{
-            paddingLeft: sidebarCollapsed ? 72 : 32,
-            paddingRight: sidebarCollapsed ? 72 : 32,
+            paddingLeft: gridSidePadding,
+            paddingRight: gridSidePadding,
             scrollbarGutter: "stable",
             transition: "padding-left 200ms ease, padding-right 200ms ease",
           }}
@@ -634,16 +636,32 @@ export function Grid({
         >
           <div data-grid-content>
             <header
-              className="min-w-0"
-              style={{ paddingTop: GRID_TITLE_TOP_INSET_PX }}
+              className="min-w-0 bg-accent"
+              style={{
+                marginLeft: -gridSidePadding,
+                marginRight: -gridSidePadding,
+                paddingTop: GRID_TITLE_TOP_INSET_PX,
+              }}
               data-grid-channel-header
             >
-              <h1
-                className="truncate text-lg leading-6 font-semibold text-foreground"
-                data-grid-current-channel-title
+              <div
+                style={{
+                  paddingLeft: gridSidePadding,
+                  paddingRight: gridSidePadding,
+                }}
               >
-                {currentChannelTitle}
-              </h1>
+                <h1
+                  className="truncate text-lg leading-6 font-semibold text-foreground"
+                  data-grid-current-channel-title
+                >
+                  {currentChannelTitle}
+                </h1>
+              </div>
+              <div
+                className="h-px bg-border"
+                style={{ marginTop: GRID_TITLE_DIVIDER_GAP_PX }}
+                data-grid-content-divider
+              />
             </header>
 
             {parentWidth > 0 && blocks.length > 0 && (
@@ -718,7 +736,7 @@ function VirtualMasonryLayout({
   return (
     <div
       className="relative"
-      style={{ height: totalHeight || 1, marginTop: GRID_CONTENT_TOP_INSET_PX }}
+      style={{ height: totalHeight || 1, marginTop: GRID_DIVIDER_CONTENT_GAP_PX }}
       data-grid-layout
     >
       {visibleItems.map((item) => {

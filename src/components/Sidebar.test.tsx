@@ -212,12 +212,19 @@ describe("Sidebar", () => {
     });
 
     const nav = container.querySelector("[data-sidebar-scroll]");
+    const header = container.querySelector("[data-sidebar-space-header]");
     const title = container.querySelector("[data-sidebar-space-title]");
+    const divider = container.querySelector("[data-sidebar-content-divider]") as HTMLElement | null;
     const rows = container.querySelector("[data-sidebar-rows]");
-    expect(nav).toHaveClass("pt-20");
+    expect(nav).not.toHaveClass("pt-20");
+    expect(header).toHaveClass("pt-20", "bg-accent");
+    expect(header).not.toHaveClass("pb-8");
     expect(title).toHaveTextContent("Mine");
     expect(title).toHaveClass("text-lg", "leading-6", "font-semibold");
-    expect(rows).toHaveClass("mt-20");
+    expect(divider).toBeTruthy();
+    expect(divider?.style.marginTop).toBe("32px");
+    expect(rows).toHaveClass("mt-8");
+    expect(rows).not.toHaveClass("mt-20");
     expect(container.querySelector("aside")?.firstElementChild).toBe(nav);
   });
 

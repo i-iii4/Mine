@@ -413,15 +413,20 @@ describe("Grid — no collapse after add / revisit", () => {
 
     const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
     const headerEl = document.querySelector("[data-grid-channel-header]") as HTMLElement | null;
+    const dividerEl = document.querySelector("[data-grid-content-divider]") as HTMLElement | null;
     const titleEl = document.querySelector("[data-grid-current-channel-title]") as HTMLElement | null;
     const layoutEl = document.querySelector("[data-grid-layout]") as HTMLElement | null;
     expect(scrollEl).toBeTruthy();
     expect(headerEl).toBeTruthy();
+    expect(dividerEl).toBeTruthy();
     expect(titleEl).toHaveTextContent("Top-inset");
     expect(layoutEl).toBeTruthy();
     expect(scrollEl).not.toHaveClass("pt-20");
     expect(headerEl?.style.paddingTop).toBe("80px");
-    expect(layoutEl?.style.marginTop).toBe("80px");
+    expect(headerEl?.style.marginLeft).toBe("-32px");
+    expect(headerEl?.style.marginRight).toBe("-32px");
+    expect(dividerEl?.style.marginTop).toBe("32px");
+    expect(layoutEl?.style.marginTop).toBe("32px");
   });
 
   it("labels the all-blocks route as Everything above the feed", async () => {

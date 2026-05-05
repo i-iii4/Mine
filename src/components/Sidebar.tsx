@@ -55,6 +55,7 @@ const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = 24;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = 24;
 const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH =
   SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET + SIDEBAR_PREVIEW_DIVIDER_GAP;
+const SIDEBAR_TITLE_DIVIDER_GAP_PX = 32;
 const createRightFadeMaskStyle = (fadeWidth: number, clearTailWidth: number) => {
   const rightFadeMaskStop = (alpha: number, progress: number) => {
     const offset =
@@ -355,7 +356,7 @@ export function Sidebar({
         ref={navRef}
         className={cn(
           "relative flex-1 overflow-y-auto",
-          isLinkingBlock ? linkEditorNavPadding : "pt-20",
+          isLinkingBlock && linkEditorNavPadding,
           compact ? "px-2" : "px-8",
         )}
         data-sidebar-scroll
@@ -368,22 +369,35 @@ export function Sidebar({
         onBlurCapture={handleSidebarBlurCapture}
       >
         {!isLinkingBlock && (
-          <div className="min-w-0" data-sidebar-space-header>
-            <h1
-              className="truncate text-lg leading-6 font-semibold text-foreground"
-              data-sidebar-space-title
-            >
-              {spaceTitle}
-            </h1>
-            {headerSlot && (
-              <div className="mt-3" data-sidebar-header-slot>
-                {headerSlot}
-              </div>
+          <div
+            className={cn(
+              "min-w-0 bg-accent pt-20",
+              compact ? "-mx-2" : "-mx-8",
             )}
+            data-sidebar-space-header
+          >
+            <div className={compact ? "px-2" : "px-8"}>
+              <h1
+                className="truncate text-lg leading-6 font-semibold text-foreground"
+                data-sidebar-space-title
+              >
+                {spaceTitle}
+              </h1>
+              {headerSlot && (
+                <div className="mt-3" data-sidebar-header-slot>
+                  {headerSlot}
+                </div>
+              )}
+            </div>
+            <div
+              className="h-px bg-sidebar-border"
+              style={{ marginTop: SIDEBAR_TITLE_DIVIDER_GAP_PX }}
+              data-sidebar-content-divider
+            />
           </div>
         )}
 
-        <div className={cn("relative", !isLinkingBlock && "mt-20")} data-sidebar-rows>
+        <div className={cn("relative", !isLinkingBlock && "mt-8")} data-sidebar-rows>
           {!compact && (
             <div className="pointer-events-none absolute inset-0" data-sidebar-guidelines>
               <span

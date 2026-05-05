@@ -1683,7 +1683,7 @@ export function AppWithVault({
       <div className="flex h-screen w-screen flex-col bg-background text-foreground">
         <header
           data-tauri-drag-region
-          className="flex h-8 shrink-0 items-center border-b border-border"
+          className="flex h-8 shrink-0 items-center border-b border-border bg-accent"
         >
           <div data-tauri-drag-region className="w-20 shrink-0" />
           <div data-tauri-drag-region className="flex flex-1 items-center px-3" />
@@ -1713,7 +1713,7 @@ export function AppWithVault({
       {/* Top toolbar */}
       <header
         data-tauri-drag-region
-        className="flex h-8 shrink-0 items-center border-b border-border"
+        className="flex h-8 shrink-0 items-center border-b border-border bg-accent"
       >
         {/* Traffic light spacer (macOS) */}
         <div data-tauri-drag-region className="w-20 shrink-0" />
