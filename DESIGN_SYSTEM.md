@@ -368,31 +368,13 @@ CollectionPicker membership rows:
   outline-component-fill-hover`.
 - Видимое состояние `Disconnect` использует destructive button semantics:
   `text-destructive` при той же серой заливке и той же hover/focus outline.
-- Клик по action button не должен всплывать в parent card/menu surface.
+- Клик по action button не должен всплывать в parent row/menu surface.
 
 ### Hover Preview Surfaces
 
 Всплывающие preview-карточки используют ту же визуальную модель, что feed card
 preview при drag: `rounded-1` (3px), `border border-border`, `bg-background`,
 утилитарная `shadow-lg`. Ordinary feed cards остаются на `--radius-card`.
-
-Sidebar thumbnail preview:
-- Temporarily disabled behind `SIDEBAR_THUMBNAIL_HOVER_PREVIEW_ENABLED=false`;
-  code remains in place for later return.
-- Trigger — конкретная `size-8` миниатюра в левой колонке, не вся строка
-  канала.
-- Hover outline: `outline-1 -outline-offset-1 outline-component-fill-hover`.
-  Outline не должен сдвигать layout и не должен менять размеры strip.
-- Outline появляется мгновенно; сама preview card открывается после
-  hover-intent delay `160ms`, чтобы случайный проход курсора не создавал шум.
-- Preview строится только из реального block data (`slug -> IndexedBlock`), а
-  не из thumbnail URL.
-- Preview surface использует `InteractiveCardPreview`: `rounded-1`, стандартный
-  hover overlay и actions `Source`, `Connect`, `More`.
-- Sidebar preview surface получает `dark:bg-accent`: лёгкая серая заливка нужна
-  только в тёмной теме; в светлой теме остаётся `bg-background` + shadow.
-- Click по миниатюре открывает конкретную карточку, не строку канала.
-- Preview раскрывается вниз от миниатюры, если хватает места; иначе вверх.
 
 Related notes preview:
 - Trigger row остаётся compact button-shell с `rounded-1 border border-border bg-component-fill`.
@@ -502,18 +484,18 @@ SubContent (подменю) — та же тень.
 |---|---|---|---|
 | ⌘⇧O | Имя vault | Выбор папки через нативный диалог | слева |
 | ⌘⇧N | New Channel | Инлайн-инпут в сайдбаре | слева |
-| ⌘, | Settings | DropdownMenu переключения темы, article menu mode и channel display mode | слева |
+| ⌘, | Settings | DropdownMenu переключения темы и article menu mode | слева |
 | ⌘K | Search | Открытие Command palette | справа |
 
 ### Сайдбар
 
-Есть два независимых переключателя:
-- layout width mode: compact/non-compact по ширине сайдбара (порог 320px);
-- channel display mode: `Rows` / `Cards` из Settings.
+Есть один layout width mode: compact/non-compact по ширине сайдбара (порог
+320px). Экспериментальный channel card display mode удалён; Settings не
+содержит переключатель `Rows` / `Cards`.
 
 #### Полный режим (width >= 320px)
 
-`Rows`-mode: три колонки в каждой строке.
+Три колонки в каждой строке.
 
 | Колонка | Содержимое | Ширина |
 |---|---|---|
@@ -559,21 +541,6 @@ Title text использует тот же right-fade mask contract, что и 
 `text-overflow: ellipsis`. Responsive contract двуступенчатый: пока ширина
 сжимается, сначала деградирует central preview rail; только когда rail
 упирается в минимум, начинает сужаться title slot в диапазоне `100–150px`.
-
-`Cards`-mode для non-compact sidebar:
-
-| Слой | Контракт |
-|---|---|
-| Surface | `border border-border bg-accent p-2 mb-2 last:mb-0` |
-| Верх | stacked thumbnail strip `w-full`, без row-mode mask |
-| Низ | `flex items-center gap-2` |
-| Левый блок | `NavLink min-w-0 flex flex-1 items-center gap-2` для `title + count` |
-| Правый блок | `data-sidebar-card-action-slot`, `w-[10ch] justify-end` |
-
-`Everything` использует тот же card shell, что и каналы. Shared vertical
-guidelines, seam accent и row-mode strip mask в этом режиме не применяются.
-Hover preview на миниатюрах включён только здесь: интерактивной целью служит
-отдельная `size-8` миниатюра, а не вся карточка.
 
 #### Compact-режим (width < 320px)
 

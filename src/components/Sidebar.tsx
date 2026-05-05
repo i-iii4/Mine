@@ -34,11 +34,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
-import type { ChannelDisplayMode, DetailTopMenuMode } from "@/lib/appPreferences";
-import { getBlock } from "@/lib/commands";
+import type { TagCount, PreviewCard } from "@/types";
+import type { DetailTopMenuMode } from "@/lib/appPreferences";
 import { cn } from "@/lib/utils";
-import { InteractiveCardPreview } from "./Card";
 
 /** Convert a collection ref to a compact display title. */
 function titleFromTag(tag: string): string {
@@ -47,12 +45,6 @@ function titleFromTag(tag: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-const SIDEBAR_PREVIEW_WIDTH = 240;
-const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
-const SIDEBAR_PREVIEW_GAP = 8;
-const SIDEBAR_PREVIEW_VIEWPORT_MARGIN = 16;
-const SIDEBAR_PREVIEW_OPEN_DELAY_MS = 160;
-const SIDEBAR_PREVIEW_CLOSE_DELAY_MS = 120;
 const SIDEBAR_ROW_TITLE_COLUMN_WIDTH = 150;
 const SIDEBAR_PREVIEW_DIVIDER_GAP = 4;
 const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = 80;
@@ -100,17 +92,6 @@ const SIDEBAR_PREVIEW_MASK_STYLE = createRightFadeMaskStyle(
   SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH,
 );
 
-type SidebarPreviewTarget = {
-  key: string;
-  slug: string;
-};
-
-type SidebarPreviewPosition = {
-  top: number;
-  left: number;
-  bridge: CSSProperties;
-};
-
 type SidebarKeyboardNavigationFocus = {
   rowKey: string;
   sequence: number;
@@ -120,10 +101,6 @@ interface SidebarProps {
   width: number;
   collapsed: boolean;
   isResizing: boolean;
-  vaultPath?: string;
-  thumbsRootPath?: string;
-  tags?: TagCount[];
-  currentTag?: string;
   orderedTags: TagCount[];
   channelPreviews: Map<string, PreviewCard[]>;
   totalBlocks: number;
@@ -133,11 +110,6 @@ interface SidebarProps {
   onDeleteTag: (tag: string) => void;
   onRenameTag: (oldTag: string, newTag: string) => void;
   onCreateChannel: (tag: string) => void;
-  onOpenBlock?: (block: IndexedBlock) => void;
-  onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void;
-  onCreateAndAssign?: (tag: string, blockSlug: string) => void;
-  onRequestRename?: (block: LightBlock) => void;
-  onRequestDelete?: (slug: string) => void;
   onNavClick?: () => void;
   onScrollToTop?: () => void;
   keyboardNavigationFocus?: SidebarKeyboardNavigationFocus | null;
@@ -147,7 +119,6 @@ interface SidebarProps {
   linkedTags?: string[];
   onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
   detailTopMenuMode?: DetailTopMenuMode;
-  channelDisplayMode?: ChannelDisplayMode;
   detailChromeClosing?: boolean;
 }
 
@@ -158,12 +129,8 @@ function buildSidebarRowOrder(visibleTags: TagCount[]): string[] {
 function createSidebarSeamAccentSet(
   orderedRowKeys: string[],
   focusedRowKey: string | null,
-  channelDisplayMode: ChannelDisplayMode,
 ): Set<string> {
   if (!focusedRowKey) return new Set();
-  if (channelDisplayMode === "card") {
-    return new Set();
-  }
   const focusedIndex = orderedRowKeys.indexOf(focusedRowKey);
   if (focusedIndex === -1) return new Set();
   const accentKeys = new Set<string>([focusedRowKey]);
@@ -177,10 +144,6 @@ export function Sidebar({
   width,
   collapsed,
   isResizing,
-  vaultPath,
-  thumbsRootPath,
-  tags,
-  currentTag,
   orderedTags,
   channelPreviews,
   totalBlocks,
@@ -190,11 +153,6 @@ export function Sidebar({
   onDeleteTag,
   onRenameTag,
   onCreateChannel,
-  onOpenBlock,
-  onToggleTag,
-  onCreateAndAssign,
-  onRequestRename,
-  onRequestDelete,
   onNavClick,
   onScrollToTop,
   keyboardNavigationFocus,
@@ -203,24 +161,15 @@ export function Sidebar({
   linkedTags = [],
   onToggleLinkedTag,
   detailTopMenuMode = "island",
-  channelDisplayMode = "row",
   detailChromeClosing = false,
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [linkMode, setLinkMode] = useState<"all" | "linked">("all");
   const navRef = useRef<HTMLElement>(null);
-  const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
-  const previewRef = useRef<HTMLDivElement | null>(null);
-  const previewOpenTimerRef = useRef<number | null>(null);
-  const previewCloseTimerRef = useRef<number | null>(null);
   const sidebarRowSwitchFrameRef = useRef<number | null>(null);
   const sidebarKeyboardFocusTimerRef = useRef<number | null>(null);
   const sidebarRowFocusKeyRef = useRef<string | null>(null);
   const sidebarRowFocusModeRef = useRef(false);
-  const [hoveredPreview, setHoveredPreview] = useState<SidebarPreviewTarget | null>(null);
-  const [hoverPreviewBlock, setHoverPreviewBlock] = useState<IndexedBlock | null>(null);
-  const [hoverPreviewPosition, setHoverPreviewPosition] = useState<SidebarPreviewPosition | null>(null);
-  const [hoverPreviewPinned, setHoverPreviewPinned] = useState(false);
   const [sidebarRowFocusKey, setSidebarRowFocusKey] = useState<string | null>(null);
   const [sidebarRowFocusMode, setSidebarRowFocusMode] = useState(false);
   const [sidebarRowSwitching, setSidebarRowSwitching] = useState(false);
@@ -256,32 +205,9 @@ export function Sidebar({
   const seamAccentKeys = createSidebarSeamAccentSet(
     orderedRowKeys,
     sidebarRowFocusMode ? sidebarRowFocusKey : null,
-    channelDisplayMode,
   );
   const linkEditorNavPadding = detailTopMenuMode === "classic" ? "pt-12" : "pt-20";
   const [linkChromeEntered, setLinkChromeEntered] = useState(false);
-
-  const setPreviewTriggerRef = useCallback((key: string, node: HTMLElement | null) => {
-    if (node) {
-      previewTriggerRefs.current.set(key, node);
-    } else {
-      previewTriggerRefs.current.delete(key);
-    }
-  }, []);
-
-  const clearPreviewOpenTimer = useCallback(() => {
-    if (previewOpenTimerRef.current !== null) {
-      window.clearTimeout(previewOpenTimerRef.current);
-      previewOpenTimerRef.current = null;
-    }
-  }, []);
-
-  const clearPreviewCloseTimer = useCallback(() => {
-    if (previewCloseTimerRef.current !== null) {
-      window.clearTimeout(previewCloseTimerRef.current);
-      previewCloseTimerRef.current = null;
-    }
-  }, []);
 
   const clearSidebarRowSwitchFrame = useCallback(() => {
     if (sidebarRowSwitchFrameRef.current !== null) {
@@ -382,147 +308,9 @@ export function Sidebar({
     clearSidebarKeyboardFocusTimer();
   }, [clearSidebarKeyboardFocusTimer]);
 
-  const closePreview = useCallback(() => {
-    clearPreviewOpenTimer();
-    clearPreviewCloseTimer();
-    setHoverPreviewPinned(false);
-    setHoveredPreview(null);
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer]);
-
-  const cancelPreviewClose = useCallback(() => {
-    clearPreviewCloseTimer();
-  }, [clearPreviewCloseTimer]);
-
-  const requestPreviewClose = useCallback(() => {
-    clearPreviewOpenTimer();
-    if (hoverPreviewPinned) return;
-    clearPreviewCloseTimer();
-    previewCloseTimerRef.current = window.setTimeout(() => {
-      previewCloseTimerRef.current = null;
-      setHoveredPreview(null);
-    }, SIDEBAR_PREVIEW_CLOSE_DELAY_MS);
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, hoverPreviewPinned]);
-
-  const noopToggleTag = useCallback((slug: string, tag: string, hasTag: boolean) => {
-    void slug;
-    void tag;
-    void hasTag;
-  }, []);
-  const noopCreateAndAssign = useCallback((tag: string, blockSlug: string) => {
-    void tag;
-    void blockSlug;
-  }, []);
-  const noopRequestRename = useCallback((block: LightBlock) => {
-    void block;
-  }, []);
-  const noopRequestDelete = useCallback((slug: string) => {
-    void slug;
-  }, []);
-
-  const schedulePreviewOpen = useCallback((target: SidebarPreviewTarget) => {
-    clearPreviewOpenTimer();
-    clearPreviewCloseTimer();
-    setHoveredPreview(null);
-    previewOpenTimerRef.current = window.setTimeout(() => {
-      previewOpenTimerRef.current = null;
-      if (!previewTriggerRefs.current.has(target.key)) return;
-      setHoveredPreview(target);
-    }, SIDEBAR_PREVIEW_OPEN_DELAY_MS);
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer]);
-
-  const openPreviewBlock = useCallback((target: SidebarPreviewTarget) => {
-    if (!onOpenBlock) return;
-    closePreview();
-    void getBlock(target.slug)
-      .then((block) => {
-        if (block) {
-          onOpenBlock(block);
-        }
-      })
-      .catch((error) => {
-        void error;
-      });
-  }, [closePreview, onOpenBlock]);
-
   useEffect(() => () => {
-    clearPreviewOpenTimer();
-    clearPreviewCloseTimer();
     clearSidebarRowSwitchFrame();
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, clearSidebarRowSwitchFrame]);
-
-  useEffect(() => {
-    if (!hoveredPreview) {
-      setHoverPreviewBlock(null);
-      setHoverPreviewPosition(null);
-      return;
-    }
-    let cancelled = false;
-    setHoverPreviewBlock(null);
-
-    const trigger = previewTriggerRefs.current.get(hoveredPreview.key);
-    if (trigger) {
-      setHoverPreviewPosition(
-        computeSidebarPreviewPosition(
-          trigger.getBoundingClientRect(),
-          previewRef.current?.getBoundingClientRect().height ?? SIDEBAR_PREVIEW_FALLBACK_HEIGHT,
-        ),
-      );
-    } else {
-      setHoverPreviewPosition(null);
-    }
-
-    void getBlock(hoveredPreview.slug)
-      .then((block) => {
-        if (cancelled) return;
-        setHoverPreviewBlock(block);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setHoverPreviewBlock(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [hoveredPreview]);
-
-  useEffect(() => {
-    if (!hoveredPreview || !hoverPreviewBlock || !hoverPreviewPosition || !previewRef.current) {
-      return;
-    }
-    const trigger = previewTriggerRefs.current.get(hoveredPreview.key);
-    if (!trigger) return;
-
-    const nextPosition = computeSidebarPreviewPosition(
-      trigger.getBoundingClientRect(),
-      previewRef.current.getBoundingClientRect().height,
-    );
-    if (
-      Math.abs(nextPosition.top - hoverPreviewPosition.top) > 1 ||
-      Math.abs(nextPosition.left - hoverPreviewPosition.left) > 1
-    ) {
-      setHoverPreviewPosition(nextPosition);
-    }
-  }, [hoveredPreview, hoverPreviewBlock, hoverPreviewPosition]);
-
-  useEffect(() => {
-    if (!hoverPreviewPinned) return;
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      const preview = previewRef.current;
-      const trigger = hoveredPreview
-        ? previewTriggerRefs.current.get(hoveredPreview.key)
-        : null;
-      if (preview?.contains(target) || trigger?.contains(target)) {
-        return;
-      }
-      closePreview();
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [closePreview, hoverPreviewPinned, hoveredPreview]);
+  }, [clearSidebarRowSwitchFrame]);
 
   useEffect(() => {
     if (!isLinkingBlock) {
@@ -580,7 +368,7 @@ export function Sidebar({
         {!isLinkingBlock && headerSlot}
 
         <div className="relative" data-sidebar-rows>
-          {!compact && channelDisplayMode === "row" && (
+          {!compact && (
             <div className="pointer-events-none absolute inset-0" data-sidebar-guidelines>
               <span
                 aria-hidden="true"
@@ -603,10 +391,6 @@ export function Sidebar({
             count={totalBlocks}
             cards={channelPreviews.get("__all__") ?? []}
             previewKeyPrefix="all"
-            onPreviewEnter={schedulePreviewOpen}
-            onPreviewLeave={requestPreviewClose}
-            onPreviewClick={openPreviewBlock}
-            onPreviewTriggerRef={setPreviewTriggerRef}
             compact={compact}
             end
             onClick={onNavClick}
@@ -614,7 +398,6 @@ export function Sidebar({
             rowKey="all"
             isSidebarRowFocused={sidebarRowFocusKey === "all"}
             isSidebarRowSeamAccent={seamAccentKeys.has("all")}
-            channelDisplayMode={channelDisplayMode}
           />
 
           <SortableContext
@@ -632,10 +415,6 @@ export function Sidebar({
                   tag={tc.tag}
                   cards={channelPreviews.get(tc.tag) ?? []}
                   previewKeyPrefix={`tag:${tc.tag}`}
-                  onPreviewEnter={schedulePreviewOpen}
-                  onPreviewLeave={requestPreviewClose}
-                  onPreviewClick={openPreviewBlock}
-                  onPreviewTriggerRef={setPreviewTriggerRef}
                   compact={compact}
                   isDropDragging={isDropDragging}
                   isEditing={!isLinkEditorActive && editingTag === tc.tag}
@@ -652,7 +431,6 @@ export function Sidebar({
                   rowKey={`tag:${tc.tag}`}
                   isSidebarRowFocused={sidebarRowFocusKey === `tag:${tc.tag}`}
                   isSidebarRowSeamAccent={seamAccentKeys.has(`tag:${tc.tag}`)}
-                  channelDisplayMode={channelDisplayMode}
                 />
               );
             })}
@@ -672,56 +450,6 @@ export function Sidebar({
         </div>
 
       </nav>
-
-      {vaultPath
-        && hoverPreviewPosition
-        && hoverPreviewBlock && (
-        <>
-          <div
-            className="fixed z-40"
-            style={hoverPreviewPosition.bridge}
-            onMouseEnter={cancelPreviewClose}
-            onMouseLeave={requestPreviewClose}
-            data-sidebar-thumbnail-hover-bridge
-          />
-          <div
-            ref={previewRef}
-            className="fixed z-50"
-            style={{
-              top: hoverPreviewPosition.top,
-              left: hoverPreviewPosition.left,
-              width: SIDEBAR_PREVIEW_WIDTH,
-            }}
-            onMouseEnter={cancelPreviewClose}
-            onMouseLeave={requestPreviewClose}
-            data-sidebar-thumbnail-hover-preview
-          >
-            <InteractiveCardPreview
-              block={hoverPreviewBlock}
-              vaultPath={vaultPath}
-              thumbsRootPath={thumbsRootPath}
-              width={SIDEBAR_PREVIEW_WIDTH}
-              className="dark:bg-accent"
-              tags={tags ?? orderedTags}
-              currentTag={currentTag}
-              onToggleTag={onToggleTag ?? noopToggleTag}
-              onCreateAndAssign={onCreateAndAssign ?? noopCreateAndAssign}
-              onRequestRename={onRequestRename ?? noopRequestRename}
-              onRequestDelete={onRequestDelete ?? noopRequestDelete}
-              onInteractiveOpenChange={(open) => {
-                if (open) {
-                  setHoverPreviewPinned(true);
-                }
-              }}
-              onInteractionStart={() => setHoverPreviewPinned(true)}
-              onClick={(previewBlock) => openPreviewBlock({
-                key: hoveredPreview?.key ?? previewBlock.slug,
-                slug: previewBlock.slug,
-              })}
-            />
-          </div>
-        </>
-      )}
 
       {isLinkingBlock && detailTopMenuMode !== "classic" && (
         <SidebarLinkModeSwitch
@@ -760,42 +488,6 @@ function scrollActiveSidebarItemIntoView(nav: HTMLElement, active: HTMLElement) 
   } else {
     nav.scrollTop = Math.max(0, nextTop);
   }
-}
-
-function computeSidebarPreviewPosition(
-  triggerRect: DOMRect,
-  previewHeight: number,
-): SidebarPreviewPosition {
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
-  const left = Math.max(
-    SIDEBAR_PREVIEW_VIEWPORT_MARGIN,
-    Math.min(
-      triggerRect.left,
-      viewportWidth - SIDEBAR_PREVIEW_VIEWPORT_MARGIN - SIDEBAR_PREVIEW_WIDTH,
-    ),
-  );
-  const canOpenDown =
-    triggerRect.bottom + SIDEBAR_PREVIEW_GAP + previewHeight <=
-    viewportHeight - SIDEBAR_PREVIEW_VIEWPORT_MARGIN;
-  const top = canOpenDown
-    ? triggerRect.bottom + SIDEBAR_PREVIEW_GAP
-    : Math.max(
-        SIDEBAR_PREVIEW_VIEWPORT_MARGIN,
-        triggerRect.top - SIDEBAR_PREVIEW_GAP - previewHeight,
-      );
-  const bridgeTop = canOpenDown ? triggerRect.bottom : top + previewHeight;
-  const bridgeBottom = canOpenDown ? top : triggerRect.top;
-  const bridgeLeft = Math.min(left, triggerRect.left);
-  const bridgeRight = Math.max(left + SIDEBAR_PREVIEW_WIDTH, triggerRect.right);
-  const bridge: CSSProperties = {
-    top: bridgeTop,
-    left: bridgeLeft,
-    width: bridgeRight - bridgeLeft,
-    height: Math.max(0, bridgeBottom - bridgeTop),
-  };
-
-  return { top, left, bridge };
 }
 
 const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
@@ -894,7 +586,6 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T) {
 
 type SidebarRowFrameProps = {
   compact?: boolean;
-  channelDisplayMode: ChannelDisplayMode;
   rowKey: string;
   isCurrentRoute: boolean;
   isLinked?: boolean;
@@ -909,7 +600,6 @@ type SidebarRowFrameProps = {
 
 const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(function SidebarRowFrame({
   compact,
-  channelDisplayMode,
   rowKey,
   isCurrentRoute,
   isLinked = false,
@@ -922,7 +612,6 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
   children,
   ...domProps
 }, forwardedRef) {
-  const isChannelCard = channelDisplayMode === "card";
   const setRefs = useCallback((node: HTMLDivElement | null) => {
     assignRef(forwardedRef, node);
     nodeRef?.(node);
@@ -934,16 +623,15 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
       style={style}
       {...domProps}
       data-sidebar-row=""
-      data-sidebar-row-surface={!compact && !isChannelCard ? "" : undefined}
+      data-sidebar-row-surface={!compact ? "" : undefined}
       data-sidebar-row-key={rowKey}
       data-sidebar-row-active={isCurrentRoute ? "true" : undefined}
       data-sidebar-row-linked={isLinked ? "true" : undefined}
       data-sidebar-row-focused={isSidebarRowFocused ? "true" : undefined}
-      data-sidebar-row-seam-accent={!compact && !isChannelCard && isSidebarRowSeamAccent ? "true" : undefined}
+      data-sidebar-row-seam-accent={!compact && isSidebarRowSeamAccent ? "true" : undefined}
       data-sidebar-text-drop-tag={textDropTag}
       className={cn(
         "group relative rounded-1",
-        isChannelCard && "mb-2 overflow-hidden border border-border bg-accent p-2 last:mb-0",
         className,
       )}
     >
@@ -959,12 +647,7 @@ function SidebarRowBody({
   count,
   cards,
   previewKeyPrefix,
-  onPreviewEnter,
-  onPreviewLeave,
-  onPreviewClick,
-  onPreviewTriggerRef,
   compact,
-  channelDisplayMode,
   isCurrentRoute,
   isDragging = false,
   isDropDragging = false,
@@ -979,12 +662,7 @@ function SidebarRowBody({
   count: number;
   cards: PreviewCard[];
   previewKeyPrefix: string;
-  onPreviewEnter: (target: SidebarPreviewTarget) => void;
-  onPreviewLeave: () => void;
-  onPreviewClick: (target: SidebarPreviewTarget) => void;
-  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
   compact?: boolean;
-  channelDisplayMode: ChannelDisplayMode;
   isCurrentRoute: boolean;
   isDragging?: boolean;
   isDropDragging?: boolean;
@@ -996,7 +674,6 @@ function SidebarRowBody({
     onToggle: () => void;
   };
 }) {
-  const isChannelCard = channelDisplayMode === "card";
   const isLinkEditor = !!linkEditor;
   const handleNavLinkClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
     if (isDragging || isDropDragging) {
@@ -1016,96 +693,6 @@ function SidebarRowBody({
     onDoubleClick();
   } : undefined;
 
-  if (isChannelCard && !compact) {
-    return (
-      <div className="flex flex-col gap-2 font-sans text-base text-muted-foreground">
-        <NavLink
-          to={to}
-          end={end}
-          draggable="false"
-          onClick={handleNavLinkClick}
-          onDoubleClick={handleNavLinkDoubleClick}
-          className="block"
-        >
-          <SidebarPreviewStrip
-            cards={cards}
-            previewKeyPrefix={previewKeyPrefix}
-            onPreviewEnter={onPreviewEnter}
-            onPreviewLeave={onPreviewLeave}
-            onPreviewClick={onPreviewClick}
-            onPreviewTriggerRef={onPreviewTriggerRef}
-            stacked
-            allowHoverPreview
-          />
-        </NavLink>
-        <div className="flex items-center gap-2">
-          <NavLink
-            to={to}
-            end={end}
-            draggable="false"
-            onClick={handleNavLinkClick}
-            onDoubleClick={handleNavLinkDoubleClick}
-            className="min-w-0 flex flex-1 items-center gap-2"
-          >
-            <span
-              data-sidebar-row-text=""
-              className="truncate"
-            >
-              {label}
-            </span>
-            <span
-              className="shrink-0 font-mono text-sm text-muted-foreground"
-              data-sidebar-row-text=""
-            >
-              {count || ""}
-            </span>
-          </NavLink>
-          <div
-            data-sidebar-card-action-slot=""
-            className="flex h-6 w-[10ch] shrink-0 items-center justify-end"
-          >
-            {linkEditor ? (
-              <button
-                type="button"
-                data-sidebar-link-action
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  linkEditor.onToggle();
-                }}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                onKeyDown={(event) => {
-                  event.stopPropagation();
-                }}
-                className={cn(
-                  "inline-flex h-6 w-[10ch] shrink-0 cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
-                  linkEditor.checked
-                    ? "opacity-100"
-                    : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
-                )}
-                aria-label={`${linkEditor.checked ? "Disconnect" : "Connect"} ${label}`}
-              >
-                {linkEditor.checked ? (
-                  <>
-                    <span className="group-hover:hidden group-focus-within:hidden">Connected</span>
-                    <span className="hidden text-destructive group-hover:inline group-focus-within:inline">Disconnect</span>
-                  </>
-                ) : (
-                  "Connect"
-                )}
-              </button>
-            ) : (
-              <span aria-hidden="true" className="block h-6 w-[10ch] opacity-0" />
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <>
       <NavLink
@@ -1118,10 +705,10 @@ function SidebarRowBody({
           compact
             ? cn(
                 "flex w-full items-center gap-2 overflow-hidden text-base",
-                isChannelCard ? "rounded-[3px] px-[5px] py-[3px]" : "rounded-1 p-2",
+                "rounded-1 p-2",
                 "text-muted-foreground",
               )
-            : cn("relative flex items-center font-sans text-base text-muted-foreground", isChannelCard ? "h-8 rounded-[3px] px-[5px]" : "py-1")
+            : cn("relative flex items-center py-1 font-sans text-base text-muted-foreground")
         }
       >
         <span
@@ -1146,11 +733,6 @@ function SidebarRowBody({
             <SidebarPreviewStrip
               cards={cards}
               previewKeyPrefix={previewKeyPrefix}
-              onPreviewEnter={onPreviewEnter}
-              onPreviewLeave={onPreviewLeave}
-              onPreviewClick={onPreviewClick}
-              onPreviewTriggerRef={onPreviewTriggerRef}
-              allowHoverPreview={false}
             />
           </div>
         )}
@@ -1252,10 +834,6 @@ const NavItem = memo(function NavItem({
   count,
   cards = [],
   previewKeyPrefix,
-  onPreviewEnter,
-  onPreviewLeave,
-  onPreviewClick,
-  onPreviewTriggerRef,
   compact,
   end,
   onClick,
@@ -1263,17 +841,12 @@ const NavItem = memo(function NavItem({
   rowKey,
   isSidebarRowFocused,
   isSidebarRowSeamAccent,
-  channelDisplayMode,
 }: {
   to: string;
   label: string;
   count: number;
   cards?: PreviewCard[];
   previewKeyPrefix: string;
-  onPreviewEnter: (target: SidebarPreviewTarget) => void;
-  onPreviewLeave: () => void;
-  onPreviewClick: (target: SidebarPreviewTarget) => void;
-  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
   compact?: boolean;
   end?: boolean;
   onClick?: () => void;
@@ -1281,7 +854,6 @@ const NavItem = memo(function NavItem({
   rowKey: string;
   isSidebarRowFocused: boolean;
   isSidebarRowSeamAccent: boolean;
-  channelDisplayMode: ChannelDisplayMode;
 }) {
   const loc = useLocation();
   const isCurrentRoute = end ? loc.pathname === to : loc.pathname.startsWith(to);
@@ -1289,7 +861,6 @@ const NavItem = memo(function NavItem({
   return (
     <SidebarRowFrame
       compact={compact}
-      channelDisplayMode={channelDisplayMode}
       rowKey={rowKey}
       isCurrentRoute={isCurrentRoute}
       isSidebarRowFocused={isSidebarRowFocused}
@@ -1302,12 +873,7 @@ const NavItem = memo(function NavItem({
         count={count}
         cards={cards}
         previewKeyPrefix={previewKeyPrefix}
-        onPreviewEnter={onPreviewEnter}
-        onPreviewLeave={onPreviewLeave}
-        onPreviewClick={onPreviewClick}
-        onPreviewTriggerRef={onPreviewTriggerRef}
         compact={compact}
-        channelDisplayMode={channelDisplayMode}
         isCurrentRoute={isCurrentRoute}
         onClick={onClick}
         onSameClick={onSameClick}
@@ -1323,10 +889,6 @@ const TagNavItem = memo(function TagNavItem({
   tag,
   cards,
   previewKeyPrefix,
-  onPreviewEnter,
-  onPreviewLeave,
-  onPreviewClick,
-  onPreviewTriggerRef,
   compact,
   isDropDragging,
   isEditing,
@@ -1340,7 +902,6 @@ const TagNavItem = memo(function TagNavItem({
   rowKey,
   isSidebarRowFocused,
   isSidebarRowSeamAccent,
-  channelDisplayMode,
 }: {
   to: string;
   label: string;
@@ -1348,10 +909,6 @@ const TagNavItem = memo(function TagNavItem({
   tag: string;
   cards: PreviewCard[];
   previewKeyPrefix: string;
-  onPreviewEnter: (target: SidebarPreviewTarget) => void;
-  onPreviewLeave: () => void;
-  onPreviewClick: (target: SidebarPreviewTarget) => void;
-  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
   compact?: boolean;
   isDropDragging: boolean;
   isEditing: boolean;
@@ -1368,13 +925,11 @@ const TagNavItem = memo(function TagNavItem({
   rowKey: string;
   isSidebarRowFocused: boolean;
   isSidebarRowSeamAccent: boolean;
-  channelDisplayMode: ChannelDisplayMode;
 }) {
   const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const isLinkEditor = !!linkEditor;
   const isCurrentRoute = location.pathname === to || location.pathname.startsWith(`${to}/`);
-  const isChannelCard = channelDisplayMode === "card";
 
   const {
     setNodeRef,
@@ -1386,19 +941,13 @@ const TagNavItem = memo(function TagNavItem({
     isOver,
   } = useSortable({ id: `tag:${tag}` });
 
-  // Phase C virtualization (SPEC_THUMBNAILS.md §Virtualized Sidebar).
-  // `content-visibility: auto` is only valid for the legacy row layout.
-  // Card-mode rows are taller and use a different internal flow, so
-  // reusing the 42px intrinsic placeholder there causes WKWebView to
-  // produce unstable geometry and visible layout gaps.
-  //
   // Disabled while dragging onto tags so dnd-kit's
   // getBoundingClientRect calls on drop targets always return real
   // geometry instead of the intrinsic placeholder.
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    ...(!isChannelCard && !isDropDragging && !isDragging
+    ...(!isDropDragging && !isDragging
       ? {
           contentVisibility: "auto" as const,
           containIntrinsicSize: "auto 42px",
@@ -1423,7 +972,6 @@ const TagNavItem = memo(function TagNavItem({
         <ContextMenuTrigger asChild>
           <SidebarRowFrame
             compact={compact}
-            channelDisplayMode={channelDisplayMode}
             rowKey={rowKey}
             isCurrentRoute={isCurrentRoute}
             isLinked={linkEditor?.checked}
@@ -1446,12 +994,7 @@ const TagNavItem = memo(function TagNavItem({
               count={count}
               cards={cards}
               previewKeyPrefix={previewKeyPrefix}
-              onPreviewEnter={onPreviewEnter}
-              onPreviewLeave={onPreviewLeave}
-              onPreviewClick={onPreviewClick}
-              onPreviewTriggerRef={onPreviewTriggerRef}
               compact={compact}
-              channelDisplayMode={channelDisplayMode}
               isCurrentRoute={isCurrentRoute}
               isDragging={isDragging}
               isDropDragging={isDropDragging}
@@ -1497,73 +1040,25 @@ const TagNavItem = memo(function TagNavItem({
 function SidebarPreviewStrip({
   cards,
   previewKeyPrefix,
-  onPreviewEnter,
-  onPreviewLeave,
-  onPreviewClick,
-  onPreviewTriggerRef,
-  stacked = false,
-  allowHoverPreview = false,
 }: {
   cards: PreviewCard[];
   previewKeyPrefix: string;
-  onPreviewEnter: (target: SidebarPreviewTarget) => void;
-  onPreviewLeave: () => void;
-  onPreviewClick: (target: SidebarPreviewTarget) => void;
-  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
-  stacked?: boolean;
-  allowHoverPreview?: boolean;
 }) {
   return (
     <div
       data-sidebar-thumbnail-strip=""
-      data-sidebar-preview-fade-width={stacked ? undefined : String(SIDEBAR_PREVIEW_MASK_FADE_WIDTH)}
-      data-sidebar-preview-protected-width={stacked ? undefined : String(SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH)}
-      className={cn(
-        "flex h-8 items-end gap-1 overflow-hidden",
-        stacked ? "w-full" : "min-w-0 flex-1",
-      )}
-      style={stacked ? undefined : SIDEBAR_PREVIEW_MASK_STYLE}
+      data-sidebar-preview-fade-width={String(SIDEBAR_PREVIEW_MASK_FADE_WIDTH)}
+      data-sidebar-preview-protected-width={String(SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH)}
+      className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden"
+      style={SIDEBAR_PREVIEW_MASK_STYLE}
     >
       {cards.map((card, index) => {
         const previewKey = `${previewKeyPrefix}:${card.slug ?? index}:${index}`;
-        const canPreview = allowHoverPreview
-          && card.hasThumb
-          && !!card.slug;
         return (
           <div
             key={previewKey}
-            ref={(node) => {
-              if (canPreview) {
-                onPreviewTriggerRef(previewKey, node);
-              }
-            }}
-            className={cn(
-              "size-8 shrink-0 overflow-hidden bg-accent",
-              canPreview &&
-                "cursor-pointer outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
-            )}
-            onMouseEnter={() => {
-              if (card.slug && canPreview) {
-                onPreviewEnter({ key: previewKey, slug: card.slug });
-              }
-            }}
-            onMouseLeave={() => {
-              if (canPreview) {
-                onPreviewLeave();
-              }
-            }}
-            onClick={(event) => {
-              if (!card.slug || !canPreview) return;
-              event.preventDefault();
-              event.stopPropagation();
-              onPreviewClick({ key: previewKey, slug: card.slug });
-            }}
-            onPointerDown={(event) => {
-              if (canPreview) {
-                event.stopPropagation();
-              }
-            }}
-            data-sidebar-preview-thumbnail={canPreview ? "trigger" : "placeholder"}
+            className="size-8 shrink-0 overflow-hidden bg-accent"
+            data-sidebar-preview-thumbnail="placeholder"
           >
             {card.hasThumb && (
               <img

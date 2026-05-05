@@ -80,54 +80,6 @@ describe("Sidebar", () => {
     expect(screen.getByText("10")).toHaveClass("-translate-x-px");
   });
 
-  it("renders channels as discrete cards when card display mode is enabled", () => {
-    const previews = new Map([
-      ["__all__", [{ url: "asset://localhost/thumbs/all-a.jpg", text: false, hasThumb: true }]],
-      ["alpha", [{ url: "asset://localhost/thumbs/alpha-a.jpg", text: false, hasThumb: true }]],
-    ]);
-    const { container } = renderSidebar({
-      ...defaultProps,
-      width: 600,
-      channelDisplayMode: "card",
-      channelPreviews: previews,
-    });
-
-    const everythingRow = container.querySelector('[data-sidebar-row-key="all"]')!;
-    const everythingLink = screen.getByRole("link", { name: /Everything/ });
-    const alphaRow = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
-    const alphaLink = screen.getByRole("link", { name: /Alpha/ });
-    const strips = container.querySelectorAll("[data-sidebar-thumbnail-strip]");
-    const alphaActionSlot = alphaRow.querySelector("[data-sidebar-card-action-slot]")!;
-
-    expect(everythingRow).not.toHaveAttribute("data-sidebar-row-surface");
-    expect(everythingRow).toHaveClass("border");
-    expect(everythingRow).toHaveClass("border-border");
-    expect(everythingRow).toHaveClass("bg-accent");
-    expect(everythingRow).toHaveClass("p-2");
-    expect(everythingRow).toHaveClass("mb-2");
-    expect(everythingLink).toHaveClass("flex-1");
-    expect(everythingLink).toHaveClass("items-center");
-    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-surface");
-    expect(alphaRow).toHaveClass("border");
-    expect(alphaRow).toHaveClass("border-border");
-    expect(alphaRow).toHaveClass("bg-accent");
-    expect(alphaRow).toHaveClass("p-2");
-    expect(alphaRow).toHaveClass("mb-2");
-    expect(alphaRow.style.contentVisibility).toBe("");
-    expect(alphaRow.style.containIntrinsicSize).toBe("");
-    expect(alphaLink).toHaveClass("flex-1");
-    expect(alphaLink).toHaveClass("items-center");
-    expect(strips[0]).toHaveClass("w-full");
-    expect(strips[1]).toHaveClass("w-full");
-    expect(alphaActionSlot).toHaveClass("w-[10ch]");
-    expect(alphaActionSlot).toHaveClass("justify-end");
-    expect(alphaActionSlot.querySelector("button")).toBeNull();
-
-    fireEvent.pointerMove(alphaRow);
-    expect(everythingRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
-    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
-  });
-
   it("keeps rows muted by default while selected and focused rows use the bright sidebar state", () => {
     const { container } = renderSidebar({ ...defaultProps, width: 600 }, ["/channel/alpha"]);
 
@@ -429,70 +381,6 @@ describe("Sidebar", () => {
     expect(rightDivider).toHaveStyle({ right: "88px" });
     expect(strip).toHaveAttribute("data-sidebar-preview-fade-width", "24");
     expect(strip).toHaveAttribute("data-sidebar-preview-protected-width", "92");
-  });
-
-  it("enables thumbnail hover preview triggers only in card mode", () => {
-    const previews = new Map([
-      ["__all__", [{
-        url: "asset://localhost/thumbs/all-a.jpg",
-        text: false,
-        hasThumb: true,
-        slug: "all-a",
-      }]],
-      ["alpha", [{
-        url: "asset://localhost/thumbs/alpha-a.jpg",
-        text: false,
-        hasThumb: true,
-        slug: "alpha-a",
-      }]],
-    ]);
-    const { container } = renderSidebar({
-      ...defaultProps,
-      width: 600,
-      channelDisplayMode: "card",
-      channelPreviews: previews,
-    });
-
-    const thumbnails = container.querySelectorAll("[data-sidebar-preview-thumbnail]");
-    expect(thumbnails[0]).toHaveAttribute("data-sidebar-preview-thumbnail", "trigger");
-    expect(thumbnails[1]).toHaveAttribute("data-sidebar-preview-thumbnail", "trigger");
-  });
-
-  it("places card-mode link actions in the trailing slot of the title row", async () => {
-    const props = {
-      ...defaultProps,
-      width: 600,
-      channelDisplayMode: "card",
-      linkedBlockSlug: "open-block",
-      linkedTags: ["alpha"],
-      onToggleLinkedTag: vi.fn(),
-    };
-    const { container, rerender } = renderSidebar(props);
-
-    const alphaLink = screen.getByRole("link", { name: /Alpha/ });
-    const alphaAction = screen.getByRole("button", { name: "Disconnect Alpha" });
-    const alphaActionSlot = container.querySelector('[data-sidebar-row-key="tag:alpha"] [data-sidebar-card-action-slot]')!;
-    await waitFor(() => {
-      expect(alphaAction).toHaveClass("opacity-100");
-    });
-    expect(alphaLink).toHaveClass("flex-1");
-    expect(alphaLink).toHaveClass("items-center");
-    expect(alphaAction).not.toHaveClass("absolute");
-    expect(alphaAction).toHaveClass("shrink-0");
-    expect(alphaActionSlot).toHaveClass("w-[10ch]");
-    expect(alphaActionSlot).toHaveClass("justify-end");
-    expect(alphaAction.parentElement).toBe(alphaActionSlot);
-    expect(alphaAction.closest("a")).toBeNull();
-
-    rerender(sidebarTree({
-      ...props,
-      linkedBlockSlug: undefined,
-      linkedTags: [],
-    }));
-    const collapsedSlot = container.querySelector('[data-sidebar-row-key="tag:alpha"] [data-sidebar-card-action-slot]')!;
-    expect(collapsedSlot).toHaveClass("w-[10ch]");
-    expect(collapsedSlot).toHaveClass("justify-end");
-    expect(collapsedSlot.querySelector("button")).toBeNull();
   });
 
   it("filters link editor to linked channels", () => {

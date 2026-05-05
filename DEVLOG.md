@@ -1,5 +1,34 @@
 # Devlog
 
+## 05.05.2026 08:28 -03 [primary] — Remove Channels card display experiment
+
+### Goal
+
+Убрать неудачный эксперимент `Channels: Cards` и вернуть sidebar к одному
+стабильному row-контракту без альтернативного display mode в Settings.
+
+### Completed
+
+- Удалён persisted `channelDisplayMode` contract из `appPreferences`.
+- Settings больше не показывает `Channels: Rows / Cards`; остались theme и
+  article menu mode.
+- `Sidebar` больше не принимает display mode и всегда рендерит table-like rows
+  с общими vertical guidelines, row seams, preview fade и absolute
+  `Connect`/`Disconnect` action overlay.
+- Удалена card-mode ветка `SidebarRowBody`, card shell, trailing
+  `data-sidebar-card-action-slot`, stacked strip path и sidebar thumbnail
+  hover-preview popup path.
+- Thumbnail strip в sidebar остаётся визуальным: миниатюры не становятся
+  interactive triggers и не открывают Detail по клику.
+- Обновлены контракты в [SPEC_FRONTEND.md](SPEC_FRONTEND.md),
+  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) и [PLAN.md](PLAN.md).
+
+### Verification
+
+- `bun run test:frontend src/components/Sidebar.test.tsx` — passed (`18/18`).
+- `bun run build` — passed.
+- `bun run lint` — passed.
+
 ## 04.05.2026 18:32 -03 [primary] — Sidebar display modes and row geometry contracts
 
 ### Goal

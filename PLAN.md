@@ -402,7 +402,7 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.21 | Grid: делегирование ContextMenu (O(N)→O(1)) + синхронный сброс visibleCount + исправление скролла контекстного меню + hover сайдбара | [x] |
 | 7.22 | Визуальная стилизация: overlay titlebar + drag region, Geist Sans (UI) + Geist Mono (карточки, метаданные), острые карточки без заливки, GAP 32px, sidebar без заголовка с градиентным fade | [x] |
 | 7.23 | Иконки каналов в sidebar: стопка из 1–3 мини-карточек с реальными превью, веерная анимация при ховере | [x] |
-| 7.23.1 | Sidebar thumbnail hover preview: outline конкретной миниатюры, click opens block, `slug -> IndexedBlock`, interactive actions, down/up placement, без fake preview; temporarily disabled behind feature flag | [~] |
+| 7.23.1 | Sidebar thumbnail hover preview experiment removed together with Channels Cards; row thumbnail strip remains visual-only and non-interactive | [x] |
 | 7.24 | Fullscreen Detail: двухслойный layout (scroll + fixed metadata), Geist Mono, top menu modes (`Classic` / `Island`), filename drag handle в sidebar | [x] |
 | 7.24.1 | Membership actions: sidebar link-editor + CollectionPicker use `Connected` always, hover `Connect`/`Disconnect`, no checkbox | [x] |
 | 7.24.2 | Sidebar row edge alignment: no inner horizontal row padding, right counts monospace, action buttons flush to row edge, 1px optical text compensation | [x] |

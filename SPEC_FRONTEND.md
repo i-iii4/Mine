@@ -256,9 +256,9 @@ Vault-пикер — не маршрут, а состояние: если `vault
 
 ### Sidebar
 
-Display mode persists in local preferences via `channelDisplayMode`:
-- `Rows` — default table-like sidebar
-- `Cards` — alternative channel card layout for non-compact sidebar only
+Sidebar uses one table-like row contract in both compact and non-compact
+layouts. The earlier experimental `Cards` display mode was removed; Settings
+must not expose a channel display-mode selector.
 
 Обычный режим:
 1. Пункт `Everything` — навигация на `/`
@@ -382,49 +382,9 @@ tail перед левой направляющей. Title slot остаётся
 `min-w-[100px] max-w-[150px] flex-1`: пока хватает места, сначала сужается
 preview strip, и только после этого начинает ужиматься текстовая колонка.
 
-Альтернативный `Cards`-mode применяется только в non-compact sidebar. В этом
-режиме и `Everything`, и каналы используют один и тот же card shell:
-`border border-border bg-accent p-2 mb-2`, без shared seam separators и без
-row focus-mode seam accent. Внутри карточки:
-1. верхняя строка — stacked thumbnail strip (`w-full`) без row-mode mask;
-2. нижняя строка — `title + count` слева и отдельный trailing action slot
-   `w-[10ch]` справа;
-3. `Connect/Connected/Disconnect` живёт в том же trailing slot, не меняя
-   геометрию карточки при открытии Detail.
-В card-mode hover preview на миниатюрах включён: trigger'ом является сама
-миниатюра, а не вся строка.
-
 **Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время любого drag-to-channel (`isDropDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию и hover-ring работал одинаково для карточек и inline-media. `SortableContext` получает полный список channels IDs независимо от видимости.
 
 **Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`), а не через polling `listChannelPreviews`. Initial state грузится один раз при mount через `listChannelPreviews(20)`, потом инкрементально патчится `useChannelPreviewsEvents` hook'ом. Latency add block → visible in sidebar: ~110ms (native host write + watcher debounce + IPC event + React update). Cache-bust: initial load использует `?m=<mtime>` (unix timestamp thumb-файла из Rust `stat()`), real-time updates используют `?v=<counter>` (per-slug version counter, инкрементируется на `thumb:updated`). Два механизма дополняют друг друга: `?m=` покрывает межсессионные изменения (Phase 2 worker перезаписал PNG→JPEG), `?v=` покрывает live-обновления внутри сессии.
-
-**Sidebar thumbnail hover preview.** Миниатюры внутри thumbnail strip в левой
-части экрана являются отдельными preview triggers. Это не markdown inline
-images и не `RELATED NOTES`. Hover применяется к конкретной `size-8`
-миниатюре: `outline-component-fill-hover`, `outline-1`, `-outline-offset-1`,
-без изменения layout. Preview показывается только если `PreviewCard` содержит
-реальный `slug`; frontend загружает `IndexedBlock` через `getBlock(slug)` и
-рендерит существующий `InteractiveCardPreview`. Фальшивая карточка из одного
-thumbnail URL недопустима. Outline появляется сразу, а сам popup открывается
-только после hover-intent delay `160ms`; уход курсора с миниатюры отменяет
-pending open. Popup использует тот же interactive feed-card contract, что и
-другие hover previews: `rounded-1`, hover overlay, actions `Source`,
-`Connect`, `More`, и click по preview открывает block detail. Surface sidebar
-popup использует лёгкую серую заливку `dark:bg-accent` только в тёмной теме; в
-светлой теме остаётся `bg-background`, потому что shadow уже отделяет popup от
-canvas. Между thumbnail и popup есть hover bridge;
-interaction с actions закрепляет popup до outside click. Popup привязан к
-DOM-геометрии конкретной миниатюры: раскрывается вниз, если хватает
-вертикального места, иначе вверх, с viewport margin. Click по миниатюре
-открывает Detail именно этого block slug, а не навигацию строки канала.
-Placeholder thumbnail без `slug` может получать обычный визуальный thumbnail
-slot, но не interactive preview.
-
-Temporary state: this block remains implemented but disabled behind
-`SIDEBAR_THUMBNAIL_HOVER_PREVIEW_ENABLED = false`. While disabled, thumbnails
-remain visible in the strip but do not show trigger outline, do not open popup
-preview cards, and do not open Detail on thumbnail click. Do not delete the
-implementation; it is intentionally gated for later return.
 
 **Main sidebar top inset.** На главной sidebar использует `pt-20` прямо на
 `data-sidebar-scroll`. Не создавать отдельную пустую header surface для

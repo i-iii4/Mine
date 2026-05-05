@@ -91,11 +91,8 @@ import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
 import { findBlockElement } from "@/lib/domSelectors";
 import {
-  getStoredChannelDisplayMode,
   getStoredDetailTopMenuMode,
-  storeChannelDisplayMode,
   storeDetailTopMenuMode,
-  type ChannelDisplayMode,
   type DetailTopMenuMode,
 } from "@/lib/appPreferences";
 import { pushRecentTag } from "@/lib/recentTags";
@@ -332,9 +329,6 @@ export function AppWithVault({
   const [deletePlanError, setDeletePlanError] = useState<string | null>(null);
   const [detailTopMenuMode, setDetailTopMenuMode] = useState<DetailTopMenuMode>(
     getStoredDetailTopMenuMode,
-  );
-  const [channelDisplayMode, setChannelDisplayMode] = useState<ChannelDisplayMode>(
-    getStoredChannelDisplayMode,
   );
   const [detailChromeClosing, setDetailChromeClosing] = useState(false);
   const [closingDetailBlock, setClosingDetailBlock] = useState<LightBlock | IndexedBlock | null>(null);
@@ -1202,11 +1196,6 @@ export function AppWithVault({
     storeDetailTopMenuMode(mode);
   }, []);
 
-  const handleChannelDisplayModeChange = useCallback((mode: ChannelDisplayMode) => {
-    setChannelDisplayMode(mode);
-    storeChannelDisplayMode(mode);
-  }, []);
-
   const handleOpenRelatedNote = useCallback((slug: string) => {
     const blockAnchor = relatedNoteBlockAnchor(slug);
     void getBlock(baseRelatedNoteSlug(slug)).then((block) => {
@@ -1732,10 +1721,6 @@ export function AppWithVault({
         width={sidebarWidth}
         collapsed={sidebarCollapsed}
         isResizing={sidebarResizing}
-        vaultPath={vaultPath}
-        thumbsRootPath={thumbsRootPath ?? undefined}
-        tags={tags}
-        currentTag={currentTag}
         orderedTags={orderedTags}
         channelPreviews={channelPreviews}
         totalBlocks={totalBlocks}
@@ -1749,11 +1734,6 @@ export function AppWithVault({
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}
         onCreateChannel={handleCreateChannel}
-        onOpenBlock={openDetailBlock}
-        onToggleTag={handleToggleTag}
-        onCreateAndAssign={handleCreateTagFromMenu}
-        onRequestRename={setRenamingBlock}
-        onRequestDelete={requestDeleteBlock}
         onNavClick={handleDetailClose}
         onScrollToTop={handleScrollToTop}
         keyboardNavigationFocus={sidebarKeyboardNavigationFocus}
@@ -1762,7 +1742,6 @@ export function AppWithVault({
         linkedTags={renderedLinkedTags}
         onToggleLinkedTag={handleToggleTag}
         detailTopMenuMode={detailTopMenuMode}
-        channelDisplayMode={channelDisplayMode}
         detailChromeClosing={detailChromeClosing}
       />
 
@@ -1935,9 +1914,7 @@ export function AppWithVault({
         <ThemeMenuButton
           ref={themeMenuRef}
           detailTopMenuMode={detailTopMenuMode}
-          channelDisplayMode={channelDisplayMode}
           onDetailTopMenuModeChange={handleDetailTopMenuModeChange}
-          onChannelDisplayModeChange={handleChannelDisplayModeChange}
         />
         <ActionButton
           onClick={() => setDesignSystemOpen((v) => !v)}
