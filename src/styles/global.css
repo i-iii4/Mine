@@ -34,8 +34,9 @@
   --tw-prose-td-borders: var(--border);
 }
 
-/* Prevent native image drag — avoids false DropZone activation */
-img {
+/* Prevent native media drag — avoids false DropZone activation */
+img,
+video {
   -webkit-user-drag: none;
 }
 
@@ -45,10 +46,28 @@ img {
   border-radius: var(--radius-media);
 }
 
-/* Prevent text selection on interactive elements (native app feel) */
+/* Native selection policy: app chrome is non-selectable; article prose opts in. */
+body,
 button,
 [role="button"],
-nav {
+nav,
+[data-tauri-drag-region] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"],
+[data-article-body],
+[data-article-body] * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+[data-article-body] button,
+[data-article-body] [role="button"] {
   -webkit-user-select: none;
   user-select: none;
 }

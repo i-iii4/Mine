@@ -199,6 +199,7 @@ export function FeedVideoSurface({
           autoPlay
           loop
           muted
+          draggable={false}
           playsInline
           preload="metadata"
           onLoadedData={() => {
@@ -243,6 +244,7 @@ export function FeedVideoSurface({
           autoPlay
           loop
           muted
+          draggable={false}
           playsInline
           preload="metadata"
           onLoadedData={() => {

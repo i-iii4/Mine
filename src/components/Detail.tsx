@@ -913,6 +913,7 @@ function RelatedNotesSection({
                     src={thumbnailUrl(resolvedThumbsRoot, relatedBlock.slug)}
                     className="size-8 object-cover"
                     loading="lazy"
+                    draggable={false}
                     onError={(event) => {
                       event.currentTarget.style.display = "none";
                     }}
@@ -1063,6 +1064,7 @@ function BlockContent({
             src={src}
             alt={navigationLabel}
             className="max-h-[85vh] object-contain"
+            draggable={false}
           />
         </div>
       );
@@ -1078,6 +1080,7 @@ function BlockContent({
               src={src}
               alt=""
               className="h-full w-full object-contain"
+              draggable={false}
               onError={(e) => {
                 (e.target as HTMLImageElement).style.display = "none";
               }}
@@ -1130,7 +1133,7 @@ function BlockContent({
                 allowFullScreen
               />
             ) : localSrc ? (
-              <video controls className="max-h-[85vh]">
+              <video controls className="max-h-[85vh]" draggable={false}>
                 <source src={localSrc} />
               </video>
             ) : (

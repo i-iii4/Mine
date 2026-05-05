@@ -87,6 +87,7 @@ export function VideoFromBlob({
         autoPlay={autoPlay}
         loop={loop}
         muted={muted}
+        draggable={false}
         playsInline
         preload={preload}
         onLoadedData={() => {
@@ -103,7 +104,7 @@ export function VideoFromBlob({
   }
 
   if (error || !blobUrl) {
-    return <video className={className} controls={controls} playsInline preload={preload} />;
+    return <video className={className} controls={controls} draggable={false} playsInline preload={preload} />;
   }
 
   return (
@@ -114,6 +115,7 @@ export function VideoFromBlob({
       autoPlay={autoPlay}
       loop={loop}
       muted={muted}
+      draggable={false}
       playsInline
       preload={preload}
     />

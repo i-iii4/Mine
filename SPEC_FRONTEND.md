@@ -132,6 +132,21 @@ the WebView, including selected text extraction drags, must not show the `Drop
 files to add` overlay. While the overlay is visible, `Escape` cancels the
 overlay state without importing anything.
 
+## Native selection policy
+
+Mine runs as a native-feeling WebKit app, so app chrome must not expose random
+blue system selection rectangles while the user drags across the toolbar,
+sidebar, feed cards, metadata rail, hover previews, or media surfaces.
+`global.css` disables `user-select` at the app level and disables native
+image/video drag. Only editable controls (`input`, `textarea`, `select`,
+`contenteditable`) and Detail article prose (`[data-article-body]`) opt back
+into text selection.
+
+Detail article text remains the only non-editable reading surface where native
+selection is expected. Inline media extraction surfaces inside that prose opt
+back out while they are draggable, so image extraction uses Mine's pointer
+drag path rather than WebKit's native image drag.
+
 ## Text selection extraction
 
 Detail article body supports sending a selected text range to a concrete

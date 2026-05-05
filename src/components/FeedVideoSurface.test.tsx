@@ -47,7 +47,7 @@ describe("FeedVideoSurface", () => {
       />,
     );
     expect(container.querySelector("video")).toBeNull();
-    expect(container.querySelector("img")).toBeInTheDocument();
+    expect(container.querySelector("img")).toHaveAttribute("draggable", "false");
     expect(container.querySelector("[data-feed-video-phase='poster']")).toBeTruthy();
   });
 
@@ -64,6 +64,7 @@ describe("FeedVideoSurface", () => {
 
     const video = container.querySelector("video");
     expect(video).toHaveAttribute("src", "asset://localhost//tmp/vault/demo.mp4");
+    expect(video).toHaveAttribute("draggable", "false");
 
     await act(async () => {
       fireEvent.loadedData(video!);

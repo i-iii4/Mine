@@ -1068,6 +1068,7 @@ function SidebarPreviewStrip({
                   card.text ? "dark:invert" : "rounded-none",
                 )}
                 loading="lazy"
+                draggable={false}
               />
             )}
           </div>

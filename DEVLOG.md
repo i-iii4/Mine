@@ -1,5 +1,31 @@
 # Devlog
 
+## 05.05.2026 09:37 -03 [primary] — Suppress accidental native selection in app chrome
+
+### Goal
+
+Убрать случайные синие WebKit selection rectangles при drag/pointer gestures
+по toolbar, sidebar, grid cards, preview/media surfaces и metadata chrome,
+не ломая нормальное выделение текста в Detail article body.
+
+### Completed
+
+- `global.css` получил app-level native selection policy: интерфейс по
+  умолчанию non-selectable, а editable controls и `[data-article-body]`
+  opt-in обратно в native text selection.
+- Native image/video drag подавлен на CSS-уровне для `img` и `video`.
+- Feed/card/sidebar/detail media elements и video surfaces явно рендерятся с
+  `draggable={false}`, чтобы WebKit не запускал собственный HTML5 media drag.
+- Обновлены контракты в [SPEC_FRONTEND.md](SPEC_FRONTEND.md),
+  [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) и [PLAN.md](PLAN.md).
+
+### Verification
+
+- `bun run test:frontend src/components/Card.test.tsx src/components/FeedVideoSurface.test.tsx src/components/Detail.test.tsx src/components/Sidebar.test.tsx` — passed (`85/85`).
+- `bun run build` — passed.
+- `bun run lint` — passed.
+- `git diff --check` — clean.
+
 ## 05.05.2026 08:28 -03 [primary] — Remove Channels card display experiment
 
 ### Goal

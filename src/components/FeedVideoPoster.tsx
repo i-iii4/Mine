@@ -48,6 +48,7 @@ export function FeedVideoPoster({
       alt={alt}
       className={className}
       loading={loading}
+      draggable={false}
       onError={() => {
         const next = index + 1;
         if (next < candidates.length) {

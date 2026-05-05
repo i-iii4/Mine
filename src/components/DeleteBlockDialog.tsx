@@ -160,6 +160,7 @@ function DeleteMediaPreviewGrid({
               poster={thumbnailUrl(resolvedThumbsRoot, blockSlug)}
               className="size-full object-cover"
               muted
+              draggable={false}
               playsInline
               preload="metadata"
             />

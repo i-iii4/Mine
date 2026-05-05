@@ -119,6 +119,7 @@ describe("Card", () => {
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const img = screen.getByRole("img");
     expect(img).toHaveAttribute("src", expect.stringContaining("sunset.jpg"));
+    expect(img).toHaveAttribute("draggable", "false");
     expect(img).not.toHaveAttribute("src", expect.stringContaining("/.arena/cache/thumbs/"));
   });
 
@@ -389,6 +390,7 @@ describe("Card", () => {
     const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const img = container.querySelector("img");
     expect(img).toBeTruthy();
+    expect(img).toHaveAttribute("draggable", "false");
     expect(img).toHaveAttribute(
       "src",
       expect.stringContaining(`${VAULT}/tweet-photo.jpg`),

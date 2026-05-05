@@ -136,6 +136,7 @@ Goal: устранить две подтверждённые архитекту�
   - sync IPC и asset-serving main-thread hotspots из trace/sample выведены из critical path;
   - generation-safe masonry rewrite внедрён: `layoutGenerationKey`, generation-aware height/layout cache, `committed` prefix и skeleton-only provisional mode;
   - на живом `Mine` подтверждено, что системная обрезка низа и white-tail underflow больше не воспроизводятся;
+  - app-level native selection suppression добавлен для chrome/feed/sidebar/media surfaces, при этом Detail article prose сохраняет системное выделение для extraction/`Cmd+C`;
   - оставшийся scope `C3` — `source_stamp` invalidation и финальный profiling gate, а не height correctness.
 - `C5` выполнен частично:
   - введён explicit backend-derived `feed_playback` contract для desktop feed autoplay;

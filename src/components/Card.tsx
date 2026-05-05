@@ -356,6 +356,7 @@ function GalleryTileImage({
       alt=""
       className="absolute inset-0 h-full w-full object-cover"
       loading={loading}
+      draggable={false}
       onError={() => {
         if (sourceSrc && src !== sourceSrc) {
           setSrc(sourceSrc);
@@ -543,6 +544,7 @@ const ImageCard = memo(function ImageCard({
           alt={navigationLabel}
           className="absolute inset-0 h-full w-full object-cover"
           loading={imgLoading}
+          draggable={false}
           onError={() => setSourceIndex((i) => i + 1)}
         />
       )}
@@ -620,6 +622,7 @@ const LinkCard = memo(function LinkCard({
               thumbLoaded ? "opacity-100" : "opacity-0",
             )}
             loading={imgLoading}
+            draggable={false}
             onLoad={() => setThumbLoaded(true)}
             onError={() => setThumbError(true)}
           />
@@ -843,6 +846,7 @@ const ArticleCard = memo(function ArticleCard({
               alt=""
               className="absolute inset-0 h-full w-full object-cover"
               loading={imgLoading}
+              draggable={false}
             />
           )}
           {rendersFeedVideo && !shouldAutoplayVideo && <PlayBadge />}

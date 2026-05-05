@@ -177,6 +177,15 @@ typography must stay inside the 12/14/18px design-system scale.
 
 Не используется. Hover достаточен для обратной связи.
 
+### Native selection
+
+Mine chrome is non-selectable by default: toolbar, sidebar, feed cards,
+metadata rail, hover previews, buttons, images, and videos must not show the
+blue WebKit selection overlay during pointer drags. The only non-editable
+surface that opts back into native text selection is Detail article prose
+(`[data-article-body]`), because text-selection extraction and `Cmd+C` depend
+on the system selection.
+
 ### Selected (активный пункт сайдбара)
 
 Sidebar navigation rows do not render a selected background. The active route
