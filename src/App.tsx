@@ -29,6 +29,11 @@ function titleFromTag(tag: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+function spaceTitleFromPath(path: string): string {
+  const normalized = path.replace(/\/+$/, "");
+  return normalized.split("/").pop() || path;
+}
+
 function baseRelatedNoteSlug(target: string): string {
   return target.split("#", 1)[0] ?? target;
 }
@@ -320,6 +325,7 @@ export function AppWithVault({
   const [designSystemOpen, setDesignSystemOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
+  const spaceTitle = useMemo(() => spaceTitleFromPath(vaultPath), [vaultPath]);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlockAnchor, setSelectedBlockAnchor] = useState<string | null>(null);
@@ -1730,6 +1736,7 @@ export function AppWithVault({
           || activeDragTextSelection !== null
         }
         isCreatingChannel={isCreatingChannel}
+        spaceTitle={spaceTitle}
         onSetCreatingChannel={setIsCreatingChannel}
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}

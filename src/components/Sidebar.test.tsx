@@ -19,6 +19,7 @@ const defaultProps = {
   totalBlocks: 17,
   isDropDragging: false,
   isCreatingChannel: false,
+  spaceTitle: "Mine",
   onSetCreatingChannel: vi.fn(),
   onDeleteTag: vi.fn(),
   onRenameTag: vi.fn(),
@@ -200,7 +201,7 @@ describe("Sidebar", () => {
     expect(onTextSelectionDrop).not.toHaveBeenCalled();
   });
 
-  it("keeps the main sidebar top inset on the scroll container without a fixed empty header slot", () => {
+  it("renders the space title before the sidebar list with the 80px rhythm", () => {
     function EmptySlot() {
       return null;
     }
@@ -211,7 +212,12 @@ describe("Sidebar", () => {
     });
 
     const nav = container.querySelector("[data-sidebar-scroll]");
+    const title = container.querySelector("[data-sidebar-space-title]");
+    const rows = container.querySelector("[data-sidebar-rows]");
     expect(nav).toHaveClass("pt-20");
+    expect(title).toHaveTextContent("Mine");
+    expect(title).toHaveClass("text-lg", "leading-6", "font-semibold");
+    expect(rows).toHaveClass("mt-20");
     expect(container.querySelector("aside")?.firstElementChild).toBe(nav);
   });
 

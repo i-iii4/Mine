@@ -412,11 +412,28 @@ describe("Grid — no collapse after add / revisit", () => {
     await flushAsync();
 
     const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
+    const headerEl = document.querySelector("[data-grid-channel-header]") as HTMLElement | null;
+    const titleEl = document.querySelector("[data-grid-current-channel-title]") as HTMLElement | null;
     const layoutEl = document.querySelector("[data-grid-layout]") as HTMLElement | null;
     expect(scrollEl).toBeTruthy();
+    expect(headerEl).toBeTruthy();
+    expect(titleEl).toHaveTextContent("Top-inset");
     expect(layoutEl).toBeTruthy();
     expect(scrollEl).not.toHaveClass("pt-20");
+    expect(headerEl?.style.paddingTop).toBe("80px");
     expect(layoutEl?.style.marginTop).toBe("80px");
+  });
+
+  it("labels the all-blocks route as Everything above the feed", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(8101)];
+    setBlockHeight(8101, 200);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    expect(document.querySelector("[data-grid-current-channel-title]")).toHaveTextContent("Everything");
   });
 
   it("keeps the first paint skeleton-only until the current generation is measured", async () => {

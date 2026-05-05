@@ -53,7 +53,8 @@ const INITIAL_COMMIT_BLOCKS = 24;
 const COMMIT_LOOKAHEAD_BLOCKS = 24;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
-const GRID_TOP_INSET_PX = 80;
+const GRID_TITLE_TOP_INSET_PX = 80;
+const GRID_CONTENT_TOP_INSET_PX = 80;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -91,6 +92,13 @@ interface GridContext {
 }
 
 type GridPhase = "provisional" | "measuring" | "committed";
+
+/** Convert a collection ref to a compact display title. */
+function titleFromTag(tag: string): string {
+  const parts = tag.split("/");
+  const label = (parts[parts.length - 1] ?? tag).trim();
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
 
 // ─── Layout cache (module-level, persists across channel switches) ─────────
 
@@ -607,6 +615,7 @@ export function Grid({
       handleRequestDelete,
     ],
   );
+  const currentChannelTitle = currentTag ? titleFromTag(currentTag) : "Everything";
 
   return (
     <ContextMenu>
@@ -623,36 +632,51 @@ export function Grid({
           }}
           data-grid-scroll
         >
-          {parentWidth > 0 && blocks.length > 0 && (
-            <VirtualMasonryLayout
-              key={generationKey}
-              blocks={blocks}
-              visibleItems={visibleItems}
-              totalHeight={layout.totalHeight}
-              priorityBounds={priorityBounds}
-              committedEndIndex={committedEndIndex}
-              activePlaybackSlugs={activePlaybackSlugs}
-              context={gridContext}
-            />
-          )}
-          {parentWidth > 0 && blocks.length > 0 && phase !== "committed" && (
-            <>
-              <div className="pointer-events-none absolute inset-x-0 top-20 z-10 flex justify-center">
-                <p className="rounded-1 border border-border bg-background/90 px-3 py-1 text-sm text-muted-foreground backdrop-blur">
-                  Refining layout…
-                </p>
-              </div>
-              {measurementBatch.length > 0 && (
-                <MeasurementPass
-                  blocks={measurementBatch}
-                  columnWidth={deriveColumnWidth(parentWidth)}
-                  vaultPath={vaultPath}
-                  thumbsRootPath={thumbsRootPath}
-                  onMeasured={handleMeasured}
-                />
-              )}
-            </>
-          )}
+          <div data-grid-content>
+            <header
+              className="min-w-0"
+              style={{ paddingTop: GRID_TITLE_TOP_INSET_PX }}
+              data-grid-channel-header
+            >
+              <h1
+                className="truncate text-lg leading-6 font-semibold text-foreground"
+                data-grid-current-channel-title
+              >
+                {currentChannelTitle}
+              </h1>
+            </header>
+
+            {parentWidth > 0 && blocks.length > 0 && (
+              <VirtualMasonryLayout
+                key={generationKey}
+                blocks={blocks}
+                visibleItems={visibleItems}
+                totalHeight={layout.totalHeight}
+                priorityBounds={priorityBounds}
+                committedEndIndex={committedEndIndex}
+                activePlaybackSlugs={activePlaybackSlugs}
+                context={gridContext}
+              />
+            )}
+            {parentWidth > 0 && blocks.length > 0 && phase !== "committed" && (
+              <>
+                <div className="pointer-events-none absolute inset-x-0 top-20 z-10 flex justify-center">
+                  <p className="rounded-1 border border-border bg-background/90 px-3 py-1 text-sm text-muted-foreground backdrop-blur">
+                    Refining layout…
+                  </p>
+                </div>
+                {measurementBatch.length > 0 && (
+                  <MeasurementPass
+                    blocks={measurementBatch}
+                    columnWidth={deriveColumnWidth(parentWidth)}
+                    vaultPath={vaultPath}
+                    thumbsRootPath={thumbsRootPath}
+                    onMeasured={handleMeasured}
+                  />
+                )}
+              </>
+            )}
+          </div>
         </div>
       </ContextMenuTrigger>
 
@@ -694,7 +718,7 @@ function VirtualMasonryLayout({
   return (
     <div
       className="relative"
-      style={{ height: totalHeight || 1, marginTop: GRID_TOP_INSET_PX }}
+      style={{ height: totalHeight || 1, marginTop: GRID_CONTENT_TOP_INSET_PX }}
       data-grid-layout
     >
       {visibleItems.map((item) => {
