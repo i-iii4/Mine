@@ -19,7 +19,7 @@ use crate::domain::block::{
 };
 use crate::domain::channel::Channel;
 use crate::domain::search::{SearchFilter, SearchQuery};
-use crate::domain::vault::VaultLayout;
+use crate::domain::vault::{validate_slug, VaultLayout};
 use crate::storage::media_dimensions::{
     build_media_dimensions_json, build_media_dimensions_json_from_sources,
 };
@@ -1634,12 +1634,13 @@ pub fn backfill_missing_preview_text(conn: &Connection, vault: &VaultLayout) -> 
     let mut stmt = conn.prepare(
         "SELECT id, slug, title, body, content_heading, display_title, fallback_label
          FROM blocks
-         WHERE preview_text IS NULL
+         WHERE slug != ''
+           AND (preview_text IS NULL
             OR preview_text_cap IS NULL
             OR preview_text_cap < ?1
             OR content_heading IS NULL
             OR display_title IS NULL
-            OR fallback_label IS NULL",
+            OR fallback_label IS NULL)",
     )?;
     let rows = stmt
         .query_map([FEED_PREVIEW_TEXT_BUFFER_CHARS as i64], |row| {
@@ -1669,6 +1670,15 @@ pub fn backfill_missing_preview_text(conn: &Connection, vault: &VaultLayout) -> 
         stored_fallback_label,
     ) in rows
     {
+        if let Err(err) = validate_slug(&slug) {
+            log::warn!(
+                "preview text backfill: skipping block with invalid slug {:?}: {}",
+                slug,
+                err
+            );
+            continue;
+        }
+
         let (legacy_title, body) = match std::fs::read_to_string(vault.block_path(&slug)) {
             Ok(content) => {
                 match parse_markdown_document(&slug, &content, fallback_saved_at.clone()) {
@@ -3942,6 +3952,45 @@ mod tests {
         assert!(preview_text.chars().count() > old_preview.chars().count());
         assert!(preview_text.chars().count() <= FEED_PREVIEW_TEXT_BUFFER_CHARS);
         assert_eq!(preview_text_cap, FEED_PREVIEW_TEXT_BUFFER_CHARS as i64);
+    }
+
+    #[test]
+    fn backfill_missing_preview_text_skips_empty_legacy_slug() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        conn.execute(
+            "INSERT INTO blocks (slug, block_type, saved_at, body)
+             VALUES ('', 'article', '2026-01-01T00:00:00Z', '# Empty')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO blocks (slug, block_type, saved_at, body)
+             VALUES ('valid', 'article', '2026-01-01T00:00:00Z', '# Valid')",
+            [],
+        )
+        .unwrap();
+
+        let updated = backfill_missing_preview_text(&conn, &vault).unwrap();
+
+        let empty_preview: Option<String> = conn
+            .query_row(
+                "SELECT preview_text FROM blocks WHERE slug = ''",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let valid_preview: Option<String> = conn
+            .query_row(
+                "SELECT preview_text FROM blocks WHERE slug = 'valid'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(updated, 1);
+        assert!(empty_preview.is_none());
+        assert_eq!(valid_preview.as_deref(), Some(""));
     }
 
     #[test]
