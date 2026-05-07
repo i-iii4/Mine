@@ -215,6 +215,15 @@ bun run lint                   # Линтинг фронтенда
 cargo clippy                   # Линтинг Rust
 ```
 
+## Operational launch rule
+
+- Do not start localhost/Vite/browser dev server for routine app launch unless
+  the user explicitly asks for a browser/dev-server workflow.
+- When the user asks to launch the app, open the macOS `.app` bundle with
+  `open` so no extra terminal window remains attached to the app.
+- Use `cargo tauri dev` only when the task explicitly needs live frontend
+  development or a localhost-backed dev session.
+
 ## Code culture
 
 **Мы не делаем MVP. Мы делаем финальный продукт.** Код бесплатен (пишет ИИ), время дорого (тратит человек на отладку). Оптимизируем корректность, не скорость написания.
