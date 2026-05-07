@@ -1,5 +1,42 @@
 # Devlog
 
+## 07.05.2026 [implementation] — Clipper pending upload recovery and index catch-up
+
+### Completed
+
+- Reworked screenshot HTTP upload into a two-phase pending upload protocol:
+  `/upload` writes to local derived store and returns `upload_id`, while
+  `save_block(pre_uploaded_id)` is the only step that creates source-vault
+  media plus markdown.
+- Added native-host capability reporting (`host_api_version: 2`,
+  `pending_uploads_v1`) and extension-side gating so screenshot save does not
+  start on stale hosts that would write unsafe root staging files.
+- Added one automatic `save_block` retry after a successful upload. If retry
+  still fails, the popup tells the user the media is recoverable instead of
+  implying the save completed.
+- Added desktop recovery commands and sidebar banner for pending uploads only.
+  Recovery no longer scans source-vault media files or infers cards from media
+  that lacks Markdown.
+- Added native-host best-effort local index upsert after source-vault commit, so
+  clips saved while the desktop UI is closed are visible without waiting on a
+  later watcher/full-scan pass.
+- Updated native-host install path to
+  `~/Library/Application Support/com.mine.app/clipper/native-host` and added
+  `bun run clipper:install-host` for the known Chrome extension id.
+
+### Verification
+
+- `cargo test -p mine clipper_uploads --locked`
+- `cargo test -p mine --bin native-host save_block_with_pending_upload_indexes_block_immediately --locked`
+- `cargo test -p mine --bin native-host --locked`
+- `cargo test --workspace --all-targets --locked`
+- `bun run lint`
+- `bun run test:frontend`
+- `bun run build`
+- `bun run build:extension`
+- `bun run clipper:install-host`
+- `strings ~/Library/Application\ Support/com.mine.app/clipper/native-host | rg "pending_uploads_v1|host_api_version|pre_uploaded_id"`
+
 ## 05.05.2026 20:25 -03 [implementation] — Derived card kind media contract
 
 ### Completed

@@ -108,6 +108,7 @@ import { VaultPicker } from "@/components/VaultPicker";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { Sidebar } from "@/components/Sidebar";
 import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
+import { ClipperRecoveryBanner } from "@/components/ClipperRecoveryBanner";
 import { VaultConflictsBanner } from "@/components/VaultConflictsBanner";
 import { Grid } from "@/components/Grid";
 import { DragCardPreview } from "@/components/Card";
@@ -1721,6 +1722,10 @@ export function AppWithVault({
         width={sidebarWidth}
         collapsed={sidebarCollapsed}
         isResizing={sidebarResizing}
+        vaultPath={vaultPath}
+        thumbsRootPath={thumbsRootPath ?? undefined}
+        tags={tags}
+        currentTag={currentTag}
         orderedTags={orderedTags}
         channelPreviews={channelPreviews}
         totalBlocks={totalBlocks}
@@ -1734,10 +1739,23 @@ export function AppWithVault({
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}
         onCreateChannel={handleCreateChannel}
+        onOpenBlock={openDetailBlock}
+        onToggleTag={handleToggleTag}
+        onCreateAndAssign={handleCreateTagFromMenu}
+        onRequestRename={setRenamingBlock}
+        onRequestDelete={requestDeleteBlock}
         onNavClick={handleDetailClose}
         onScrollToTop={handleScrollToTop}
         keyboardNavigationFocus={sidebarKeyboardNavigationFocus}
-        headerSlot={<VaultConflictsBanner vaultReady={vaultReady} />}
+        headerSlot={
+          <>
+            <ClipperRecoveryBanner
+              vaultReady={vaultReady}
+              onRecovered={() => void reloadAllSnapshots()}
+            />
+            <VaultConflictsBanner vaultReady={vaultReady} />
+          </>
+        }
         linkedBlockSlug={renderedLinkedBlockSlug}
         linkedTags={renderedLinkedTags}
         onToggleLinkedTag={handleToggleTag}

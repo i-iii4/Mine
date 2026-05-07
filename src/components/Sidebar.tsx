@@ -34,9 +34,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { TagCount, PreviewCard } from "@/types";
+import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
 import type { DetailTopMenuMode } from "@/lib/appPreferences";
+import { getBlock } from "@/lib/commands";
 import { cn } from "@/lib/utils";
+import { InteractiveCardPreview } from "./Card";
 
 /** Convert a collection ref to a compact display title. */
 function titleFromTag(tag: string): string {
@@ -45,6 +47,12 @@ function titleFromTag(tag: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+const SIDEBAR_PREVIEW_WIDTH = 240;
+const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
+const SIDEBAR_PREVIEW_GAP = 8;
+const SIDEBAR_PREVIEW_VIEWPORT_MARGIN = 16;
+const SIDEBAR_PREVIEW_OPEN_DELAY_MS = 160;
+const SIDEBAR_PREVIEW_CLOSE_DELAY_MS = 120;
 const SIDEBAR_ROW_TITLE_COLUMN_WIDTH = 150;
 const SIDEBAR_PREVIEW_DIVIDER_GAP = 4;
 const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = 80;
@@ -92,6 +100,18 @@ const SIDEBAR_PREVIEW_MASK_STYLE = createRightFadeMaskStyle(
   SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH,
 );
 
+type SidebarPreviewTarget = {
+  key: string;
+  rowKey: string;
+  slug: string;
+};
+
+type SidebarPreviewPosition = {
+  top: number;
+  left: number;
+  bridge: CSSProperties;
+};
+
 type SidebarKeyboardNavigationFocus = {
   rowKey: string;
   sequence: number;
@@ -101,6 +121,10 @@ interface SidebarProps {
   width: number;
   collapsed: boolean;
   isResizing: boolean;
+  vaultPath?: string;
+  thumbsRootPath?: string;
+  tags?: TagCount[];
+  currentTag?: string;
   orderedTags: TagCount[];
   channelPreviews: Map<string, PreviewCard[]>;
   totalBlocks: number;
@@ -110,6 +134,11 @@ interface SidebarProps {
   onDeleteTag: (tag: string) => void;
   onRenameTag: (oldTag: string, newTag: string) => void;
   onCreateChannel: (tag: string) => void;
+  onOpenBlock?: (block: IndexedBlock) => void;
+  onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign?: (tag: string, blockSlug: string) => void;
+  onRequestRename?: (block: LightBlock) => void;
+  onRequestDelete?: (slug: string) => void;
   onNavClick?: () => void;
   onScrollToTop?: () => void;
   keyboardNavigationFocus?: SidebarKeyboardNavigationFocus | null;
@@ -144,6 +173,10 @@ export function Sidebar({
   width,
   collapsed,
   isResizing,
+  vaultPath,
+  thumbsRootPath,
+  tags,
+  currentTag,
   orderedTags,
   channelPreviews,
   totalBlocks,
@@ -153,6 +186,11 @@ export function Sidebar({
   onDeleteTag,
   onRenameTag,
   onCreateChannel,
+  onOpenBlock,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
   onNavClick,
   onScrollToTop,
   keyboardNavigationFocus,
@@ -166,10 +204,18 @@ export function Sidebar({
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [linkMode, setLinkMode] = useState<"all" | "linked">("all");
   const navRef = useRef<HTMLElement>(null);
+  const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const previewOpenTimerRef = useRef<number | null>(null);
+  const previewCloseTimerRef = useRef<number | null>(null);
   const sidebarRowSwitchFrameRef = useRef<number | null>(null);
   const sidebarKeyboardFocusTimerRef = useRef<number | null>(null);
   const sidebarRowFocusKeyRef = useRef<string | null>(null);
   const sidebarRowFocusModeRef = useRef(false);
+  const [hoveredPreview, setHoveredPreview] = useState<SidebarPreviewTarget | null>(null);
+  const [hoverPreviewBlock, setHoverPreviewBlock] = useState<IndexedBlock | null>(null);
+  const [hoverPreviewPosition, setHoverPreviewPosition] = useState<SidebarPreviewPosition | null>(null);
+  const [hoverPreviewPinned, setHoverPreviewPinned] = useState(false);
   const [sidebarRowFocusKey, setSidebarRowFocusKey] = useState<string | null>(null);
   const [sidebarRowFocusMode, setSidebarRowFocusMode] = useState(false);
   const [sidebarRowSwitching, setSidebarRowSwitching] = useState(false);
@@ -202,12 +248,39 @@ export function Sidebar({
     ? orderedTags.filter((tc) => linkedTagSet.has(tc.tag))
     : orderedTags;
   const orderedRowKeys = buildSidebarRowOrder(visibleTags);
+  const activePreviewRowKey = hoveredPreview?.rowKey ?? null;
+  const effectiveSidebarRowFocusKey = sidebarRowFocusMode
+    ? sidebarRowFocusKey
+    : activePreviewRowKey;
+  const hasSidebarRowFocusMode = sidebarRowFocusMode || activePreviewRowKey !== null;
   const seamAccentKeys = createSidebarSeamAccentSet(
     orderedRowKeys,
-    sidebarRowFocusMode ? sidebarRowFocusKey : null,
+    effectiveSidebarRowFocusKey,
   );
   const linkEditorNavPadding = detailTopMenuMode === "classic" ? "pt-12" : "pt-20";
   const [linkChromeEntered, setLinkChromeEntered] = useState(false);
+
+  const setPreviewTriggerRef = useCallback((key: string, node: HTMLElement | null) => {
+    if (node) {
+      previewTriggerRefs.current.set(key, node);
+    } else {
+      previewTriggerRefs.current.delete(key);
+    }
+  }, []);
+
+  const clearPreviewOpenTimer = useCallback(() => {
+    if (previewOpenTimerRef.current !== null) {
+      window.clearTimeout(previewOpenTimerRef.current);
+      previewOpenTimerRef.current = null;
+    }
+  }, []);
+
+  const clearPreviewCloseTimer = useCallback(() => {
+    if (previewCloseTimerRef.current !== null) {
+      window.clearTimeout(previewCloseTimerRef.current);
+      previewCloseTimerRef.current = null;
+    }
+  }, []);
 
   const clearSidebarRowSwitchFrame = useCallback(() => {
     if (sidebarRowSwitchFrameRef.current !== null) {
@@ -308,9 +381,147 @@ export function Sidebar({
     clearSidebarKeyboardFocusTimer();
   }, [clearSidebarKeyboardFocusTimer]);
 
+  const closePreview = useCallback(() => {
+    clearPreviewOpenTimer();
+    clearPreviewCloseTimer();
+    setHoverPreviewPinned(false);
+    setHoveredPreview(null);
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer]);
+
+  const cancelPreviewClose = useCallback(() => {
+    clearPreviewCloseTimer();
+  }, [clearPreviewCloseTimer]);
+
+  const requestPreviewClose = useCallback(() => {
+    clearPreviewOpenTimer();
+    if (hoverPreviewPinned) return;
+    clearPreviewCloseTimer();
+    previewCloseTimerRef.current = window.setTimeout(() => {
+      previewCloseTimerRef.current = null;
+      setHoveredPreview(null);
+    }, SIDEBAR_PREVIEW_CLOSE_DELAY_MS);
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, hoverPreviewPinned]);
+
+  const noopToggleTag = useCallback((slug: string, tag: string, hasTag: boolean) => {
+    void slug;
+    void tag;
+    void hasTag;
+  }, []);
+  const noopCreateAndAssign = useCallback((tag: string, blockSlug: string) => {
+    void tag;
+    void blockSlug;
+  }, []);
+  const noopRequestRename = useCallback((block: LightBlock) => {
+    void block;
+  }, []);
+  const noopRequestDelete = useCallback((slug: string) => {
+    void slug;
+  }, []);
+
+  const schedulePreviewOpen = useCallback((target: SidebarPreviewTarget) => {
+    clearPreviewOpenTimer();
+    clearPreviewCloseTimer();
+    setHoveredPreview(null);
+    previewOpenTimerRef.current = window.setTimeout(() => {
+      previewOpenTimerRef.current = null;
+      if (!previewTriggerRefs.current.has(target.key)) return;
+      setHoveredPreview(target);
+    }, SIDEBAR_PREVIEW_OPEN_DELAY_MS);
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer]);
+
+  const openPreviewBlock = useCallback((target: SidebarPreviewTarget) => {
+    if (!onOpenBlock) return;
+    closePreview();
+    void getBlock(target.slug)
+      .then((block) => {
+        if (block) {
+          onOpenBlock(block);
+        }
+      })
+      .catch((error) => {
+        void error;
+      });
+  }, [closePreview, onOpenBlock]);
+
   useEffect(() => () => {
+    clearPreviewOpenTimer();
+    clearPreviewCloseTimer();
     clearSidebarRowSwitchFrame();
-  }, [clearSidebarRowSwitchFrame]);
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, clearSidebarRowSwitchFrame]);
+
+  useEffect(() => {
+    if (!hoveredPreview) {
+      setHoverPreviewBlock(null);
+      setHoverPreviewPosition(null);
+      return;
+    }
+    let cancelled = false;
+    setHoverPreviewBlock(null);
+
+    const trigger = previewTriggerRefs.current.get(hoveredPreview.key);
+    if (trigger) {
+      setHoverPreviewPosition(
+        computeSidebarPreviewPosition(
+          trigger.getBoundingClientRect(),
+          previewRef.current?.getBoundingClientRect().height ?? SIDEBAR_PREVIEW_FALLBACK_HEIGHT,
+        ),
+      );
+    } else {
+      setHoverPreviewPosition(null);
+    }
+
+    void getBlock(hoveredPreview.slug)
+      .then((block) => {
+        if (cancelled) return;
+        setHoverPreviewBlock(block);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setHoverPreviewBlock(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hoveredPreview]);
+
+  useEffect(() => {
+    if (!hoveredPreview || !hoverPreviewBlock || !hoverPreviewPosition || !previewRef.current) {
+      return;
+    }
+    const trigger = previewTriggerRefs.current.get(hoveredPreview.key);
+    if (!trigger) return;
+
+    const nextPosition = computeSidebarPreviewPosition(
+      trigger.getBoundingClientRect(),
+      previewRef.current.getBoundingClientRect().height,
+    );
+    if (
+      Math.abs(nextPosition.top - hoverPreviewPosition.top) > 1 ||
+      Math.abs(nextPosition.left - hoverPreviewPosition.left) > 1
+    ) {
+      setHoverPreviewPosition(nextPosition);
+    }
+  }, [hoveredPreview, hoverPreviewBlock, hoverPreviewPosition]);
+
+  useEffect(() => {
+    if (!hoverPreviewPinned) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      const preview = previewRef.current;
+      const trigger = hoveredPreview
+        ? previewTriggerRefs.current.get(hoveredPreview.key)
+        : null;
+      if (preview?.contains(target) || trigger?.contains(target)) {
+        return;
+      }
+      closePreview();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [closePreview, hoverPreviewPinned, hoveredPreview]);
 
   useEffect(() => {
     if (!isLinkingBlock) {
@@ -358,7 +569,7 @@ export function Sidebar({
         )}
         data-sidebar-scroll
         data-sidebar-link-editor-mode={isLinkEditorActive ? "true" : undefined}
-        data-sidebar-row-focus-mode={sidebarRowFocusMode ? "true" : undefined}
+        data-sidebar-row-focus-mode={hasSidebarRowFocusMode ? "true" : undefined}
         data-sidebar-row-switching={sidebarRowSwitching ? "true" : undefined}
         onPointerMove={handleSidebarPointerMove}
         onPointerLeave={deactivateSidebarRowFocusMode}
@@ -391,12 +602,17 @@ export function Sidebar({
             count={totalBlocks}
             cards={channelPreviews.get("__all__") ?? []}
             previewKeyPrefix="all"
+            onPreviewEnter={schedulePreviewOpen}
+            onPreviewLeave={requestPreviewClose}
+            onPreviewClick={openPreviewBlock}
+            onPreviewTriggerRef={setPreviewTriggerRef}
+            activePreviewKey={hoveredPreview?.key ?? null}
             compact={compact}
             end
             onClick={onNavClick}
             onSameClick={isLinkEditorActive ? onNavClick : onScrollToTop}
             rowKey="all"
-            isSidebarRowFocused={sidebarRowFocusKey === "all"}
+            isSidebarRowFocused={effectiveSidebarRowFocusKey === "all"}
             isSidebarRowSeamAccent={seamAccentKeys.has("all")}
           />
 
@@ -415,6 +631,11 @@ export function Sidebar({
                   tag={tc.tag}
                   cards={channelPreviews.get(tc.tag) ?? []}
                   previewKeyPrefix={`tag:${tc.tag}`}
+                  onPreviewEnter={schedulePreviewOpen}
+                  onPreviewLeave={requestPreviewClose}
+                  onPreviewClick={openPreviewBlock}
+                  onPreviewTriggerRef={setPreviewTriggerRef}
+                  activePreviewKey={hoveredPreview?.key ?? null}
                   compact={compact}
                   isDropDragging={isDropDragging}
                   isEditing={!isLinkEditorActive && editingTag === tc.tag}
@@ -429,7 +650,7 @@ export function Sidebar({
                   onClick={onNavClick}
                   onSameClick={isLinkEditorActive ? undefined : onScrollToTop}
                   rowKey={`tag:${tc.tag}`}
-                  isSidebarRowFocused={sidebarRowFocusKey === `tag:${tc.tag}`}
+                  isSidebarRowFocused={effectiveSidebarRowFocusKey === `tag:${tc.tag}`}
                   isSidebarRowSeamAccent={seamAccentKeys.has(`tag:${tc.tag}`)}
                 />
               );
@@ -450,6 +671,57 @@ export function Sidebar({
         </div>
 
       </nav>
+
+      {vaultPath
+        && hoverPreviewPosition
+        && hoverPreviewBlock && (
+        <>
+          <div
+            className="fixed z-40"
+            style={hoverPreviewPosition.bridge}
+            onMouseEnter={cancelPreviewClose}
+            onMouseLeave={requestPreviewClose}
+            data-sidebar-thumbnail-hover-bridge
+          />
+          <div
+            ref={previewRef}
+            className="fixed z-50"
+            style={{
+              top: hoverPreviewPosition.top,
+              left: hoverPreviewPosition.left,
+              width: SIDEBAR_PREVIEW_WIDTH,
+            }}
+            onMouseEnter={cancelPreviewClose}
+            onMouseLeave={requestPreviewClose}
+            data-sidebar-thumbnail-hover-preview
+          >
+            <InteractiveCardPreview
+              block={hoverPreviewBlock}
+              vaultPath={vaultPath}
+              thumbsRootPath={thumbsRootPath}
+              width={SIDEBAR_PREVIEW_WIDTH}
+              className="dark:bg-accent"
+              tags={tags ?? orderedTags}
+              currentTag={currentTag}
+              onToggleTag={onToggleTag ?? noopToggleTag}
+              onCreateAndAssign={onCreateAndAssign ?? noopCreateAndAssign}
+              onRequestRename={onRequestRename ?? noopRequestRename}
+              onRequestDelete={onRequestDelete ?? noopRequestDelete}
+              onInteractiveOpenChange={(open) => {
+                if (open) {
+                  setHoverPreviewPinned(true);
+                }
+              }}
+              onInteractionStart={() => setHoverPreviewPinned(true)}
+              onClick={(previewBlock) => openPreviewBlock({
+                key: hoveredPreview?.key ?? previewBlock.slug,
+                rowKey: hoveredPreview?.rowKey ?? "",
+                slug: previewBlock.slug,
+              })}
+            />
+          </div>
+        </>
+      )}
 
       {isLinkingBlock && detailTopMenuMode !== "classic" && (
         <SidebarLinkModeSwitch
@@ -488,6 +760,42 @@ function scrollActiveSidebarItemIntoView(nav: HTMLElement, active: HTMLElement) 
   } else {
     nav.scrollTop = Math.max(0, nextTop);
   }
+}
+
+function computeSidebarPreviewPosition(
+  triggerRect: DOMRect,
+  previewHeight: number,
+): SidebarPreviewPosition {
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const left = Math.max(
+    SIDEBAR_PREVIEW_VIEWPORT_MARGIN,
+    Math.min(
+      triggerRect.left,
+      viewportWidth - SIDEBAR_PREVIEW_VIEWPORT_MARGIN - SIDEBAR_PREVIEW_WIDTH,
+    ),
+  );
+  const canOpenDown =
+    triggerRect.bottom + SIDEBAR_PREVIEW_GAP + previewHeight <=
+    viewportHeight - SIDEBAR_PREVIEW_VIEWPORT_MARGIN;
+  const top = canOpenDown
+    ? triggerRect.bottom + SIDEBAR_PREVIEW_GAP
+    : Math.max(
+        SIDEBAR_PREVIEW_VIEWPORT_MARGIN,
+        triggerRect.top - SIDEBAR_PREVIEW_GAP - previewHeight,
+      );
+  const bridgeTop = canOpenDown ? triggerRect.bottom : top + previewHeight;
+  const bridgeBottom = canOpenDown ? top : triggerRect.top;
+  const bridgeLeft = Math.min(left, triggerRect.left);
+  const bridgeRight = Math.max(left + SIDEBAR_PREVIEW_WIDTH, triggerRect.right);
+  const bridge: CSSProperties = {
+    top: bridgeTop,
+    left: bridgeLeft,
+    width: bridgeRight - bridgeLeft,
+    height: Math.max(0, bridgeBottom - bridgeTop),
+  };
+
+  return { top, left, bridge };
 }
 
 const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
@@ -647,6 +955,12 @@ function SidebarRowBody({
   count,
   cards,
   previewKeyPrefix,
+  rowKey,
+  onPreviewEnter,
+  onPreviewLeave,
+  onPreviewClick,
+  onPreviewTriggerRef,
+  activePreviewKey,
   compact,
   isCurrentRoute,
   isDragging = false,
@@ -662,6 +976,12 @@ function SidebarRowBody({
   count: number;
   cards: PreviewCard[];
   previewKeyPrefix: string;
+  rowKey: string;
+  onPreviewEnter: (target: SidebarPreviewTarget) => void;
+  onPreviewLeave: () => void;
+  onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
+  activePreviewKey: string | null;
   compact?: boolean;
   isCurrentRoute: boolean;
   isDragging?: boolean;
@@ -733,6 +1053,13 @@ function SidebarRowBody({
             <SidebarPreviewStrip
               cards={cards}
               previewKeyPrefix={previewKeyPrefix}
+              rowKey={rowKey}
+              onPreviewEnter={onPreviewEnter}
+              onPreviewLeave={onPreviewLeave}
+              onPreviewClick={onPreviewClick}
+              onPreviewTriggerRef={onPreviewTriggerRef}
+              activePreviewKey={activePreviewKey}
+              allowHoverPreview
             />
           </div>
         )}
@@ -834,6 +1161,11 @@ const NavItem = memo(function NavItem({
   count,
   cards = [],
   previewKeyPrefix,
+  onPreviewEnter,
+  onPreviewLeave,
+  onPreviewClick,
+  onPreviewTriggerRef,
+  activePreviewKey,
   compact,
   end,
   onClick,
@@ -847,6 +1179,11 @@ const NavItem = memo(function NavItem({
   count: number;
   cards?: PreviewCard[];
   previewKeyPrefix: string;
+  onPreviewEnter: (target: SidebarPreviewTarget) => void;
+  onPreviewLeave: () => void;
+  onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
+  activePreviewKey: string | null;
   compact?: boolean;
   end?: boolean;
   onClick?: () => void;
@@ -873,6 +1210,12 @@ const NavItem = memo(function NavItem({
         count={count}
         cards={cards}
         previewKeyPrefix={previewKeyPrefix}
+        rowKey={rowKey}
+        onPreviewEnter={onPreviewEnter}
+        onPreviewLeave={onPreviewLeave}
+        onPreviewClick={onPreviewClick}
+        onPreviewTriggerRef={onPreviewTriggerRef}
+        activePreviewKey={activePreviewKey}
         compact={compact}
         isCurrentRoute={isCurrentRoute}
         onClick={onClick}
@@ -889,6 +1232,11 @@ const TagNavItem = memo(function TagNavItem({
   tag,
   cards,
   previewKeyPrefix,
+  onPreviewEnter,
+  onPreviewLeave,
+  onPreviewClick,
+  onPreviewTriggerRef,
+  activePreviewKey,
   compact,
   isDropDragging,
   isEditing,
@@ -909,6 +1257,11 @@ const TagNavItem = memo(function TagNavItem({
   tag: string;
   cards: PreviewCard[];
   previewKeyPrefix: string;
+  onPreviewEnter: (target: SidebarPreviewTarget) => void;
+  onPreviewLeave: () => void;
+  onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
+  activePreviewKey: string | null;
   compact?: boolean;
   isDropDragging: boolean;
   isEditing: boolean;
@@ -994,6 +1347,12 @@ const TagNavItem = memo(function TagNavItem({
               count={count}
               cards={cards}
               previewKeyPrefix={previewKeyPrefix}
+              rowKey={rowKey}
+              onPreviewEnter={onPreviewEnter}
+              onPreviewLeave={onPreviewLeave}
+              onPreviewClick={onPreviewClick}
+              onPreviewTriggerRef={onPreviewTriggerRef}
+              activePreviewKey={activePreviewKey}
               compact={compact}
               isCurrentRoute={isCurrentRoute}
               isDragging={isDragging}
@@ -1040,9 +1399,23 @@ const TagNavItem = memo(function TagNavItem({
 function SidebarPreviewStrip({
   cards,
   previewKeyPrefix,
+  rowKey,
+  onPreviewEnter,
+  onPreviewLeave,
+  onPreviewClick,
+  onPreviewTriggerRef,
+  activePreviewKey,
+  allowHoverPreview = false,
 }: {
   cards: PreviewCard[];
   previewKeyPrefix: string;
+  rowKey: string;
+  onPreviewEnter: (target: SidebarPreviewTarget) => void;
+  onPreviewLeave: () => void;
+  onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
+  activePreviewKey: string | null;
+  allowHoverPreview?: boolean;
 }) {
   return (
     <div
@@ -1054,11 +1427,48 @@ function SidebarPreviewStrip({
     >
       {cards.map((card, index) => {
         const previewKey = `${previewKeyPrefix}:${card.slug ?? index}:${index}`;
+        const canPreview = allowHoverPreview
+          && card.hasThumb
+          && !!card.slug;
+        const isPreviewActive = activePreviewKey === previewKey;
         return (
           <div
             key={previewKey}
-            className="size-8 shrink-0 overflow-hidden bg-accent"
-            data-sidebar-preview-thumbnail="placeholder"
+            ref={(node) => {
+              if (canPreview) {
+                onPreviewTriggerRef(previewKey, node);
+              }
+            }}
+            className={cn(
+              "size-8 shrink-0 overflow-hidden bg-accent",
+              canPreview &&
+                "cursor-pointer outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
+              isPreviewActive &&
+                "outline-1 -outline-offset-1 outline-component-fill-hover",
+            )}
+            onMouseEnter={() => {
+              if (card.slug && canPreview) {
+                onPreviewEnter({ key: previewKey, rowKey, slug: card.slug });
+              }
+            }}
+            onMouseLeave={() => {
+              if (canPreview) {
+                onPreviewLeave();
+              }
+            }}
+            onClick={(event) => {
+              if (!card.slug || !canPreview) return;
+              event.preventDefault();
+              event.stopPropagation();
+              onPreviewClick({ key: previewKey, rowKey, slug: card.slug });
+            }}
+            onPointerDown={(event) => {
+              if (canPreview) {
+                event.stopPropagation();
+              }
+            }}
+            data-sidebar-preview-thumbnail={canPreview ? "trigger" : "placeholder"}
+            data-sidebar-preview-active={isPreviewActive ? "true" : undefined}
           >
             {card.hasThumb && (
               <img

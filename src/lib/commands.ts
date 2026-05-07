@@ -18,6 +18,8 @@ import type {
   ImportChannelRequest,
   ImportChannelResult,
   ArticleAudioState,
+  ClipperRecoveryItem,
+  RecoveredClipperBlock,
   ExtractInlineMediaParams,
   InlineMediaExtractError,
   ExtractTextSelectionParams,
@@ -245,3 +247,13 @@ export const resolveVaultConflict = (
     conflict_slug: conflictSlug,
     action: { action },
   });
+
+// Clipper recovery
+export const listClipperRecoveryItems = () =>
+  invoke<ClipperRecoveryItem[]>("list_clipper_recovery_items");
+
+export const recoverClipperPendingUpload = (upload_id: string) =>
+  invoke<RecoveredClipperBlock>("recover_clipper_pending_upload", { upload_id });
+
+export const discardClipperPendingUpload = (upload_id: string) =>
+  invoke<void>("discard_clipper_pending_upload", { upload_id });

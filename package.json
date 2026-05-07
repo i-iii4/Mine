@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "verify": "bun run lint && bun run test",
     "build:extension": "vite build --config vite.extension.config.ts && vite build --config vite.overlay.config.ts && cp extension/content.js extension/background.js extension/manifest.json 'safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/' && cp -r extension/dist 'safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/dist' && cp extension/lib/* 'safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/'",
+    "clipper:install-host": "bash extension/install-native-host.sh mfmocklgopobknfgeedgdlnchfohicii",
     "pack:extension": "bun run build:extension && rm -f build/mine-clipper.zip && mkdir -p build && cd extension && zip -r ../build/mine-clipper.zip manifest.json background.js content.js dist/ lib/ icons/ -x '*.DS_Store'",
     "preview": "vite preview",
     "tauri": "tauri"

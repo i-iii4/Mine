@@ -811,6 +811,15 @@ now avoid overwriting existing `.md` or media files, roll back copied media when
 the final block write fails, and validate remote fetch hosts through parsed
 HTTP(S) URLs plus DNS/IP checks before `ureq` runs.
 
+Large clipper uploads use a two-phase commit. The HTTP `/upload` endpoint writes
+binary payloads into the local derived store under `pending_uploads/<upload_id>`
+and returns `pending_uploads_v1` capability data through `get_status`. Only
+`save_block(pre_uploaded_id)` copies that payload into the source vault and
+writes the markdown card. If that second phase fails or the browser loses the
+native-message response, the pending payload remains recoverable in the desktop
+recovery surface; the source vault is not polluted with unreferenced media by
+the happy-path upload step.
+
 ## Dependencies
 
 | Package | Version | Purpose | License |

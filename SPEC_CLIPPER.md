@@ -183,7 +183,7 @@ generated `title:` frontmatter.
 |---|---|
 | type | `image` |
 | url | URL страницы (для ссылки на источник) |
-| file | JPEG/PNG, залит через HTTP upload, имя передаётся в save_block как `pre_uploaded_file`; frontmatter writes canonical `[[file]]` |
+| file | JPEG/PNG, залит через HTTP upload, pending id передаётся в save_block как `pre_uploaded_id`; frontmatter writes canonical `[[file]]` |
 | source | `web-clipper` |
 
 Screenshot clips do not write generated `title:`. If the user explicitly adds a
@@ -441,12 +441,19 @@ Response:
   "ok": true,
   "vault_path": "/Users/user/LocalArena",
   "version": "0.1.0",
+  "host_api_version": 2,
+  "features": ["pending_uploads_v1"],
   "upload_port": 54231,
   "upload_token": "a1b2c3d4e5f6..."
 }
 ```
 
-`upload_port` и `upload_token` выдаются попапу один раз при инициализации и используются для заливки бинарных файлов через локальный HTTP-сервер native host (см. Upload Server).
+`features` — capability contract между popup и native host. Screenshot-save
+требует `pending_uploads_v1`: без него popup не начинает HTTP upload, чтобы не
+создать root-media без recoverable commit state. `upload_port` и
+`upload_token` выдаются попапу один раз при инициализации и используются для
+заливки бинарных файлов через локальный HTTP-сервер native host (см. Upload
+Server).
 
 #### `list_channels`
 
@@ -555,7 +562,7 @@ writes canonical frontmatter `file: "[[resolved-name.ext]]"`.
 `media_file` через `image_url` / data URL / `pre_uploaded_file` либо валидный
 `thumbnail`. Если источник отсутствует или скачивание/финализация media не
 удались, native host возвращает `ok:false`, а `.md` не создаётся. Это защищает
-vault от orphan media-записей без `file:`.
+vault от битых media-карточек без `file:`.
 
 ##### Article inline-media pipeline
 
@@ -622,16 +629,49 @@ Chrome ограничивает отдельное native messaging-сообще
 
 Успешный ответ:
 ```json
-{ "ok": true, "filename": "page-screenshot.jpg" }
+{
+  "ok": true,
+  "filename": "pending:8f7e0a91d9b44d0cb1e6f52bb612ab8d",
+  "upload_id": "8f7e0a91d9b44d0cb1e6f52bb612ab8d",
+  "size": 1843231
+}
 ```
 
-Файл сохраняется в корень указанного vault под staging-именем. Upload endpoint не перезаписывает существующий файл: если requested staging name уже занят, native host добавляет Obsidian-style suffix ` (N)` и возвращает фактически записанное имя. Финальное имя media определяет `save_block`: native host переименовывает staging-файл в `<slug>.<ext>` и дедуплицирует конфликт тем же suffix-правилом. Все новые `.md` и media writes используют create-new semantics; если финальная запись блока падает, уже скопированные media файлы для этого блока удаляются.
+Файл сохраняется не в source vault, а в local derived store:
+`<derived_root>/pending_uploads/<upload_id>/`. Upload endpoint не создаёт
+пользовательский media-файл до успешного `save_block`. Это закрывает отказ
+между HTTP upload и native-message commit: если вторая фаза не дошла до
+создания `.md`, Mine показывает pending upload в recovery surface.
+
+Поле `filename: "pending:<id>"` оставлено как compatibility bridge для старых
+popup build'ов, которые ещё передают только `pre_uploaded_file`.
 
 ### Интеграция с `save_block`
 
-После успешного upload попап передаёт полученное имя в `save_block` через поле `pre_uploaded_file`. Native host проверяет, что файл существует в vault, и использует его как `media_file` блока — без повторного скачивания через `image_url`.
+После успешного upload popup передаёт `upload_id` в `save_block` через
+`pre_uploaded_id`. Native host копирует pending payload в source vault под
+финальным именем `<slug>.<ext>` с create-new semantics, затем пишет `.md`.
+Pending manifest помечается committed только после успешной записи блока.
+Повторный `save_block` с тем же `pre_uploaded_id` после успешного commit
+идемпотентно возвращает уже созданный slug.
+
+После source-vault commit native host best-effort обновляет local derived index
+тем же `upsert_block` контрактом, что и desktop watcher. Если SQLite занят
+запущенным приложением, сохранение не откатывается: `.md` и media уже являются
+source of truth, а watcher/startup scan догонят индекс. При выключенном desktop
+app этот upsert должен проходить сразу, поэтому новый клип появляется в ленте
+после запуска без ручного rebuild.
+
+Legacy `pre_uploaded_file` продолжает поддерживаться: если значение начинается
+с `pending:`, оно трактуется как pending upload id; иначе native host ожидает
+старый root-staged файл и финализирует его прежним путём.
 
 Если background service worker потерял in-memory cache и upload вернул `Screenshot upload expired`, popup ре-кэширует уже имеющийся `dataUrl` и один раз повторяет upload без нового screenshot capture. Остальные upload-ошибки (`timeout`, PNA/loopback отказ, сервер upload не настроен) показываются inline через `StatusBar`; popup остаётся в основном UI, а превью, выбранные коллекции, display heading/body H1 if present, vault и кнопки `Save` / `Retake` сохраняются. Такие ошибки не переводят popup в full-screen `ErrorState`, потому что пользователь должен иметь возможность повторить сохранение без повторного сбора контекста.
+
+Если HTTP upload успешен, но `save_block` возвращает ошибку или теряет ответ,
+popup один раз повторяет `save_block` с тем же `pre_uploaded_id`. Если retry
+тоже падает, popup показывает inline notice: медиа уже recoverable в Mine, но
+карточка не создана автоматически.
 
 ### Browser-origin boundary
 
@@ -650,10 +690,22 @@ Chrome ограничивает отдельное native messaging-сообще
 {
   "action": "save_block",
   "block_type": "image",
-  "pre_uploaded_file": "article-screenshot.jpg",
+  "pre_uploaded_id": "8f7e0a91d9b44d0cb1e6f52bb612ab8d",
   "tags": ["reference"]
 }
 ```
+
+### Recovery surface
+
+Desktop app exposes unfinished clipper work through `list_clipper_recovery_items`.
+The list contains:
+
+- `pending_upload` — binary payload exists in derived store, no committed block.
+
+`recover_clipper_pending_upload` creates an empty-body media card from the
+pending payload. `discard_clipper_pending_upload` removes only a pending
+derived-store payload. Recovery does not scan source-vault media files and does
+not infer cards from user media that lacks Markdown.
 
 ### Безопасность
 
@@ -742,9 +794,10 @@ Native host читает путь к vault из файла конфигурац�
 | Vault not configured | Response: `{"ok": false, "error": "Vault not configured"}`. Popup показывает сообщение |
 | Native host not found | Chrome показывает ошибку подключения. Popup показывает «Native host not installed» |
 | Media source missing | media creation request не создаётся. Popup показывает inline error, main UI остаётся открытым |
-| Media download/upload/finalize failed | Response: `{"ok": false, "error": "..."}`. `.md` не создаётся, чтобы не получить orphan media card без `file:` |
+| Media download/finalize failed | Response: `{"ok": false, "error": "..."}`. `.md` не создаётся, чтобы не получить битую media card без `file:` |
 | Link/video thumbnail download failed | Блок может быть создан без thumbnail; media failure для preview не ломает сохранение самой ссылки/видео |
 | Screenshot upload failed | Popup показывает inline error в `StatusBar` и сохраняет preview/tags/display heading для retry |
+| Screenshot upload succeeded but `save_block` failed | Popup делает один retry. Если retry не помог, pending upload остаётся в recovery surface; source vault не получает незакреплённый media-файл |
 | SQLite locked | Retry через 100мс, до 3 попыток. Затем ошибка |
 | Disk full | Ошибка записи файла. Response: `{"ok": false, "error": "Failed to write file: ..."}` |
 | Invalid URL | Блок создаётся, URL сохраняется as-is |

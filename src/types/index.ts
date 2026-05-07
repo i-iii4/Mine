@@ -236,6 +236,21 @@ export interface VaultOpenResult {
   thumbs_root: string;
 }
 
+export type ClipperRecoveryKind = "pending_upload";
+
+export interface ClipperRecoveryItem {
+  id: string;
+  kind: ClipperRecoveryKind;
+  fileName: string;
+  mediaPath: string | null;
+  size: number;
+  createdAt: string;
+}
+
+export interface RecoveredClipperBlock {
+  slug: string;
+}
+
 export interface CreateBlockParams {
   block_type: string;
   title?: string;

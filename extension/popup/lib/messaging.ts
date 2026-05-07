@@ -10,6 +10,8 @@ export interface NativeResponse {
   ok: boolean;
   error?: string;
   channels?: ChannelInfo[];
+  features?: string[];
+  host_api_version?: number;
   [key: string]: unknown;
 }
 
@@ -213,7 +215,7 @@ export async function uploadFile(
   filename: string,
   screenshotId: string,
   vaultPath?: string | null,
-): Promise<{ ok: boolean; filename?: string; error?: string }> {
+): Promise<{ ok: boolean; filename?: string; upload_id?: string; error?: string }> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       resolve({ ok: false, error: "Upload timeout" });
@@ -237,7 +239,7 @@ export async function uploadFile(
           resolve({ ok: false, error: chrome.runtime.lastError.message });
           return;
         }
-        resolve((response as { ok: boolean; filename?: string; error?: string }) ?? {
+        resolve((response as { ok: boolean; filename?: string; upload_id?: string; error?: string }) ?? {
           ok: false,
           error: "No upload response",
         });

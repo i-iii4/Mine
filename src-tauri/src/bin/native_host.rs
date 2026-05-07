@@ -22,12 +22,13 @@ use mine_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use mine_lib::domain::channel::Channel;
 use mine_lib::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use mine_lib::domain::vault::{resolve_slug_conflict, VaultLayout};
-use mine_lib::storage::{db, files, index, thumbnails};
+use mine_lib::storage::{clipper_uploads, db, files, index, thumbnails};
 use mine_lib::util::now_iso8601;
 use percent_encoding::percent_decode_str;
 use url::{Host, Url};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const HOST_API_VERSION: u32 = 2;
 
 // ─── Message types ──────────────────────────────────────────────────────────
 
@@ -44,6 +45,8 @@ struct StatusResponse {
     ok: bool,
     vault_path: Option<String>,
     version: String,
+    host_api_version: u32,
+    features: Vec<String>,
     upload_port: Option<u16>,
     upload_token: Option<String>,
 }
@@ -91,6 +94,8 @@ struct SaveBlockParams {
     body: Option<String>,
     tags: Option<Vec<String>>,
     image_url: Option<String>,
+    /// Pending upload id returned by HTTP /upload endpoint.
+    pre_uploaded_id: Option<String>,
     /// File already uploaded via HTTP /upload endpoint
     pre_uploaded_file: Option<String>,
     author: Option<String>,
@@ -144,6 +149,7 @@ fn read_message() -> io::Result<Option<String>> {
 }
 
 /// Write a native message to stdout: 4-byte LE length + JSON bytes.
+#[cfg(not(test))]
 fn write_message(json: &str) -> io::Result<()> {
     let bytes = json.as_bytes();
     let len = (bytes.len() as u32).to_le_bytes();
@@ -154,11 +160,15 @@ fn write_message(json: &str) -> io::Result<()> {
     out.flush()
 }
 
+#[cfg(not(test))]
 fn send_response<T: serde::Serialize>(resp: &T) {
     let json = serde_json::to_string(resp)
         .unwrap_or_else(|_| r#"{"ok":false,"error":"serialization failed"}"#.to_string());
     let _ = write_message(&json);
 }
+
+#[cfg(test)]
+fn send_response<T: serde::Serialize>(_resp: &T) {}
 
 fn send_error(msg: &str) {
     send_response(&ErrorResponse {
@@ -337,6 +347,8 @@ fn handle_get_status_with_upload(upload: &Option<UploadServer>) {
         ok,
         vault_path,
         version: VERSION.to_string(),
+        host_api_version: HOST_API_VERSION,
+        features: vec!["pending_uploads_v1".to_string()],
         upload_port: upload.as_ref().map(|u| u.port),
         upload_token: upload.as_ref().map(|u| u.token.clone()),
     });
@@ -495,10 +507,37 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         Err(e) => return send_error(&format!("invalid block type: {e}")),
     };
 
+    let pending_upload_id = p.pre_uploaded_id.clone().or_else(|| {
+        p.pre_uploaded_file
+            .as_deref()
+            .and_then(clipper_uploads::upload_id_from_legacy_filename)
+            .map(str::to_string)
+    });
+
     let conn = match db::open_or_create(&vault.index_db_path()) {
         Ok(c) => c,
         Err(e) => return send_error(&format!("failed to open database: {e}")),
     };
+
+    if let Some(ref upload_id) = pending_upload_id {
+        match clipper_uploads::load_pending_upload(vault, upload_id) {
+            Ok(manifest) => {
+                if let Some(slug) = manifest.committed_slug {
+                    if vault.block_path(&slug).exists() {
+                        return send_response(&SaveResponse {
+                            ok: true,
+                            slug,
+                            block_type: p.block_type,
+                            warning: None,
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                return send_error(&format!("failed to read pending upload: {e:#}"));
+            }
+        }
+    }
 
     // Generate slug
     let raw_slug = mine_lib::domain::block::suggest_slug(p.title.as_deref(), p.url.as_deref());
@@ -515,8 +554,19 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     let mut media_file = None;
     let mut thumbnail_file = None;
     let mut warning = None;
+    let mut pending_upload_to_commit = None;
 
-    if let Some(ref uploaded) = p.pre_uploaded_file {
+    if let Some(ref upload_id) = pending_upload_id {
+        match clipper_uploads::finalize_pending_upload(vault, upload_id, &slug) {
+            Ok(finalized) => {
+                media_file = Some(finalized.filename);
+                pending_upload_to_commit = Some(upload_id.clone());
+            }
+            Err(e) => {
+                warning = Some(format!("failed to finalize pending upload: {e:#}"));
+            }
+        }
+    } else if let Some(ref uploaded) = p.pre_uploaded_file {
         // File already uploaded via HTTP /upload endpoint.
         // Phase 18.E: backend is authoritative for the final media filename.
         // The uploaded file may have arrived under any popup-chosen staging
@@ -664,6 +714,23 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         return send_error(&format!("failed to write block file: {e}"));
     }
 
+    if let Some(ref upload_id) = pending_upload_to_commit {
+        if let Some(filename) = block
+            .frontmatter
+            .file
+            .as_deref()
+            .or(block.frontmatter.thumbnail.as_deref())
+        {
+            if let Err(e) =
+                clipper_uploads::mark_pending_upload_committed(vault, upload_id, &slug, filename)
+            {
+                warning = Some(format!(
+                    "saved block, but failed to mark upload committed: {e:#}"
+                ));
+            }
+        }
+    }
+
     // Thumbnail generation is delegated to the shared cascade in
     // storage::thumbnails::generate_for_block. Single source of truth —
     // watcher handler calls the same function at full_scan and on file
@@ -671,12 +738,25 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     // first embedded image/video in article body, and text fallback.
     let _ = thumbnails::generate_for_block(&block, vault);
 
-    // Do NOT upsert into the index here. The filesystem is the source
-    // of truth; the watcher (when the main app is running) mirrors
-    // file changes into SQLite, and full_scan covers the offline case.
-    // Writing to the DB from both the native host and the watcher
-    // caused write-lock contention — the user would see "failed to
-    // upsert block" even though the file was written correctly.
+    // Best-effort index catch-up. The source vault is still the durable
+    // commit, but the clipper must also work while the desktop UI is closed:
+    // waiting for a future watcher/full-scan makes a successful save look
+    // like "nothing happened". If the desktop app currently owns a write lock,
+    // do not fail the clip; the watcher/startup scan can still reconcile from
+    // the source files.
+    if let Err(e) = index::upsert_block_with_diagnostics(
+        &conn,
+        &block,
+        Some(vault.root()),
+        Some("clipper"),
+        None,
+    ) {
+        let message = format!("saved block, but failed to update local index: {e:#}");
+        warning = Some(match warning {
+            Some(existing) => format!("{existing}; {message}"),
+            None => message,
+        });
+    }
 
     send_response(&SaveResponse {
         ok: true,
@@ -813,7 +893,7 @@ fn title_from_raw_channel_tag(tag: &str) -> String {
 /// - If `uploaded` already equals the target filename, no rename is performed.
 /// - If the target filename already exists, returns an error — the caller's
 ///   slug-conflict resolution should have produced a unique stem, so a
-///   collision here indicates an orphan media file on disk and we must not
+///   collision here indicates an untracked media file on disk and we must not
 ///   overwrite it silently.
 /// - Otherwise renames the file and returns the new basename.
 ///
@@ -1708,6 +1788,7 @@ fn upload_filename_from_url(url: &str) -> String {
         .to_string()
 }
 
+#[cfg(test)]
 fn dedupe_upload_staging_filename(
     vault_root: &std::path::Path,
     requested: &str,
@@ -1837,7 +1918,8 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
         return;
     }
 
-    // Write to vault
+    // Write to local derived pending storage. The source vault is touched only
+    // when save_block commits the matching markdown file.
     let Some(vp) = vault_path else {
         let response = tiny_http::Response::from_string("Vault not configured")
             .with_status_code(500)
@@ -1850,9 +1932,8 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
         return;
     };
 
-    let vault_root = PathBuf::from(&vp);
-    let filename = match dedupe_upload_staging_filename(&vault_root, &filename) {
-        Ok(filename) => filename,
+    let vault = match resolve_native_vault_layout(PathBuf::from(&vp)) {
+        Ok(vault) => vault,
         Err(e) => {
             let response = tiny_http::Response::from_string(e)
                 .with_status_code(500)
@@ -1865,24 +1946,35 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
             return;
         }
     };
-    let dest = vault_root.join(&filename);
-    if let Err(e) = write_new_bytes(&dest, &body) {
-        let response = tiny_http::Response::from_string(format!("Write error: {e}"))
-            .with_status_code(500)
-            .with_header(
-                "Access-Control-Allow-Origin: *"
-                    .parse::<tiny_http::Header>()
-                    .unwrap(),
-            );
-        let _ = request.respond(response);
-        return;
-    }
 
-    let json = format!(
-        r#"{{"ok":true,"filename":"{}","size":{}}}"#,
-        filename,
-        body.len()
-    );
+    let content_type = request
+        .headers()
+        .iter()
+        .find(|h| h.field.as_str() == "Content-Type" || h.field.as_str() == "content-type")
+        .map(|h| h.value.as_str().to_string());
+    let manifest =
+        match clipper_uploads::write_pending_upload(&vault, &filename, content_type, &body) {
+            Ok(manifest) => manifest,
+            Err(e) => {
+                let response = tiny_http::Response::from_string(format!("Write error: {e:#}"))
+                    .with_status_code(500)
+                    .with_header(
+                        "Access-Control-Allow-Origin: *"
+                            .parse::<tiny_http::Header>()
+                            .unwrap(),
+                    );
+                let _ = request.respond(response);
+                return;
+            }
+        };
+
+    let json = serde_json::json!({
+        "ok": true,
+        "filename": format!("pending:{}", manifest.upload_id),
+        "upload_id": manifest.upload_id,
+        "size": manifest.size,
+    })
+    .to_string();
     let response = tiny_http::Response::from_string(json)
         .with_header(
             "Content-Type: application/json"
@@ -2215,6 +2307,47 @@ mod tests {
 
         assert!(existing.contains("Disk Only"));
         assert!(existing.contains("Orphan Media"));
+    }
+
+    #[test]
+    fn save_block_with_pending_upload_indexes_block_immediately() {
+        let tmp = TempDir::new().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"));
+        std::fs::create_dir_all(vault.root()).unwrap();
+
+        let upload = clipper_uploads::write_pending_upload(
+            &vault,
+            "shot.jpg",
+            Some("image/jpeg".into()),
+            b"jpg",
+        )
+        .unwrap();
+
+        handle_save_block(
+            &vault,
+            serde_json::json!({
+                "block_type": "image",
+                "title": "Door Link",
+                "url": "https://door.link",
+                "pre_uploaded_id": upload.upload_id,
+                "body": "",
+                "tags": []
+            }),
+        );
+
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let media_file: String = conn
+            .query_row(
+                "SELECT media_file FROM blocks WHERE slug = ?1",
+                ["Door Link"],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(media_file, "Door Link.jpg");
+        assert!(vault.block_path("Door Link").exists());
+        assert!(vault.root().join("Door Link.jpg").exists());
     }
 
     #[test]

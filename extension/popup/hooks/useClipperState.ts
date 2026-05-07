@@ -103,6 +103,7 @@ export function useClipperState() {
   const [cropSupported, setCropSupported] = useState<boolean>(false);
   const uploadPortRef = useRef<number | null>(null);
   const uploadTokenRef = useRef<string | null>(null);
+  const supportsPendingUploadsRef = useRef(false);
 
   const tabIdRef = useRef<number | null>(null);
   const vaultRef = useRef<string | null>(null);
@@ -320,6 +321,8 @@ export function useClipperState() {
       }
       uploadPortRef.current = (status.upload_port as number) ?? null;
       uploadTokenRef.current = (status.upload_token as string) ?? null;
+      supportsPendingUploadsRef.current = Array.isArray(status.features)
+        && status.features.includes("pending_uploads_v1");
 
       // Taxonomy and vault list are useful, but they must not block the
       // first paint of the clipper. Open overlays refresh again when another
@@ -706,6 +709,13 @@ export function useClipperState() {
         setSaving(false);
         return { ok: false as const, error: "Upload server not configured" };
       }
+      if (!supportsPendingUploadsRef.current) {
+        setSaving(false);
+        return {
+          ok: false as const,
+          error: "Native host needs update before screenshots can be saved safely.",
+        };
+      }
       try {
         const blob = await fetch(screenshotDataUrl).then((r) => r.blob());
         const ext = blob.type === "image/png" ? "png" : "jpg";
@@ -730,13 +740,17 @@ export function useClipperState() {
             );
           }
         }
-        if (uploadResult.ok && uploadResult.filename) {
+        if (uploadResult.ok && uploadResult.upload_id) {
+          payload.pre_uploaded_id = uploadResult.upload_id;
+        } else if (uploadResult.ok && uploadResult.filename?.startsWith("pending:")) {
           payload.pre_uploaded_file = uploadResult.filename;
         } else {
           setSaving(false);
           return {
             ok: false as const,
-            error: `Upload failed: ${uploadResult.error ?? "unknown"}`,
+            error: uploadResult.ok
+              ? "Upload failed: native host did not return a recoverable upload id"
+              : `Upload failed: ${uploadResult.error ?? "unknown"}`,
           };
         }
       } catch (e) {
@@ -768,7 +782,10 @@ export function useClipperState() {
       payload.image_url = metadata.image;
     }
 
-    const result = await sendToNative(payload);
+    let result = await sendToNative(payload);
+    if (!result.ok && currentType === "screenshot") {
+      result = await sendToNative(payload);
+    }
     setSaving(false);
 
     if (result.ok) {
@@ -782,6 +799,12 @@ export function useClipperState() {
         chrome.storage.local.set({ recentChannels: updated });
       }
       return { ok: true as const };
+    }
+    if (currentType === "screenshot") {
+      return {
+        ok: false as const,
+        error: `Clip uploaded, but card was not created. Open Mine recovery to restore it. ${result.error ?? "Failed to save"}`,
+      };
     }
     return { ok: false as const, error: result.error ?? "Failed to save" };
   }, [

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { DndContext } from "@dnd-kit/core";
+import { invoke } from "@tauri-apps/api/core";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
 import type { TagCount } from "@/types";
@@ -39,6 +40,40 @@ function sidebarTree(props = defaultProps, initialEntries = ["/"]) {
 
 function renderSidebar(props = defaultProps, initialEntries = ["/"]) {
   return render(sidebarTree(props, initialEntries));
+}
+
+function previewBlock(slug: string) {
+  return {
+    id: 101,
+    slug,
+    card_kind: "media",
+    block_type: "image",
+    title: null,
+    content_heading: null,
+    display_title: null,
+    fallback_label: slug,
+    description: null,
+    url: null,
+    media_file: `${slug}.jpg`,
+    thumbnail: null,
+    saved_at: "2026-01-01T00:00:00Z",
+    source: null,
+    width: 1200,
+    height: 800,
+    author: null,
+    body: "",
+    preview_text: null,
+    first_image: null,
+    media_urls: null,
+    media_dimensions: null,
+    preview_manifest: null,
+    feed_playback: null,
+    related_notes: [],
+    body_hash: null,
+    origin: null,
+    index_warning: null,
+    tags: [],
+  };
 }
 
 describe("Sidebar", () => {
@@ -323,7 +358,9 @@ describe("Sidebar", () => {
     expect(after).toBe(before);
   });
 
-  it("keeps row-mode thumbnail hover preview disabled", () => {
+  it("opens a card preview from row-mode sidebar thumbnails on hover", async () => {
+    vi.useFakeTimers();
+    vi.mocked(invoke).mockResolvedValueOnce(previewBlock("alpha-a"));
     const previews = new Map([
       ["alpha", [{
         url: "asset://localhost/thumbs/alpha-a.jpg",
@@ -335,14 +372,33 @@ describe("Sidebar", () => {
     const { container } = renderSidebar({
       ...defaultProps,
       width: 600,
+      vaultPath: "/vault",
+      thumbsRootPath: "/vault/.arena/cache/thumbs",
       channelPreviews: previews,
     });
 
     const thumbnail = container.querySelector("[data-sidebar-preview-thumbnail]");
-    expect(thumbnail).toHaveAttribute("data-sidebar-preview-thumbnail", "placeholder");
-    expect(thumbnail).not.toHaveClass("cursor-pointer");
+    expect(thumbnail).toHaveAttribute("data-sidebar-preview-thumbnail", "trigger");
+    expect(thumbnail).toHaveClass("cursor-pointer");
     fireEvent.mouseEnter(thumbnail!);
-    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
+    fireEvent.pointerLeave(container.querySelector("[data-sidebar-scroll]")!);
+    expect(container.querySelector("[data-sidebar-scroll]")).toHaveAttribute(
+      "data-sidebar-row-focus-mode",
+      "true",
+    );
+    expect(container.querySelector('[data-sidebar-row-key="tag:alpha"]')).toHaveAttribute(
+      "data-sidebar-row-focused",
+      "true",
+    );
+    expect(thumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
+    expect(invoke).toHaveBeenCalledWith("get_block", { slug: "alpha-a" });
   });
 
   it("renders continuous sidebar guidelines and keeps the protected action area in row mode", () => {

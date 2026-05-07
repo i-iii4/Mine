@@ -221,6 +221,12 @@ chrome.runtime.onInstalled.addListener(() => {
     contexts: ["selection"],
   });
 
+  chrome.contextMenus.create({
+    id: "save-link",
+    title: "Save link to Mine",
+    contexts: ["link"],
+  });
+
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -400,17 +406,25 @@ async function uploadFileToNativeHost({ port, token, filename, screenshotId, vau
     if (typeof vaultPath === "string" && vaultPath.length > 0) {
       params.set("vault_path", vaultPath);
     }
-    const resp = await fetch(
-      `http://127.0.0.1:${port}/upload?${params.toString()}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": cached.contentType || blob.type || "application/octet-stream",
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    let resp;
+    try {
+      resp = await fetch(
+        `http://127.0.0.1:${port}/upload?${params.toString()}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": cached.contentType || blob.type || "application/octet-stream",
+          },
+          body: blob,
+          signal: controller.signal,
         },
-        body: blob,
-      },
-    );
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
     const result = await resp.json();
     if (result?.ok) screenshotUploads.delete(screenshotId);

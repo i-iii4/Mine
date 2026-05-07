@@ -3,7 +3,7 @@
 #
 # This script:
 # 1. Builds the native-host binary (release mode)
-# 2. Copies it to ~/Library/Application Support/LocalArena/
+# 2. Copies it to ~/Library/Application Support/com.mine.app/clipper/
 # 3. Creates the Chrome native messaging manifest
 # 4. Optionally sets the vault path (for standalone mode without desktop app)
 #
@@ -24,13 +24,13 @@ EXT_ID="${1:-EXTENSION_ID_PLACEHOLDER}"
 VAULT_PATH="${2:-}"
 
 HOST_NAME="com.localarena.clipper"
-HOST_DIR="$HOME/Library/Application Support/LocalArena"
+HOST_DIR="$HOME/Library/Application Support/com.mine.app/clipper"
 HOST_PATH="$HOST_DIR/native-host"
 
 CHROME_NM_DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
 MANIFEST_PATH="$CHROME_NM_DIR/$HOST_NAME.json"
 
-APP_CONFIG_DIR="$HOME/Library/Application Support/com.localarena.app"
+APP_CONFIG_DIR="$HOME/Library/Application Support/com.mine.app"
 
 echo "Building native-host (release)..."
 cd "$PROJECT_DIR/src-tauri"

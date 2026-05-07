@@ -60,6 +60,9 @@ pub fn run() {
             commands::import::import_arena_channels,
             commands::thumbnails::save_thumb,
             commands::thumbnails::list_pending_thumb_upgrades,
+            commands::clipper_recovery::list_clipper_recovery_items,
+            commands::clipper_recovery::recover_clipper_pending_upload,
+            commands::clipper_recovery::discard_clipper_pending_upload,
             commands::conflicts::list_vault_conflicts,
             commands::conflicts::resolve_vault_conflict,
         ])
