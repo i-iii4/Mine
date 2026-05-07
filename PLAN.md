@@ -113,7 +113,7 @@ Goal: устранить две подтверждённые архитекту�
 | C1 | Derived Store Migration | [x] | `vault-id`, local app-data store, startup/open against local index, first-run migration UX |
 | C2 | Feed Preview Pipeline | [~] | `FeedPreviewManifest`, composite previews, feed/detail split, removal of originals from grid path |
 | C3 | Measurement + Invalidation Hardening | [~] | media-free measurement, `source_stamp` invalidation, acceptance profiling |
-| C4 | Residual Risks / Follow-up | [ ] | watcher hardening beyond current catch-up, remaining frontend boot optimization, optional async/custom asset path for Detail/original flows, remaining windowing bugs |
+| C4 | Residual Risks / Follow-up | [ ] | filesystem-first route catch-up, watcher hardening beyond current catch-up, remaining frontend boot optimization, optional async/custom asset path for Detail/original flows, remaining windowing bugs |
 | C5 | Feed Video Phase | [~] | explicit `feed_playback` contract, tiered `standard/heavy` autoplay policy, poster-first `FeedVideoSurface`, single-active autoplay, preview-only galleries |
 | C6 | Identity Assets | [x] | Redaction 100 Italic `m`, platform-specific app icons, toolbar circle icon, Instagram overlay glyph/button contract |
 
@@ -137,7 +137,7 @@ Goal: устранить две подтверждённые архитекту�
   - generation-safe masonry rewrite внедрён: `layoutGenerationKey`, generation-aware height/layout cache, `committed` prefix и skeleton-only provisional mode;
   - на живом `Mine` подтверждено, что системная обрезка низа и white-tail underflow больше не воспроизводятся;
   - app-level native selection suppression добавлен для chrome/feed/sidebar/media surfaces, при этом Detail article prose сохраняет системное выделение для extraction/`Cmd+C`;
-  - оставшийся scope `C3` — `source_stamp` invalidation и финальный profiling gate, а не height correctness.
+  - оставшийся scope `C3` — filesystem-first route catch-up, `source_stamp` invalidation и финальный profiling gate, а не height correctness.
 - `C5` выполнен частично:
   - введён explicit backend-derived `feed_playback` contract для desktop feed autoplay;
   - galleries больше не монтируют live video вообще и остаются preview-only;
@@ -161,6 +161,20 @@ Goal: устранить две подтверждённые архитекту�
   - macOS/Tauri app icon использует transparent canvas + inset white rounded tile, чтобы Dock не показывал oversized квадрат;
   - extension toolbar icon — белый круг с чёрной `m`;
   - Instagram overlay отделён от toolbar icon: content script рисует круглую белую кнопку и вставляет glyph-only `clipper-overlay-32.png`.
+
+### Phase 24 — Filesystem-first visibility [PLANNED]
+
+Goal: любой `.md` файл в source vault отображается в приложении как карточка без
+ручного rebuild, независимо от того, как он появился: Obsidian/Finder,
+web-clipper при закрытом desktop UI, iCloud sync или внешний editor.
+
+| # | Task | Status |
+|---|------|--------|
+| 24.1 | Backend catch-up primitive: compare source-vault `.md` inventory with local SQLite and upsert missing/changed files | [ ] |
+| 24.2 | Delete stale index rows when the corresponding source `.md` no longer exists | [ ] |
+| 24.3 | Call catch-up before final route-facing reads: `list_grid_blocks`, `list_tags`, `list_channels`, `list_channel_previews`, `search_blocks`, `get_block` | [ ] |
+| 24.4 | Preserve fast startup by allowing provisional cached snapshots only until catch-up completes | [ ] |
+| 24.5 | Tests: create `.md` directly on disk and assert grid/list/search/detail visibility without restart/rebuild; include missed-watcher regression | [ ] |
 
 ### Current audit hardening — 03.05.2026 [COMPLETED]
 
@@ -260,7 +274,8 @@ The target is one canonical post-migration format documented in
 
 - Этот план **не обещает** мгновенно убрать вообще все лаги.
 - После него осознанно могут остаться:
-  - watcher correctness improvements beyond current catch-up;
+  - filesystem-first route catch-up;
+  - watcher correctness improvements beyond route catch-up;
   - frontend boot / per-first-paint optimization;
   - отдельная оптимизация Detail/original asset path;
   - отдельные windowing bugs, если они сохранятся после перевода feed на previews.

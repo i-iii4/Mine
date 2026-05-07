@@ -164,6 +164,28 @@ fallback only; new write paths do not create it.
 
 Source vault хранит только пользовательские файлы и `vault-id`. Все derived данные живут per-device в app data и могут быть rebuilt локально.
 
+### Filesystem-first visibility contract
+
+Наличие `.md` файла в source vault — единственный источник правды для видимости
+карточки. Если Markdown существует на диске, приложение обязано показать его в
+ленте/поиске/детале после route read, даже если SQLite snapshot устарел,
+watcher пропустил событие или native host сохранял clip при закрытом desktop UI.
+
+Практические инварианты:
+
+- SQLite, FTS, preview manifests, thumbnails и channel previews — только
+  derived read models. Они ускоряют UI, но не решают, существует ли карточка.
+- Watcher — accelerator, а не гарантия correctness. Потерянное notify-событие
+  не может делать `.md` невидимым.
+- Route-facing read commands (`list_grid_blocks`, `list_tags`,
+  `list_channels`, `list_channel_previews`, `search_blocks`, `get_block`) должны
+  проходить read-time catch-up: upsert missing/changed `.md` files and remove
+  rows whose source `.md` disappeared before returning a final snapshot.
+- Startup may render a cached skeleton/snapshot provisionally, but any final
+  empty state or final route data must be reconciled with the source vault.
+- Clipper/native-host direct SQLite upsert is only an optimization for faster
+  feedback. The main app must still recover visibility from Markdown files alone.
+
 ### Filename-first rename contract
 
 - identity блока остаётся равной `file_stem` его `.md` файла
@@ -185,6 +207,9 @@ Source vault хранит только пользовательские файл
 Текущий runtime contract после срезов `Critical Path Reset v1`:
 
 - startup/open работает против local derived store, а не против SQLite внутри iCloud vault;
+- local derived store остаётся cache: route read must catch up from source-vault
+  `.md` inventory before returning final data, so a stale index cannot hide
+  Markdown files;
 - feed/grid/sidebar используют preview-first pipeline;
 - `Detail` остаётся full-fidelity path и может открывать оригиналы;
 - async asset protocol override убирает синхронный `asset://` hotspot с main thread WebView для оставшихся asset-paths;
@@ -605,9 +630,9 @@ CREATE TABLE wikilinks (
 | Approach | Problem |
 |---|---|
 | SQLite как единственное хранилище | Данные заперты в приложении, нет доступа через Finder, сложный экспорт |
-| Файлы + SQLite-индекс (chosen) | Нужен file watcher и синхронизация индекса, но данные всегда доступны |
+| Файлы + SQLite-индекс (chosen) | Нужен file watcher/read-time catch-up и синхронизация индекса, но данные всегда доступны |
 
-Rationale: пользователь должен иметь возможность удалить приложение и сохранить все данные. Файлы — универсальный формат. SQLite пересобирается из файлов за секунды.
+Rationale: пользователь должен иметь возможность удалить приложение и сохранить все данные. Файлы — универсальный формат. SQLite пересобирается из файлов за секунды. Следствие этого решения: stale SQLite snapshot не имеет права скрывать существующие Markdown files; индекс должен догонять source vault на чтении, а не наоборот.
 
 ### 002: Tauri вместо Electron
 
@@ -819,6 +844,19 @@ writes the markdown card. If that second phase fails or the browser loses the
 native-message response, the pending payload remains recoverable in the desktop
 recovery surface; the source vault is not polluted with unreferenced media by
 the happy-path upload step.
+
+### 016: Filesystem-first visibility over SQLite-only route reads
+
+| Approach | Problem |
+|---|---|
+| Trust current SQLite snapshot and rely on watcher/background `full_scan` | A valid Markdown file can exist in the vault but remain invisible in the UI until a later scan, which breaks the Obsidian-like contract |
+| Synchronous full vault scan before every route read | Correct but too expensive for large vaults and defeats the startup/performance reset |
+| **Bounded read-time catch-up before route reads** (chosen) | Adds small filesystem IO to read paths, but preserves correctness: missing/changed/deleted `.md` files are reconciled before final route data is returned |
+
+Rationale: Local Arena's primary contract is "the app is a window into the
+Markdown vault". The derived index may be stale, absent, or rebuilt; user-visible
+truth must still come from source-vault files. The watcher and native-host direct
+upsert remain performance optimizations only.
 
 ## Dependencies
 

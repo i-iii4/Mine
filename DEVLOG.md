@@ -1,5 +1,29 @@
 # Devlog
 
+## 07.05.2026 [docs] — Filesystem-first visibility contract
+
+### Context
+
+- Clipper-created Markdown files existed in the source vault, but the UI could
+  still look empty because route reads trusted a stale local SQLite index.
+- This violated the core Local Arena/Obsidian contract: Markdown files on disk
+  are the source of truth, and the app is a window into that vault.
+
+### Decision
+
+- Documented filesystem-first visibility in [ARCHITECTURE.md](ARCHITECTURE.md):
+  any `.md` in the source vault must become visible from source files alone.
+- Clarified that SQLite, FTS, previews, thumbnails, and sidebar previews are
+  derived read models only.
+- Clarified that watcher and native-host direct upsert are accelerators, not
+  correctness guarantees.
+- Added planned Phase 24 to [PLAN.md](PLAN.md): read-time catch-up before final
+  grid/list/search/taxonomy/detail route reads.
+
+### Verification
+
+- Documentation-only change.
+
 ## 07.05.2026 [implementation] — Clipper pending upload recovery and index catch-up
 
 ### Completed
