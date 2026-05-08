@@ -37,8 +37,9 @@ import {
 import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
 import type { DetailTopMenuMode } from "@/lib/appPreferences";
 import { getBlock } from "@/lib/commands";
+import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import { cn } from "@/lib/utils";
-import { InteractiveCardPreview } from "./Card";
+import { ReadOnlyCardPreview } from "./Card";
 
 /** Convert a collection ref to a compact display title. */
 function titleFromTag(tag: string): string {
@@ -51,8 +52,6 @@ const SIDEBAR_PREVIEW_WIDTH = 240;
 const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
 const SIDEBAR_PREVIEW_GAP = 8;
 const SIDEBAR_PREVIEW_VIEWPORT_MARGIN = 16;
-const SIDEBAR_PREVIEW_OPEN_DELAY_MS = 160;
-const SIDEBAR_PREVIEW_CLOSE_DELAY_MS = 120;
 const SIDEBAR_ROW_TITLE_COLUMN_WIDTH = 150;
 const SIDEBAR_PREVIEW_DIVIDER_GAP = 4;
 const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = 80;
@@ -109,7 +108,6 @@ type SidebarPreviewTarget = {
 type SidebarPreviewPosition = {
   top: number;
   left: number;
-  bridge: CSSProperties;
 };
 
 type SidebarKeyboardNavigationFocus = {
@@ -175,8 +173,6 @@ export function Sidebar({
   isResizing,
   vaultPath,
   thumbsRootPath,
-  tags,
-  currentTag,
   orderedTags,
   channelPreviews,
   totalBlocks,
@@ -187,10 +183,6 @@ export function Sidebar({
   onRenameTag,
   onCreateChannel,
   onOpenBlock,
-  onToggleTag,
-  onCreateAndAssign,
-  onRequestRename,
-  onRequestDelete,
   onNavClick,
   onScrollToTop,
   keyboardNavigationFocus,
@@ -208,6 +200,7 @@ export function Sidebar({
   const previewRef = useRef<HTMLDivElement | null>(null);
   const previewOpenTimerRef = useRef<number | null>(null);
   const previewCloseTimerRef = useRef<number | null>(null);
+  const lastPreviewOpenedAtRef = useRef<number | null>(null);
   const sidebarRowSwitchFrameRef = useRef<number | null>(null);
   const sidebarKeyboardFocusTimerRef = useRef<number | null>(null);
   const sidebarRowFocusKeyRef = useRef<string | null>(null);
@@ -215,7 +208,6 @@ export function Sidebar({
   const [hoveredPreview, setHoveredPreview] = useState<SidebarPreviewTarget | null>(null);
   const [hoverPreviewBlock, setHoverPreviewBlock] = useState<IndexedBlock | null>(null);
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<SidebarPreviewPosition | null>(null);
-  const [hoverPreviewPinned, setHoverPreviewPinned] = useState(false);
   const [sidebarRowFocusKey, setSidebarRowFocusKey] = useState<string | null>(null);
   const [sidebarRowFocusMode, setSidebarRowFocusMode] = useState(false);
   const [sidebarRowSwitching, setSidebarRowSwitching] = useState(false);
@@ -384,50 +376,32 @@ export function Sidebar({
   const closePreview = useCallback(() => {
     clearPreviewOpenTimer();
     clearPreviewCloseTimer();
-    setHoverPreviewPinned(false);
     setHoveredPreview(null);
   }, [clearPreviewCloseTimer, clearPreviewOpenTimer]);
 
-  const cancelPreviewClose = useCallback(() => {
-    clearPreviewCloseTimer();
-  }, [clearPreviewCloseTimer]);
-
   const requestPreviewClose = useCallback(() => {
-    clearPreviewOpenTimer();
-    if (hoverPreviewPinned) return;
-    clearPreviewCloseTimer();
-    previewCloseTimerRef.current = window.setTimeout(() => {
-      previewCloseTimerRef.current = null;
-      setHoveredPreview(null);
-    }, SIDEBAR_PREVIEW_CLOSE_DELAY_MS);
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, hoverPreviewPinned]);
+    closePreview();
+  }, [closePreview]);
 
-  const noopToggleTag = useCallback((slug: string, tag: string, hasTag: boolean) => {
-    void slug;
-    void tag;
-    void hasTag;
-  }, []);
-  const noopCreateAndAssign = useCallback((tag: string, blockSlug: string) => {
-    void tag;
-    void blockSlug;
-  }, []);
-  const noopRequestRename = useCallback((block: LightBlock) => {
-    void block;
-  }, []);
-  const noopRequestDelete = useCallback((slug: string) => {
-    void slug;
+  const openPreview = useCallback((target: SidebarPreviewTarget) => {
+    if (!previewTriggerRefs.current.has(target.key)) return;
+    setHoveredPreview(target);
   }, []);
 
   const schedulePreviewOpen = useCallback((target: SidebarPreviewTarget) => {
     clearPreviewOpenTimer();
     clearPreviewCloseTimer();
     setHoveredPreview(null);
+    const delay = getHoverPreviewOpenDelay(lastPreviewOpenedAtRef.current);
+    if (delay <= 0) {
+      openPreview(target);
+      return;
+    }
     previewOpenTimerRef.current = window.setTimeout(() => {
       previewOpenTimerRef.current = null;
-      if (!previewTriggerRefs.current.has(target.key)) return;
-      setHoveredPreview(target);
-    }, SIDEBAR_PREVIEW_OPEN_DELAY_MS);
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer]);
+      openPreview(target);
+    }, delay);
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, openPreview]);
 
   const openPreviewBlock = useCallback((target: SidebarPreviewTarget) => {
     if (!onOpenBlock) return;
@@ -473,6 +447,9 @@ export function Sidebar({
     void getBlock(hoveredPreview.slug)
       .then((block) => {
         if (cancelled) return;
+        if (block) {
+          lastPreviewOpenedAtRef.current = Date.now();
+        }
         setHoverPreviewBlock(block);
       })
       .catch(() => {
@@ -502,26 +479,6 @@ export function Sidebar({
       setHoverPreviewPosition(nextPosition);
     }
   }, [hoveredPreview, hoverPreviewBlock, hoverPreviewPosition]);
-
-  useEffect(() => {
-    if (!hoverPreviewPinned) return;
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      const preview = previewRef.current;
-      const trigger = hoveredPreview
-        ? previewTriggerRefs.current.get(hoveredPreview.key)
-        : null;
-      if (preview?.contains(target) || trigger?.contains(target)) {
-        return;
-      }
-      closePreview();
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [closePreview, hoverPreviewPinned, hoveredPreview]);
 
   useEffect(() => {
     if (!isLinkingBlock) {
@@ -675,52 +632,23 @@ export function Sidebar({
       {vaultPath
         && hoverPreviewPosition
         && hoverPreviewBlock && (
-        <>
-          <div
-            className="fixed z-40"
-            style={hoverPreviewPosition.bridge}
-            onMouseEnter={cancelPreviewClose}
-            onMouseLeave={requestPreviewClose}
-            data-sidebar-thumbnail-hover-bridge
-          />
           <div
             ref={previewRef}
-            className="fixed z-50"
+            className="pointer-events-none fixed z-50"
             style={{
               top: hoverPreviewPosition.top,
               left: hoverPreviewPosition.left,
               width: SIDEBAR_PREVIEW_WIDTH,
             }}
-            onMouseEnter={cancelPreviewClose}
-            onMouseLeave={requestPreviewClose}
             data-sidebar-thumbnail-hover-preview
           >
-            <InteractiveCardPreview
+            <ReadOnlyCardPreview
               block={hoverPreviewBlock}
               vaultPath={vaultPath}
               thumbsRootPath={thumbsRootPath}
               width={SIDEBAR_PREVIEW_WIDTH}
-              className="dark:bg-accent"
-              tags={tags ?? orderedTags}
-              currentTag={currentTag}
-              onToggleTag={onToggleTag ?? noopToggleTag}
-              onCreateAndAssign={onCreateAndAssign ?? noopCreateAndAssign}
-              onRequestRename={onRequestRename ?? noopRequestRename}
-              onRequestDelete={onRequestDelete ?? noopRequestDelete}
-              onInteractiveOpenChange={(open) => {
-                if (open) {
-                  setHoverPreviewPinned(true);
-                }
-              }}
-              onInteractionStart={() => setHoverPreviewPinned(true)}
-              onClick={(previewBlock) => openPreviewBlock({
-                key: hoveredPreview?.key ?? previewBlock.slug,
-                rowKey: hoveredPreview?.rowKey ?? "",
-                slug: previewBlock.slug,
-              })}
             />
           </div>
-        </>
       )}
 
       {isLinkingBlock && detailTopMenuMode !== "classic" && (
@@ -784,18 +712,7 @@ function computeSidebarPreviewPosition(
         SIDEBAR_PREVIEW_VIEWPORT_MARGIN,
         triggerRect.top - SIDEBAR_PREVIEW_GAP - previewHeight,
       );
-  const bridgeTop = canOpenDown ? triggerRect.bottom : top + previewHeight;
-  const bridgeBottom = canOpenDown ? top : triggerRect.top;
-  const bridgeLeft = Math.min(left, triggerRect.left);
-  const bridgeRight = Math.max(left + SIDEBAR_PREVIEW_WIDTH, triggerRect.right);
-  const bridge: CSSProperties = {
-    top: bridgeTop,
-    left: bridgeLeft,
-    width: bridgeRight - bridgeLeft,
-    height: Math.max(0, bridgeBottom - bridgeTop),
-  };
-
-  return { top, left, bridge };
+  return { top, left };
 }
 
 const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
@@ -1425,7 +1342,7 @@ function SidebarPreviewStrip({
       className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden"
       style={SIDEBAR_PREVIEW_MASK_STYLE}
     >
-      {cards.map((card, index) => {
+      {cards.filter((card) => card.hasThumb).map((card, index) => {
         const previewKey = `${previewKeyPrefix}:${card.slug ?? index}:${index}`;
         const canPreview = allowHoverPreview
           && card.hasThumb
@@ -1446,12 +1363,12 @@ function SidebarPreviewStrip({
               isPreviewActive &&
                 "outline-1 -outline-offset-1 outline-component-fill-hover",
             )}
-            onMouseEnter={() => {
+            onPointerEnter={() => {
               if (card.slug && canPreview) {
                 onPreviewEnter({ key: previewKey, rowKey, slug: card.slug });
               }
             }}
-            onMouseLeave={() => {
+            onPointerLeave={() => {
               if (canPreview) {
                 onPreviewLeave();
               }

@@ -34,6 +34,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { getBlock } from "@/lib/commands";
+import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import type { DetailTopMenuMode } from "@/lib/appPreferences";
 import {
   findPreviewTileForSource,
@@ -47,7 +48,7 @@ import {
 import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
 import { CardMoreMenu } from "./CardHoverMenu";
-import { InteractiveCardPreview } from "./Card";
+import { ReadOnlyCardPreview } from "./Card";
 import { CollectionPicker } from "./CollectionPicker";
 
 // Layout constants — shared between top chrome, scroll layer, and metadata layer.
@@ -95,7 +96,6 @@ function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock
 type HoverPreviewPosition = {
   top: number;
   left: number;
-  bridge: CSSProperties;
 };
 
 type HoveredRelatedNote = {
@@ -375,8 +375,6 @@ export function Detail({
                 currentTag={currentTag}
                 onToggleTag={onToggleTag}
                 onCreateAndAssign={onCreateAndAssign}
-                onRequestRename={onRequestRename}
-                onRequestDelete={onRequestDelete}
                 onOpenRelatedNote={onOpenRelatedNote}
               />
             </div>
@@ -399,8 +397,6 @@ interface MetadataPanelProps {
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
-  onRequestRename: (block: LightBlock | IndexedBlock) => void;
-  onRequestDelete: (slug: string) => void;
   onOpenRelatedNote: (slug: string) => void;
 }
 
@@ -414,13 +410,12 @@ function MetadataPanel({
   currentTag,
   onToggleTag,
   onCreateAndAssign,
-  onRequestRename,
-  onRequestDelete,
   onOpenRelatedNote,
 }: MetadataPanelProps) {
   const relatedNoteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const hoverPreviewRef = useRef<HTMLDivElement | null>(null);
-  const hoverPreviewCloseTimerRef = useRef<number | null>(null);
+  const hoverPreviewOpenTimerRef = useRef<number | null>(null);
+  const lastHoverPreviewOpenedAtRef = useRef<number | null>(null);
   const displayBlock = fullBlock ?? block;
   const indexWarning = getIndexWarning(displayBlock);
   const relatedNotes = useMemo(
@@ -435,7 +430,6 @@ function MetadataPanel({
   const [relatedNoteBlocks, setRelatedNoteBlocks] = useState<Map<string, IndexedBlock | null> | null>(null);
   const [hoveredRelatedNote, setHoveredRelatedNote] = useState<HoveredRelatedNote | null>(null);
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<HoverPreviewPosition | null>(null);
-  const [hoverPreviewPinned, setHoverPreviewPinned] = useState(false);
 
   useEffect(() => {
     if (relatedNotes.length === 0) {
@@ -460,36 +454,41 @@ function MetadataPanel({
     };
   }, [relatedNotes, relatedNotesKey]);
 
-  const cancelHoverPreviewClose = useCallback(() => {
-    if (hoverPreviewCloseTimerRef.current == null) return;
-    window.clearTimeout(hoverPreviewCloseTimerRef.current);
-    hoverPreviewCloseTimerRef.current = null;
+  const cancelHoverPreviewOpen = useCallback(() => {
+    if (hoverPreviewOpenTimerRef.current == null) return;
+    window.clearTimeout(hoverPreviewOpenTimerRef.current);
+    hoverPreviewOpenTimerRef.current = null;
+  }, []);
+
+  const showRelatedNotePreview = useCallback((note: HoveredRelatedNote) => {
+    lastHoverPreviewOpenedAtRef.current = Date.now();
+    setHoveredRelatedNote(note);
   }, []);
 
   const openRelatedNotePreview = useCallback((note: HoveredRelatedNote) => {
-    cancelHoverPreviewClose();
-    setHoveredRelatedNote(note);
-  }, [cancelHoverPreviewClose]);
+    cancelHoverPreviewOpen();
+    const delay = getHoverPreviewOpenDelay(lastHoverPreviewOpenedAtRef.current);
+    if (delay <= 0) {
+      showRelatedNotePreview(note);
+      return;
+    }
+    setHoveredRelatedNote(null);
+    hoverPreviewOpenTimerRef.current = window.setTimeout(() => {
+      hoverPreviewOpenTimerRef.current = null;
+      showRelatedNotePreview(note);
+    }, delay);
+  }, [cancelHoverPreviewOpen, showRelatedNotePreview]);
 
   const requestCloseRelatedNotePreview = useCallback(() => {
-    if (hoverPreviewPinned) return;
-    cancelHoverPreviewClose();
-    hoverPreviewCloseTimerRef.current = window.setTimeout(() => {
-      setHoveredRelatedNote(null);
-    }, 120);
-  }, [cancelHoverPreviewClose, hoverPreviewPinned]);
+    cancelHoverPreviewOpen();
+    setHoveredRelatedNote(null);
+  }, [cancelHoverPreviewOpen]);
 
   useEffect(() => {
     return () => {
-      cancelHoverPreviewClose();
+      cancelHoverPreviewOpen();
     };
-  }, [cancelHoverPreviewClose]);
-
-  useEffect(() => {
-    if (!hoveredRelatedNote) {
-      setHoverPreviewPinned(false);
-    }
-  }, [hoveredRelatedNote]);
+  }, [cancelHoverPreviewOpen]);
 
   const hoveredRelatedNoteBlock = hoveredRelatedNote
     ? relatedNoteBlocks?.get(hoveredRelatedNote.slug) ?? null
@@ -531,71 +530,28 @@ function MetadataPanel({
     }
   }, [hoveredRelatedNote, hoverPreviewPosition, hoveredRelatedNoteBlock]);
 
-  useEffect(() => {
-    if (!hoverPreviewPinned) return;
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      const preview = hoverPreviewRef.current;
-      const trigger = hoveredRelatedNote
-        ? relatedNoteButtonRefs.current.get(hoveredRelatedNote.rowKey)
-        : null;
-      if (preview?.contains(target) || trigger?.contains(target)) {
-        return;
-      }
-      setHoverPreviewPinned(false);
-      setHoveredRelatedNote(null);
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-    };
-  }, [hoverPreviewPinned, hoveredRelatedNote]);
-
   const cardKindValue = formatMetadataCardKind(displayBlock.card_kind);
 
   return (
     <>
       {hoverPreviewPosition && hoveredRelatedNoteBlock && (
-        <>
-          <div
-            className="fixed z-30"
-            style={hoverPreviewPosition.bridge}
-            onMouseEnter={cancelHoverPreviewClose}
-            onMouseLeave={requestCloseRelatedNotePreview}
-            data-related-note-hover-bridge
+        <div
+          ref={hoverPreviewRef}
+          className="pointer-events-none fixed z-40"
+          style={{
+            top: hoverPreviewPosition.top,
+            left: hoverPreviewPosition.left,
+            width: HOVER_CARD_WIDTH,
+          }}
+          data-related-note-hover-preview
+        >
+          <ReadOnlyCardPreview
+            block={hoveredRelatedNoteBlock}
+            vaultPath={vaultPath}
+            thumbsRootPath={resolvedThumbsRoot}
+            width={HOVER_CARD_WIDTH}
           />
-          <div
-            ref={hoverPreviewRef}
-            className="fixed z-40"
-            style={{
-              top: hoverPreviewPosition.top,
-              left: hoverPreviewPosition.left,
-              width: HOVER_CARD_WIDTH,
-            }}
-            onMouseEnter={cancelHoverPreviewClose}
-            onMouseLeave={requestCloseRelatedNotePreview}
-            data-related-note-hover-preview
-          >
-            <InteractiveCardPreview
-              block={hoveredRelatedNoteBlock}
-              vaultPath={vaultPath}
-              thumbsRootPath={resolvedThumbsRoot}
-              width={HOVER_CARD_WIDTH}
-              tags={tags}
-              currentTag={currentTag}
-              onToggleTag={onToggleTag}
-              onCreateAndAssign={onCreateAndAssign}
-              onRequestRename={onRequestRename}
-              onRequestDelete={onRequestDelete}
-              onInteractiveOpenChange={setHoverPreviewPinned}
-              onInteractionStart={() => setHoverPreviewPinned(true)}
-              onClick={(previewBlock) => onOpenRelatedNote(previewBlock.slug)}
-            />
-          </div>
-        </>
+        </div>
       )}
       <div className="min-w-0 overflow-x-hidden">
         <ArticleAudioControls
@@ -904,8 +860,6 @@ function RelatedNotesSection({
               }}
               onMouseEnter={() => onRelatedNotePreviewEnter({ rowKey, slug: baseSlug })}
               onMouseLeave={onRelatedNotePreviewLeave}
-              onFocus={() => onRelatedNotePreviewEnter({ rowKey, slug: baseSlug })}
-              onBlur={onRelatedNotePreviewLeave}
               data-related-note-item="button"
             >
               <div className={RELATED_NOTE_ROW_CONTENT_CLASSES}>
@@ -966,28 +920,9 @@ function computeHoverPreviewPosition(
         HOVER_CARD_VIEWPORT_MARGIN,
         triggerRect.bottom - previewHeight,
       );
-  const bridgeLeft = canOpenRight
-    ? triggerRect.right
-    : left + HOVER_CARD_WIDTH;
-  const bridgeWidth = Math.max(
-    HOVER_CARD_GAP,
-    canOpenRight
-      ? left - triggerRect.right
-      : triggerRect.left - (left + HOVER_CARD_WIDTH),
-  );
-
   return {
     top,
     left,
-    bridge: {
-      left: bridgeLeft,
-      top: Math.min(triggerRect.top, top),
-      width: bridgeWidth,
-      height: Math.max(
-        triggerRect.height,
-        Math.abs(triggerRect.top - top) + previewHeight,
-      ),
-    },
   };
 }
 

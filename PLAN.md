@@ -176,6 +176,22 @@ web-clipper при закрытом desktop UI, iCloud sync или внешни�
 | 24.4 | Preserve fast startup by allowing provisional cached snapshots only until catch-up completes | [ ] |
 | 24.5 | Tests: create `.md` directly on disk and assert grid/list/search/detail visibility without restart/rebuild; include missed-watcher regression | [ ] |
 
+### Current thumbnail / hover hardening — 08.05.2026 [COMPLETED]
+
+- Native host save path now writes source-vault files, upserts SQLite, generates
+  Phase 1 thumb, and syncs `thumb_format` / `thumb_mtime` before returning.
+- Empty-body media clips with non-Rust-decodable media (AVIF/HEIC/VP8X WebP)
+  get a PNG fallback-label placeholder instead of an empty sidebar slot.
+- Sidebar preview queries return only confirmed thumb rows
+  (`thumb_format IS NOT NULL`); frontend filters `has_thumb=false`
+  defensively.
+- Watcher/full-scan emits thumb events for fresh PNG placeholders so Phase 2
+  WebView upgrade is still requested even when the file was already fresh.
+- Sidebar thumbnails and Related Notes use the shared hover-preview timing:
+  `500ms` cold delay, `0ms` warm delay inside an `800ms` warm window.
+- Hover previews in sidebar and Related Notes are read-only quick-look cards:
+  no action buttons, no hover bridge, no popup pinning.
+
 ### Current audit hardening — 03.05.2026 [COMPLETED]
 
 - Frontend async route/search guards:
@@ -418,7 +434,7 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.21 | Grid: делегирование ContextMenu (O(N)→O(1)) + синхронный сброс visibleCount + исправление скролла контекстного меню + hover сайдбара | [x] |
 | 7.22 | Визуальная стилизация: overlay titlebar + drag region, Geist Sans (UI) + Geist Mono (карточки, метаданные), острые карточки без заливки, GAP 32px, sidebar без заголовка с градиентным fade | [x] |
 | 7.23 | Иконки каналов в sidebar: стопка из 1–3 мини-карточек с реальными превью, веерная анимация при ховере | [x] |
-| 7.23.1 | Sidebar thumbnail hover preview experiment removed together with Channels Cards; row thumbnail strip remains visual-only and non-interactive | [x] |
+| 7.23.1 | Sidebar thumbnail hover preview restored as read-only quick-look: no action buttons, no hover bridge, closes on thumbnail leave | [x] |
 | 7.24 | Fullscreen Detail: двухслойный layout (scroll + fixed metadata), Geist Mono, top menu modes (`Classic` / `Island`), filename drag handle в sidebar | [x] |
 | 7.24.1 | Membership actions: sidebar link-editor + CollectionPicker use `Connected` always, hover `Connect`/`Disconnect`, no checkbox | [x] |
 | 7.24.2 | Sidebar row edge alignment: no inner horizontal row padding, right counts monospace, action buttons flush to row edge, 1px optical text compensation | [x] |
@@ -428,7 +444,7 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.24.6 | Sidebar link-editor actions: render `Connect`/`Disconnect` as absolute row overlay, not a flex item, so buttons never shift thumbnail strip mask | [x] |
 | 7.24.7 | Sidebar link-editor close: remove row actions immediately on `detailChromeClosing`; only top chrome uses closing snapshot | [x] |
 | 7.24.8 | Sidebar row focus-mode: default `text-foreground`, hover/focus dims non-focused labels/counts to `muted-foreground` and thumbnail strips to `0.9`, with animated enter/exit and instant row switching | [x] |
-| 7.25 | Detail related-notes hover preview: row-key positioning, 3px preview radius, viewport-aware side/up placement, hover bridge, interactive card actions with pinned outside-click close | [~] |
+| 7.25 | Detail related-notes hover preview: row-key positioning, 3px preview radius, viewport-aware side/up placement, read-only quick-look card, shared hover timing | [x] |
 | 7.26 | Detail inline-image hover preview: image wrapper hover outline + resolver `image src/mediaRef -> extracted media block` + below/above interactive preview | [ ] |
 | 7.27 | Single-instance guard для desktop app: повторный запуск должен фокусировать существующее окно, а не создавать вторую инстанцию | [ ] |
 | 7.28 | Sidebar resize handle: suppress native WebKit text selection from `pointerdown`, before drag threshold | [x] |

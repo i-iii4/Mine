@@ -135,7 +135,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
   );
 });
 
-export function DragCardPreview({
+export function ReadOnlyCardPreview({
   block,
   vaultPath,
   thumbsRootPath,
@@ -159,6 +159,15 @@ export function DragCardPreview({
       />
     </CardFrame>
   );
+}
+
+export function DragCardPreview(props: {
+  block: LightBlock;
+  vaultPath: string;
+  thumbsRootPath?: string;
+  width?: number;
+}) {
+  return <ReadOnlyCardPreview {...props} />;
 }
 
 export function InteractiveCardPreview({

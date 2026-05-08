@@ -1065,16 +1065,26 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
         }
     }
 
-    // 6. Universal fallback for image/link/video/file blocks with
+    // 6. Universal fallback for media-bearing blocks with
     //    non-Rust-decodable media (HEIC, VP8X WebP, AVIF, HEVC video,
-    //    missing file, etc.): write a text placeholder with just the
-    //    title. Maintains the invariant "Phase 1 always leaves a thumb
-    //    file on disk" so Phase 2 (list_pending_thumb_upgrades) can
-    //    pick it up and upgrade to a real decoded JPEG via the WebView.
-    //    Without this, image blocks with HEIC media were left with no
-    //    thumb at all → broken-image icon in the sidebar forever.
-    let title = title_fields.display_title.as_deref();
-    if title.is_some() || !preview_body.is_empty() {
+    //    missing file, etc.): write a text placeholder using the best
+    //    available label. New media clips intentionally do not synthesize
+    //    frontmatter.title and have an empty body, so fallback_label
+    //    (derived from the slug/file stem) is the only stable material here.
+    //
+    //    This maintains the invariant "Phase 1 always leaves a thumb file
+    //    on disk" for blocks that have preview intent, so Phase 2
+    //    (list_pending_thumb_upgrades) can upgrade to a real decoded JPEG
+    //    via the WebView.
+    let has_preview_intent = block.frontmatter.file.is_some()
+        || block.frontmatter.thumbnail.is_some()
+        || title_fields.display_title.is_some()
+        || !preview_body.is_empty();
+    if has_preview_intent {
+        let title = title_fields
+            .display_title
+            .as_deref()
+            .or(Some(title_fields.fallback_label.as_str()));
         match generate_text_thumbnail(title, &preview_body, &thumb_path) {
             Ok(_) => return ThumbSource::Text,
             Err(e) => log::warn!("fallback text thumb failed for {}: {}", slug, e),
@@ -1393,6 +1403,33 @@ mod tests {
                 icon: None,
             },
             body: body.to_string(),
+        }
+    }
+
+    fn make_media_block(slug: &str, file: &str) -> Block {
+        use crate::domain::block::{DateTime, Frontmatter};
+        Block {
+            slug: slug.to_string(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Image,
+                title: None,
+                description: None,
+                url: Some("https://example.com/image".into()),
+                file: Some(file.to_string()),
+                thumbnail: None,
+                tags: vec![],
+                related_notes: Vec::new(),
+                source_media: None,
+                saved_at: DateTime::new("2026-01-15T12:00:00Z").unwrap(),
+                source: None,
+                width: None,
+                height: None,
+                author: None,
+                position: None,
+                color: None,
+                icon: None,
+            },
+            body: String::new(),
         }
     }
 
@@ -1830,6 +1867,27 @@ mod tests {
         assert!(thumb_path.exists());
 
         // Text placeholder is PNG (transparent background for dark-mode invert)
+        let mut header = [0u8; 3];
+        use std::io::Read;
+        let mut f = std::fs::File::open(&thumb_path).unwrap();
+        f.read_exact(&mut header).unwrap();
+        assert_eq!(header, PNG_MAGIC);
+    }
+
+    #[test]
+    fn generate_for_block_media_avif_empty_body_writes_fallback_label_placeholder() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let avif_path = dir.path().join("Opal Camera.avif");
+        std::fs::write(&avif_path, b"\x00\x00\x00\x1cftypavif\x00\x00").unwrap();
+
+        let block = make_media_block("Opal Camera", "Opal Camera.avif");
+
+        let source = generate_for_block(&block, &vault);
+        assert_eq!(source, ThumbSource::Text);
+
+        let thumb_path = vault.thumb_path("Opal Camera");
+        assert!(thumb_path.exists());
         let mut header = [0u8; 3];
         use std::io::Read;
         let mut f = std::fs::File::open(&thumb_path).unwrap();

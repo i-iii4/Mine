@@ -731,20 +731,13 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         }
     }
 
-    // Thumbnail generation is delegated to the shared cascade in
-    // storage::thumbnails::generate_for_block. Single source of truth —
-    // watcher handler calls the same function at full_scan and on file
-    // change. Covers: explicit media file, frontmatter thumbnail field,
-    // first embedded image/video in article body, and text fallback.
-    let _ = thumbnails::generate_for_block(&block, vault);
-
     // Best-effort index catch-up. The source vault is still the durable
     // commit, but the clipper must also work while the desktop UI is closed:
     // waiting for a future watcher/full-scan makes a successful save look
     // like "nothing happened". If the desktop app currently owns a write lock,
     // do not fail the clip; the watcher/startup scan can still reconcile from
     // the source files.
-    if let Err(e) = index::upsert_block_with_diagnostics(
+    let indexed = if let Err(e) = index::upsert_block_with_diagnostics(
         &conn,
         &block,
         Some(vault.root()),
@@ -756,6 +749,29 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             Some(existing) => format!("{existing}; {message}"),
             None => message,
         });
+        false
+    } else {
+        true
+    };
+
+    // Thumbnail generation is delegated to the shared cascade in
+    // storage::thumbnails::generate_for_block. Single source of truth —
+    // watcher handler calls the same function at full_scan and on file
+    // change. Covers: explicit media file, frontmatter thumbnail field,
+    // first embedded image/video in article body, and text fallback.
+    let thumb_source = thumbnails::generate_for_block(&block, vault);
+
+    if indexed && thumb_source != thumbnails::ThumbSource::None {
+        let thumb_path = vault.thumb_path(&block.slug);
+        if let Err(e) =
+            index::sync_thumb_metadata(&conn, &block.slug, &thumb_path, Some(vault.root()))
+        {
+            let message = format!("saved block, but failed to update thumb metadata: {e:#}");
+            warning = Some(match warning {
+                Some(existing) => format!("{existing}; {message}"),
+                None => message,
+            });
+        }
     }
 
     send_response(&SaveResponse {
@@ -2348,6 +2364,48 @@ mod tests {
         assert_eq!(media_file, "Door Link.jpg");
         assert!(vault.block_path("Door Link").exists());
         assert!(vault.root().join("Door Link.jpg").exists());
+    }
+
+    #[test]
+    fn save_block_with_avif_upload_writes_placeholder_thumb_metadata() {
+        let tmp = TempDir::new().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"));
+        std::fs::create_dir_all(vault.root()).unwrap();
+
+        let upload = clipper_uploads::write_pending_upload(
+            &vault,
+            "opal.avif",
+            Some("image/avif".into()),
+            b"\x00\x00\x00\x1cftypavif\x00\x00",
+        )
+        .unwrap();
+
+        handle_save_block(
+            &vault,
+            serde_json::json!({
+                "block_type": "image",
+                "title": "Opal Camera",
+                "url": "https://example.com/opal",
+                "pre_uploaded_id": upload.upload_id,
+                "body": "",
+                "tags": []
+            }),
+        );
+
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let (media_file, thumb_format, thumb_mtime): (String, String, i64) = conn
+            .query_row(
+                "SELECT media_file, thumb_format, thumb_mtime FROM blocks WHERE slug = ?1",
+                ["Opal Camera"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+
+        assert_eq!(media_file, "Opal Camera.avif");
+        assert_eq!(thumb_format, "png");
+        assert!(thumb_mtime > 0);
+        assert!(vault.thumb_path("Opal Camera").exists());
     }
 
     #[test]

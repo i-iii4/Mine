@@ -505,12 +505,24 @@ iOS UI contract:
 - Sidebar previews больше не строятся через полный `list_blocks_light()` с фильтрацией по всем тегам в памяти. Бэкенд отдаёт top-N preview rows отдельными SQL-запросами: один для `__all__`, один window-function запрос для `top N per tag`.
 - Frontend считает previews производным состоянием сервера: `useChannelPreviewsEvents` делает initial refresh и затем коалесцирует `block:added`, `block:removed`, `thumb:updated`, `vault-changed` в повторный `list_channel_previews`, вместо локального patch-state.
 - Таблица `blocks` хранит `thumb_format` (`jpeg` / `png`) и `thumb_mtime`. Эти поля синхронизируются в точках записи thumb (`generate_for_block`, `save_thumb`, direct create path) и позволяют `list_channel_previews` отвечать без filesystem syscall-ов на горячем пути.
+- Native host после source-vault commit делает best-effort `upsert_block`,
+  затем `generate_for_block` и `sync_thumb_metadata`. Поэтому клиппер при
+  закрытом desktop app оставляет не только `.md` + media, но и подтверждённый
+  Phase 1 thumb metadata row.
+- `list_channel_previews` возвращает только rows с `thumb_format IS NOT NULL`.
+  Empty-body media clips с AVIF/HEIC/VP8X WebP получают PNG placeholder из
+  `fallback_label`, а не пустую preview slot.
 - Thumbnail path остаётся стабильным `<slug>.jpg`, но content может быть JPEG
   или PNG. Custom `asset://` protocol обязан выставлять MIME по magic bytes,
   а не только по расширению, иначе transparent text thumbnails отдаются как
   `image/jpeg` и WKWebView показывает broken-image `?`.
 - Legacy vault compatibility: если в `.arena/cache/thumbs/` уже лежат `.jpg`, а `thumb_format/thumb_mtime` в SQLite ещё не заполнены, `open_vault()` запускает фоновый backfill metadata и после него шлёт `vault-changed`. Это восстанавливает sidebar previews без полного rebuild index.
-- Startup backlog planner для Phase 2 (`list_pending_thumb_upgrades`) тоже больше не читает thumb-файлы на main thread. Он работает через отдельный SQLite connection в `spawn_blocking`, выбирает только `thumb_format = 'png'` и восстанавливает media source из индексированных `media_file / thumbnail / first_image / media_urls`.
+- Startup backlog planner для Phase 2 (`list_pending_thumb_upgrades`) тоже
+  больше не читает thumb-файлы на main thread. Он работает через отдельный
+  SQLite connection в `spawn_blocking`, выбирает PNG placeholder rows и
+  missing/NULL thumb metadata rows, затем command layer проверяет реальный
+  disk state и восстанавливает media source из индексированных
+  `media_file / thumbnail / first_image / media_urls`.
 - Watcher больше не индексирует те же `.md` параллельно с `full_scan()` для того же vault. Пока `syncing_vaults` содержит текущий путь, `watcher/watch.rs` пропускает notify-события; это убирает `database is locked` storm и лишние `vault-changed` во время раннего startup sync.
 
 ## Data flow

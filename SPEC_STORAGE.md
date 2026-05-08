@@ -40,6 +40,11 @@ CREATE TABLE blocks (
     body TEXT DEFAULT '',
     preview_text TEXT,
     preview_text_cap INTEGER,
+    preview_manifest TEXT,
+    feed_playback TEXT,
+    related_notes TEXT,
+    thumb_format TEXT, -- derived thumb content: jpeg/png, NULL means no confirmed thumb
+    thumb_mtime INTEGER, -- derived thumb mtime, NULL means no confirmed thumb
     media_index_version INTEGER,
     body_hash TEXT,
     indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -190,6 +195,12 @@ get_all_tags(conn: &Connection) -> Result<Vec<TagCount>>
 slug_exists(conn: &Connection, slug: &str) -> Result<bool>
 resolve_unique_slug(conn: &Connection, raw_slug: &str) -> Result<String>
 rename_slug(conn: &Connection, old_slug: &str, new_slug: &str) -> Result<bool>
+sync_thumb_metadata(conn: &Connection, slug: &str, thumb_path: &Path, vault_root: Option<&Path>) -> Result<bool>
+clear_thumb_metadata(conn: &Connection, slug: &str) -> Result<bool>
+backfill_missing_thumb_metadata(conn: &Connection, vault: &VaultLayout) -> Result<usize>
+list_preview_blocks(conn: &Connection, limit: usize) -> Result<Vec<PreviewBlock>>
+list_preview_blocks_by_tag(conn: &Connection, limit: usize) -> Result<Vec<(String, Vec<PreviewBlock>)>>
+list_pending_thumb_upgrade_blocks(conn: &Connection) -> Result<Vec<PendingThumbUpgradeBlock>>
 search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<IndexedBlock>>
 upsert_channel(conn: &Connection, channel: &Channel) -> Result<i64>
 list_channels(conn: &Connection) -> Result<Vec<Channel>>
@@ -204,6 +215,22 @@ remove_channel(conn: &Connection, tag: &str) -> Result<bool>
 - Обновляет block_tags: удаляет старые, вставляет новые
 - Обновляет wikilinks: удаляет старые, вставляет новые (из extract_wikilinks)
 - FTS5 обновляется автоматически через триггеры
+- Не генерирует thumbnail и не угадывает `thumb_format` по slug. Thumbnail
+  metadata синхронизируется отдельным `sync_thumb_metadata` после записи thumb.
+
+### Поведение thumbnail metadata / preview queries
+
+- `sync_thumb_metadata` читает on-disk thumb magic bytes и mtime, затем пишет
+  `thumb_format = jpeg|png` и `thumb_mtime`; если файл отсутствует или не
+  является валидным JPEG/PNG, поля очищаются.
+- `list_preview_blocks` и `list_preview_blocks_by_tag` возвращают только
+  non-channel rows с `thumb_format IS NOT NULL`. Отсутствующий thumb не должен
+  превращаться в пустую sidebar preview-card.
+- `backfill_missing_thumb_metadata` восстанавливает metadata для legacy rows,
+  у которых thumb file уже лежит на диске, но SQLite columns ещё пустые.
+- `list_pending_thumb_upgrade_blocks` отдаёт кандидатов для Phase 2 upgrade,
+  включая PNG placeholder rows и rows с missing/NULL metadata; command layer
+  обязан проверить реальный disk state перед возвратом upgrade request.
 
 ### Поведение rename_slug
 
@@ -382,9 +409,9 @@ is_video_ext(ext: &str) -> bool
 - Возвращает (width, height) результата
 - Если изображение меньше max_size — сохраняет как есть (без увеличения)
 
-### Поведение — generate_text_thumbnail (статьи)
+### Поведение — generate_text_thumbnail (статьи и media placeholder)
 
-- Создаёт JPEG 480x480 с фоном #F8F8F8
+- Создаёт PNG 480x480 с фоном #F8F8F8
 - Рисует заголовок (шрифт 1.3x, цвет #333) и тело статьи (шрифт 24px, цвет #505050)
 - Очищает markdown: заголовки, жирный/курсив, ссылки `[text](url)` → text
 - Word-wrap по ширине с учётом метрик шрифта
@@ -399,7 +426,7 @@ is_video_ext(ext: &str) -> bool
 
 ### Поведение — generate_for_block (unified cascade)
 
-Единая точка входа для thumbnail generation. Вызывается и из native host (Phase 1 at save time), и из watcher handler (full_scan, index_md_file). Cascade из 5 уровней с graceful fallback chain:
+Единая точка входа для thumbnail generation. Вызывается и из native host (Phase 1 at save time), и из watcher handler (full_scan, index_md_file). Cascade с graceful fallback chain:
 
 1. `frontmatter.file` указывает на existing image → `generate_thumbnail`
    (`file` may be canonical `[[...]]` or legacy raw syntax on read)
@@ -411,7 +438,11 @@ is_video_ext(ext: &str) -> bool
 5. Later body media fallback:
    - usable article images → composite или single-image thumbnail
    - first local video → `generate_video_thumbnail` (с fallback к text при ошибке)
-6. Runtime card kind is `article` → `generate_text_thumbnail` (всегда успешно)
+6. Media-bearing blocks whose source exists but cannot be decoded by Rust
+   (AVIF, HEIC, VP8X WebP, unsupported video) → `generate_text_thumbnail` with
+   `display_title` or `fallback_label`. Empty-body media clips intentionally do
+   not synthesize `frontmatter.title`, so `fallback_label` is required.
+7. Runtime card kind is `article` → `generate_text_thumbnail` (всегда успешно)
 
 Для inline video `preview_manifest.tiles[].preview_path` не должен указывать
 на derived `<video-stem>.jpg`, пока такой per-video thumbnail реально не

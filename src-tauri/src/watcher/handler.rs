@@ -420,6 +420,14 @@ fn spawn_thumb_jobs_worker(
                                 ),
                             }
                         }
+                        if matches!(
+                            thumbnails::thumb_disk_state(&thumb_path),
+                            thumbnails::ThumbDiskState::Png
+                        ) {
+                            if let Some(ref app) = app {
+                                emit_thumb_events(app, &vault, &job.block, thumbnails::ThumbSource::Text);
+                            }
+                        }
                         continue;
                     }
 
@@ -553,6 +561,14 @@ pub fn index_md_file(
         if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, vault) {
             let _ =
                 index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path, Some(vault.root()));
+            if matches!(
+                thumbnails::thumb_disk_state(&thumb_path),
+                thumbnails::ThumbDiskState::Png
+            ) {
+                if let Some(app) = app {
+                    emit_thumb_events(app, vault, &job.block, thumbnails::ThumbSource::Text);
+                }
+            }
             return Ok(true);
         }
 

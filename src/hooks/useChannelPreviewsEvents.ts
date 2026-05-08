@@ -66,7 +66,7 @@ export function useChannelPreviewsEvents({ thumbsRootPath, limit }: Options): {
     for (const [key, items] of Object.entries(raw)) {
       next.set(
         key,
-        items.map((item) => {
+        items.filter((item) => item.has_thumb).map((item) => {
           const baseUrl = thumbnailUrl(root, item.slug);
           const version = versionsRef.current.get(item.slug) ?? 0;
           // `?v=` wins over `?m=` within a session so events can force

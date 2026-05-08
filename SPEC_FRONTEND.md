@@ -398,6 +398,13 @@ Hover navigation row не должен менять background. Обычный s
 selected background. Hover/selection меняют только яркость текста строки; ни
 thumbnail strip, ни preview cards не должны участвовать в этом contract и не
 могут менять ширину, opacity или layout.
+Hover на thumbnail открывает только read-only card preview. Preview не
+интерактивен (`pointer-events: none`), не содержит `Source` / `Connect` /
+`More`, не имеет hover bridge и закрывается сразу, когда pointer уходит с
+thumbnail. Выделение строки и outline thumbnail остаются локальными состояниями
+trigger'а и не переносятся на popup. Cold open delay — `500ms`; если предыдущий
+preview был открыт в течение `800ms` warm window, следующий thumbnail открывает
+preview с `0ms` delay.
 Title text в row-mode не должен уходить в жёсткое ellipsis. Он использует тот
 же right-fade contract, что и preview strip: fade `24px` + `4px` прозрачный
 tail перед левой направляющей. Title slot остаётся responsive
@@ -406,7 +413,7 @@ preview strip, и только после этого начинает ужима
 
 **Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время любого drag-to-channel (`isDropDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию и hover-ring работал одинаково для карточек и inline-media. `SortableContext` получает полный список channels IDs независимо от видимости.
 
-**Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`), а не через polling `listChannelPreviews`. Initial state грузится один раз при mount через `listChannelPreviews(20)`, потом инкрементально патчится `useChannelPreviewsEvents` hook'ом. Latency add block → visible in sidebar: ~110ms (native host write + watcher debounce + IPC event + React update). Cache-bust: initial load использует `?m=<mtime>` (unix timestamp thumb-файла из Rust `stat()`), real-time updates используют `?v=<counter>` (per-slug version counter, инкрементируется на `thumb:updated`). Два механизма дополняют друг друга: `?m=` покрывает межсессионные изменения (Phase 2 worker перезаписал PNG→JPEG), `?v=` покрывает live-обновления внутри сессии.
+**Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`, `vault-changed`), а не через polling. Initial state и event refresh идут через `listChannelPreviews(20)`; `useChannelPreviewsEvents` коалесцирует события и фильтрует `has_thumb=false` как defense-in-depth. Cache-bust: initial load использует `?m=<mtime>` из SQLite `thumb_mtime`, real-time updates используют `?v=<counter>` (per-slug version counter, инкрементируется на `thumb:updated`). Два механизма дополняют друг друга: `?m=` покрывает межсессионные изменения (Phase 2 worker перезаписал PNG→JPEG), `?v=` покрывает live-обновления внутри сессии.
 
 **Main sidebar top inset.** На главной sidebar использует `pt-20` прямо на
 `data-sidebar-scroll`. Не создавать отдельную пустую header surface для
@@ -583,13 +590,14 @@ that belongs to `storage::media_refs`.
   deduplicates by base slug.
 - `RELATED NOTES` rows use a compact button-shell with persistent fill/border,
   `8x8` thumbnail on the left, and filename fallback label on the right.
-  Hover/focus can show an interactive feed-style card preview. The preview:
-  uses `rounded-1`, is keyed by row identity rather than base slug so repeated
+  Hover can show a read-only feed-style card preview. The preview uses
+  `rounded-1`, is keyed by row identity rather than base slug so repeated
   backlinks position independently, opens right when viewport space allows and
-  left otherwise, flips upward when it would overflow below, and keeps a hover
-  bridge between trigger row and preview. Preview actions reuse `CardHoverMenu`
-  (`Source`, `Connect`, `More`). Opening any action pins the preview until an
-  outside pointer-down.
+  left otherwise, flips upward when it would overflow below, and closes when
+  the pointer leaves the row trigger. It is non-interactive
+  (`pointer-events: none`), has no hover bridge, and does not show
+  `Source` / `Connect` / `More`. Timing matches sidebar thumbnails: `500ms`
+  cold open delay, `0ms` warm delay inside an `800ms` warm window.
 - Article inline image hover preview is a separate, not-yet-implemented feature.
   It must not be added by copying the related-notes implementation. The required
   contract is: image wrapper gets the same button-like hover/focus outline

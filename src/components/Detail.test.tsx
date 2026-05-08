@@ -1,9 +1,13 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Detail } from "./Detail";
 import type { IndexedBlock } from "@/types";
 import { getBlock } from "@/lib/commands";
+import {
+  HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
+  HOVER_PREVIEW_WARM_WINDOW_MS,
+} from "@/lib/hoverPreviewTiming";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
@@ -90,6 +94,8 @@ describe("Detail", () => {
     getBlockMock.mockReset();
     getBlockMock.mockResolvedValue(null);
   });
+
+  afterEach(() => vi.useRealTimers());
 
   it("renders the selected top menu mode", () => {
     const props = {
@@ -1001,6 +1007,7 @@ describe("Detail", () => {
   });
 
   it("renders related notes as sidebar-sized rows with thumbnail and filename", async () => {
+    vi.useFakeTimers();
     getBlockMock.mockImplementation(async (slug: string) => {
       if (slug === "related-note") {
         return block({
@@ -1012,6 +1019,16 @@ describe("Detail", () => {
           title: null,
         });
       }
+      if (slug === "second-note") {
+        return block({
+          id: 3,
+          slug: "second-note",
+          content_heading: "Second note body",
+          display_title: "Second note body",
+          fallback_label: "Second Note",
+          title: null,
+        });
+      }
       return null;
     });
 
@@ -1019,7 +1036,7 @@ describe("Detail", () => {
     render(
       <Detail
         block={block({
-          related_notes: ["related-note"],
+          related_notes: ["related-note", "second-note"],
         })}
         vaultPath="/tmp/test-vault"
         thumbsRootPath="/tmp/thumbs"
@@ -1035,9 +1052,12 @@ describe("Detail", () => {
       />,
     );
 
-    await waitFor(() => {
-      expect(screen.getByText("Related Note")).toBeInTheDocument();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
     });
+    expect(screen.getByText("Related Note")).toBeInTheDocument();
+    expect(screen.getByText("Second Note")).toBeInTheDocument();
     expect(screen.queryByText("First line from note body")).not.toBeInTheDocument();
 
     const row = screen.getByRole("button", { name: "Related Note" });
@@ -1067,12 +1087,108 @@ describe("Detail", () => {
     expect(row.querySelector("div.flex.h-8.w-full.items-center.gap-2.overflow-hidden")).not.toBeNull();
 
     fireEvent.mouseEnter(row);
-    await waitFor(() => {
-      expect(document.querySelector("[data-related-note-hover-preview]")).not.toBeNull();
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS - 1);
+      await Promise.resolve();
     });
+    expect(document.querySelector("[data-related-note-hover-preview]")).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const relatedPreview = document.querySelector("[data-related-note-hover-preview]");
+    expect(relatedPreview).not.toBeNull();
+    expect(relatedPreview).toHaveClass("pointer-events-none");
+    expect(relatedPreview?.querySelector("button")).toBeNull();
+    expect(relatedPreview).not.toHaveTextContent("Connect");
+    expect(document.querySelector("[data-related-note-hover-bridge]")).not.toBeInTheDocument();
+
+    const secondRow = screen.getByRole("button", { name: "Second Note" });
+    fireEvent.mouseLeave(row);
+    expect(document.querySelector("[data-related-note-hover-preview]")).toBeNull();
+    fireEvent.mouseEnter(secondRow);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const warmPreview = document.querySelector("[data-related-note-hover-preview]");
+    expect(warmPreview).not.toBeNull();
+    expect(warmPreview).toHaveTextContent("Second note body");
+    expect(warmPreview?.querySelector("button")).toBeNull();
+
+    fireEvent.mouseLeave(secondRow);
+    expect(document.querySelector("[data-related-note-hover-preview]")).toBeNull();
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_WARM_WINDOW_MS + 1);
+      await Promise.resolve();
+    });
+
+    fireEvent.mouseEnter(row);
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS - 1);
+      await Promise.resolve();
+    });
+    expect(document.querySelector("[data-related-note-hover-preview]")).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(document.querySelector("[data-related-note-hover-preview]")).not.toBeNull();
 
     fireEvent.click(row);
     expect(onOpenRelatedNote).toHaveBeenCalledWith("related-note");
+  });
+
+  it("does not open related note preview on focus", async () => {
+    vi.useFakeTimers();
+    getBlockMock.mockImplementation(async (slug: string) => {
+      if (slug === "related-note") {
+        return block({
+          id: 2,
+          slug: "related-note",
+          fallback_label: "Related Note",
+          title: null,
+        });
+      }
+      return null;
+    });
+
+    render(
+      <Detail
+        block={block({
+          related_notes: ["related-note"],
+        })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const row = screen.getByRole("button", { name: "Related Note" });
+    fireEvent.focus(row);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector("[data-related-note-hover-preview]")).toBeNull();
   });
 
   it("refreshes related notes in-place after a vault snapshot refresh", async () => {

@@ -2109,7 +2109,7 @@ pub fn list_preview_blocks(conn: &Connection, limit: usize) -> Result<Vec<Previe
     let mut stmt = conn.prepare(
         "SELECT slug, thumb_format, thumb_mtime
          FROM blocks
-         WHERE slug != '' AND card_kind != 'channel'
+         WHERE slug != '' AND card_kind != 'channel' AND thumb_format IS NOT NULL
          ORDER BY saved_at DESC
          LIMIT ?1",
     )?;
@@ -2142,7 +2142,7 @@ pub fn list_preview_blocks_by_tag(
                     ) AS row_num
              FROM block_tags bt
              JOIN blocks b ON b.id = bt.block_id
-             WHERE b.slug != '' AND b.card_kind != 'channel'
+             WHERE b.slug != '' AND b.card_kind != 'channel' AND b.thumb_format IS NOT NULL
          )
          WHERE row_num <= ?1
          ORDER BY tag, row_num",
@@ -2161,8 +2161,9 @@ pub fn list_preview_blocks_by_tag(
     Ok(grouped)
 }
 
-/// List only blocks whose thumbnail metadata says the on-disk thumb is still
-/// a PNG text placeholder and may need a Phase 2 browser-decoded upgrade.
+/// List blocks that may need a Phase 2 browser-decoded upgrade. The command
+/// layer verifies the on-disk thumb state, so this intentionally includes
+/// missing/NULL thumb metadata rows as well as PNG placeholder rows.
 pub fn list_pending_thumb_upgrade_blocks(
     conn: &Connection,
 ) -> Result<Vec<PendingThumbUpgradeBlock>> {
@@ -3626,9 +3627,8 @@ mod tests {
 
         assert!(clear_thumb_metadata(&conn, "design-a").unwrap());
         let cleared = list_preview_blocks(&conn, 10).unwrap();
-        let cleared_a = cleared.iter().find(|item| item.slug == "design-a").unwrap();
-        assert_eq!(cleared_a.thumb_format, None);
-        assert_eq!(cleared_a.thumb_mtime, 0);
+        assert!(cleared.iter().all(|item| item.slug != "design-a"));
+        assert!(cleared.iter().any(|item| item.slug == "design-b"));
     }
 
     #[test]
@@ -3641,12 +3641,7 @@ mod tests {
         upsert_block(&conn, &make_block("legacy-thumb", &["design"]), None).unwrap();
 
         let before = list_preview_blocks(&conn, 10).unwrap();
-        let legacy_before = before
-            .iter()
-            .find(|item| item.slug == "legacy-thumb")
-            .unwrap();
-        assert_eq!(legacy_before.thumb_format, None);
-        assert_eq!(legacy_before.thumb_mtime, 0);
+        assert!(before.iter().all(|item| item.slug != "legacy-thumb"));
 
         std::fs::write(vault.thumb_path("legacy-thumb"), [0xFF, 0xD8, 0xFF, 0x00]).unwrap();
 

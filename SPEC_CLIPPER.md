@@ -50,8 +50,9 @@ contract: non-empty body → `article`, empty body → `media`, `type: channel` 
          │ Read vault path  │
          │ Write .md files  │
          │ Download media   │
-         │ Gen thumbnails   │
          │ Update SQLite    │
+         │ Gen thumbnails   │
+         │ Sync thumb meta  │
          │ List channels    │
          └────────┬─────────┘
                   │
@@ -554,8 +555,12 @@ Response:
 }
 ```
 
-Native host скачивает `image_url`, сохраняет файл, генерирует thumbnail, and
-writes canonical frontmatter `file: "[[resolved-name.ext]]"`.
+Native host скачивает `image_url`, сохраняет файл, пишет canonical frontmatter
+`file: "[[resolved-name.ext]]"`, upsert'ит local derived index, генерирует
+Phase 1 thumbnail и синхронизирует `thumb_format` / `thumb_mtime`. Для AVIF,
+HEIC, VP8X WebP и других форматов, которые Rust не декодирует, Phase 1 пишет
+PNG placeholder из `fallback_label`; WebView upgrade выполнится при открытом
+desktop app.
 
 Инвариант для media creation modes: блок не может быть записан без
 разрешённого media. Save считается успешным только если native host получил
@@ -656,11 +661,12 @@ Pending manifest помечается committed только после успе
 идемпотентно возвращает уже созданный slug.
 
 После source-vault commit native host best-effort обновляет local derived index
-тем же `upsert_block` контрактом, что и desktop watcher. Если SQLite занят
-запущенным приложением, сохранение не откатывается: `.md` и media уже являются
-source of truth, а watcher/startup scan догонят индекс. При выключенном desktop
-app этот upsert должен проходить сразу, поэтому новый клип появляется в ленте
-после запуска без ручного rebuild.
+тем же `upsert_block` контрактом, что и desktop watcher, затем создаёт Phase 1
+thumbnail и пишет thumbnail metadata в SQLite. Если SQLite занят запущенным
+приложением, сохранение не откатывается: `.md` и media уже являются source of
+truth, а watcher/startup scan догонят индекс и thumb metadata. При выключенном
+desktop app этот upsert должен проходить сразу, поэтому новый клип появляется
+в ленте после запуска без ручного rebuild.
 
 Legacy `pre_uploaded_file` продолжает поддерживаться: если значение начинается
 с `pending:`, оно трактуется как pending upload id; иначе native host ожидает
@@ -927,7 +933,7 @@ content script уже вставил кнопку без текущей верс
 | 2 | get_status с vault | Ответ ok=true, путь к vault |
 | 3 | save_block link | Создаёт .md + загружает thumbnail |
 | 4 | save_block article | Создаёт .md с body |
-| 5 | save_block image | Загружает файл, генерирует thumbnail |
+| 5 | save_block image | Загружает файл, генерирует thumbnail, синхронизирует thumb metadata |
 | 6 | save_block с новыми коллекциями | `Mine Collections` wikilinks добавляются в frontmatter |
 | 7 | list_channels | Возвращает каналы из индекса |
 | 8 | create_channel | Создаёт канал, возвращает collection ref |

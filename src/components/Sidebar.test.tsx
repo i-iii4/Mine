@@ -6,6 +6,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
 import type { TagCount } from "@/types";
+import {
+  HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
+  HOVER_PREVIEW_WARM_WINDOW_MS,
+} from "@/lib/hoverPreviewTiming";
 
 function tag(name: string, count = 3): TagCount {
   return { tag: name, count };
@@ -358,16 +362,56 @@ describe("Sidebar", () => {
     expect(after).toBe(before);
   });
 
-  it("opens a card preview from row-mode sidebar thumbnails on hover", async () => {
-    vi.useFakeTimers();
-    vi.mocked(invoke).mockResolvedValueOnce(previewBlock("alpha-a"));
+  it("does not render empty preview tiles for items without thumb metadata", () => {
     const previews = new Map([
-      ["alpha", [{
-        url: "asset://localhost/thumbs/alpha-a.jpg",
-        text: false,
-        hasThumb: true,
-        slug: "alpha-a",
-      }]],
+      ["alpha", [
+        {
+          url: "asset://localhost/thumbs/missing.jpg",
+          text: false,
+          hasThumb: false,
+          slug: "missing",
+        },
+        {
+          url: "asset://localhost/thumbs/ready.jpg",
+          text: false,
+          hasThumb: true,
+          slug: "ready",
+        },
+      ]],
+    ]);
+
+    const { container } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      channelPreviews: previews,
+    });
+
+    expect(container.querySelector('img[src="asset://localhost/thumbs/missing.jpg"]')).toBeNull();
+    expect(container.querySelector('img[src="asset://localhost/thumbs/ready.jpg"]')).toBeInTheDocument();
+    expect(container.querySelectorAll("[data-sidebar-preview-thumbnail]")).toHaveLength(1);
+  });
+
+  it("shows a non-interactive sidebar preview only while the thumbnail is hovered", async () => {
+    vi.useFakeTimers();
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(previewBlock("alpha-a"))
+      .mockResolvedValueOnce(previewBlock("alpha-b"))
+      .mockResolvedValueOnce(previewBlock("alpha-a"));
+    const previews = new Map([
+      ["alpha", [
+        {
+          url: "asset://localhost/thumbs/alpha-a.jpg",
+          text: false,
+          hasThumb: true,
+          slug: "alpha-a",
+        },
+        {
+          url: "asset://localhost/thumbs/alpha-b.jpg",
+          text: false,
+          hasThumb: true,
+          slug: "alpha-b",
+        },
+      ]],
     ]);
     const { container } = renderSidebar({
       ...defaultProps,
@@ -377,17 +421,31 @@ describe("Sidebar", () => {
       channelPreviews: previews,
     });
 
-    const thumbnail = container.querySelector("[data-sidebar-preview-thumbnail]");
-    expect(thumbnail).toHaveAttribute("data-sidebar-preview-thumbnail", "trigger");
-    expect(thumbnail).toHaveClass("cursor-pointer");
-    fireEvent.mouseEnter(thumbnail!);
+    const thumbnails = container.querySelectorAll('[data-sidebar-preview-thumbnail="trigger"]');
+    const firstThumbnail = thumbnails[0];
+    const secondThumbnail = thumbnails[1];
+    expect(firstThumbnail).toHaveAttribute("data-sidebar-preview-thumbnail", "trigger");
+    expect(firstThumbnail).toHaveClass("cursor-pointer");
+
+    fireEvent.pointerEnter(firstThumbnail!);
     await act(async () => {
-      vi.advanceTimersByTime(160);
+      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS - 1);
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
       await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toHaveClass(
+      "pointer-events-none",
+    );
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview] button")).toBeNull();
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-bridge]")).not.toBeInTheDocument();
     fireEvent.pointerLeave(container.querySelector("[data-sidebar-scroll]")!);
     expect(container.querySelector("[data-sidebar-scroll]")).toHaveAttribute(
       "data-sidebar-row-focus-mode",
@@ -397,8 +455,42 @@ describe("Sidebar", () => {
       "data-sidebar-row-focused",
       "true",
     );
-    expect(thumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
+    expect(firstThumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
     expect(invoke).toHaveBeenCalledWith("get_block", { slug: "alpha-a" });
+
+    fireEvent.pointerLeave(firstThumbnail!);
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
+    expect(firstThumbnail).not.toHaveAttribute("data-sidebar-preview-active");
+
+    fireEvent.pointerEnter(secondThumbnail!);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
+    expect(secondThumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
+    expect(invoke).toHaveBeenCalledWith("get_block", { slug: "alpha-b" });
+
+    fireEvent.pointerLeave(secondThumbnail!);
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_WARM_WINDOW_MS + 1);
+      await Promise.resolve();
+    });
+
+    fireEvent.pointerEnter(firstThumbnail!);
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS - 1);
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
+    expect(firstThumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
   });
 
   it("renders continuous sidebar guidelines and keeps the protected action area in row mode", () => {

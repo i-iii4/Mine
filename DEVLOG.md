@@ -1,5 +1,42 @@
 # Devlog
 
+## 08.05.2026 [implementation] — Clipper media thumbnail contract and hover quick-look
+
+### Context
+
+- Right-click image saves could create valid `.md` + media for formats like
+  AVIF, but leave `thumb_format` empty. Sidebar then had an empty preview slot
+  and no hover target.
+- Hover-preview behavior had diverged between sidebar thumbnails and Related
+  Notes.
+
+### Completed
+
+- Native host now upserts the block before Phase 1 thumb generation, then
+  syncs `thumb_format` / `thumb_mtime` immediately after thumb write.
+- `generate_for_block` now treats media-bearing empty-body clips as preview
+  intent even when there is no title/body; non-Rust-decodable media gets a PNG
+  placeholder from `fallback_label`.
+- `list_channel_previews` only returns rows with confirmed thumb metadata;
+  frontend also filters `has_thumb=false` defensively.
+- Watcher/full-scan emits thumb events for fresh PNG placeholders, so the
+  WebView upgrade pipeline still sees existing placeholder thumbs.
+- Sidebar thumbnails and Related Notes share hover timing:
+  `500ms` cold delay, `0ms` warm delay inside an `800ms` warm window.
+- Sidebar and Related Notes hover popups are read-only quick-look cards:
+  no action buttons, no hover bridge, no pinned popup.
+
+### Verification
+
+- `cargo fmt`
+- `cargo test -p mine`
+- `bun run test:frontend`
+- `bun run lint`
+- `bun run build`
+- `git diff --check`
+- `cargo tauri build` produced the `.app`; DMG packaging still failed in the
+  existing `bundle_dmg.sh` step.
+
 ## 07.05.2026 [docs] — Filesystem-first visibility contract
 
 ### Context

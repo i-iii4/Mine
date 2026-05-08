@@ -4,7 +4,10 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 ## Status
 
-Draft — pending implementation. Supersedes the ad-hoc thumbnail generation logic currently distributed between `src-tauri/src/bin/native_host.rs`, `src-tauri/src/watcher/handler.rs`, and `src-tauri/src/storage/thumbnails.rs` (unified cascade from commit `f726854`).
+Implemented contract. Thumbnail generation is centralized in
+`src-tauri/src/storage/thumbnails.rs`, with native-host and watcher paths both
+calling `generate_for_block`. SQLite `thumb_format` / `thumb_mtime` are the
+hot-path preview metadata for sidebar queries.
 
 ## Context
 
@@ -27,7 +30,11 @@ Pipeline обязан удовлетворять **каждому** из эти�
 
 **I2. Корректность для всех форматов клиппера.** Любой формат media который клиппер сохраняет в vault через `localize_body_images` (текущие форматы: JPEG, PNG, GIF, WebP во всех вариантах, HEIC, AVIF, MP4 H.264/HEVC, WebM VP8/VP9) получает валидную визуальную миниатюру — либо сам кадр изображения/видео, либо baked text fallback для pure-text блоков.
 
-**I3. Нет «пустых» sidebar карточек.** Блок, у которого есть preview в `list_channel_previews`, **всегда** рендерится визуально непустым. Нет case'ов «thumb файл есть, но transparent PNG без content».
+**I3. Нет «пустых» sidebar карточек.** Блок, у которого есть preview в
+`list_channel_previews`, **всегда** рендерится визуально непустым.
+`list_channel_previews` возвращает только строки с подтверждённым
+`thumb_format IS NOT NULL`; frontend дополнительно фильтрует `has_thumb=false`
+как defense-in-depth. Нет case'ов «строка есть, а thumb не существует».
 
 **I4. Плавный скролл при 100+ каналах × 10 thumbs.** Sidebar скроллится со скоростью display refresh rate (60Hz минимум, 120Hz на ProMotion). Frame budget 16ms не нарушается на машине с M-series chip.
 
@@ -47,7 +54,10 @@ Pipeline обязан удовлетворять **каждому** из эти�
 - **N2.** Не пытается валидировать content thumb файла beyond magic bytes check (JPEG/PNG prefix). Глубокая валидация image integrity — out of scope.
 - **N3.** Не делает reactive update thumbs если пользователь руками заменил media file в vault (watcher detects и перегенерирует — это отдельный flow через `VaultEvent::MediaChanged`, специфицирован в SPEC_INTEGRATION.md).
 - **N4.** Не оптимизирует качество thumb (quality 85 JPEG, fixed 480×480 max). Tuning качества — отдельная задача.
-- **N5.** Не поддерживает thumbnail generation для блоков сохранённых из клиппера **пока main app закрыт** — в этом случае thumbs создаются как text placeholder при save, upgrade происходит при next open main app.
+- **N5.** Не делает real-media WebView upgrade для блоков, сохранённых из
+  клиппера **пока main app закрыт**. Native host всё равно создаёт `.md`,
+  media-файл, Phase 1 thumb и синхронизирует thumb metadata; upgrade до real
+  image/video preview происходит при следующем открытии main app.
 
 ## Architecture Overview
 
@@ -61,12 +71,13 @@ Pipeline обязан удовлетворять **каждому** из эти�
 │  │                                                                   │
 │  │ 1. localize_body_images — download inline media to vault          │
 │  │ 2. write_block_file — .md frontmatter + body                      │
-│  │ 3. PHASE 1: generate instant thumb                                │
+│  │ 3. upsert_block → SQLite                                          │
+│  │ 4. PHASE 1: generate instant thumb                                │
 │  │    ├─ sniff first 3 bytes of media file                           │
 │  │    ├─ if JPEG/PNG magic → generate_thumbnail (Rust decode, fast)  │
-│  │    └─ else → generate_text_thumbnail (display title, always works)│
-│  │ 4. upsert_block → SQLite                                          │
-│  │ 5. Response OK                                                    │
+│  │    └─ else → generate_text_thumbnail (fallback label, always works)│
+│  │ 5. sync_thumb_metadata → SQLite                                   │
+│  │ 6. Response OK                                                    │
 └──────────────────────────────────────────────────────────────────────┘
                                 │
                                 │ (file watcher via notify crate)
@@ -138,9 +149,17 @@ Tile-level `preview_path` в `preview_manifest.tiles[]` разрешён тол�
 использует `source_path` из vault. Synthetic `<source-stem>.jpg` paths
 запрещены: они создают 404 в `asset://.../cache/thumbs/` и broken-image flash.
 
-### In-memory state (Rust side)
+### Persistent read model (Rust side)
 
-Нет persistent state в SQLite относительно thumbnail pipeline beyond SQLite index (который не хранит thumb metadata — только `slug`, `first_image`, etc. frontmatter fields).
+SQLite stores thumbnail read-model metadata on `blocks`:
+
+- `thumb_format`: `jpeg` or `png`, detected from actual file magic bytes.
+- `thumb_mtime`: unix timestamp from the on-disk thumb file.
+
+`list_channel_previews` and `list_channel_previews_by_tag` use these columns and
+return only rows where `thumb_format IS NOT NULL`. Filesystem probing belongs to
+write/repair paths (`generate_for_block`, `save_thumb`,
+`sync_thumb_metadata`, metadata backfill), not to the hot sidebar read path.
 
 ### In-memory state (Frontend side)
 
@@ -220,9 +239,11 @@ if bytes[0..3] == [0x47, 0x49, 0x46]:  # GIF
     return ThumbSource::Image
 
 # Anything else (WebP variants, HEIC, AVIF, TIFF, video, exotic formats):
-# Rust может упасть — сразу пишем text placeholder.
-generate_text_thumbnail(display_title, body, thumb_path)
-return ThumbSource::PlaceholderPendingUpgrade
+# Rust может упасть — сразу пишем text placeholder from display_title or
+# fallback_label. Empty-body media clips usually have no display title, so the
+# filename/slug fallback label is required.
+generate_text_thumbnail(display_title.or(fallback_label), body, thumb_path)
+return ThumbSource::Text
 ```
 
 ### Failure handling
@@ -249,14 +270,15 @@ Runs in main app, triggered either by:
 
 ### Enqueue logic (Rust side)
 
-After `generate_for_block` completes, Rust checks: was result `ThumbSource::Text` or `ThumbSource::PlaceholderPendingUpgrade`, **and** does the block have embedded media that could be decoded by WebView?
+After `generate_for_block` completes, Rust checks: was result `ThumbSource::Text`,
+**and** does the block have local media that could be decoded by WebView?
 
 ```rust
 fn needs_upgrade(block: &Block, result: ThumbSource) -> Option<UpgradeRequest> {
     match result {
         ThumbSource::Image | ThumbSource::Video => None,  // already real
         ThumbSource::Text if block.first_media_is_pure_text() => None,  // correct final
-        ThumbSource::Text | ThumbSource::PlaceholderPendingUpgrade => {
+        ThumbSource::Text => {
             // Block has embedded media that Rust couldn't decode — ask WebView
             let first_media = find_first_local_media_any(&block.body)?;
             Some(UpgradeRequest {
@@ -531,9 +553,12 @@ fn list_pending_thumb_upgrades(
 **Returns:** List of blocks whose thumb is text placeholder but which have embedded media that should be upgraded via WebView.
 
 **Detection:**
-- Scan `.arena/cache/thumbs/` for files where first 3 bytes are PNG magic (`89 50 4E`)
-- For each, check if block has embedded image/video in body (`find_first_local_media_any`)
-- If yes, include in result
+- Query SQLite for rows that may need Phase 2: PNG placeholder metadata or
+  missing/NULL thumb metadata.
+- Command layer resolves indexed media (`media_file`, `thumbnail`, `first_image`,
+  `media_urls`) through the shared media resolver.
+- Command layer checks actual disk state before returning work. Rows with
+  missing metadata are repair candidates, not guaranteed orphan media.
 
 **Response shape:**
 ```typescript
@@ -788,7 +813,7 @@ Every startup re-enumerates pending upgrades. Any blocks that failed upgrade las
 
 **`storage::thumbnails` module:**
 - Magic byte sniff: correctly identifies JPEG/PNG/GIF vs other → correct cascade branch
-- `generate_for_block` with webp body → returns `PlaceholderPendingUpgrade`
+- `generate_for_block` with webp/avif media → returns `Text` and writes PNG placeholder
 - `generate_for_block` with jpg body → returns `Image`, JPEG content
 - `generate_for_block` with pure text → returns `Text`
 - `is_thumb_fresh` with corrupt content → `false`
@@ -850,7 +875,11 @@ Two strategies, used in complementary roles:
 
 ### Q4: How to handle clipper saving block while main app is closed
 
-Current behavior: native host writes Phase 1 thumb (text placeholder для exotic formats). Next time main app opens, `full_scan` enumerates, worker upgrades.
+Current behavior: native host writes source files, upserts the local derived
+SQLite index, writes Phase 1 thumb (text placeholder для exotic formats) and
+syncs `thumb_format` / `thumb_mtime`. Next time main app opens,
+`list_pending_thumb_upgrades` enumerates repair/upgrade candidates and the
+worker upgrades media placeholders.
 
 **Edge case:** user saves 100 blocks via clipper with main app closed over a week. Next open: 100 upgrades queued. Takes ~30 seconds. User sees thumbs progressively upgrading.
 
@@ -889,26 +918,26 @@ If Phase C virtualization introduces rendering bugs:
 
 ### Data migration
 
-None. No schema changes. No file moves. Existing `.arena/cache/thumbs/` directory used as-is.
+No source-vault file migration. Existing thumb files are used as-is. SQLite
+schemas that predate `thumb_format` / `thumb_mtime` get additive columns and a
+metadata backfill from the existing thumb cache.
 
-## Appendix A: Current pipeline state (as of commit `f726854`)
+## Appendix A: Implemented pipeline state (08.05.2026)
 
-For reference, current state before this SPEC's implementation:
-
-- `generate_for_block` в `storage::thumbnails` содержит полный cascade (frontmatter.file → frontmatter.thumbnail → first_image → first_video → text fallback)
-- Native host calls `generate_for_block` directly (unified dispatch)
-- Watcher handler also calls `generate_for_block` при full_scan и index_md_file
-- `is_thumb_fresh` validates mtime + JPEG/PNG magic bytes
-- `list_channel_previews` читает filesystem + `is_text` флаг
-- Sidebar renders all channels (not virtualized)
-- No Tauri events for block:added / thumb:updated — frontend uses polling loadPreviews
-- Rust crates: image 0.25 (default features), openh264 0.6, mp4 0.14
-
-Known gaps (this SPEC addresses):
-- Rust `image` crate can't decode VP8X webp → user-visible broken thumbs
-- Video thumbnail generation may fail on HEVC / fragmented MP4
-- Polling-based sidebar updates have ~500ms latency
-- Sidebar not virtualized → slow with hundreds of channels
+- `generate_for_block` in `storage::thumbnails` contains the shared cascade:
+  `frontmatter.file` → `frontmatter.thumbnail` → inline body media →
+  fallback-label/text PNG.
+- Native host calls `upsert_block`, `generate_for_block`, then
+  `sync_thumb_metadata` after source-vault commit.
+- Watcher handler calls the same `generate_for_block` during full scan and
+  `index_md_file`, and emits thumb events for fresh PNG placeholders.
+- `is_thumb_fresh` validates mtime + JPEG/PNG magic bytes.
+- `list_channel_previews` reads SQLite `thumb_format` / `thumb_mtime` and
+  returns only confirmed preview rows.
+- `useChannelPreviewsEvents` coalesces preview refresh events and filters
+  `has_thumb=false` defensively.
+- Phase 2 WebView upgrade remains responsible for replacing PNG placeholders
+  with real decoded JPEG previews when the desktop app is open.
 
 ## Appendix B: Glossary
 
