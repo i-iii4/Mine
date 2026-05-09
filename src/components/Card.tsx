@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
-import type { LightBlock } from "@/types";
+import type { IndexedBlock, LightBlock } from "@/types";
 import {
   mediaUrl,
   previewAssetUrl,
@@ -140,12 +140,79 @@ export function ReadOnlyCardPreview({
   vaultPath,
   thumbsRootPath,
   width = 240,
+  previewMode = "full",
 }: {
-  block: LightBlock;
+  block: LightBlock & Partial<Pick<IndexedBlock, "thumb_format" | "thumb_mtime">>;
   vaultPath: string;
   thumbsRootPath?: string;
   width?: number;
+  previewMode?: "full" | "micro";
 }) {
+  if (previewMode === "micro") {
+    const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
+    const mtime = typeof block.thumb_mtime === "number" && block.thumb_mtime > 0
+      ? `?m=${block.thumb_mtime}`
+      : "";
+    const manifest = parsePreviewManifest(block);
+    const firstTile = manifest?.tiles[0] ?? null;
+    const previewWidth = firstTile?.width ?? manifest?.width ?? block.width;
+    const previewHeight = firstTile?.height ?? manifest?.height ?? block.height;
+    const aspectRatio = previewWidth && previewHeight ? previewWidth / previewHeight : 1;
+    const title = getDisplayTitle(block) ?? getNavigationLabel(block);
+    const previewText = block.preview_text?.trim() ?? "";
+    const hasText = Boolean(title || previewText || block.author);
+
+    return (
+      <CardFrame
+        className="pointer-events-none rounded-1 shadow-lg"
+        style={{ width }}
+      >
+        <div className="p-4">
+          <div
+            className="relative w-full overflow-hidden bg-accent"
+            style={{ aspectRatio }}
+          >
+            <img
+              src={`${thumbnailUrl(resolvedThumbsRoot, block.slug)}${mtime}`}
+              alt=""
+              className={cn(
+                "absolute inset-0 size-full object-cover",
+                block.thumb_format === "png" && "dark:invert",
+              )}
+              loading="eager"
+              draggable={false}
+            />
+          </div>
+          {hasText && (
+            <div className="mt-3">
+              {title && (
+                <p
+                  className="line-clamp-2 text-sm font-semibold text-foreground"
+                  style={{ lineHeight: "16px" }}
+                >
+                  {title}
+                </p>
+              )}
+              {previewText && (
+                <p
+                  className={cn("text-sm text-muted-foreground", title && "mt-1.5", "line-clamp-3")}
+                  style={contentCardPreviewTextStyle}
+                >
+                  {previewText}
+                </p>
+              )}
+              {block.author && (
+                <p className={cn("text-sm text-muted-foreground", (title || previewText) && "mt-2")}>
+                  by {block.author}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </CardFrame>
+    );
+  }
+
   return (
     <CardFrame
       className="pointer-events-none rounded-1 shadow-lg"

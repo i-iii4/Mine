@@ -7,4 +7,5 @@ pub mod files;
 pub mod index;
 pub mod media_dimensions;
 pub mod media_refs;
+pub mod preview_plan;
 pub mod thumbnails;

@@ -1,5 +1,145 @@
 # Devlog
 
+## 08.05.2026 [audit] — Sidebar micro-preview performance audit
+
+### Context
+
+- After the sidebar/Related Notes micro-preview changes, we re-audited whether
+  the left sidebar still follows the original performance-oriented contract.
+- The main risk was accidentally moving sidebar previews back toward full-card
+  rendering, filesystem probing, or multi-image composite generation.
+
+### Findings
+
+- Steady-state sidebar hot path is preserved: preview strips still come from
+  `list_channel_previews`, which reads `thumb_format` / `thumb_mtime` from
+  SQLite and returns only confirmed top-N preview rows.
+- `<slug>.jpg` is again a single representative micro-preview asset. Rich
+  multi-image rendering stays in `preview_manifest` for feed cards and Related
+  Notes hover previews.
+- Sidebar hover quick look does an on-demand `getBlock(slug)` only after hover
+  open; this is outside startup/strip rendering and was not reintroduced into
+  the hot path.
+- The cache marker bump to `5` causes a one-time thumbnail cache rebuild after
+  upgrade, but does not add steady-state sidebar cost.
+- Minor caveat: sidebar micro hover still parses `preview_manifest` to infer
+  aspect ratio. It is one hovered block at a time, not the strip hot path; keep
+  it as a future cleanup candidate if hover profiling ever shows cost.
+
+### Verification
+
+- `bun run test:frontend -- src/components/Sidebar.test.tsx src/components/Detail.test.tsx src/components/Card.test.tsx`
+- `cargo test -p mine storage::thumbnails`
+- `git diff --check`
+
+## 08.05.2026 [fix] — Roll back composite micro-preview generation
+
+### Context
+
+- The unified micro-preview work accidentally let the hot `<slug>.jpg`
+  thumbnail path inherit multi-image composite behavior.
+- That changed sidebar/Related Notes thumbnails from "first representative
+  media" into a baked gallery image and regressed the performance-oriented
+  contract.
+- Runtime check showed the regenerated `Made with high-performance...` thumb
+  was already single-image (`360×480`), but the left sidebar hover popup still
+  rendered `preview_manifest.kind=composite`, so it visually showed three
+  joined images despite the micro-preview cache being correct.
+
+### Completed
+
+- Split the shared preview plan into two explicit budgets:
+  `PREVIEW_TILE_LIMIT = 4` for rich `preview_manifest` card rendering and
+  `MICRO_PREVIEW_IMAGE_LIMIT = 1` for the on-disk micro-preview.
+- Changed `generate_for_block`, expected thumb state, and freshness dependency
+  tracking so article micro-previews use only one representative media/poster.
+- Bumped the thumb cache format marker from `4` to `5` so already-generated
+  composite micro-previews are cleared and rebuilt as single-image thumbs.
+- Added a sidebar-only micro preview mode for `ReadOnlyCardPreview`: the left
+  menu hover popup now renders one `<slug>.jpg` asset plus compact text
+  metadata and ignores composite `preview_manifest.tiles`. Detail/Related Notes
+  keep the richer preview.
+- Updated thumbnail/architecture specs and regression tests.
+
+### Verification
+
+- `cargo fmt`
+- `cargo test -p mine storage::thumbnails`
+- `cargo test -p mine sync_thumb_metadata_and_preview_queries_use_db_columns`
+- `bun run test:frontend -- src/components/Detail.test.tsx src/components/Sidebar.test.tsx`
+- `cargo test -p mine`
+- `bun run test:frontend`
+- `bun run lint`
+- `bun run test:frontend -- src/components/Sidebar.test.tsx`
+- `bun run test:frontend -- src/components/Card.test.tsx src/components/Sidebar.test.tsx src/components/Detail.test.tsx`
+- `bun run build`
+- `git diff --check`
+
+## 08.05.2026 [implementation] — Stable Detail top chrome on card switch
+
+### Context
+
+- Switching between already-open cards from sidebar thumbnails was restarting
+  the top menu enter animation because `block.slug` participated in the top
+  chrome `key` and `chromeEntered` effect dependencies.
+
+### Completed
+
+- Removed `block.slug` from Detail top chrome keys.
+- Kept the top chrome enter/exit state tied to Detail lifecycle
+  (`open` / `closing`) and top-menu mode changes, not active-card changes.
+- Added regression coverage for both `island` and `classic`: switching active
+  cards keeps the same top-menu DOM node and preserves `data-entered="true"`.
+- Updated frontend and architecture specs with the stable chrome contract.
+
+### Verification
+
+- `bun run test:frontend -- src/components/Detail.test.tsx`
+- `bun run build`
+- `bun run lint`
+- `git diff --check`
+
+## 08.05.2026 [implementation] — Unified micro-preview contract
+
+### Context
+
+- Sidebar thumbnails and right-side Related Notes were consuming block preview
+  state differently. Sidebar used confirmed `thumb_format` / `thumb_mtime`
+  metadata from `list_channel_previews`, while Related Notes guessed
+  `<slug>.jpg` directly from the related block slug.
+- The preview manifest and thumbnail generation also had separate literals for
+  the stable preview path and tile budget, which made future drift too easy.
+
+### Completed
+
+- Added shared backend preview primitives in `storage::preview_plan`:
+  `primary_preview_path(<slug>) = <slug>.jpg`, media predicates, and
+  `PREVIEW_TILE_LIMIT = 4`.
+- Moved inline-media preview ordering into `storage::preview_plan`, so
+  thumbnail generation no longer owns a separate body-media scan heuristic.
+- Extended full `IndexedBlock` projections (`get_block`, `list_blocks`,
+  `list_blocks_by_tag`, `search_blocks`) with `thumb_format` and `thumb_mtime`.
+- Added shared `MicroPreviewThumbnail` frontend component and switched both
+  sidebar strips and Related Notes rows to it.
+- Related Notes rows now render thumbnails only from confirmed metadata, add
+  `?m=<thumb_mtime>` cache busting, and apply the same PNG `dark:invert`
+  behavior as sidebar thumbnails.
+- Bumped thumbnail cache format marker from `3` to `4` so stale micro-preview
+  files are rebuilt under the unified contract.
+- Updated architecture/frontend/thumbnail specs.
+
+### Verification
+
+- `cargo fmt`
+- `cargo test -p mine sync_thumb_metadata_and_preview_queries_use_db_columns`
+- `bun run test:frontend -- src/components/Detail.test.tsx src/components/Sidebar.test.tsx`
+- `bun run test:frontend -- src/components/Search.test.tsx src/App.test.tsx`
+- `bun run test:frontend`
+- `cargo test -p mine`
+- `bun run lint`
+- `bun run build`
+- `git diff --check`
+
 ## 08.05.2026 [implementation] — Clipper media thumbnail contract and hover quick-look
 
 ### Context

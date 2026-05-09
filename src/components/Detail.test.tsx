@@ -80,6 +80,8 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
     media_dimensions: null,
     preview_manifest: null,
     feed_playback: null,
+    thumb_format: null,
+    thumb_mtime: 0,
     related_notes: [],
     body_hash: null,
     tags: [],
@@ -153,6 +155,102 @@ describe("Detail", () => {
     );
 
     expect(screen.getByRole("dialog", { name: "article-cover.jpg" })).toBeInTheDocument();
+  });
+
+  it("keeps floating top chrome mounted and entered when switching active cards", async () => {
+    const props = {
+      vaultPath: "/tmp/test-vault",
+      thumbsRootPath: "/tmp/thumbs",
+      onClose: vi.fn(),
+      onNavigate: vi.fn(),
+      tags: [],
+      onToggleTag: vi.fn(),
+      onCreateAndAssign: vi.fn(),
+      onTagsChanged: vi.fn(),
+      onRequestRename: vi.fn(),
+      onRequestDelete: vi.fn(),
+      onOpenRelatedNote: vi.fn(),
+    };
+
+    const { container, rerender } = render(
+      <Detail
+        {...props}
+        detailTopMenuMode="island"
+        block={block({ slug: "first-card", media_file: "first-card.jpg" })}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-detail-top-menu="island"]')).toHaveAttribute(
+        "data-entered",
+        "true",
+      );
+    });
+
+    const topMenu = container.querySelector('[data-detail-top-menu="island"]');
+    expect(topMenu).toHaveTextContent("first-card.jpg");
+
+    rerender(
+      <Detail
+        {...props}
+        detailTopMenuMode="island"
+        block={block({ slug: "second-card", media_file: "second-card.jpg" })}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(topMenu).toHaveTextContent("second-card.jpg");
+    });
+    expect(container.querySelector('[data-detail-top-menu="island"]')).toBe(topMenu);
+    expect(topMenu).toHaveAttribute("data-entered", "true");
+  });
+
+  it("keeps classic top chrome mounted and entered when switching active cards", async () => {
+    const props = {
+      vaultPath: "/tmp/test-vault",
+      thumbsRootPath: "/tmp/thumbs",
+      onClose: vi.fn(),
+      onNavigate: vi.fn(),
+      tags: [],
+      onToggleTag: vi.fn(),
+      onCreateAndAssign: vi.fn(),
+      onTagsChanged: vi.fn(),
+      onRequestRename: vi.fn(),
+      onRequestDelete: vi.fn(),
+      onOpenRelatedNote: vi.fn(),
+    };
+
+    const { container, rerender } = render(
+      <Detail
+        {...props}
+        detailTopMenuMode="classic"
+        block={block({ slug: "first-card", media_file: "first-card.jpg" })}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-detail-top-menu="classic"]')).toHaveAttribute(
+        "data-entered",
+        "true",
+      );
+    });
+
+    const topMenu = container.querySelector('[data-detail-top-menu="classic"]');
+    expect(topMenu).toHaveTextContent("first-card.jpg");
+
+    rerender(
+      <Detail
+        {...props}
+        detailTopMenuMode="classic"
+        block={block({ slug: "second-card", media_file: "second-card.jpg" })}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(topMenu).toHaveTextContent("second-card.jpg");
+    });
+    expect(container.querySelector('[data-detail-top-menu="classic"]')).toBe(topMenu);
+    expect(topMenu).toHaveAttribute("data-entered", "true");
   });
 
   it("does not close Detail when Escape belongs to a nested menu surface", () => {
@@ -1017,6 +1115,8 @@ describe("Detail", () => {
           display_title: "First line from note body",
           fallback_label: "Related Note",
           title: null,
+          thumb_format: "png",
+          thumb_mtime: 123,
         });
       }
       if (slug === "second-note") {
@@ -1027,6 +1127,8 @@ describe("Detail", () => {
           display_title: "Second note body",
           fallback_label: "Second Note",
           title: null,
+          thumb_format: "jpeg",
+          thumb_mtime: 456,
         });
       }
       return null;
@@ -1083,7 +1185,8 @@ describe("Detail", () => {
     );
 
     const img = row.querySelector("img");
-    expect(img).toHaveAttribute("src", "asset://localhost//tmp/thumbs/related-note.jpg");
+    expect(img).toHaveAttribute("src", "asset://localhost//tmp/thumbs/related-note.jpg?m=123");
+    expect(img).toHaveClass("dark:invert");
     expect(row.querySelector("div.flex.h-8.w-full.items-center.gap-2.overflow-hidden")).not.toBeNull();
 
     fireEvent.mouseEnter(row);

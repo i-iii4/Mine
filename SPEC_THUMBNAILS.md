@@ -160,6 +160,9 @@ SQLite stores thumbnail read-model metadata on `blocks`:
 return only rows where `thumb_format IS NOT NULL`. Filesystem probing belongs to
 write/repair paths (`generate_for_block`, `save_thumb`,
 `sync_thumb_metadata`, metadata backfill), not to the hot sidebar read path.
+Full `IndexedBlock` DTOs also carry `thumb_format` / `thumb_mtime`, so compact
+previews outside the sidebar (currently Related Notes rows) use the same
+confirmed read-model metadata instead of optimistic `<slug>.jpg` probing.
 
 ### In-memory state (Frontend side)
 
@@ -927,6 +930,13 @@ metadata backfill from the existing thumb cache.
 - `generate_for_block` in `storage::thumbnails` contains the shared cascade:
   `frontmatter.file` → `frontmatter.thumbnail` → inline body media →
   fallback-label/text PNG.
+- `storage::preview_plan` owns the common preview contract used by both
+  `preview_manifest` and thumbnail generation: `primary_preview_path =
+  <slug>.jpg`, shared media predicates, inline-media scan order,
+  `PREVIEW_TILE_LIMIT = 4` for rich card manifests, and
+  `MICRO_PREVIEW_IMAGE_LIMIT = 1` for the hot `<slug>.jpg` micro-preview.
+  The micro-preview is always one representative media/poster, not a baked
+  composite; multi-image richness belongs to `preview_manifest.tiles`.
 - Native host calls `upsert_block`, `generate_for_block`, then
   `sync_thumb_metadata` after source-vault commit.
 - Watcher handler calls the same `generate_for_block` during full scan and
@@ -934,6 +944,8 @@ metadata backfill from the existing thumb cache.
 - `is_thumb_fresh` validates mtime + JPEG/PNG magic bytes.
 - `list_channel_previews` reads SQLite `thumb_format` / `thumb_mtime` and
   returns only confirmed preview rows.
+- `get_block`, `list_blocks`, `list_blocks_by_tag`, and `search_blocks` expose
+  the same thumb metadata on `IndexedBlock`.
 - `useChannelPreviewsEvents` coalesces preview refresh events and filters
   `has_thumb=false` defensively.
 - Phase 2 WebView upgrade remains responsible for replacing PNG placeholders

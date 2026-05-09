@@ -40,6 +40,7 @@ import { getBlock } from "@/lib/commands";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import { cn } from "@/lib/utils";
 import { ReadOnlyCardPreview } from "./Card";
+import { MicroPreviewThumbnail, microPreviewFromPreviewCard } from "./MicroPreviewThumbnail";
 
 /** Convert a collection ref to a compact display title. */
 function titleFromTag(tag: string): string {
@@ -647,6 +648,7 @@ export function Sidebar({
               vaultPath={vaultPath}
               thumbsRootPath={thumbsRootPath}
               width={SIDEBAR_PREVIEW_WIDTH}
+              previewMode="micro"
             />
           </div>
       )}
@@ -1387,17 +1389,11 @@ function SidebarPreviewStrip({
             data-sidebar-preview-thumbnail={canPreview ? "trigger" : "placeholder"}
             data-sidebar-preview-active={isPreviewActive ? "true" : undefined}
           >
-            {card.hasThumb && (
-              <img
-                src={card.url}
-                className={cn(
-                  "size-8 object-cover",
-                  card.text ? "dark:invert" : "rounded-none",
-                )}
-                loading="lazy"
-                draggable={false}
-              />
-            )}
+            <MicroPreviewThumbnail
+              preview={microPreviewFromPreviewCard(card)}
+              loading="lazy"
+              draggable={false}
+            />
           </div>
         );
       })}

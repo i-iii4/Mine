@@ -16,6 +16,30 @@
 
 ## Latest wins
 
+### 08.05.2026 — sidebar micro-preview regression audit
+
+- Left sidebar preview strips still use the original hot path:
+  `useChannelPreviewsEvents` calls `list_channel_previews`, and Rust returns
+  confirmed top-N rows from SQLite `thumb_format` / `thumb_mtime`. No full block
+  list, no O(tags * blocks) filtering, and no per-preview filesystem probing
+  were reintroduced.
+- `MicroPreviewThumbnail` is shared by sidebar strips and Related Notes rows,
+  but it renders only confirmed micro-preview metadata. Related Notes no longer
+  guesses `<slug>.jpg` from slug alone.
+- The on-disk `<slug>.jpg` micro-preview contract is single representative
+  media/poster. The earlier composite generation path was removed from
+  `generate_for_block`, so multi-image articles no longer bake gallery thumbs
+  for sidebar/row use.
+- Sidebar hover quick look fetches the full block on demand after hover open and
+  renders the same single micro-preview asset. This cost is outside startup and
+  outside the strip refresh path.
+- Known one-time cost: thumb cache marker `5` clears old generated `.jpg` files
+  once, so the next startup/background sync can rebuild single-image thumbs.
+  This is an upgrade migration cost, not a steady-state sidebar regression.
+- Known small cleanup candidate: `ReadOnlyCardPreview previewMode="micro"` still
+  parses `preview_manifest` for aspect ratio. It runs for one hovered block at a
+  time, but can be removed later if hover profiling shows it matters.
+
 ### 16.04.2026 — startup / vault switch / sidebar previews
 
 - `commands/vault.rs`: открытие vault разделено на две фазы. SQLite + watcher + последний индексированный snapshot доступны сразу; `full_scan()` уходит в отдельный поток и репортит `vault-sync-started` / `vault-sync-finished`.

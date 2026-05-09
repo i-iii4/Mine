@@ -24,6 +24,10 @@ use crate::storage::media_dimensions::{
     build_media_dimensions_json, build_media_dimensions_json_from_sources,
 };
 use crate::storage::media_refs;
+use crate::storage::preview_plan::{
+    is_image_media, is_remote_media, is_video_media, local_media_items, media_ext_lower,
+    primary_preview_path, PREVIEW_TILE_LIMIT,
+};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -57,6 +61,8 @@ pub struct IndexedBlock {
     pub media_dimensions: Option<String>,
     pub preview_manifest: Option<String>,
     pub feed_playback: Option<String>,
+    pub thumb_format: Option<ThumbFormat>,
+    pub thumb_mtime: u64,
     pub related_notes: Vec<String>,
     pub body_hash: Option<String>,
     pub origin: Option<String>,
@@ -220,7 +226,8 @@ pub struct TagCount {
     pub count: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ThumbFormat {
     Jpeg,
     Png,
@@ -334,41 +341,6 @@ fn is_social_url(url: Option<&str>) -> bool {
         || lc.contains("instagram.com/stories/")
 }
 
-fn is_remote_media(src: &str) -> bool {
-    src.starts_with("http://") || src.starts_with("https://")
-}
-
-fn media_ext_lower(src: &str) -> Option<String> {
-    let clean = src.split('?').next().unwrap_or(src);
-    clean.rsplit('.').next().map(str::to_lowercase)
-}
-
-fn is_image_media(src: &str) -> bool {
-    matches!(
-        media_ext_lower(src).as_deref(),
-        Some(
-            "jpg"
-                | "jpeg"
-                | "png"
-                | "gif"
-                | "webp"
-                | "bmp"
-                | "tiff"
-                | "tif"
-                | "heic"
-                | "heif"
-                | "avif"
-        )
-    )
-}
-
-fn is_video_media(src: &str) -> bool {
-    matches!(
-        media_ext_lower(src).as_deref(),
-        Some("mp4" | "webm" | "m4v" | "mov")
-    )
-}
-
 fn parse_media_dimensions_json(
     media_dimensions: Option<&str>,
 ) -> std::collections::HashMap<String, [u32; 2]> {
@@ -394,10 +366,6 @@ fn media_tile(
         is_video,
         is_video_poster,
     }
-}
-
-fn primary_preview_path(slug: &str) -> String {
-    format!("{slug}.jpg")
 }
 
 fn dimensions_for_src(
@@ -447,7 +415,7 @@ fn extract_social_preview_tiles(
     let first_section = body.split("\n---").next().unwrap_or(body);
     let mut tiles = Vec::new();
     let mut next_is_video_poster = false;
-    let resolved_media = extract_local_media_items(media_urls, |_| true);
+    let resolved_media = local_media_items(media_urls, |_| true);
     let mut media_index = 0usize;
 
     for line in first_section.lines() {
@@ -473,19 +441,6 @@ fn extract_social_preview_tiles(
     }
 
     tiles
-}
-
-fn extract_local_media_items(media_urls: Option<&str>, predicate: fn(&str) -> bool) -> Vec<String> {
-    let Some(media_urls) = media_urls else {
-        return Vec::new();
-    };
-    serde_json::from_str::<Vec<String>>(media_urls)
-        .map(|urls| {
-            urls.into_iter()
-                .filter(|src| !is_remote_media(src) && predicate(src))
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 fn serialize_feed_preview_manifest(
@@ -563,13 +518,16 @@ fn serialize_feed_preview_manifest(
             if is_social_url(block.frontmatter.url.as_deref()) {
                 let mut tiles = extract_social_preview_tiles(&block.body, &dims, media_urls);
                 if tiles.is_empty() {
-                    tiles = extract_local_media_items(media_urls, |_| true)
+                    tiles = local_media_items(media_urls, |_| true)
                         .into_iter()
                         .map(|src| media_tile(&src, &dims, false, false))
                         .collect();
                 }
-                let overflow_count = tiles.len().saturating_sub(4);
-                let tiles = tiles.into_iter().take(4).collect::<Vec<_>>();
+                let overflow_count = tiles.len().saturating_sub(PREVIEW_TILE_LIMIT);
+                let tiles = tiles
+                    .into_iter()
+                    .take(PREVIEW_TILE_LIMIT)
+                    .collect::<Vec<_>>();
 
                 match tiles.as_slice() {
                     [] => FeedPreviewManifest {
@@ -602,12 +560,15 @@ fn serialize_feed_preview_manifest(
                     },
                 }
             } else {
-                let image_tiles = extract_local_media_items(media_urls, is_image_media)
+                let image_tiles = local_media_items(media_urls, is_image_media)
                     .into_iter()
                     .map(|src| media_tile(&src, &dims, false, false))
                     .collect::<Vec<_>>();
-                let overflow_count = image_tiles.len().saturating_sub(4);
-                let image_tiles = image_tiles.into_iter().take(4).collect::<Vec<_>>();
+                let overflow_count = image_tiles.len().saturating_sub(PREVIEW_TILE_LIMIT);
+                let image_tiles = image_tiles
+                    .into_iter()
+                    .take(PREVIEW_TILE_LIMIT)
+                    .collect::<Vec<_>>();
 
                 if image_tiles.len() >= 2 {
                     FeedPreviewManifest {
@@ -627,10 +588,9 @@ fn serialize_feed_preview_manifest(
                         tiles: image_tiles,
                         overflow_count: 0,
                     }
-                } else if let Some(video_src) =
-                    extract_local_media_items(media_urls, is_video_media)
-                        .into_iter()
-                        .next()
+                } else if let Some(video_src) = local_media_items(media_urls, is_video_media)
+                    .into_iter()
+                    .next()
                 {
                     FeedPreviewManifest {
                         kind: FeedPreviewKind::VideoPoster,
@@ -2196,7 +2156,8 @@ pub fn get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>> 
         .prepare(
             "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), description, url, media_file,
                     thumbnail, saved_at, source, width, height, author, body, preview_text, first_image, media_urls,
-                    media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning
+                    media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning,
+                    thumb_format, thumb_mtime
              FROM blocks WHERE slug = ?1",
         )
         .context("failed to prepare get_block")?;
@@ -2217,7 +2178,8 @@ pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), description, url, media_file,
                 thumbnail, saved_at, source, width, height, author, body, preview_text, first_image, media_urls,
-                media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning
+                media_dimensions, preview_manifest, feed_playback, related_notes, body_hash, origin, index_warning,
+                thumb_format, thumb_mtime
          FROM blocks ORDER BY saved_at DESC",
     )?;
     collect_blocks(conn, &mut stmt, &[] as &[&dyn rusqlite::types::ToSql])
@@ -2229,7 +2191,8 @@ pub fn list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlo
         "SELECT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
                 b.height, b.author, b.body, b.preview_text, b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest,
-                b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning
+                b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning,
+                b.thumb_format, b.thumb_mtime
          FROM blocks b
          JOIN block_tags bt ON bt.block_id = b.id
          WHERE bt.tag = ?1
@@ -2303,7 +2266,8 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
         "SELECT DISTINCT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.description, b.url,
                 b.media_file, b.thumbnail, b.saved_at, b.source, b.width,
                 b.height, b.author, b.body, b.preview_text, b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest,
-                b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning
+                b.feed_playback, b.related_notes, b.body_hash, b.origin, b.index_warning,
+                b.thumb_format, b.thumb_mtime
          FROM blocks b",
     );
 
@@ -2520,6 +2484,8 @@ fn load_bidirectional_related_notes(
 }
 
 fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
+    let raw_thumb_format = row.get::<_, Option<String>>(28)?;
+    let thumb_mtime = row.get::<_, Option<i64>>(29)?.unwrap_or(0).max(0) as u64;
     Ok(IndexedBlock {
         id: row.get(0)?,
         slug: row.get(1)?,
@@ -2545,6 +2511,8 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
         media_dimensions: row.get(21)?,
         preview_manifest: row.get(22)?,
         feed_playback: row.get(23)?,
+        thumb_format: raw_thumb_format.as_deref().and_then(ThumbFormat::from_db),
+        thumb_mtime,
         related_notes: parse_related_notes_json(row.get(24)?),
         body_hash: row.get(25)?,
         origin: row.get(26)?,
@@ -3624,6 +3592,10 @@ mod tests {
             .collect::<std::collections::HashMap<_, _>>();
         assert_eq!(design_by_slug["design-a"], Some(ThumbFormat::Png));
         assert_eq!(design_by_slug["design-b"], Some(ThumbFormat::Jpeg));
+
+        let full_block = get_block(&conn, "design-a").unwrap().unwrap();
+        assert_eq!(full_block.thumb_format, Some(ThumbFormat::Png));
+        assert!(full_block.thumb_mtime > 0);
 
         assert!(clear_thumb_metadata(&conn, "design-a").unwrap());
         let cleared = list_preview_blocks(&conn, 10).unwrap();

@@ -50,6 +50,7 @@ import { ArticleAudioControls } from "./ArticleAudioControls";
 import { CardMoreMenu } from "./CardHoverMenu";
 import { ReadOnlyCardPreview } from "./Card";
 import { CollectionPicker } from "./CollectionPicker";
+import { MicroPreviewThumbnail, microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
 
 // Layout constants — shared between top chrome, scroll layer, and metadata layer.
 const DETAIL_CANVAS_CLASSES = "mx-auto w-[calc(100%-4rem)] max-w-[70rem]";
@@ -161,7 +162,7 @@ export function Detail({
       setChromeEntered(true);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [displayBlock.slug, detailTopMenuMode, isClosing]);
+  }, [detailTopMenuMode, isClosing]);
 
   const refreshFullBlock = useCallback((slug: string) => {
     void getBlock(slug).then((full) => {
@@ -228,7 +229,6 @@ export function Detail({
     >
       {isFloatingTopMenu ? (
         <div
-          key={`detail-top-pill:${detailTopMenuMode}:${displayBlock.slug}`}
           className={cn("absolute left-1/2 top-4 z-20 -translate-x-1/2", DETAIL_CANVAS_CLASSES)}
         >
           <header
@@ -278,7 +278,6 @@ export function Detail({
         </div>
       ) : (
         <header
-          key={`detail-top-bar:${displayBlock.slug}`}
           data-entered={chromeEntered ? "true" : "false"}
           className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 bg-accent px-8"
           data-detail-top-menu="classic"
@@ -864,9 +863,8 @@ function RelatedNotesSection({
             >
               <div className={RELATED_NOTE_ROW_CONTENT_CLASSES}>
                 <div aria-hidden="true" className="size-8 shrink-0 overflow-hidden bg-component-fill">
-                  <img
-                    src={thumbnailUrl(resolvedThumbsRoot, relatedBlock.slug)}
-                    className="size-8 object-cover"
+                  <MicroPreviewThumbnail
+                    preview={microPreviewFromIndexedBlock(relatedBlock, resolvedThumbsRoot)}
                     loading="lazy"
                     draggable={false}
                     onError={(event) => {

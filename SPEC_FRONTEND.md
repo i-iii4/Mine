@@ -415,6 +415,12 @@ preview strip, и только после этого начинает ужима
 
 **Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`, `vault-changed`), а не через polling. Initial state и event refresh идут через `listChannelPreviews(20)`; `useChannelPreviewsEvents` коалесцирует события и фильтрует `has_thumb=false` как defense-in-depth. Cache-bust: initial load использует `?m=<mtime>` из SQLite `thumb_mtime`, real-time updates используют `?v=<counter>` (per-slug version counter, инкрементируется на `thumb:updated`). Два механизма дополняют друг друга: `?m=` покрывает межсессионные изменения (Phase 2 worker перезаписал PNG→JPEG), `?v=` покрывает live-обновления внутри сессии.
 
+**Sidebar hover quick look.** The left sidebar hover popup is micro-preview
+only: it renders one confirmed `<slug>.jpg` asset plus compact text metadata
+and deliberately ignores `preview_manifest.tiles`. This keeps the left menu
+aligned with the thumbnail strip contract even when the full feed card is a
+multi-image composite/gallery. Related Notes keeps its richer hover preview.
+
 **Main sidebar top inset.** На главной sidebar использует `pt-20` прямо на
 `data-sidebar-scroll`. Не создавать отдельную пустую header surface для
 опциональных баннеров: если banner component возвращает `null`, над списком не
@@ -540,6 +546,10 @@ that belongs to `storage::media_refs`.
 - Верхний chrome Detail входит и выходит через мягкий `opacity + translateY`
   transition; нижняя hairline у `classic` живёт отдельным visual layer и
   анимируется отдельно от fill
+- Верхний chrome Detail анимируется по lifecycle самого Detail (`open` /
+  `closing`) и по смене top-menu mode, но не по смене активного `block.slug`.
+  При переходе между открытыми карточками верхний chrome остаётся тем же DOM
+  subtree; меняются только filename/action data.
 - Двухслойный layout: scroll-слой (article content + невидимый rail spacer)
   и fixed-слой (метаданные). Оба слоя используют один Detail canvas/grid
   contract, чтобы article column, right rail и top pill подчинялись одной
@@ -590,6 +600,10 @@ that belongs to `storage::media_refs`.
   deduplicates by base slug.
 - `RELATED NOTES` rows use a compact button-shell with persistent fill/border,
   `8x8` thumbnail on the left, and filename fallback label on the right.
+  The thumbnail is the shared `MicroPreviewThumbnail` component: it renders only
+  when `IndexedBlock.thumb_format` confirms a real micro-preview, appends
+  `?m=<thumb_mtime>` for cache busting, and applies the same PNG `dark:invert`
+  contract as sidebar thumbnails.
   Hover can show a read-only feed-style card preview. The preview uses
   `rounded-1`, is keyed by row identity rather than base slug so repeated
   backlinks position independently, opens right when viewport space allows and

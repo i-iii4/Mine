@@ -214,6 +214,8 @@ function indexedBlock(id: number, slug: string, title = slug): IndexedBlock {
     title,
     description: null,
     source: null,
+    thumb_format: null,
+    thumb_mtime: 0,
     related_notes: [],
     body_hash: null,
     tags: [],

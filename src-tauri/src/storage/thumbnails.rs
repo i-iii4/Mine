@@ -13,22 +13,17 @@ use imageproc::drawing::draw_text_mut;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use crate::domain::block::{
-    derive_card_kind, derive_title_fields, iter_inline_media_references, iter_inline_media_sources,
-    strip_first_markdown_h1, Block, CardKind,
-};
+use crate::domain::block::{derive_title_fields, strip_first_markdown_h1, Block};
 use crate::domain::vault::VaultLayout;
 use crate::storage::media_refs;
+use crate::storage::preview_plan::{
+    self, media_ext_lower, PreviewMediaKind, MICRO_PREVIEW_IMAGE_LIMIT, PREVIEW_TILE_LIMIT,
+};
+pub use crate::storage::preview_plan::{is_image_ext, is_video_ext};
 
 /// Default max side for thumbnails: 480px covers 240px CSS columns at 2x Retina.
 pub const DEFAULT_MAX_SIZE: u32 = 480;
-const COMPOSITE_TILE_LIMIT: usize = 4;
-
 const JPEG_QUALITY: u8 = 85;
-
-fn is_article_card(block: &Block) -> bool {
-    derive_card_kind(block) == CardKind::Article
-}
 
 /// Write a thumbnail to `dest` atomically: encode into a per-process,
 /// per-call temp file in the same directory, then rename onto the final
@@ -171,25 +166,25 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
     // 3. Article body: first embedded media in markdown order. If the
     //    article starts with a video and later includes images, the feed
     //    poster must still be derived from the video source.
-    if is_article_card(block) {
-        if let Some((_media_name, media_path, media_kind)) =
-            find_first_existing_article_media(block, vault)
-        {
-            if media_kind == "video" {
+    if preview_plan::is_article_card(block) {
+        if let Some(media) = preview_plan::find_first_existing_article_media(block, vault) {
+            if media.kind == PreviewMediaKind::Video {
                 return ExpectedThumb::Either;
             }
-            debug_assert!(media_path.exists());
+            debug_assert!(media.path.exists());
         }
 
-        let article_images = collect_article_preview_images(block, vault, COMPOSITE_TILE_LIMIT);
-        if article_images.len() >= 2 {
-            return ExpectedThumb::OnlyJpeg;
-        }
+        let article_images = preview_plan::collect_article_preview_images(
+            block,
+            vault,
+            MICRO_PREVIEW_IMAGE_LIMIT,
+            is_rust_decodable,
+        );
         if !article_images.is_empty() {
             return ExpectedThumb::OnlyJpeg;
         }
         // 4. Article body: first video.
-        if find_first_existing_body_media(block, vault, is_video_ext).is_some() {
+        if preview_plan::find_first_existing_body_media(block, vault, is_video_ext).is_some() {
             // Video: Rust may succeed or fall through. Accept either.
             return ExpectedThumb::Either;
         }
@@ -215,24 +210,24 @@ fn preview_dependency_paths(block: &Block, vault: &VaultLayout) -> Vec<std::path
         }
     }
 
-    if is_article_card(block) {
-        if let Some((_media_name, media_path, media_kind)) =
-            find_first_existing_article_media(block, vault)
-        {
-            if media_kind == "video" {
-                return vec![media_path];
+    if preview_plan::is_article_card(block) {
+        if let Some(media) = preview_plan::find_first_existing_article_media(block, vault) {
+            if media.kind == PreviewMediaKind::Video {
+                return vec![media.path];
             }
         }
 
-        let article_images = collect_article_preview_images(block, vault, COMPOSITE_TILE_LIMIT);
-        if article_images.len() >= 2 {
-            return article_images;
-        }
+        let article_images = preview_plan::collect_article_preview_images(
+            block,
+            vault,
+            MICRO_PREVIEW_IMAGE_LIMIT,
+            is_rust_decodable,
+        );
         if let Some(media_path) = article_images.into_iter().next() {
             return vec![media_path];
         }
         if let Some((_first_video, media_path)) =
-            find_first_existing_body_media(block, vault, is_video_ext)
+            preview_plan::find_first_existing_body_media(block, vault, is_video_ext)
         {
             return vec![media_path];
         }
@@ -425,7 +420,7 @@ pub fn generate_composite_thumbnail(
     dest: &Path,
     max_size: u32,
 ) -> Result<(u32, u32)> {
-    let tile_count = sources.len().min(COMPOSITE_TILE_LIMIT);
+    let tile_count = sources.len().min(PREVIEW_TILE_LIMIT);
     anyhow::ensure!(
         tile_count >= 2,
         "composite thumbnail needs at least two source images"
@@ -864,27 +859,9 @@ fn strip_links(text: &str) -> String {
 
 // ─── Unified dispatch ───────────────────────────────────────────────────────
 
-/// Extensions recognized as still images that `generate_thumbnail` can process.
-const IMAGE_EXTS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif", "heic", "heif", "avif",
-];
-/// Extensions recognized as video containers that `generate_video_thumbnail` can process.
-const VIDEO_EXTS: &[&str] = &["mp4", "webm", "mov"];
-
+/// Extension extraction for the shared media predicates re-exported above.
 fn ext_lower(path_str: &str) -> String {
-    Path::new(path_str)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase()
-}
-
-pub fn is_image_ext(ext: &str) -> bool {
-    IMAGE_EXTS.contains(&ext)
-}
-
-pub fn is_video_ext(ext: &str) -> bool {
-    VIDEO_EXTS.contains(&ext)
+    media_ext_lower(path_str).unwrap_or_default()
 }
 
 /// Sniff the first bytes of a file and check whether it is a raster image
@@ -935,6 +912,8 @@ pub enum ThumbSource {
     /// Resized from a raster image file (JPEG/PNG/GIF/etc).
     Image,
     /// Composited from multiple embedded images into a single JPEG preview.
+    /// Used by the composite helper/tests; micro-preview generation intentionally
+    /// stays on a single representative media file.
     Composite,
     /// Extracted first visible frame from an H.264 MP4.
     Video,
@@ -1007,17 +986,14 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
         }
     }
 
-    // 3-5. Scan body for embedded image/video previews (articles). If the
-    //      first existing embedded media is a video, use its frame as the
-    //      poster even when later images exist. Otherwise multi-image
-    //      articles/social posts prefer a composite JPEG preview; then a
-    //      single image; then a later video frame.
-    if is_article_card(block) {
-        if let Some((_media_name, media_path, media_kind)) =
-            find_first_existing_article_media(block, vault)
-        {
-            if media_kind == "video" {
-                match generate_video_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
+    // 3-5. Scan body for embedded image/video previews (articles). `<slug>.jpg`
+    //      is a micro-preview asset: use one representative media file, never a
+    //      baked composite. Rich multi-tile rendering belongs to
+    //      `preview_manifest`, not the hot sidebar/related-notes thumbnail.
+    if preview_plan::is_article_card(block) {
+        if let Some(media) = preview_plan::find_first_existing_article_media(block, vault) {
+            if media.kind == PreviewMediaKind::Video {
+                match generate_video_thumbnail(&media.path, &thumb_path, DEFAULT_MAX_SIZE) {
                     Ok(_) => return ThumbSource::Video,
                     Err(e) => log::warn!(
                         "first-video thumb failed for {}, falling back through article media cascade: {}",
@@ -1028,13 +1004,12 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
             }
         }
 
-        let article_images = collect_article_preview_images(block, vault, COMPOSITE_TILE_LIMIT);
-        if article_images.len() >= 2 {
-            match generate_composite_thumbnail(&article_images, &thumb_path, DEFAULT_MAX_SIZE) {
-                Ok(_) => return ThumbSource::Composite,
-                Err(e) => log::warn!("composite thumb failed for {}: {}", slug, e),
-            }
-        }
+        let article_images = preview_plan::collect_article_preview_images(
+            block,
+            vault,
+            MICRO_PREVIEW_IMAGE_LIMIT,
+            is_rust_decodable,
+        );
         if let Some(media_path) = article_images.into_iter().next() {
             match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
                 Ok(_) => return ThumbSource::Image,
@@ -1042,7 +1017,7 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
             }
         }
         if let Some((_first_video, media_path)) =
-            find_first_existing_body_media(block, vault, is_video_ext)
+            preview_plan::find_first_existing_body_media(block, vault, is_video_ext)
         {
             match generate_video_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
                 Ok(_) => return ThumbSource::Video,
@@ -1098,141 +1073,11 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
 /// extension matches `ext_predicate`. Supports both `![[name]]` and
 /// legacy `![](name)` syntax via the shared domain parser.
 pub fn find_first_local_media(body: &str, ext_predicate: fn(&str) -> bool) -> Option<String> {
-    find_local_media(body, ext_predicate, 1).into_iter().next()
+    preview_plan::find_first_local_media(body, ext_predicate)
 }
 
 pub fn find_first_local_media_any(body: &str) -> Option<(String, &'static str)> {
-    for src in iter_inline_media_sources(body) {
-        if src.is_empty() || src.starts_with("http://") || src.starts_with("https://") {
-            continue;
-        }
-        let ext = ext_lower(&src);
-        if is_image_ext(&ext) {
-            return Some((src, "image"));
-        }
-        if is_video_ext(&ext) {
-            return Some((src, "video"));
-        }
-    }
-    None
-}
-
-fn find_local_media(body: &str, ext_predicate: fn(&str) -> bool, limit: usize) -> Vec<String> {
-    if limit == 0 {
-        return Vec::new();
-    }
-
-    let mut results = Vec::new();
-    for src in iter_inline_media_sources(body) {
-        if src.is_empty() || src.starts_with("http://") || src.starts_with("https://") {
-            continue;
-        }
-        let ext = ext_lower(&src);
-        if ext_predicate(&ext) {
-            results.push(src);
-            if results.len() >= limit {
-                break;
-            }
-        }
-    }
-    results
-}
-
-fn find_local_media_refs(
-    body: &str,
-    ext_predicate: fn(&str) -> bool,
-    limit: usize,
-) -> Vec<crate::domain::block::InlineMediaReference> {
-    if limit == 0 {
-        return Vec::new();
-    }
-
-    let mut results = Vec::new();
-    for reference in iter_inline_media_references(body) {
-        if reference.source.is_empty()
-            || reference.source.starts_with("http://")
-            || reference.source.starts_with("https://")
-        {
-            continue;
-        }
-        let ext = ext_lower(&reference.source);
-        if ext_predicate(&ext) {
-            results.push(reference);
-            if results.len() >= limit {
-                break;
-            }
-        }
-    }
-    results
-}
-
-fn find_first_existing_body_media(
-    block: &Block,
-    vault: &VaultLayout,
-    ext_predicate: fn(&str) -> bool,
-) -> Option<(String, std::path::PathBuf)> {
-    for reference in find_local_media_refs(&block.body, ext_predicate, usize::MAX) {
-        if let Some(path) = media_refs::resolve_inline_media(vault, &block.slug, &reference) {
-            return Some((reference.source, path));
-        }
-    }
-    None
-}
-
-fn find_first_existing_article_media(
-    block: &Block,
-    vault: &VaultLayout,
-) -> Option<(String, std::path::PathBuf, &'static str)> {
-    if !is_article_card(block) {
-        return None;
-    }
-    for reference in iter_inline_media_references(&block.body) {
-        if reference.source.is_empty()
-            || reference.source.starts_with("http://")
-            || reference.source.starts_with("https://")
-        {
-            continue;
-        }
-        let ext = ext_lower(&reference.source);
-        let kind = if is_image_ext(&ext) {
-            "image"
-        } else if is_video_ext(&ext) {
-            "video"
-        } else {
-            continue;
-        };
-        if let Some(path) = media_refs::resolve_inline_media(vault, &block.slug, &reference) {
-            return Some((reference.source, path, kind));
-        }
-    }
-    None
-}
-
-fn collect_article_preview_images(
-    block: &Block,
-    vault: &VaultLayout,
-    limit: usize,
-) -> Vec<std::path::PathBuf> {
-    if !is_article_card(block) || limit == 0 {
-        return Vec::new();
-    }
-
-    let mut seen = std::collections::HashSet::<String>::new();
-    let mut paths = Vec::new();
-    for reference in find_local_media_refs(&block.body, is_image_ext, limit.saturating_mul(3)) {
-        if !seen.insert(reference.source.clone()) {
-            continue;
-        }
-        if let Some(path) = media_refs::resolve_inline_media(vault, &block.slug, &reference) {
-            if is_rust_decodable(&path) {
-                paths.push(path);
-                if paths.len() >= limit {
-                    break;
-                }
-            }
-        }
-    }
-    paths
+    preview_plan::find_first_local_media_any(body).map(|(src, kind)| (src, kind.as_str()))
 }
 
 fn resolve_block_media_path(
@@ -1463,7 +1308,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_for_block_article_with_multiple_images_writes_composite_jpeg() {
+    fn generate_for_block_article_with_multiple_images_uses_first_image_jpeg() {
         let dir = tempfile::tempdir().unwrap();
         let vault = make_vault(dir.path());
 
@@ -1480,7 +1325,7 @@ mod tests {
         );
 
         let source = generate_for_block(&block, &vault);
-        assert_eq!(source, ThumbSource::Composite);
+        assert_eq!(source, ThumbSource::Image);
 
         let thumb_path = vault.thumb_path("multi-image");
         let mut header = [0u8; 3];
@@ -1489,16 +1334,11 @@ mod tests {
         f.read_exact(&mut header).unwrap();
         assert_eq!(header, JPEG_MAGIC);
 
-        let composite = image::open(&thumb_path).unwrap().to_rgb8();
-        assert_eq!(composite.dimensions(), (DEFAULT_MAX_SIZE, DEFAULT_MAX_SIZE));
+        let thumb = image::open(&thumb_path).unwrap().to_rgb8();
+        assert_eq!(thumb.dimensions(), (240, DEFAULT_MAX_SIZE));
 
-        let left = composite.get_pixel(DEFAULT_MAX_SIZE / 4, DEFAULT_MAX_SIZE / 2);
-        let right_top = composite.get_pixel(DEFAULT_MAX_SIZE * 3 / 4, DEFAULT_MAX_SIZE / 4);
-        let right_bottom = composite.get_pixel(DEFAULT_MAX_SIZE * 3 / 4, DEFAULT_MAX_SIZE * 3 / 4);
-
-        assert!(left[0] > left[1] && left[0] > left[2]);
-        assert!(right_top[1] > right_top[0] && right_top[1] > right_top[2]);
-        assert!(right_bottom[2] > right_bottom[0] && right_bottom[2] > right_bottom[1]);
+        let center = thumb.get_pixel(thumb.width() / 2, thumb.height() / 2);
+        assert!(center[0] > center[1] && center[0] > center[2]);
     }
 
     #[test]
@@ -1667,7 +1507,7 @@ mod tests {
     }
 
     #[test]
-    fn is_thumb_fresh_rejects_thumb_older_than_any_composite_dependency() {
+    fn is_thumb_fresh_tracks_only_first_micro_preview_dependency() {
         let dir = tempfile::tempdir().unwrap();
         let vault = make_vault(dir.path());
         let source = dir.path().join("article.md");
@@ -1680,11 +1520,16 @@ mod tests {
         let block = make_article("article", "![](first.png)\n![](second.png)\n");
 
         let thumb = vault.thumb_path("article");
-        generate_composite_thumbnail(&[first.clone(), second.clone()], &thumb, 240).unwrap();
+        generate_thumbnail(&first, &thumb, 240).unwrap();
         assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
 
         std::thread::sleep(std::time::Duration::from_millis(20));
         create_test_image(&second, 120, 120);
+
+        assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        create_test_image(&first, 130, 130);
 
         assert!(!is_thumb_fresh(&thumb, &source, &block, &vault));
     }
@@ -1920,7 +1765,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_for_block_article_with_two_wikilink_images_writes_composite_jpeg() {
+    fn generate_for_block_article_with_two_wikilink_images_uses_first_image_jpeg() {
         let dir = tempfile::tempdir().unwrap();
         let vault = make_vault(dir.path());
 
@@ -1933,7 +1778,7 @@ mod tests {
         );
 
         let source = generate_for_block(&block, &vault);
-        assert_eq!(source, ThumbSource::Composite);
+        assert_eq!(source, ThumbSource::Image);
 
         let thumb_path = vault.thumb_path("Human Readable Title");
         let mut header = [0u8; 3];

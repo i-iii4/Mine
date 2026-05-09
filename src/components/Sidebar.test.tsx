@@ -5,7 +5,7 @@ import { DndContext } from "@dnd-kit/core";
 import { invoke } from "@tauri-apps/api/core";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
-import type { TagCount } from "@/types";
+import type { IndexedBlock, TagCount } from "@/types";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
@@ -46,7 +46,7 @@ function renderSidebar(props = defaultProps, initialEntries = ["/"]) {
   return render(sidebarTree(props, initialEntries));
 }
 
-function previewBlock(slug: string) {
+function previewBlock(slug: string, overrides: Partial<IndexedBlock> = {}): IndexedBlock {
   return {
     id: 101,
     slug,
@@ -72,11 +72,14 @@ function previewBlock(slug: string) {
     media_dimensions: null,
     preview_manifest: null,
     feed_playback: null,
+    thumb_format: "jpeg",
+    thumb_mtime: 0,
     related_notes: [],
     body_hash: null,
     origin: null,
     index_warning: null,
     tags: [],
+    ...overrides,
   };
 }
 
@@ -393,8 +396,54 @@ describe("Sidebar", () => {
 
   it("shows a non-interactive sidebar preview only while the thumbnail is hovered", async () => {
     vi.useFakeTimers();
+    const compositeManifest = JSON.stringify({
+      kind: "composite",
+      primary_preview_path: "alpha-a.jpg",
+      width: 1,
+      height: 1,
+      tiles: [
+        {
+          source_path: "alpha-a-img1.jpg",
+          preview_path: null,
+          width: 900,
+          height: 1200,
+          is_video: false,
+          is_video_poster: false,
+        },
+        {
+          source_path: "alpha-a-img2.jpg",
+          preview_path: null,
+          width: 900,
+          height: 1200,
+          is_video: false,
+          is_video_poster: false,
+        },
+        {
+          source_path: "alpha-a-img3.jpg",
+          preview_path: null,
+          width: 900,
+          height: 1200,
+          is_video: false,
+          is_video_poster: false,
+        },
+      ],
+      overflow_count: 0,
+    });
+
     vi.mocked(invoke)
-      .mockResolvedValueOnce(previewBlock("alpha-a"))
+      .mockResolvedValueOnce(previewBlock("alpha-a", {
+        card_kind: "article",
+        block_type: "article",
+        media_file: null,
+        width: null,
+        height: null,
+        body: "Alpha text\n\n![[alpha-a-img1.jpg]]\n\n![[alpha-a-img2.jpg]]\n\n![[alpha-a-img3.jpg]]",
+        preview_text: "Alpha preview text",
+        first_image: "alpha-a-img1.jpg",
+        media_urls: JSON.stringify(["alpha-a-img1.jpg", "alpha-a-img2.jpg", "alpha-a-img3.jpg"]),
+        preview_manifest: compositeManifest,
+        thumb_mtime: 123,
+      }))
       .mockResolvedValueOnce(previewBlock("alpha-b"))
       .mockResolvedValueOnce(previewBlock("alpha-a"));
     const previews = new Map([
@@ -440,11 +489,16 @@ describe("Sidebar", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
-    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toHaveClass(
-      "pointer-events-none",
+    const hoverPreview = container.querySelector("[data-sidebar-thumbnail-hover-preview]");
+    expect(hoverPreview).toBeInTheDocument();
+    expect(hoverPreview).toHaveClass("pointer-events-none");
+    expect(hoverPreview!.querySelector("button")).toBeNull();
+    const hoverImages = hoverPreview!.querySelectorAll("img");
+    expect(hoverImages).toHaveLength(1);
+    expect(hoverImages[0]).toHaveAttribute(
+      "src",
+      "asset://localhost//vault/.arena/cache/thumbs/alpha-a.jpg?m=123",
     );
-    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview] button")).toBeNull();
     expect(container.querySelector("[data-sidebar-thumbnail-hover-bridge]")).not.toBeInTheDocument();
     fireEvent.pointerLeave(container.querySelector("[data-sidebar-scroll]")!);
     expect(container.querySelector("[data-sidebar-scroll]")).toHaveAttribute(

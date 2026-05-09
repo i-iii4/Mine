@@ -3,6 +3,7 @@
 
 export type BlockType = "image" | "article" | "link" | "video" | "file" | "channel";
 export type CardKind = "article" | "media" | "channel";
+export type ThumbFormat = "jpeg" | "png";
 
 export interface IndexedBlock {
   id: number;
@@ -36,6 +37,8 @@ export interface IndexedBlock {
   media_dimensions: string | null;
   preview_manifest: string | null;
   feed_playback: string | null;
+  thumb_format: ThumbFormat | null;
+  thumb_mtime: number;
   related_notes: string[];
   body_hash: string | null;
   origin?: string | null;

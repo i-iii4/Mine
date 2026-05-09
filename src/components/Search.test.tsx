@@ -30,6 +30,8 @@ function block(id: number, title: string): IndexedBlock {
     media_dimensions: null,
     preview_manifest: null,
     feed_playback: null,
+    thumb_format: null,
+    thumb_mtime: 0,
     related_notes: [],
     body_hash: null,
     tags: [],

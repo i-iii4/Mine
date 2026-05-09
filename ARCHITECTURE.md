@@ -213,7 +213,10 @@ watcher пропустил событие или native host сохранял cl
 - feed/grid/sidebar используют preview-first pipeline;
 - `Detail` остаётся full-fidelity path и может открывать оригиналы;
 - async asset protocol override убирает синхронный `asset://` hotspot с main thread WebView для оставшихся asset-paths;
-- multi-image article/social preview должен приходить как один composite preview asset, а не как client-side gallery.
+- multi-image article/social card preview описывается `preview_manifest` как
+  rich tile set; hot micro-preview asset `<slug>.jpg` остаётся single
+  representative media/poster, чтобы sidebar/related thumbnails не тащили
+  gallery/composite работу в быстрый path.
 - grid больше не допускает mixed-generation layout: live cards рендерятся только внутри exact `committed` prefix текущего layout generation.
 - feed video contract больше не определяется render-time эвристиками: autoplay разрешён только при наличии backend-derived `feed_playback`, galleries остаются preview-only, а failure mode feed-video всегда poster-safe.
 
@@ -516,6 +519,23 @@ iOS UI contract:
   или PNG. Custom `asset://` protocol обязан выставлять MIME по magic bytes,
   а не только по расширению, иначе transparent text thumbnails отдаются как
   `image/jpeg` и WKWebView показывает broken-image `?`.
+- `src-tauri/src/storage/preview_plan.rs` хранит общий contract для
+  `preview_manifest` и thumbnail pipeline: стабильный `primary_preview_path =
+  <slug>.jpg`, media predicates, лимит видимых rich preview tiles
+  (`PREVIEW_TILE_LIMIT = 4`), micro-preview лимит
+  (`MICRO_PREVIEW_IMAGE_LIMIT = 1`) и порядок сканирования inline media.
+  `<slug>.jpg` — быстрый representative asset для sidebar/Related Notes, не
+  baked composite; rich gallery/composite semantics живут в `preview_manifest`.
+- Полный `IndexedBlock` тоже отдаёт `thumb_format` / `thumb_mtime`. Поэтому
+  right-side `RELATED NOTES` больше не угадывает наличие `<slug>.jpg` по slug,
+  а строит micro-preview из тех же подтверждённых metadata, что и sidebar.
+  Frontend-компонент `MicroPreviewThumbnail` общий для sidebar strip и Related
+  Notes row.
+- Sidebar hover popup intentionally uses the same micro-preview asset as the
+  thumbnail strip. It does not render `preview_manifest.tiles`, so a multi-image
+  article/social block still opens as a one-image quick look in the left menu.
+  Rich composite/gallery rendering stays in feed cards and the Related Notes
+  hover preview.
 - Legacy vault compatibility: если в `.arena/cache/thumbs/` уже лежат `.jpg`, а `thumb_format/thumb_mtime` в SQLite ещё не заполнены, `open_vault()` запускает фоновый backfill metadata и после него шлёт `vault-changed`. Это восстанавливает sidebar previews без полного rebuild index.
 - Startup backlog planner для Phase 2 (`list_pending_thumb_upgrades`) тоже
   больше не читает thumb-файлы на main thread. Он работает через отдельный
@@ -715,6 +735,11 @@ split-variant и не является частью contract; если стар�
 Island surface компенсирует правый optical inset (`pl-3 pr-1`), потому что
 иконки живут внутри `size-8` hit area: hit target остаётся 32px, а визуальный
 край совпадает с текстовым краем filename.
+Detail top menu является стабильным chrome текущей Detail-сессии, а не частью
+content subtree конкретного `block.slug`. Enter/exit motion запускается при
+open/close Detail и при смене top-menu mode; переключение активной карточки
+внутри уже открытого Detail обновляет только filename/action data без remount
+и без повторного `data-entered=false → true`.
 
 Filename в Detail top menu является block drag handle. DnD payload всегда
 передаёт `{ type: "block", slug, block }`; обычная feed card и Detail menu
@@ -747,7 +772,19 @@ link-editor используют общий `TagNavItem`, а checkbox/more menu 
 
 Rationale: бэкенд остаётся источником истины для preview-состояния, но хранит его в индексе рядом с блоком, а не вычисляет повторно через filesystem на каждый sidebar refresh. Это убирает линейный syscall-cost при старте и switch vault, не возвращая фронтенду угадывание состояния по `asset://`.
 
-### 009: Расширение собирается через Vite (единая дизайн-система)
+### 009: Micro-preview и rich preview — разные surfaces
+
+| Approach | Problem |
+|---|---|
+| Один `preview_manifest` renderer для feed, sidebar hover и row thumbnails | Sidebar снова наследует multi-image gallery/composite работу, хотя его задача — быстрый representative preview. Это ухудшает визуальный контракт и повышает риск лишнего render/fetch work в плотном меню. |
+| Split contract (chosen): `<slug>.jpg` micro-preview для sidebar/row surfaces, `preview_manifest` для rich feed/hover surfaces | Две поверхности остаются согласованы через `storage::preview_plan`, но быстрый sidebar path не тащит rich-card semantics. |
+
+Rationale: left sidebar optimized for scan speed and dense navigation. Its
+thumbnail strip and hover quick look both use a confirmed single micro-preview
+asset. Feed cards and Related Notes hover previews remain the rich surfaces that
+can render `preview_manifest.tiles`.
+
+### 010: Расширение собирается через Vite (единая дизайн-система)
 
 | Approach | Problem |
 |---|---|
