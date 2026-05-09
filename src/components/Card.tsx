@@ -161,6 +161,13 @@ export function ReadOnlyCardPreview({
     const title = getDisplayTitle(block) ?? getNavigationLabel(block);
     const previewText = block.preview_text?.trim() ?? "";
     const hasText = Boolean(title || previewText || block.author);
+    const isPureTextPreview =
+      block.thumb_format === "png" &&
+      manifest?.kind === "text" &&
+      !block.media_file &&
+      !block.thumbnail &&
+      !block.first_image &&
+      !block.media_urls;
 
     return (
       <CardFrame
@@ -168,23 +175,25 @@ export function ReadOnlyCardPreview({
         style={{ width }}
       >
         <div className="p-4">
-          <div
-            className="relative w-full overflow-hidden bg-accent"
-            style={{ aspectRatio }}
-          >
-            <img
-              src={`${thumbnailUrl(resolvedThumbsRoot, block.slug)}${mtime}`}
-              alt=""
-              className={cn(
-                "absolute inset-0 size-full object-cover",
-                block.thumb_format === "png" && "dark:invert",
-              )}
-              loading="eager"
-              draggable={false}
-            />
-          </div>
+          {!isPureTextPreview && (
+            <div
+              className="relative w-full overflow-hidden bg-accent"
+              style={{ aspectRatio }}
+            >
+              <img
+                src={`${thumbnailUrl(resolvedThumbsRoot, block.slug)}${mtime}`}
+                alt=""
+                className={cn(
+                  "absolute inset-0 size-full object-cover",
+                  block.thumb_format === "png" && "dark:invert",
+                )}
+                loading="eager"
+                draggable={false}
+              />
+            </div>
+          )}
           {hasText && (
-            <div className="mt-3">
+            <div className={cn(!isPureTextPreview && "mt-3")}>
               {title && (
                 <p
                   className="line-clamp-2 text-sm font-semibold text-foreground"

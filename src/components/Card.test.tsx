@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { Card } from "./Card";
+import { Card, ReadOnlyCardPreview } from "./Card";
 import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
 import type { LightBlock } from "@/types";
 
@@ -81,6 +81,40 @@ describe("Card", () => {
     render(<Card block={b} vaultPath={VAULT} onClick={onClick} />);
     fireEvent.keyDown(screen.getByRole("button"), { key: " " });
     expect(onClick).toHaveBeenCalledWith(b);
+  });
+
+  it("renders pure text micro previews without a baked thumbnail image", () => {
+    const { container } = render(
+      <ReadOnlyCardPreview
+        block={{
+          ...block({
+            block_type: "article",
+            card_kind: "article",
+            title: null,
+            author: "@fish_elysium",
+            body: "Авторка задает хороший вопрос",
+            preview_text: "Авторка задает хороший вопрос",
+            preview_manifest: JSON.stringify({
+              kind: "text",
+              primary_preview_path: null,
+              width: null,
+              height: null,
+              tiles: [],
+              overflow_count: 0,
+            }),
+          }),
+          thumb_format: "png",
+          thumb_mtime: 123,
+        }}
+        vaultPath={VAULT}
+        thumbsRootPath="/tmp/thumbs"
+        previewMode="micro"
+      />,
+    );
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("Авторка задает хороший вопрос")).toBeInTheDocument();
+    expect(screen.getByText("by @fish_elysium")).toBeInTheDocument();
   });
 
   it("does not open the card when a nested hover action receives keyboard input", () => {

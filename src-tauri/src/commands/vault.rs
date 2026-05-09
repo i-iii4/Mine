@@ -488,7 +488,7 @@ fn initialize_vault(
 /// Current thumb cache format version. Bump this when the thumbnail
 /// pipeline changes in a way that makes old cached files incompatible
 /// (e.g. text placeholders switched from JPEG to PNG, or new font).
-const THUMB_FORMAT_VERSION: &str = "5";
+const THUMB_FORMAT_VERSION: &str = "6";
 
 /// If the thumb cache was written by an older format version, delete
 /// all cached thumbnails and let a background sync regenerate them fresh.

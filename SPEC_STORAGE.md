@@ -411,11 +411,11 @@ is_video_ext(ext: &str) -> bool
 
 ### Поведение — generate_text_thumbnail (статьи и media placeholder)
 
-- Создаёт PNG 480x480 с фоном #F8F8F8
+- Создаёт PNG 480x480 с прозрачным фоном для theme-adaptive rendering
 - Рисует заголовок (шрифт 1.3x, цвет #333) и тело статьи (шрифт 24px, цвет #505050)
 - Очищает markdown: заголовки, жирный/курсив, ссылки `[text](url)` → text
 - Word-wrap по ширине с учётом метрик шрифта
-- Шрифт: Noto Sans Regular (28 KB, OFL), встроен через `include_bytes!`, парсится один раз через `LazyLock<FontArc>`
+- Шрифт: Geist Regular (Latin + Cyrillic), встроен через `include_bytes!`, парсится один раз через `LazyLock<FontArc>`
 
 ### Поведение — is_thumb_fresh (проверка свежести)
 

@@ -1,5 +1,31 @@
 # Devlog
 
+## 09.05.2026 [fix] — Cyrillic text thumbnails use Geist
+
+### Context
+
+- Text-only article thumbnails were baked with a tiny Noto Sans subset that
+  covered Latin but not Cyrillic.
+- English previews rendered as text; Russian previews rendered missing-glyph
+  boxes, which looked like broken or foreign media even though the source card
+  had no media.
+
+### Completed
+
+- Switched Rust text-thumbnail rendering to bundled Geist Regular, matching the
+  UI font family and covering Cyrillic.
+- Bumped the thumb cache format version so stale text PNGs are regenerated on
+  next vault open.
+- Changed pure-text sidebar hover previews to render text directly instead of
+  promoting the baked text thumbnail into a large media area.
+- Added a Rust regression test that verifies Cyrillic glyph coverage in the
+  embedded thumbnail font.
+
+### Verification
+
+- `cargo test -p mine text_thumbnail`
+- `bun run test:frontend -- Card`
+
 ## 09.05.2026 [fix] — Twitter thread selection excludes recommendations
 
 ### Context

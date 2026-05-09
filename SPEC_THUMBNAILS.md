@@ -141,6 +141,15 @@ Actual content варианты:
 - **JPEG** (magic `FF D8 FF`): image blocks (image thumbnail) или image upgrade от Phase 2
 - **PNG** (magic `89 50 4E`): text-baked thumbnails для pure-text article fallback (PNG with RGBA transparency для dark-mode `invert` CSS trick)
 
+Text-baked thumbnails use bundled Geist Regular with Latin and Cyrillic
+coverage. Changing this font is a cache-format change: bump
+`THUMB_FORMAT_VERSION` so stale baked text previews are regenerated instead of
+showing old missing-glyph boxes.
+
+Text-baked thumbnails are sidebar/list micro-preview assets, not source media.
+Pure-text hover previews must render the card text directly instead of showing
+the baked PNG as a large media area.
+
 `is_thumb_fresh` валидирует оба формата через magic bytes check (см. SPEC_STORAGE.md `storage/thumbnails`).
 
 Tile-level `preview_path` в `preview_manifest.tiles[]` разрешён только если

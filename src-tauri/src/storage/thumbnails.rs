@@ -466,11 +466,11 @@ pub fn generate_composite_thumbnail(
 
 // ─── Text thumbnail ─────────────────────────────────────────────────────────
 
-/// Embedded font for text thumbnails (Noto Sans Regular, ~28 KB).
+/// Embedded font for text thumbnails (Geist Regular, Latin + Cyrillic).
 /// Parsed once via LazyLock — avoids re-parsing TTF tables on every call.
 static FONT: LazyLock<FontArc> = LazyLock::new(|| {
-    FontArc::try_from_slice(include_bytes!("../../assets/NotoSans-Regular.ttf"))
-        .expect("embedded NotoSans font must be valid")
+    FontArc::try_from_slice(include_bytes!("../../assets/Geist-Regular.ttf"))
+        .expect("embedded Geist font must be valid")
 });
 
 /// Thumbnail dimensions for text blocks (square, 2x Retina at 240 CSS px).
@@ -1094,6 +1094,7 @@ fn resolve_block_media_path(
 mod tests {
     use super::*;
     use crate::domain::block::BlockType;
+    use ab_glyph::Font;
 
     /// Create a solid-color test image of given dimensions.
     fn create_test_image_with_color(path: &Path, width: u32, height: u32, color: [u8; 3]) {
@@ -1161,7 +1162,7 @@ mod tests {
     }
 
     #[test]
-    fn text_thumbnail_generates_valid_jpeg() {
+    fn text_thumbnail_generates_valid_png() {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("text-thumb.jpg");
 
@@ -1188,6 +1189,14 @@ mod tests {
         let (iw, ih) = img.dimensions();
         assert_eq!(iw, 480);
         assert_eq!(ih, 480);
+    }
+
+    #[test]
+    fn text_thumbnail_font_covers_cyrillic() {
+        let font = &*FONT;
+        for ch in ['А', 'в', 'т', 'о', 'р', 'к', 'я'] {
+            assert_ne!(font.glyph_id(ch).0, 0, "missing glyph for {ch}");
+        }
     }
 
     #[test]
