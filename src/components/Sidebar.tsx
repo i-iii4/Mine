@@ -495,7 +495,7 @@ export function Sidebar({
       setLinkChromeEntered(true);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [isLinkingBlock, linkedBlockSlug, detailTopMenuMode, detailChromeClosing]);
+  }, [isLinkingBlock, detailTopMenuMode, detailChromeClosing]);
 
   return (
     <aside

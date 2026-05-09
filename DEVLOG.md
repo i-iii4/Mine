@@ -1,5 +1,29 @@
 # Devlog
 
+## 08.05.2026 [fix] — Stable sidebar link-editor chrome on Detail switch
+
+### Context
+
+- The previous stable top chrome fix covered `Detail.tsx`, but the left-side
+  `SidebarLinkModeSwitch` still restarted its enter animation whenever
+  `linkedBlockSlug` changed.
+- Switching between already-open cards should update channel membership data
+  without making the sidebar `Channels: All / Connected` chrome blink.
+
+### Completed
+
+- Removed `linkedBlockSlug` from the sidebar link-editor chrome animation
+  lifecycle dependencies.
+- Kept enter/exit animation tied to Detail open/close, top-menu mode changes,
+  and closing state.
+- Added regression coverage that rerenders `Sidebar` with a different
+  `linkedBlockSlug` while keeping the same link-editor chrome DOM node entered.
+
+### Verification
+
+- `bun run test:frontend -- src/components/Sidebar.test.tsx`
+- `git diff --check`
+
 ## 08.05.2026 [audit] — Sidebar micro-preview performance audit
 
 ### Context

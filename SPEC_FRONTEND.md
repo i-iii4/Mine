@@ -352,6 +352,9 @@ chrome: мягкий `opacity + translateY` enter/exit (`220–280ms`,
 `cubic-bezier(0.22, 1, 0.36, 1)`). Close detail не должен блокировать возврат
 к grid: sidebar сразу возвращается в обычный interactive state, а exit sidebar
 chrome доигрывается неблокирующим overlay-путём.
+Переключение между открытыми карточками не является lifecycle-событием для
+этой плашки: изменение `linkedBlockSlug` не должно сбрасывать `data-entered` и
+не должно повторно запускать enter transition.
 
 Row actions не являются частью closing snapshot. Когда `detailChromeClosing`
 становится `true`, `Connect`/`Disconnect` overlay-кнопки и фильтр строк
@@ -550,6 +553,9 @@ that belongs to `storage::media_refs`.
   `closing`) и по смене top-menu mode, но не по смене активного `block.slug`.
   При переходе между открытыми карточками верхний chrome остаётся тем же DOM
   subtree; меняются только filename/action data.
+- Sidebar link-editor chrome следует тому же правилу: при переходе между
+  открытыми карточками меняются linked channel rows, но `Channels: All /
+  Connected` не сбрасывает entered-state и не переанимируется.
 - Двухслойный layout: scroll-слой (article content + невидимый rail spacer)
   и fixed-слой (метаданные). Оба слоя используют один Detail canvas/grid
   contract, чтобы article column, right rail и top pill подчинялись одной

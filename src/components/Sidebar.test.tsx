@@ -656,4 +656,31 @@ describe("Sidebar", () => {
     );
   });
 
+  it("keeps link-editor chrome entered when switching the active detail block", async () => {
+    const props = {
+      ...defaultProps,
+      linkedBlockSlug: "first-block",
+      linkedTags: ["alpha"],
+      onToggleLinkedTag: vi.fn(),
+      detailTopMenuMode: "island" as const,
+    };
+
+    const { container, rerender } = renderSidebar(props);
+
+    const pill = container.querySelector("[data-sidebar-link-mode-pill]");
+    expect(pill).not.toBeNull();
+    await waitFor(() => {
+      expect(pill).toHaveAttribute("data-entered", "true");
+    });
+
+    rerender(sidebarTree({
+      ...props,
+      linkedBlockSlug: "second-block",
+      linkedTags: ["beta"],
+    }));
+
+    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toBe(pill);
+    expect(pill).toHaveAttribute("data-entered", "true");
+  });
+
 });

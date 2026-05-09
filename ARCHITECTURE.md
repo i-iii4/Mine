@@ -740,6 +740,10 @@ content subtree конкретного `block.slug`. Enter/exit motion запу�
 open/close Detail и при смене top-menu mode; переключение активной карточки
 внутри уже открытого Detail обновляет только filename/action data без remount
 и без повторного `data-entered=false → true`.
+Sidebar link-editor chrome (`Channels: All / Connected`) следует тому же
+lifecycle contract. Он отражает режим просмотра/линковки, а не identity
+конкретного блока: смена `linkedBlockSlug` обновляет связанные каналы в строках,
+но не перезапускает enter motion левой плашки.
 
 Filename в Detail top menu является block drag handle. DnD payload всегда
 передаёт `{ type: "block", slug, block }`; обычная feed card и Detail menu
