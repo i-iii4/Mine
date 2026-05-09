@@ -277,6 +277,17 @@ Content preview не воспроизводит видео. Content script пе�
 
 Twitter/X extractor должен считать syndication/API media более авторитетным источником, чем generic DOM video scan. Если API уже дал direct mp4 + `tweet_video_thumb` poster, DOM `<video>` fallback не добавляется в `embeddedVideos`, чтобы blob/player nodes и generic X cards не создавали лишние previews. Поскольку content scripts могут упереться в CORS при чтении syndication API, popup имеет native-host fallback `resolve_twitter_media`: он возвращает тот же direct mp4 / poster contract, который использует save path. Для `animated_gif` popup может заменить API thumbnail на preview-only кадр из direct mp4 с seek к текущему времени DOM video; если frame capture недоступен, используется `tweet_video_thumb`. Это не меняет saved markdown/body и не локализует дополнительный файл.
 
+Twitter/X thread extraction выбирает состав треда до извлечения текста/медиа.
+Selection layer обязан якориться на `tweetId` из URL, читать `tweetId` каждого
+видимого tweet article из permalink/timestamp и собирать только contiguous
+timeline cells вокруг target tweet. Сканирование останавливается на
+структурной границе: cell без top-level tweet article, чужой tweet article,
+reply composer/section heading, recommendation block вроде `More tweets`.
+Текст heading не является source of truth, потому что X локализует UI. Если
+target article не найден, extractor сохраняет не больше одного fallback tweet,
+а не все твиты автора. Syndication media привязывается именно к target tweet,
+не к первому сохранённому tweet в thread window.
+
 `useClipperState` обязан применять async extraction result, если пришёл `content` **или** `embeddedVideos.length > 0`. Preview-only media не должна отбрасываться только потому, что body text пустой или уже был показан раньше.
 
 Инвариант: предпросмотр видео в клиппере — чисто визуальный affordance, не playback surface. Он не должен запускать playback и не должен менять save payload. Любой frame capture должен быть bounded по времени/размеру, работать только как улучшение poster, и иметь fallback на metadata poster без ошибки для пользователя.

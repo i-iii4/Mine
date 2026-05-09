@@ -334,22 +334,6 @@
   }
 
   /**
-   * Check if a tweet article element belongs to a given author.
-   * Handles both relative (/handle) and absolute (https://x.com/handle) hrefs.
-   */
-  function isTweetByAuthor(article, authorHandleLc) {
-    const userName = article.querySelector('div[data-testid="User-Name"]');
-    if (!userName) return false;
-    for (const link of userName.querySelectorAll("a[href]")) {
-      const href = (link.getAttribute("href") || "").toLowerCase();
-      if (href === `/${authorHandleLc}` || href.endsWith(`/${authorHandleLc}`)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
    * Walk a tweet's DOM tree and produce Markdown.
    * Twitter uses non-semantic HTML (<span> + CSS) instead of <br>/<p>,
    * so we traverse manually.
@@ -464,11 +448,18 @@
     const urlMatch = url.match(/(?:twitter\.com|x\.com)\/([^/]+)\/status\/(\d+)/i);
     if (!urlMatch) return null;
     const authorHandle = urlMatch[1];
-    const authorHandleLc = authorHandle.toLowerCase();
     const tweetId = urlMatch[2];
 
-    const articles = document.querySelectorAll('article[data-testid="tweet"]');
+    const threadSelection = window.MineTwitterThreadSelection;
+    const articles = threadSelection?.selectTwitterThreadArticles?.({
+      document,
+      targetTweetId: tweetId,
+      authorHandle,
+    }) || [];
     if (articles.length === 0) return null;
+    const targetArticle = articles.find((article) => {
+      return threadSelection?.getTweetIdentity?.(article)?.tweetId === tweetId;
+    }) || articles[0];
 
     // Fetch media from syndication API (includes videos that DOM can't capture)
     let apiMediaDetails = [];
@@ -478,36 +469,15 @@
     const apiMedia = apiMediaDetails.map((m) => m.url);
 
     const tweets = [];
-    let foundAuthorTweet = false;
-    let firstAuthorArticle = null;
-
     for (const article of articles) {
-      const isAuthor = isTweetByAuthor(article, authorHandleLc);
-
-      if (!isAuthor) {
-        if (foundAuthorTweet) break;
-        continue;
-      }
-
-      foundAuthorTweet = true;
-      if (!firstAuthorArticle) firstAuthorArticle = article;
       const { text, media } = extractTweetContent(article);
-      // First tweet: prefer API media (complete — photos + GIFs + videos).
+      // Target tweet: prefer API media (complete — photos + GIFs + videos).
       // Fallback to DOM media if API returned nothing.
-      const isFirstTweet = tweets.length === 0;
-      const finalMedia = isFirstTweet && apiMedia.length > 0 ? apiMedia : media;
+      const isTargetTweet =
+        threadSelection?.getTweetIdentity?.(article)?.tweetId === tweetId;
+      const finalMedia = isTargetTweet && apiMedia.length > 0 ? apiMedia : media;
       if (text || finalMedia.length > 0) {
         tweets.push({ text, media: finalMedia });
-      }
-    }
-
-    // Fallback: grab first tweet
-    if (tweets.length === 0 && articles.length > 0) {
-      const { text, media } = extractTweetContent(articles[0]);
-      const finalMedia = apiMedia.length > 0 ? apiMedia : media;
-      if (text || finalMedia.length > 0) {
-        tweets.push({ text, media: finalMedia });
-        if (!firstAuthorArticle) firstAuthorArticle = articles[0];
       }
     }
 
@@ -517,7 +487,7 @@
     // actual frame the user sees in the page. Prefer a preview-only snapshot
     // from the visible tweet <video>; never change the saved video URL/body.
     const capturedPosters = await captureArticleVideoPosters(
-      firstAuthorArticle,
+      targetArticle,
       apiMediaDetails.filter((media) => media.kind === "video"),
     );
     if (capturedPosters.length > 0) {

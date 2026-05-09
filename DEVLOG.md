@@ -1,5 +1,35 @@
 # Devlog
 
+## 09.05.2026 [fix] — Twitter thread selection excludes recommendations
+
+### Context
+
+- The Twitter/X content extractor treated same-author tweets after the first
+  found author tweet as a thread.
+- X can render same-author recommendations under `More tweets`, so that rule
+  could accidentally save recommendations as part of the clipped thread.
+
+### Completed
+
+- Added a dedicated Twitter thread selection layer before text/media
+  extraction.
+- The selector anchors on the target `tweetId` from the current URL, reads tweet
+  ids from article permalinks/timestamps, and keeps only contiguous timeline
+  cells around the target tweet.
+- Structural boundaries now stop extraction before comments, section headings,
+  reply/recommendation cells, and чужие tweets.
+- Syndication media is attached to the target tweet, not to the first saved item
+  in the selected window.
+- Synced the content script and helper into Safari extension resources.
+- Documented the contract in [SPEC_CLIPPER.md](SPEC_CLIPPER.md).
+
+### Verification
+
+- `bun run test:frontend -- twitterThreadSelection`
+- `node --check extension/content.js`
+- `node --check extension/lib/twitterThreadSelection.js`
+- `bun run build`
+
 ## 09.05.2026 [fix] — Media delete confirms and cleans references
 
 ### Context
