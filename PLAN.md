@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Goal
 
@@ -1070,6 +1070,25 @@ Goal: demote non-channel `type` to compatibility metadata and make feed/detail/s
 | 23.5 | Inline-media extraction output | [x] | New extraction creates empty-body media-card with canonical `file` wikilink instead of singleton embed body |
 | 23.6 | Clipper/native-host contract | [x] | Popup creation modes mostly unchanged; native-host writer is authoritative for canonical `file` wikilinks |
 | 23.7 | Manual QA | [ ] | Real-vault migration + fresh clipper media save + existing singleton embed body behavior |
+
+### Phase 25 — Media Asset Actions
+
+Goal: сделать все локальные media assets одинаковыми для взаимодействия,
+независимо от того, пришли они из `frontmatter.file` или из body embed. Hover,
+drag и меню должны target'ить конкретный media file, а не карточку.
+
+Specification: [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md).
+
+| # | Slice | Status | Scope |
+|---|---|---|---|
+| 25.1 | MediaAssetRef resolver | [x] | Shared frontend/backend resolver for local vault media refs from frontmatter and body embeds; remote/derived assets excluded |
+| 25.2 | Shared media action frame | [x] | One Detail/body wrapper with standard ellipsis Button, menu, focus/hover lifetime, video-safe overlay |
+| 25.3 | Create Card/materialize command | [x] | `create_media_asset_card`: always create a new empty-body media card and optionally connect that card to a collection |
+| 25.4 | Image drag routing | [x] | Replace inline-only payload with `media_asset`; sidebar drop calls media command, not card connect |
+| 25.5 | Media rename command | [x] | Rename physical media file, rewrite media refs across parseable Markdown, keep card slugs/titles unchanged |
+| 25.6 | Media delete command | [x] | Prepare referenced-card plan, show exact media preview in confirmation, delete media file, remove parseable refs, keep `.md` cards/notes |
+| 25.7 | Reveal/Copy Path/Copy | [x] | Finder/path/native clipboard actions resolve the media file, not source card `.md` |
+| 25.8 | Tests + manual QA | [ ] | Automated Rust/frontend coverage is in place; real-vault manual QA for frontmatter media and inline media parity remains |
 
 ### Backlog
 

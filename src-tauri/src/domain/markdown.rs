@@ -10,7 +10,7 @@
 // result as applying it once. This lets a user re-run the migration
 // safely without corrupting already-converted bodies.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Rewrite markdown image embeds into Obsidian wikilinks for every
 /// locally-addressed URL in `body`. Returns the new body.
@@ -270,6 +270,131 @@ pub fn rename_inline_media_references(body: &str, renames: &BTreeMap<String, Str
     out
 }
 
+/// Remove local inline-media references listed in `removals`.
+///
+/// Supports both canonical Obsidian embeds (`![[file]]`, `![[file|alt]]`) and
+/// legacy markdown images (`![alt](file%20name.jpg)`). When a removed media
+/// reference occupies a whole line, the whole line is removed so article bodies
+/// do not retain an empty media row.
+pub fn remove_inline_media_references(body: &str, removals: &BTreeSet<String>) -> String {
+    if removals.is_empty() {
+        return body.to_string();
+    }
+
+    let mut ranges = Vec::new();
+    let mut i = 0usize;
+
+    while i < body.len() {
+        let Some(rel) = body[i..].find("![") else {
+            break;
+        };
+        let excl = i + rel;
+        let after_excl = excl + 2;
+        if after_excl >= body.len() {
+            break;
+        }
+
+        if body[after_excl..].starts_with('[') {
+            let name_start = after_excl + 1;
+            let Some(close_offset) = body[name_start..].find("]]") else {
+                break;
+            };
+
+            let end = name_start + close_offset + 2;
+            let inner = &body[name_start..name_start + close_offset];
+            let raw_name = inner.split('|').next().unwrap_or("").trim();
+            if removals.contains(raw_name) {
+                ranges.push(expand_media_removal_range(body, excl, end));
+            }
+            i = end;
+            continue;
+        }
+
+        let Some(bracket_offset) = body[after_excl..].find("](") else {
+            i = after_excl;
+            continue;
+        };
+        let url_start = after_excl + bracket_offset + 2;
+        let Some(paren_end) = body[url_start..].find(')') else {
+            i = url_start;
+            continue;
+        };
+
+        let raw_url = &body[url_start..url_start + paren_end];
+        let end = url_start + paren_end + 1;
+        if raw_url.starts_with("http://") || raw_url.starts_with("https://") || raw_url.is_empty() {
+            i = end;
+            continue;
+        }
+
+        let decoded = percent_encoding::percent_decode_str(raw_url)
+            .decode_utf8_lossy()
+            .into_owned();
+        if removals.contains(&decoded) {
+            ranges.push(expand_media_removal_range(body, excl, end));
+        }
+        i = end;
+    }
+
+    if ranges.is_empty() {
+        return body.to_string();
+    }
+
+    ranges.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in ranges {
+        if let Some((_, last_end)) = merged.last_mut() {
+            if start <= *last_end {
+                *last_end = (*last_end).max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+
+    let mut out = String::with_capacity(body.len());
+    let mut cursor = 0usize;
+    for (start, end) in merged {
+        out.push_str(&body[cursor..start]);
+        cursor = end;
+    }
+    out.push_str(&body[cursor..]);
+    out
+}
+
+fn expand_media_removal_range(body: &str, start: usize, end: usize) -> (usize, usize) {
+    let line_start = body[..start]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let line_end = body[end..]
+        .find('\n')
+        .map(|index| end + index)
+        .unwrap_or(body.len());
+
+    if !body[line_start..start].trim().is_empty() || !body[end..line_end].trim().is_empty() {
+        return (start, end);
+    }
+
+    let bytes = body.as_bytes();
+    let mut remove_start = line_start;
+    let mut remove_end = if line_end < body.len() {
+        line_end + 1
+    } else {
+        line_end
+    };
+
+    if remove_start > 0 && remove_end < body.len() && bytes[remove_start - 1] == b'\n' {
+        remove_start -= 1;
+    } else if remove_start == 0 && remove_end < body.len() && bytes[remove_end] == b'\n' {
+        remove_end += 1;
+    } else if remove_end == body.len() && remove_start > 0 && bytes[remove_start - 1] == b'\n' {
+        remove_start -= 1;
+    }
+
+    (remove_start, remove_end)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,5 +559,35 @@ mod tests {
         let mut renames = BTreeMap::new();
         renames.insert("Old Name.jpg".to_string(), "New Name.jpg".to_string());
         assert_eq!(rename_inline_media_references(input, &renames), input);
+    }
+
+    #[test]
+    fn remove_inline_media_references_removes_wikilink_media_line() {
+        let input = "Intro\n\n![[photo.jpg|alt]]\n\nOutro";
+        let mut removals = BTreeSet::new();
+        removals.insert("photo.jpg".to_string());
+        assert_eq!(
+            remove_inline_media_references(input, &removals),
+            "Intro\n\nOutro"
+        );
+    }
+
+    #[test]
+    fn remove_inline_media_references_removes_legacy_markdown_media_line() {
+        let input = "Intro\n\n![cap](Old%20Name.jpg)\n\nOutro";
+        let mut removals = BTreeSet::new();
+        removals.insert("Old Name.jpg".to_string());
+        assert_eq!(
+            remove_inline_media_references(input, &removals),
+            "Intro\n\nOutro"
+        );
+    }
+
+    #[test]
+    fn remove_inline_media_references_keeps_remote_urls() {
+        let input = "![cap](https://cdn.example.com/photo.jpg)";
+        let mut removals = BTreeSet::new();
+        removals.insert("photo.jpg".to_string());
+        assert_eq!(remove_inline_media_references(input, &removals), input);
     }
 }

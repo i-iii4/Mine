@@ -18,6 +18,7 @@
 - `SPEC_THUMBNAILS.md` — полная спецификация preview/thumbnail pipeline
 - `SPEC_FEED_VIDEO.md` — спецификация desktop feed video contract: surfaces, `feed_playback`, autoplay gating
 - `SPEC_ARTICLE_AUDIO.md` — спецификация manual article audio renditions: speech prep, derived audio state, desktop/iOS controls
+- `SPEC_MEDIA_ASSET_ACTIONS.md` — спецификация media-level hover/drag/actions: Create Card, Reveal, Copy Path, Copy Media, Rename Media, Remove from Card, Delete для конкретного local media asset
 - `SPEC_INLINE_MEDIA_EXTRACTION.md` — спецификация перетаскивания inline-изображений из статьи в отдельный блок с односторонней связью на исходную заметку
 - `SPEC_IDENTITY_ROBUSTNESS.md` — спецификация filename-first identity: rename, conflicts, NFC
 - `SPEC_OBSIDIAN_WIKILINKS.md` — спецификация inline media через Obsidian wikilinks

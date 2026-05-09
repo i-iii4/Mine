@@ -1,5 +1,102 @@
 # Devlog
 
+## 09.05.2026 [fix] — Media delete confirms and cleans references
+
+### Context
+
+- `Delete` in the media-asset menu still described an old broken-reference
+  outcome.
+- The backend deleted the file but did not rewrite Markdown cards that
+  referenced it.
+
+### Completed
+
+- Added `prepare_delete_media_asset`, returning the normalized media path,
+  media kind, and all cards/notes that reference the file.
+- Updated the delete confirmation to show a thumbnail/preview of the exact
+  media file and list affected cards with reference kind.
+- Changed `delete_media_asset` to keep `.md` cards/notes but remove parseable
+  references to the deleted media from `frontmatter.file`, `thumbnail`, and
+  body embeds.
+- Added Rust and frontend coverage for the new plan/delete behavior.
+
+### Verification
+
+- `cargo test --workspace --all-targets --locked media_asset`
+- `bun run test:frontend -- Detail`
+
+## 09.05.2026 [feature] — Media asset actions implementation
+
+### Context
+
+- The media action contract needed the same behavior for `frontmatter.file`
+  media and inline Markdown embeds.
+- Actions must target the concrete local media file, never the source card or
+  note as a whole.
+
+### Completed
+
+- Added backend media-asset commands:
+  `create_media_asset_card`, `rename_media_asset`, `delete_media_asset`, and
+  `copy_media_asset_to_clipboard`.
+- `Create Card` now always creates an empty-body media card and optionally
+  connects that card to the selected collection; the source article/card remains
+  unchanged.
+- `Rename` renames the physical media file and rewrites parseable
+  `frontmatter.file`, `thumbnail`, wikilink embeds, and legacy local Markdown
+  image refs while preserving card filenames/titles/H1s.
+- `Delete` removes only the media file, keeps all `.md` cards/notes, refreshes
+  affected index rows, and invalidates stale thumbnails. Later hardening in
+  this devlog adds global reference cleanup before file deletion.
+- Detail view now wraps both primary media and inline body media in the same
+  hover action frame with the standard default icon-only ellipsis button.
+- Image drag from Detail/body media now uses `media_asset` payloads and routes
+  sidebar drops through media materialization. Video drag remains disabled.
+- `Reveal in Finder`, `Copy Path`, and `Copy Media` resolve the media file path
+  from `MediaAssetRef`, not from the card slug.
+- Fixed a macOS `/var` vs `/private/var` canonical path mismatch in media-ref
+  resolution while adding direct backend coverage.
+
+### Verification
+
+- `bun run build`
+- `bun run test:frontend`
+- `bun run lint`
+- `cargo test --workspace --all-targets --locked`
+
+## 09.05.2026 [spec] — Media asset actions contract
+
+### Context
+
+- Frontmatter media and body-embedded media had diverging interaction models.
+- The desired product contract is media-level: hover, drag and menu actions
+  target the concrete local media file, not the card that displays it.
+
+### Completed
+
+- Added [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) as the
+  canonical contract for local media asset hover/drag/actions.
+- Documented the menu shape: one standard default icon-only ellipsis button with
+  `Create Card`, `Reveal in Finder`, `Copy Path`, `Copy Media`, `Rename
+  Media...`, `Remove from Card`, `Delete`.
+- Defined user flows for frontmatter media, inline media, image drag, video
+  hover actions, media rename, media delete, reveal/path/copy.
+- Recorded the implementation phase in [PLAN.md](PLAN.md) as Phase 25.
+- Linked the new spec from required-reading docs, frontend spec, design system,
+  and the legacy inline-media extraction spec.
+
+### Decisions
+
+- `Create Card` and image drag always create a standalone media card, then
+  optionally connect that card to a collection. The source card/article is not
+  connected.
+- `Delete` deletes only the media file. Cards and notes remain in the vault;
+  current contract also removes parseable references to the deleted file.
+- `Rename` renames only the media file and rewrites references, never card
+  filenames, titles, H1s or URLs.
+- `Copy Media` copies the media object itself; `Copy Path` remains the plain
+  path action.
+
 ## 08.05.2026 [fix] — Stable sidebar link-editor chrome on Detail switch
 
 ### Context

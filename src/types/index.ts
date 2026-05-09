@@ -156,6 +156,65 @@ export interface ExtractInlineMediaParams {
   target_tag: string;
 }
 
+export type MediaAssetKind = "image" | "video" | "file";
+
+export interface MediaAssetRef {
+  media_ref: string;
+  media_kind: MediaAssetKind;
+  source_slug: string;
+  reference_kind: "frontmatter_file" | "body_embed";
+}
+
+export interface CreateMediaAssetCardParams {
+  media_ref: string;
+  target_tag: string;
+  source_slug?: string | null;
+}
+
+export interface RemoveMediaAssetFromCardParams {
+  media_ref: string;
+  source_slug: string;
+  reference_kind: MediaAssetRef["reference_kind"];
+}
+
+export interface RenameMediaAssetParams {
+  media_ref: string;
+  new_stem: string;
+}
+
+export interface MediaAssetMutationResult {
+  media_ref: string;
+  new_media_ref: string | null;
+  affected_slugs: string[];
+}
+
+export type DeleteMediaAssetKind = "image" | "video" | "audio" | "document" | "file";
+
+export interface MediaAssetReferenceBlock {
+  slug: string;
+  title: string | null;
+  display_title: string | null;
+  fallback_label: string;
+  card_kind: CardKind;
+  reference_kinds: string[];
+}
+
+export interface DeleteMediaAssetPlan {
+  media_ref: string;
+  media_kind: DeleteMediaAssetKind;
+  referenced_by: MediaAssetReferenceBlock[];
+}
+
+export type MediaAssetActionError =
+  | { kind: "no_vault" }
+  | { kind: "invalid_media_ref"; reason: string }
+  | { kind: "media_not_found"; media_ref: string }
+  | { kind: "unsupported_media_kind"; media_ref: string }
+  | { kind: "name_taken"; target: string }
+  | { kind: "invalid_filename"; reason: string }
+  | { kind: "clipboard_unsupported"; media_ref: string }
+  | { kind: "internal"; message: string };
+
 export type InlineMediaExtractError =
   | { kind: "no_vault" }
   | { kind: "source_not_found"; source_slug: string }

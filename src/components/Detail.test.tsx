@@ -1,9 +1,9 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Detail } from "./Detail";
 import type { IndexedBlock } from "@/types";
-import { getBlock } from "@/lib/commands";
+import { getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
@@ -45,6 +45,8 @@ vi.mock("./VideoFromBlob", () => ({
 
 vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(),
+  copyMediaAssetToClipboard: vi.fn(),
+  prepareDeleteMediaAsset: vi.fn(),
 }));
 
 function cardKindForBlockType(blockType: IndexedBlock["block_type"]): IndexedBlock["card_kind"] {
@@ -90,11 +92,18 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
 }
 
 const getBlockMock = vi.mocked(getBlock);
+const prepareDeleteMediaAssetMock = vi.mocked(prepareDeleteMediaAsset);
 
 describe("Detail", () => {
   beforeEach(() => {
     getBlockMock.mockReset();
     getBlockMock.mockResolvedValue(null);
+    prepareDeleteMediaAssetMock.mockReset();
+    prepareDeleteMediaAssetMock.mockResolvedValue({
+      media_ref: "photo.jpg",
+      media_kind: "image",
+      referenced_by: [],
+    });
   });
 
   afterEach(() => vi.useRealTimers());
@@ -927,8 +936,12 @@ describe("Detail", () => {
       "[data-detail-inline-media-drag='true']",
     );
     expect(dragSurface).not.toBeNull();
+    expect(dragSurface).toHaveClass("not-prose", "[&_img]:m-0", "[&_video]:m-0");
     expect(dragSurface).toHaveClass("select-none");
     expect(dragSurface).toHaveAttribute("draggable", "false");
+    for (const img of Array.from(dragSurface!.querySelectorAll("img"))) {
+      expect(img).toHaveClass("block", "max-w-full");
+    }
     expect(dragSurface!.dispatchEvent(
       new MouseEvent("mousedown", { bubbles: true, cancelable: true }),
     )).toBe(false);
@@ -1040,6 +1053,194 @@ describe("Detail", () => {
     const image = container.querySelector("img");
     expect(image).toHaveAttribute("src", "asset://localhost//tmp/test-vault/photo.jpg");
     expect(container.querySelector("[data-article-body]")).toBeNull();
+  });
+
+  it("shows the standard overflow menu trigger on image media surfaces", async () => {
+    const onRenameMediaAsset = vi.fn().mockResolvedValue(undefined);
+    const b = block({
+      card_kind: "media",
+      block_type: "image",
+      title: "Photo",
+      url: null,
+      media_file: "photo.jpg",
+    });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onRenameMediaAsset={onRenameMediaAsset}
+      />,
+    );
+
+    const menu = container.querySelector("[data-detail-media-action-menu]");
+    expect(menu).not.toBeNull();
+    expect(menu).toHaveClass("right-2", "top-2");
+    const trigger = menu!.querySelector("button");
+    expect(trigger).toHaveAttribute("data-variant", "default");
+    expect(trigger).toHaveAttribute("data-size", "icon");
+    expect(trigger).toHaveClass(
+      "bg-component-fill",
+      "opacity-0",
+      "group-hover/detail-media:opacity-100",
+      "hover:outline-component-fill-hover",
+    );
+
+    fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger!);
+
+    const dropdownMenu = await screen.findByRole("menu");
+    expect(within(dropdownMenu).getByText("Create Card")).toBeInTheDocument();
+    expect(within(dropdownMenu).getByText("Reveal in Finder")).toBeInTheDocument();
+    expect(within(dropdownMenu).getByText("Copy Path")).toBeInTheDocument();
+    expect(within(dropdownMenu).getByText("Copy Media")).toBeInTheDocument();
+    const renameItem = within(dropdownMenu).getByText("Rename Media...");
+    expect(renameItem).toBeInTheDocument();
+    expect(within(dropdownMenu).getByText("Remove from Card")).toBeInTheDocument();
+    expect(within(dropdownMenu).getByText("Delete")).toBeInTheDocument();
+
+    fireEvent.click(renameItem);
+    const dialog = await screen.findByRole("dialog", { name: "Rename media" });
+    const input = within(dialog).getByLabelText("Filename");
+    expect(input).toHaveValue("photo");
+    fireEvent.change(input, { target: { value: "photo-renamed" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+
+    await waitFor(() => {
+      expect(onRenameMediaAsset).toHaveBeenCalledWith(
+        expect.objectContaining({
+          media_ref: "photo.jpg",
+          media_kind: "image",
+          source_slug: "test-block",
+          reference_kind: "frontmatter_file",
+        }),
+        "photo-renamed",
+      );
+    });
+  });
+
+  it("shows delete media preview, affected cards, and deletes the media asset", async () => {
+    prepareDeleteMediaAssetMock.mockResolvedValueOnce({
+      media_ref: "photo.jpg",
+      media_kind: "image",
+      referenced_by: [
+        {
+          slug: "Photo Card",
+          title: "Photo Card",
+          display_title: "Photo Card",
+          fallback_label: "Photo Card",
+          card_kind: "media",
+          reference_kinds: ["frontmatter_file"],
+        },
+        {
+          slug: "Source Article",
+          title: "Source Article",
+          display_title: "Source Article",
+          fallback_label: "Source Article",
+          card_kind: "article",
+          reference_kinds: ["body_embed"],
+        },
+      ],
+    });
+    const onDeleteMediaAsset = vi.fn().mockResolvedValue(undefined);
+    const b = block({
+      card_kind: "media",
+      block_type: "image",
+      title: "Photo",
+      url: null,
+      media_file: "photo.jpg",
+    });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onDeleteMediaAsset={onDeleteMediaAsset}
+      />,
+    );
+
+    const trigger = container.querySelector("[data-detail-media-action-menu] button");
+    fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger!);
+
+    const dropdownMenu = await screen.findByRole("menu");
+    fireEvent.click(within(dropdownMenu).getByText("Delete"));
+
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete media file?" });
+    await within(dialog).findByText("Primary media");
+    expect(within(dialog).getAllByText("Photo Card").length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText("Source Article").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("2 cards reference this file.")).toBeInTheDocument();
+    expect(dialog.querySelector("img")).toHaveAttribute(
+      "src",
+      "asset://localhost//tmp/test-vault/photo.jpg",
+    );
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete media" }));
+
+    await waitFor(() => {
+      expect(onDeleteMediaAsset).toHaveBeenCalledWith(
+        expect.objectContaining({
+          media_ref: "photo.jpg",
+          media_kind: "image",
+          source_slug: "test-block",
+          reference_kind: "frontmatter_file",
+        }),
+      );
+    });
+  });
+
+  it("shows the standard overflow menu trigger on video media surfaces", () => {
+    const b = block({
+      card_kind: "media",
+      block_type: "video",
+      title: "Clip",
+      url: null,
+      media_file: "clip.mp4",
+    });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector("video")).not.toBeNull();
+    const menu = container.querySelector("[data-detail-media-action-menu]");
+    expect(menu).not.toBeNull();
+    expect(menu).toHaveClass("right-2", "top-2");
+    const trigger = menu!.querySelector("button");
+    expect(trigger).toHaveAttribute("data-variant", "default");
+    expect(trigger).toHaveAttribute("data-size", "icon");
+    expect(trigger).toHaveClass("bg-component-fill");
   });
 
   it("renders non-image media files as a file shell even with article legacy type", () => {

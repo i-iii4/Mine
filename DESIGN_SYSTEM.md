@@ -365,6 +365,29 @@ Content: `rounded-1 border bg-popover p-1`, тень — единая для в�
 - Connect: `DropdownMenu` со списком каналов (`CollectionPicker`)
 - More: `DropdownMenu` — Connect (подменю), Source, Remove from collection, Delete
 
+### Media Asset Hover Menu
+
+Media Asset Hover Menu — отдельный contract от Card Hover Menu. Он появляется
+на конкретном локальном media asset (frontmatter `file` или body embed), а не
+на карточке.
+
+**Кнопка:** стандартный `Button variant="default" size="icon"` с
+`MoreHorizontal size-4`. Фон непрозрачный `bg-component-fill`; hover-состояние
+идёт из базового Button: inset outline `hover:outline-component-fill-hover`.
+
+**Расположение:** `absolute right-2 top-2` относительно прямоугольника самого
+media asset.
+
+**Меню:** одно overflow-меню под многоточием. Команды: `Create Card`, `Reveal
+in Finder`, `Copy Path`, `Copy Media`, `Rename Media...`, `Remove from Card`,
+`Delete`.
+
+**Граница ответственности:** все команды target'ят media file. В этом меню нет
+card-level `Source`, card rename, card delete или `Remove from collection`.
+
+**Видео:** кнопка занимает только top-right corner и не создаёт full-surface
+overlay, чтобы не блокировать native video controls.
+
 CollectionPicker membership rows:
 - Checkbox не используется.
 - Название канала слева остаётся обычным UI-шрифтом.

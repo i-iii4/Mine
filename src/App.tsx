@@ -63,7 +63,7 @@ const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform })
   };
 };
 
-import type { DeleteBlockPlan, IndexedBlock, LightBlock, TagCount, ChannelDto, GridSnapshot } from "@/types";
+import type { DeleteBlockPlan, IndexedBlock, LightBlock, TagCount, ChannelDto, GridSnapshot, MediaAssetRef } from "@/types";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   getVaultPath,
@@ -83,7 +83,10 @@ import {
   removeTag,
   deleteBlock,
   getBlock,
-  extractInlineMedia,
+  createMediaAssetCard,
+  renameMediaAsset,
+  deleteMediaAsset,
+  removeMediaAssetFromCard,
   extractTextSelection,
   sweepVaultThumbnails,
 } from "@/lib/commands";
@@ -166,15 +169,13 @@ interface BlockAddedEvent {
   is_text: boolean;
 }
 
-type InlineMediaDragPayload = {
-  type: "inline_media";
-  sourceSlug: string;
-  mediaRef: string;
-  mediaKind: "image";
+type MediaAssetDragPayload = {
+  type: "media_asset";
+  asset: MediaAssetRef & { media_kind: "image" };
   imageSrc?: string;
 };
 
-type InlineMediaDragPreview = {
+type MediaAssetDragPreview = {
   src: string;
 };
 
@@ -342,7 +343,7 @@ export function AppWithVault({
   } | null>(null);
   const [activeDragBlock, setActiveDragBlock] = useState<LightBlock | null>(null);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
-  const [activeDragInlineMedia, setActiveDragInlineMedia] = useState<InlineMediaDragPreview | null>(null);
+  const [activeDragMediaAsset, setActiveDragMediaAsset] = useState<MediaAssetDragPreview | null>(null);
   const [activeDragTextSelection, setActiveDragTextSelection] = useState<TextSelectionDragPreview | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const themeMenuRef = useRef<ThemeMenuHandle>(null);
@@ -1375,12 +1376,12 @@ export function AppWithVault({
     [reloadAllSnapshots, selectedBlock?.slug],
   );
 
-  const handleInlineMediaDrop = useCallback(
-    async (payload: InlineMediaDragPayload, tag: string) => {
+  const handleMediaAssetDrop = useCallback(
+    async (payload: MediaAssetDragPayload, tag: string) => {
       try {
-        const block = await extractInlineMedia({
-          source_slug: payload.sourceSlug,
-          media_ref: payload.mediaRef,
+        const block = await createMediaAssetCard({
+          source_slug: payload.asset.source_slug,
+          media_ref: payload.asset.media_ref,
           target_tag: tag,
         });
         invalidateRoutesForTags(block.tags);
@@ -1390,10 +1391,85 @@ export function AppWithVault({
           previews: true,
         }, 0, { force: true });
       } catch (err) {
-        console.error("Failed to extract inline media:", err);
+        console.error("Failed to create media asset card:", err);
       }
     },
     [invalidateRoutesForTags, scheduleRefresh],
+  );
+
+  const handleMediaAssetCreateCard = useCallback(
+    async (asset: MediaAssetRef, tag: string) => {
+      const block = await createMediaAssetCard({
+        source_slug: asset.source_slug,
+        media_ref: asset.media_ref,
+        target_tag: tag,
+      });
+      invalidateRoutesForTags(block.tags);
+      scheduleRefresh({
+        grid: currentTagRef.current === undefined || block.tags.includes(currentTagRef.current),
+        taxonomy: true,
+        previews: true,
+      }, 0, { force: true });
+    },
+    [invalidateRoutesForTags, scheduleRefresh],
+  );
+
+  const handleMediaAssetCreateChannelAndCard = useCallback(
+    async (asset: MediaAssetRef, tag: string) => {
+      const channel = await createChannel(tag, titleFromTag(tag));
+      pushRecentTag(channel.tag);
+      await handleMediaAssetCreateCard(asset, channel.tag);
+    },
+    [handleMediaAssetCreateCard],
+  );
+
+  const handleMediaAssetRename = useCallback(
+    async (asset: MediaAssetRef, newStem: string) => {
+      await renameMediaAsset({
+        media_ref: asset.media_ref,
+        new_stem: newStem,
+      });
+      invalidateRouteSnapshots();
+      scheduleRefresh({
+        grid: true,
+        taxonomy: true,
+        previews: true,
+      }, 0, { force: true });
+      window.dispatchEvent(new Event("vault-refreshed"));
+    },
+    [invalidateRouteSnapshots, scheduleRefresh],
+  );
+
+  const handleMediaAssetDelete = useCallback(
+    async (asset: MediaAssetRef) => {
+      await deleteMediaAsset(asset.media_ref);
+      invalidateRouteSnapshots();
+      scheduleRefresh({
+        grid: true,
+        taxonomy: true,
+        previews: true,
+      }, 0, { force: true });
+      window.dispatchEvent(new Event("vault-refreshed"));
+    },
+    [invalidateRouteSnapshots, scheduleRefresh],
+  );
+
+  const handleMediaAssetRemoveFromCard = useCallback(
+    async (asset: MediaAssetRef) => {
+      await removeMediaAssetFromCard({
+        media_ref: asset.media_ref,
+        source_slug: asset.source_slug,
+        reference_kind: asset.reference_kind,
+      });
+      invalidateRouteSnapshots();
+      scheduleRefresh({
+        grid: true,
+        taxonomy: true,
+        previews: true,
+      }, 0, { force: true });
+      window.dispatchEvent(new Event("vault-refreshed"));
+    },
+    [invalidateRouteSnapshots, scheduleRefresh],
   );
 
   const handleTextSelectionDrop = useCallback(
@@ -1427,9 +1503,9 @@ export function AppWithVault({
         type?: string;
         slug?: string;
         block?: LightBlock;
-      } & Partial<InlineMediaDragPayload> & Partial<MineTextSelectionDragPayload>) | undefined;
-      if (data?.type === "inline_media") {
-        setActiveDragInlineMedia({
+      } & Partial<MediaAssetDragPayload> & Partial<MineTextSelectionDragPayload>) | undefined;
+      if (data?.type === "media_asset") {
+        setActiveDragMediaAsset({
           src: data.imageSrc ?? "",
         });
         setActiveDragBlock(null);
@@ -1448,13 +1524,13 @@ export function AppWithVault({
         });
         setActiveDragBlock(null);
         setActiveDragTag(null);
-        setActiveDragInlineMedia(null);
+        setActiveDragMediaAsset(null);
         return;
       }
       if (id.startsWith("tag:")) {
         setActiveDragTag(id.slice(4));
         setActiveDragBlock(null);
-        setActiveDragInlineMedia(null);
+        setActiveDragMediaAsset(null);
         setActiveDragTextSelection(null);
       } else {
         const slug = data?.type === "block" && data.slug
@@ -1467,7 +1543,7 @@ export function AppWithVault({
           : blocks.find((b) => b.slug === slug);
         if (block) setActiveDragBlock(block);
         setActiveDragTag(null);
-        setActiveDragInlineMedia(null);
+        setActiveDragMediaAsset(null);
         setActiveDragTextSelection(null);
       }
     },
@@ -1478,7 +1554,7 @@ export function AppWithVault({
     (event: DragEndEvent) => {
       setActiveDragBlock(null);
       setActiveDragTag(null);
-      setActiveDragInlineMedia(null);
+      setActiveDragMediaAsset(null);
       setActiveDragTextSelection(null);
       const { active, over } = event;
       if (!over) {
@@ -1491,10 +1567,10 @@ export function AppWithVault({
       const activeData = active.data.current as ({
         type?: string;
         slug?: string;
-      } & Partial<InlineMediaDragPayload> & Partial<MineTextSelectionDragPayload>) | undefined;
-      if (activeData?.type === "inline_media") {
+      } & Partial<MediaAssetDragPayload> & Partial<MineTextSelectionDragPayload>) | undefined;
+      if (activeData?.type === "media_asset") {
         if (overId.startsWith("tag:")) {
-          void handleInlineMediaDrop(activeData as InlineMediaDragPayload, overId.slice(4));
+          void handleMediaAssetDrop(activeData as MediaAssetDragPayload, overId.slice(4));
         }
         return;
       }
@@ -1528,13 +1604,13 @@ export function AppWithVault({
         handleCardDrop(activeSlug, overId.slice(4));
       }
     },
-    [handleCardDrop, handleInlineMediaDrop, handleReorderTag, handleTextSelectionDrop],
+    [handleCardDrop, handleMediaAssetDrop, handleReorderTag, handleTextSelectionDrop],
   );
 
   const handleDndCancel = useCallback(() => {
     setActiveDragBlock(null);
     setActiveDragTag(null);
-    setActiveDragInlineMedia(null);
+    setActiveDragMediaAsset(null);
     setActiveDragTextSelection(null);
     clearActiveMineTextSelectionDragPayload();
   }, []);
@@ -1731,7 +1807,7 @@ export function AppWithVault({
         totalBlocks={totalBlocks}
         isDropDragging={
           activeDragBlock !== null
-          || activeDragInlineMedia !== null
+          || activeDragMediaAsset !== null
           || activeDragTextSelection !== null
         }
         isCreatingChannel={isCreatingChannel}
@@ -1767,7 +1843,7 @@ export function AppWithVault({
         isResizing={sidebarResizing}
         disabled={
           activeDragBlock !== null
-          || activeDragInlineMedia !== null
+          || activeDragMediaAsset !== null
           || activeDragTag !== null
           || activeDragTextSelection !== null
         }
@@ -1851,6 +1927,11 @@ export function AppWithVault({
               onCreateAndAssign={handleCreateTagFromMenu}
               onRequestRename={setRenamingBlock}
               onRequestDelete={requestDeleteBlock}
+              onCreateMediaAssetCard={handleMediaAssetCreateCard}
+              onCreateChannelAndMediaAssetCard={handleMediaAssetCreateChannelAndCard}
+              onRenameMediaAsset={handleMediaAssetRename}
+              onRemoveMediaAssetFromCard={handleMediaAssetRemoveFromCard}
+              onDeleteMediaAsset={handleMediaAssetDelete}
               onOpenRelatedNote={handleOpenRelatedNote}
               onTextSelectionDrop={handleTextSelectionDrop}
               onTagsChanged={() => {
@@ -1967,10 +2048,10 @@ export function AppWithVault({
           thumbsRootPath={thumbsRootPath ?? undefined}
         />
       )}
-      {activeDragInlineMedia && activeDragInlineMedia.src && (
+      {activeDragMediaAsset && activeDragMediaAsset.src && (
         <div className="pointer-events-none max-h-48 max-w-64 overflow-hidden rounded-1 border border-border bg-background shadow-lg">
           <img
-            src={activeDragInlineMedia.src}
+            src={activeDragMediaAsset.src}
             alt=""
             className="max-h-48 max-w-64 object-contain"
             draggable={false}

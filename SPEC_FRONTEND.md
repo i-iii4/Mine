@@ -495,6 +495,28 @@ that belongs to `storage::media_refs`.
 - Открывает единый rename dialog для выбранного блока
 - Rename не делает silent auto-fix: занятое имя и invalid stem показываются как явные ошибки
 
+### MediaAssetActionMenu
+
+Media asset actions are defined by
+[SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md). This is not a
+variant of `CardHoverMenu`: the action target is the local media file rendered
+inside Detail/article content, not the block/card that contains it.
+
+Frontend rules:
+
+- render the same wrapper for local media from `frontmatter.file` and body
+  embeds;
+- show one `Button variant="default" size="icon"` ellipsis trigger in the
+  media's top-right corner;
+- menu items are `Create Card`, `Reveal in Finder`, `Copy Path`, `Copy Media`,
+  `Rename Media...`, `Remove from Card`, `Delete`;
+- `Delete` opens a media-level confirmation that shows the exact media preview
+  and all cards/notes returned by `prepare_delete_media_asset`;
+- image drag uses `type: "media_asset"` and drops on sidebar collections call
+  the media materialization command;
+- video gets the hover menu but no drag payload;
+- remote images and generated thumbnails do not get media-asset controls.
+
 ### CollectionPicker
 
 `CollectionPicker` используется в hover menu, context menu и Detail action row

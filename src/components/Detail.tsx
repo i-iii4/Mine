@@ -12,15 +12,55 @@ import { useDraggable } from "@dnd-kit/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
-import { ExternalLink, GripVertical, Plus, X } from "lucide-react";
+import {
+  Copy,
+  ExternalLink,
+  FolderOpen,
+  GripVertical,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { IndexedBlock, LightBlock, TagCount } from "@/types";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { Input } from "@/components/ui/input";
+import type {
+  DeleteMediaAssetPlan,
+  IndexedBlock,
+  LightBlock,
+  MediaAssetRef,
+  TagCount,
+} from "@/types";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { preprocessWikilinks } from "@/lib/markdownWikilinks";
 import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
 import {
@@ -33,7 +73,7 @@ import {
 } from "@/lib/assets";
 import { cn } from "@/lib/utils";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
-import { getBlock } from "@/lib/commands";
+import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import type { DetailTopMenuMode } from "@/lib/appPreferences";
 import {
@@ -81,14 +121,14 @@ interface DetailProps {
   onTagsChanged: () => void;
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
   onRequestDelete: (slug: string) => void;
+  onCreateMediaAssetCard?: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onCreateChannelAndMediaAssetCard?: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onRenameMediaAsset?: (asset: MediaAssetRef, newStem: string) => Promise<void>;
+  onRemoveMediaAssetFromCard?: (asset: MediaAssetRef) => Promise<void>;
+  onDeleteMediaAsset?: (asset: MediaAssetRef) => Promise<void>;
   onOpenRelatedNote: (slug: string) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }
-
-type DetailInlineMediaExtraction = {
-  sourceSlug: string;
-  mediaRef: string;
-};
 
 function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock {
   return "tags" in block;
@@ -104,6 +144,10 @@ type HoveredRelatedNote = {
   slug: string;
 };
 
+const noopMediaAssetConnect = async (_asset: MediaAssetRef, _tag: string) => {};
+const noopMediaAssetRename = async (_asset: MediaAssetRef, _newStem: string) => {};
+const noopMediaAssetDelete = async (_asset: MediaAssetRef) => {};
+
 export function Detail({
   block,
   scrollAnchor = null,
@@ -118,6 +162,11 @@ export function Detail({
   onCreateAndAssign,
   onRequestRename,
   onRequestDelete,
+  onCreateMediaAssetCard = noopMediaAssetConnect,
+  onCreateChannelAndMediaAssetCard = noopMediaAssetConnect,
+  onRenameMediaAsset = noopMediaAssetRename,
+  onRemoveMediaAssetFromCard = noopMediaAssetDelete,
+  onDeleteMediaAsset = noopMediaAssetDelete,
   onOpenRelatedNote,
   onTextSelectionDrop,
 }: DetailProps) {
@@ -345,6 +394,13 @@ export function Detail({
                 scrollAnchor={scrollAnchor}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath}
+                tags={tags}
+                currentTag={currentTag}
+                onCreateMediaAssetCard={onCreateMediaAssetCard}
+                onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+                onRenameMediaAsset={onRenameMediaAsset}
+                onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+                onDeleteMediaAsset={onDeleteMediaAsset}
                 onTextSelectionDrop={onTextSelectionDrop}
               />
             </div>
@@ -978,6 +1034,13 @@ function BlockContent({
   scrollAnchor,
   vaultPath,
   thumbsRootPath,
+  tags,
+  currentTag,
+  onCreateMediaAssetCard,
+  onCreateChannelAndMediaAssetCard,
+  onRenameMediaAsset,
+  onRemoveMediaAssetFromCard,
+  onDeleteMediaAsset,
   onTextSelectionDrop,
 }: {
   block: LightBlock | IndexedBlock;
@@ -985,6 +1048,13 @@ function BlockContent({
   scrollAnchor?: string | null;
   vaultPath: string;
   thumbsRootPath?: string;
+  tags: TagCount[];
+  currentTag?: string;
+  onCreateMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onCreateChannelAndMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
+  onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
+  onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
@@ -1027,6 +1097,13 @@ function BlockContent({
             sourceSlug={block.slug}
             sourceBodyHash={fullBlock?.body_hash ?? (isIndexedBlock(block) ? block.body_hash : null)}
             scrollAnchor={scrollAnchor}
+            tags={tags}
+            currentTag={currentTag}
+            onCreateMediaAssetCard={onCreateMediaAssetCard}
+            onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+            onRenameMediaAsset={onRenameMediaAsset}
+            onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+            onDeleteMediaAsset={onDeleteMediaAsset}
             onTextSelectionDrop={onTextSelectionDrop}
           />
         </div>
@@ -1045,6 +1122,13 @@ function BlockContent({
               sourceSlug={block.slug}
               sourceBodyHash={fullBlock?.body_hash ?? (isIndexedBlock(block) ? block.body_hash : null)}
               scrollAnchor={scrollAnchor}
+              tags={tags}
+              currentTag={currentTag}
+              onCreateMediaAssetCard={onCreateMediaAssetCard}
+              onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+              onRenameMediaAsset={onRenameMediaAsset}
+              onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+              onDeleteMediaAsset={onDeleteMediaAsset}
               onTextSelectionDrop={onTextSelectionDrop}
             />
           </div>
@@ -1069,12 +1153,26 @@ function BlockContent({
         });
         return (
           <div className="flex min-h-full items-center justify-center">
-            <img
-              src={src}
-              alt={navigationLabel}
-              className="max-h-[85vh] object-contain"
-              draggable={false}
-            />
+            <MediaAssetActionFrame
+              asset={mediaAssetFromPrimary(block, "image")}
+              vaultPath={vaultPath}
+              tags={tags}
+              currentTag={currentTag}
+              canDrag
+              onCreateMediaAssetCard={onCreateMediaAssetCard}
+              onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+              onRenameMediaAsset={onRenameMediaAsset}
+              onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+              onDeleteMediaAsset={onDeleteMediaAsset}
+              imageSrc={src}
+            >
+              <img
+                src={src}
+                alt={navigationLabel}
+                className="block max-h-[85vh] max-w-full object-contain"
+                draggable={false}
+              />
+            </MediaAssetActionFrame>
           </div>
         );
       }
@@ -1125,16 +1223,43 @@ function BlockContent({
           <div className="flex min-h-full flex-col">
             <div className="flex flex-1 items-center justify-center bg-black">
               {embedUrl ? (
-                <iframe
-                  src={embedUrl}
-                  className="aspect-video w-full max-h-[85vh]"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                />
+                <MediaAssetActionFrame
+                  asset={null}
+                  vaultPath={vaultPath}
+                  tags={tags}
+                  currentTag={currentTag}
+                  canDrag={false}
+                  onCreateMediaAssetCard={onCreateMediaAssetCard}
+                  onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+                  onRenameMediaAsset={onRenameMediaAsset}
+                  onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+                  onDeleteMediaAsset={onDeleteMediaAsset}
+                  className="w-full"
+                >
+                  <iframe
+                    src={embedUrl}
+                    className="aspect-video w-full max-h-[85vh]"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                </MediaAssetActionFrame>
               ) : localSrc ? (
-                <video controls className="max-h-[85vh]" draggable={false}>
-                  <source src={localSrc} />
-                </video>
+                <MediaAssetActionFrame
+                  asset={videoSourcePath ? mediaAssetFromMediaRef(block.slug, videoSourcePath, "video", "frontmatter_file") : null}
+                  vaultPath={vaultPath}
+                  tags={tags}
+                  currentTag={currentTag}
+                  canDrag={false}
+                  onCreateMediaAssetCard={onCreateMediaAssetCard}
+                  onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+                  onRenameMediaAsset={onRenameMediaAsset}
+                  onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+                  onDeleteMediaAsset={onDeleteMediaAsset}
+                >
+                  <video controls className="block max-h-[85vh] max-w-full" draggable={false}>
+                    <source src={localSrc} />
+                  </video>
+                </MediaAssetActionFrame>
               ) : (
                 <div className="flex aspect-video items-center justify-center text-muted-foreground">
                   No video file
@@ -1148,6 +1273,14 @@ function BlockContent({
                   vaultPath={vaultPath}
                   thumbsRootPath={resolvedThumbsRoot}
                   previewManifest={previewManifest}
+                  sourceSlug={block.slug}
+                  tags={tags}
+                  currentTag={currentTag}
+                  onCreateMediaAssetCard={onCreateMediaAssetCard}
+                  onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+                  onRenameMediaAsset={onRenameMediaAsset}
+                  onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+                  onDeleteMediaAsset={onDeleteMediaAsset}
                 />
               </div>
             )}
@@ -1172,6 +1305,690 @@ function BlockContent({
   }
 }
 
+function MediaAssetActionFrame({
+  asset,
+  vaultPath,
+  tags,
+  currentTag,
+  canDrag,
+  imageSrc,
+  onCreateMediaAssetCard,
+  onCreateChannelAndMediaAssetCard,
+  onRenameMediaAsset,
+  onRemoveMediaAssetFromCard,
+  onDeleteMediaAsset,
+  className,
+  children,
+}: {
+  asset: MediaAssetRef | null;
+  vaultPath: string;
+  tags: TagCount[];
+  currentTag?: string;
+  canDrag: boolean;
+  imageSrc?: string;
+  onCreateMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onCreateChannelAndMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
+  onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
+  onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
+  className?: string;
+  children: ReactNode;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const {
+    attributes: dragAttributes,
+    listeners: dragListeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
+    id: asset && canDrag
+      ? `media-asset:${asset.source_slug}:${asset.media_ref}`
+      : `media-asset-disabled:${asset?.media_ref ?? "none"}`,
+    disabled: !asset || !canDrag,
+    data: asset && canDrag
+      ? {
+          type: "media_asset",
+          asset,
+          imageSrc,
+        }
+      : undefined,
+  });
+  const dragPointerListener = (dragListeners as {
+    onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  } | undefined)?.onPointerDown;
+
+  if (!asset) {
+    return (
+      <div
+        className={cn(
+          "not-prose relative inline-flex max-h-[85vh] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
+          className,
+        )}
+      >
+        {children}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={setDragRef}
+      {...(canDrag ? dragAttributes : {})}
+      {...(canDrag ? dragListeners : {})}
+      className={cn(
+        "not-prose group/detail-media relative inline-flex max-h-[85vh] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
+        canDrag && "cursor-grab select-none active:cursor-grabbing",
+        isDragging && "opacity-40",
+        className,
+      )}
+      draggable={false}
+      data-detail-media-action-frame
+      data-detail-inline-media-drag={canDrag ? "true" : undefined}
+      data-media-asset-ref={asset.media_ref}
+      onPointerDown={(event) => {
+        if (!canDrag) return;
+        dragPointerListener?.(event);
+        event.preventDefault();
+        window.getSelection()?.removeAllRanges();
+      }}
+      onMouseDown={(event) => {
+        if (canDrag) {
+          event.preventDefault();
+        }
+      }}
+      onDragStart={(event) => {
+        if (canDrag) {
+          event.preventDefault();
+        }
+      }}
+    >
+      {children}
+      <div
+        className="absolute right-2 top-2 z-10"
+        data-detail-media-action-menu
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <MediaAssetMoreMenu
+          asset={asset}
+          vaultPath={vaultPath}
+          tags={tags}
+          currentTag={currentTag}
+          onCreateMediaAssetCard={onCreateMediaAssetCard}
+          onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+          onRenameMediaAsset={onRenameMediaAsset}
+          onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+          onDeleteMediaAsset={onDeleteMediaAsset}
+          onOpenChange={setMenuOpen}
+          className={cn(
+            "transition-opacity duration-[160ms]",
+            menuOpen
+              ? "opacity-100"
+              : "pointer-events-none opacity-0 group-hover/detail-media:pointer-events-auto group-hover/detail-media:opacity-100 group-focus-within/detail-media:pointer-events-auto group-focus-within/detail-media:opacity-100",
+          )}
+        />
+      </div>
+    </div>
+  );
+}
+
+function MediaAssetMoreMenu({
+  asset,
+  vaultPath,
+  tags,
+  currentTag,
+  onCreateMediaAssetCard,
+  onCreateChannelAndMediaAssetCard,
+  onRenameMediaAsset,
+  onRemoveMediaAssetFromCard,
+  onDeleteMediaAsset,
+  onOpenChange,
+  className,
+}: {
+  asset: MediaAssetRef;
+  vaultPath: string;
+  tags: TagCount[];
+  currentTag?: string;
+  onCreateMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onCreateChannelAndMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
+  onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
+  onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
+  onOpenChange: (open: boolean) => void;
+  className?: string;
+}) {
+  const [menuRootOpen, setMenuRootOpen] = useState(false);
+  const [connectSubmenuOpen, setConnectSubmenuOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const mediaPath = mediaAbsolutePath(vaultPath, asset.media_ref);
+  const updateRootOpen = useCallback((open: boolean) => {
+    setMenuRootOpen(open);
+    if (!open) {
+      setConnectSubmenuOpen(false);
+    }
+    onOpenChange(open);
+  }, [onOpenChange]);
+
+  return (
+    <>
+      <DropdownMenu open={menuRootOpen} onOpenChange={updateRootOpen} modal={false}>
+        <DropdownMenuTrigger asChild>
+          <Button variant="default" size="icon" className={className}>
+            <MoreHorizontal className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuSub open={connectSubmenuOpen} onOpenChange={setConnectSubmenuOpen}>
+            <DropdownMenuSubTrigger>
+              <Plus className="size-3" />
+              Create Card
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
+              <MediaAssetCollectionPicker
+                asset={asset}
+                tags={tags}
+                currentTag={currentTag}
+                onConnect={onCreateMediaAssetCard}
+                onCreateAndConnect={onCreateChannelAndMediaAssetCard}
+              />
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+
+          <DropdownMenuSeparator />
+
+          <DropdownMenuItem onSelect={() => revealItemInDir(mediaPath)}>
+            <FolderOpen className="size-3" />
+            Reveal in Finder
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => navigator.clipboard.writeText(mediaPath)}>
+            <Copy className="size-3" />
+            Copy Path
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault();
+              setActionError(null);
+              void copyMediaAssetToClipboard(asset.media_ref)
+                .catch((error) => setActionError(mediaAssetErrorMessage(error)));
+            }}
+          >
+            <Copy className="size-3" />
+            Copy Media
+          </DropdownMenuItem>
+
+          {actionError && (
+            <div className="px-2 py-1.5 text-sm text-destructive">
+              {actionError}
+            </div>
+          )}
+
+          <DropdownMenuSeparator />
+
+          <DropdownMenuItem onSelect={() => setRenameOpen(true)}>
+            <Pencil className="size-3" />
+            Rename Media...
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setRemoveOpen(true)}>
+            <X className="size-3" />
+            Remove from Card
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            variant="destructive"
+            onSelect={() => setDeleteOpen(true)}
+          >
+            <Trash2 className="size-3" />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <RenameMediaAssetDialog
+        asset={asset}
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        onRename={onRenameMediaAsset}
+      />
+      <RemoveMediaAssetFromCardDialog
+        asset={asset}
+        open={removeOpen}
+        onOpenChange={setRemoveOpen}
+        onRemove={onRemoveMediaAssetFromCard}
+      />
+      <DeleteMediaAssetDialog
+        asset={asset}
+        vaultPath={vaultPath}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onDelete={onDeleteMediaAsset}
+      />
+    </>
+  );
+}
+
+function MediaAssetCollectionPicker({
+  asset,
+  tags,
+  currentTag,
+  onConnect,
+  onCreateAndConnect,
+}: {
+  asset: MediaAssetRef;
+  tags: TagCount[];
+  currentTag?: string;
+  onConnect: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onCreateAndConnect: (asset: MediaAssetRef, tag: string) => Promise<void>;
+}) {
+  const [search, setSearch] = useState("");
+  const [pendingTag, setPendingTag] = useState<string | null>(null);
+  const sortedTags = useMemo(() => {
+    return [...tags].sort((a, b) => {
+      if (currentTag) {
+        const aCurrent = a.tag === currentTag;
+        const bCurrent = b.tag === currentTag;
+        if (aCurrent !== bCurrent) return aCurrent ? -1 : 1;
+      }
+      return a.tag.localeCompare(b.tag);
+    });
+  }, [currentTag, tags]);
+  const lc = search.toLowerCase();
+  const everythingItem = { tag: "", title: "Everything" };
+  const channelItems = sortedTags.map((tag) => ({
+    tag: tag.tag,
+    title: collectionTitle(tag.tag),
+  }));
+  const filtered = lc
+    ? [everythingItem, ...channelItems].filter((item) => item.title.toLowerCase().includes(lc))
+    : [everythingItem, ...channelItems];
+  const trimmed = search.trim();
+  const canCreate = trimmed.length > 0 && filtered.length === 0;
+
+  const connect = async (tag: string, create: boolean) => {
+    setPendingTag(tag);
+    try {
+      if (create) {
+        await onCreateAndConnect(asset, tag);
+      } else {
+        await onConnect(asset, tag);
+      }
+      setSearch("");
+    } finally {
+      setPendingTag(null);
+    }
+  };
+
+  return (
+    <>
+      <div
+        className="shrink-0 p-2 pb-1"
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        <Input
+          autoFocus
+          type="text"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search channels..."
+          className="h-auto py-1.5"
+        />
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="px-1 py-0.5">
+          {filtered.map((item) => {
+            const pending = pendingTag === item.tag;
+            return (
+              <DropdownMenuItem
+                key={item.tag || "__everything__"}
+                disabled={pendingTag !== null}
+                onSelect={() => {
+                  void connect(item.tag, false);
+                }}
+              >
+                <span className="truncate">{pending ? "Creating..." : item.title}</span>
+              </DropdownMenuItem>
+            );
+          })}
+
+          {canCreate && (
+            <DropdownMenuItem
+              disabled={pendingTag !== null}
+              onSelect={() => {
+                void connect(trimmed, true);
+              }}
+            >
+              <Plus className="size-4 shrink-0" />
+              <span>Create &ldquo;{trimmed}&rdquo;</span>
+            </DropdownMenuItem>
+          )}
+
+          {filtered.length === 0 && !canCreate && (
+            <p className="px-2 py-3 text-center text-sm text-muted-foreground">
+              No channels
+            </p>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function RenameMediaAssetDialog({
+  asset,
+  open,
+  onOpenChange,
+  onRename,
+}: {
+  asset: MediaAssetRef;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onRename: (asset: MediaAssetRef, newStem: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const extension = mediaExtension(asset.media_ref);
+
+  useEffect(() => {
+    if (!open) {
+      setSubmitting(false);
+      setError(null);
+      return;
+    }
+    setValue(mediaStem(asset.media_ref));
+    setError(null);
+  }, [asset.media_ref, open]);
+
+  const submit = async () => {
+    const next = value.trim();
+    if (!next) return;
+    try {
+      setSubmitting(true);
+      setError(null);
+      await onRename(asset, next);
+      onOpenChange(false);
+    } catch (rawError) {
+      setError(mediaAssetErrorMessage(rawError));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Rename media</DialogTitle>
+          <DialogDescription>
+            Rename only the media file. Cards and notes keep their filenames.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <div className="text-sm font-medium text-foreground">Current</div>
+            <div className="font-mono text-sm text-muted-foreground">
+              {asset.media_ref}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground" htmlFor="rename-media-input">
+              Filename
+            </label>
+            <Input
+              id="rename-media-input"
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              autoFocus
+              spellCheck={false}
+              disabled={submitting}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void submit();
+                }
+              }}
+            />
+            <div className="text-sm text-muted-foreground">
+              Extension stays <span className="font-mono">.{extension}</span>
+            </div>
+          </div>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button onClick={() => void submit()} disabled={!value.trim() || submitting}>
+            {submitting ? "Renaming..." : "Rename"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RemoveMediaAssetFromCardDialog({
+  asset,
+  open,
+  onOpenChange,
+  onRemove,
+}: {
+  asset: MediaAssetRef;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onRemove: (asset: MediaAssetRef) => Promise<void>;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setSubmitting(false);
+      setError(null);
+    }
+  }, [open]);
+
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove media from card?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This removes only this media reference from the current card. The media file stays in the vault.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="font-mono text-sm text-muted-foreground">
+          {asset.media_ref}
+        </div>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={submitting}
+            onClick={(event) => {
+              event.preventDefault();
+              void (async () => {
+                try {
+                  setSubmitting(true);
+                  setError(null);
+                  await onRemove(asset);
+                  onOpenChange(false);
+                } catch (rawError) {
+                  setError(mediaAssetErrorMessage(rawError));
+                } finally {
+                  setSubmitting(false);
+                }
+              })();
+            }}
+          >
+            {submitting ? "Removing..." : "Remove from Card"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function DeleteMediaAssetDialog({
+  asset,
+  vaultPath,
+  open,
+  onOpenChange,
+  onDelete,
+}: {
+  asset: MediaAssetRef;
+  vaultPath: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDelete: (asset: MediaAssetRef) => Promise<void>;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [plan, setPlan] = useState<DeleteMediaAssetPlan | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const previewSrc = vaultPath ? mediaUrl(vaultPath, asset.media_ref) : "";
+  const references = plan?.referenced_by ?? [];
+
+  useEffect(() => {
+    if (!open) {
+      setSubmitting(false);
+      setError(null);
+      setPlan(null);
+      setPlanLoading(false);
+      setPlanError(null);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    let cancelled = false;
+    setPlan(null);
+    setPlanError(null);
+    setPlanLoading(true);
+    void prepareDeleteMediaAsset(asset.media_ref)
+      .then((nextPlan) => {
+        if (!cancelled) {
+          setPlan(nextPlan);
+        }
+      })
+      .catch((rawError) => {
+        if (!cancelled) {
+          setPlanError(mediaAssetErrorMessage(rawError));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPlanLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [asset.media_ref, open]);
+
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete media file?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This deletes the local media file and removes its references from every listed card. Markdown cards stay in the vault.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="grid gap-3 sm:grid-cols-[128px_minmax(0,1fr)]">
+          <div className="flex h-24 w-32 items-center justify-center overflow-hidden rounded-1 border border-border bg-component-fill">
+            {asset.media_kind === "image" ? (
+              <img
+                src={previewSrc}
+                alt=""
+                className="h-full w-full object-cover"
+              />
+            ) : asset.media_kind === "video" ? (
+              <video
+                src={previewSrc}
+                className="h-full w-full object-cover"
+                muted
+                preload="metadata"
+              />
+            ) : (
+              <span className="px-3 text-center text-xs text-muted-foreground">
+                Media file
+              </span>
+            )}
+          </div>
+          <div className="min-w-0 space-y-2">
+            <div className="break-all font-mono text-sm text-muted-foreground">
+              {plan?.media_ref ?? asset.media_ref}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {planLoading
+                ? "Checking references..."
+                : references.length === 1
+                  ? "1 card references this file."
+                  : `${references.length} cards reference this file.`}
+            </div>
+          </div>
+        </div>
+        <div className="max-h-48 overflow-auto rounded-1 border border-border">
+          {planLoading ? (
+            <div className="px-3 py-2 text-sm text-muted-foreground">
+              Checking cards...
+            </div>
+          ) : references.length > 0 ? (
+            <ul className="divide-y divide-border">
+              {references.map((reference) => (
+                <li key={reference.slug} className="px-3 py-2">
+                  <div className="truncate text-sm">
+                    {mediaAssetReferenceTitle(reference)}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                    <span className="font-mono">{reference.slug}</span>
+                    <span>{mediaAssetReferenceKindsLabel(reference.reference_kinds)}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="px-3 py-2 text-sm text-muted-foreground">
+              No cards currently reference this file.
+            </div>
+          )}
+        </div>
+        {planError && <p className="text-sm text-destructive">{planError}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={submitting || planLoading || Boolean(planError)}
+            onClick={(event) => {
+              event.preventDefault();
+              void (async () => {
+                try {
+                  setSubmitting(true);
+                  setError(null);
+                  await onDelete(asset);
+                  onOpenChange(false);
+                } catch (rawError) {
+                  setError(mediaAssetErrorMessage(rawError));
+                } finally {
+                  setSubmitting(false);
+                }
+              })();
+            }}
+          >
+            {submitting ? "Deleting..." : "Delete media"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 // ─── Markdown renderer for article body ─────────────────────────────────────
 
 function ArticleBody({
@@ -1182,6 +1999,13 @@ function ArticleBody({
   sourceSlug,
   sourceBodyHash,
   scrollAnchor,
+  tags,
+  currentTag,
+  onCreateMediaAssetCard,
+  onCreateChannelAndMediaAssetCard,
+  onRenameMediaAsset,
+  onRemoveMediaAssetFromCard,
+  onDeleteMediaAsset,
   onTextSelectionDrop,
 }: {
   body: string;
@@ -1191,6 +2015,13 @@ function ArticleBody({
   sourceSlug?: string;
   sourceBodyHash?: string | null;
   scrollAnchor?: string | null;
+  tags: TagCount[];
+  currentTag?: string;
+  onCreateMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onCreateChannelAndMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
+  onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
+  onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }) {
   const articleRef = useRef<HTMLDivElement | null>(null);
@@ -1390,35 +2221,61 @@ function ArticleBody({
         // Video/GIF (downloaded MP4) — render as inline autoplay video with controls.
         // Autoplay must stay muted to satisfy browser/WebView media policies.
         if (/\.mp4(\?|$)|\.webm(\?|$)/i.test(decodedSrc)) {
+          const videoAsset = sourceSlug && isLocalMediaRef(resolvedSrc)
+            ? mediaAssetFromMediaRef(sourceSlug, resolvedSrc, "video", "body_embed")
+            : null;
           return (
-            <VideoFromBlob
-              src={originalSrc}
-              controls
-              autoPlay
-              muted
-              loop
-              className="rounded-0"
-            />
+            <MediaAssetActionFrame
+              asset={videoAsset}
+              vaultPath={vaultPath}
+              tags={tags}
+              currentTag={currentTag}
+              canDrag={false}
+              onCreateMediaAssetCard={onCreateMediaAssetCard}
+              onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+              onRenameMediaAsset={onRenameMediaAsset}
+              onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+              onDeleteMediaAsset={onDeleteMediaAsset}
+            >
+              <VideoFromBlob
+                src={originalSrc}
+                controls
+                autoPlay
+                muted
+                loop
+                className="rounded-0"
+              />
+            </MediaAssetActionFrame>
           );
         }
         const previewSrc = previewTile?.previewPath
           ? previewAssetUrl(thumbsRootPath, previewTile.previewPath)
           : null;
-        const extraction = sourceSlug && isExtractableLocalImage(decodedSrc)
-          ? {
-              sourceSlug,
-              mediaRef: decodedSrc,
-            }
+        const asset = sourceSlug && isExtractableLocalImage(resolvedSrc)
+          ? mediaAssetFromMediaRef(sourceSlug, resolvedSrc, "image", "body_embed")
           : null;
         return (
-          <DetailImage
-            src={originalSrc}
-            previewSrc={previewSrc}
-            alt={alt ?? ""}
-            extraction={extraction}
-            className="rounded-0"
-            {...props}
-          />
+          <MediaAssetActionFrame
+            asset={asset}
+            vaultPath={vaultPath}
+            tags={tags}
+            currentTag={currentTag}
+            canDrag
+            imageSrc={previewSrc ?? originalSrc}
+            onCreateMediaAssetCard={onCreateMediaAssetCard}
+            onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+            onRenameMediaAsset={onRenameMediaAsset}
+            onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+            onDeleteMediaAsset={onDeleteMediaAsset}
+          >
+            <DetailImage
+              src={originalSrc}
+              previewSrc={previewSrc}
+              alt={alt ?? ""}
+              className="rounded-0"
+              {...props}
+            />
+          </MediaAssetActionFrame>
         );
       },
       a: ({ href, children, ...props }) => (
@@ -1432,7 +2289,19 @@ function ArticleBody({
         </a>
       ),
     }),
-    [previewManifest, sourceSlug, thumbsRootPath, vaultPath],
+    [
+      currentTag,
+      onCreateMediaAssetCard,
+      onCreateChannelAndMediaAssetCard,
+      onDeleteMediaAsset,
+      onRemoveMediaAssetFromCard,
+      onRenameMediaAsset,
+      previewManifest,
+      sourceSlug,
+      tags,
+      thumbsRootPath,
+      vaultPath,
+    ],
   );
 
   return (
@@ -1523,81 +2392,26 @@ function DetailImage({
   src,
   previewSrc,
   alt,
-  extraction,
   className,
   ...imgProps
 }: {
   src: string;
   previewSrc: string | null;
   alt: string;
-  extraction: DetailInlineMediaExtraction | null;
 } & React.ImgHTMLAttributes<HTMLImageElement>) {
   const [originalReady, setOriginalReady] = useState(false);
-  const {
-    attributes: dragAttributes,
-    listeners: dragListeners,
-    setNodeRef: setDragRef,
-    isDragging,
-  } = useDraggable({
-    id: extraction
-      ? `inline-media:${extraction.sourceSlug}:${extraction.mediaRef}`
-      : `inline-media-disabled:${src}`,
-    disabled: extraction === null,
-    data: extraction
-      ? {
-          type: "inline_media",
-          sourceSlug: extraction.sourceSlug,
-          mediaRef: extraction.mediaRef,
-          mediaKind: "image",
-          imageSrc: previewSrc ?? src,
-        }
-      : undefined,
-  });
 
   useEffect(() => {
     setOriginalReady(false);
   }, [src]);
 
-  const dragPointerListener = (dragListeners as {
-    onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
-  } | undefined)?.onPointerDown;
-
   return (
-    <div
-      ref={setDragRef}
-      {...(extraction ? dragAttributes : {})}
-      {...(extraction ? dragListeners : {})}
-      draggable={extraction ? false : undefined}
-      data-detail-inline-media-drag={extraction ? "true" : undefined}
-      onPointerDown={(event) => {
-        if (!extraction) {
-          return;
-        }
-        dragPointerListener?.(event);
-        event.preventDefault();
-        window.getSelection()?.removeAllRanges();
-      }}
-      onMouseDown={(event) => {
-        if (extraction) {
-          event.preventDefault();
-        }
-      }}
-      onDragStart={(event) => {
-        if (extraction) {
-          event.preventDefault();
-        }
-      }}
-      className={cn(
-        "relative overflow-hidden",
-        extraction && "cursor-grab select-none active:cursor-grabbing",
-        isDragging && "opacity-40",
-      )}
-    >
+    <div className="relative overflow-hidden leading-none">
       {previewSrc && !originalReady && (
         <img
           src={previewSrc}
           alt=""
-          className={cn("rounded-0", className)}
+          className={cn("block max-w-full rounded-0", className)}
           loading="eager"
           draggable={false}
           aria-hidden="true"
@@ -1606,7 +2420,11 @@ function DetailImage({
       <img
         src={src}
         alt={alt}
-        className={cn("rounded-0", className, previewSrc && !originalReady && "absolute inset-0")}
+        className={cn(
+          "block max-w-full rounded-0",
+          className,
+          previewSrc && !originalReady && "absolute inset-0",
+        )}
         loading="lazy"
         draggable={false}
         {...imgProps}
@@ -1630,6 +2448,119 @@ function resolveImageSrc(src: string, vaultPath: string): string {
   return mediaUrl(vaultPath, src);
 }
 
+function mediaAssetFromPrimary(
+  block: LightBlock | IndexedBlock,
+  mediaKind: MediaAssetRef["media_kind"],
+): MediaAssetRef | null {
+  const mediaRef = block.media_file;
+  if (!mediaRef || !isLocalMediaRef(mediaRef)) {
+    return null;
+  }
+  return mediaAssetFromMediaRef(block.slug, mediaRef, mediaKind, "frontmatter_file");
+}
+
+function mediaAssetFromMediaRef(
+  sourceSlug: string,
+  mediaRef: string,
+  mediaKind: MediaAssetRef["media_kind"],
+  referenceKind: MediaAssetRef["reference_kind"],
+): MediaAssetRef {
+  return {
+    source_slug: sourceSlug,
+    media_ref: mediaRef,
+    media_kind: mediaKind,
+    reference_kind: referenceKind,
+  };
+}
+
+function mediaAbsolutePath(vaultPath: string, mediaRef: string): string {
+  return `${vaultPath.replace(/\/+$/, "")}/${mediaRef.replace(/^\/+/, "")}`;
+}
+
+function mediaStem(mediaRef: string): string {
+  const fileName = mediaRef.split("/").pop() ?? mediaRef;
+  const dot = fileName.lastIndexOf(".");
+  return dot > 0 ? fileName.slice(0, dot) : fileName;
+}
+
+function mediaExtension(mediaRef: string): string {
+  const fileName = mediaRef.split("/").pop() ?? mediaRef;
+  const dot = fileName.lastIndexOf(".");
+  return dot >= 0 && dot < fileName.length - 1 ? fileName.slice(dot + 1) : "";
+}
+
+function collectionTitle(tag: string): string {
+  const parts = tag.split("/");
+  const label = (parts[parts.length - 1] ?? tag).trim();
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function mediaAssetReferenceTitle(reference: DeleteMediaAssetPlan["referenced_by"][number]): string {
+  return reference.display_title ?? reference.title ?? reference.fallback_label ?? reference.slug;
+}
+
+function mediaAssetReferenceKindsLabel(referenceKinds: string[]): string {
+  const labels = referenceKinds.map((kind) => {
+    switch (kind) {
+      case "frontmatter_file":
+        return "Primary media";
+      case "frontmatter_thumbnail":
+        return "Thumbnail";
+      case "body_embed":
+        return "Inline media";
+      default:
+        return kind;
+    }
+  });
+  return labels.join(", ");
+}
+
+function mediaAssetErrorMessage(error: unknown): string {
+  if (error && typeof error === "object" && "kind" in error) {
+    const typed = error as { kind: string } & Record<string, unknown>;
+    switch (typed.kind) {
+      case "no_vault":
+        return "No vault is open.";
+      case "invalid_media_ref":
+        return typeof typed.reason === "string" ? typed.reason : "Invalid media reference.";
+      case "media_not_found":
+        return "Media file was not found.";
+      case "unsupported_media_kind":
+        return "This media kind is not supported.";
+      case "name_taken":
+        return typeof typed.target === "string"
+          ? `A file named ${typed.target} already exists.`
+          : "A file with this name already exists.";
+      case "invalid_filename":
+        return typeof typed.reason === "string" ? typed.reason : "Invalid filename.";
+      case "clipboard_unsupported":
+        return "Native media copy is not supported on this platform.";
+      case "internal":
+        return typeof typed.message === "string" ? typed.message : "Media action failed.";
+    }
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Media action failed.";
+}
+
+function isLocalMediaRef(src: string): boolean {
+  const trimmed = src.trim();
+  if (!trimmed || trimmed !== src) {
+    return false;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) || trimmed.startsWith("/")) {
+    return false;
+  }
+  if (trimmed.includes("\\") || trimmed.includes("\0")) {
+    return false;
+  }
+  return trimmed.split("/").every((segment) => {
+    return segment.length > 0 && segment !== "." && segment !== "..";
+  });
+}
+
 function findElementForBlockAnchor(root: HTMLElement, blockId: string): HTMLElement | null {
   const marker = `^${blockId}`;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -1645,7 +2576,7 @@ function findElementForBlockAnchor(root: HTMLElement, blockId: string): HTMLElem
 }
 
 function isExtractableLocalImage(src: string): boolean {
-  if (src.startsWith("http://") || src.startsWith("https://")) {
+  if (!isLocalMediaRef(src)) {
     return false;
   }
   return /\.(avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)$/i.test(src);

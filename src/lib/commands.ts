@@ -20,8 +20,14 @@ import type {
   ArticleAudioState,
   ClipperRecoveryItem,
   RecoveredClipperBlock,
+  CreateMediaAssetCardParams,
+  DeleteMediaAssetPlan,
   ExtractInlineMediaParams,
   InlineMediaExtractError,
+  MediaAssetActionError,
+  MediaAssetMutationResult,
+  RenameMediaAssetParams,
+  RemoveMediaAssetFromCardParams,
   ExtractTextSelectionParams,
   TextSelectionExtractError,
 } from "@/types";
@@ -99,6 +105,67 @@ export const extractInlineMedia = async (params: ExtractInlineMediaParams) => {
     return await invoke<IndexedBlock>("extract_inline_media", { ...params });
   } catch (error) {
     throw normalizeInlineMediaExtractError(error);
+  }
+};
+
+function normalizeMediaAssetActionError(error: unknown): MediaAssetActionError {
+  if (error && typeof error === "object" && "kind" in error) {
+    return error as MediaAssetActionError;
+  }
+  if (typeof error === "string") {
+    return { kind: "internal", message: error };
+  }
+  if (error instanceof Error) {
+    return { kind: "internal", message: error.message };
+  }
+  return { kind: "internal", message: String(error) };
+}
+
+export const createMediaAssetCard = async (params: CreateMediaAssetCardParams) => {
+  try {
+    return await invoke<IndexedBlock>("create_media_asset_card", { ...params });
+  } catch (error) {
+    throw normalizeMediaAssetActionError(error);
+  }
+};
+
+export const renameMediaAsset = async (params: RenameMediaAssetParams) => {
+  try {
+    return await invoke<MediaAssetMutationResult>("rename_media_asset", { ...params });
+  } catch (error) {
+    throw normalizeMediaAssetActionError(error);
+  }
+};
+
+export const prepareDeleteMediaAsset = async (media_ref: string) => {
+  try {
+    return await invoke<DeleteMediaAssetPlan>("prepare_delete_media_asset", { media_ref });
+  } catch (error) {
+    throw normalizeMediaAssetActionError(error);
+  }
+};
+
+export const deleteMediaAsset = async (media_ref: string) => {
+  try {
+    return await invoke<MediaAssetMutationResult>("delete_media_asset", { media_ref });
+  } catch (error) {
+    throw normalizeMediaAssetActionError(error);
+  }
+};
+
+export const removeMediaAssetFromCard = async (params: RemoveMediaAssetFromCardParams) => {
+  try {
+    return await invoke<MediaAssetMutationResult>("remove_media_asset_from_card", { ...params });
+  } catch (error) {
+    throw normalizeMediaAssetActionError(error);
+  }
+};
+
+export const copyMediaAssetToClipboard = async (media_ref: string) => {
+  try {
+    await invoke<void>("copy_media_asset_to_clipboard", { media_ref });
+  } catch (error) {
+    throw normalizeMediaAssetActionError(error);
   }
 };
 

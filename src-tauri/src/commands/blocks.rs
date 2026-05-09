@@ -6,17 +6,21 @@ use anyhow::{bail, Context};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 use thiserror::Error;
 
 use crate::commands::state::{current_vault_layout, AppState, CommandError};
 use crate::domain::block::{
-    compute_body_hash, derive_card_kind, iter_inline_media_references, parse_markdown_document,
-    suggest_slug, Block, BlockType, CardKind, DateTime, Frontmatter,
+    compute_body_hash, derive_card_kind, derive_title_fields, iter_inline_media_references,
+    parse_markdown_document, suggest_slug, Block, BlockType, CardKind, DateTime, Frontmatter,
 };
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
-use crate::domain::markdown::{rename_inline_media_references, rename_wikilink_targets};
+use crate::domain::markdown::{
+    remove_inline_media_references, rename_inline_media_references, rename_wikilink_targets,
+};
 use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultLayout};
 use crate::storage::index::IndexedBlock;
 use crate::storage::{article_audio, db, files, index, media_refs, thumbnails};
@@ -53,6 +57,30 @@ pub struct DeleteBlockPlan {
     pub markdown_file: String,
     pub unused_media: Vec<DeleteBlockMedia>,
     pub shared_media: Vec<DeleteBlockMedia>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MediaAssetMutationResult {
+    pub media_ref: String,
+    pub new_media_ref: Option<String>,
+    pub affected_slugs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MediaAssetReferenceBlock {
+    pub slug: String,
+    pub title: Option<String>,
+    pub display_title: Option<String>,
+    pub fallback_label: String,
+    pub card_kind: CardKind,
+    pub reference_kinds: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteMediaAssetPlan {
+    pub media_ref: String,
+    pub media_kind: String,
+    pub referenced_by: Vec<MediaAssetReferenceBlock>,
 }
 
 #[derive(Debug, Error, Serialize)]
@@ -110,6 +138,35 @@ pub enum InlineMediaExtractError {
 
 #[derive(Debug, Error, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MediaAssetActionError {
+    #[error("no vault selected")]
+    NoVault,
+
+    #[error("invalid media reference: {reason}")]
+    InvalidMediaRef { reason: String },
+
+    #[error("media '{media_ref}' not found")]
+    MediaNotFound { media_ref: String },
+
+    #[error("unsupported media kind for '{media_ref}'")]
+    UnsupportedMediaKind { media_ref: String },
+
+    #[error("filename already exists")]
+    NameTaken { target: String },
+
+    #[error("filename is invalid: {reason}")]
+    InvalidFilename { reason: String },
+
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    #[error("native media copy is not supported for '{media_ref}'")]
+    ClipboardUnsupported { media_ref: String },
+
+    #[error("{message}")]
+    Internal { message: String },
+}
+
+#[derive(Debug, Error, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TextSelectionExtractError {
     #[error("no vault selected")]
     NoVault,
@@ -155,9 +212,19 @@ struct ThumbUpdatedPayload {
     is_text: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct VaultChangedPayload {
+    path: String,
+}
+
 struct PlannedBlockWrite {
     original_path: PathBuf,
     target_path: PathBuf,
+    block: Block,
+}
+
+struct MediaAssetBlockWrite {
+    path: PathBuf,
     block: Block,
 }
 
@@ -396,6 +463,243 @@ pub async fn extract_inline_media(
     Ok(indexed)
 }
 
+/// Create a new standalone media card for a local media file, then connect that
+/// media card to the selected collection. The source note/card is only
+/// provenance context and is never connected as a side effect.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn create_media_asset_card(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    media_ref: String,
+    target_tag: String,
+    source_slug: Option<String>,
+) -> Result<IndexedBlock, MediaAssetActionError> {
+    let vault = {
+        let vault_state =
+            state
+                .vault_state
+                .lock()
+                .map_err(|_| MediaAssetActionError::Internal {
+                    message: "vault state mutex poisoned".into(),
+                })?;
+        let vs = vault_state.as_ref().ok_or(MediaAssetActionError::NoVault)?;
+        vs.vault.clone()
+    };
+
+    let indexed = tauri::async_runtime::spawn_blocking(move || {
+        let conn =
+            db::open_or_create(&vault.index_db_path()).map_err(internal_media_asset_error)?;
+        create_media_asset_card_inner(&conn, &vault, media_ref, target_tag, source_slug)
+    })
+    .await
+    .map_err(|e| MediaAssetActionError::Internal {
+        message: format!("media asset create worker failed: {e}"),
+    })??;
+
+    app.emit(
+        "block:added",
+        BlockAddedPayload {
+            slug: indexed.slug.clone(),
+            tags: indexed.tags.clone(),
+            is_text: false,
+        },
+    )
+    .map_err(|e| MediaAssetActionError::Internal {
+        message: format!("failed to emit block:added: {e}"),
+    })?;
+    app.emit(
+        "thumb:updated",
+        ThumbUpdatedPayload {
+            slug: indexed.slug.clone(),
+            is_text: false,
+        },
+    )
+    .map_err(|e| MediaAssetActionError::Internal {
+        message: format!("failed to emit thumb:updated: {e}"),
+    })?;
+
+    Ok(indexed)
+}
+
+/// Rename a local media file and rewrite media references. Card filenames,
+/// titles, H1s and URLs remain unchanged.
+#[tauri::command(rename_all = "snake_case")]
+pub fn rename_media_asset(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    media_ref: String,
+    new_stem: String,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| MediaAssetActionError::Internal {
+            message: "vault state mutex poisoned".into(),
+        })?;
+    let vs = vault_state.as_ref().ok_or(MediaAssetActionError::NoVault)?;
+
+    let result = rename_media_asset_inner(&state, &vs.conn, &vs.vault, media_ref, new_stem)?;
+    for slug in &result.affected_slugs {
+        app.emit(
+            "thumb:updated",
+            ThumbUpdatedPayload {
+                slug: slug.clone(),
+                is_text: false,
+            },
+        )
+        .map_err(|e| MediaAssetActionError::Internal {
+            message: format!("failed to emit thumb:updated: {e}"),
+        })?;
+    }
+    app.emit(
+        "vault-changed",
+        VaultChangedPayload {
+            path: vs.vault.root().to_string_lossy().to_string(),
+        },
+    )
+    .map_err(|e| MediaAssetActionError::Internal {
+        message: format!("failed to emit vault-changed: {e}"),
+    })?;
+
+    Ok(result)
+}
+
+/// Prepare a destructive media-file delete by listing every card/note whose
+/// Markdown currently references the selected local file.
+#[tauri::command(rename_all = "snake_case")]
+pub fn prepare_delete_media_asset(
+    state: State<'_, AppState>,
+    media_ref: String,
+) -> Result<DeleteMediaAssetPlan, MediaAssetActionError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| MediaAssetActionError::Internal {
+            message: "vault state mutex poisoned".into(),
+        })?;
+    let vs = vault_state.as_ref().ok_or(MediaAssetActionError::NoVault)?;
+
+    prepare_delete_media_asset_inner(&vs.vault, media_ref)
+}
+
+/// Delete the selected media file and remove references to it from every
+/// parseable Markdown card/note. Cards and notes stay in place.
+#[tauri::command(rename_all = "snake_case")]
+pub fn delete_media_asset(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    media_ref: String,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| MediaAssetActionError::Internal {
+            message: "vault state mutex poisoned".into(),
+        })?;
+    let vs = vault_state.as_ref().ok_or(MediaAssetActionError::NoVault)?;
+
+    let result = delete_media_asset_inner(&state, &vs.conn, &vs.vault, media_ref)?;
+    for slug in &result.affected_slugs {
+        app.emit(
+            "thumb:updated",
+            ThumbUpdatedPayload {
+                slug: slug.clone(),
+                is_text: false,
+            },
+        )
+        .map_err(|e| MediaAssetActionError::Internal {
+            message: format!("failed to emit thumb:updated: {e}"),
+        })?;
+    }
+    app.emit(
+        "vault-changed",
+        VaultChangedPayload {
+            path: vs.vault.root().to_string_lossy().to_string(),
+        },
+    )
+    .map_err(|e| MediaAssetActionError::Internal {
+        message: format!("failed to emit vault-changed: {e}"),
+    })?;
+
+    Ok(result)
+}
+
+/// Remove the selected media reference from one source card. The media file
+/// itself remains on disk, and every other card/note keeps its references.
+#[tauri::command(rename_all = "snake_case")]
+pub fn remove_media_asset_from_card(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    media_ref: String,
+    source_slug: String,
+    reference_kind: String,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| MediaAssetActionError::Internal {
+            message: "vault state mutex poisoned".into(),
+        })?;
+    let vs = vault_state.as_ref().ok_or(MediaAssetActionError::NoVault)?;
+
+    let result = remove_media_asset_from_card_inner(
+        &state,
+        &vs.conn,
+        &vs.vault,
+        media_ref,
+        source_slug,
+        reference_kind,
+    )?;
+    for slug in &result.affected_slugs {
+        app.emit(
+            "thumb:updated",
+            ThumbUpdatedPayload {
+                slug: slug.clone(),
+                is_text: false,
+            },
+        )
+        .map_err(|e| MediaAssetActionError::Internal {
+            message: format!("failed to emit thumb:updated: {e}"),
+        })?;
+    }
+    app.emit(
+        "vault-changed",
+        VaultChangedPayload {
+            path: vs.vault.root().to_string_lossy().to_string(),
+        },
+    )
+    .map_err(|e| MediaAssetActionError::Internal {
+        message: format!("failed to emit vault-changed: {e}"),
+    })?;
+
+    Ok(result)
+}
+
+/// Copy the selected local media file as a native media/file object. This is
+/// intentionally separate from Copy Path, which copies a plain string path.
+#[tauri::command(rename_all = "snake_case")]
+pub fn copy_media_asset_to_clipboard(
+    state: State<'_, AppState>,
+    media_ref: String,
+) -> Result<(), MediaAssetActionError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| MediaAssetActionError::Internal {
+            message: "vault state mutex poisoned".into(),
+        })?;
+    let vs = vault_state.as_ref().ok_or(MediaAssetActionError::NoVault)?;
+    let media_path = resolve_media_asset_path(&vs.vault, &media_ref)?;
+    let media_ref = vs
+        .vault
+        .root_relative_reference(&media_path)
+        .ok_or_else(|| MediaAssetActionError::InvalidMediaRef {
+            reason: "media reference must stay inside the vault".to_string(),
+        })?;
+
+    copy_media_path_to_clipboard(&media_path, &media_ref)
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn extract_text_selection(
     app: AppHandle,
@@ -589,6 +893,84 @@ fn extract_inline_media_inner(
     let indexed =
         files::persist_new_reference_block(conn, vault, &block).map_err(internal_extract_error)?;
     Ok(indexed)
+}
+
+fn create_media_asset_card_inner(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    media_ref: String,
+    target_tag: String,
+    source_slug: Option<String>,
+) -> Result<IndexedBlock, MediaAssetActionError> {
+    let media_path = resolve_media_asset_path(vault, &media_ref)?;
+    let media_ref = vault.root_relative_reference(&media_path).ok_or_else(|| {
+        MediaAssetActionError::InvalidMediaRef {
+            reason: "media reference must stay inside the vault".to_string(),
+        }
+    })?;
+    let media_kind = media_asset_kind(&media_ref);
+    if media_kind != BlockType::Image
+        && media_kind != BlockType::Video
+        && media_kind != BlockType::File
+    {
+        return Err(MediaAssetActionError::UnsupportedMediaKind { media_ref });
+    }
+
+    let target_tag = normalize_collection_ref(&target_tag);
+    if !target_tag.is_empty() {
+        validate_collection_ref(&target_tag)
+            .map_err(|reason| MediaAssetActionError::InvalidMediaRef { reason })?;
+    }
+
+    let source_block = source_slug
+        .as_deref()
+        .and_then(|slug| read_optional_source_block(vault, slug).ok().flatten());
+    let raw_slug = suggest_slug(Some(&extraction_slug_seed(&media_ref)), None);
+    let source_ext = media_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let slug = resolve_unique_extraction_slug(conn, vault, &raw_slug, source_ext)
+        .map_err(internal_media_asset_error)?;
+    let now = crate::commands::state::now_iso8601();
+    let saved_at = DateTime::new(&now).map_err(|e| MediaAssetActionError::Internal {
+        message: e.to_string(),
+    })?;
+
+    let block = Block {
+        slug: slug.clone(),
+        frontmatter: Frontmatter {
+            block_type: media_kind,
+            title: None,
+            description: None,
+            url: source_block
+                .as_ref()
+                .and_then(|block| block.frontmatter.url.clone()),
+            file: Some(media_ref.clone()),
+            thumbnail: None,
+            tags: if target_tag.is_empty() {
+                Vec::new()
+            } else {
+                vec![target_tag]
+            },
+            related_notes: source_block
+                .as_ref()
+                .map(|block| vec![block.slug.clone()])
+                .unwrap_or_default(),
+            source_media: Some(media_ref),
+            saved_at,
+            source: Some("media-asset-action".to_string()),
+            width: None,
+            height: None,
+            author: None,
+            position: None,
+            color: None,
+            icon: None,
+        },
+        body: String::new(),
+    };
+
+    files::persist_new_reference_block(conn, vault, &block).map_err(internal_media_asset_error)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -974,6 +1356,269 @@ fn insert_delete_media(
         });
 }
 
+fn rename_media_asset_inner(
+    state: &AppState,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    media_ref: String,
+    new_stem: String,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let old_path = resolve_media_asset_path(vault, &media_ref)?;
+    let old_ref = vault.root_relative_reference(&old_path).ok_or_else(|| {
+        MediaAssetActionError::InvalidMediaRef {
+            reason: "media reference must stay inside the vault".to_string(),
+        }
+    })?;
+    let new_ref = renamed_media_ref(&old_ref, &new_stem)?;
+    let new_path = vault.root().join(&new_ref);
+    if new_path.exists() {
+        return Err(MediaAssetActionError::NameTaken { target: new_ref });
+    }
+
+    let planned_writes = build_media_asset_reference_writes(vault, &old_path, &new_ref)?;
+    state
+        .suppress_paths(
+            std::iter::once(old_path.clone())
+                .chain(std::iter::once(new_path.clone()))
+                .chain(planned_writes.iter().map(|write| write.path.clone())),
+            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+        )
+        .map_err(internal_media_asset_error)?;
+
+    if let Some(parent) = new_path.parent() {
+        std::fs::create_dir_all(parent).map_err(internal_media_asset_error)?;
+    }
+    std::fs::rename(&old_path, &new_path).map_err(internal_media_asset_error)?;
+
+    let mut affected_slugs = Vec::new();
+    for write in planned_writes {
+        let serialized = crate::domain::block::serialize_block(&write.block);
+        std::fs::write(&write.path, serialized).map_err(internal_media_asset_error)?;
+        index::upsert_block(conn, &write.block, Some(vault.root()))
+            .map_err(internal_media_asset_error)?;
+        let _ = thumbnails::generate_for_block(&write.block, vault);
+        let _ = index::sync_thumb_metadata(
+            conn,
+            &write.block.slug,
+            &vault.thumb_path(&write.block.slug),
+            Some(vault.root()),
+        );
+        affected_slugs.push(write.block.slug);
+    }
+    affected_slugs.sort();
+    affected_slugs.dedup();
+
+    Ok(MediaAssetMutationResult {
+        media_ref: old_ref,
+        new_media_ref: Some(new_ref),
+        affected_slugs,
+    })
+}
+
+fn delete_media_asset_inner(
+    state: &AppState,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    media_ref: String,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let media_path = resolve_media_asset_path(vault, &media_ref)?;
+    let media_ref = vault.root_relative_reference(&media_path).ok_or_else(|| {
+        MediaAssetActionError::InvalidMediaRef {
+            reason: "media reference must stay inside the vault".to_string(),
+        }
+    })?;
+    let planned_writes = build_media_asset_removal_writes(vault, &media_path)?;
+    let mut suppressed_paths = vec![media_path.clone()];
+    for write in &planned_writes {
+        suppressed_paths.push(write.path.clone());
+        suppressed_paths.push(vault.thumb_path(&write.block.slug));
+    }
+    state
+        .suppress_paths(
+            suppressed_paths,
+            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+        )
+        .map_err(internal_media_asset_error)?;
+
+    let mut affected_slugs = Vec::new();
+    for write in planned_writes {
+        let serialized = crate::domain::block::serialize_block(&write.block);
+        std::fs::write(&write.path, serialized).map_err(internal_media_asset_error)?;
+        index::upsert_block(conn, &write.block, Some(vault.root()))
+            .map_err(internal_media_asset_error)?;
+        let thumb_path = vault.thumb_path(&write.block.slug);
+        let thumb_source = thumbnails::generate_for_block(&write.block, vault);
+        if matches!(thumb_source, thumbnails::ThumbSource::None) && thumb_path.exists() {
+            let _ = std::fs::remove_file(&thumb_path);
+        }
+        let _ =
+            index::sync_thumb_metadata(conn, &write.block.slug, &thumb_path, Some(vault.root()));
+        affected_slugs.push(write.block.slug);
+    }
+    std::fs::remove_file(&media_path).map_err(internal_media_asset_error)?;
+    affected_slugs.sort();
+    affected_slugs.dedup();
+
+    Ok(MediaAssetMutationResult {
+        media_ref,
+        new_media_ref: None,
+        affected_slugs,
+    })
+}
+
+fn remove_media_asset_from_card_inner(
+    state: &AppState,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    media_ref: String,
+    source_slug: String,
+    reference_kind: String,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    validate_slug(&source_slug).map_err(|e| MediaAssetActionError::InvalidMediaRef {
+        reason: format!("invalid source slug: {e}"),
+    })?;
+    let media_path = resolve_media_asset_path(vault, &media_ref)?;
+    let media_ref = vault.root_relative_reference(&media_path).ok_or_else(|| {
+        MediaAssetActionError::InvalidMediaRef {
+            reason: "media reference must stay inside the vault".to_string(),
+        }
+    })?;
+
+    let source_path = vault.block_path(&source_slug);
+    if !source_path.exists() {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: format!("source card not found: {source_slug}"),
+        });
+    }
+
+    let (read_slug, content) =
+        files::read_block_file(vault, &source_path).map_err(internal_media_asset_error)?;
+    let parsed = parse_markdown_document(&read_slug, &content, file_saved_at(&source_path))
+        .map_err(|e| MediaAssetActionError::Internal {
+            message: format!("failed to parse source card: {e}"),
+        })?;
+    let mut block = parsed.block;
+    let mut changed = false;
+
+    match reference_kind.as_str() {
+        "frontmatter_file" => {
+            if block
+                .frontmatter
+                .file
+                .as_deref()
+                .and_then(|reference| {
+                    media_refs::resolve_indexed_media(vault, &block.slug, reference)
+                })
+                .is_some_and(|path| same_path(&path, &media_path))
+            {
+                block.frontmatter.file = None;
+                changed = true;
+            }
+            if block
+                .frontmatter
+                .thumbnail
+                .as_deref()
+                .and_then(|reference| {
+                    media_refs::resolve_indexed_media(vault, &block.slug, reference)
+                })
+                .is_some_and(|path| same_path(&path, &media_path))
+            {
+                block.frontmatter.thumbnail = None;
+                changed = true;
+            }
+        }
+        "body_embed" => {
+            let mut removals = BTreeSet::new();
+            for reference in iter_inline_media_references(&block.body) {
+                if media_refs::resolve_inline_media(vault, &block.slug, &reference)
+                    .is_some_and(|path| same_path(&path, &media_path))
+                {
+                    removals.insert(reference.source);
+                }
+            }
+            let next_body = remove_inline_media_references(&block.body, &removals);
+            if next_body != block.body {
+                block.body = next_body;
+                changed = true;
+            }
+        }
+        _ => {
+            return Err(MediaAssetActionError::InvalidMediaRef {
+                reason: "reference kind must be frontmatter_file or body_embed".to_string(),
+            });
+        }
+    }
+
+    if !changed {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: format!("media is not attached to source card: {source_slug}"),
+        });
+    }
+
+    let thumb_path = vault.thumb_path(&block.slug);
+    state
+        .suppress_paths(
+            [source_path.clone(), thumb_path.clone()],
+            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+        )
+        .map_err(internal_media_asset_error)?;
+
+    let serialized = crate::domain::block::serialize_block(&block);
+    std::fs::write(&source_path, serialized).map_err(internal_media_asset_error)?;
+    index::upsert_block(conn, &block, Some(vault.root())).map_err(internal_media_asset_error)?;
+    let thumb_source = thumbnails::generate_for_block(&block, vault);
+    if matches!(thumb_source, thumbnails::ThumbSource::None) && thumb_path.exists() {
+        let _ = std::fs::remove_file(&thumb_path);
+    }
+    let _ = index::sync_thumb_metadata(conn, &block.slug, &thumb_path, Some(vault.root()));
+
+    Ok(MediaAssetMutationResult {
+        media_ref,
+        new_media_ref: None,
+        affected_slugs: vec![block.slug],
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn copy_media_path_to_clipboard(
+    media_path: &Path,
+    _media_ref: &str,
+) -> Result<(), MediaAssetActionError> {
+    let script = r#"
+on run argv
+  set mediaPath to item 1 of argv
+  set the clipboard to (POSIX file mediaPath)
+end run
+"#;
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .arg(media_path.to_string_lossy().to_string())
+        .output()
+        .map_err(internal_media_asset_error)?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(MediaAssetActionError::Internal {
+        message: if stderr.is_empty() {
+            "failed to copy media file to clipboard".to_string()
+        } else {
+            stderr
+        },
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn copy_media_path_to_clipboard(
+    _media_path: &Path,
+    media_ref: &str,
+) -> Result<(), MediaAssetActionError> {
+    Err(MediaAssetActionError::ClipboardUnsupported {
+        media_ref: media_ref.to_string(),
+    })
+}
+
 fn is_slug_owned_primary_media(vault: &VaultLayout, block_slug: &str, path: &Path) -> bool {
     if validate_slug(block_slug).is_err() {
         return false;
@@ -1017,6 +1662,376 @@ fn delete_media_kind(root_relative: &str) -> &'static str {
         "document"
     } else {
         "file"
+    }
+}
+
+fn validate_media_asset_ref(media_ref: &str) -> Result<(), MediaAssetActionError> {
+    let trimmed = media_ref.trim();
+    if trimmed.is_empty() {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: "media reference is empty".to_string(),
+        });
+    }
+    if trimmed != media_ref {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: "media reference has leading or trailing whitespace".to_string(),
+        });
+    }
+    if media_ref.starts_with("http://") || media_ref.starts_with("https://") {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: "remote media is not supported".to_string(),
+        });
+    }
+    if Path::new(media_ref).is_absolute() {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: "absolute media paths are not supported".to_string(),
+        });
+    }
+    if media_ref.contains('\\') || media_ref.contains('\0') {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: "media reference contains an invalid path separator".to_string(),
+        });
+    }
+    for segment in media_ref.split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return Err(MediaAssetActionError::InvalidMediaRef {
+                reason: "media reference cannot contain path traversal".to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn resolve_media_asset_path(
+    vault: &VaultLayout,
+    media_ref: &str,
+) -> Result<PathBuf, MediaAssetActionError> {
+    validate_media_asset_ref(media_ref)?;
+    let root = vault
+        .root()
+        .canonicalize()
+        .map_err(internal_media_asset_error)?;
+    let candidate = vault.root().join(media_ref);
+    let path = candidate
+        .canonicalize()
+        .map_err(|_| MediaAssetActionError::MediaNotFound {
+            media_ref: media_ref.to_string(),
+        })?;
+    if !path.starts_with(&root) {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: "media reference must stay inside the vault".to_string(),
+        });
+    }
+    if !path.is_file() {
+        return Err(MediaAssetActionError::MediaNotFound {
+            media_ref: media_ref.to_string(),
+        });
+    }
+    Ok(candidate)
+}
+
+fn media_asset_kind(media_ref: &str) -> BlockType {
+    let ext = Path::new(media_ref)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if thumbnails::is_image_ext(&ext) {
+        BlockType::Image
+    } else if thumbnails::is_video_ext(&ext) {
+        BlockType::Video
+    } else {
+        BlockType::File
+    }
+}
+
+fn read_optional_source_block(
+    vault: &VaultLayout,
+    source_slug: &str,
+) -> Result<Option<Block>, MediaAssetActionError> {
+    validate_slug(source_slug).map_err(|e| MediaAssetActionError::InvalidMediaRef {
+        reason: format!("invalid source slug: {e}"),
+    })?;
+    let path = vault.block_path(source_slug);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let (read_slug, content) =
+        files::read_block_file(vault, &path).map_err(internal_media_asset_error)?;
+    let parsed =
+        parse_markdown_document(&read_slug, &content, file_saved_at(&path)).map_err(|e| {
+            MediaAssetActionError::Internal {
+                message: format!("failed to parse source block: {e}"),
+            }
+        })?;
+    Ok(Some(parsed.block))
+}
+
+fn renamed_media_ref(old_ref: &str, new_stem: &str) -> Result<String, MediaAssetActionError> {
+    let trimmed = new_stem.trim();
+    if trimmed.is_empty() {
+        return Err(MediaAssetActionError::InvalidFilename {
+            reason: "filename is empty".to_string(),
+        });
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains('\0') {
+        return Err(MediaAssetActionError::InvalidFilename {
+            reason: "media filename cannot contain path separators".to_string(),
+        });
+    }
+    let normalized_stem = normalize_filename_stem(trimmed.trim_end_matches('.').trim());
+    if normalized_stem.is_empty() || normalized_stem == "." || normalized_stem == ".." {
+        return Err(MediaAssetActionError::InvalidFilename {
+            reason: "filename is invalid".to_string(),
+        });
+    }
+    let old_path = Path::new(old_ref);
+    let extension = old_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| MediaAssetActionError::InvalidMediaRef {
+            reason: "media file must have an extension".to_string(),
+        })?;
+    let file_name = format!("{normalized_stem}.{extension}");
+    Ok(
+        match old_path.parent().and_then(|parent| {
+            if parent.as_os_str().is_empty() {
+                None
+            } else {
+                parent.to_str()
+            }
+        }) {
+            Some(parent) => format!("{parent}/{file_name}"),
+            None => file_name,
+        },
+    )
+}
+
+fn build_media_asset_reference_writes(
+    vault: &VaultLayout,
+    old_path: &Path,
+    new_ref: &str,
+) -> Result<Vec<MediaAssetBlockWrite>, MediaAssetActionError> {
+    let mut writes = Vec::new();
+    for path in files::scan_md_files(vault).map_err(internal_media_asset_error)? {
+        let (slug, content) =
+            files::read_block_file(vault, &path).map_err(internal_media_asset_error)?;
+        let block = crate::domain::block::parse_block(&slug, &content).map_err(|e| {
+            MediaAssetActionError::Internal {
+                message: format!("failed to parse {}: {e}", path.display()),
+            }
+        })?;
+        let rewritten = rewrite_block_media_asset_references(vault, &block, old_path, new_ref);
+        if rewritten.frontmatter != block.frontmatter || rewritten.body != block.body {
+            writes.push(MediaAssetBlockWrite {
+                path,
+                block: rewritten,
+            });
+        }
+    }
+    Ok(writes)
+}
+
+fn prepare_delete_media_asset_inner(
+    vault: &VaultLayout,
+    media_ref: String,
+) -> Result<DeleteMediaAssetPlan, MediaAssetActionError> {
+    let media_path = resolve_media_asset_path(vault, &media_ref)?;
+    let media_ref = vault.root_relative_reference(&media_path).ok_or_else(|| {
+        MediaAssetActionError::InvalidMediaRef {
+            reason: "media reference must stay inside the vault".to_string(),
+        }
+    })?;
+    let media_kind = delete_media_kind(&media_ref).to_string();
+    let referenced_by = collect_media_asset_reference_blocks(vault, &media_path)?;
+
+    Ok(DeleteMediaAssetPlan {
+        media_ref,
+        media_kind,
+        referenced_by,
+    })
+}
+
+fn build_media_asset_removal_writes(
+    vault: &VaultLayout,
+    media_path: &Path,
+) -> Result<Vec<MediaAssetBlockWrite>, MediaAssetActionError> {
+    let mut writes = Vec::new();
+    for path in files::scan_md_files(vault).map_err(internal_media_asset_error)? {
+        let (slug, content) =
+            files::read_block_file(vault, &path).map_err(internal_media_asset_error)?;
+        let block = crate::domain::block::parse_block(&slug, &content).map_err(|e| {
+            MediaAssetActionError::Internal {
+                message: format!("failed to parse {}: {e}", path.display()),
+            }
+        })?;
+        if let Some(rewritten) = remove_block_media_asset_references(vault, &block, media_path) {
+            writes.push(MediaAssetBlockWrite {
+                path,
+                block: rewritten,
+            });
+        }
+    }
+    Ok(writes)
+}
+
+fn collect_media_asset_reference_blocks(
+    vault: &VaultLayout,
+    media_path: &Path,
+) -> Result<Vec<MediaAssetReferenceBlock>, MediaAssetActionError> {
+    let mut blocks = Vec::new();
+    for path in files::scan_md_files(vault).map_err(internal_media_asset_error)? {
+        let (slug, content) =
+            files::read_block_file(vault, &path).map_err(internal_media_asset_error)?;
+        let block = crate::domain::block::parse_block(&slug, &content).map_err(|e| {
+            MediaAssetActionError::Internal {
+                message: format!("failed to parse {}: {e}", path.display()),
+            }
+        })?;
+        let reference_kinds = media_asset_reference_kinds(vault, &block, media_path);
+        if reference_kinds.is_empty() {
+            continue;
+        }
+
+        let title_fields =
+            derive_title_fields(&block.slug, block.frontmatter.title.as_deref(), &block.body);
+        blocks.push(MediaAssetReferenceBlock {
+            slug: block.slug.clone(),
+            title: title_fields.legacy_title,
+            display_title: title_fields.display_title,
+            fallback_label: title_fields.fallback_label,
+            card_kind: derive_card_kind(&block),
+            reference_kinds,
+        });
+    }
+    blocks.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(blocks)
+}
+
+fn rewrite_block_media_asset_references(
+    vault: &VaultLayout,
+    block: &Block,
+    old_path: &Path,
+    new_ref: &str,
+) -> Block {
+    let mut rewritten = block.clone();
+    if block
+        .frontmatter
+        .file
+        .as_deref()
+        .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference))
+        .is_some_and(|path| same_path(&path, old_path))
+    {
+        rewritten.frontmatter.file = Some(new_ref.to_string());
+    }
+    if block
+        .frontmatter
+        .thumbnail
+        .as_deref()
+        .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference))
+        .is_some_and(|path| same_path(&path, old_path))
+    {
+        rewritten.frontmatter.thumbnail = Some(new_ref.to_string());
+    }
+
+    let mut body_renames = BTreeMap::new();
+    for reference in iter_inline_media_references(&block.body) {
+        if media_refs::resolve_inline_media(vault, &block.slug, &reference)
+            .is_some_and(|path| same_path(&path, old_path))
+        {
+            body_renames.insert(reference.source, new_ref.to_string());
+        }
+    }
+    rewritten.body = rename_inline_media_references(&rewritten.body, &body_renames);
+    rewritten
+}
+
+fn remove_block_media_asset_references(
+    vault: &VaultLayout,
+    block: &Block,
+    media_path: &Path,
+) -> Option<Block> {
+    let mut rewritten = block.clone();
+    let mut changed = false;
+
+    if block
+        .frontmatter
+        .file
+        .as_deref()
+        .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference))
+        .is_some_and(|path| same_path(&path, media_path))
+    {
+        rewritten.frontmatter.file = None;
+        changed = true;
+    }
+    if block
+        .frontmatter
+        .thumbnail
+        .as_deref()
+        .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference))
+        .is_some_and(|path| same_path(&path, media_path))
+    {
+        rewritten.frontmatter.thumbnail = None;
+        changed = true;
+    }
+
+    let mut body_removals = BTreeSet::new();
+    for reference in iter_inline_media_references(&block.body) {
+        if media_refs::resolve_inline_media(vault, &block.slug, &reference)
+            .is_some_and(|path| same_path(&path, media_path))
+        {
+            body_removals.insert(reference.source);
+        }
+    }
+    let next_body = remove_inline_media_references(&rewritten.body, &body_removals);
+    if next_body != rewritten.body {
+        rewritten.body = next_body;
+        changed = true;
+    }
+
+    changed.then_some(rewritten)
+}
+
+fn media_asset_reference_kinds(
+    vault: &VaultLayout,
+    block: &Block,
+    media_path: &Path,
+) -> Vec<String> {
+    let mut kinds = BTreeSet::new();
+    if block
+        .frontmatter
+        .file
+        .as_deref()
+        .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference))
+        .is_some_and(|path| same_path(&path, media_path))
+    {
+        kinds.insert("frontmatter_file".to_string());
+    }
+    if block
+        .frontmatter
+        .thumbnail
+        .as_deref()
+        .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference))
+        .is_some_and(|path| same_path(&path, media_path))
+    {
+        kinds.insert("frontmatter_thumbnail".to_string());
+    }
+    if iter_inline_media_references(&block.body)
+        .into_iter()
+        .any(|reference| {
+            media_refs::resolve_inline_media(vault, &block.slug, &reference)
+                .is_some_and(|path| same_path(&path, media_path))
+        })
+    {
+        kinds.insert("body_embed".to_string());
+    }
+    kinds.into_iter().collect()
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
     }
 }
 
@@ -1602,6 +2617,12 @@ fn internal_extract_error(error: impl std::fmt::Display) -> InlineMediaExtractEr
     }
 }
 
+fn internal_media_asset_error(error: impl std::fmt::Display) -> MediaAssetActionError {
+    MediaAssetActionError::Internal {
+        message: error.to_string(),
+    }
+}
+
 fn internal_text_selection_error(error: impl std::fmt::Display) -> TextSelectionExtractError {
     TextSelectionExtractError::Internal {
         message: error.to_string(),
@@ -1965,6 +2986,249 @@ mod tests {
             std::fs::read(vault.root().join("photo.png")).unwrap(),
             b"image-bytes"
         );
+    }
+
+    #[test]
+    fn create_media_asset_card_inner_creates_standalone_media_card_without_connecting_source() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
+        persist_block(&conn, &vault, &source);
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let indexed = create_media_asset_card_inner(
+            &conn,
+            &vault,
+            "photo.png".to_string(),
+            "Mood Board".to_string(),
+            Some("Source Article".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(indexed.block_type, BlockType::Image);
+        assert!(indexed.body.is_empty());
+        assert_eq!(indexed.media_file.as_deref(), Some("photo.png"));
+        assert_eq!(indexed.tags, vec!["Mood Board".to_string()]);
+        assert_eq!(indexed.related_notes, vec!["Source Article".to_string()]);
+        assert_eq!(indexed.source.as_deref(), Some("media-asset-action"));
+
+        let source_after = index::get_block(&conn, "Source Article").unwrap().unwrap();
+        assert_eq!(source_after.tags, vec!["notes".to_string()]);
+        let (_, source_content) =
+            files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
+        assert!(source_content.contains("![[photo.png]]"));
+    }
+
+    #[test]
+    fn create_media_asset_card_inner_always_creates_a_new_media_card() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let mut existing = image("Existing Photo", "photo.png");
+        existing.frontmatter.tags = vec!["Existing".to_string()];
+        persist_block(&conn, &vault, &existing);
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let indexed = create_media_asset_card_inner(
+            &conn,
+            &vault,
+            "photo.png".to_string(),
+            "Mood Board".to_string(),
+            None,
+        )
+        .unwrap();
+
+        assert_ne!(indexed.slug, "Existing Photo");
+        assert_eq!(indexed.media_file.as_deref(), Some("photo.png"));
+        assert_eq!(indexed.tags, vec!["Mood Board".to_string()]);
+
+        let (_, content) =
+            files::read_block_file(&vault, &vault.block_path("Existing Photo")).unwrap();
+        let parsed = crate::domain::block::parse_block("Existing Photo", &content).unwrap();
+        assert_eq!(parsed.frontmatter.tags, vec!["Existing".to_string()]);
+        assert!(parsed.body.is_empty());
+    }
+
+    #[test]
+    fn create_media_asset_card_inner_allows_everything_without_tags() {
+        let (_root, _derived, vault, conn) = make_vault();
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let indexed = create_media_asset_card_inner(
+            &conn,
+            &vault,
+            "photo.png".to_string(),
+            String::new(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(indexed.media_file.as_deref(), Some("photo.png"));
+        assert!(indexed.tags.is_empty());
+    }
+
+    #[test]
+    fn rename_media_asset_inner_rewrites_frontmatter_and_inline_refs_only() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
+        let media = image("Photo Card", "photo.png");
+        persist_block(&conn, &vault, &source);
+        persist_block(&conn, &vault, &media);
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let result = rename_media_asset_inner(
+            &state,
+            &conn,
+            &vault,
+            "photo.png".to_string(),
+            "renamed".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.media_ref, "photo.png");
+        assert_eq!(result.new_media_ref.as_deref(), Some("renamed.png"));
+        assert!(result
+            .affected_slugs
+            .contains(&"Source Article".to_string()));
+        assert!(result.affected_slugs.contains(&"Photo Card".to_string()));
+        assert!(!vault.root().join("photo.png").exists());
+        assert_eq!(
+            std::fs::read(vault.root().join("renamed.png")).unwrap(),
+            b"image-bytes"
+        );
+        assert!(vault.block_path("Photo Card").exists());
+
+        let (_, source_content) =
+            files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
+        assert!(source_content.contains("![[renamed.png]]"));
+        assert!(!source_content.contains("![[photo.png]]"));
+
+        let (_, media_content) =
+            files::read_block_file(&vault, &vault.block_path("Photo Card")).unwrap();
+        let parsed = crate::domain::block::parse_block("Photo Card", &media_content).unwrap();
+        assert_eq!(parsed.frontmatter.file.as_deref(), Some("renamed.png"));
+        assert_eq!(parsed.frontmatter.title.as_deref(), Some("Photo Card"));
+    }
+
+    #[test]
+    fn prepare_delete_media_asset_inner_lists_referencing_cards() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
+        let media = image("Photo Card", "photo.png");
+        persist_block(&conn, &vault, &source);
+        persist_block(&conn, &vault, &media);
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let plan = prepare_delete_media_asset_inner(&vault, "photo.png".to_string()).unwrap();
+
+        assert_eq!(plan.media_ref, "photo.png");
+        assert_eq!(plan.media_kind, "image");
+        assert_eq!(plan.referenced_by.len(), 2);
+        assert_eq!(plan.referenced_by[0].slug, "Photo Card");
+        assert_eq!(
+            plan.referenced_by[0].reference_kinds,
+            vec!["frontmatter_file".to_string()]
+        );
+        assert_eq!(
+            plan.referenced_by[1].reference_kinds,
+            vec!["body_embed".to_string()]
+        );
+    }
+
+    #[test]
+    fn delete_media_asset_inner_deletes_file_and_cleans_card_references() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
+        let media = image("Photo Card", "photo.png");
+        persist_block(&conn, &vault, &source);
+        persist_block(&conn, &vault, &media);
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let result =
+            delete_media_asset_inner(&state, &conn, &vault, "photo.png".to_string()).unwrap();
+
+        assert_eq!(result.media_ref, "photo.png");
+        assert!(result.new_media_ref.is_none());
+        assert!(result
+            .affected_slugs
+            .contains(&"Source Article".to_string()));
+        assert!(result.affected_slugs.contains(&"Photo Card".to_string()));
+        assert!(!vault.root().join("photo.png").exists());
+        assert!(vault.block_path("Source Article").exists());
+        assert!(vault.block_path("Photo Card").exists());
+
+        let (_, source_content) =
+            files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
+        assert!(!source_content.contains("![[photo.png]]"));
+        assert!(source_content.contains("Intro"));
+        assert!(source_content.contains("Outro"));
+
+        let (_, media_content) =
+            files::read_block_file(&vault, &vault.block_path("Photo Card")).unwrap();
+        let parsed = crate::domain::block::parse_block("Photo Card", &media_content).unwrap();
+        assert_eq!(parsed.frontmatter.file.as_deref(), None);
+        assert!(parsed.body.is_empty());
+    }
+
+    #[test]
+    fn remove_media_asset_from_card_inner_removes_frontmatter_file_without_deleting_media() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let media = image("Photo Card", "photo.png");
+        persist_block(&conn, &vault, &media);
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let result = remove_media_asset_from_card_inner(
+            &state,
+            &conn,
+            &vault,
+            "photo.png".to_string(),
+            "Photo Card".to_string(),
+            "frontmatter_file".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.media_ref, "photo.png");
+        assert_eq!(result.affected_slugs, vec!["Photo Card".to_string()]);
+        assert_eq!(
+            std::fs::read(vault.root().join("photo.png")).unwrap(),
+            b"image-bytes"
+        );
+
+        let (_, content) = files::read_block_file(&vault, &vault.block_path("Photo Card")).unwrap();
+        let parsed = crate::domain::block::parse_block("Photo Card", &content).unwrap();
+        assert!(parsed.frontmatter.file.is_none());
+        assert!(parsed.body.is_empty());
+    }
+
+    #[test]
+    fn remove_media_asset_from_card_inner_removes_body_embed_without_deleting_media() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
+        persist_block(&conn, &vault, &source);
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let result = remove_media_asset_from_card_inner(
+            &state,
+            &conn,
+            &vault,
+            "photo.png".to_string(),
+            "Source Article".to_string(),
+            "body_embed".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.media_ref, "photo.png");
+        assert_eq!(result.affected_slugs, vec!["Source Article".to_string()]);
+        assert_eq!(
+            std::fs::read(vault.root().join("photo.png")).unwrap(),
+            b"image-bytes"
+        );
+
+        let (_, content) =
+            files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
+        let parsed = crate::domain::block::parse_block("Source Article", &content).unwrap();
+        assert_eq!(parsed.body, "Intro\n\nOutro");
     }
 
     #[test]
