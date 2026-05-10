@@ -7,7 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
-import { Copy, Minus, Plus, X } from "lucide-react";
+import { Copy, Minimize2, Minus, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { copyMediaAssetToClipboard } from "@/lib/commands";
@@ -381,7 +381,7 @@ export function ImagePreviewOverlay({
           ref={imageRef}
           src={preview.src}
           alt=""
-          className="max-h-[calc(100vh-8rem)] max-w-[calc(100vw-4rem)] origin-center cursor-grab select-none object-contain will-change-transform active:cursor-grabbing"
+          className="image-preview-primary-media max-h-[calc(100vh-8rem)] max-w-[calc(100vw-4rem)] origin-center cursor-grab select-none object-contain will-change-transform active:cursor-grabbing"
           draggable={false}
           data-image-preview-image
           data-detail-image-preview-scale="1.000"
@@ -461,12 +461,12 @@ export function ImagePreviewOverlay({
           type="button"
           variant="ghost"
           size="icon"
-          aria-label="Close image preview"
-          data-image-preview-close
+          aria-label="Collapse image preview"
+          data-image-preview-collapse
           onClick={onClose}
           className="text-muted-foreground hover:text-foreground"
         >
-          <X className="size-4" />
+          <Minimize2 className="size-4" />
         </Button>
         {copyError && (
           <span className="sr-only" data-image-preview-copy-error>

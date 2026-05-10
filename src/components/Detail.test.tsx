@@ -1186,6 +1186,35 @@ describe("Detail", () => {
   });
 
   it("shows delete media preview, affected cards, and deletes the media asset", async () => {
+    getBlockMock.mockImplementation(async (slug: string) => {
+      if (slug === "Photo Card") {
+        return block({
+          id: 2,
+          slug: "Photo Card",
+          fallback_label: "Photo Card",
+          display_title: "Photo Card",
+          card_kind: "media",
+          block_type: "image",
+          media_file: "photo.jpg",
+          thumb_format: "png",
+          thumb_mtime: 111,
+        });
+      }
+      if (slug === "Source Article") {
+        return block({
+          id: 3,
+          slug: "Source Article",
+          fallback_label: "Source Article",
+          display_title: "Source Article",
+          card_kind: "article",
+          block_type: "article",
+          body: "Article body",
+          thumb_format: "jpeg",
+          thumb_mtime: 222,
+        });
+      }
+      return null;
+    });
     prepareDeleteMediaAssetMock.mockResolvedValueOnce({
       media_ref: "photo.jpg",
       media_kind: "image",
@@ -1209,6 +1238,7 @@ describe("Detail", () => {
       ],
     });
     const onDeleteMediaAsset = vi.fn().mockResolvedValue(undefined);
+    const onOpenRelatedNote = vi.fn();
     const b = block({
       card_kind: "media",
       block_type: "image",
@@ -1231,6 +1261,7 @@ describe("Detail", () => {
         onRequestRename={vi.fn()}
         onRequestDelete={vi.fn()}
         onDeleteMediaAsset={onDeleteMediaAsset}
+        onOpenRelatedNote={onOpenRelatedNote}
       />,
     );
 
@@ -1242,14 +1273,38 @@ describe("Detail", () => {
     fireEvent.click(within(dropdownMenu).getByText("Delete"));
 
     const dialog = await screen.findByRole("alertdialog", { name: "Delete media file?" });
-    await within(dialog).findByText("Primary media");
-    expect(within(dialog).getAllByText("Photo Card").length).toBeGreaterThan(0);
-    expect(within(dialog).getAllByText("Source Article").length).toBeGreaterThan(0);
-    expect(within(dialog).getByText("2 cards reference this file.")).toBeInTheDocument();
+    const photoRow = await within(dialog).findByRole("button", { name: "Photo Card" });
+    const sourceRow = within(dialog).getByRole("button", { name: "Source Article" });
+    expect(within(dialog).getByText("Connected cards")).toBeInTheDocument();
+    const connectedCardsScroll = dialog.querySelector("[data-delete-media-connected-cards-scroll]");
+    expect(connectedCardsScroll).toHaveAttribute("data-visible-card-count", "5");
+    expect(connectedCardsScroll).toHaveStyle({ maxHeight: "216px" });
+    expect(within(dialog).queryByText("Primary media")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("Inline media")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("2 cards reference this file.")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("photo.jpg")).not.toBeInTheDocument();
+    expect(photoRow).toHaveAttribute("data-related-note-item", "button");
+    expect(photoRow).toHaveClass("bg-component-fill", "cursor-pointer");
+    expect(sourceRow).toHaveAttribute("data-related-note-item", "button");
     expect(dialog.querySelector("img")).toHaveAttribute(
       "src",
       "asset://localhost//tmp/test-vault/photo.jpg",
     );
+
+    vi.useFakeTimers();
+    fireEvent.mouseEnter(photoRow);
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const hoverPreview = document.querySelector("[data-related-note-hover-preview]");
+    expect(hoverPreview).not.toBeNull();
+    expect(hoverPreview?.parentElement).toBe(document.body);
+    expect(dialog.contains(hoverPreview)).toBe(false);
+    fireEvent.mouseLeave(photoRow);
+    expect(document.querySelector("[data-related-note-hover-preview]")).toBeNull();
+    vi.useRealTimers();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete media" }));
 
@@ -1263,6 +1318,75 @@ describe("Detail", () => {
         }),
       );
     });
+  });
+
+  it("opens referenced cards from the delete media confirmation", async () => {
+    getBlockMock.mockImplementation(async (slug: string) => {
+      if (slug === "Source Article") {
+        return block({
+          id: 3,
+          slug: "Source Article",
+          fallback_label: "Source Article",
+          display_title: "Source Article",
+          card_kind: "article",
+          block_type: "article",
+          body: "Article body",
+        });
+      }
+      return null;
+    });
+    prepareDeleteMediaAssetMock.mockResolvedValueOnce({
+      media_ref: "photo.jpg",
+      media_kind: "image",
+      referenced_by: [
+        {
+          slug: "Source Article",
+          title: "Source Article",
+          display_title: "Source Article",
+          fallback_label: "Source Article",
+          card_kind: "article",
+          reference_kinds: ["body_embed"],
+        },
+      ],
+    });
+    const onOpenRelatedNote = vi.fn();
+    const b = block({
+      card_kind: "media",
+      block_type: "image",
+      title: "Photo",
+      url: null,
+      media_file: "photo.jpg",
+    });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={onOpenRelatedNote}
+      />,
+    );
+
+    const trigger = container.querySelector("[data-detail-media-more-button]");
+    fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger!);
+    const dropdownMenu = await screen.findByRole("menu");
+    fireEvent.click(within(dropdownMenu).getByText("Delete"));
+
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete media file?" });
+    const sourceRow = await within(dialog).findByRole("button", { name: "Source Article" });
+    fireEvent.click(sourceRow);
+
+    expect(onOpenRelatedNote).toHaveBeenCalledWith("Source Article");
+    expect(screen.queryByRole("alertdialog", { name: "Delete media file?" })).not.toBeInTheDocument();
   });
 
   it("shows the standard overflow menu trigger on video media surfaces", () => {

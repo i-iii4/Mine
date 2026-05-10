@@ -481,6 +481,14 @@ Thumbnail отображается через `convertFileSrc(vaultPath + "/.are
 
 Медиафайлы (для media-карточек без thumbnail): `convertFileSrc(vaultPath + "/" + media_file)`.
 
+Feed card frame is a persistent `border border-border bg-background` surface.
+On hover the existing 1px border changes color to `component-fill-hover`
+through `hover:border-component-fill-hover`; no outline, inset border, shadow,
+glow, transition, or extra overlay is added. Article feed cards additionally
+get `feed-article-card`; that class applies `background: var(--accent)` only
+in dark theme (`data-theme="dark"` or system dark unless `data-theme="light"`).
+Light theme article cards stay on the default card background.
+
 Article inline media renders from backend-derived paths. For bare Obsidian
 embeds such as `![[01.jpg]]`, Detail first asks `preview_manifest.tiles` for a
 resolved `source_path` and then loads `convertFileSrc(vaultPath + "/" +
@@ -516,6 +524,22 @@ Frontend rules:
   the media materialization command;
 - video gets the hover menu but no drag payload;
 - remote images and generated thumbnails do not get media-asset controls.
+
+Image media expansion:
+
+- local images expose a top-right `Expand` icon button; left click on the image
+  surface is inert and reserved for drag/pan behavior;
+- expanded image preview is an app-level overlay below the top bar. It covers
+  the main body and bottom action bar, but leaves the top app bar available;
+- the secondary plane uses a solid/minimal scrim:
+  `background: rgb(0 0 0 / 0.56)` plus `backdrop-filter: saturate(0.55)`.
+  It intentionally avoids blur;
+- the foreground image is the primary plane and uses
+  `box-shadow: 0 24px 96px rgb(0 0 0 / 0.45)` plus
+  `outline: 1px solid rgb(255 255 255 / 0.08)`;
+- the bottom floating control island contains zoom out, current zoom, zoom in,
+  Copy Media, and `Collapse image preview` (`Minimize2`, inward arrows). There
+  is no top-right X close button.
 
 ### CollectionPicker
 

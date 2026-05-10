@@ -218,9 +218,14 @@ body {
 }
 
 .image-preview-secondary-plane {
-  background: rgb(0 0 0 / 0.28);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
+  background: rgb(0 0 0 / 0.56);
+  -webkit-backdrop-filter: saturate(0.55);
+  backdrop-filter: saturate(0.55);
+}
+
+.image-preview-primary-media {
+  box-shadow: 0 24px 96px rgb(0 0 0 / 0.45);
+  outline: 1px solid rgb(255 255 255 / 0.08);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -231,6 +236,16 @@ body {
     transform: none;
     transition: none;
   }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .feed-article-card {
+    background: var(--accent);
+  }
+}
+
+:root[data-theme="dark"] .feed-article-card {
+  background: var(--accent);
 }
 
 @theme inline {

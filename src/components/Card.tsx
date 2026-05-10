@@ -13,6 +13,7 @@ import {
 import {
   deriveCardLayoutDescriptor,
   deriveContentCardSlots,
+  getRuntimeCardKind,
   parsePreviewManifest,
   type CardLayoutDescriptor,
 } from "@/lib/cardLayout";
@@ -92,6 +93,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
       block,
     },
   });
+  const isArticleFeedCard = getRuntimeCardKind(block) === "article";
 
   const handleClick = () => onClick(block);
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -113,7 +115,8 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
-        "h-full cursor-pointer",
+        "h-full cursor-pointer hover:border-component-fill-hover",
+        isArticleFeedCard && "feed-article-card",
         isDragging && "opacity-30",
         isFocused && "ring-2 ring-ring",
       )}

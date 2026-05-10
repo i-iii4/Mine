@@ -85,6 +85,7 @@ describe("ImagePreviewOverlay", () => {
       offsetHeight: 100,
     });
     expect(image).toHaveAttribute("src", "asset://localhost/photo.jpg");
+    expect(image).toHaveClass("image-preview-primary-media");
     expect(image).toHaveStyle({ transform: "translate3d(0px, 0px, 0) scale(1)" });
     expect(image).not.toHaveClass("cursor-ns-resize", "active:cursor-ns-resize");
 
@@ -163,7 +164,9 @@ describe("ImagePreviewOverlay", () => {
     fireEvent.click(screen.getByLabelText("Copy media"));
     expect(copyMediaAssetToClipboardMock).toHaveBeenCalledWith("photo.jpg");
 
-    fireEvent.click(screen.getByLabelText("Close image preview"));
+    const collapseButton = screen.getByLabelText("Collapse image preview");
+    expect(collapseButton).toHaveAttribute("data-image-preview-collapse");
+    fireEvent.click(collapseButton);
     expect(onClose).toHaveBeenCalled();
   });
 });

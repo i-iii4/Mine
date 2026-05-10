@@ -1814,13 +1814,7 @@ fn build_media_asset_reference_writes(
 ) -> Result<Vec<MediaAssetBlockWrite>, MediaAssetActionError> {
     let mut writes = Vec::new();
     for path in files::scan_md_files(vault).map_err(internal_media_asset_error)? {
-        let (slug, content) =
-            files::read_block_file(vault, &path).map_err(internal_media_asset_error)?;
-        let block = crate::domain::block::parse_block(&slug, &content).map_err(|e| {
-            MediaAssetActionError::Internal {
-                message: format!("failed to parse {}: {e}", path.display()),
-            }
-        })?;
+        let block = read_media_asset_action_block(vault, &path)?;
         let rewritten = rewrite_block_media_asset_references(vault, &block, old_path, new_ref);
         if rewritten.frontmatter != block.frontmatter || rewritten.body != block.body {
             writes.push(MediaAssetBlockWrite {
@@ -1858,13 +1852,7 @@ fn build_media_asset_removal_writes(
 ) -> Result<Vec<MediaAssetBlockWrite>, MediaAssetActionError> {
     let mut writes = Vec::new();
     for path in files::scan_md_files(vault).map_err(internal_media_asset_error)? {
-        let (slug, content) =
-            files::read_block_file(vault, &path).map_err(internal_media_asset_error)?;
-        let block = crate::domain::block::parse_block(&slug, &content).map_err(|e| {
-            MediaAssetActionError::Internal {
-                message: format!("failed to parse {}: {e}", path.display()),
-            }
-        })?;
+        let block = read_media_asset_action_block(vault, &path)?;
         if let Some(rewritten) = remove_block_media_asset_references(vault, &block, media_path) {
             writes.push(MediaAssetBlockWrite {
                 path,
@@ -1881,13 +1869,7 @@ fn collect_media_asset_reference_blocks(
 ) -> Result<Vec<MediaAssetReferenceBlock>, MediaAssetActionError> {
     let mut blocks = Vec::new();
     for path in files::scan_md_files(vault).map_err(internal_media_asset_error)? {
-        let (slug, content) =
-            files::read_block_file(vault, &path).map_err(internal_media_asset_error)?;
-        let block = crate::domain::block::parse_block(&slug, &content).map_err(|e| {
-            MediaAssetActionError::Internal {
-                message: format!("failed to parse {}: {e}", path.display()),
-            }
-        })?;
+        let block = read_media_asset_action_block(vault, &path)?;
         let reference_kinds = media_asset_reference_kinds(vault, &block, media_path);
         if reference_kinds.is_empty() {
             continue;
@@ -1906,6 +1888,20 @@ fn collect_media_asset_reference_blocks(
     }
     blocks.sort_by(|a, b| a.slug.cmp(&b.slug));
     Ok(blocks)
+}
+
+fn read_media_asset_action_block(
+    vault: &VaultLayout,
+    path: &Path,
+) -> Result<Block, MediaAssetActionError> {
+    let (slug, content) = files::read_block_file(vault, path).map_err(internal_media_asset_error)?;
+    let parsed =
+        parse_markdown_document(&slug, &content, file_saved_at(path)).map_err(|e| {
+            MediaAssetActionError::Internal {
+                message: format!("failed to parse {}: {e}", path.display()),
+            }
+        })?;
+    Ok(parsed.block)
 }
 
 fn rewrite_block_media_asset_references(
@@ -3134,6 +3130,26 @@ mod tests {
     }
 
     #[test]
+    fn prepare_delete_media_asset_inner_accepts_partial_frontmatter_without_type() {
+        let (_root, _derived, vault, _conn) = make_vault();
+        std::fs::write(
+            vault.block_path("Partial Note"),
+            "---\nsaved_at: 2026-05-05T22:28:06Z\n---\n# Partial Note\n\n![[photo.png]]\n",
+        )
+        .unwrap();
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let plan = prepare_delete_media_asset_inner(&vault, "photo.png".to_string()).unwrap();
+
+        assert_eq!(plan.referenced_by.len(), 1);
+        assert_eq!(plan.referenced_by[0].slug, "Partial Note");
+        assert_eq!(
+            plan.referenced_by[0].reference_kinds,
+            vec!["body_embed".to_string()]
+        );
+    }
+
+    #[test]
     fn delete_media_asset_inner_deletes_file_and_cleans_card_references() {
         let (_root, _derived, vault, conn) = make_vault();
         let state = AppState::new();
@@ -3167,6 +3183,58 @@ mod tests {
         let parsed = crate::domain::block::parse_block("Photo Card", &media_content).unwrap();
         assert_eq!(parsed.frontmatter.file.as_deref(), None);
         assert!(parsed.body.is_empty());
+    }
+
+    #[test]
+    fn delete_media_asset_inner_ignores_unrelated_markdown_without_type() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        std::fs::write(
+            vault.block_path("CleanShot 2026 05 05 at 19.17.00@2x"),
+            "---\nsaved_at: 2026-05-05T22:28:06Z\n---\n# Screenshot note\n\nNo matching media here.\n",
+        )
+        .unwrap();
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let result =
+            delete_media_asset_inner(&state, &conn, &vault, "photo.png".to_string()).unwrap();
+
+        assert_eq!(result.media_ref, "photo.png");
+        assert!(result.affected_slugs.is_empty());
+        assert!(!vault.root().join("photo.png").exists());
+        assert!(vault
+            .block_path("CleanShot 2026 05 05 at 19.17.00@2x")
+            .exists());
+    }
+
+    #[test]
+    fn rename_media_asset_inner_ignores_unrelated_markdown_without_type() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        std::fs::write(
+            vault.block_path("Partial Note"),
+            "---\nsaved_at: 2026-05-05T22:28:06Z\n---\n# Partial Note\n\nNo matching media here.\n",
+        )
+        .unwrap();
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        let result = rename_media_asset_inner(
+            &state,
+            &conn,
+            &vault,
+            "photo.png".to_string(),
+            "renamed".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.media_ref, "photo.png");
+        assert_eq!(result.new_media_ref.as_deref(), Some("renamed.png"));
+        assert!(result.affected_slugs.is_empty());
+        assert!(!vault.root().join("photo.png").exists());
+        assert_eq!(
+            std::fs::read(vault.root().join("renamed.png")).unwrap(),
+            b"image-bytes"
+        );
     }
 
     #[test]

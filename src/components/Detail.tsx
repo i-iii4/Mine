@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { useDraggable } from "@dnd-kit/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -407,6 +408,7 @@ export function Detail({
                 onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
                 onDeleteMediaAsset={onDeleteMediaAsset}
                 onOpenImagePreview={onOpenImagePreview}
+                onOpenRelatedNote={onOpenRelatedNote}
                 onTextSelectionDrop={onTextSelectionDrop}
               />
             </div>
@@ -691,6 +693,12 @@ const METADATA_VALUE_BASE_CLASSES = "block min-w-0 font-sans text-sm leading-4 t
 const RELATED_NOTE_ROW_SHELL_CLASSES =
   "w-full min-w-0 overflow-hidden rounded-1 border border-border bg-component-fill p-[3px] font-sans text-base";
 const RELATED_NOTE_ROW_CONTENT_CLASSES = "flex h-8 w-full min-w-0 items-center gap-2 overflow-hidden";
+const RELATED_NOTE_ROW_ESTIMATED_HEIGHT_PX = 40;
+const RELATED_NOTE_ROW_GAP_PX = 4;
+const DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT = 5;
+const DELETE_MEDIA_CONNECTED_CARDS_MAX_HEIGHT_PX =
+  DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT * RELATED_NOTE_ROW_ESTIMATED_HEIGHT_PX
+  + (DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT - 1) * RELATED_NOTE_ROW_GAP_PX;
 
 type MetadataValueMode = "truncate" | "wrap";
 
@@ -862,16 +870,20 @@ function DetailActionRow({
 }
 
 function RelatedNotesSection({
+  label = "Related notes",
   relatedNotes,
   relatedNoteBlocks,
+  fallbackLabels,
   resolvedThumbsRoot,
   onOpenRelatedNote,
   relatedNoteButtonRefs,
   onRelatedNotePreviewEnter,
   onRelatedNotePreviewLeave,
 }: {
+  label?: string | null;
   relatedNotes: string[];
   relatedNoteBlocks: Map<string, IndexedBlock | null> | null;
+  fallbackLabels?: Map<string, string>;
   resolvedThumbsRoot: string;
   onOpenRelatedNote: (slug: string) => void;
   relatedNoteButtonRefs: { current: Map<string, HTMLButtonElement> };
@@ -880,13 +892,15 @@ function RelatedNotesSection({
 }) {
   return (
     <section className="flex flex-col gap-1" data-related-notes-block>
-      <div className={METADATA_LABEL_CLASSES}>Related notes</div>
+      {label !== null && <div className={METADATA_LABEL_CLASSES}>{label}</div>}
       <div className="flex min-w-0 flex-col gap-1" data-related-notes-list>
         {relatedNotes.map((slug, index) => {
           const baseSlug = baseRelatedNoteSlug(slug);
           const rowKey = `${index}:${slug}`;
           const relatedBlock = relatedNoteBlocks?.get(baseSlug) ?? null;
-          const rowLabel = relatedBlock ? getFallbackLabel(relatedBlock) : baseSlug;
+          const rowLabel = relatedBlock
+            ? getFallbackLabel(relatedBlock)
+            : fallbackLabels?.get(baseSlug) ?? baseSlug;
 
           if (!relatedBlock) {
             return (
@@ -907,7 +921,14 @@ function RelatedNotesSection({
             <button
               key={rowKey}
               type="button"
-              onClick={() => onOpenRelatedNote(baseSlug)}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onOpenRelatedNote(baseSlug);
+              }}
               className={cn(
                 RELATED_NOTE_ROW_SHELL_CLASSES,
                 "cursor-pointer text-left text-muted-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
@@ -1048,6 +1069,7 @@ function BlockContent({
   onRemoveMediaAssetFromCard,
   onDeleteMediaAsset,
   onOpenImagePreview,
+  onOpenRelatedNote,
   onTextSelectionDrop,
 }: {
   block: LightBlock | IndexedBlock;
@@ -1063,6 +1085,7 @@ function BlockContent({
   onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
   onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
   onOpenImagePreview: (preview: ImagePreviewRequest) => void;
+  onOpenRelatedNote: (slug: string) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
@@ -1113,6 +1136,7 @@ function BlockContent({
             onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
             onDeleteMediaAsset={onDeleteMediaAsset}
             onOpenImagePreview={onOpenImagePreview}
+            onOpenRelatedNote={onOpenRelatedNote}
             onTextSelectionDrop={onTextSelectionDrop}
           />
         </div>
@@ -1139,6 +1163,7 @@ function BlockContent({
               onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
               onDeleteMediaAsset={onDeleteMediaAsset}
               onOpenImagePreview={onOpenImagePreview}
+              onOpenRelatedNote={onOpenRelatedNote}
               onTextSelectionDrop={onTextSelectionDrop}
             />
           </div>
@@ -1175,6 +1200,7 @@ function BlockContent({
               onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
               onDeleteMediaAsset={onDeleteMediaAsset}
               onOpenImagePreview={onOpenImagePreview}
+              onOpenRelatedNote={onOpenRelatedNote}
               imageSrc={src}
               fullSizeImageSrc={src}
             >
@@ -1246,6 +1272,7 @@ function BlockContent({
                   onRenameMediaAsset={onRenameMediaAsset}
                   onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
                   onDeleteMediaAsset={onDeleteMediaAsset}
+                  onOpenRelatedNote={onOpenRelatedNote}
                   className="w-full"
                 >
                   <iframe
@@ -1267,6 +1294,7 @@ function BlockContent({
                   onRenameMediaAsset={onRenameMediaAsset}
                   onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
                   onDeleteMediaAsset={onDeleteMediaAsset}
+                  onOpenRelatedNote={onOpenRelatedNote}
                 >
                   <video controls className="block max-h-[85vh] max-w-full" draggable={false}>
                     <source src={localSrc} />
@@ -1294,6 +1322,7 @@ function BlockContent({
                   onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
                   onDeleteMediaAsset={onDeleteMediaAsset}
                   onOpenImagePreview={onOpenImagePreview}
+                  onOpenRelatedNote={onOpenRelatedNote}
                 />
               </div>
             )}
@@ -1332,6 +1361,7 @@ function MediaAssetActionFrame({
   onRenameMediaAsset,
   onRemoveMediaAssetFromCard,
   onDeleteMediaAsset,
+  onOpenRelatedNote,
   className,
   children,
 }: {
@@ -1348,6 +1378,7 @@ function MediaAssetActionFrame({
   onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
   onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
   onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
+  onOpenRelatedNote: (slug: string) => void;
   className?: string;
   children: ReactNode;
 }) {
@@ -1467,6 +1498,7 @@ function MediaAssetActionFrame({
           onRenameMediaAsset={onRenameMediaAsset}
           onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
           onDeleteMediaAsset={onDeleteMediaAsset}
+          onOpenRelatedNote={onOpenRelatedNote}
           open={menuOpen}
           onOpenChange={setMenuOpen}
         />
@@ -1485,6 +1517,7 @@ function MediaAssetMoreMenu({
   onRenameMediaAsset,
   onRemoveMediaAssetFromCard,
   onDeleteMediaAsset,
+  onOpenRelatedNote,
   open,
   onOpenChange,
   className,
@@ -1498,6 +1531,7 @@ function MediaAssetMoreMenu({
   onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
   onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
   onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
+  onOpenRelatedNote: (slug: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   className?: string;
@@ -1612,6 +1646,11 @@ function MediaAssetMoreMenu({
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         onDelete={onDeleteMediaAsset}
+        onOpenRelatedNote={(slug) => {
+          setDeleteOpen(false);
+          onOpenChange(false);
+          onOpenRelatedNote(slug);
+        }}
       />
     </>
   );
@@ -1885,12 +1924,14 @@ function DeleteMediaAssetDialog({
   open,
   onOpenChange,
   onDelete,
+  onOpenRelatedNote,
 }: {
   asset: MediaAssetRef;
   vaultPath: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onDelete: (asset: MediaAssetRef) => Promise<void>;
+  onOpenRelatedNote: (slug: string) => void;
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1899,6 +1940,7 @@ function DeleteMediaAssetDialog({
   const [planError, setPlanError] = useState<string | null>(null);
   const previewSrc = vaultPath ? mediaUrl(vaultPath, asset.media_ref) : "";
   const references = plan?.referenced_by ?? [];
+  const resolvedThumbsRoot = vaultPath ? legacyThumbsRoot(vaultPath) : "";
 
   useEffect(() => {
     if (!open) {
@@ -1948,7 +1990,7 @@ function DeleteMediaAssetDialog({
             This deletes the local media file and removes its references from every listed card. Markdown cards stay in the vault.
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="grid gap-3 sm:grid-cols-[128px_minmax(0,1fr)]">
+        <div className="flex">
           <div className="flex h-24 w-32 items-center justify-center overflow-hidden rounded-1 border border-border bg-component-fill">
             {asset.media_kind === "image" ? (
               <img
@@ -1969,43 +2011,32 @@ function DeleteMediaAssetDialog({
               </span>
             )}
           </div>
-          <div className="min-w-0 space-y-2">
-            <div className="break-all font-mono text-sm text-muted-foreground">
-              {plan?.media_ref ?? asset.media_ref}
-            </div>
-            <div className="text-sm text-muted-foreground">
-              {planLoading
-                ? "Checking references..."
-                : references.length === 1
-                  ? "1 card references this file."
-                  : `${references.length} cards reference this file.`}
-            </div>
-          </div>
         </div>
-        <div className="max-h-48 overflow-auto rounded-1 border border-border">
-          {planLoading ? (
-            <div className="px-3 py-2 text-sm text-muted-foreground">
-              Checking cards...
-            </div>
-          ) : references.length > 0 ? (
-            <ul className="divide-y divide-border">
-              {references.map((reference) => (
-                <li key={reference.slug} className="px-3 py-2">
-                  <div className="truncate text-sm">
-                    {mediaAssetReferenceTitle(reference)}
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                    <span className="font-mono">{reference.slug}</span>
-                    <span>{mediaAssetReferenceKindsLabel(reference.reference_kinds)}</span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="px-3 py-2 text-sm text-muted-foreground">
-              No cards currently reference this file.
-            </div>
-          )}
+        <div className="space-y-1">
+          <div className={METADATA_LABEL_CLASSES}>Connected cards</div>
+          <div
+            className="overflow-y-auto pr-1"
+            style={{ maxHeight: DELETE_MEDIA_CONNECTED_CARDS_MAX_HEIGHT_PX }}
+            data-delete-media-connected-cards-scroll
+            data-visible-card-count={DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT}
+          >
+            {planLoading ? (
+              <div className="px-3 py-2 text-sm text-muted-foreground">
+                Checking cards...
+              </div>
+            ) : references.length > 0 ? (
+              <MediaAssetReferenceCards
+                references={references}
+                vaultPath={vaultPath}
+                thumbsRootPath={resolvedThumbsRoot}
+                onOpenRelatedNote={onOpenRelatedNote}
+              />
+            ) : (
+              <div className="px-3 py-2 text-sm text-muted-foreground">
+                No cards currently reference this file.
+              </div>
+            )}
+          </div>
         </div>
         {planError && <p className="text-sm text-destructive">{planError}</p>}
         {error && <p className="text-sm text-destructive">{error}</p>}
@@ -2038,6 +2069,177 @@ function DeleteMediaAssetDialog({
   );
 }
 
+function MediaAssetReferenceCards({
+  references,
+  vaultPath,
+  thumbsRootPath,
+  onOpenRelatedNote,
+}: {
+  references: DeleteMediaAssetPlan["referenced_by"];
+  vaultPath: string | null;
+  thumbsRootPath: string;
+  onOpenRelatedNote: (slug: string) => void;
+}) {
+  const relatedNoteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const hoverPreviewRef = useRef<HTMLDivElement | null>(null);
+  const hoverPreviewOpenTimerRef = useRef<number | null>(null);
+  const lastHoverPreviewOpenedAtRef = useRef<number | null>(null);
+  const relatedNotes = useMemo(() => references.map((reference) => reference.slug), [references]);
+  const relatedNotesKey = relatedNotes.join("\u0000");
+  const fallbackLabels = useMemo(
+    () =>
+      new Map(
+        references.map((reference) => [
+          reference.slug,
+          mediaAssetReferenceTitle(reference),
+        ]),
+      ),
+    [references],
+  );
+  const [relatedNoteBlocks, setRelatedNoteBlocks] = useState<Map<string, IndexedBlock | null> | null>(null);
+  const [hoveredRelatedNote, setHoveredRelatedNote] = useState<HoveredRelatedNote | null>(null);
+  const [hoverPreviewPosition, setHoverPreviewPosition] = useState<HoverPreviewPosition | null>(null);
+
+  useEffect(() => {
+    if (relatedNotes.length === 0) {
+      setRelatedNoteBlocks(null);
+      return;
+    }
+    let cancelled = false;
+    setRelatedNoteBlocks(null);
+    void Promise.all(
+      relatedNotes.map(async (slug) => {
+        const baseSlug = baseRelatedNoteSlug(slug);
+        return { slug: baseSlug, block: await getBlock(baseSlug) };
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      setRelatedNoteBlocks(
+        new Map(results.map(({ slug, block }) => [slug, block])),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [relatedNotes, relatedNotesKey]);
+
+  const cancelHoverPreviewOpen = useCallback(() => {
+    if (hoverPreviewOpenTimerRef.current == null) return;
+    window.clearTimeout(hoverPreviewOpenTimerRef.current);
+    hoverPreviewOpenTimerRef.current = null;
+  }, []);
+
+  const showRelatedNotePreview = useCallback((note: HoveredRelatedNote) => {
+    lastHoverPreviewOpenedAtRef.current = Date.now();
+    setHoveredRelatedNote(note);
+  }, []);
+
+  const openRelatedNotePreview = useCallback((note: HoveredRelatedNote) => {
+    cancelHoverPreviewOpen();
+    const delay = getHoverPreviewOpenDelay(lastHoverPreviewOpenedAtRef.current);
+    if (delay <= 0) {
+      showRelatedNotePreview(note);
+      return;
+    }
+    setHoveredRelatedNote(null);
+    hoverPreviewOpenTimerRef.current = window.setTimeout(() => {
+      hoverPreviewOpenTimerRef.current = null;
+      showRelatedNotePreview(note);
+    }, delay);
+  }, [cancelHoverPreviewOpen, showRelatedNotePreview]);
+
+  const requestCloseRelatedNotePreview = useCallback(() => {
+    cancelHoverPreviewOpen();
+    setHoveredRelatedNote(null);
+  }, [cancelHoverPreviewOpen]);
+
+  useEffect(() => {
+    return () => {
+      cancelHoverPreviewOpen();
+    };
+  }, [cancelHoverPreviewOpen]);
+
+  const hoveredRelatedNoteBlock = hoveredRelatedNote
+    ? relatedNoteBlocks?.get(hoveredRelatedNote.slug) ?? null
+    : null;
+
+  useEffect(() => {
+    if (!hoveredRelatedNote) {
+      setHoverPreviewPosition(null);
+      return;
+    }
+    const button = relatedNoteButtonRefs.current.get(hoveredRelatedNote.rowKey);
+    if (!button) {
+      setHoverPreviewPosition(null);
+      return;
+    }
+
+    const triggerRect = button.getBoundingClientRect();
+    const previewHeight =
+      hoverPreviewRef.current?.getBoundingClientRect().height ??
+      HOVER_CARD_FALLBACK_HEIGHT;
+    setHoverPreviewPosition(computeHoverPreviewPosition(triggerRect, previewHeight));
+  }, [hoveredRelatedNote, hoveredRelatedNoteBlock]);
+
+  useEffect(() => {
+    if (!hoveredRelatedNote || !hoverPreviewPosition || !hoverPreviewRef.current) {
+      return;
+    }
+    const button = relatedNoteButtonRefs.current.get(hoveredRelatedNote.rowKey);
+    if (!button) return;
+
+    const triggerRect = button.getBoundingClientRect();
+    const previewHeight = hoverPreviewRef.current.getBoundingClientRect().height;
+    const nextPosition = computeHoverPreviewPosition(triggerRect, previewHeight);
+    if (
+      Math.abs(nextPosition.top - hoverPreviewPosition.top) > 1 ||
+      Math.abs(nextPosition.left - hoverPreviewPosition.left) > 1
+    ) {
+      setHoverPreviewPosition(nextPosition);
+    }
+  }, [hoveredRelatedNote, hoverPreviewPosition, hoveredRelatedNoteBlock]);
+
+  const hoverPreview =
+    vaultPath && hoverPreviewPosition && hoveredRelatedNoteBlock ? (
+      <div
+        ref={hoverPreviewRef}
+        className="pointer-events-none fixed z-50"
+        style={{
+          top: hoverPreviewPosition.top,
+          left: hoverPreviewPosition.left,
+          width: HOVER_CARD_WIDTH,
+        }}
+        data-related-note-hover-preview
+      >
+        <ReadOnlyCardPreview
+          block={hoveredRelatedNoteBlock}
+          vaultPath={vaultPath}
+          thumbsRootPath={thumbsRootPath}
+          width={HOVER_CARD_WIDTH}
+        />
+      </div>
+    ) : null;
+
+  return (
+    <>
+      {hoverPreview && typeof document !== "undefined"
+        ? createPortal(hoverPreview, document.body)
+        : null}
+      <RelatedNotesSection
+        label={null}
+        relatedNotes={relatedNotes}
+        relatedNoteBlocks={relatedNoteBlocks}
+        fallbackLabels={fallbackLabels}
+        resolvedThumbsRoot={thumbsRootPath}
+        onOpenRelatedNote={onOpenRelatedNote}
+        relatedNoteButtonRefs={relatedNoteButtonRefs}
+        onRelatedNotePreviewEnter={openRelatedNotePreview}
+        onRelatedNotePreviewLeave={requestCloseRelatedNotePreview}
+      />
+    </>
+  );
+}
+
 // ─── Markdown renderer for article body ─────────────────────────────────────
 
 function ArticleBody({
@@ -2056,6 +2258,7 @@ function ArticleBody({
   onRemoveMediaAssetFromCard,
   onDeleteMediaAsset,
   onOpenImagePreview,
+  onOpenRelatedNote,
   onTextSelectionDrop,
 }: {
   body: string;
@@ -2073,6 +2276,7 @@ function ArticleBody({
   onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
   onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
   onOpenImagePreview: (preview: ImagePreviewRequest) => void;
+  onOpenRelatedNote: (slug: string) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }) {
   const articleRef = useRef<HTMLDivElement | null>(null);
@@ -2287,6 +2491,7 @@ function ArticleBody({
               onRenameMediaAsset={onRenameMediaAsset}
               onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
               onDeleteMediaAsset={onDeleteMediaAsset}
+              onOpenRelatedNote={onOpenRelatedNote}
             >
               <VideoFromBlob
                 src={originalSrc}
@@ -2320,6 +2525,7 @@ function ArticleBody({
             onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
             onDeleteMediaAsset={onDeleteMediaAsset}
             onOpenImagePreview={onOpenImagePreview}
+            onOpenRelatedNote={onOpenRelatedNote}
           >
             <DetailImage
               src={originalSrc}
@@ -2551,22 +2757,6 @@ function collectionTitle(tag: string): string {
 
 function mediaAssetReferenceTitle(reference: DeleteMediaAssetPlan["referenced_by"][number]): string {
   return reference.display_title ?? reference.title ?? reference.fallback_label ?? reference.slug;
-}
-
-function mediaAssetReferenceKindsLabel(referenceKinds: string[]): string {
-  const labels = referenceKinds.map((kind) => {
-    switch (kind) {
-      case "frontmatter_file":
-        return "Primary media";
-      case "frontmatter_thumbnail":
-        return "Thumbnail";
-      case "body_embed":
-        return "Inline media";
-      default:
-        return kind;
-    }
-  });
-  return labels.join(", ");
 }
 
 function mediaAssetErrorMessage(error: unknown): string {

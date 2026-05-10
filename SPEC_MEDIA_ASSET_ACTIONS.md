@@ -295,14 +295,27 @@ unsupported.
 Conflicts are explicit errors. The command must not silently suffix, overwrite,
 or rewrite the user's requested name without confirmation.
 
+Media-action scans must use the same Obsidian-compatible Markdown read path as
+indexing:
+
+- Markdown files without `type` are valid scan inputs and must not block
+  `prepare_delete_media_asset`, `delete_media_asset`, or `rename_media_asset`.
+- Unrelated Markdown files must be ignored without rewriting.
+- Only files with matched media references are rewritten.
+
 ### Delete media
 
 1. User chooses `Delete` from a media menu.
 2. UI calls `prepare_delete_media_asset(media_ref)`.
 3. UI confirmation shows:
    - thumbnail/preview of the exact media file that will be deleted;
-   - normalized media path;
-   - every card/note that currently references that file, with reference kind.
+   - `Connected cards` subsection title above the reference list;
+   - every card/note that currently references that file, rendered with the
+     same clickable related-note row component used in the Detail right sidebar.
+     Rows keep the same thumbnail, hover preview, and click-to-open behavior.
+   - reference kind is not shown as custom text in the primary confirmation UI.
+   - the list shows up to 5 connected-card rows without scrolling; additional
+     rows scroll inside the list area.
 4. Backend removes all parseable references to that file:
    - `frontmatter.file`;
    - matching `thumbnail`;

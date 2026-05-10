@@ -1,5 +1,92 @@
 # Devlog
 
+## 10.05.2026 [change] — Feed card visual hover and image preview contrast
+
+### Context
+
+- Article cards in the dark feed needed a slightly more readable surface
+  without changing the light theme.
+- Card hover should brighten the existing card border, not add a second outline
+  or animated decorative layer.
+- Expanded image preview needed stronger primary/secondary separation and a
+  collapse icon that matches the expand affordance.
+
+### Completed
+
+- Added `feed-article-card` to runtime `article` feed cards only.
+- Applied `background: var(--accent)` to `feed-article-card` only in dark theme
+  (`data-theme="dark"` or system dark unless `data-theme="light"`).
+- Kept light theme article cards on the default `bg-background`.
+- Changed feed card hover to recolor the existing 1px border with
+  `hover:border-component-fill-hover`.
+- Removed `transition-colors` from card hover; state changes are immediate.
+- Strengthened expanded image preview separation:
+  `rgb(0 0 0 / 0.56)`, `saturate(0.55)`, foreground image shadow and thin
+  outline.
+- Replaced the preview close `X` with the inward-arrows `Minimize2` collapse
+  icon and `Collapse image preview` accessible label.
+- Updated [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) and
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md) with the finalized visual contracts.
+
+### Verification
+
+- `bun run test:frontend -- Card`
+- `bun run test:frontend -- ImagePreviewOverlay`
+- `bun run build`
+- `cargo tauri build --bundles app`
+
+## 10.05.2026 [change] — Delete media confirmation uses related-note rows
+
+### Context
+
+- The delete media confirmation showed a redundant filename/count summary and a
+  custom text list of referenced cards.
+- Referenced cards should behave like Related Notes in the Detail sidebar:
+  same row component, hover preview, and click-to-open.
+
+### Completed
+
+- Removed the right-side media filename/count summary from the delete media
+  confirmation.
+- Added a `Connected cards` subsection title above referenced cards.
+- Reused the Related Notes row pattern for referenced cards in the confirmation.
+- Added hover preview and click-to-open behavior for referenced cards.
+- Kept reference-kind details out of the primary confirmation UI.
+- Limited the visible connected-card list to 5 rows; overflow scrolls inside
+  the list area.
+- Documented the confirmation contract in
+  [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md).
+
+### Verification
+
+- `bun run test:frontend -- Detail`
+
+## 10.05.2026 [fix] — Media delete accepts Obsidian-compatible Markdown
+
+### Context
+
+- `delete_media_asset` could fail while scanning the vault if any unrelated
+  Markdown file had frontmatter without `type`.
+- This violated the Obsidian compatibility contract: ordinary/partial Markdown
+  must be valid read input and must not block media actions.
+
+### Completed
+
+- Switched media-action scan paths for rename/delete/reference listing from
+  strict `parse_block` to permissive `parse_markdown_document`.
+- Kept write scope narrow: unrelated Markdown without a matching media
+  reference is ignored and not rewritten.
+- Added regression coverage for delete and rename with partial frontmatter
+  files that do not include `type`.
+- Documented the media-action scan contract in
+  [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md).
+
+### Verification
+
+- `cargo test -p mine commands::blocks::tests::prepare_delete_media_asset_inner_accepts_partial_frontmatter_without_type`
+- `cargo test -p mine commands::blocks::tests::delete_media_asset_inner_ignores_unrelated_markdown_without_type`
+- `cargo test -p mine commands::blocks::tests::rename_media_asset_inner_ignores_unrelated_markdown_without_type`
+
 ## 09.05.2026 [feature] — Image media click contract
 
 ### Context
@@ -15,9 +102,10 @@
   nested `Detail` dialog. It covers the body and bottom action bar with a
   readable secondary canvas scrim while leaving the app top bar visible and
   interactive.
-- Replaced the frosted/blurred secondary plane with `rgb(0 0 0 / 0.28)` and no
-  `backdrop-filter`: the underlying page remains readable as context, but is
-  visually lower-priority and non-interactive while the image preview is open.
+- Replaced the frosted/blurred secondary plane with a minimal secondary canvas:
+  `rgb(0 0 0 / 0.56)` and `backdrop-filter: saturate(0.55)` without blur. The
+  underlying page remains recognizable as context, but is visually
+  lower-priority and non-interactive while the image preview is open.
 - The viewer closes on background click and supports only the explicit zoom
   inputs: image click toggle, wheel/trackpad, and plus/minus. Wheel/trackpad
   zoom is twice as responsive as the previous preview implementation.
@@ -26,8 +114,8 @@
   React tree on every input event.
 - Replaced the standalone top-right close button with a bottom floating control
   island that matches the opened-card floating top chrome. The island contains
-  zoom out, current zoom, zoom in, Copy Media, and Close controls, appears on
-  pointer movement, and fades out after 3 seconds of inactivity.
+  zoom out, current zoom, zoom in, Copy Media, and Collapse controls, appears
+  on pointer movement, and fades out after 3 seconds of inactivity.
 - Clicking the foreground image toggles zoom between 100% and 150%; plus/minus
   and wheel/trackpad keep detailed zoom control. Wheel/click zoom is anchored at
   the current cursor position, and pointer drag pans the foreground image.

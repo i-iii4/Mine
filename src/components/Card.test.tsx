@@ -144,9 +144,12 @@ describe("Card", () => {
 
   it("enforces the minimum height needed for hover actions", () => {
     render(<Card block={block()} vaultPath={VAULT} onClick={vi.fn()} />);
-    expect(screen.getByRole("button")).toHaveStyle({
+    const card = screen.getByRole("button");
+    expect(card).toHaveStyle({
       minHeight: `${CARD_HOVER_ACTION_MIN_HEIGHT}px`,
     });
+    expect(card).toHaveClass("hover:border-component-fill-hover");
+    expect(card).not.toHaveClass("transition-colors");
   });
 
   // ── Image card ────────────────────────────────────────────────────────
@@ -162,6 +165,7 @@ describe("Card", () => {
       media_file: "sunset.jpg",
     });
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(screen.getByRole("button")).not.toHaveClass("feed-article-card");
     const img = screen.getByRole("img");
     expect(img).toHaveAttribute("src", expect.stringContaining("sunset.jpg"));
     expect(img).toHaveAttribute("draggable", "false");
@@ -267,6 +271,7 @@ describe("Card", () => {
       author: "Author Name",
     });
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(screen.getByRole("button")).toHaveClass("feed-article-card");
     expect(screen.getByText("My Article")).toBeInTheDocument();
     expect(
       screen.getByText("This is a long article body text for testing."),
