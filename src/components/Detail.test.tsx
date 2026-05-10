@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Detail } from "./Detail";
 import type { IndexedBlock } from "@/types";
-import { getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
+import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
@@ -92,12 +92,15 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
 }
 
 const getBlockMock = vi.mocked(getBlock);
+const copyMediaAssetToClipboardMock = vi.mocked(copyMediaAssetToClipboard);
 const prepareDeleteMediaAssetMock = vi.mocked(prepareDeleteMediaAsset);
 
 describe("Detail", () => {
   beforeEach(() => {
     getBlockMock.mockReset();
     getBlockMock.mockResolvedValue(null);
+    copyMediaAssetToClipboardMock.mockReset();
+    copyMediaAssetToClipboardMock.mockResolvedValue(undefined);
     prepareDeleteMediaAssetMock.mockReset();
     prepareDeleteMediaAssetMock.mockResolvedValue({
       media_ref: "photo.jpg",
@@ -1084,14 +1087,19 @@ describe("Detail", () => {
 
     const menu = container.querySelector("[data-detail-media-action-menu]");
     expect(menu).not.toBeNull();
-    expect(menu).toHaveClass("right-2", "top-2");
-    const trigger = menu!.querySelector("button");
+    expect(menu).toHaveClass(
+      "right-2",
+      "top-2",
+      "opacity-0",
+      "group-hover/detail-media:opacity-100",
+    );
+    const expandButton = menu!.querySelector("[data-detail-media-expand-button]");
+    expect(expandButton).toHaveAttribute("aria-label", "Expand image");
+    const trigger = menu!.querySelector("[data-detail-media-more-button]");
     expect(trigger).toHaveAttribute("data-variant", "default");
     expect(trigger).toHaveAttribute("data-size", "icon");
     expect(trigger).toHaveClass(
       "bg-component-fill",
-      "opacity-0",
-      "group-hover/detail-media:opacity-100",
       "hover:outline-component-fill-hover",
     );
 
@@ -1126,6 +1134,55 @@ describe("Detail", () => {
         "photo-renamed",
       );
     });
+  });
+
+  it("keeps image left click inert, delegates Expand to app-level preview, and opens the media menu on right click", async () => {
+    const onOpenImagePreview = vi.fn();
+    const b = block({
+      card_kind: "media",
+      block_type: "image",
+      title: "Photo",
+      url: null,
+      media_file: "photo.jpg",
+    });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenImagePreview={onOpenImagePreview}
+      />,
+    );
+
+    const image = container.querySelector("img");
+    expect(image).toHaveAttribute("src", "asset://localhost//tmp/test-vault/photo.jpg");
+
+    fireEvent.click(image!);
+    expect(onOpenImagePreview).not.toHaveBeenCalled();
+
+    const expandButton = container.querySelector("[data-detail-media-expand-button]");
+    expect(expandButton).toHaveAttribute("aria-label", "Expand image");
+    fireEvent.click(expandButton!);
+    expect(onOpenImagePreview).toHaveBeenCalledWith({
+      src: "asset://localhost//tmp/test-vault/photo.jpg",
+      mediaRef: "photo.jpg",
+    });
+    expect(screen.queryByRole("dialog", { name: "Image preview" })).not.toBeInTheDocument();
+
+    fireEvent.contextMenu(image!);
+    const dropdownMenu = await screen.findByRole("menu");
+    expect(within(dropdownMenu).getByText("Create Card")).toBeInTheDocument();
+    expect(within(dropdownMenu).getByText("Rename Media...")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Image preview" })).not.toBeInTheDocument();
   });
 
   it("shows delete media preview, affected cards, and deletes the media asset", async () => {
@@ -1177,7 +1234,7 @@ describe("Detail", () => {
       />,
     );
 
-    const trigger = container.querySelector("[data-detail-media-action-menu] button");
+    const trigger = container.querySelector("[data-detail-media-more-button]");
     fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
     fireEvent.click(trigger!);
 

@@ -217,6 +217,12 @@ body {
   transform: translateY(0) scale(1);
 }
 
+.image-preview-secondary-plane {
+  background: rgb(0 0 0 / 0.28);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .detail-top-bar-enter,
   .detail-top-bar-line-enter,

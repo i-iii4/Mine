@@ -119,6 +119,10 @@ import { ActionButton } from "@/components/ActionButton";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 import { DeleteBlockDialog } from "@/components/DeleteBlockDialog";
+import {
+  ImagePreviewOverlay,
+  type ImagePreviewRequest,
+} from "@/components/ImagePreviewOverlay";
 
 const Search = lazy(async () => {
   const mod = await import("@/components/Search");
@@ -321,6 +325,7 @@ export function AppWithVault({
   const [searchOpen, setSearchOpen] = useState(false);
   const [designSystemOpen, setDesignSystemOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
@@ -430,6 +435,10 @@ export function AppWithVault({
   const renderedLinkedTags = selectedBlock
     ? selectedBlockTags
     : (detailChromeClosing ? closingDetailTags : []);
+
+  useEffect(() => {
+    setImagePreview(null);
+  }, [selectedBlock?.slug]);
 
   const handleColumnCountChange = useCallback((n: number) => {
     gridColumnCountRef.current = n;
@@ -1932,6 +1941,7 @@ export function AppWithVault({
               onRenameMediaAsset={handleMediaAssetRename}
               onRemoveMediaAssetFromCard={handleMediaAssetRemoveFromCard}
               onDeleteMediaAsset={handleMediaAssetDelete}
+              onOpenImagePreview={setImagePreview}
               onOpenRelatedNote={handleOpenRelatedNote}
               onTextSelectionDrop={handleTextSelectionDrop}
               onTagsChanged={() => {
@@ -2038,6 +2048,10 @@ export function AppWithVault({
           }}
         />
       </Suspense>
+      <ImagePreviewOverlay
+        preview={imagePreview}
+        onClose={() => setImagePreview(null)}
+      />
     </div>{/* end flex-col */}
 
     <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>

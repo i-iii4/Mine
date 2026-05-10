@@ -166,6 +166,49 @@ collection`, card rename, or card delete.
 Video controls remain usable. The media-asset trigger occupies only the top
 right corner and does not place a full-surface overlay over the video.
 
+Image click contract:
+
+- left click on a local image surface does not open anything; it is reserved for
+  drag-and-drop initiation;
+- the top-right media controls include a standard `Expand` icon button for
+  fullscreen image preview;
+- fullscreen image preview is an app-level overlay, not a nested `Detail`
+  dialog and not a Radix portal;
+- the overlay is fixed to `top: 32px; bottom: 0`, covers the body and bottom
+  action bar with a readable secondary canvas scrim, and leaves the app top bar
+  outside the overlay and interactive;
+- the secondary canvas keeps the underlying page readable as context while
+  making it non-interactive and lower-priority: `background: rgb(0 0 0 / 0.28)`;
+- the overlay must not use `backdrop-filter` or blur, because blur destroys the
+  semantic readability of the secondary canvas;
+- the opened card top bar is covered by the overlay because it belongs to the
+  body/detail working area, not to the app shell;
+- the viewer does not show a standalone top-right close button;
+- viewer controls live in a bottom floating island that uses the same compact
+  floating chrome as the opened-card floating top bar;
+- the bottom island contains zoom out, current zoom label, zoom in, Copy Media,
+  and Close controls;
+- clicking outside the sharp foreground image closes the preview, while clicking
+  the image toggles zoom between 100% and 150%;
+- plus/minus buttons adjust preview scale in `0.2` increments; wheel/trackpad
+  input uses `0.0024` exponential sensitivity per delta unit;
+- wheel/trackpad zoom and image-click zoom are anchored at the current cursor
+  position, so the point under the cursor stays visually stable while scaling;
+- pointer drag on the foreground image pans the preview image; it must not
+  adjust preview scale and must not show a vertical resize cursor;
+- pan is bounded: drag must never move the image fully off screen; at least a
+  `48px` visible edge remains on each axis where the image can otherwise leave
+  the stage;
+- continuous zoom updates the image transform through a DOM ref and
+  `requestAnimationFrame`, not React state on every wheel/pointer event; React
+  state may update only low-frequency UI such as the numeric zoom label;
+- the bottom island appears on pointer movement and fades out after 3 seconds
+  of inactivity;
+- right click on a local image opens the same media-asset overflow menu as the
+  ellipsis trigger;
+- this image click contract does not apply to video, because video clicks belong
+  to playback controls.
+
 ## User Flows
 
 ### Create Card from primary media

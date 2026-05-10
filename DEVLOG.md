@@ -1,5 +1,51 @@
 # Devlog
 
+## 09.05.2026 [feature] — Image media click contract
+
+### Context
+
+- Local images already had a hover ellipsis menu, but the image surface itself
+  did not match the desired direct-manipulation contract.
+
+### Completed
+
+- Left click on a local image media asset is inert and reserved for drag-and-drop.
+- Added a top-right `Expand` icon button that opens fullscreen image preview.
+- Changed the fullscreen image preview to an app-level overlay rather than a
+  nested `Detail` dialog. It covers the body and bottom action bar with a
+  readable secondary canvas scrim while leaving the app top bar visible and
+  interactive.
+- Replaced the frosted/blurred secondary plane with `rgb(0 0 0 / 0.28)` and no
+  `backdrop-filter`: the underlying page remains readable as context, but is
+  visually lower-priority and non-interactive while the image preview is open.
+- The viewer closes on background click and supports only the explicit zoom
+  inputs: image click toggle, wheel/trackpad, and plus/minus. Wheel/trackpad
+  zoom is twice as responsive as the previous preview implementation.
+- Continuous zoom now writes the foreground image transform through a DOM ref
+  and `requestAnimationFrame`, so continuous zoom input does not rerender the
+  React tree on every input event.
+- Replaced the standalone top-right close button with a bottom floating control
+  island that matches the opened-card floating top chrome. The island contains
+  zoom out, current zoom, zoom in, Copy Media, and Close controls, appears on
+  pointer movement, and fades out after 3 seconds of inactivity.
+- Clicking the foreground image toggles zoom between 100% and 150%; plus/minus
+  and wheel/trackpad keep detailed zoom control. Wheel/click zoom is anchored at
+  the current cursor position, and pointer drag pans the foreground image.
+  Pan is bounded so at least a `48px` edge of the image remains visible on
+  screen. Pointer drag zoom and the vertical resize cursor are not part of the
+  contract.
+- Right click on a local image media asset opens the same media-asset overflow
+  menu as the ellipsis trigger.
+- Kept the behavior image-only so video clicks remain reserved for playback
+  controls.
+- Documented the click contract in [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md).
+
+### Verification
+
+- `bun run test:frontend -- ImagePreviewOverlay Detail`
+- `bun run build`
+- `cargo tauri build --bundles app`
+
 ## 09.05.2026 [fix] — Cyrillic text thumbnails use Geist
 
 ### Context

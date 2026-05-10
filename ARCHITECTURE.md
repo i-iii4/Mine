@@ -576,6 +576,9 @@ User hovers local media file rendered in Detail/body
     ▼
 Frontend: MediaAssetActionFrame builds MediaAssetRef
     │
+    ├──► Expand image: App-level ImagePreviewOverlay(media_ref, src)
+    │       └── fixed below top app bar, readable scrim over body + bottom bar, bounded RAF/ref pan+zoom
+    │
     ├──► Create Card / image drag: create_media_asset_card(media_ref, collection)
     │       └── always create a new empty-body media card, then optionally connect that card
     │

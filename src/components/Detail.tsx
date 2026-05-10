@@ -14,6 +14,7 @@ import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import {
   Copy,
+  Expand,
   ExternalLink,
   FolderOpen,
   GripVertical,
@@ -91,6 +92,7 @@ import { CardMoreMenu } from "./CardHoverMenu";
 import { ReadOnlyCardPreview } from "./Card";
 import { CollectionPicker } from "./CollectionPicker";
 import { MicroPreviewThumbnail, microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
+import type { ImagePreviewRequest } from "./ImagePreviewOverlay";
 
 // Layout constants — shared between top chrome, scroll layer, and metadata layer.
 const DETAIL_CANVAS_CLASSES = "mx-auto w-[calc(100%-4rem)] max-w-[70rem]";
@@ -126,6 +128,7 @@ interface DetailProps {
   onRenameMediaAsset?: (asset: MediaAssetRef, newStem: string) => Promise<void>;
   onRemoveMediaAssetFromCard?: (asset: MediaAssetRef) => Promise<void>;
   onDeleteMediaAsset?: (asset: MediaAssetRef) => Promise<void>;
+  onOpenImagePreview?: (preview: ImagePreviewRequest) => void;
   onOpenRelatedNote: (slug: string) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }
@@ -147,6 +150,7 @@ type HoveredRelatedNote = {
 const noopMediaAssetConnect = async (_asset: MediaAssetRef, _tag: string) => {};
 const noopMediaAssetRename = async (_asset: MediaAssetRef, _newStem: string) => {};
 const noopMediaAssetDelete = async (_asset: MediaAssetRef) => {};
+const noopOpenImagePreview = (_preview: ImagePreviewRequest) => {};
 
 export function Detail({
   block,
@@ -167,6 +171,7 @@ export function Detail({
   onRenameMediaAsset = noopMediaAssetRename,
   onRemoveMediaAssetFromCard = noopMediaAssetDelete,
   onDeleteMediaAsset = noopMediaAssetDelete,
+  onOpenImagePreview = noopOpenImagePreview,
   onOpenRelatedNote,
   onTextSelectionDrop,
 }: DetailProps) {
@@ -401,6 +406,7 @@ export function Detail({
                 onRenameMediaAsset={onRenameMediaAsset}
                 onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
                 onDeleteMediaAsset={onDeleteMediaAsset}
+                onOpenImagePreview={onOpenImagePreview}
                 onTextSelectionDrop={onTextSelectionDrop}
               />
             </div>
@@ -1041,6 +1047,7 @@ function BlockContent({
   onRenameMediaAsset,
   onRemoveMediaAssetFromCard,
   onDeleteMediaAsset,
+  onOpenImagePreview,
   onTextSelectionDrop,
 }: {
   block: LightBlock | IndexedBlock;
@@ -1055,6 +1062,7 @@ function BlockContent({
   onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
   onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
   onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
+  onOpenImagePreview: (preview: ImagePreviewRequest) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
@@ -1104,6 +1112,7 @@ function BlockContent({
             onRenameMediaAsset={onRenameMediaAsset}
             onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
             onDeleteMediaAsset={onDeleteMediaAsset}
+            onOpenImagePreview={onOpenImagePreview}
             onTextSelectionDrop={onTextSelectionDrop}
           />
         </div>
@@ -1129,6 +1138,7 @@ function BlockContent({
               onRenameMediaAsset={onRenameMediaAsset}
               onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
               onDeleteMediaAsset={onDeleteMediaAsset}
+              onOpenImagePreview={onOpenImagePreview}
               onTextSelectionDrop={onTextSelectionDrop}
             />
           </div>
@@ -1164,7 +1174,9 @@ function BlockContent({
               onRenameMediaAsset={onRenameMediaAsset}
               onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
               onDeleteMediaAsset={onDeleteMediaAsset}
+              onOpenImagePreview={onOpenImagePreview}
               imageSrc={src}
+              fullSizeImageSrc={src}
             >
               <img
                 src={src}
@@ -1281,6 +1293,7 @@ function BlockContent({
                   onRenameMediaAsset={onRenameMediaAsset}
                   onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
                   onDeleteMediaAsset={onDeleteMediaAsset}
+                  onOpenImagePreview={onOpenImagePreview}
                 />
               </div>
             )}
@@ -1312,6 +1325,8 @@ function MediaAssetActionFrame({
   currentTag,
   canDrag,
   imageSrc,
+  fullSizeImageSrc,
+  onOpenImagePreview = noopOpenImagePreview,
   onCreateMediaAssetCard,
   onCreateChannelAndMediaAssetCard,
   onRenameMediaAsset,
@@ -1326,6 +1341,8 @@ function MediaAssetActionFrame({
   currentTag?: string;
   canDrag: boolean;
   imageSrc?: string;
+  fullSizeImageSrc?: string;
+  onOpenImagePreview?: (preview: ImagePreviewRequest) => void;
   onCreateMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
   onCreateChannelAndMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
   onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
@@ -1356,6 +1373,8 @@ function MediaAssetActionFrame({
   const dragPointerListener = (dragListeners as {
     onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
   } | undefined)?.onPointerDown;
+  const canOpenImagePreview = asset?.media_kind === "image" && Boolean(fullSizeImageSrc);
+  const controlsVisible = menuOpen;
 
   if (!asset) {
     return (
@@ -1386,15 +1405,21 @@ function MediaAssetActionFrame({
       data-detail-inline-media-drag={canDrag ? "true" : undefined}
       data-media-asset-ref={asset.media_ref}
       onPointerDown={(event) => {
-        if (!canDrag) return;
+        if (!canDrag || event.button !== 0) return;
         dragPointerListener?.(event);
         event.preventDefault();
         window.getSelection()?.removeAllRanges();
       }}
       onMouseDown={(event) => {
-        if (canDrag) {
+        if (canDrag && event.button === 0) {
           event.preventDefault();
         }
+      }}
+      onContextMenu={(event) => {
+        if (!canOpenImagePreview) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setMenuOpen(true);
       }}
       onDragStart={(event) => {
         if (canDrag) {
@@ -1404,11 +1429,34 @@ function MediaAssetActionFrame({
     >
       {children}
       <div
-        className="absolute right-2 top-2 z-10"
+        className={cn(
+          "absolute right-2 top-2 z-10 flex gap-1 transition-opacity duration-[160ms]",
+          controlsVisible
+            ? "opacity-100"
+            : "pointer-events-none opacity-0 group-hover/detail-media:pointer-events-auto group-hover/detail-media:opacity-100 group-focus-within/detail-media:pointer-events-auto group-focus-within/detail-media:opacity-100",
+        )}
         data-detail-media-action-menu
         onClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
+        onContextMenu={(event) => event.stopPropagation()}
       >
+        {canOpenImagePreview && fullSizeImageSrc && (
+          <Button
+            type="button"
+            variant="default"
+            size="icon"
+            aria-label="Expand image"
+            data-detail-media-expand-button
+            onClick={() => {
+              onOpenImagePreview({
+                src: fullSizeImageSrc,
+                mediaRef: asset.media_ref,
+              });
+            }}
+          >
+            <Expand className="size-4" />
+          </Button>
+        )}
         <MediaAssetMoreMenu
           asset={asset}
           vaultPath={vaultPath}
@@ -1419,13 +1467,8 @@ function MediaAssetActionFrame({
           onRenameMediaAsset={onRenameMediaAsset}
           onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
           onDeleteMediaAsset={onDeleteMediaAsset}
+          open={menuOpen}
           onOpenChange={setMenuOpen}
-          className={cn(
-            "transition-opacity duration-[160ms]",
-            menuOpen
-              ? "opacity-100"
-              : "pointer-events-none opacity-0 group-hover/detail-media:pointer-events-auto group-hover/detail-media:opacity-100 group-focus-within/detail-media:pointer-events-auto group-focus-within/detail-media:opacity-100",
-          )}
         />
       </div>
     </div>
@@ -1442,6 +1485,7 @@ function MediaAssetMoreMenu({
   onRenameMediaAsset,
   onRemoveMediaAssetFromCard,
   onDeleteMediaAsset,
+  open,
   onOpenChange,
   className,
 }: {
@@ -1454,10 +1498,10 @@ function MediaAssetMoreMenu({
   onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
   onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
   onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
+  open: boolean;
   onOpenChange: (open: boolean) => void;
   className?: string;
 }) {
-  const [menuRootOpen, setMenuRootOpen] = useState(false);
   const [connectSubmenuOpen, setConnectSubmenuOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
@@ -1465,7 +1509,6 @@ function MediaAssetMoreMenu({
   const [actionError, setActionError] = useState<string | null>(null);
   const mediaPath = mediaAbsolutePath(vaultPath, asset.media_ref);
   const updateRootOpen = useCallback((open: boolean) => {
-    setMenuRootOpen(open);
     if (!open) {
       setConnectSubmenuOpen(false);
     }
@@ -1474,9 +1517,15 @@ function MediaAssetMoreMenu({
 
   return (
     <>
-      <DropdownMenu open={menuRootOpen} onOpenChange={updateRootOpen} modal={false}>
+      <DropdownMenu open={open} onOpenChange={updateRootOpen} modal={false}>
         <DropdownMenuTrigger asChild>
-          <Button variant="default" size="icon" className={className}>
+          <Button
+            variant="default"
+            size="icon"
+            className={className}
+            aria-label="Media actions"
+            data-detail-media-more-button
+          >
             <MoreHorizontal className="size-4" />
           </Button>
         </DropdownMenuTrigger>
@@ -2006,6 +2055,7 @@ function ArticleBody({
   onRenameMediaAsset,
   onRemoveMediaAssetFromCard,
   onDeleteMediaAsset,
+  onOpenImagePreview,
   onTextSelectionDrop,
 }: {
   body: string;
@@ -2022,6 +2072,7 @@ function ArticleBody({
   onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
   onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
   onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
+  onOpenImagePreview: (preview: ImagePreviewRequest) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
 }) {
   const articleRef = useRef<HTMLDivElement | null>(null);
@@ -2262,11 +2313,13 @@ function ArticleBody({
             currentTag={currentTag}
             canDrag
             imageSrc={previewSrc ?? originalSrc}
+            fullSizeImageSrc={originalSrc}
             onCreateMediaAssetCard={onCreateMediaAssetCard}
             onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
             onRenameMediaAsset={onRenameMediaAsset}
             onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
             onDeleteMediaAsset={onDeleteMediaAsset}
+            onOpenImagePreview={onOpenImagePreview}
           >
             <DetailImage
               src={originalSrc}
@@ -2294,6 +2347,7 @@ function ArticleBody({
       onCreateMediaAssetCard,
       onCreateChannelAndMediaAssetCard,
       onDeleteMediaAsset,
+      onOpenImagePreview,
       onRemoveMediaAssetFromCard,
       onRenameMediaAsset,
       previewManifest,
@@ -2647,7 +2701,7 @@ function shouldIgnoreDetailEscape(event: KeyboardEvent): boolean {
     return true;
   }
   return !!target.closest(
-    "[data-radix-popper-content-wrapper], [role='menu'], [role='listbox']",
+    "[data-image-preview-overlay], [data-radix-popper-content-wrapper], [role='menu'], [role='listbox']",
   );
 }
 
