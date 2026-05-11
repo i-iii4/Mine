@@ -162,7 +162,7 @@ typography must stay inside the 12/14/18px design-system scale.
 |---|---|---|---|---|
 | Кнопка default/destructive | Обводка 1px inset | `--component-fill-hover` | `--component-fill-hover` | `hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover` |
 | Кнопка ghost/link | Цвет текста | #333 → #000 | #E4E4E4 → #FFF | `hover:text-hover-foreground` |
-| Карточка | Цвет существующей 1px рамки | `--component-fill-hover` | `--component-fill-hover` | `hover:border-component-fill-hover` |
+| Карточка | Frame не меняется | — | — | Hover actions only |
 
 ### Focus
 
@@ -682,7 +682,7 @@ Masonry с round-robin распределением по колонкам. Gap: 
 
 Паддинги сетки: 32px по бокам (при развёрнутом сайдбаре), 72px (при свёрнутом — компенсация ширины).
 
-Карточки: `border border-border`, без скругления (`rounded-0`). Обводка = +1 уровень к фону. Hover не добавляет вторую линию, тень, glow или inset overlay: меняется только цвет существующей 1px рамки на `--component-fill-hover` через `hover:border-component-fill-hover`. Состояние мгновенное, без transition.
+Карточки: `border border-border`, без скругления (`rounded-0`). Обводка = +1 уровень к фону. Hover не меняет frame карточки: без смены цвета рамки, второй линии, тени, glow, inset overlay или transition. Hover-affordance карточки — только action controls; keyboard/focused state использует `ring-2 ring-ring`.
 
 Article-карточки в ленте используют дополнительную surface-заливку только в тёмной теме: `feed-article-card` применяет `background: var(--accent)` при `data-theme="dark"` или системной dark theme, если не выбран `data-theme="light"`. В светлой теме article-карточка остаётся на стандартном `bg-background`.
 

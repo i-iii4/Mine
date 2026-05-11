@@ -1,5 +1,21 @@
 # Devlog
 
+## 10.05.2026 [change] — Remove feed card hover border
+
+### Context
+
+- Hover border on feed cards added visual noise in the dense masonry grid.
+- Card interactivity is already communicated by cursor, hover actions, and
+  keyboard focus ring.
+
+### Completed
+
+- Removed `hover:border-component-fill-hover` from the feed card frame.
+- Kept the dark-only article card surface background unchanged.
+- Updated [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) and
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md): feed card hover no longer changes the
+  frame; hover affordance is limited to action controls.
+
 ## 10.05.2026 [change] — Feed card visual hover and image preview contrast
 
 ### Context

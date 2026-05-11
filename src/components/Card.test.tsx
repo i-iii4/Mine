@@ -148,7 +148,7 @@ describe("Card", () => {
     expect(card).toHaveStyle({
       minHeight: `${CARD_HOVER_ACTION_MIN_HEIGHT}px`,
     });
-    expect(card).toHaveClass("hover:border-component-fill-hover");
+    expect(card).not.toHaveClass("hover:border-component-fill-hover");
     expect(card).not.toHaveClass("transition-colors");
   });
 

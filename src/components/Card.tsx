@@ -115,7 +115,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
-        "h-full cursor-pointer hover:border-component-fill-hover",
+        "h-full cursor-pointer",
         isArticleFeedCard && "feed-article-card",
         isDragging && "opacity-30",
         isFocused && "ring-2 ring-ring",

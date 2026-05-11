@@ -482,12 +482,13 @@ Thumbnail отображается через `convertFileSrc(vaultPath + "/.are
 Медиафайлы (для media-карточек без thumbnail): `convertFileSrc(vaultPath + "/" + media_file)`.
 
 Feed card frame is a persistent `border border-border bg-background` surface.
-On hover the existing 1px border changes color to `component-fill-hover`
-through `hover:border-component-fill-hover`; no outline, inset border, shadow,
-glow, transition, or extra overlay is added. Article feed cards additionally
-get `feed-article-card`; that class applies `background: var(--accent)` only
-in dark theme (`data-theme="dark"` or system dark unless `data-theme="light"`).
-Light theme article cards stay on the default card background.
+Hover does not change the card frame: no border recolor, outline, inset border,
+shadow, glow, transition, or extra overlay. The feed hover affordance is the
+card action controls; keyboard/focused navigation continues to use
+`ring-2 ring-ring`. Article feed cards additionally get `feed-article-card`;
+that class applies `background: var(--accent)` only in dark theme
+(`data-theme="dark"` or system dark unless `data-theme="light"`). Light theme
+article cards stay on the default card background.
 
 Article inline media renders from backend-derived paths. For bare Obsidian
 embeds such as `![[01.jpg]]`, Detail first asks `preview_manifest.tiles` for a
