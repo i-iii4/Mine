@@ -14,6 +14,7 @@ import {
   type Ref,
 } from "react";
 import { NavLink, useLocation } from "react-router";
+import { useDndContext } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Pencil, Trash2 } from "lucide-react";
@@ -213,6 +214,7 @@ export function Sidebar({
   const [sidebarRowFocusMode, setSidebarRowFocusMode] = useState(false);
   const [sidebarRowSwitching, setSidebarRowSwitching] = useState(false);
   const location = useLocation();
+  const { over } = useDndContext();
 
   // Auto-scroll sidebar to the active channel (e.g. after Opt+Cmd+Arrow)
   useEffect(() => {
@@ -242,10 +244,12 @@ export function Sidebar({
     : orderedTags;
   const orderedRowKeys = buildSidebarRowOrder(visibleTags);
   const activePreviewRowKey = hoveredPreview?.rowKey ?? null;
-  const effectiveSidebarRowFocusKey = sidebarRowFocusMode
+  const overId = isDropDragging && over?.id != null ? String(over.id) : null;
+  const dropOverRowKey = overId?.startsWith("tag:") ? overId : null;
+  const effectiveSidebarRowFocusKey = dropOverRowKey ?? (sidebarRowFocusMode
     ? sidebarRowFocusKey
-    : activePreviewRowKey;
-  const hasSidebarRowFocusMode = sidebarRowFocusMode || activePreviewRowKey !== null;
+    : activePreviewRowKey);
+  const hasSidebarRowFocusMode = dropOverRowKey !== null || sidebarRowFocusMode || activePreviewRowKey !== null;
   const seamAccentKeys = createSidebarSeamAccentSet(
     orderedRowKeys,
     effectiveSidebarRowFocusKey,
@@ -1210,7 +1214,6 @@ const TagNavItem = memo(function TagNavItem({
     transform,
     transition,
     isDragging,
-    isOver,
   } = useSortable({ id: `tag:${tag}` });
 
   // Disabled while dragging onto tags so dnd-kit's
@@ -1251,8 +1254,6 @@ const TagNavItem = memo(function TagNavItem({
             isSidebarRowSeamAccent={isSidebarRowSeamAccent}
             className={cn(
               isDragging && "opacity-30",
-              "data-[selected-text-over=true]:ring-2 data-[selected-text-over=true]:ring-ring data-[selected-text-over=true]:ring-inset",
-              isOver && !isDragging && isDropDragging && "ring-2 ring-ring ring-inset",
             )}
             style={style}
             nodeRef={setNodeRef}

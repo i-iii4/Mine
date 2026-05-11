@@ -11,6 +11,21 @@ import {
   HOVER_PREVIEW_WARM_WINDOW_MS,
 } from "@/lib/hoverPreviewTiming";
 
+const dndContextState = vi.hoisted(() => ({
+  over: null as { id: string } | null,
+}));
+
+vi.mock("@dnd-kit/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dnd-kit/core")>();
+  return {
+    ...actual,
+    useDndContext: () => ({
+      ...actual.useDndContext(),
+      over: dndContextState.over,
+    }),
+  };
+});
+
 function tag(name: string, count = 3): TagCount {
   return { tag: name, count };
 }
@@ -84,7 +99,10 @@ function previewBlock(slug: string, overrides: Partial<IndexedBlock> = {}): Inde
 }
 
 describe("Sidebar", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dndContextState.over = null;
+  });
   afterEach(() => vi.useRealTimers());
 
   it("renders Everything link with total block count", () => {
@@ -217,6 +235,25 @@ describe("Sidebar", () => {
     act(() => vi.advanceTimersByTime(1));
     expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
     expect(betaRow).not.toHaveAttribute("data-sidebar-row-focused");
+  });
+
+  it("uses the normal row hover state for card drag-over targets", () => {
+    dndContextState.over = { id: "tag:alpha" };
+    const { container } = renderSidebar({ ...defaultProps, width: 600, isDropDragging: true });
+
+    const nav = container.querySelector("[data-sidebar-scroll]")!;
+    const allRow = container.querySelector('[data-sidebar-row-key="all"]')!;
+    const alphaRow = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+    const betaRow = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
+
+    expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
+    expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
+    expect(allRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
+    expect(alphaRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
+    expect(betaRow).not.toHaveAttribute("data-sidebar-row-focused");
+    expect(alphaRow).not.toHaveClass("ring-2");
+    expect(alphaRow).not.toHaveClass("ring-ring");
+    expect(alphaRow).not.toHaveClass("ring-inset");
   });
 
   it("does not replace sidebar counts with a hover ellipsis menu", () => {

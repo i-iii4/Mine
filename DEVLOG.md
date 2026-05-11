@@ -1,5 +1,23 @@
 # Devlog
 
+## 11.05.2026 [change] — Reuse sidebar hover for drag-over channels
+
+### Context
+
+- Dragging a card into the left sidebar still showed a legacy cropped ring
+  highlight on channel rows.
+- The desired contract is one visual state for sidebar row hover and sidebar
+  drag-over.
+
+### Completed
+
+- Sidebar now reads the current `dnd-kit` `over` target and maps `tag:*`
+  drag-over to the existing row focus-mode.
+- Removed the sidebar channel `ring-2 ring-ring ring-inset` drag-over styling.
+- Updated [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) and
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md): sidebar channel drop targets reuse row
+  hover/focus visuals and do not use a separate ring.
+
 ## 10.05.2026 [change] — Remove feed card hover border
 
 ### Context

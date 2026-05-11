@@ -461,7 +461,8 @@ SubContent (подменю) — та же тень.
 | Состояние | Стиль | Утилита |
 |---|---|---|
 | Перетаскивание | Полупрозрачный элемент | `opacity-30` |
-| Цель (drop target) | Подсветка рамкой | `ring-2 ring-ring ring-inset` |
+| Sidebar channel drop target | Тот же row focus-mode, что обычный hover строки | `data-sidebar-row-focus-mode` + `data-sidebar-row-focused` |
+| Изолированная drop target surface | Подсветка рамкой | `ring-2 ring-ring ring-inset` |
 
 ### DropZone (внешний file drop)
 
@@ -612,6 +613,9 @@ Row focus-mode:
   другой строке.
 - Thumbnail strips и preview cards вообще не участвуют в этом state и
   остаются визуально неизменными.
+- Drag-over карточки, inline-media или выделенного фрагмента над channel row
+  использует тот же row focus-mode, что hover: без отдельной ring-рамки,
+  outline, inset или legacy drop-highlight.
 - Вход/выход из focus-mode анимируется `180ms cubic-bezier(0.22, 1, 0.36, 1)`.
   Переключение между строками внутри уже активного focus-mode идёт мгновенно
   через `data-sidebar-row-switching="true"` на один animation frame.
