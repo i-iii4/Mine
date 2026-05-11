@@ -290,7 +290,7 @@ describe("Sidebar", () => {
     });
 
     const nav = container.querySelector("[data-sidebar-scroll]");
-    expect(nav).toHaveClass("pt-20");
+    expect(nav).toHaveClass("pt-16");
     expect(container.querySelector("aside")?.firstElementChild).toBe(nav);
   });
 
@@ -654,7 +654,7 @@ describe("Sidebar", () => {
     ).toHaveClass("detail-top-bar-line-enter");
     expect(screen.getByText("Channels:")).toHaveClass("text-muted-foreground");
     expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("text-muted-foreground");
-    expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-12");
+    expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-8");
   });
 
   it("places the island link editor bar at the top with the floating surface", () => {
@@ -687,7 +687,7 @@ describe("Sidebar", () => {
     expect(container.querySelector("[data-sidebar-link-mode-control]")).not.toHaveClass("hover:bg-component-fill-hover");
     expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("text-muted-foreground");
     expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("hover:text-foreground");
-    expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-20");
+    expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-16");
     expect(container.querySelector("aside")?.lastElementChild).toBe(
       container.querySelector("[data-sidebar-link-mode-bar]"),
     );

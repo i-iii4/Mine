@@ -565,6 +565,7 @@ describe("Detail", () => {
       "grid",
       "grid-cols-[minmax(0,48rem)_20rem]",
       "gap-8",
+      "pt-16",
     );
     expect(rail?.parentElement).toHaveClass(
       "w-[calc(100%-4rem)]",
@@ -572,7 +573,33 @@ describe("Detail", () => {
       "grid",
       "grid-cols-[minmax(0,48rem)_20rem]",
       "gap-8",
+      "pt-16",
     );
+  });
+
+  it("compensates classic detail chrome so article and rail start at the 64px detail inset", () => {
+    const { container } = render(
+      <Detail
+        block={block({ body: "Article body" })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+        detailTopMenuMode="classic"
+      />,
+    );
+
+    const articleColumn = container.querySelector("[data-detail-article-column]");
+    const rail = container.querySelector("[data-metadata-scroll]");
+    expect(articleColumn?.parentElement).toHaveClass("pt-8");
+    expect(rail?.parentElement).toHaveClass("pt-8");
   });
 
   it("keeps related notes as a separate block below the metadata table", async () => {

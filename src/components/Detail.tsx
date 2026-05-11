@@ -98,8 +98,8 @@ import type { ImagePreviewRequest } from "./ImagePreviewOverlay";
 // Layout constants — shared between top chrome, scroll layer, and metadata layer.
 const DETAIL_CANVAS_CLASSES = "mx-auto w-[calc(100%-4rem)] max-w-[70rem]";
 const DETAIL_GRID_CLASSES = `${DETAIL_CANVAS_CLASSES} grid grid-cols-[minmax(0,48rem)_20rem] gap-8`;
-const CLASSIC_LAYOUT_CLASSES = `${DETAIL_GRID_CLASSES} pt-12`;
-const ISLANDS_LAYOUT_CLASSES = `${DETAIL_GRID_CLASSES} pt-20`;
+const CLASSIC_LAYOUT_CLASSES = `${DETAIL_GRID_CLASSES} pt-8`;
+const ISLANDS_LAYOUT_CLASSES = `${DETAIL_GRID_CLASSES} pt-16`;
 const DETAIL_BOTTOM_SAFE_SPACE_CLASS = "pb-20";
 const HOVER_CARD_WIDTH = 240;
 const HOVER_CARD_FALLBACK_HEIGHT = 320;

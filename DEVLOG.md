@@ -1,5 +1,39 @@
 # Devlog
 
+## 11.05.2026 [change] — Set main grid and sidebar top inset to 64px
+
+### Context
+
+- Main grid cards and the ordinary left sidebar list used an 80px top inset
+  below the top menu.
+- The desired main-screen spacing is now 64px.
+
+### Completed
+
+- Changed `GRID_TOP_INSET_PX` from `80` to `64`.
+- Changed the ordinary sidebar scroll inset from `pt-20` to `pt-16`.
+- Moved the grid layout indicator from `top-20` to `top-16`.
+- Updated [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) and
+  [SPEC_FRONTEND.md](SPEC_FRONTEND.md) with the 64px main-screen contract.
+
+## 11.05.2026 [change] — Align Detail expanded layout to 64px
+
+### Context
+
+- Expanded Detail still used the previous 80px visual top offset.
+- The left link-editor sidebar, article body and right metadata rail should
+  start on the same line as the new 64px spacing contract.
+
+### Completed
+
+- Changed Detail layout padding to `pt-8` in classic mode and `pt-16` in
+  island mode. Classic compensates the in-flow `h-8` top bar; island uses the
+  full 64px because its top pill is absolute.
+- Changed the sidebar link-editor list padding to the same compensated values:
+  classic `pt-8`, island `pt-16`.
+- Added tests for the shared Detail article/right-rail layout and updated
+  sidebar expectations.
+
 ## 11.05.2026 [change] — Reuse sidebar hover for drag-over channels
 
 ### Context

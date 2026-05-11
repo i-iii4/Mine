@@ -415,8 +415,8 @@ describe("Grid — no collapse after add / revisit", () => {
     const layoutEl = document.querySelector("[data-grid-layout]") as HTMLElement | null;
     expect(scrollEl).toBeTruthy();
     expect(layoutEl).toBeTruthy();
-    expect(scrollEl).not.toHaveClass("pt-20");
-    expect(layoutEl?.style.marginTop).toBe("80px");
+    expect(scrollEl).not.toHaveClass("pt-16");
+    expect(layoutEl?.style.marginTop).toBe("64px");
   });
 
   it("keeps the first paint skeleton-only until the current generation is measured", async () => {

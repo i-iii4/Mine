@@ -345,7 +345,9 @@ Geometry зависит от Detail top menu mode. В `classic` selector жив�
 полноширинном `h-8 bg-accent` баре с отдельной нижней hairline. В `island` selector живёт в
 абсолютной top-пуле (`top-4`, `bg-accent/80`, `backdrop-blur-sm`,
 `backdrop-saturate-150`, `rounded-1`, `border`) без фоновой защитной плашки;
-список сохраняет top inset `pt-20`.
+список сохраняет общий visual top inset `64px`: classic компенсирует `h-8`
+бар через `pt-8`, island использует `pt-16`, потому что floating bar не
+занимает layout space.
 
 Sidebar link-editor chrome использует тот же motion contract, что и Detail top
 chrome: мягкий `opacity + translateY` enter/exit (`220–280ms`,
@@ -424,7 +426,7 @@ and deliberately ignores `preview_manifest.tiles`. This keeps the left menu
 aligned with the thumbnail strip contract even when the full feed card is a
 multi-image composite/gallery. Related Notes keeps its richer hover preview.
 
-**Main sidebar top inset.** На главной sidebar использует `pt-20` прямо на
+**Main sidebar top inset.** На главной sidebar использует `pt-16` прямо на
 `data-sidebar-scroll`. Не создавать отдельную пустую header surface для
 опциональных баннеров: если banner component возвращает `null`, над списком не
 должно оставаться фиксированной белой плашки, которая обрезает scroll-content.
@@ -438,6 +440,7 @@ multi-image composite/gallery. Related Notes keeps its richer hover preview.
 - Количество столбцов: адаптивное, на основе ширины контейнера (`ResizeObserver`, минимум 240px на столбец)
 - Layout считается чистой функцией: `containerWidth + estimatedHeights -> positions[]`
 - Карточки позиционируются абсолютно (`translate(x, y)`), контейнер имеет вычисленную `totalHeight`
+- Top inset ленты — `64px` через `marginTop` на `data-grid-layout`, не через padding scrollport.
 - В DOM находятся только видимые карточки + direction-aware overscan: forward 2200px / backward 600px (зависит от направления scroll'а). Предзагружает больше карточек по направлению движения.
 - **Priority bounds**: зона ±1400px по направлению scroll'а. Карточки внутри зоны получают `priority=true` → `<img loading="eager">` для image/link/article карточек. Карточки вне зоны — `loading="lazy"`.
 - Порядок: по `saved_at` descending (новые вверху)
@@ -621,7 +624,11 @@ Image media expansion:
 - Fixed rail допускает только vertical scroll (`overflow-y-auto`) и запрещает
   horizontal scroll (`overflow-x-hidden`); metadata/actions/related notes не
   должны создавать внутреннюю горизонтальную прокрутку.
-- Scroll/content top padding: classic `pt-12`, island `pt-20`; вместе с верхним меню это сохраняет общий visual top offset
+- Scroll/content top padding: classic `pt-8`, island `pt-16`; вместе с верхним
+  меню это сохраняет общий visual top offset `64px`. Article column, invisible
+  right-rail spacer and fixed metadata rail must use the same compensated
+  layout classes, so left sidebar rows, article body and right rail start on
+  the same horizontal line.
 - Scroll/content bottom safe space: `pb-20` lives on the inner content layer, not on `[data-detail-scroll]`, so the final article line does not press against the bottom edge while scrollbar geometry stays unchanged
 - Article content keeps a stable top inset (`pt-4`) even when duplicate
   author/title chrome is removed. The inset belongs to the article content

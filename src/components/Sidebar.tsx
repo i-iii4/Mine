@@ -254,7 +254,7 @@ export function Sidebar({
     orderedRowKeys,
     effectiveSidebarRowFocusKey,
   );
-  const linkEditorNavPadding = detailTopMenuMode === "classic" ? "pt-12" : "pt-20";
+  const linkEditorNavPadding = detailTopMenuMode === "classic" ? "pt-8" : "pt-16";
   const [linkChromeEntered, setLinkChromeEntered] = useState(false);
 
   const setPreviewTriggerRef = useCallback((key: string, node: HTMLElement | null) => {
@@ -526,7 +526,7 @@ export function Sidebar({
         ref={navRef}
         className={cn(
           "relative flex-1 overflow-y-auto",
-          isLinkingBlock ? linkEditorNavPadding : "pt-20",
+          isLinkingBlock ? linkEditorNavPadding : "pt-16",
           compact ? "px-2" : "px-8",
         )}
         data-sidebar-scroll

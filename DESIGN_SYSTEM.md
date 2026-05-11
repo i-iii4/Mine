@@ -538,7 +538,7 @@ SubContent (подменю) — та же тень.
 
 Шрифт названий: `font-sans text-base` (14px). Счётчики справа:
 `font-mono text-sm text-right`. Строки разделены
-`border-b border-sidebar-border`. Паддинги навигации: `px-8 pt-20`;
+`border-b border-sidebar-border`. Паддинги навигации: `px-8 pt-16`;
 строки в полном режиме не имеют собственного горизонтального padding, чтобы
 названия каналов, правые счётчики и link-editor action buttons стояли
 заподлицо с краями navigation column. Это отдаёт свободную ширину центральной
@@ -627,6 +627,12 @@ Row focus-mode:
 без checkbox. Список строк каналов использует ту же геометрию, что обычный
 sidebar.
 
+Top inset списка в раскрытой карточке — общий visual start `64px`: classic
+link-editor chrome занимает `h-8` в потоке, поэтому список использует `pt-8`;
+island chrome absolute и не занимает layout space, поэтому список использует
+`pt-16`. Это держит левый sidebar, article body и правый Detail rail на одной
+линии.
+
 Верхняя surface:
 
 | Режим Detail menu | Geometry |
@@ -683,6 +689,8 @@ row-action slot (`count/menu` ↔ `Connected/Connect/Disconnect`). Это уби
 ### Сетка
 
 Masonry с round-robin распределением по колонкам. Gap: 32px (`--spacing-s5`). Минимальная ширина карточки: 220px; максимальная ширина не фиксируется токеном и определяется алгоритмически перед переходом к следующему числу колонок. Ленивая подгрузка через IntersectionObserver.
+
+Top inset ленты: 64px (`--spacing-s7`) от верхнего меню до верхнего края masonry layout. Inset живёт на внутреннем virtual layout через `marginTop`, а не на scrollport.
 
 Паддинги сетки: 32px по бокам (при развёрнутом сайдбаре), 72px (при свёрнутом — компенсация ширины).
 

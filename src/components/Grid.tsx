@@ -53,7 +53,7 @@ const INITIAL_COMMIT_BLOCKS = 24;
 const COMMIT_LOOKAHEAD_BLOCKS = 24;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
-const GRID_TOP_INSET_PX = 80;
+const GRID_TOP_INSET_PX = 64;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -637,7 +637,7 @@ export function Grid({
           )}
           {parentWidth > 0 && blocks.length > 0 && phase !== "committed" && (
             <>
-              <div className="pointer-events-none absolute inset-x-0 top-20 z-10 flex justify-center">
+              <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex justify-center">
                 <p className="rounded-1 border border-border bg-background/90 px-3 py-1 text-sm text-muted-foreground backdrop-blur">
                   Refining layout…
                 </p>
