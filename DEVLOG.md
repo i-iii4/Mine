@@ -1,5 +1,63 @@
 # Devlog
 
+## 13.05.2026 [change] — Restore fixed Detail metadata rail width
+
+### Context
+
+- The adaptive/content-aware rail width made the Detail layout feel less
+  stable.
+- The expected contract is simpler: the right metadata rail keeps a fixed
+  inspector width for articles, images and videos.
+
+### Completed
+
+- Removed the content-aware media/viewport width calculation from Detail.
+- Restored the fixed five-column grid:
+  `minmax(2rem,1fr) / minmax(0,48rem) / minmax(2rem,1fr) / 20rem / 2rem`.
+- The metadata/Connected Cards rail is fixed at `20rem` (`320px`) and remains
+  right-anchored with a `2rem` right inset.
+- Updated Detail layout tests and documentation for the fixed rail contract.
+
+## 13.05.2026 [change] — Right-anchor Detail metadata rail
+
+### Context
+
+- Expanded Detail should feel closer to traditional Apple app layouts: the
+  metadata/Connected Cards rail belongs to the right edge, not to the article
+  text column.
+- Article content should be centered in the remaining space to the left of that
+  rail.
+
+### Completed
+
+- Replaced the centered `article + rail` canvas with a full-width five-column
+  Detail grid:
+  `minmax(2rem,1fr) / minmax(0,48rem) / minmax(2rem,1fr) / 20rem / 2rem`.
+- Anchored metadata and the invisible rail spacer to column 4, leaving a fixed
+  `32px` right inset in column 5.
+- Anchored article content to column 2 so it is centered by the flexible tracks
+  in the remaining left-side space.
+- Updated Detail tests and documentation for the new right-rail contract.
+
+## 11.05.2026 [change] — Remove Detail island mode
+
+### Context
+
+- The Detail top-menu island experiment is no longer part of the product
+  contract.
+- The expanded article body should use symmetric left/right canvas insets
+  instead of a one-sided guard created for the old island layout.
+
+### Completed
+
+- Removed the Detail top-menu mode switch from Settings and deleted the
+  obsolete stored preference module.
+- Removed the floating Detail/sidebar link-editor island render path and its
+  CSS motion class.
+- Removed the article column `pl-2` guard so the Detail canvas uses the same
+  `32px` side inset on both sides.
+- Updated tests and documentation for the single in-flow top-bar contract.
+
 ## 11.05.2026 [change] — Set main grid and sidebar top inset to 64px
 
 ### Context

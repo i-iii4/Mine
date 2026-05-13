@@ -93,11 +93,6 @@ import {
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
 import { findBlockElement } from "@/lib/domSelectors";
-import {
-  getStoredDetailTopMenuMode,
-  storeDetailTopMenuMode,
-  type DetailTopMenuMode,
-} from "@/lib/appPreferences";
 import { pushRecentTag } from "@/lib/recentTags";
 import {
   clearActiveMineTextSelectionDragPayload,
@@ -334,9 +329,6 @@ export function AppWithVault({
   const [deleteTargetSlug, setDeleteTargetSlug] = useState<string | null>(null);
   const [deletePlan, setDeletePlan] = useState<DeleteBlockPlan | null>(null);
   const [deletePlanError, setDeletePlanError] = useState<string | null>(null);
-  const [detailTopMenuMode, setDetailTopMenuMode] = useState<DetailTopMenuMode>(
-    getStoredDetailTopMenuMode,
-  );
   const [detailChromeClosing, setDetailChromeClosing] = useState(false);
   const [closingDetailBlock, setClosingDetailBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [closingDetailTags, setClosingDetailTags] = useState<string[]>([]);
@@ -1202,11 +1194,6 @@ export function AppWithVault({
     [selectedBlock, activeBlocks, openDetailBlock],
   );
 
-  const handleDetailTopMenuModeChange = useCallback((mode: DetailTopMenuMode) => {
-    setDetailTopMenuMode(mode);
-    storeDetailTopMenuMode(mode);
-  }, []);
-
   const handleOpenRelatedNote = useCallback((slug: string) => {
     const blockAnchor = relatedNoteBlockAnchor(slug);
     void getBlock(baseRelatedNoteSlug(slug)).then((block) => {
@@ -1844,7 +1831,6 @@ export function AppWithVault({
         linkedBlockSlug={renderedLinkedBlockSlug}
         linkedTags={renderedLinkedTags}
         onToggleLinkedTag={handleToggleTag}
-        detailTopMenuMode={detailTopMenuMode}
         detailChromeClosing={detailChromeClosing}
       />
 
@@ -1929,7 +1915,6 @@ export function AppWithVault({
               isClosing={detailChromeClosing}
               onClose={handleDetailClose}
               onNavigate={handleDetailNavigate}
-              detailTopMenuMode={detailTopMenuMode}
               tags={tags}
               currentTag={currentTag}
               onToggleTag={handleToggleTag}
@@ -2022,8 +2007,6 @@ export function AppWithVault({
         </ActionButton>
         <ThemeMenuButton
           ref={themeMenuRef}
-          detailTopMenuMode={detailTopMenuMode}
-          onDetailTopMenuModeChange={handleDetailTopMenuModeChange}
         />
         <ActionButton
           onClick={() => setDesignSystemOpen((v) => !v)}

@@ -341,13 +341,10 @@ versioned collection-index backfill до формирования стабиль
    только правый action slot. Это предотвращает remount `<img>` и blink превью
    при открытии карточки.
 
-Geometry зависит от Detail top menu mode. В `classic` selector живёт в
-полноширинном `h-8 bg-accent` баре с отдельной нижней hairline. В `island` selector живёт в
-абсолютной top-пуле (`top-4`, `bg-accent/80`, `backdrop-blur-sm`,
-`backdrop-saturate-150`, `rounded-1`, `border`) без фоновой защитной плашки;
-список сохраняет общий visual top inset `64px`: classic компенсирует `h-8`
-бар через `pt-8`, island использует `pt-16`, потому что floating bar не
-занимает layout space.
+Geometry не имеет переключаемых режимов: selector живёт в полноширинном
+`h-8 bg-accent` баре с отдельной нижней hairline. Список сохраняет общий
+visual top inset `64px`: in-flow верхний бар занимает `32px`, поэтому список
+компенсируется `pt-8`.
 
 Sidebar link-editor chrome использует тот же motion contract, что и Detail top
 chrome: мягкий `opacity + translateY` enter/exit (`220–280ms`,
@@ -597,35 +594,38 @@ Image media expansion:
 - В верхнем меню показывается filename (`media_file`, иначе `${slug}.md`) в `font-mono text-sm text-muted-foreground`
 - Справа в верхнем меню находятся shared overflow menu (`CardMoreMenu`) и close button
 - Верхний chrome Detail входит и выходит через мягкий `opacity + translateY`
-  transition; нижняя hairline у `classic` живёт отдельным visual layer и
-  анимируется отдельно от fill
+  transition; нижняя hairline живёт отдельным visual layer и анимируется
+  отдельно от fill
 - Верхний chrome Detail анимируется по lifecycle самого Detail (`open` /
-  `closing`) и по смене top-menu mode, но не по смене активного `block.slug`.
-  При переходе между открытыми карточками верхний chrome остаётся тем же DOM
+  `closing`), но не по смене активного `block.slug`. При переходе между
+  открытыми карточками верхний chrome остаётся тем же DOM
   subtree; меняются только filename/action data.
 - Sidebar link-editor chrome следует тому же правилу: при переходе между
   открытыми карточками меняются linked channel rows, но `Channels: All /
   Connected` не сбрасывает entered-state и не переанимируется.
 - Двухслойный layout: scroll-слой (article content + невидимый rail spacer)
-  и fixed-слой (метаданные). Оба слоя используют один Detail canvas/grid
-  contract, чтобы article column, right rail и top pill подчинялись одной
-  горизонтальной системе.
-- Detail canvas: `mx-auto w-[calc(100%-4rem)] max-w-[70rem]`. `4rem` keeps
-  the article Detail canvas on the same 32px side inset contract as the feed.
-  `70rem` — это
-  сумма article column `48rem`, gap `2rem` и right rail `20rem`; на широких
-  экранах растут внешние поля, а не пустота между article и rail.
-- Detail body grid: `grid grid-cols-[minmax(0,48rem)_20rem] gap-8`. Article
-  column занимает левую bounded колонку, right rail занимает фиксированную
-  20rem колонку и доходит до правого края общего Detail canvas.
-- Article column adds `pl-2` inside the left grid column, so article body text
-  has an extra 8px guard inset from the top chrome/canvas outer edge instead of sitting flush
-  against the framed top pill.
+  и fixed-слой (метаданные). Оба слоя используют один Detail grid contract,
+  чтобы article column, fixed metadata rail и invisible spacer сохраняли одну
+  горизонтальную систему.
+- Detail grid: `grid w-full
+  grid-cols-[minmax(2rem,1fr)_minmax(0,48rem)_minmax(2rem,1fr)_20rem_2rem]`.
+  Правая колонка `2rem` фиксирует `32px` inset от правого края viewport;
+  metadata rail занимает fixed `20rem` inspector column before it.
+- Metadata rail width is fixed at `20rem` (`320px`) for articles, images and
+  videos. Detail does not resize the rail from viewport thresholds or media
+  dimensions; on constrained viewports, the primary content column yields.
+- Article column lives in column 2 (`col-start-2`) and is centered inside the
+  remaining space to the left of the metadata rail by the two matching flexible
+  tracks around it. На широких экранах воздух растёт между article и right rail,
+  а не прижимает metadata к тексту.
+- Article column не добавляет внутренний left guard: article body starts at
+  the left edge of its bounded article column. Горизонтальную дистанцию до rail
+  задаёт grid, not a local padding/margin on article content.
 - Fixed rail допускает только vertical scroll (`overflow-y-auto`) и запрещает
   horizontal scroll (`overflow-x-hidden`); metadata/actions/related notes не
   должны создавать внутреннюю горизонтальную прокрутку.
-- Scroll/content top padding: classic `pt-8`, island `pt-16`; вместе с верхним
-  меню это сохраняет общий visual top offset `64px`. Article column, invisible
+- Scroll/content top padding: `pt-8`; вместе с in-flow верхним `h-8` меню это
+  сохраняет общий visual top offset `64px`. Article column, invisible
   right-rail spacer and fixed metadata rail must use the same compensated
   layout classes, so left sidebar rows, article body and right rail start on
   the same horizontal line.
@@ -746,7 +746,9 @@ const mediaUrl = convertFileSrc(vaultPath + "/" + mediaFile);
 
 ## Ограничения WebKit (Tauri на macOS)
 
-- `backdrop-filter` использовать только на маленьких fixed-height island surfaces (`h-8`); для больших оверлеев и полноширинных баров использовать сплошной фон
+- `backdrop-filter` использовать только на маленьких fixed-height floating
+  surfaces (`h-8`); для больших оверлеев и полноширинных баров использовать
+  сплошной фон
 - `scrollbar-width: none` не поддерживается — использовать `::-webkit-scrollbar { display: none }`
 - `gap` в flexbox/grid — поддерживается с Safari 14.1+, безопасно
 

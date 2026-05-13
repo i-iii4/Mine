@@ -111,7 +111,7 @@ describe("Detail", () => {
 
   afterEach(() => vi.useRealTimers());
 
-  it("renders the selected top menu mode", () => {
+  it("renders the classic top menu", () => {
     const props = {
       block: block(),
       vaultPath: "/tmp/test-vault",
@@ -126,26 +126,12 @@ describe("Detail", () => {
       onRequestDelete: vi.fn(),
     };
 
-    const { container, rerender } = render(
-      <Detail {...props} detailTopMenuMode="classic" />,
-    );
+    const { container } = render(<Detail {...props} />);
 
-    expect(container.querySelector('[data-detail-top-menu="classic"]')).not.toBeNull();
-
-    rerender(<Detail {...props} detailTopMenuMode="island" />);
-
-    const islandMenu = container.querySelector('[data-detail-top-menu="island"]');
-    expect(islandMenu).not.toBeNull();
-    expect(islandMenu).toHaveClass("bg-accent/80");
-    expect(islandMenu).toHaveClass("backdrop-blur-sm");
-    expect(islandMenu).toHaveClass("backdrop-saturate-150");
-    expect(islandMenu).toHaveClass("detail-top-pill-enter");
-    expect(islandMenu).toHaveClass("pl-3");
-    expect(islandMenu).toHaveClass("pr-1");
-    expect(islandMenu?.parentElement).toHaveClass(
-      "w-[calc(100%-4rem)]",
-      "max-w-[70rem]",
-    );
+    const topMenu = container.querySelector('[data-detail-top-menu="classic"]');
+    expect(topMenu).not.toBeNull();
+    expect(topMenu).toHaveClass("detail-top-bar-enter");
+    expect(topMenu).toHaveClass("h-8", "bg-accent", "px-8");
   });
 
   it("names the detail dialog with the active filename", () => {
@@ -169,54 +155,6 @@ describe("Detail", () => {
     expect(screen.getByRole("dialog", { name: "article-cover.jpg" })).toBeInTheDocument();
   });
 
-  it("keeps floating top chrome mounted and entered when switching active cards", async () => {
-    const props = {
-      vaultPath: "/tmp/test-vault",
-      thumbsRootPath: "/tmp/thumbs",
-      onClose: vi.fn(),
-      onNavigate: vi.fn(),
-      tags: [],
-      onToggleTag: vi.fn(),
-      onCreateAndAssign: vi.fn(),
-      onTagsChanged: vi.fn(),
-      onRequestRename: vi.fn(),
-      onRequestDelete: vi.fn(),
-      onOpenRelatedNote: vi.fn(),
-    };
-
-    const { container, rerender } = render(
-      <Detail
-        {...props}
-        detailTopMenuMode="island"
-        block={block({ slug: "first-card", media_file: "first-card.jpg" })}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(container.querySelector('[data-detail-top-menu="island"]')).toHaveAttribute(
-        "data-entered",
-        "true",
-      );
-    });
-
-    const topMenu = container.querySelector('[data-detail-top-menu="island"]');
-    expect(topMenu).toHaveTextContent("first-card.jpg");
-
-    rerender(
-      <Detail
-        {...props}
-        detailTopMenuMode="island"
-        block={block({ slug: "second-card", media_file: "second-card.jpg" })}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(topMenu).toHaveTextContent("second-card.jpg");
-    });
-    expect(container.querySelector('[data-detail-top-menu="island"]')).toBe(topMenu);
-    expect(topMenu).toHaveAttribute("data-entered", "true");
-  });
-
   it("keeps classic top chrome mounted and entered when switching active cards", async () => {
     const props = {
       vaultPath: "/tmp/test-vault",
@@ -235,7 +173,6 @@ describe("Detail", () => {
     const { container, rerender } = render(
       <Detail
         {...props}
-        detailTopMenuMode="classic"
         block={block({ slug: "first-card", media_file: "first-card.jpg" })}
       />,
     );
@@ -253,7 +190,6 @@ describe("Detail", () => {
     rerender(
       <Detail
         {...props}
-        detailTopMenuMode="classic"
         block={block({ slug: "second-card", media_file: "second-card.jpg" })}
       />,
     );
@@ -335,7 +271,6 @@ describe("Detail", () => {
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
         onRequestDelete={vi.fn()}
-        detailTopMenuMode="classic"
       />,
     );
 
@@ -363,11 +298,9 @@ describe("Detail", () => {
       onOpenRelatedNote: vi.fn(),
     };
 
-    const { container, rerender } = render(
-      <Detail {...props} detailTopMenuMode="classic" />,
-    );
+    const { container, rerender } = render(<Detail {...props} />);
 
-    rerender(<Detail {...props} detailTopMenuMode="classic" isClosing />);
+    rerender(<Detail {...props} isClosing />);
 
     const classicMenu = container.querySelector('[data-detail-top-menu="classic"]');
     expect(classicMenu).toHaveAttribute("data-entered", "false");
@@ -551,29 +484,27 @@ describe("Detail", () => {
 
     const rail = container.querySelector("[data-metadata-scroll]");
     const articleColumn = container.querySelector("[data-detail-article-column]");
-    expect(articleColumn).toHaveClass("min-w-0", "pl-2");
+    expect(articleColumn).toHaveClass("col-start-2", "min-w-0");
+    expect(articleColumn).not.toHaveClass("pl-2", "pl-4");
     expect(rail).toHaveClass(
+      "col-start-4",
       "min-w-0",
       "overflow-y-auto",
       "overflow-x-hidden",
     );
     const spacer = container.querySelector("[data-detail-metadata-spacer]");
-    expect(spacer).toHaveClass("min-w-0");
+    expect(spacer).toHaveClass("col-start-4", "min-w-0");
     expect(spacer?.parentElement).toHaveClass(
-      "w-[calc(100%-4rem)]",
-      "max-w-[70rem]",
+      "w-full",
       "grid",
-      "grid-cols-[minmax(0,48rem)_20rem]",
-      "gap-8",
-      "pt-16",
+      "grid-cols-[minmax(2rem,1fr)_minmax(0,48rem)_minmax(2rem,1fr)_20rem_2rem]",
+      "pt-8",
     );
     expect(rail?.parentElement).toHaveClass(
-      "w-[calc(100%-4rem)]",
-      "max-w-[70rem]",
+      "w-full",
       "grid",
-      "grid-cols-[minmax(0,48rem)_20rem]",
-      "gap-8",
-      "pt-16",
+      "grid-cols-[minmax(2rem,1fr)_minmax(0,48rem)_minmax(2rem,1fr)_20rem_2rem]",
+      "pt-8",
     );
   });
 
@@ -592,7 +523,6 @@ describe("Detail", () => {
         onRequestRename={vi.fn()}
         onRequestDelete={vi.fn()}
         onOpenRelatedNote={vi.fn()}
-        detailTopMenuMode="classic"
       />,
     );
 

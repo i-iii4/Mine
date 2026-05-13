@@ -36,7 +36,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
-import type { DetailTopMenuMode } from "@/lib/appPreferences";
 import { getBlock } from "@/lib/commands";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import { cn } from "@/lib/utils";
@@ -147,7 +146,6 @@ interface SidebarProps {
   linkedBlockSlug?: string | null;
   linkedTags?: string[];
   onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
-  detailTopMenuMode?: DetailTopMenuMode;
   detailChromeClosing?: boolean;
 }
 
@@ -192,7 +190,6 @@ export function Sidebar({
   linkedBlockSlug,
   linkedTags = [],
   onToggleLinkedTag,
-  detailTopMenuMode = "island",
   detailChromeClosing = false,
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
@@ -254,7 +251,7 @@ export function Sidebar({
     orderedRowKeys,
     effectiveSidebarRowFocusKey,
   );
-  const linkEditorNavPadding = detailTopMenuMode === "classic" ? "pt-8" : "pt-16";
+  const linkEditorNavPadding = "pt-8";
   const [linkChromeEntered, setLinkChromeEntered] = useState(false);
 
   const setPreviewTriggerRef = useCallback((key: string, node: HTMLElement | null) => {
@@ -499,7 +496,7 @@ export function Sidebar({
       setLinkChromeEntered(true);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [isLinkingBlock, detailTopMenuMode, detailChromeClosing]);
+  }, [isLinkingBlock, detailChromeClosing]);
 
   return (
     <aside
@@ -512,10 +509,9 @@ export function Sidebar({
         transition: isResizing ? "none" : "width 200ms ease",
       }}
     >
-      {isLinkingBlock && detailTopMenuMode === "classic" && (
+      {isLinkingBlock && (
         <SidebarLinkModeSwitch
           value={linkMode}
-          mode={detailTopMenuMode}
           entered={linkChromeEntered}
           onChange={setLinkMode}
         />
@@ -657,14 +653,6 @@ export function Sidebar({
           </div>
       )}
 
-      {isLinkingBlock && detailTopMenuMode !== "classic" && (
-        <SidebarLinkModeSwitch
-          value={linkMode}
-          mode={detailTopMenuMode}
-          entered={linkChromeEntered}
-          onChange={setLinkMode}
-        />
-      )}
     </aside>
   );
 }
@@ -723,16 +711,13 @@ function computeSidebarPreviewPosition(
 
 const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
   value,
-  mode,
   entered,
   onChange,
 }: {
   value: "all" | "linked";
-  mode: DetailTopMenuMode;
   entered: boolean;
   onChange: (value: "all" | "linked") => void;
 }) {
-  const isIsland = mode !== "classic";
   const label = (
     <span className="shrink-0 font-mono text-sm text-muted-foreground">
       Channels:
@@ -742,7 +727,7 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
     <div
       className={cn(
         "action-button inline-flex h-6 shrink-0 cursor-pointer items-center overflow-hidden rounded-1 bg-transparent p-[2px] font-mono text-sm outline-0",
-        !isIsland && "hover:bg-component-fill-hover",
+        "hover:bg-component-fill-hover",
       )}
       data-sidebar-link-mode-control
     >
@@ -771,37 +756,19 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
     </div>
   );
 
-  if (mode === "classic") {
-    return (
-      <div
-        className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-2 bg-accent px-8"
-        data-entered={entered ? "true" : "false"}
-        data-sidebar-link-mode-bar
-      >
-        {label}
-        {control}
-        <span
-          aria-hidden="true"
-          data-entered={entered ? "true" : "false"}
-          className="detail-top-bar-line-enter pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border"
-        />
-      </div>
-    );
-  }
-
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 top-4 z-10 flex justify-center bg-transparent"
+      className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-2 bg-accent px-8"
+      data-entered={entered ? "true" : "false"}
       data-sidebar-link-mode-bar
     >
-      <div
-        className="detail-top-pill-enter pointer-events-auto flex h-8 w-fit items-center gap-2 rounded-1 border border-border bg-accent/80 pl-3 pr-[2px] backdrop-blur-sm backdrop-saturate-150"
+      {label}
+      {control}
+      <span
+        aria-hidden="true"
         data-entered={entered ? "true" : "false"}
-        data-sidebar-link-mode-pill
-      >
-        {label}
-        {control}
-      </div>
+        className="detail-top-bar-line-enter pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border"
+      />
     </div>
   );
 });

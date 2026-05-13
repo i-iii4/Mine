@@ -202,21 +202,6 @@ body {
   transform: scaleX(1);
 }
 
-.detail-top-pill-enter {
-  opacity: 0;
-  transform: translateY(-16px) scale(0.965);
-  transition:
-    opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
-  transform-origin: top center;
-  will-change: opacity, transform;
-}
-
-.detail-top-pill-enter[data-entered="true"] {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
 .image-preview-secondary-plane {
   background: rgb(0 0 0 / 0.56);
   -webkit-backdrop-filter: saturate(0.55);
@@ -230,8 +215,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .detail-top-bar-enter,
-  .detail-top-bar-line-enter,
-  .detail-top-pill-enter {
+  .detail-top-bar-line-enter {
     opacity: 1;
     transform: none;
     transition: none;

@@ -628,28 +628,31 @@ Row focus-mode:
 sidebar.
 
 Top inset списка в раскрытой карточке — общий visual start `64px`: classic
-link-editor chrome занимает `h-8` в потоке, поэтому список использует `pt-8`;
-island chrome absolute и не занимает layout space, поэтому список использует
-`pt-16`. Это держит левый sidebar, article body и правый Detail rail на одной
-линии.
+link-editor chrome занимает `h-8` в потоке, поэтому список использует `pt-8`.
+Это держит левый sidebar, article body и правый Detail rail на одной линии.
 
 Верхняя surface:
 
-| Режим Detail menu | Geometry |
+| Surface | Geometry |
 |---|---|
-| `classic` | `h-8 bg-accent px-8 gap-2` + отдельная нижняя hairline |
-| `island` | absolute `top-4`, centered, без фоновой плашки; pill `h-8 rounded-1 border border-border bg-accent/80 backdrop-blur-sm backdrop-saturate-150 pl-3 pr-[2px] gap-2` |
+| Detail/link-editor top bar | `h-8 bg-accent px-8 gap-2` + отдельная нижняя hairline |
 
 Содержимое surface: `Channels:` + selector `All / Connected`. `Channels:`
 использует `font-mono text-sm text-muted-foreground`. Selector повторяет
 ActionButton geometry: outer `h-6 p-[2px] rounded-1`, segments `h-5
-px-[1ch] rounded-[2px] text-muted-foreground`. В `island` hover не заливает
-outer control; меняется только яркость текста segment (`hover:text-foreground`).
+px-[1ch] rounded-[2px] text-muted-foreground`. Hover заливает только outer
+control через стандартный `hover:bg-component-fill-hover`; активный segment
+использует `bg-component-fill-inner text-foreground`.
 
-Island surfaces используют только лёгкий glass effect: `bg-accent/80
-backdrop-blur-sm backdrop-saturate-150`, без теней и градиентов. Эффект
-разрешён только для маленьких fixed-height island surfaces (`h-8`), не для
-полноширинных classic bars и не для больших overlay.
+Detail article/metadata layout использует right-anchored fixed-rail contract:
+`grid w-full
+grid-cols-[minmax(2rem,1fr)_minmax(0,48rem)_minmax(2rem,1fr)_20rem_2rem]`.
+Metadata/Connected Cards rail стоит перед правой колонкой `2rem`, то есть
+имеет фиксированный `32px` inset от правого края. Ширина rail фиксирована:
+`20rem` (`320px`) для статей, фото и видео. Article/media column стоит в
+`col-start-2`, ограничен `48rem` и центрируется в оставшемся пространстве слева
+от rail. Тело карточки не добавляет локальный `pl-*` guard; дистанцию между
+текстом и metadata задаёт grid.
 
 Motion contract: верхний chrome в Detail и sidebar link-editor surface входят и
 выходят через мягкий `opacity + translateY` transition с тем же темпом

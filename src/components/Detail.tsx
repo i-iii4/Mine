@@ -77,7 +77,6 @@ import { cn } from "@/lib/utils";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
-import type { DetailTopMenuMode } from "@/lib/appPreferences";
 import {
   findPreviewTileForSource,
   normalizeFeedPreviewManifest,
@@ -95,11 +94,12 @@ import { CollectionPicker } from "./CollectionPicker";
 import { MicroPreviewThumbnail, microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
 import type { ImagePreviewRequest } from "./ImagePreviewOverlay";
 
-// Layout constants — shared between top chrome, scroll layer, and metadata layer.
-const DETAIL_CANVAS_CLASSES = "mx-auto w-[calc(100%-4rem)] max-w-[70rem]";
-const DETAIL_GRID_CLASSES = `${DETAIL_CANVAS_CLASSES} grid grid-cols-[minmax(0,48rem)_20rem] gap-8`;
+// Layout constants shared by scroll content and fixed metadata. The rail is
+// anchored to the right edge with a fixed 20rem inspector width, while the
+// article/media column is centered in the remaining space to its left.
+const DETAIL_GRID_CLASSES =
+  "grid w-full grid-cols-[minmax(2rem,1fr)_minmax(0,48rem)_minmax(2rem,1fr)_20rem_2rem]";
 const CLASSIC_LAYOUT_CLASSES = `${DETAIL_GRID_CLASSES} pt-8`;
-const ISLANDS_LAYOUT_CLASSES = `${DETAIL_GRID_CLASSES} pt-16`;
 const DETAIL_BOTTOM_SAFE_SPACE_CLASS = "pb-20";
 const HOVER_CARD_WIDTH = 240;
 const HOVER_CARD_FALLBACK_HEIGHT = 320;
@@ -113,7 +113,6 @@ interface DetailProps {
   scrollAnchor?: string | null;
   vaultPath: string;
   thumbsRootPath?: string;
-  detailTopMenuMode?: DetailTopMenuMode;
   isClosing?: boolean;
   onClose: () => void;
   onNavigate: (direction: "prev" | "next" | "up" | "down") => void;
@@ -158,7 +157,6 @@ export function Detail({
   scrollAnchor = null,
   vaultPath,
   thumbsRootPath,
-  detailTopMenuMode = "island",
   isClosing = false,
   onClose,
   tags,
@@ -181,8 +179,7 @@ export function Detail({
   );
   const displayBlock = fullBlock ?? block;
   const currentBlockSlugRef = useRef(block.slug);
-  const isFloatingTopMenu = detailTopMenuMode !== "classic";
-  const layoutClasses = isFloatingTopMenu ? ISLANDS_LAYOUT_CLASSES : CLASSIC_LAYOUT_CLASSES;
+  const layoutClasses = CLASSIC_LAYOUT_CLASSES;
   const {
     attributes: dragAttributes,
     listeners: dragListeners,
@@ -217,7 +214,7 @@ export function Detail({
       setChromeEntered(true);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [detailTopMenuMode, isClosing]);
+  }, [isClosing]);
 
   const refreshFullBlock = useCallback((slug: string) => {
     void getBlock(slug).then((full) => {
@@ -275,113 +272,61 @@ export function Detail({
       className={cn(
         "absolute inset-0 z-10 outline-none",
         isClosing ? "pointer-events-none bg-transparent" : "bg-background",
-        !isFloatingTopMenu && "flex flex-col",
+        "flex flex-col",
       )}
       role="dialog"
       aria-modal="false"
       aria-label={filename}
       data-detail-root
     >
-      {isFloatingTopMenu ? (
+      <header
+        data-entered={chromeEntered ? "true" : "false"}
+        className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 bg-accent px-8"
+        data-detail-top-menu="classic"
+      >
         <div
-          className={cn("absolute left-1/2 top-4 z-20 -translate-x-1/2", DETAIL_CANVAS_CLASSES)}
+          ref={setDragHandleRef}
+          {...dragAttributes}
+          {...dragListeners}
+          className={cn(
+            "min-w-0 flex-1 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
+            isDragging && "opacity-30",
+          )}
+          data-detail-drag-handle
+          title={filename}
         >
-          <header
-            data-detail-top-menu={detailTopMenuMode}
-            data-entered={chromeEntered ? "true" : "false"}
-            className={cn(
-              "detail-top-pill-enter flex h-8 w-full items-center gap-3 rounded-1 border border-border bg-accent/80 pl-3 pr-1 backdrop-blur-sm backdrop-saturate-150",
-            )}
-          >
-            <div
-              ref={setDragHandleRef}
-              {...dragAttributes}
-              {...dragListeners}
-              className={cn(
-                "min-w-0 flex-1 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
-                isDragging && "opacity-30",
-              )}
-              data-detail-drag-handle
-              title={filename}
-            >
-              {filename}
-            </div>
-            <div className="flex h-8 shrink-0 items-center gap-1">
-              <CardMoreMenu
-                block={displayBlock}
-                vaultPath={vaultPath}
-                tags={tags}
-                currentTag={currentTag}
-                onToggleTag={onToggleTag}
-                onCreateAndAssign={onCreateAndAssign}
-                onRequestRename={onRequestRename}
-                onRequestDelete={onRequestDelete}
-                triggerVariant="ghost"
-                className="shrink-0 text-muted-foreground hover:text-foreground"
-              />
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onClose}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="size-4" />
-                <span className="sr-only">Close</span>
-              </Button>
-            </div>
-          </header>
+          {filename}
         </div>
-      ) : (
-        <header
-          data-entered={chromeEntered ? "true" : "false"}
-          className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 bg-accent px-8"
-          data-detail-top-menu="classic"
+        <CardMoreMenu
+          block={displayBlock}
+          vaultPath={vaultPath}
+          tags={tags}
+          currentTag={currentTag}
+          onToggleTag={onToggleTag}
+          onCreateAndAssign={onCreateAndAssign}
+          onRequestRename={onRequestRename}
+          onRequestDelete={onRequestDelete}
+          triggerVariant="ghost"
+          className="shrink-0 text-muted-foreground hover:text-foreground"
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground"
         >
-          <div
-            ref={setDragHandleRef}
-            {...dragAttributes}
-            {...dragListeners}
-            className={cn(
-              "min-w-0 flex-1 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
-              isDragging && "opacity-30",
-            )}
-            data-detail-drag-handle
-            title={filename}
-          >
-            {filename}
-          </div>
-          <CardMoreMenu
-            block={displayBlock}
-            vaultPath={vaultPath}
-            tags={tags}
-            currentTag={currentTag}
-            onToggleTag={onToggleTag}
-            onCreateAndAssign={onCreateAndAssign}
-            onRequestRename={onRequestRename}
-            onRequestDelete={onRequestDelete}
-            triggerVariant="ghost"
-            className="shrink-0 text-muted-foreground hover:text-foreground"
-          />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <X className="size-4" />
-            <span className="sr-only">Close</span>
-          </Button>
-          <span
-            aria-hidden="true"
-            data-entered={chromeEntered ? "true" : "false"}
-            className="detail-top-bar-line-enter pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border"
-          />
-        </header>
-      )}
+          <X className="size-4" />
+          <span className="sr-only">Close</span>
+        </Button>
+        <span
+          aria-hidden="true"
+          data-entered={chromeEntered ? "true" : "false"}
+          className="detail-top-bar-line-enter pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border"
+        />
+      </header>
       <div
         className={cn(
-          "relative min-h-0",
-          isFloatingTopMenu ? "h-full" : "flex-1",
+          "relative min-h-0 flex-1",
           isClosing && "opacity-0",
         )}
       >
@@ -392,8 +337,11 @@ export function Detail({
           className="h-full w-full overflow-y-auto outline-none"
           data-detail-scroll
         >
-          <div className={cn(layoutClasses, DETAIL_BOTTOM_SAFE_SPACE_CLASS)}>
-            <div className="min-w-0 pl-2" data-detail-article-column>
+          <div
+            className={cn(layoutClasses, DETAIL_BOTTOM_SAFE_SPACE_CLASS)}
+            data-detail-layout-grid="scroll"
+          >
+            <div className="col-start-2 min-w-0" data-detail-article-column>
               <BlockContent
                 block={block}
                 fullBlock={fullBlock}
@@ -413,7 +361,7 @@ export function Detail({
               />
             </div>
             <div
-              className="min-w-0"
+              className="col-start-4 min-w-0"
               aria-hidden="true"
               data-detail-metadata-spacer
             />
@@ -422,10 +370,13 @@ export function Detail({
 
         {/* Layer 2: Fixed metadata (same layout, doesn't scroll) */}
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          <div className={layoutClasses}>
-            <div className="min-w-0" />
+          <div
+            className={layoutClasses}
+            data-detail-layout-grid="metadata"
+          >
+            <div className="col-start-2 min-w-0" />
             <div
-              className="pointer-events-auto min-w-0 overflow-y-auto overflow-x-hidden"
+              className="pointer-events-auto col-start-4 min-w-0 overflow-y-auto overflow-x-hidden"
               data-metadata-scroll
             >
               <MetadataPanel

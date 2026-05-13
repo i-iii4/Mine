@@ -643,7 +643,6 @@ describe("Sidebar", () => {
       linkedBlockSlug: "open-block",
       linkedTags: ["alpha"],
       onToggleLinkedTag: vi.fn(),
-      detailTopMenuMode: "classic",
     });
 
     expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("h-8");
@@ -657,57 +656,20 @@ describe("Sidebar", () => {
     expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-8");
   });
 
-  it("places the island link editor bar at the top with the floating surface", () => {
-    const { container } = renderSidebar({
-      ...defaultProps,
-      linkedBlockSlug: "open-block",
-      linkedTags: ["alpha"],
-      onToggleLinkedTag: vi.fn(),
-      detailTopMenuMode: "island",
-    });
-
-    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("absolute");
-    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("top-4");
-    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("pointer-events-none");
-    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("justify-center");
-    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("bg-transparent");
-    expect(container.querySelector("[data-sidebar-link-mode-bar]")).not.toHaveClass("bottom-[18px]");
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("h-8");
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("w-fit");
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("rounded-1");
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("pointer-events-auto");
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("bg-accent/80");
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("backdrop-blur-sm");
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("backdrop-saturate-150");
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("detail-top-pill-enter");
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("gap-2");
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("pl-3");
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toHaveClass("pr-[2px]");
-    expect(screen.getByText("Channels:")).toHaveClass("text-muted-foreground");
-    expect(container.querySelector("[data-sidebar-link-mode-control]")).not.toHaveClass("hover:bg-component-fill-hover");
-    expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("text-muted-foreground");
-    expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("hover:text-foreground");
-    expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-16");
-    expect(container.querySelector("aside")?.lastElementChild).toBe(
-      container.querySelector("[data-sidebar-link-mode-bar]"),
-    );
-  });
-
   it("keeps link-editor chrome entered when switching the active detail block", async () => {
     const props = {
       ...defaultProps,
       linkedBlockSlug: "first-block",
       linkedTags: ["alpha"],
       onToggleLinkedTag: vi.fn(),
-      detailTopMenuMode: "island" as const,
     };
 
     const { container, rerender } = renderSidebar(props);
 
-    const pill = container.querySelector("[data-sidebar-link-mode-pill]");
-    expect(pill).not.toBeNull();
+    const bar = container.querySelector("[data-sidebar-link-mode-bar]");
+    expect(bar).not.toBeNull();
     await waitFor(() => {
-      expect(pill).toHaveAttribute("data-entered", "true");
+      expect(bar).toHaveAttribute("data-entered", "true");
     });
 
     rerender(sidebarTree({
@@ -716,8 +678,8 @@ describe("Sidebar", () => {
       linkedTags: ["beta"],
     }));
 
-    expect(container.querySelector("[data-sidebar-link-mode-pill]")).toBe(pill);
-    expect(pill).toHaveAttribute("data-entered", "true");
+    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toBe(bar);
+    expect(bar).toHaveAttribute("data-entered", "true");
   });
 
 });
