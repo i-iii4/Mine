@@ -6,6 +6,7 @@ import { MemoryRouter } from "react-router";
 
 import type { DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult } from "@/types";
 import { AppWithVault } from "./App";
+import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 
 const commandMocks = vi.hoisted(() => ({
   openVault: vi.fn<(path: string) => Promise<VaultOpenResult>>(),
@@ -19,6 +20,8 @@ const commandMocks = vi.hoisted(() => ({
   extractInlineMedia: vi.fn(),
   extractTextSelection: vi.fn(),
 }));
+
+const clipboardWriteText = vi.fn<(text: string) => Promise<void>>();
 
 vi.mock("@/lib/commands", () => ({
   getVaultPath: vi.fn(),
@@ -127,7 +130,7 @@ vi.mock("@/components/Detail", () => ({
     block: LightBlock | IndexedBlock;
     onRequestDelete: (slug: string) => void;
   }) => (
-    <div>
+    <div role="dialog" aria-label={`${block.slug}.md`} data-detail-root>
       <div data-testid="detail-title">{block.title ?? block.slug}</div>
       <button type="button" onClick={() => onRequestDelete(block.slug)}>
         Delete detail
@@ -247,6 +250,11 @@ function deferred<T>() {
 describe("AppWithVault", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clipboardWriteText.mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: clipboardWriteText },
+    });
 
     const allBlocks = [block(1, "alpha-block"), block(2, "beta-block")];
     const alphaBlocks = [allBlocks[0]!];
@@ -302,6 +310,25 @@ describe("AppWithVault", () => {
         },
       ],
       total_blocks: 2,
+    });
+  });
+
+  it("reserves the app minimum from max sidebar plus right pane minimum", async () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    expect(container.firstElementChild).toHaveStyle({
+      minWidth: `${APP_MIN_WIDTH_PX}px`,
+    });
+    expect(screen.getByRole("main")).toHaveStyle({
+      minWidth: `${APP_MAIN_MIN_WIDTH_PX}px`,
     });
   });
 
@@ -414,6 +441,96 @@ describe("AppWithVault", () => {
     expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
     expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeShortcut);
+  });
+
+  it("copies the open card markdown path with Command-L", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    });
+
+    fireEvent.keyDown(screen.getByTestId("detail-title"), { key: "l", metaKey: true });
+
+    expect(clipboardWriteText).toHaveBeenCalledWith("/vault/alpha-block.md");
+  });
+
+  it("does not copy a card path with Command-L when Detail is closed", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.keyDown(window, { key: "l", metaKey: true });
+
+    expect(clipboardWriteText).not.toHaveBeenCalled();
+  });
+
+  it("navigates route history with Command brackets", async () => {
+    render(
+      <MemoryRouter
+        initialEntries={["/", "/channel/alpha", "/channel/beta"]}
+        initialIndex={2}
+      >
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("beta:1");
+    });
+
+    fireEvent.keyDown(window, { key: "[", code: "BracketLeft", metaKey: true });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
+    });
+
+    fireEvent.keyDown(window, { key: "]", code: "BracketRight", metaKey: true });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("beta:1");
+    });
+  });
+
+  it("allows route history shortcuts from an open Detail surface", async () => {
+    render(
+      <MemoryRouter initialEntries={["/", "/channel/alpha"]} initialIndex={1}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    });
+
+    fireEvent.keyDown(screen.getByTestId("detail-title"), {
+      key: "[",
+      code: "BracketLeft",
+      metaKey: true,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    expect(screen.queryByTestId("detail-title")).not.toBeInTheDocument();
   });
 
   it("keeps sidebar channel order from channel positions when tag counts change", async () => {

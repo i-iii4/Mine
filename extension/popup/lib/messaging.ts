@@ -17,7 +17,6 @@ export interface NativeResponse {
 
 export interface ChannelInfo {
   tag: string;
-  title: string;
   block_count: number;
 }
 

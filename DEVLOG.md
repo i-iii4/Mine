@@ -1,5 +1,96 @@
 # Devlog
 
+## 15.05.2026 [change] — Add route history shortcuts
+
+### Context
+
+- The desktop app should support the standard macOS/browser history shortcuts
+  for moving back and forward between app pages.
+
+### Completed
+
+- Added `Cmd+[` and `Cmd+]` as global route-history shortcuts.
+- The shortcuts use router history and work from the open Detail surface, where
+  route navigation closes Detail through the existing route-change path.
+- The shortcuts stay disabled for editable fields and nested overlays/menus.
+- Added App-level regression tests for back/forward history and Detail-origin
+  navigation.
+
+## 15.05.2026 [change] — Set app shell minimum width from sidebar contract
+
+### Context
+
+- The desktop window minimum should preserve a usable right/main pane even when
+  the left sidebar is at its maximum width.
+
+### Completed
+
+- Added shared app layout constants for `304px` right/main minimum, `600px`
+  sidebar maximum and `904px` app minimum.
+- Applied `304px` as the `main` pane minimum width: `240px` metadata card
+  minimum + two `32px` side insets.
+- Updated Tauri `minWidth` from `800` to `904`.
+- Locked the stacked Detail metadata card to `min-width: 240px` so the
+  `Source` / `Connect` action row cannot collapse.
+- Added an App-level regression test for the shell width contract.
+
+## 15.05.2026 [change] — Add Detail card path shortcut
+
+### Context
+
+- When a card is open, users need a fast keyboard path to copy the underlying
+  Markdown file path without opening a context menu.
+
+### Completed
+
+- Added `Cmd+L` for open Detail cards.
+- The shortcut copies `<vault>/<slug>.md` to the clipboard.
+- The shortcut is ignored outside Detail and inside editable/dialog/menu
+  targets.
+- Added App-level regression tests for the open-card and closed-card cases.
+
+## 14.05.2026 [change] — Make channel naming Markdown-first
+
+### Context
+
+- Channel rename must behave like a Markdown file rename: the visible
+  collection name comes from the collection ref / filename, not from a separate
+  `Channel.title` field.
+- Keeping `title` as a second source of truth made inline collection rename
+  vulnerable to snapping back to stale display data.
+
+### Completed
+
+- Removed `title` from the `Channel` domain type and `ChannelDto`.
+- Stopped reading collection-page `frontmatter.title` into channel identity or
+  display state.
+- Kept the legacy SQLite `channels.title` column only as storage compatibility;
+  runtime display uses `tag`/collection ref.
+- Updated desktop, native host, clipper popup, sidebar, collection picker and
+  tests to derive labels from the Markdown collection ref.
+- Updated the channel/collection specs to document the no-`title` contract.
+
+## 13.05.2026 [change] — Stack Detail metadata below the 400px article minimum
+
+### Context
+
+- The article column should not shrink below the comfortable reading minimum of
+  `400px`.
+- Once fixed right metadata would force the article below that width, the page
+  should rebuild into a stacked layout instead of making the text column worse.
+
+### Completed
+
+- Changed the fixed-rail Detail grid article column to `minmax(400px,48rem)`.
+- Added a measured Detail-container breakpoint at `816px`
+  (`400px` article + `320px` rail + three `32px` grid insets).
+- Below that breakpoint, Detail switches to a three-column stacked grid:
+  `2rem / minmax(0,1fr) / 2rem`.
+- In stacked mode, the fixed metadata overlay is not rendered; metadata and
+  Connected Cards move into the scroll flow as a full-width row below the
+  article/media content.
+- Added a Detail regression test for the stacked metadata layout.
+
 ## 13.05.2026 [change] — Restore fixed Detail metadata rail width
 
 ### Context

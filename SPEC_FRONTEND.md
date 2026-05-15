@@ -65,7 +65,6 @@ interface TagCount {
 ```typescript
 interface ChannelDto {
   tag: string; // legacy physical name; semantic meaning: CollectionRef
-  title: string;
   description: string | null;
   color: string | null;
   icon: string | null;
@@ -119,7 +118,7 @@ addTag(slug: string, tag: string): Promise<void>
 removeTag(slug: string, tag: string): Promise<void>
 search(query: string): Promise<IndexedBlock[]>
 listChannels(): Promise<ChannelDto[]>
-createChannel(tag: string, title?: string): Promise<ChannelDto>
+createChannel(tag: string): Promise<ChannelDto>
 deleteChannel(tag: string): Promise<boolean>
 ```
 
@@ -273,8 +272,12 @@ Vault-пикер — не маршрут, а состояние: если `vault
 ### Layout
 
 Двухколоночная раскладка:
-- Sidebar (фиксированная, 240px)
-- Main area (flex-1, содержит Outlet роутера)
+- Sidebar (resizable `220–600px`, может быть collapsed)
+- Main area (flex-1, содержит Outlet роутера) имеет минимум `304px`: `240px`
+  минимальной metadata card + два боковых inset по `32px`.
+- Минимальная ширина desktop window: `904px` = `600px` максимального sidebar +
+  `304px` минимальной правой/main области. Значения фронтенда живут в
+  `src/lib/appLayout.ts`, нативный window guard — в `src-tauri/tauri.conf.json`.
 
 ### Sidebar
 
@@ -608,12 +611,23 @@ Image media expansion:
   чтобы article column, fixed metadata rail и invisible spacer сохраняли одну
   горизонтальную систему.
 - Detail grid: `grid w-full
-  grid-cols-[minmax(2rem,1fr)_minmax(0,48rem)_minmax(2rem,1fr)_20rem_2rem]`.
+  grid-cols-[minmax(2rem,1fr)_minmax(400px,48rem)_minmax(2rem,1fr)_20rem_2rem]`.
   Правая колонка `2rem` фиксирует `32px` inset от правого края viewport;
   metadata rail занимает fixed `20rem` inspector column before it.
 - Metadata rail width is fixed at `20rem` (`320px`) for articles, images and
   videos. Detail does not resize the rail from viewport thresholds or media
-  dimensions; on constrained viewports, the primary content column yields.
+  dimensions.
+- Article/media column has a comfortable minimum of `400px`. When the measured
+  Detail container width drops below `816px` (`400px` article minimum +
+  `20rem` rail + three `2rem` grid insets), Detail switches to stacked layout
+  instead of shrinking article text further.
+- Stacked layout uses `grid-cols-[2rem_minmax(240px,1fr)_2rem]`: the
+  article/media column remains centered with `max-w-[48rem]`, and
+  metadata/Connected Cards render as a full-width scroll-flow row below the
+  primary content. The fixed metadata overlay layer is not rendered in stacked
+  mode.
+- Metadata card itself has `min-width: 240px`, so the `Source` / `Connect`
+  action row cannot squeeze below its content minimum.
 - Article column lives in column 2 (`col-start-2`) and is centered inside the
   remaining space to the left of the metadata rail by the two matching flexible
   tracks around it. На широких экранах воздух растёт между article и right rail,
@@ -699,6 +713,12 @@ Image media expansion:
 
 ### Клавиатурная навигация
 
+#### История страниц
+- `Cmd+[` / `Cmd+]` — перейти назад/вперёд по router/browser history.
+- Shortcut не срабатывает из input/textarea/select/contenteditable и вложенных
+  overlay/menu/listbox/dialog. Из корня Detail shortcut разрешён: route change
+  закрывает Detail тем же путём, что обычная навигация.
+
 #### Grid (экран коллекции)
 - Стрелки (4 направления) — перемещение фокуса между карточками
 - Визуальная навигация по координатам (`getBoundingClientRect`): ближайшая карточка в направлении стрелки с весовой функцией `primaryAxis + 3 × crossAxis`
@@ -713,7 +733,9 @@ Image media expansion:
   defaultPrevented или пришёл из вложенного menu/listbox/input/contenteditable.
 - Стрелки не перехватываются: чтение статьи не должно случайно переключать
   карточки.
-- Модификаторы (Cmd/Alt/Ctrl) пропускаются — Detail не перехватывает
+- `Cmd+L` при открытом Detail копирует абсолютный путь к текущему `.md` файлу
+  карточки (`<vault>/<slug>.md`).
+- Остальные модификаторы (Cmd/Alt/Ctrl) пропускаются — Detail не перехватывает
   системные/browser shortcuts.
 
 #### Переключение каналов

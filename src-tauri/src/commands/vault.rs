@@ -1132,7 +1132,7 @@ fn migrate_channels_to_files(conn: &Connection, vault: &VaultLayout) {
             slug: ch.tag.clone(),
             frontmatter: Frontmatter {
                 block_type: BlockType::Channel,
-                title: Some(ch.title),
+                title: None,
                 description: ch.description,
                 url: None,
                 file: None,

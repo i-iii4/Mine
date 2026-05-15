@@ -250,8 +250,8 @@ export const listChannels = () =>
 export const listTaxonomySnapshot = () =>
   invoke<TaxonomySnapshot>("list_taxonomy_snapshot");
 
-export const createChannel = (tag: string, title?: string) =>
-  invoke<ChannelDto>("create_channel", { tag, title });
+export const createChannel = (tag: string) =>
+  invoke<ChannelDto>("create_channel", { tag });
 
 export const reorderChannels = (items: { tag: string; position: number }[]) =>
   invoke<void>("reorder_channels", { items });

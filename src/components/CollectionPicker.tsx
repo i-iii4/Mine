@@ -2,15 +2,9 @@ import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import type { TagCount } from "@/types";
+import { collectionRefLabel } from "@/lib/collections";
 import { getRecentTags } from "@/lib/recentTags";
 import { cn } from "@/lib/utils";
-
-/** Convert a collection ref to a compact display title. */
-export function titleFromTag(tag: string): string {
-  const parts = tag.split("/");
-  const label = (parts[parts.length - 1] ?? tag).trim();
-  return label.charAt(0).toUpperCase() + label.slice(1);
-}
 
 interface CollectionPickerProps {
   blockSlug: string;
@@ -70,7 +64,7 @@ export function CollectionPicker({
 
   const lc = search.toLowerCase();
   const filtered = lc
-    ? sortedTags.filter((tc) => titleFromTag(tc.tag).toLowerCase().includes(lc))
+    ? sortedTags.filter((tc) => collectionRefLabel(tc.tag).toLowerCase().includes(lc))
     : sortedTags;
 
   const trimmed = search.trim();
@@ -108,7 +102,7 @@ export function CollectionPicker({
           {filtered.map((tc) => {
             const hasTag = optimisticTags.includes(tc.tag);
             const actionLabel = hasTag ? "Disconnect" : "Connect";
-            const title = titleFromTag(tc.tag);
+            const title = collectionRefLabel(tc.tag);
             return (
               <div
                 key={tc.tag}

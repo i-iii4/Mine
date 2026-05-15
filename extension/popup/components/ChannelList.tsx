@@ -28,7 +28,9 @@ export function ChannelList({
   const filtered = useMemo(() => {
     const list = lc
       ? channels.filter(
-          (ch) => ch.title.toLowerCase().includes(lc) || ch.tag.toLowerCase().includes(lc),
+          (ch) =>
+            collectionRefLabel(ch.tag).toLowerCase().includes(lc) ||
+            ch.tag.toLowerCase().includes(lc),
         )
       : channels.slice();
 
@@ -61,6 +63,7 @@ export function ChannelList({
       <div className="max-h-[260px] overflow-y-auto rounded-1 border border-border">
         {filtered.map((ch) => {
           const selected = selectedTags.includes(ch.tag);
+          const label = collectionRefLabel(ch.tag);
           return (
             <label
               key={ch.tag}
@@ -74,7 +77,7 @@ export function ChannelList({
                 checked={selected}
                 onCheckedChange={() => onToggle(ch.tag)}
               />
-              <span className="min-w-0 flex-1 truncate">{ch.title}</span>
+              <span className="min-w-0 flex-1 truncate">{label}</span>
               <span className="shrink-0 text-sm text-muted-foreground">{ch.block_count}</span>
             </label>
           );
@@ -102,4 +105,9 @@ export function ChannelList({
       </div>
     </div>
   );
+}
+
+function collectionRefLabel(ref: string): string {
+  const parts = ref.split("/");
+  return (parts[parts.length - 1] ?? ref).trim();
 }

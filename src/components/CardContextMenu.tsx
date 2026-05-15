@@ -11,7 +11,8 @@ import { Copy, ExternalLink, FolderOpen, Pencil, Plus, Trash2 } from "lucide-rea
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { LightBlock, TagCount } from "@/types";
 import { getBlock } from "@/lib/commands";
-import { CollectionPicker, titleFromTag } from "./CollectionPicker";
+import { collectionRefLabel } from "@/lib/collections";
+import { CollectionPicker } from "./CollectionPicker";
 
 interface CardTagMenuProps {
   block: LightBlock;
@@ -104,7 +105,7 @@ export function CardTagMenu({
 
       {currentTag && selectedTags.includes(currentTag) && (
         <ContextMenuItem onSelect={() => onToggleTag(block.slug, currentTag, true)}>
-          Remove from &ldquo;{titleFromTag(currentTag)}&rdquo;
+          Remove from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
         </ContextMenuItem>
       )}
 

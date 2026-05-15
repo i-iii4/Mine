@@ -54,7 +54,6 @@ struct StatusResponse {
 #[derive(Debug, PartialEq, Eq, serde::Serialize)]
 struct ChannelInfo {
     tag: String,
-    title: String,
     block_count: usize,
 }
 
@@ -106,7 +105,8 @@ struct SaveBlockParams {
 #[derive(serde::Deserialize)]
 struct CreateChannelParams {
     tag: String,
-    title: Option<String>,
+    #[serde(rename = "title")]
+    _title: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -402,11 +402,7 @@ fn merge_channels_and_tags(channels: Vec<Channel>, tags: Vec<index::TagCount>) -
         }
         let block_count = counts.get(&tag).copied().unwrap_or(0);
         seen.insert(tag.clone());
-        infos.push(ChannelInfo {
-            tag,
-            title: channel.title,
-            block_count,
-        });
+        infos.push(ChannelInfo { tag, block_count });
     }
 
     for tag in tags {
@@ -416,7 +412,6 @@ fn merge_channels_and_tags(channels: Vec<Channel>, tags: Vec<index::TagCount>) -
         }
         let block_count = counts.get(&collection_ref).copied().unwrap_or(tag.count);
         infos.push(ChannelInfo {
-            title: collection_ref_title(&collection_ref),
             tag: collection_ref.clone(),
             block_count,
         });
@@ -424,22 +419,6 @@ fn merge_channels_and_tags(channels: Vec<Channel>, tags: Vec<index::TagCount>) -
     }
 
     infos
-}
-
-fn collection_ref_title(collection_ref: &str) -> String {
-    let label = collection_ref
-        .split('/')
-        .next_back()
-        .unwrap_or(collection_ref)
-        .trim();
-    let mut chars = label.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first) => {
-            let upper: String = first.to_uppercase().collect();
-            upper + chars.as_str()
-        }
-    }
 }
 
 fn existing_vault_stems(
@@ -830,14 +809,12 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         Ok(dt) => dt,
         Err(e) => return send_error(&format!("failed to create timestamp: {e}")),
     };
-    let title = p.title.or_else(|| Some(title_from_raw_channel_tag(&p.tag)));
-
     let tag = match validate_collection_ref(&p.tag) {
         Ok(tag) => tag,
         Err(error) => return send_error(&format!("invalid collection ref: {error}")),
     };
 
-    let mut channel = match Channel::new(&tag, title.as_deref(), created_at) {
+    let mut channel = match Channel::new(&tag, created_at) {
         Ok(channel) => channel,
         Err(e) => return send_error(&format!("invalid channel: {e}")),
     };
@@ -874,7 +851,7 @@ fn channel_to_block(channel: &Channel) -> Block {
         slug: channel.tag.clone(),
         frontmatter: Frontmatter {
             block_type: BlockType::Channel,
-            title: Some(channel.title.clone()),
+            title: None,
             description: channel.description.clone(),
             url: None,
             file: None,
@@ -893,10 +870,6 @@ fn channel_to_block(channel: &Channel) -> Block {
         },
         body: String::new(),
     }
-}
-
-fn title_from_raw_channel_tag(tag: &str) -> String {
-    collection_ref_title(&normalize_collection_ref(tag))
 }
 
 /// Finalize a pre-uploaded staging file by renaming it from whatever name
@@ -2097,29 +2070,27 @@ mod tests {
         DateTime::new("2026-04-24T12:00:00Z").unwrap()
     }
 
-    fn test_channel(tag: &str, title: &str) -> Channel {
-        Channel::new(tag, Some(title), test_dt()).unwrap()
+    fn test_channel(tag: &str) -> Channel {
+        Channel::new(tag, test_dt()).unwrap()
     }
 
     #[test]
     fn merge_channels_and_tags_includes_empty_promoted_channel() {
-        let infos =
-            merge_channels_and_tags(vec![test_channel("empty-channel", "Empty Channel")], vec![]);
+        let infos = merge_channels_and_tags(vec![test_channel("empty-channel")], vec![]);
 
         assert_eq!(
             infos,
             vec![ChannelInfo {
                 tag: "empty-channel".to_string(),
-                title: "Empty Channel".to_string(),
                 block_count: 0,
             }]
         );
     }
 
     #[test]
-    fn merge_channels_and_tags_uses_promoted_title_and_tag_count() {
+    fn merge_channels_and_tags_uses_promoted_tag_count() {
         let infos = merge_channels_and_tags(
-            vec![test_channel("design", "Design System")],
+            vec![test_channel("design")],
             vec![index::TagCount {
                 tag: "design".to_string(),
                 count: 3,
@@ -2130,7 +2101,6 @@ mod tests {
             infos,
             vec![ChannelInfo {
                 tag: "design".to_string(),
-                title: "Design System".to_string(),
                 block_count: 3,
             }]
         );
@@ -2139,7 +2109,7 @@ mod tests {
     #[test]
     fn merge_channels_and_tags_preserves_promoted_collection_ref() {
         let infos = merge_channels_and_tags(
-            vec![test_channel("Красивый веб", "Красивый веб")],
+            vec![test_channel("Красивый веб")],
             vec![index::TagCount {
                 tag: "Красивый веб".to_string(),
                 count: 4,
@@ -2150,7 +2120,6 @@ mod tests {
             infos,
             vec![ChannelInfo {
                 tag: "Красивый веб".to_string(),
-                title: "Красивый веб".to_string(),
                 block_count: 4,
             }]
         );
@@ -2159,10 +2128,7 @@ mod tests {
     #[test]
     fn merge_channels_and_tags_keeps_distinct_collection_refs() {
         let infos = merge_channels_and_tags(
-            vec![
-                test_channel("Красивый веб", "Красивый веб"),
-                test_channel("красивый-веб", "Kebab"),
-            ],
+            vec![test_channel("Красивый веб"), test_channel("красивый-веб")],
             vec![index::TagCount {
                 tag: "красивый-веб".to_string(),
                 count: 4,
@@ -2174,12 +2140,10 @@ mod tests {
             vec![
                 ChannelInfo {
                     tag: "Красивый веб".to_string(),
-                    title: "Красивый веб".to_string(),
                     block_count: 0,
                 },
                 ChannelInfo {
                     tag: "красивый-веб".to_string(),
-                    title: "Kebab".to_string(),
                     block_count: 4,
                 },
             ]
@@ -2189,7 +2153,7 @@ mod tests {
     #[test]
     fn merge_channels_and_tags_keeps_unpromoted_used_tags() {
         let infos = merge_channels_and_tags(
-            vec![test_channel("design", "Design")],
+            vec![test_channel("design")],
             vec![
                 index::TagCount {
                     tag: "design".to_string(),
@@ -2207,12 +2171,10 @@ mod tests {
             vec![
                 ChannelInfo {
                     tag: "design".to_string(),
-                    title: "Design".to_string(),
                     block_count: 1,
                 },
                 ChannelInfo {
                     tag: "local-first".to_string(),
-                    title: "Local-first".to_string(),
                     block_count: 2,
                 },
             ]

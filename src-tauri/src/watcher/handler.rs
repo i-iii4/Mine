@@ -1287,7 +1287,6 @@ mod tests {
         let channels = index::list_channels(&conn).unwrap();
         assert_eq!(channels.len(), 1);
         assert_eq!(channels[0].tag, "Красивый веб");
-        assert_eq!(channels[0].title, "Красивый веб");
     }
 
     #[test]

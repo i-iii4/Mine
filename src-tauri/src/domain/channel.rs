@@ -16,22 +16,17 @@ pub enum ChannelError {
     #[error("channel collection ref is empty")]
     EmptyTag,
 
-    #[error("channel title is empty")]
-    EmptyTitle,
-
     #[error("invalid color: \"{value}\" (expected #RGB or #RRGGBB)")]
     InvalidColor { value: String },
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-/// A promoted collection with display metadata for the sidebar.
+/// A promoted collection with sidebar metadata.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Channel {
     /// The collection ref this channel filters by.
     pub tag: String,
-    /// Display name in the sidebar.
-    pub title: String,
     pub description: Option<String>,
     /// Hex color: #RGB or #RRGGBB.
     pub color: Option<String>,
@@ -45,42 +40,20 @@ pub struct Channel {
 
 impl Channel {
     /// Create a new channel from an Obsidian collection ref.
-    pub fn new(tag: &str, title: Option<&str>, created_at: DateTime) -> Result<Self, ChannelError> {
+    pub fn new(tag: &str, created_at: DateTime) -> Result<Self, ChannelError> {
         let collection_ref = normalize_collection_ref(tag);
         if collection_ref.is_empty() {
             return Err(ChannelError::EmptyTag);
         }
 
-        let title = match title {
-            Some(t) => {
-                let trimmed = t.trim();
-                if trimmed.is_empty() {
-                    return Err(ChannelError::EmptyTitle);
-                }
-                trimmed.to_string()
-            }
-            None => title_from_ref(&collection_ref),
-        };
-
         Ok(Self {
             tag: collection_ref,
-            title,
             description: None,
             color: None,
             icon: None,
             position: 0,
             created_at,
         })
-    }
-
-    /// Update the channel title.
-    pub fn update_title(&mut self, title: &str) -> Result<(), ChannelError> {
-        let trimmed = title.trim();
-        if trimmed.is_empty() {
-            return Err(ChannelError::EmptyTitle);
-        }
-        self.title = trimmed.to_string();
-        Ok(())
     }
 
     /// Set the channel's sidebar position.
@@ -112,24 +85,6 @@ pub fn validate_color(color: &str) -> bool {
     (hex.len() == 3 || hex.len() == 6) && hex.iter().all(|b| b.is_ascii_hexdigit())
 }
 
-// ─── Private helpers ────────────────────────────────────────────────────────
-
-fn title_from_ref(collection_ref: &str) -> String {
-    let display = collection_ref
-        .rsplit('/')
-        .next()
-        .unwrap_or(collection_ref)
-        .trim();
-    let mut chars = display.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first) => {
-            let upper: String = first.to_uppercase().collect();
-            upper + chars.as_str()
-        }
-    }
-}
-
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -143,52 +98,23 @@ mod tests {
     // ── Channel::new ────────────────────────────────────────────────────
 
     #[test]
-    fn new_with_explicit_title() {
-        let ch = Channel::new("design", Some("My Design Channel"), dt()).unwrap();
+    fn new_with_ref() {
+        let ch = Channel::new("design", dt()).unwrap();
         assert_eq!(ch.tag, "design");
-        assert_eq!(ch.title, "My Design Channel");
         assert_eq!(ch.position, 0);
     }
 
     #[test]
-    fn new_title_generated_from_ref() {
-        // C2
-        let ch = Channel::new("Красивый веб", None, dt()).unwrap();
-        assert_eq!(ch.title, "Красивый веб");
-    }
-
-    #[test]
     fn new_preserves_human_ref() {
-        let ch = Channel::new("  Web Design  ", None, dt()).unwrap();
+        let ch = Channel::new("  Web Design  ", dt()).unwrap();
         assert_eq!(ch.tag, "Web Design");
     }
 
     #[test]
     fn new_empty_tag() {
         // C1
-        let err = Channel::new("", None, dt()).unwrap_err();
+        let err = Channel::new("", dt()).unwrap_err();
         assert_eq!(err, ChannelError::EmptyTag);
-    }
-
-    #[test]
-    fn new_empty_title() {
-        let err = Channel::new("design", Some("  "), dt()).unwrap_err();
-        assert_eq!(err, ChannelError::EmptyTitle);
-    }
-
-    // ── update_title ────────────────────────────────────────────────────
-
-    #[test]
-    fn update_title_ok() {
-        let mut ch = Channel::new("design", None, dt()).unwrap();
-        ch.update_title("New Title").unwrap();
-        assert_eq!(ch.title, "New Title");
-    }
-
-    #[test]
-    fn update_title_empty() {
-        let mut ch = Channel::new("design", None, dt()).unwrap();
-        assert_eq!(ch.update_title(""), Err(ChannelError::EmptyTitle));
     }
 
     // ── validate_color ──────────────────────────────────────────────────
@@ -236,45 +162,23 @@ mod tests {
 
     #[test]
     fn set_color_ok() {
-        let mut ch = Channel::new("design", None, dt()).unwrap();
+        let mut ch = Channel::new("design", dt()).unwrap();
         ch.set_color("#FF5733").unwrap();
         assert_eq!(ch.color.as_deref(), Some("#FF5733"));
     }
 
     #[test]
     fn set_color_invalid() {
-        let mut ch = Channel::new("design", None, dt()).unwrap();
+        let mut ch = Channel::new("design", dt()).unwrap();
         let err = ch.set_color("red").unwrap_err();
         assert!(matches!(err, ChannelError::InvalidColor { .. }));
-    }
-
-    // ── title_from_ref ──────────────────────────────────────────────────
-
-    #[test]
-    fn title_from_simple() {
-        assert_eq!(title_from_ref("design"), "Design");
-    }
-
-    #[test]
-    fn title_from_human_name() {
-        assert_eq!(title_from_ref("Web Design"), "Web Design");
-    }
-
-    #[test]
-    fn title_from_path_target() {
-        assert_eq!(title_from_ref("Design/References"), "References");
-    }
-
-    #[test]
-    fn title_from_cyrillic() {
-        assert_eq!(title_from_ref("верстка"), "Верстка");
     }
 
     // ── update_position ─────────────────────────────────────────────────
 
     #[test]
     fn update_position() {
-        let mut ch = Channel::new("design", None, dt()).unwrap();
+        let mut ch = Channel::new("design", dt()).unwrap();
         ch.update_position(5);
         assert_eq!(ch.position, 5);
     }

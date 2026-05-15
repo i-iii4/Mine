@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { DndContext } from "@dnd-kit/core";
 import { invoke } from "@tauri-apps/api/core";
@@ -117,8 +117,161 @@ describe("Sidebar", () => {
     const links = screen.getAllByRole("link");
     // "Everything" link is first, then tags in orderedTags order
     expect(links[0]).toHaveTextContent("Everything");
-    expect(links[1]).toHaveTextContent("Alpha");
-    expect(links[2]).toHaveTextContent("Beta");
+    expect(links[1]).toHaveTextContent("alpha");
+    expect(links[2]).toHaveTextContent("beta");
+  });
+
+  it("renders the new-channel row outside the guided channel grid", () => {
+    const { container } = renderSidebar({ ...defaultProps, width: 600 });
+
+    const button = screen.getByRole("button", { name: "Create New Channel" });
+    const row = button.closest("[data-sidebar-new-channel-row]") as HTMLElement;
+    expect(row).toHaveAttribute("data-sidebar-new-channel-row", "");
+    expect(row).toHaveAttribute("data-sidebar-row", "");
+    expect(row).toHaveAttribute("data-sidebar-row-key", "create-channel");
+    expect(row.closest("[data-sidebar-rows]")).toBeNull();
+    expect(row).not.toHaveAttribute("data-sidebar-row-surface");
+    expect(container.querySelector("[data-sidebar-rows]")).toBeInTheDocument();
+    const label = within(row).getByText("Create New Channel");
+    expect(label).toHaveAttribute("data-sidebar-row-text", "");
+    expect(label).not.toHaveAttribute("data-sidebar-title-fade-width");
+    expect(label).not.toHaveClass("max-w-[150px]");
+    expect(label).toHaveClass("shrink-0");
+    expect(label.nextElementSibling).toHaveAttribute("data-sidebar-create-channel-plus", "");
+    expect(label.nextElementSibling).toHaveClass("ml-2");
+    expect(row.querySelector("[data-sidebar-empty-preview-rail]")).not.toBeInTheDocument();
+  });
+
+  it("starts and submits new-channel creation inline", () => {
+    const onSetCreatingChannel = vi.fn();
+    const onCreateChannel = vi.fn();
+    const { container, rerender } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      onSetCreatingChannel,
+      onCreateChannel,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create New Channel" }));
+    expect(onSetCreatingChannel).toHaveBeenCalledWith(true);
+
+    rerender(sidebarTree({
+      ...defaultProps,
+      width: 600,
+      isCreatingChannel: true,
+      onSetCreatingChannel,
+      onCreateChannel,
+    }));
+
+    const input = screen.getByRole("textbox", { name: "Имя нового канала" });
+    const createRow = input.closest("[data-sidebar-new-channel-row]");
+    expect(input.closest("[data-sidebar-new-channel-row]")).toHaveAttribute(
+      "data-sidebar-row-editing",
+      "true",
+    );
+    expect(createRow).toHaveAttribute("data-sidebar-row-surface", "");
+    expect(createRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
+    expect(createRow?.querySelector("[data-sidebar-editable-row-full-width]")).toBeInTheDocument();
+    expect(createRow?.querySelector("[data-sidebar-preview-rail]")).not.toBeInTheDocument();
+    expect(createRow?.querySelector("[data-sidebar-empty-preview-rail]")).not.toBeInTheDocument();
+    const createAction = within(createRow as HTMLElement).getByRole("button", {
+      name: /Create\s+Enter/,
+    });
+    expect(createAction).toHaveAttribute("data-sidebar-inline-submit-action", "");
+    expect(createAction).toHaveClass("bg-component-fill");
+    expect(createAction).toHaveClass("hover:outline-component-fill-hover");
+    expect(createAction).toHaveTextContent("Create");
+    expect(within(createAction).getByText("Enter")).toHaveAttribute(
+      "data-sidebar-inline-submit-shortcut",
+      "",
+    );
+    expect(container.querySelector('[data-sidebar-row-key="tag:beta"]')).toHaveAttribute(
+      "data-sidebar-row-seam-accent",
+      "true",
+    );
+    expect(input).toHaveAttribute("data-sidebar-inline-channel-editor", "");
+    expect(input).toHaveClass("border-0");
+    expect(input).toHaveClass("bg-transparent");
+    expect(input).toHaveClass("p-0");
+
+    fireEvent.change(input, { target: { value: "Archive" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onCreateChannel).toHaveBeenCalledWith("Archive");
+    expect(onSetCreatingChannel).toHaveBeenCalledWith(false);
+  });
+
+  it("submits new-channel creation from the right-edge Create action", () => {
+    const onSetCreatingChannel = vi.fn();
+    const onCreateChannel = vi.fn();
+    renderSidebar({
+      ...defaultProps,
+      width: 600,
+      isCreatingChannel: true,
+      onSetCreatingChannel,
+      onCreateChannel,
+    });
+
+    const input = screen.getByRole("textbox", { name: "Имя нового канала" });
+    const row = input.closest("[data-sidebar-new-channel-row]") as HTMLElement;
+    const createAction = within(row).getByRole("button", { name: /Create\s+Enter/ });
+
+    fireEvent.change(input, { target: { value: "Research" } });
+    fireEvent.click(createAction);
+
+    expect(onCreateChannel).toHaveBeenCalledWith("Research");
+    expect(onSetCreatingChannel).toHaveBeenCalledWith(false);
+  });
+
+  it("renames a channel with an inline editor without replacing row geometry", () => {
+    const onRenameTag = vi.fn();
+    const { container } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      onRenameTag,
+    });
+
+    fireEvent.doubleClick(screen.getByRole("link", { name: /alpha/ }));
+
+    const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
+    expect(row).toHaveAttribute("data-sidebar-row-surface", "");
+    expect(row).toHaveAttribute("data-sidebar-row-editing", "true");
+    expect(row).toHaveAttribute("data-sidebar-row-seam-accent", "true");
+    expect(container.querySelector('[data-sidebar-row-key="all"]')).toHaveAttribute(
+      "data-sidebar-row-seam-accent",
+      "true",
+    );
+    expect(row.querySelector("[data-sidebar-editable-row-full-width]")).toBeInTheDocument();
+    expect(row.querySelector("[data-sidebar-preview-rail]")).not.toBeInTheDocument();
+    expect(row.querySelector("[data-sidebar-row-text]")).not.toBeInTheDocument();
+
+    const input = within(row).getByRole("textbox", { name: "Переименовать alpha" });
+    expect(input).toHaveAttribute("data-sidebar-inline-channel-editor", "");
+    expect(input).toHaveClass("border-0");
+    expect(input).toHaveClass("bg-transparent");
+    expect(input).toHaveClass("p-0");
+
+    fireEvent.change(input, { target: { value: "Renamed" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onRenameTag).toHaveBeenCalledWith("alpha", "Renamed");
+  });
+
+  it("uses the row hover seam when card content is dragged over Create New Channel", () => {
+    dndContextState.over = { id: "create-channel" };
+    const { container } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      isDropDragging: true,
+    });
+
+    const createRow = container.querySelector("[data-sidebar-new-channel-row]") as HTMLElement;
+    expect(createRow).toHaveAttribute("data-sidebar-row-key", "create-channel");
+    expect(createRow).toHaveAttribute("data-sidebar-row-focused", "true");
+    expect(container.querySelector('[data-sidebar-row-key="tag:beta"]')).toHaveAttribute(
+      "data-sidebar-row-seam-accent",
+      "true",
+    );
   });
 
   it("renders tag counts", () => {
@@ -153,7 +306,7 @@ describe("Sidebar", () => {
     expect(everythingLink).toHaveClass("text-muted-foreground");
     expect(screen.getByText("17")).toHaveClass("text-muted-foreground");
 
-    const alphaLink = screen.getByRole("link", { name: /Alpha/ });
+    const alphaLink = screen.getByRole("link", { name: /alpha/ });
     expect(alphaLink).not.toHaveClass("bg-sidebar-accent");
     expect(alphaLink).not.toHaveClass("text-sidebar-accent-foreground");
     expect(alphaLink).not.toHaveClass("hover:bg-accent");
@@ -161,7 +314,7 @@ describe("Sidebar", () => {
     expect(alphaLink).toHaveClass("text-muted-foreground");
     expect(screen.getByText("10")).toHaveClass("text-muted-foreground");
 
-    const betaLink = screen.getByRole("link", { name: /Beta/ });
+    const betaLink = screen.getByRole("link", { name: /beta/ });
     expect(betaLink).not.toHaveClass("hover:bg-accent");
     expect(betaLink).not.toHaveClass("hover:bg-sidebar-accent");
     expect(betaLink).toHaveClass("text-muted-foreground");
@@ -269,7 +422,7 @@ describe("Sidebar", () => {
       ...defaultProps,
       onTextSelectionDrop,
     });
-    const alphaLink = screen.getByRole("link", { name: /Alpha/ });
+    const alphaLink = screen.getByRole("link", { name: /alpha/ });
     const alphaRow = alphaLink.parentElement!;
 
     fireEvent.dragOver(alphaRow);
@@ -279,7 +432,7 @@ describe("Sidebar", () => {
     expect(onTextSelectionDrop).not.toHaveBeenCalled();
   });
 
-  it("keeps the main sidebar top inset on the scroll container without a fixed empty header slot", () => {
+  it("keeps the main sidebar insets on the scroll container without a fixed empty header slot", () => {
     function EmptySlot() {
       return null;
     }
@@ -291,6 +444,7 @@ describe("Sidebar", () => {
 
     const nav = container.querySelector("[data-sidebar-scroll]");
     expect(nav).toHaveClass("pt-16");
+    expect(nav).toHaveClass("pb-8");
     expect(container.querySelector("aside")?.firstElementChild).toBe(nav);
   });
 
@@ -334,8 +488,8 @@ describe("Sidebar", () => {
     );
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     const actions = screen.getAllByRole("button", { name: /Connect|Disconnect/ });
-    const alphaAction = actions.find((button) => button.getAttribute("aria-label") === "Disconnect Alpha")!;
-    const betaAction = actions.find((button) => button.getAttribute("aria-label") === "Connect Beta")!;
+    const alphaAction = actions.find((button) => button.getAttribute("aria-label") === "Disconnect alpha")!;
+    const betaAction = actions.find((button) => button.getAttribute("aria-label") === "Connect beta")!;
 
     await waitFor(() => {
       expect(screen.getByText("10")).toHaveClass("opacity-0");
@@ -356,7 +510,7 @@ describe("Sidebar", () => {
     expect(onNavClick).not.toHaveBeenCalled();
     onToggleLinkedTag.mockClear();
 
-    fireEvent.click(screen.getByRole("link", { name: /Beta/ }));
+    fireEvent.click(screen.getByRole("link", { name: /beta/ }));
     expect(onNavClick).toHaveBeenCalledOnce();
     expect(onToggleLinkedTag).not.toHaveBeenCalled();
 
@@ -373,8 +527,8 @@ describe("Sidebar", () => {
       detailChromeClosing: true,
     });
 
-    expect(screen.queryByRole("button", { name: "Disconnect Alpha" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Connect Beta" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Disconnect alpha" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect beta" })).not.toBeInTheDocument();
     expect(screen.getByText("10")).not.toHaveClass("opacity-0");
     expect(screen.getByText("5")).not.toHaveClass("opacity-0");
   });
@@ -633,8 +787,8 @@ describe("Sidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connected" }));
 
     expect(screen.getByText("Everything")).toBeInTheDocument();
-    expect(screen.getByText("Alpha")).toBeInTheDocument();
-    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+    expect(screen.getByText("alpha")).toBeInTheDocument();
+    expect(screen.queryByText("beta")).not.toBeInTheDocument();
   });
 
   it("uses classic detail-menu geometry for the link editor", () => {

@@ -280,8 +280,10 @@ Boundary:
 
 ```rust
 #[tauri::command] list_channels(state) -> Result<Vec<ChannelDto>, CommandError>
-#[tauri::command] create_channel(state, tag: String, title: Option<String>) -> Result<ChannelDto, CommandError>
+#[tauri::command] create_channel(state, tag: String) -> Result<ChannelDto, CommandError>
 #[tauri::command] delete_channel(state, tag: String) -> Result<bool, CommandError>
 ```
 
-`ChannelDto` — сериализуемая версия `Channel` для фронтенда.
+`ChannelDto` — сериализуемая версия `Channel` для фронтенда. В DTO нет
+отдельного `title`: отображаемое имя коллекции выводится из Markdown
+collection ref / имени файла.

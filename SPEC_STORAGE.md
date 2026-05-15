@@ -241,7 +241,9 @@ remove_channel(conn: &Connection, tag: &str) -> Result<bool>
 
 ### Поведение list_channels / next_channel_position
 
-- `list_channels` возвращает каналы в порядке `position ASC`, затем стабильный title/ref tie-breaker.
+- `list_channels` возвращает каналы в порядке `position ASC`, затем стабильный
+  `CollectionRef` tie-breaker. Legacy DB column `channels.title` is not a
+  display-title source.
 - `next_channel_position` возвращает `max(position) + 1`, либо `0` для пустого списка.
 - Новые каналы должны получать append-position через `next_channel_position`; `position = 0` допустим только для первого канала или explicit reorder.
 

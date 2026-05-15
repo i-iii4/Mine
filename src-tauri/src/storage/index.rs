@@ -2302,7 +2302,7 @@ pub fn upsert_channel(conn: &Connection, channel: &Channel) -> Result<i64> {
             position = excluded.position",
         params![
             channel.tag,
-            channel.title,
+            channel.tag,
             channel.description,
             channel.color,
             channel.icon,
@@ -2321,12 +2321,8 @@ pub fn upsert_channel(conn: &Connection, channel: &Channel) -> Result<i64> {
 /// Index a channel from a parsed Block with type: channel.
 /// Maps frontmatter fields to Channel struct and upserts.
 pub fn upsert_channel_from_block(conn: &Connection, block: &Block) -> Result<i64> {
-    let mut channel = Channel::new(
-        &block.slug,
-        block.frontmatter.title.as_deref(),
-        block.frontmatter.saved_at.clone(),
-    )
-    .map_err(|e| anyhow::anyhow!("invalid channel from block: {}", e))?;
+    let mut channel = Channel::new(&block.slug, block.frontmatter.saved_at.clone())
+        .map_err(|e| anyhow::anyhow!("invalid channel from block: {}", e))?;
     channel.description = block.frontmatter.description.clone();
     channel.color = block.frontmatter.color.clone();
     channel.icon = block.frontmatter.icon.clone();
@@ -2335,31 +2331,30 @@ pub fn upsert_channel_from_block(conn: &Connection, block: &Block) -> Result<i64
     upsert_channel(conn, &channel)
 }
 
-/// List all channels ordered by position, then title.
+/// List all channels ordered by position, then collection ref.
 pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
     let mut stmt = conn.prepare(
-        "SELECT tag, title, description, color, icon, position, created_at
-         FROM channels ORDER BY position ASC, title ASC, tag ASC",
+        "SELECT tag, description, color, icon, position, created_at
+         FROM channels ORDER BY position ASC, tag ASC",
     )?;
     let rows = stmt
         .query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, i64>(5)?,
-                row.get::<_, String>(6)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut channels = Vec::new();
-    for (raw_tag, title, description, color, icon, position, created_at) in rows {
+    for (raw_tag, description, color, icon, position, created_at) in rows {
         let dt = DateTime::new(&created_at)
             .map_err(|e| anyhow::anyhow!("invalid datetime in channel: {}", e))?;
-        let mut ch = Channel::new(&raw_tag, Some(&title), dt)
+        let mut ch = Channel::new(&raw_tag, dt)
             .map_err(|e| anyhow::anyhow!("invalid channel from db: {}", e))?;
         ch.description = description;
         ch.color = color;
@@ -2368,12 +2363,7 @@ pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
         channels.push(ch);
     }
 
-    channels.sort_by(|a, b| {
-        a.position
-            .cmp(&b.position)
-            .then_with(|| a.title.cmp(&b.title))
-            .then_with(|| a.tag.cmp(&b.tag))
-    });
+    channels.sort_by(|a, b| a.position.cmp(&b.position).then_with(|| a.tag.cmp(&b.tag)));
     Ok(channels)
 }
 
@@ -4394,30 +4384,28 @@ mod tests {
     fn upsert_and_list_channels() {
         let conn = test_conn();
         let dt = DateTime::new("2026-01-01T00:00:00Z").unwrap();
-        let ch = Channel::new("design", Some("Design Inspiration"), dt).unwrap();
+        let ch = Channel::new("design", dt).unwrap();
         let id = upsert_channel(&conn, &ch).unwrap();
         assert!(id > 0);
 
         let channels = list_channels(&conn).unwrap();
         assert_eq!(channels.len(), 1);
         assert_eq!(channels[0].tag, "design");
-        assert_eq!(channels[0].title, "Design Inspiration");
     }
 
     #[test]
     fn upsert_channel_updates_existing() {
         let conn = test_conn();
         let dt = DateTime::new("2026-01-01T00:00:00Z").unwrap();
-        let ch1 = Channel::new("design", Some("Old Title"), dt.clone()).unwrap();
+        let ch1 = Channel::new("design", dt.clone()).unwrap();
         upsert_channel(&conn, &ch1).unwrap();
 
-        let mut ch2 = Channel::new("design", Some("New Title"), dt).unwrap();
+        let mut ch2 = Channel::new("design", dt).unwrap();
         ch2.position = 5;
         upsert_channel(&conn, &ch2).unwrap();
 
         let channels = list_channels(&conn).unwrap();
         assert_eq!(channels.len(), 1);
-        assert_eq!(channels[0].title, "New Title");
         assert_eq!(channels[0].position, 5);
     }
 
@@ -4440,9 +4428,7 @@ mod tests {
         let channels = list_channels(&conn).unwrap();
         assert_eq!(channels.len(), 2);
         assert_eq!(channels[0].tag, "Красивый веб");
-        assert_eq!(channels[0].title, "Human");
         assert_eq!(channels[1].tag, "красивый-веб");
-        assert_eq!(channels[1].title, "Kebab");
     }
 
     #[test]
@@ -4469,7 +4455,6 @@ mod tests {
         let channels = list_channels(&conn).unwrap();
         assert_eq!(channels.len(), 1);
         assert_eq!(channels[0].tag, "Красивый веб");
-        assert_eq!(channels[0].title, "Красивый веб");
         assert_eq!(channels[0].position, 3);
 
         let human_ref_count: i64 = conn
@@ -4486,7 +4471,7 @@ mod tests {
     fn remove_channel_existing() {
         let conn = test_conn();
         let dt = DateTime::new("2026-01-01T00:00:00Z").unwrap();
-        let ch = Channel::new("design", None, dt).unwrap();
+        let ch = Channel::new("design", dt).unwrap();
         upsert_channel(&conn, &ch).unwrap();
         assert!(remove_channel(&conn, "design").unwrap());
         assert!(list_channels(&conn).unwrap().is_empty());
@@ -4503,15 +4488,15 @@ mod tests {
         let conn = test_conn();
         let dt = DateTime::new("2026-01-01T00:00:00Z").unwrap();
 
-        let mut ch_b = Channel::new("beta", None, dt.clone()).unwrap();
+        let mut ch_b = Channel::new("beta", dt.clone()).unwrap();
         ch_b.position = 2;
         upsert_channel(&conn, &ch_b).unwrap();
 
-        let mut ch_a = Channel::new("alpha", None, dt.clone()).unwrap();
+        let mut ch_a = Channel::new("alpha", dt.clone()).unwrap();
         ch_a.position = 1;
         upsert_channel(&conn, &ch_a).unwrap();
 
-        let mut ch_c = Channel::new("gamma", None, dt).unwrap();
+        let mut ch_c = Channel::new("gamma", dt).unwrap();
         ch_c.position = 0;
         upsert_channel(&conn, &ch_c).unwrap();
 
@@ -4526,11 +4511,11 @@ mod tests {
         assert_eq!(next_channel_position(&conn).unwrap(), 0);
 
         let dt = DateTime::new("2026-01-01T00:00:00Z").unwrap();
-        let mut ch_a = Channel::new("alpha", None, dt.clone()).unwrap();
+        let mut ch_a = Channel::new("alpha", dt.clone()).unwrap();
         ch_a.position = 4;
         upsert_channel(&conn, &ch_a).unwrap();
 
-        let mut ch_b = Channel::new("beta", None, dt).unwrap();
+        let mut ch_b = Channel::new("beta", dt).unwrap();
         ch_b.position = 9;
         upsert_channel(&conn, &ch_b).unwrap();
 

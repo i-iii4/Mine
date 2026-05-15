@@ -27,15 +27,9 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import type { TagCount, PreviewCard } from "@/types";
+import { collectionRefLabel } from "@/lib/collections";
 import { cn } from "@/lib/utils";
 import { ChannelIcon } from "./ChannelIcon";
-
-/** Convert a collection ref to a compact display title. */
-function titleFromTag(tag: string): string {
-  const parts = tag.split("/");
-  const label = (parts[parts.length - 1] ?? tag).trim();
-  return label.charAt(0).toUpperCase() + label.slice(1);
-}
 
 interface SidebarProps {
   width: number;
@@ -112,7 +106,7 @@ export function Sidebar({
             <TagNavItem
               key={tc.tag}
               to={`/channel/${encodeURIComponent(tc.tag)}`}
-              label={titleFromTag(tc.tag)}
+              label={collectionRefLabel(tc.tag)}
               count={tc.count}
               tag={tc.tag}
               cards={channelPreviews.get(tc.tag) ?? []}

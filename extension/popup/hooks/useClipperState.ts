@@ -613,7 +613,7 @@ export function useClipperState() {
   }, []);
 
   const createChannel = useCallback(async (name: string) => {
-    const result = await sendToNative({ action: "create_channel", tag: name, title: name, vault_path: vaultRef.current });
+    const result = await sendToNative({ action: "create_channel", tag: name, vault_path: vaultRef.current });
     if (!result.ok) {
       showError(result.error ?? "Failed to create channel");
       return;

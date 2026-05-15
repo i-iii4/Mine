@@ -21,13 +21,8 @@ import {
   type Modifier,
 } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
-
-/** Convert a collection ref to a compact display title. */
-function titleFromTag(tag: string): string {
-  const parts = tag.split("/");
-  const label = (parts[parts.length - 1] ?? tag).trim();
-  return label.charAt(0).toUpperCase() + label.slice(1);
-}
+import { collectionRefLabel } from "@/lib/collections";
+import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 
 function baseRelatedNoteSlug(target: string): string {
   return target.split("#", 1)[0] ?? target;
@@ -49,6 +44,26 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
 function isOverlayKeyboardTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return target.closest("[role='dialog'], [data-radix-popper-content-wrapper]") !== null;
+}
+
+function isDetailShortcutBlockedTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const dialog = target.closest("[role='dialog']");
+  if (dialog && !(dialog as HTMLElement).hasAttribute("data-detail-root")) return true;
+  return target.closest(
+    "[data-image-preview-overlay], [data-radix-popper-content-wrapper], [role='menu'], [role='listbox']",
+  ) !== null;
+}
+
+function blockMarkdownPath(vaultPath: string, slug: string): string {
+  return `${vaultPath.replace(/\/+$/, "")}/${slug.replace(/^\/+/, "")}.md`;
+}
+
+function historyDirectionForShortcut(e: KeyboardEvent): -1 | 1 | null {
+  if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return null;
+  if (e.key === "[" || e.code === "BracketLeft") return -1;
+  if (e.key === "]" || e.code === "BracketRight") return 1;
+  return null;
 }
 
 /** Pin the DragOverlay so the cursor tip sits just outside the top-left corner. */
@@ -181,6 +196,11 @@ type MediaAssetDragPreview = {
 type TextSelectionDragPreview = {
   selectedText: string;
 };
+
+type PendingCreateChannelDrop =
+  | { type: "block"; slug: string }
+  | { type: "media_asset"; payload: MediaAssetDragPayload }
+  | { type: "text_selection"; payload: MineTextSelectionDragPayload };
 
 interface BlockRemovedEvent {
   slug: string;
@@ -322,6 +342,8 @@ export function AppWithVault({
   const [importOpen, setImportOpen] = useState(false);
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
+  const [pendingCreateChannelDrop, setPendingCreateChannelDrop] =
+    useState<PendingCreateChannelDrop | null>(null);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlockAnchor, setSelectedBlockAnchor] = useState<string | null>(null);
@@ -1108,7 +1130,30 @@ export function AppWithVault({
   // Global keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || isEditableKeyboardTarget(e.target) || isOverlayKeyboardTarget(e.target)) return;
+      if (e.defaultPrevented || isEditableKeyboardTarget(e.target)) return;
+      const historyDirection = historyDirectionForShortcut(e);
+      if (historyDirection !== null) {
+        if (isDetailShortcutBlockedTarget(e.target)) return;
+        e.preventDefault();
+        navigate(historyDirection);
+        return;
+      }
+      if (
+        e.metaKey
+        && !e.shiftKey
+        && !e.altKey
+        && !e.ctrlKey
+        && e.key.toLowerCase() === "l"
+        && selectedBlock
+      ) {
+        if (isDetailShortcutBlockedTarget(e.target)) return;
+        e.preventDefault();
+        void navigator.clipboard
+          .writeText(blockMarkdownPath(vaultPath, selectedBlock.slug))
+          .catch((err) => console.error("Failed to copy card path:", err));
+        return;
+      }
+      if (isOverlayKeyboardTarget(e.target)) return;
       if (!e.metaKey) return;
       if (e.key === "k") {
         e.preventDefault();
@@ -1126,7 +1171,7 @@ export function AppWithVault({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleSwitchVault]);
+  }, [handleSwitchVault, navigate, selectedBlock, vaultPath]);
 
   // ── Block navigation ──────────────────────────────────────────────────────
 
@@ -1247,7 +1292,6 @@ export function AppWithVault({
     const withPos = [...channels]
       .sort((a, b) => (
         a.position - b.position
-        || a.title.localeCompare(b.title)
         || a.tag.localeCompare(b.tag)
       ))
       .map((ch) => ({
@@ -1316,15 +1360,90 @@ export function AppWithVault({
 
   const handleCreateChannel = useCallback(
     async (tag: string) => {
+      const pendingDrop = pendingCreateChannelDrop;
+      setPendingCreateChannelDrop(null);
       try {
-        await createChannel(tag);
+        const channel = await createChannel(tag);
+        pushRecentTag(channel.tag);
+
+        if (pendingDrop?.type === "block") {
+          await addTag(pendingDrop.slug, channel.tag);
+          if (selectedBlock?.slug === pendingDrop.slug) {
+            setSelectedBlockTags((current) => (
+              current.includes(channel.tag) ? current : [...current, channel.tag]
+            ));
+            setSelectedBlock((current) => (
+              current && current.slug === pendingDrop.slug && "tags" in current
+                ? {
+                    ...current,
+                    tags: current.tags.includes(channel.tag)
+                      ? current.tags
+                      : [...current.tags, channel.tag],
+                  }
+                : current
+            ));
+          }
+          await reloadAllSnapshots();
+          return;
+        }
+
+        if (pendingDrop?.type === "media_asset") {
+          const block = await createMediaAssetCard({
+            source_slug: pendingDrop.payload.asset.source_slug,
+            media_ref: pendingDrop.payload.asset.media_ref,
+            target_tag: channel.tag,
+          });
+          invalidateRoutesForTags(block.tags);
+          scheduleRefresh({
+            grid: currentTagRef.current === undefined || block.tags.includes(currentTagRef.current),
+            taxonomy: true,
+            previews: true,
+          }, 0, { force: true });
+          return;
+        }
+
+        if (pendingDrop?.type === "text_selection") {
+          const payload = pendingDrop.payload;
+          const block = await extractTextSelection({
+            source_slug: payload.sourceSlug,
+            target_tag: channel.tag,
+            selected_text: payload.selectedText,
+            first_block_start: payload.firstBlockStart,
+            first_block_end: payload.firstBlockEnd,
+            source_body_hash: payload.sourceBodyHash,
+          });
+          invalidateRoutesForTags(block.tags);
+          scheduleRefresh({
+            grid: currentTagRef.current === undefined || block.tags.includes(currentTagRef.current),
+            taxonomy: true,
+            previews: true,
+          }, 0, { force: true });
+          return;
+        }
+
+        await reloadAllSnapshots();
       } catch (err) {
         console.error("Failed to create channel:", err);
       }
-      await reloadAllSnapshots();
     },
-    [reloadAllSnapshots],
+    [
+      invalidateRoutesForTags,
+      pendingCreateChannelDrop,
+      reloadAllSnapshots,
+      scheduleRefresh,
+      selectedBlock?.slug,
+    ],
   );
+
+  const handleSetCreatingChannel = useCallback((creating: boolean) => {
+    setPendingCreateChannelDrop(null);
+    setIsCreatingChannel(creating);
+  }, []);
+
+  const beginCreateChannelFromDrop = useCallback((pendingDrop: PendingCreateChannelDrop) => {
+    setPendingCreateChannelDrop(pendingDrop);
+    setIsCreatingChannel(true);
+  }, []);
 
   const handleReorderTag = useCallback(
     async (activeTag: string, overTag: string) => {
@@ -1412,7 +1531,7 @@ export function AppWithVault({
 
   const handleMediaAssetCreateChannelAndCard = useCallback(
     async (asset: MediaAssetRef, tag: string) => {
-      const channel = await createChannel(tag, titleFromTag(tag));
+      const channel = await createChannel(tag);
       pushRecentTag(channel.tag);
       await handleMediaAssetCreateCard(asset, channel.tag);
     },
@@ -1565,6 +1684,13 @@ export function AppWithVault({
         slug?: string;
       } & Partial<MediaAssetDragPayload> & Partial<MineTextSelectionDragPayload>) | undefined;
       if (activeData?.type === "media_asset") {
+        if (overId === "create-channel") {
+          beginCreateChannelFromDrop({
+            type: "media_asset",
+            payload: activeData as MediaAssetDragPayload,
+          });
+          return;
+        }
         if (overId.startsWith("tag:")) {
           void handleMediaAssetDrop(activeData as MediaAssetDragPayload, overId.slice(4));
         }
@@ -1576,6 +1702,14 @@ export function AppWithVault({
           ? getActiveMineTextSelectionDragPayload()
           : null;
       if (textSelectionPayload) {
+        if (overId === "create-channel") {
+          beginCreateChannelFromDrop({
+            type: "text_selection",
+            payload: textSelectionPayload,
+          });
+          clearActiveMineTextSelectionDragPayload();
+          return;
+        }
         if (overId.startsWith("tag:")) {
           void handleTextSelectionDrop(textSelectionPayload, overId.slice(4));
         }
@@ -1595,12 +1729,23 @@ export function AppWithVault({
         return;
       }
 
+      if (!activeIsTag && overId === "create-channel") {
+        beginCreateChannelFromDrop({ type: "block", slug: activeSlug });
+        return;
+      }
+
       // Card dropped on tag
       if (!activeIsTag && overId.startsWith("tag:")) {
         handleCardDrop(activeSlug, overId.slice(4));
       }
     },
-    [handleCardDrop, handleMediaAssetDrop, handleReorderTag, handleTextSelectionDrop],
+    [
+      beginCreateChannelFromDrop,
+      handleCardDrop,
+      handleMediaAssetDrop,
+      handleReorderTag,
+      handleTextSelectionDrop,
+    ],
   );
 
   const handleDndCancel = useCallback(() => {
@@ -1776,7 +1921,10 @@ export function AppWithVault({
       onDragEnd={handleDndEnd}
       onDragCancel={handleDndCancel}
     >
-    <div className="flex h-screen w-screen flex-col bg-background text-foreground">
+    <div
+      className="flex h-screen w-screen flex-col bg-background text-foreground"
+      style={{ minWidth: APP_MIN_WIDTH_PX }}
+    >
       {/* Top toolbar */}
       <header
         data-tauri-drag-region
@@ -1807,7 +1955,7 @@ export function AppWithVault({
           || activeDragTextSelection !== null
         }
         isCreatingChannel={isCreatingChannel}
-        onSetCreatingChannel={setIsCreatingChannel}
+        onSetCreatingChannel={handleSetCreatingChannel}
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}
         onCreateChannel={handleCreateChannel}
@@ -1848,7 +1996,11 @@ export function AppWithVault({
         onToggleCollapsed={toggleCollapsed}
       />
 
-      <main ref={mainRef} className="relative isolate flex-1 overflow-hidden">
+      <main
+        ref={mainRef}
+        className="relative isolate flex-1 overflow-hidden"
+        style={{ minWidth: APP_MAIN_MIN_WIDTH_PX }}
+      >
         {loadError && (
           <div className="flex h-full items-center justify-center p-8">
             <p className="text-sm text-destructive">{loadError}</p>
@@ -2071,7 +2223,7 @@ export function AppWithVault({
       )}
       {activeDragTag && (
         <div className="pointer-events-none rounded-1 bg-secondary px-3 py-1.5 text-base font-semibold shadow-lg">
-          {titleFromTag(activeDragTag)}
+          {collectionRefLabel(activeDragTag)}
         </div>
       )}
     </DragOverlay>

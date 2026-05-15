@@ -490,8 +490,8 @@ Response:
 {
   "ok": true,
   "channels": [
-    { "tag": "Design", "title": "Design", "block_count": 42 },
-    { "tag": "Красивый веб", "title": "Красивый веб", "block_count": 15 }
+    { "tag": "Design", "block_count": 42 },
+    { "tag": "Красивый веб", "block_count": 15 }
   ]
 }
 ```
@@ -601,8 +601,7 @@ Per-kind индексы могут содержать gap'ы при failed/dup (
 ```json
 {
   "action": "create_channel",
-  "tag": "new-topic",
-  "title": "New Topic"
+  "tag": "new-topic"
 }
 ```
 

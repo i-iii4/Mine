@@ -16,7 +16,8 @@ import {
 import { cn } from "@/lib/utils";
 import type { IndexedBlock, LightBlock, TagCount } from "@/types";
 import { getBlock } from "@/lib/commands";
-import { CollectionPicker, titleFromTag } from "./CollectionPicker";
+import { collectionRefLabel } from "@/lib/collections";
+import { CollectionPicker } from "./CollectionPicker";
 
 interface CardMenuActionsProps<TBlock extends LightBlock | IndexedBlock> {
   block: TBlock;
@@ -138,7 +139,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
           <DropdownMenuItem
             onSelect={() => onToggleTag(block.slug, currentTag, true)}
           >
-            Remove from &ldquo;{titleFromTag(currentTag)}&rdquo;
+            Remove from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
           </DropdownMenuItem>
         )}
 

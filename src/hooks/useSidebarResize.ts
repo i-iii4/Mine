@@ -1,11 +1,12 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, startTransition } from "react";
+import { SIDEBAR_MAX_WIDTH_PX } from "@/lib/appLayout";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = "arena:sidebar";
 const DEFAULT_WIDTH = 300;
 const MIN_WIDTH = 220;
-const MAX_WIDTH = 600;
+const MAX_WIDTH = SIDEBAR_MAX_WIDTH_PX;
 const COLLAPSE_THRESHOLD = 100;
 const CSS_VAR = "--sidebar-width";
 

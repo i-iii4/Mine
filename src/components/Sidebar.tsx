@@ -14,11 +14,10 @@ import {
   type Ref,
 } from "react";
 import { NavLink, useLocation } from "react-router";
-import { useDndContext } from "@dnd-kit/core";
+import { useDndContext, useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Pencil, Trash2 } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -37,17 +36,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
 import { getBlock } from "@/lib/commands";
+import { collectionRefLabel } from "@/lib/collections";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import { cn } from "@/lib/utils";
 import { ReadOnlyCardPreview } from "./Card";
 import { MicroPreviewThumbnail, microPreviewFromPreviewCard } from "./MicroPreviewThumbnail";
-
-/** Convert a collection ref to a compact display title. */
-function titleFromTag(tag: string): string {
-  const parts = tag.split("/");
-  const label = (parts[parts.length - 1] ?? tag).trim();
-  return label.charAt(0).toUpperCase() + label.slice(1);
-}
 
 const SIDEBAR_PREVIEW_WIDTH = 240;
 const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
@@ -63,6 +56,8 @@ const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = 24;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = 24;
 const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH =
   SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET + SIDEBAR_PREVIEW_DIVIDER_GAP;
+const SIDEBAR_ROW_ACTION_BUTTON_CLASS =
+  "inline-flex h-6 cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
 const createRightFadeMaskStyle = (fadeWidth: number, clearTailWidth: number) => {
   const rightFadeMaskStop = (alpha: number, progress: number) => {
     const offset =
@@ -149,8 +144,12 @@ interface SidebarProps {
   detailChromeClosing?: boolean;
 }
 
-function buildSidebarRowOrder(visibleTags: TagCount[]): string[] {
-  return ["all", ...visibleTags.map((tc) => `tag:${tc.tag}`)];
+function buildSidebarRowOrder(visibleTags: TagCount[], includeCreateRow = false): string[] {
+  const rowKeys = ["all", ...visibleTags.map((tc) => `tag:${tc.tag}`)];
+  if (includeCreateRow) {
+    rowKeys.push("create-channel");
+  }
+  return rowKeys;
 }
 
 function createSidebarSeamAccentSet(
@@ -239,14 +238,23 @@ export function Sidebar({
   const visibleTags = isLinkEditorActive && linkMode === "linked"
     ? orderedTags.filter((tc) => linkedTagSet.has(tc.tag))
     : orderedTags;
-  const orderedRowKeys = buildSidebarRowOrder(visibleTags);
+  const editingRowKey = !isLinkEditorActive && editingTag !== null
+    ? `tag:${editingTag}`
+    : isCreatingChannel
+      ? "create-channel"
+      : null;
+  const orderedRowKeys = buildSidebarRowOrder(visibleTags, true);
   const activePreviewRowKey = hoveredPreview?.rowKey ?? null;
   const overId = isDropDragging && over?.id != null ? String(over.id) : null;
-  const dropOverRowKey = overId?.startsWith("tag:") ? overId : null;
-  const effectiveSidebarRowFocusKey = dropOverRowKey ?? (sidebarRowFocusMode
+  const dropOverRowKey = overId?.startsWith("tag:")
+    ? overId
+    : overId === "create-channel"
+      ? "create-channel"
+      : null;
+  const effectiveSidebarRowFocusKey = editingRowKey ?? dropOverRowKey ?? (sidebarRowFocusMode
     ? sidebarRowFocusKey
     : activePreviewRowKey);
-  const hasSidebarRowFocusMode = dropOverRowKey !== null || sidebarRowFocusMode || activePreviewRowKey !== null;
+  const hasSidebarRowFocusMode = editingRowKey !== null || dropOverRowKey !== null || sidebarRowFocusMode || activePreviewRowKey !== null;
   const seamAccentKeys = createSidebarSeamAccentSet(
     orderedRowKeys,
     effectiveSidebarRowFocusKey,
@@ -523,6 +531,7 @@ export function Sidebar({
         className={cn(
           "relative flex-1 overflow-y-auto",
           isLinkingBlock ? linkEditorNavPadding : "pt-16",
+          "pb-8",
           compact ? "px-2" : "px-8",
         )}
         data-sidebar-scroll
@@ -584,7 +593,7 @@ export function Sidebar({
                 <TagNavItem
                   key={tc.tag}
                   to={`/channel/${encodeURIComponent(tc.tag)}`}
-                  label={titleFromTag(tc.tag)}
+                  label={collectionRefLabel(tc.tag)}
                   count={tc.count}
                   tag={tc.tag}
                   cards={channelPreviews.get(tc.tag) ?? []}
@@ -615,18 +624,20 @@ export function Sidebar({
             })}
           </SortableContext>
 
-          {isCreatingChannel && (
-            <InlineInput
-              defaultValue=""
-              placeholder="New channel..."
-              onSubmit={(value) => {
-                onCreateChannel(value);
-                onSetCreatingChannel(false);
-              }}
-              onCancel={() => onSetCreatingChannel(false)}
-            />
-          )}
         </div>
+
+        <NewChannelRow
+          compact={compact}
+          isEditing={isCreatingChannel}
+          isSidebarRowFocused={effectiveSidebarRowFocusKey === "create-channel"}
+          isSidebarRowSeamAccent={seamAccentKeys.has("create-channel")}
+          onStartCreate={() => onSetCreatingChannel(true)}
+          onCreate={(value) => {
+            onCreateChannel(value);
+            onSetCreatingChannel(false);
+          }}
+          onCancel={() => onSetCreatingChannel(false)}
+        />
 
       </nav>
 
@@ -789,6 +800,8 @@ type SidebarRowFrameProps = {
   isLinked?: boolean;
   isSidebarRowFocused: boolean;
   isSidebarRowSeamAccent: boolean;
+  surface?: boolean;
+  isEditing?: boolean;
   className?: string;
   style?: CSSProperties;
   nodeRef?: (node: HTMLDivElement | null) => void;
@@ -803,6 +816,8 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
   isLinked = false,
   isSidebarRowFocused,
   isSidebarRowSeamAccent,
+  surface,
+  isEditing = false,
   className,
   style,
   nodeRef,
@@ -814,6 +829,7 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
     assignRef(forwardedRef, node);
     nodeRef?.(node);
   }, [forwardedRef, nodeRef]);
+  const hasSurface = surface ?? !compact;
 
   return (
     <div
@@ -821,15 +837,17 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
       style={style}
       {...domProps}
       data-sidebar-row=""
-      data-sidebar-row-surface={!compact ? "" : undefined}
+      data-sidebar-row-surface={hasSurface ? "" : undefined}
       data-sidebar-row-key={rowKey}
       data-sidebar-row-active={isCurrentRoute ? "true" : undefined}
       data-sidebar-row-linked={isLinked ? "true" : undefined}
       data-sidebar-row-focused={isSidebarRowFocused ? "true" : undefined}
       data-sidebar-row-seam-accent={!compact && isSidebarRowSeamAccent ? "true" : undefined}
+      data-sidebar-row-editing={isEditing ? "true" : undefined}
       data-sidebar-text-drop-tag={textDropTag}
       className={cn(
         "group relative rounded-1",
+        isEditing && "z-10 bg-sidebar",
         className,
       )}
     >
@@ -837,6 +855,45 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
     </div>
   );
 });
+
+function SidebarRowTitleCell({
+  compact,
+  children,
+  className,
+}: {
+  compact?: boolean;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <span
+      data-sidebar-row-text=""
+      data-sidebar-title-fade-width={compact ? undefined : String(SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH)}
+      data-sidebar-title-protected-width={compact ? undefined : String(SIDEBAR_PREVIEW_DIVIDER_GAP)}
+      className={cn(
+        compact
+          ? "flex-1 truncate"
+          : "min-w-[100px] max-w-[150px] flex-1 translate-x-px overflow-hidden whitespace-nowrap",
+        className,
+      )}
+      style={compact ? undefined : SIDEBAR_ROW_TEXT_MASK_STYLE}
+    >
+      {children}
+    </span>
+  );
+}
+
+function SidebarPreviewRail({ children }: { children: ReactNode }) {
+  return (
+    <div
+      className="relative min-w-0 flex-1"
+      data-sidebar-preview-rail
+      style={{ paddingLeft: `${SIDEBAR_PREVIEW_DIVIDER_GAP}px` }}
+    >
+      {children}
+    </div>
+  );
+}
 
 function SidebarRowBody({
   to,
@@ -921,25 +978,11 @@ function SidebarRowBody({
             : cn("relative flex items-center py-1 font-sans text-base text-muted-foreground")
         }
       >
-        <span
-          data-sidebar-row-text=""
-          data-sidebar-title-fade-width={compact ? undefined : String(SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH)}
-          data-sidebar-title-protected-width={compact ? undefined : String(SIDEBAR_PREVIEW_DIVIDER_GAP)}
-          className={
-            compact
-              ? "flex-1 truncate"
-              : "min-w-[100px] max-w-[150px] flex-1 translate-x-px overflow-hidden whitespace-nowrap"
-          }
-          style={compact ? undefined : SIDEBAR_ROW_TEXT_MASK_STYLE}
-        >
+        <SidebarRowTitleCell compact={compact}>
           {label}
-        </span>
+        </SidebarRowTitleCell>
         {!compact && (
-          <div
-            className="relative min-w-0 flex-1"
-            data-sidebar-preview-rail
-            style={{ paddingLeft: `${SIDEBAR_PREVIEW_DIVIDER_GAP}px` }}
-          >
+          <SidebarPreviewRail>
             <SidebarPreviewStrip
               cards={cards}
               previewKeyPrefix={previewKeyPrefix}
@@ -951,7 +994,7 @@ function SidebarRowBody({
               activePreviewKey={activePreviewKey}
               allowHoverPreview
             />
-          </div>
+          </SidebarPreviewRail>
         )}
         {compact && isLinkEditor && (
           <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
@@ -1023,7 +1066,8 @@ function SidebarRowBody({
             event.stopPropagation();
           }}
           className={cn(
-            "absolute top-1/2 z-10 inline-flex h-6 w-[10ch] -translate-y-1/2 cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+            SIDEBAR_ROW_ACTION_BUTTON_CLASS,
+            "absolute top-1/2 z-10 w-[10ch] -translate-y-1/2 transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
             "right-0",
             linkEditor.checked
               ? "opacity-100"
@@ -1042,6 +1086,52 @@ function SidebarRowBody({
         </button>
       )}
     </>
+  );
+}
+
+function SidebarEditableRowBody({
+  defaultValue,
+  placeholder,
+  ariaLabel,
+  compact,
+  submitAction,
+  onSubmit,
+  onCancel,
+}: {
+  defaultValue: string;
+  placeholder: string;
+  ariaLabel: string;
+  compact?: boolean;
+  submitAction?: {
+    label: string;
+    shortcut: string;
+  };
+  onSubmit: (value: string) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      className={
+        compact
+          ? cn(
+              "flex w-full items-center overflow-hidden text-base",
+              "rounded-1 p-2",
+              "text-muted-foreground",
+            )
+          : cn("relative flex min-h-10 w-full items-center py-1 font-sans text-base text-muted-foreground")
+      }
+      data-sidebar-editable-row-body
+      data-sidebar-editable-row-full-width
+    >
+      <InlineChannelNameEditor
+        defaultValue={defaultValue}
+        placeholder={placeholder}
+        ariaLabel={ariaLabel}
+        submitAction={submitAction}
+        onSubmit={onSubmit}
+        onCancel={onCancel}
+      />
+    </div>
   );
 }
 
@@ -1199,12 +1289,30 @@ const TagNavItem = memo(function TagNavItem({
 
   if (isEditing) {
     return (
-      <InlineInput
-        defaultValue={label}
-        placeholder="Rename..."
-        onSubmit={onRenameSubmit}
-        onCancel={onRenameCancel}
-      />
+      <SidebarRowFrame
+        compact={compact}
+        rowKey={rowKey}
+        isCurrentRoute={isCurrentRoute}
+        isLinked={linkEditor?.checked}
+        isSidebarRowFocused={isSidebarRowFocused}
+        isSidebarRowSeamAccent={isSidebarRowSeamAccent}
+        isEditing
+        className={cn(
+          isDragging && "opacity-30",
+        )}
+        style={style}
+        nodeRef={setNodeRef}
+        textDropTag={tag}
+      >
+        <SidebarEditableRowBody
+          defaultValue={label}
+          placeholder={label}
+          ariaLabel={`Переименовать ${label}`}
+          compact={compact}
+          onSubmit={onRenameSubmit}
+          onCancel={onRenameCancel}
+        />
+      </SidebarRowFrame>
     );
   }
 
@@ -1282,6 +1390,107 @@ const TagNavItem = memo(function TagNavItem({
     </>
   );
 });
+
+function NewChannelRow({
+  compact,
+  isEditing,
+  isSidebarRowFocused,
+  isSidebarRowSeamAccent,
+  onStartCreate,
+  onCreate,
+  onCancel,
+}: {
+  compact?: boolean;
+  isEditing: boolean;
+  isSidebarRowFocused: boolean;
+  isSidebarRowSeamAccent: boolean;
+  onStartCreate: () => void;
+  onCreate: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const { setNodeRef } = useDroppable({
+    id: "create-channel",
+    disabled: isEditing,
+  });
+
+  return (
+    <SidebarRowFrame
+      compact={compact}
+      rowKey="create-channel"
+      isCurrentRoute={false}
+      isSidebarRowFocused={isSidebarRowFocused}
+      isSidebarRowSeamAccent={isSidebarRowSeamAccent}
+      surface={isEditing && !compact}
+      isEditing={isEditing}
+      nodeRef={setNodeRef}
+      data-sidebar-new-channel-row=""
+    >
+      {isEditing ? (
+        <SidebarEditableRowBody
+          defaultValue=""
+          placeholder=""
+          ariaLabel="Имя нового канала"
+          compact={compact}
+          submitAction={{ label: "Create", shortcut: "Enter" }}
+          onSubmit={onCreate}
+          onCancel={onCancel}
+        />
+      ) : (
+        <button
+          type="button"
+          className="block w-full text-left"
+          onClick={onStartCreate}
+        >
+          <SidebarCreateChannelRowBody
+            compact={compact}
+            isEditing={false}
+          />
+        </button>
+      )}
+    </SidebarRowFrame>
+  );
+}
+
+function SidebarCreateChannelRowBody({
+  compact,
+  isEditing,
+}: {
+  compact?: boolean;
+  isEditing: boolean;
+}) {
+  return (
+    <div
+      className={
+        compact
+          ? cn(
+              "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 font-sans text-base text-muted-foreground",
+              !isEditing && "group-hover:text-foreground group-focus-within:text-foreground",
+            )
+          : cn(
+              "relative flex min-h-10 w-full items-center py-1 font-sans text-base text-muted-foreground",
+              !isEditing && "group-hover:text-foreground group-focus-within:text-foreground",
+            )
+      }
+      data-sidebar-create-channel-row-body
+    >
+      <span
+        data-sidebar-row-text=""
+        className="shrink-0 whitespace-nowrap text-left"
+      >
+        Create New Channel
+      </span>
+      <Plus
+        aria-hidden="true"
+        data-sidebar-create-channel-plus=""
+        className={cn(
+          "ml-2 size-4 shrink-0 text-muted-foreground",
+          isEditing && "opacity-0",
+        )}
+      />
+      <span className="min-w-0 flex-1" aria-hidden="true" />
+    </div>
+  );
+}
 
 function SidebarPreviewStrip({
   cards,
@@ -1369,14 +1578,21 @@ function SidebarPreviewStrip({
   );
 }
 
-function InlineInput({
+function InlineChannelNameEditor({
   placeholder,
   defaultValue = "",
+  ariaLabel,
+  submitAction,
   onSubmit,
   onCancel,
 }: {
   placeholder: string;
   defaultValue?: string;
+  ariaLabel: string;
+  submitAction?: {
+    label: string;
+    shortcut: string;
+  };
   onSubmit: (value: string) => void;
   onCancel: () => void;
 }) {
@@ -1384,8 +1600,11 @@ function InlineInput({
   const submitted = useRef(false);
 
   useEffect(() => {
-    ref.current?.focus();
-    ref.current?.select();
+    const input = ref.current;
+    if (!input) return;
+    input.focus();
+    const end = input.value.length;
+    input.setSelectionRange(end, end);
   }, []);
 
   const doSubmit = (value: string) => {
@@ -1397,21 +1616,63 @@ function InlineInput({
   };
 
   return (
-    <Input
-      ref={ref}
-      type="text"
-      defaultValue={defaultValue}
-      placeholder={placeholder}
-      className="mx-1 h-auto w-[calc(100%-0.5rem)] border-ring py-1.5"
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          doSubmit((e.target as HTMLInputElement).value);
-        } else if (e.key === "Escape") {
-          submitted.current = true;
-          onCancel();
-        }
-      }}
-      onBlur={(e) => doSubmit(e.target.value)}
-    />
+    <div className="flex w-full min-w-0 items-center gap-3" data-sidebar-inline-channel-editor-row>
+      <input
+        ref={ref}
+        type="text"
+        aria-label={ariaLabel}
+        defaultValue={defaultValue}
+        placeholder={placeholder}
+        className="block h-5 min-w-0 flex-1 translate-x-px border-0 bg-transparent p-0 font-sans text-base leading-5 text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0"
+        data-sidebar-inline-channel-editor=""
+        onClick={(e) => {
+          e.stopPropagation();
+        }}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.stopPropagation();
+            doSubmit((e.target as HTMLInputElement).value);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            submitted.current = true;
+            onCancel();
+          }
+        }}
+        onBlur={(e) => doSubmit(e.target.value)}
+      />
+      {submitAction && (
+        <button
+          type="button"
+          aria-label={`${submitAction.label} ${submitAction.shortcut}`}
+          className={cn(
+            SIDEBAR_ROW_ACTION_BUTTON_CLASS,
+            "shrink-0 gap-[1ch] px-[1ch]",
+          )}
+          data-sidebar-inline-submit-action=""
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            doSubmit(ref.current?.value ?? "");
+          }}
+        >
+          <span>{submitAction.label}</span>
+          <span
+            className="font-mono text-xs font-normal text-muted-foreground"
+            data-sidebar-inline-submit-shortcut=""
+          >
+            {submitAction.shortcut}
+          </span>
+        </button>
+      )}
+    </div>
   );
 }

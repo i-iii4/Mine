@@ -76,6 +76,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
+import { collectionRefLabel } from "@/lib/collections";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import {
   findPreviewTileForSource,
@@ -97,9 +98,18 @@ import type { ImagePreviewRequest } from "./ImagePreviewOverlay";
 // Layout constants shared by scroll content and fixed metadata. The rail is
 // anchored to the right edge with a fixed 20rem inspector width, while the
 // article/media column is centered in the remaining space to its left.
-const DETAIL_GRID_CLASSES =
-  "grid w-full grid-cols-[minmax(2rem,1fr)_minmax(0,48rem)_minmax(2rem,1fr)_20rem_2rem]";
-const CLASSIC_LAYOUT_CLASSES = `${DETAIL_GRID_CLASSES} pt-8`;
+const DETAIL_RAIL_LAYOUT_CLASSES =
+  "grid w-full grid-cols-[minmax(2rem,1fr)_minmax(400px,48rem)_minmax(2rem,1fr)_20rem_2rem] pt-8";
+const DETAIL_STACKED_LAYOUT_CLASSES =
+  "grid w-full grid-cols-[2rem_minmax(240px,1fr)_2rem] pt-8";
+const DETAIL_MIN_ARTICLE_WIDTH_PX = 400;
+const DETAIL_FIXED_RAIL_WIDTH_PX = 320;
+const DETAIL_GRID_INSET_WIDTH_PX = 32;
+const DETAIL_METADATA_CARD_MIN_WIDTH_PX = 240;
+const DETAIL_STACKED_BREAKPOINT_PX =
+  DETAIL_MIN_ARTICLE_WIDTH_PX +
+  DETAIL_FIXED_RAIL_WIDTH_PX +
+  DETAIL_GRID_INSET_WIDTH_PX * 3;
 const DETAIL_BOTTOM_SAFE_SPACE_CLASS = "pb-20";
 const HOVER_CARD_WIDTH = 240;
 const HOVER_CARD_FALLBACK_HEIGHT = 320;
@@ -152,6 +162,46 @@ const noopMediaAssetRename = async (_asset: MediaAssetRef, _newStem: string) => 
 const noopMediaAssetDelete = async (_asset: MediaAssetRef) => {};
 const noopOpenImagePreview = (_preview: ImagePreviewRequest) => {};
 
+function getElementLayoutWidth(node: HTMLElement): number {
+  const measuredWidth = node.getBoundingClientRect().width;
+  if (measuredWidth > 0) return measuredWidth;
+  return window.innerWidth;
+}
+
+function useDetailStackedLayout() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState<number | null>(null);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+
+    const updateWidth = () => {
+      setContainerWidth(getElementLayoutWidth(node));
+    };
+
+    updateWidth();
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver((entries) => {
+        const entryWidth = entries[0]?.contentRect.width ?? 0;
+        setContainerWidth(entryWidth > 0 ? entryWidth : getElementLayoutWidth(node));
+      });
+      observer.observe(node);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener("resize", updateWidth);
+    return () => window.removeEventListener("resize", updateWidth);
+  }, []);
+
+  return {
+    containerRef,
+    isStackedLayout:
+      containerWidth !== null && containerWidth < DETAIL_STACKED_BREAKPOINT_PX,
+  };
+}
+
 export function Detail({
   block,
   scrollAnchor = null,
@@ -179,7 +229,13 @@ export function Detail({
   );
   const displayBlock = fullBlock ?? block;
   const currentBlockSlugRef = useRef(block.slug);
-  const layoutClasses = CLASSIC_LAYOUT_CLASSES;
+  const { containerRef: detailLayoutRef, isStackedLayout } = useDetailStackedLayout();
+  const layoutClasses = isStackedLayout
+    ? DETAIL_STACKED_LAYOUT_CLASSES
+    : DETAIL_RAIL_LAYOUT_CLASSES;
+  const articleColumnClasses = isStackedLayout
+    ? "col-start-2 min-w-0 mx-auto w-full max-w-[48rem]"
+    : "col-start-2 min-w-0";
   const {
     attributes: dragAttributes,
     listeners: dragListeners,
@@ -325,10 +381,12 @@ export function Detail({
         />
       </header>
       <div
+        ref={detailLayoutRef}
         className={cn(
           "relative min-h-0 flex-1",
           isClosing && "opacity-0",
         )}
+        data-detail-layout-mode={isStackedLayout ? "stacked" : "rail"}
       >
         {/* Layer 1: Scrollable content + invisible spacer */}
         <div
@@ -341,7 +399,7 @@ export function Detail({
             className={cn(layoutClasses, DETAIL_BOTTOM_SAFE_SPACE_CLASS)}
             data-detail-layout-grid="scroll"
           >
-            <div className="col-start-2 min-w-0" data-detail-article-column>
+            <div className={articleColumnClasses} data-detail-article-column>
               <BlockContent
                 block={block}
                 fullBlock={fullBlock}
@@ -360,40 +418,65 @@ export function Detail({
                 onTextSelectionDrop={onTextSelectionDrop}
               />
             </div>
-            <div
-              className="col-start-4 min-w-0"
-              aria-hidden="true"
-              data-detail-metadata-spacer
-            />
+            {isStackedLayout ? (
+              <div
+                className="col-start-2 mt-8 min-w-0"
+                data-detail-stacked-metadata-row
+              >
+                <MetadataPanel
+                  block={block}
+                  fullBlock={fullBlock}
+                  formattedDate={formattedDate}
+                  vaultPath={vaultPath}
+                  thumbsRootPath={thumbsRootPath}
+                  tags={tags}
+                  currentTag={currentTag}
+                  onToggleTag={onToggleTag}
+                  onCreateAndAssign={onCreateAndAssign}
+                  onOpenRelatedNote={onOpenRelatedNote}
+                />
+              </div>
+            ) : (
+              <div
+                className="col-start-4 min-w-0"
+                aria-hidden="true"
+                data-detail-metadata-spacer
+              />
+            )}
           </div>
         </div>
 
-        {/* Layer 2: Fixed metadata (same layout, doesn't scroll) */}
-        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        {!isStackedLayout && (
+          /* Layer 2: Fixed metadata (same layout, doesn't scroll) */
           <div
-            className={layoutClasses}
-            data-detail-layout-grid="metadata"
+            className="pointer-events-none absolute inset-0 overflow-hidden"
+            data-detail-fixed-metadata-layer
           >
-            <div className="col-start-2 min-w-0" />
             <div
-              className="pointer-events-auto col-start-4 min-w-0 overflow-y-auto overflow-x-hidden"
-              data-metadata-scroll
+              className={layoutClasses}
+              data-detail-layout-grid="metadata"
             >
-              <MetadataPanel
-                block={block}
-                fullBlock={fullBlock}
-                formattedDate={formattedDate}
-                vaultPath={vaultPath}
-                thumbsRootPath={thumbsRootPath}
-                tags={tags}
-                currentTag={currentTag}
-                onToggleTag={onToggleTag}
-                onCreateAndAssign={onCreateAndAssign}
-                onOpenRelatedNote={onOpenRelatedNote}
-              />
+              <div className="col-start-2 min-w-0" />
+              <div
+                className="pointer-events-auto col-start-4 min-w-0 overflow-y-auto overflow-x-hidden"
+                data-metadata-scroll
+              >
+                <MetadataPanel
+                  block={block}
+                  fullBlock={fullBlock}
+                  formattedDate={formattedDate}
+                  vaultPath={vaultPath}
+                  thumbsRootPath={thumbsRootPath}
+                  tags={tags}
+                  currentTag={currentTag}
+                  onToggleTag={onToggleTag}
+                  onCreateAndAssign={onCreateAndAssign}
+                  onOpenRelatedNote={onOpenRelatedNote}
+                />
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -576,7 +659,8 @@ function MetadataPanel({
 
         <div className="flex min-w-0 flex-col gap-6" data-metadata-sections>
           <section
-            className="min-w-0 overflow-hidden rounded-1 border border-border bg-accent"
+            className="overflow-hidden rounded-1 border border-border bg-accent"
+            style={{ minWidth: DETAIL_METADATA_CARD_MIN_WIDTH_PX }}
             data-detail-metadata-card
           >
             <div className="px-2 pb-4 pt-4" data-detail-metadata-card-content>
@@ -1636,7 +1720,7 @@ function MediaAssetCollectionPicker({
   const everythingItem = { tag: "", title: "Everything" };
   const channelItems = sortedTags.map((tag) => ({
     tag: tag.tag,
-    title: collectionTitle(tag.tag),
+    title: collectionRefLabel(tag.tag),
   }));
   const filtered = lc
     ? [everythingItem, ...channelItems].filter((item) => item.title.toLowerCase().includes(lc))
@@ -2698,12 +2782,6 @@ function mediaExtension(mediaRef: string): string {
   const fileName = mediaRef.split("/").pop() ?? mediaRef;
   const dot = fileName.lastIndexOf(".");
   return dot >= 0 && dot < fileName.length - 1 ? fileName.slice(dot + 1) : "";
-}
-
-function collectionTitle(tag: string): string {
-  const parts = tag.split("/");
-  const label = (parts[parts.length - 1] ?? tag).trim();
-  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 function mediaAssetReferenceTitle(reference: DeleteMediaAssetPlan["referenced_by"][number]): string {

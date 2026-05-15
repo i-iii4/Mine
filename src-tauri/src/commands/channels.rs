@@ -22,7 +22,6 @@ use crate::util::append_startup_trace;
 #[derive(Debug, Clone, Serialize)]
 pub struct ChannelDto {
     pub tag: String,
-    pub title: String,
     pub description: Option<String>,
     pub color: Option<String>,
     pub icon: Option<String>,
@@ -36,7 +35,6 @@ impl ChannelDto {
     fn from_channel(channel: &Channel, block_count: usize) -> Self {
         Self {
             tag: channel.tag.clone(),
-            title: channel.title.clone(),
             description: channel.description.clone(),
             color: channel.color.clone(),
             icon: channel.icon.clone(),
@@ -109,13 +107,14 @@ pub async fn list_taxonomy_snapshot(
     Ok(snapshot)
 }
 
-/// Create a channel from a tag. Title is auto-generated if not provided.
+/// Create a promoted collection from a Markdown collection ref.
 #[tauri::command]
 pub fn create_channel(
     state: State<'_, AppState>,
     tag: String,
     title: Option<String>,
 ) -> Result<ChannelDto, CommandError> {
+    let _ = title;
     let vault_state = state
         .vault_state
         .lock()
@@ -126,8 +125,7 @@ pub fn create_channel(
     let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
 
     let tag = validate_collection_ref(&tag).map_err(CommandError::Internal)?;
-    let mut channel = Channel::new(&tag, title.as_deref(), dt)
-        .map_err(|e| CommandError::Internal(e.to_string()))?;
+    let mut channel = Channel::new(&tag, dt).map_err(|e| CommandError::Internal(e.to_string()))?;
 
     // Check uniqueness after collection-ref normalization
     let existing = index::list_channels(&vs.conn)?;
@@ -192,7 +190,7 @@ pub fn reorder_channels(
         if !existing_tags.contains(tag.as_str()) {
             let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
             let channel =
-                Channel::new(&tag, None, dt).map_err(|e| CommandError::Internal(e.to_string()))?;
+                Channel::new(&tag, dt).map_err(|e| CommandError::Internal(e.to_string()))?;
             // Write .md file for new channel
             let block = channel_to_block(&channel);
             files::write_block_file(&vs.vault, &block)?;
@@ -343,7 +341,6 @@ pub fn rename_channel(
     // Create new channel with same metadata
     let new_channel = Channel {
         tag: normalized_new.clone(),
-        title: normalized_new.clone(),
         description: existing.description.clone(),
         color: existing.color.clone(),
         icon: existing.icon.clone(),
@@ -493,7 +490,7 @@ fn channel_to_block(channel: &Channel) -> Block {
         slug: channel.tag.clone(),
         frontmatter: Frontmatter {
             block_type: BlockType::Channel,
-            title: Some(channel.title.clone()),
+            title: None,
             description: channel.description.clone(),
             url: None,
             file: None,

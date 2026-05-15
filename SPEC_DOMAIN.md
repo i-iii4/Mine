@@ -122,7 +122,6 @@ enum TagError {
 ```rust
 struct Channel {
     tag: String,               // CollectionRef; physical name kept for API/DB compatibility
-    title: String,             // отображаемое имя
     description: Option<String>,
     color: Option<String>,     // hex-цвет, например "#FF5733"
     icon: Option<String>,      // имя иконки
@@ -134,8 +133,7 @@ struct Channel {
 ### Функции
 
 ```rust
-Channel::new(tag: &str, title: Option<&str>, created_at: DateTime) -> Result<Channel, ChannelError>
-Channel::update_title(&mut self, title: &str) -> Result<(), ChannelError>
+Channel::new(tag: &str, created_at: DateTime) -> Result<Channel, ChannelError>
 Channel::update_position(&mut self, position: u32)
 validate_color(color: &str) -> bool   // hex: #RGB или #RRGGBB
 ```
@@ -145,7 +143,6 @@ validate_color(color: &str) -> bool   // hex: #RGB или #RRGGBB
 ```rust
 enum ChannelError {
     EmptyTag,
-    EmptyTitle,
     InvalidColor { value: String },
 }
 ```
@@ -153,8 +150,8 @@ enum ChannelError {
 ### Поведение
 
 - `Channel::new` derives `tag` via `normalize_collection_ref`, not `normalize_tag`.
-- If `title` is not provided, it uses the last path segment of the collection ref
-  with the first character uppercased.
+- Channel has no separate display title. UI display text is derived from the
+  Markdown collection ref / filename target.
 - `color` валидируется: `#RGB` или `#RRGGBB` (hex)
 - Human filenames such as `Красивый веб.md` remain valid collection pages.
 - Collection refs may be URL-encoded for routes, but must not be lowercased or

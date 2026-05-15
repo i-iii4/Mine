@@ -519,6 +519,7 @@ SubContent (подменю) — та же тень.
 | ⌘⇧N | New Channel | Инлайн-инпут в сайдбаре | слева |
 | ⌘, | Settings | DropdownMenu переключения темы и article menu mode | слева |
 | ⌘K | Search | Открытие Command palette | справа |
+| ⌘[ / ⌘] | History | Назад / вперёд по истории страниц | глобально |
 
 ### Сайдбар
 
@@ -592,6 +593,9 @@ hover/active; текст участвует в общем sidebar row focus-mode
 #### Общее
 
 Ширина по умолчанию: 300px. Диапазон ресайза: 220–600px. Порог сворачивания: 100px. Паддинг строки в полном режиме: `py-1` (4px), без `px-*`.
+App shell keeps the right/main pane at a minimum of `304px`: `240px` metadata
+card minimum plus two `32px` side insets. Desktop `minWidth` is `904px`
+(`600px` max sidebar + `304px` min right pane).
 
 Обычные строки sidebar не заменяют счётчик hover-действиями: правый `w-8`
 slot всегда показывает count в `font-mono`. Rename/Delete доступны через
@@ -646,13 +650,25 @@ control через стандартный `hover:bg-component-fill-hover`; ак�
 
 Detail article/metadata layout использует right-anchored fixed-rail contract:
 `grid w-full
-grid-cols-[minmax(2rem,1fr)_minmax(0,48rem)_minmax(2rem,1fr)_20rem_2rem]`.
+grid-cols-[minmax(2rem,1fr)_minmax(400px,48rem)_minmax(2rem,1fr)_20rem_2rem]`.
 Metadata/Connected Cards rail стоит перед правой колонкой `2rem`, то есть
 имеет фиксированный `32px` inset от правого края. Ширина rail фиксирована:
 `20rem` (`320px`) для статей, фото и видео. Article/media column стоит в
-`col-start-2`, ограничен `48rem` и центрируется в оставшемся пространстве слева
-от rail. Тело карточки не добавляет локальный `pl-*` guard; дистанцию между
-текстом и metadata задаёт grid.
+`col-start-2`, имеет минимальную комфортную ширину `400px`, ограничен `48rem`
+и центрируется в оставшемся пространстве слева от rail. Тело карточки не
+добавляет локальный `pl-*` guard; дистанцию между текстом и metadata задаёт
+grid.
+
+Если реальная ширина Detail-контейнера становится меньше `816px`
+(`400px` article minimum + `320px` rail + три grid inset по `32px`), layout
+переключается в stacked mode: grid становится
+`grid-cols-[2rem_minmax(240px,1fr)_2rem]`, article/media column остаётся
+центрированной с `max-w-[48rem]`, а metadata/Connected Cards больше не fixed
+rail и рендерятся отдельным full-width row под основным контентом в scroll
+flow.
+
+Metadata card keeps `min-width: 240px`, so the bottom `Source` / `Connect`
+button row cannot compress below the buttons' intrinsic content.
 
 Motion contract: верхний chrome в Detail и sidebar link-editor surface входят и
 выходят через мягкий `opacity + translateY` transition с тем же темпом

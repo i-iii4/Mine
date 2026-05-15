@@ -95,7 +95,17 @@ const getBlockMock = vi.mocked(getBlock);
 const copyMediaAssetToClipboardMock = vi.mocked(copyMediaAssetToClipboard);
 const prepareDeleteMediaAssetMock = vi.mocked(prepareDeleteMediaAsset);
 
+function setViewportWidth(value: number) {
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    writable: true,
+    value,
+  });
+}
+
 describe("Detail", () => {
+  const initialViewportWidth = window.innerWidth;
+
   beforeEach(() => {
     getBlockMock.mockReset();
     getBlockMock.mockResolvedValue(null);
@@ -109,7 +119,10 @@ describe("Detail", () => {
     });
   });
 
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    setViewportWidth(initialViewportWidth);
+  });
 
   it("renders the classic top menu", () => {
     const props = {
@@ -497,15 +510,62 @@ describe("Detail", () => {
     expect(spacer?.parentElement).toHaveClass(
       "w-full",
       "grid",
-      "grid-cols-[minmax(2rem,1fr)_minmax(0,48rem)_minmax(2rem,1fr)_20rem_2rem]",
+      "grid-cols-[minmax(2rem,1fr)_minmax(400px,48rem)_minmax(2rem,1fr)_20rem_2rem]",
       "pt-8",
     );
     expect(rail?.parentElement).toHaveClass(
       "w-full",
       "grid",
-      "grid-cols-[minmax(2rem,1fr)_minmax(0,48rem)_minmax(2rem,1fr)_20rem_2rem]",
+      "grid-cols-[minmax(2rem,1fr)_minmax(400px,48rem)_minmax(2rem,1fr)_20rem_2rem]",
       "pt-8",
     );
+  });
+
+  it("stacks metadata below content once the article would shrink under 400px", async () => {
+    setViewportWidth(815);
+
+    const { container } = render(
+      <Detail
+        block={block({ body: "Article body" })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-detail-layout-mode]")).toHaveAttribute(
+        "data-detail-layout-mode",
+        "stacked",
+      );
+    });
+
+    const scrollGrid = container.querySelector('[data-detail-layout-grid="scroll"]');
+    const articleColumn = container.querySelector("[data-detail-article-column]");
+    const stackedMetadataRow = container.querySelector("[data-detail-stacked-metadata-row]");
+
+    expect(scrollGrid).toHaveClass(
+      "grid-cols-[2rem_minmax(240px,1fr)_2rem]",
+      "pt-8",
+      "pb-20",
+    );
+    expect(articleColumn).toHaveClass(
+      "col-start-2",
+      "mx-auto",
+      "w-full",
+      "max-w-[48rem]",
+    );
+    expect(stackedMetadataRow).toHaveClass("col-start-2", "mt-8", "min-w-0");
+    expect(container.querySelector("[data-detail-fixed-metadata-layer]")).toBeNull();
+    expect(container.querySelector("[data-detail-metadata-spacer]")).toBeNull();
   });
 
   it("compensates classic detail chrome so article and rail start at the 64px detail inset", () => {
@@ -653,13 +713,13 @@ describe("Detail", () => {
 
     const metadataCard = container.querySelector("[data-detail-metadata-card]");
     expect(metadataCard).toHaveClass(
-      "min-w-0",
       "overflow-hidden",
       "rounded-1",
       "border",
       "border-border",
       "bg-accent",
     );
+    expect(metadataCard).toHaveStyle({ minWidth: "240px" });
     const metadataContent = metadataCard?.querySelector("[data-detail-metadata-card-content]");
     expect(metadataContent).toHaveClass("px-2", "pb-4", "pt-4");
     expect(metadataCard?.querySelector("[data-metadata-table]")).not.toBeNull();

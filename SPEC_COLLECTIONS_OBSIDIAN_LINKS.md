@@ -41,7 +41,6 @@ filename:
 ```markdown
 ---
 type: channel
-title: Красивый веб
 saved_at: 2026-04-29T12:00:00Z
 position: 0
 ---
@@ -117,7 +116,6 @@ Collection pages are ordinary `.md` files in the vault:
 ```yaml
 ---
 type: channel
-title: Красивый веб
 position: 12
 saved_at: 2026-04-29T12:00:00Z
 ---
@@ -126,8 +124,8 @@ saved_at: 2026-04-29T12:00:00Z
 Rules:
 
 - The filename is the primary human-readable Obsidian page target.
-- `title` may mirror the filename for display, but Mine must not require a
-  separate machine id.
+- Mine does not write or read a separate collection `title`; display text comes
+  from the filename / wikilink target.
 - `position` stores sidebar order.
 - Future collection metadata such as color, icon, or description belongs on
   the collection page.
