@@ -30,6 +30,20 @@ export function getMasonryColumnCount(
   return Math.max(1, Math.floor((width + safeGap) / (minWidth + safeGap)));
 }
 
+export function getMasonryColumnWidth(
+  containerWidth: number,
+  minColumnWidth: number,
+  gap: number,
+): number {
+  const columnCount = getMasonryColumnCount(containerWidth, minColumnWidth, gap);
+  const safeGap = clampPositive(gap);
+  const innerWidth = Math.max(
+    0,
+    clampPositive(containerWidth) - safeGap * (columnCount - 1),
+  );
+  return Math.max(1, Math.floor(innerWidth / columnCount));
+}
+
 export function computeMasonryLayout(
   itemHeights: number[],
   containerWidth: number,
@@ -38,8 +52,7 @@ export function computeMasonryLayout(
 ): MasonryLayout {
   const columnCount = getMasonryColumnCount(containerWidth, minColumnWidth, gap);
   const safeGap = clampPositive(gap);
-  const innerWidth = Math.max(0, clampPositive(containerWidth) - safeGap * (columnCount - 1));
-  const columnWidth = Math.max(1, innerWidth / columnCount);
+  const columnWidth = getMasonryColumnWidth(containerWidth, minColumnWidth, gap);
 
   const columnHeights = new Array<number>(columnCount).fill(0);
   const positions: MasonryPosition[] = [];

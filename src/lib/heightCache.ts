@@ -36,8 +36,10 @@ export const BUCKET_PX = 40;
  *     reuses stale heights across generations.
  * v8: CardFrame now enforces a 90px interactive minimum so hover actions
  *     cannot overlap on empty cards.
+ * v9: Masonry column widths are snapped to whole CSS pixels to keep
+ *     transformed card layers and hover controls stable.
  */
-const CACHE_VERSION = 8;
+const CACHE_VERSION = 9;
 
 const DB_NAME = "arena-card-heights";
 const DB_VERSION = 1;

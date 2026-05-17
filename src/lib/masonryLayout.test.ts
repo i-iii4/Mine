@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeMasonryLayout,
   getMasonryColumnCount,
+  getMasonryColumnWidth,
   getVisibleMasonryItems,
   createVisibilityIndex,
   getVisibleItemsFromIndex,
@@ -43,6 +44,18 @@ describe("masonryLayout", () => {
     const nextThreshold = computeMasonryLayout([100, 100], 472, MIN_COL, GAP);
     expect(nextThreshold.columnCount).toBe(2);
     expect(nextThreshold.columnWidth).toBe(MIN_COL);
+  });
+
+  it("snaps column widths and positions to whole CSS pixels", () => {
+    const layout = computeMasonryLayout([100, 100, 100], 902, MIN_COL, GAP);
+
+    expect(layout.columnCount).toBe(3);
+    expect(layout.columnWidth).toBe(279);
+    expect(getMasonryColumnWidth(902, MIN_COL, GAP)).toBe(layout.columnWidth);
+    for (const position of layout.positions) {
+      expect(Number.isInteger(position.left)).toBe(true);
+      expect(Number.isInteger(position.width)).toBe(true);
+    }
   });
 
   it("returns only items inside the viewport plus overscan", () => {

@@ -37,9 +37,9 @@ interface CardProps {
   block: LightBlock;
   vaultPath: string;
   thumbsRootPath?: string;
-  isFocused?: boolean;
   priority?: boolean;
   allowPlayback?: boolean;
+  openMoreMenuRequestSequence?: number;
   onClick: (block: LightBlock) => void;
   tags?: import("@/types").TagCount[];
   currentTag?: string;
@@ -53,6 +53,10 @@ const CARD_FRAME_CLASS =
   "group relative overflow-hidden border border-border rounded-[var(--radius-card)] bg-background";
 
 interface CardFrameProps extends React.HTMLAttributes<HTMLDivElement> {
+  children: React.ReactNode;
+}
+
+interface GraphicSurfaceProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
 }
 
@@ -72,6 +76,22 @@ const CardFrame = forwardRef<HTMLDivElement, CardFrameProps>(function CardFrame(
   );
 });
 
+function GraphicSurface({
+  children,
+  className,
+  ...props
+}: GraphicSurfaceProps) {
+  return (
+    <div
+      data-card-graphic-surface=""
+      className={cn("relative overflow-hidden bg-accent", className)}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function MeasuredCardFrame({
   children,
   className,
@@ -84,7 +104,7 @@ export function MeasuredCardFrame({
   );
 }
 
-export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFocused, priority, allowPlayback = true, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
     data: {
@@ -118,7 +138,6 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
         "h-full cursor-pointer",
         isArticleFeedCard && "feed-article-card",
         isDragging && "opacity-30",
-        isFocused && "ring-2 ring-ring",
       )}
     >
       {tags && onToggleTag && onCreateAndAssign && onRequestRename && onRequestDelete && (
@@ -131,6 +150,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, isFoc
           onCreateAndAssign={onCreateAndAssign}
           onRequestRename={onRequestRename}
           onRequestDelete={onRequestDelete}
+          openMoreMenuRequestSequence={openMoreMenuRequestSequence}
         />
       )}
       <CardContent block={block} vaultPath={vaultPath} thumbsRootPath={thumbsRootPath} priority={priority} allowPlayback={allowPlayback} />
@@ -179,8 +199,8 @@ export function ReadOnlyCardPreview({
       >
         <div className="p-4">
           {!isPureTextPreview && (
-            <div
-              className="relative w-full overflow-hidden bg-accent"
+            <GraphicSurface
+              className="w-full"
               style={{ aspectRatio }}
             >
               <img
@@ -193,7 +213,7 @@ export function ReadOnlyCardPreview({
                 loading="eager"
                 draggable={false}
               />
-            </div>
+            </GraphicSurface>
           )}
           {hasText && (
             <div className={cn(!isPureTextPreview && "mt-3")}>
@@ -648,8 +668,7 @@ const ImageCard = memo(function ImageCard({
     : "1";
 
   return (
-    <div
-      className="relative overflow-hidden bg-accent"
+    <GraphicSurface
       style={{ aspectRatio }}
     >
       {!measurementMode && (
@@ -666,7 +685,7 @@ const ImageCard = memo(function ImageCard({
           onError={() => setSourceIndex((i) => i + 1)}
         />
       )}
-    </div>
+    </GraphicSurface>
   );
 });
 
@@ -743,7 +762,7 @@ const LinkCard = memo(function LinkCard({
 
   return (
     <div className="flex flex-col">
-      <div className={`relative aspect-video ${bgColor}`}>
+      <GraphicSurface className={cn("aspect-video", bgColor)}>
         {!thumbLoaded && (
           <div className="flex h-full flex-col items-center justify-center gap-1">
             <span className="text-lg font-semibold text-white/40">{initial}</span>
@@ -769,7 +788,7 @@ const LinkCard = memo(function LinkCard({
             }}
           />
         )}
-      </div>
+      </GraphicSurface>
       <div className="p-3">
         <p className="truncate text-sm font-semibold text-foreground">
           {navigationLabel}
@@ -827,8 +846,8 @@ const SocialCard = memo(function SocialCard({
           primaryMedia: m,
         });
         return (
-          <div
-            className="relative w-full overflow-hidden bg-accent"
+          <GraphicSurface
+            className="w-full"
             style={{ aspectRatio: `${m.aspectRatio ?? 1}` }}
           >
             {shouldAutoplay ? (
@@ -850,14 +869,14 @@ const SocialCard = memo(function SocialCard({
                     loading={imgLoading}
                   />
                 ) : (
-                <GalleryTileImage
-                  item={m}
-                  vaultPath={vaultPath}
-                  thumbsRootPath={thumbsRootPath}
-                  fallbackSlug={block.slug}
-                  allowSourceFallback={!m.isVideo}
-                  loading={imgLoading}
-                />
+                  <GalleryTileImage
+                    item={m}
+                    vaultPath={vaultPath}
+                    thumbsRootPath={thumbsRootPath}
+                    fallbackSlug={block.slug}
+                    allowSourceFallback={!m.isVideo}
+                    loading={imgLoading}
+                  />
                 )
               )
             )}
@@ -865,12 +884,12 @@ const SocialCard = memo(function SocialCard({
               <div className={cn("absolute inset-0 bg-accent", absClass)} />
             )}
             {(m.isVideo || m.isVideoPoster) && !shouldAutoplay && <PlayBadge />}
-          </div>
+          </GraphicSurface>
         );
       })()}
       {descriptor.variant === "social-media-grid" && media.length >= 2 && (
-        <div
-          className="relative w-full overflow-hidden bg-accent"
+        <GraphicSurface
+          className="w-full"
           style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? 1}` }}
         >
           <GalleryTiles
@@ -880,7 +899,7 @@ const SocialCard = memo(function SocialCard({
             fallbackSlug={block.slug}
             measurementMode={measurementMode}
           />
-        </div>
+        </GraphicSurface>
       )}
 
       {hasTextStack && (
@@ -950,8 +969,8 @@ const ArticleCard = memo(function ArticleCard({
         // aspect-video fallback for older/unreindexed blocks. Multi-image
         // article previews reserve a square gallery slot; single-image
         // previews use object-cover to avoid letterboxing in feed cards.
-        <div
-          className="relative w-full overflow-hidden bg-accent"
+        <GraphicSurface
+          className="w-full"
           style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? (16 / 9)}` }}
         >
           {descriptor.totalMediaCount > 1 ? (
@@ -992,7 +1011,7 @@ const ArticleCard = memo(function ArticleCard({
             />
           )}
           {rendersFeedVideo && !shouldAutoplayVideo && <PlayBadge />}
-        </div>
+        </GraphicSurface>
       )}
       {hasTextStack && (
         <div className={cn(hasPreview && "mt-3")}>
@@ -1061,7 +1080,7 @@ const VideoCard = memo(function VideoCard({
   ]);
 
   return (
-    <div className="relative aspect-video">
+    <GraphicSurface className="aspect-video">
       {shouldAutoplay ? (
         <FeedVideoSurface
           playback={playback}
@@ -1082,7 +1101,7 @@ const VideoCard = memo(function VideoCard({
         <div className="h-full w-full bg-accent" />
       )}
       {!shouldAutoplay && <PlayBadge />}
-    </div>
+    </GraphicSurface>
   );
 });
 

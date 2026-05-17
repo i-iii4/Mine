@@ -439,6 +439,10 @@ multi-image composite/gallery. Related Notes keeps its richer hover preview.
 - Источник данных: `LightBlock[]`
 - Количество столбцов: адаптивное, на основе ширины контейнера (`ResizeObserver`, минимум 240px на столбец)
 - Layout считается чистой функцией: `containerWidth + estimatedHeights -> positions[]`
+- `columnWidth` и `left` позиций снапятся к целым CSS-пикселям. Скрытая
+  measurement pass использует тот же pixel-snapped width, что и visible render,
+  чтобы hover controls внутри `translate3d`-позиционированных карточек не
+  переснапливались при opacity/focus transitions.
 - Карточки позиционируются абсолютно (`translate(x, y)`), контейнер имеет вычисленную `totalHeight`
 - Top inset ленты — `64px` через `marginTop` на `data-grid-layout`, не через padding scrollport.
 - В DOM находятся только видимые карточки + direction-aware overscan: forward 2200px / backward 600px (зависит от направления scroll'а). Предзагружает больше карточек по направлению движения.
@@ -487,8 +491,17 @@ Thumbnail отображается через `convertFileSrc(vaultPath + "/.are
 Feed card frame is a persistent `border border-border bg-background` surface.
 Hover does not change the card frame: no border recolor, outline, inset border,
 shadow, glow, transition, or extra overlay. The feed hover affordance is the
-card action controls; keyboard/focused navigation continues to use
-`ring-2 ring-ring`. Article feed cards additionally get `feed-article-card`;
+card action controls. Feed keyboard focus is not Card state: Grid owns
+`focusedSlug` and marks the focused masonry item with
+`data-feed-grid-item-focused="true"`. The visual treatment reuses the left
+sidebar focus token: the existing Card frame border changes to
+`var(--border-accent)` with the same 180ms transition. No card-frame overlay,
+extra line, ring, glow, or `foreground` border is rendered. Real graphic slots
+inside the focused GridItem are marked by Card as `data-card-graphic-surface`
+and receive a visible media wash only in focus mode: light theme darkens with
+`oklch(0 0 0 / 14%)`, dark theme brightens with `oklch(1 0 0 / 18%)`. Text-only
+cards do not get a graphic surface state.
+Article feed cards additionally get `feed-article-card`;
 that class applies `background: var(--accent)` only in dark theme
 (`data-theme="dark"` or system dark unless `data-theme="light"`). Light theme
 article cards stay on the default card background.
@@ -721,12 +734,49 @@ Image media expansion:
 
 #### Grid (экран коллекции)
 - Стрелки (4 направления) — перемещение фокуса между карточками
-- Визуальная навигация по координатам (`getBoundingClientRect`): ближайшая карточка в направлении стрелки с весовой функцией `primaryAxis + 3 × crossAxis`
+- Grid владеет `focusedSlug`; App только передаёт `keyboardNavigationDisabled`
+  и restore-сигнал `restoreFocusSlug` + `restoreFocusSequence` после закрытия Detail.
+- Визуальная навигация идёт по `layout.positions`, а не по DOM. Ближайшая
+  карточка в направлении стрелки выбирается по функции
+  `primaryAxis + 3 × crossAxis`.
+- Первое нажатие стрелки выбирает первую реально видимую committed-card в
+  текущем viewport, не первый элемент коллекции.
+- Если пользователь вручную проскроллил ленту и текущий `focusedSlug` оказался
+  вне текущего viewport, следующее нажатие стрелки сначала ресинхронизирует
+  фокус на первую видимую committed-card текущего viewport и не продолжает
+  навигацию от старой offscreen-позиции.
 - Enter — открыть выделенную карточку в Detail
 - Esc — сбросить фокус
-- Выделение: `ring-2 ring-ring` на карточке
-- `focusedBlockId` (state) + автоподскрол (`scrollIntoView({ block: "nearest" })`)
+- Выделение: GridItem получает `data-feed-grid-item-focused="true"`, а
+  существующий Card frame меняет border color на тот же token, что sidebar
+  focus seam — `var(--border-accent)` — с тем же `180ms cubic-bezier(0.22, 1,
+  0.36, 1)` transition. Это не card-frame overlay, не extra line, не ring/glow
+  и не `foreground` border. Card не получает focus props/classes.
+- Графические surface внутри focused GridItem получают дополнительный
+  `data-card-graphic-surface::after` wash: в light theme `oklch(0 0 0 / 14%)`,
+  в dark theme `oklch(1 0 0 / 18%)`. Состояние применяется только к реальным
+  media/preview slots; текстовые карточки не меняются.
+- Focused GridItem показывает top-left shortcut badge `data-feed-grid-action-badge`
+  с текстом `⌘K`. Badge рендерится только в Grid keyboard focus mode, не от
+  pointer hover, не участвует в layout и не перехватывает pointer events.
+  Badge находится внутри `data-feed-grid-action-layer` (`absolute inset-px`),
+  чтобы компенсировать 1px Card frame и считать offsets из той же внутренней
+  плоскости карточки, что и Card Hover Menu. Сам badge использует
+  `absolute left-2 top-2` и interface radius `rounded-1` (3px): `top-2`
+  зеркалит `More` (`top-2 right-2`), `left-2` зеркалит bottom action row
+  (`left-2 right-2 bottom-2`).
+- `Cmd+K` — scoped override глобального Search shortcut: если Grid keyboard
+  focus активен и focused committed-card видна в текущем viewport, Grid
+  предотвращает открытие Search, показывает/pin-ит top-right `…` action button
+  и открывает overflow menu этой карточки. Нижний hover action row (`Source` /
+  `Connect`) при этом не появляется и не pin-ится; он остаётся только pointer
+  hover / interactive hover-action affordance. Если Grid focus отсутствует,
+  focused card невалидна/offscreen или открыт Detail/Search/dialog/menu,
+  `Cmd+K` остаётся глобальным Search shortcut.
+- Автоподскрол идёт по `layout.positions` и scroll container, без
+  `scrollIntoView`/DOM lookup.
 - При закрытии Detail фокус возвращается на последнюю просмотренную карточку
+  по slug.
 
 #### Detail
 - Escape закрывает Detail, кроме случаев, когда keyboard event уже

@@ -1,5 +1,47 @@
 # Devlog
 
+## 15.05.2026 [change] — Move feed keyboard focus ownership into Grid
+
+### Context
+
+- Feed keyboard focus was owned by App and navigated by DOM
+  `getBoundingClientRect()` queries.
+- That made the focus chain fragile: App does not own masonry geometry,
+  committed/skeleton state, viewport scroll state, or preview-card DOM.
+
+### Completed
+
+- Removed App-owned `focusedBlockId` and DOM-based visual-neighbor lookup.
+- Added Grid-owned `focusedSlug`, restore-by-slug after Detail close and
+  keyboard-disabled gating from App.
+- Replaced DOM navigation with `layout.positions` navigation using the existing
+  `primaryAxis + 3 × crossAxis` scoring.
+- First arrow press now chooses the first visible committed card in the current
+  viewport, not the first block in the collection.
+- After manual scrolling, arrow-key navigation resynchronizes to the current
+  viewport when the previous focused card is offscreen instead of jumping back
+  to the stale focus position.
+- Snapped masonry `columnWidth` and horizontal positions to whole CSS pixels
+  through shared `getMasonryColumnWidth`, so hover controls inside transformed
+  cards do not subpixel-jitter during hover/focus transitions.
+- Moved the visible focus state to GridItem data attributes instead of Card
+  props/classes.
+- Matched the visual treatment to the left sidebar focus token by recoloring
+  the existing Card frame border to `var(--border-accent)`; no overlay, extra
+  line, ring/glow or foreground border is rendered.
+- Added a shared `GraphicSurface` contract for actual media slots and a
+  focused GridItem media wash: light theme `oklch(0 0 0 / 14%)`, dark theme
+  `oklch(1 0 0 / 18%)`. Text-only cards are unchanged.
+- Added the focused GridItem `⌘K` action badge and scoped `Cmd+K` override:
+  with a valid visible feed focus it opens the focused card overflow menu;
+  otherwise `Cmd+K` remains the global Search shortcut. The keyboard path pins
+  only the top-right overflow action; bottom hover actions remain hidden.
+- Moved the `⌘K` badge into an `inset-px` action layer so its `left-2 top-2`
+  offsets share the same inner Card frame coordinate system as the `More`
+  button.
+- Added App/Grid regression tests for restore, disabled mode and layout-based
+  arrow navigation.
+
 ## 15.05.2026 [change] — Add route history shortcuts
 
 ### Context

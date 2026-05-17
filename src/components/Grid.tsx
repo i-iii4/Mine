@@ -17,6 +17,7 @@ import { CardTagMenu } from "./CardContextMenu";
 import {
   computeMasonryLayout,
   createVisibilityIndex,
+  getMasonryColumnWidth,
   getVisibleItemsFromIndex,
   type MasonryPosition,
   type MasonryLayout,
@@ -39,6 +40,10 @@ import {
   type LayoutGenerationKey,
 } from "@/lib/layoutGeneration";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
+import {
+  isEditableKeyboardTarget,
+  isOverlayKeyboardTarget,
+} from "@/lib/keyboardTargets";
 
 // ─── Layout constants ───────────────────────────────────────────────────────
 
@@ -55,6 +60,135 @@ const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
 const GRID_TOP_INSET_PX = 64;
 
+type GridArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
+
+function isGridArrowKey(key: string): key is GridArrowKey {
+  return key === "ArrowLeft" || key === "ArrowRight" || key === "ArrowUp" || key === "ArrowDown";
+}
+
+function positionCenter(position: MasonryPosition): { x: number; y: number } {
+  return {
+    x: position.left + position.width / 2,
+    y: position.top + position.height / 2,
+  };
+}
+
+function findPositionForSlug(
+  positions: readonly MasonryPosition[],
+  blocks: readonly LightBlock[],
+  slug: string,
+): MasonryPosition | null {
+  const blockIndex = blocks.findIndex((block) => block.slug === slug);
+  if (blockIndex < 0) return null;
+  return positions.find((position) => position.index === blockIndex) ?? null;
+}
+
+function findLayoutNeighborSlug(
+  positions: readonly MasonryPosition[],
+  blocks: readonly LightBlock[],
+  currentSlug: string,
+  direction: GridArrowKey,
+  committedEndIndex: number,
+): string | null {
+  const current = findPositionForSlug(positions, blocks, currentSlug);
+  if (!current) return null;
+
+  const currentCenter = positionCenter(current);
+  const horizontal = direction === "ArrowLeft" || direction === "ArrowRight";
+  let bestSlug: string | null = null;
+  let bestScore = Infinity;
+
+  for (const candidate of positions) {
+    if (candidate.index === current.index || candidate.index > committedEndIndex) continue;
+    const block = blocks[candidate.index];
+    if (!block) continue;
+
+    const candidateCenter = positionCenter(candidate);
+    const dx = candidateCenter.x - currentCenter.x;
+    const dy = candidateCenter.y - currentCenter.y;
+    const valid =
+      direction === "ArrowRight" ? dx > 10 :
+      direction === "ArrowLeft" ? dx < -10 :
+      direction === "ArrowDown" ? dy > 10 :
+      dy < -10;
+    if (!valid) continue;
+
+    const score = horizontal
+      ? Math.abs(dx) + Math.abs(dy) * 3
+      : Math.abs(dy) + Math.abs(dx) * 3;
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestSlug = block.slug;
+    }
+  }
+
+  return bestSlug;
+}
+
+function firstVisibleSlug(
+  positions: readonly MasonryPosition[],
+  blocks: readonly LightBlock[],
+  scrollTop: number,
+  viewportHeight: number,
+  committedEndIndex: number,
+): string | null {
+  const viewportTop = scrollTop;
+  const viewportBottom = scrollTop + viewportHeight;
+  let best: MasonryPosition | null = null;
+
+  for (const item of positions) {
+    if (item.index > committedEndIndex) continue;
+    const itemTop = GRID_TOP_INSET_PX + item.top;
+    const itemBottom = GRID_TOP_INSET_PX + item.bottom;
+    if (itemBottom < viewportTop || itemTop > viewportBottom) continue;
+    if (
+      !best ||
+      item.top < best.top - 0.5 ||
+      (Math.abs(item.top - best.top) <= 0.5 && item.left < best.left)
+    ) {
+      best = item;
+    }
+  }
+
+  return best ? blocks[best.index]?.slug ?? null : null;
+}
+
+function isPositionVisibleInViewport(
+  position: MasonryPosition,
+  scrollTop: number,
+  viewportHeight: number,
+): boolean {
+  if (viewportHeight <= 0) return false;
+  const viewportTop = scrollTop;
+  const viewportBottom = scrollTop + viewportHeight;
+  const itemTop = GRID_TOP_INSET_PX + position.top;
+  const itemBottom = GRID_TOP_INSET_PX + position.bottom;
+  return itemBottom >= viewportTop && itemTop <= viewportBottom;
+}
+
+function scrollPositionIntoView(
+  scrollElement: HTMLElement,
+  position: MasonryPosition,
+): void {
+  const padding = 32;
+  const itemTop = GRID_TOP_INSET_PX + position.top;
+  const itemBottom = GRID_TOP_INSET_PX + position.bottom;
+  const viewportTop = scrollElement.scrollTop;
+  const viewportBottom = viewportTop + scrollElement.clientHeight;
+  let nextTop: number | null = null;
+
+  if (itemTop < viewportTop + padding) {
+    nextTop = Math.max(0, itemTop - padding);
+  } else if (itemBottom > viewportBottom - padding) {
+    nextTop = Math.max(0, itemBottom - scrollElement.clientHeight + padding);
+  }
+
+  if (nextTop !== null) {
+    scrollElement.scrollTo({ top: nextTop, behavior: "smooth" });
+  }
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 interface GridProps {
@@ -65,7 +199,9 @@ interface GridProps {
   currentTag?: string;
   scrollToTop: number;
   sidebarCollapsed?: boolean;
-  focusedBlockId?: number | null;
+  keyboardNavigationDisabled?: boolean;
+  restoreFocusSlug?: string | null;
+  restoreFocusSequence?: number;
   onBlockClick: (block: LightBlock) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
@@ -80,7 +216,8 @@ interface GridProps {
 interface GridContext {
   vaultPath: string;
   thumbsRootPath?: string;
-  focusedBlockId?: number | null;
+  focusedSlug: string | null;
+  actionMenuRequest: { slug: string; sequence: number } | null;
   onBlockClick: (block: LightBlock) => void;
   tags: TagCount[];
   currentTag?: string;
@@ -108,15 +245,7 @@ function ensureWarmed(): Promise<void> {
 // ─── Deterministic layout computation ──────────────────────────────────────
 
 function deriveColumnWidth(parentWidth: number): number {
-  const provisionalColumnCount = Math.max(
-    1,
-    Math.floor((parentWidth + GAP) / (COLUMN_MIN_WIDTH + GAP)),
-  );
-  return Math.max(
-    1,
-    (Math.max(0, parentWidth - GAP * (provisionalColumnCount - 1))) /
-      provisionalColumnCount,
-  );
+  return getMasonryColumnWidth(parentWidth, COLUMN_MIN_WIDTH, GAP);
 }
 
 function buildLayout(
@@ -151,7 +280,9 @@ export function Grid({
   currentTag,
   scrollToTop,
   sidebarCollapsed = false,
-  focusedBlockId,
+  keyboardNavigationDisabled = false,
+  restoreFocusSlug = null,
+  restoreFocusSequence = 0,
   onBlockClick,
   onToggleTag,
   onCreateAndAssign,
@@ -167,6 +298,12 @@ export function Grid({
   const [viewportHeight, setViewportHeight] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
+  const [focusedSlug, setFocusedSlug] = useState<string | null>(null);
+  const [actionMenuRequest, setActionMenuRequest] = useState<{
+    slug: string;
+    sequence: number;
+  } | null>(null);
+  const lastRestoreFocusSequenceRef = useRef(0);
 
   // Grid has exactly three pieces of genuine state:
   //
@@ -428,6 +565,177 @@ export function Grid({
     [blocks],
   );
 
+  useEffect(() => {
+    setFocusedSlug(null);
+  }, [currentTag]);
+
+  useEffect(() => {
+    if (focusedSlug && !blocksBySlug.has(focusedSlug)) {
+      setFocusedSlug(null);
+    }
+  }, [blocksBySlug, focusedSlug]);
+
+  useEffect(() => {
+    if (!restoreFocusSlug || restoreFocusSequence <= lastRestoreFocusSequenceRef.current) {
+      return;
+    }
+    lastRestoreFocusSequenceRef.current = restoreFocusSequence;
+    if (blocksBySlug.has(restoreFocusSlug)) {
+      setFocusedSlug(restoreFocusSlug);
+    }
+  }, [blocksBySlug, restoreFocusSequence, restoreFocusSlug]);
+
+  useEffect(() => {
+    if (!focusedSlug) return;
+    const scrollElement = parentRef.current;
+    if (!scrollElement) return;
+    const position = findPositionForSlug(layout.positions, blocks, focusedSlug);
+    if (!position) return;
+    requestAnimationFrame(() => {
+      scrollPositionIntoView(scrollElement, position);
+    });
+  }, [blocks, focusedSlug, layout.positions]);
+
+  useEffect(() => {
+    if (keyboardNavigationDisabled) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        isEditableKeyboardTarget(event.target) ||
+        isOverlayKeyboardTarget(event.target)
+      ) {
+        return;
+      }
+
+      const scrollElement = parentRef.current;
+      const currentScrollTop = scrollElement?.scrollTop ?? scrollTop;
+      const currentViewportHeight = scrollElement?.clientHeight || viewportHeight;
+      const commandK =
+        event.metaKey &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        event.key.toLowerCase() === "k";
+
+      if (commandK) {
+        if (!focusedSlug || committedEndIndex < 0) return;
+        const focusedPosition = findPositionForSlug(
+          layout.positions,
+          blocks,
+          focusedSlug,
+        );
+        if (
+          !focusedPosition ||
+          focusedPosition.index > committedEndIndex ||
+          !isPositionVisibleInViewport(
+            focusedPosition,
+            currentScrollTop,
+            currentViewportHeight,
+          )
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        setActionMenuRequest((current) => ({
+          slug: focusedSlug,
+          sequence: (current?.sequence ?? 0) + 1,
+        }));
+        return;
+      }
+
+      if (event.metaKey || event.altKey || event.ctrlKey) {
+        return;
+      }
+
+      if (event.key === "Escape") {
+        if (focusedSlug !== null) {
+          event.preventDefault();
+          setFocusedSlug(null);
+        }
+        return;
+      }
+
+      if (event.key === "Enter") {
+        if (!focusedSlug) return;
+        const block = blocksBySlug.get(focusedSlug);
+        if (!block) return;
+        event.preventDefault();
+        onBlockClick(block);
+        return;
+      }
+
+      if (!isGridArrowKey(event.key)) return;
+      event.preventDefault();
+      if (committedEndIndex < 0) return;
+
+      if (!focusedSlug) {
+        const firstSlug = firstVisibleSlug(
+          layout.positions,
+          blocks,
+          currentScrollTop,
+          currentViewportHeight,
+          committedEndIndex,
+        );
+        if (firstSlug) {
+          setFocusedSlug(firstSlug);
+        }
+        return;
+      }
+
+      const focusedPosition = findPositionForSlug(
+        layout.positions,
+        blocks,
+        focusedSlug,
+      );
+      if (
+        !focusedPosition ||
+        !isPositionVisibleInViewport(
+          focusedPosition,
+          currentScrollTop,
+          currentViewportHeight,
+        )
+      ) {
+        const firstSlug = firstVisibleSlug(
+          layout.positions,
+          blocks,
+          currentScrollTop,
+          currentViewportHeight,
+          committedEndIndex,
+        );
+        if (firstSlug) {
+          setFocusedSlug(firstSlug);
+        }
+        return;
+      }
+
+      const nextSlug = findLayoutNeighborSlug(
+        layout.positions,
+        blocks,
+        focusedSlug,
+        event.key,
+        committedEndIndex,
+      );
+      if (nextSlug) {
+        setFocusedSlug(nextSlug);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [
+    blocks,
+    blocksBySlug,
+    committedEndIndex,
+    focusedSlug,
+    keyboardNavigationDisabled,
+    layout.positions,
+    onBlockClick,
+    scrollTop,
+    viewportHeight,
+  ]);
+
   const measurementBatch = useMemo(() => {
     if (!warmedUp) return [];
     if (targetCommittedEndIndex < 0) return [];
@@ -585,7 +893,8 @@ export function Grid({
     () => ({
       vaultPath,
       thumbsRootPath,
-      focusedBlockId,
+      focusedSlug,
+      actionMenuRequest,
       onBlockClick,
       tags,
       currentTag,
@@ -597,7 +906,8 @@ export function Grid({
     [
       vaultPath,
       thumbsRootPath,
-      focusedBlockId,
+      focusedSlug,
+      actionMenuRequest,
       onBlockClick,
       tags,
       currentTag,
@@ -622,6 +932,7 @@ export function Grid({
             transition: "padding-left 200ms ease, padding-right 200ms ease",
           }}
           data-grid-scroll
+          data-feed-grid-focus-mode={focusedSlug ? "true" : undefined}
         >
           {parentWidth > 0 && blocks.length > 0 && (
             <VirtualMasonryLayout
@@ -710,6 +1021,7 @@ function VirtualMasonryLayout({
             }
             isCommitted={item.index <= committedEndIndex}
             allowPlayback={activePlaybackSlugs.has(block.slug)}
+            isFocused={block.slug === context.focusedSlug}
             context={context}
           />
         );
@@ -724,6 +1036,7 @@ const GridItem = memo(function GridItem({
   priority,
   isCommitted,
   allowPlayback,
+  isFocused,
   context,
 }: {
   block: LightBlock;
@@ -731,11 +1044,17 @@ const GridItem = memo(function GridItem({
   priority: boolean;
   isCommitted: boolean;
   allowPlayback: boolean;
+  isFocused: boolean;
   context: GridContext;
 }) {
+  const openMoreMenuRequestSequence =
+    context.actionMenuRequest?.slug === block.slug
+      ? context.actionMenuRequest.sequence
+      : 0;
+
   return (
     <div
-      className="will-change-transform"
+      className="relative will-change-transform"
       style={{
         position: "absolute",
         width: item.width,
@@ -749,15 +1068,18 @@ const GridItem = memo(function GridItem({
         overflow: "hidden",
         transform: `translate3d(${item.left}px, ${item.top}px, 0)`,
       }}
+      data-feed-grid-item=""
+      data-feed-grid-item-focused={isCommitted && isFocused ? "true" : undefined}
+      data-feed-grid-item-slug={block.slug}
     >
       {isCommitted ? (
         <Card
           block={block}
           vaultPath={context.vaultPath}
           thumbsRootPath={context.thumbsRootPath}
-          isFocused={block.id === context.focusedBlockId}
           priority={priority}
           allowPlayback={allowPlayback}
+          openMoreMenuRequestSequence={openMoreMenuRequestSequence}
           onClick={context.onBlockClick}
           tags={context.tags}
           currentTag={context.currentTag}
@@ -768,6 +1090,20 @@ const GridItem = memo(function GridItem({
         />
       ) : (
         <CardSkeleton block={block} />
+      )}
+      {isCommitted && isFocused && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-px z-[6]"
+          data-feed-grid-action-layer=""
+        >
+          <div
+            className="absolute left-2 top-2 flex h-6 items-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground"
+            data-feed-grid-action-badge=""
+          >
+            ⌘K
+          </div>
+        </div>
       )}
     </div>
   );
@@ -894,10 +1230,9 @@ function MeasurementPass({
         position: "fixed",
         left: "-99999px",
         top: 0,
-        // Use the exact fractional columnWidth — same value the layout
-        // engine uses for item.width in the visible grid. Rounding here
-        // would create a width mismatch between measurement and render,
-        // causing text to wrap slightly differently and heights to drift.
+        // Use the exact pixel-snapped columnWidth from the layout engine.
+        // Measurement and visible render must share the same width or text
+        // wrapping drifts and cached heights become invalid.
         width: Math.max(1, columnWidth),
         visibility: "hidden",
         pointerEvents: "none",

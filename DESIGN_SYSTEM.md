@@ -131,19 +131,21 @@ typography must stay inside the 12/14/18px design-system scale.
 | Светлая | oklch(0.95 0 0) | 1px |
 | Тёмная | oklch(0.2311 0 0) | 1px |
 
-Локальное исключение для hover/focus separator state в sidebar:
+Локальные исключения для hover/focus state в sidebar и feed:
 
 | Токен | Светлая | Тёмная | Где |
 |---|---|---|---|
-| `--border-accent` | oklch(0.145 0 0 / 12%) | oklch(0.985 0 0 / 16%) | Hover/focus color для sidebar row separator |
+| `--border-accent` | oklch(0.145 0 0 / 12%) | oklch(0.985 0 0 / 16%) | Hover/focus color для sidebar row separator и focused feed card frame |
+| `--graphic-card-focus-overlay` | oklch(0 0 0 / 14%) | oklch(1 0 0 / 18%) | Focus wash для graphic card surface |
 
 **Правило:** по умолчанию все линии используют `--border`. `--border-accent`
-разрешён только для состояния hover/focus у sidebar row separator, где линия
-должна слегка поддержать bright text, но не спорить с ним. Реализация должна
-идти через один и тот же separator system: каждая строка владеет только своей
-нижней seam line, а hover/focus перекрашивает seam текущей и предыдущей
-строки. Так визуально подсвечиваются обе направляющие hovered row без второй
-линии и без изменения толщины.
+разрешён только для состояния hover/focus у sidebar row separator и keyboard
+focus у feed card frame, где 1px линия должна слегка поддержать active state,
+но не спорить с контентом. В sidebar реализация идёт через один и тот же
+separator system: каждая строка владеет только своей нижней seam line, а
+hover/focus перекрашивает seam текущей и предыдущей строки. В feed меняется
+только цвет существующего 1px Card frame. Без второй линии и без изменения
+толщины.
 
 ## Оверлеи
 
@@ -713,7 +715,11 @@ Top inset ленты: 64px (`--spacing-s7`) от верхнего меню до 
 
 Паддинги сетки: 32px по бокам (при развёрнутом сайдбаре), 72px (при свёрнутом — компенсация ширины).
 
-Карточки: `border border-border`, без скругления (`rounded-0`). Обводка = +1 уровень к фону. Hover не меняет frame карточки: без смены цвета рамки, второй линии, тени, glow, inset overlay или transition. Hover-affordance карточки — только action controls; keyboard/focused state использует `ring-2 ring-ring`.
+Карточки: `border border-border`, без скругления (`rounded-0`). Обводка = +1 уровень к фону. Hover не меняет frame карточки: без смены цвета рамки, второй линии, тени, glow, inset overlay или transition. Hover-affordance карточки — только action controls. Keyboard/focused state принадлежит GridItem, не Card: focused item получает `data-feed-grid-item-focused="true"`, а существующий Card frame меняет border color на тот же token, что left sidebar row focus seam — `var(--border-accent)` — с тем же `180ms cubic-bezier(0.22, 1, 0.36, 1)` transition. Без card-frame overlay, extra line, ring/glow или `foreground` border; Card не получает focus props/classes.
+
+Графические поверхности карточек помечаются единым `GraphicSurface`/`data-card-graphic-surface` контрактом. При keyboard focus GridItem применяет только к этим surfaces дополнительный wash: light theme `oklch(0 0 0 / 14%)` затемняет, dark theme `oklch(1 0 0 / 18%)` высветляет. Текстовые карточки и текстовые области mixed cards не получают этот state.
+
+Focused GridItem дополнительно показывает shortcut badge в левом верхнем углу: `data-feed-grid-action-badge`, внутри `data-feed-grid-action-layer` (`absolute inset-px`), затем `absolute left-2 top-2`, `h-6`, `px-[1ch]`, `rounded-1` (3px), `bg-component-fill`, `text-sm font-semibold text-foreground`, `pointer-events-none`. Action layer компенсирует 1px Card frame, поэтому offsets badge считаются из той же внутренней плоскости карточки, что и Card Hover Menu controls: `top-2` как у верхнего `More`, `left-2` как у нижнего action row. Текст badge — `⌘K`; он сообщает scoped action shortcut для открытия card overflow menu и не является hover affordance. При `Cmd+K` pin-ится только top-right `More`/overflow menu; нижние `Source`/`Connect` не появляются.
 
 Article-карточки в ленте используют дополнительную surface-заливку только в тёмной теме: `feed-article-card` применяет `background: var(--accent)` при `data-theme="dark"` или системной dark theme, если не выбран `data-theme="light"`. В светлой теме article-карточка остаётся на стандартном `bg-background`.
 

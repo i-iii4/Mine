@@ -36,6 +36,25 @@ function makeBlock(): LightBlock {
 }
 
 describe("CardHoverMenu", () => {
+  it("opens the overflow menu from a keyboard action request", async () => {
+    const { container } = render(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        openMoreMenuRequestSequence={1}
+      />,
+    );
+
+    expect(await screen.findByText("Rename…")).toBeInTheDocument();
+    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-100");
+    expect(container.querySelector("[data-card-hover-bottom-actions]")).toHaveClass("opacity-0");
+  });
+
   it("shows Rename in the overflow menu", async () => {
     const onRequestRename = vi.fn();
 

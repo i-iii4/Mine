@@ -23,6 +23,11 @@ import {
 import { arrayMove } from "@dnd-kit/sortable";
 import { collectionRefLabel } from "@/lib/collections";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
+import {
+  isDetailShortcutBlockedTarget,
+  isEditableKeyboardTarget,
+  isOverlayKeyboardTarget,
+} from "@/lib/keyboardTargets";
 
 function baseRelatedNoteSlug(target: string): string {
   return target.split("#", 1)[0] ?? target;
@@ -33,26 +38,6 @@ function relatedNoteBlockAnchor(target: string): string | null {
   if (!fragment?.startsWith("^")) return null;
   const blockId = fragment.slice(1).trim();
   return blockId || null;
-}
-
-function isEditableKeyboardTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  return target.closest("input, textarea, select, [contenteditable='true']") !== null;
-}
-
-function isOverlayKeyboardTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.closest("[role='dialog'], [data-radix-popper-content-wrapper]") !== null;
-}
-
-function isDetailShortcutBlockedTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const dialog = target.closest("[role='dialog']");
-  if (dialog && !(dialog as HTMLElement).hasAttribute("data-detail-root")) return true;
-  return target.closest(
-    "[data-image-preview-overlay], [data-radix-popper-content-wrapper], [role='menu'], [role='listbox']",
-  ) !== null;
 }
 
 function blockMarkdownPath(vaultPath: string, slug: string): string {
@@ -107,7 +92,6 @@ import {
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
-import { findBlockElement } from "@/lib/domSelectors";
 import { pushRecentTag } from "@/lib/recentTags";
 import {
   clearActiveMineTextSelectionDragPayload,
@@ -217,55 +201,6 @@ interface ThumbUpdatedEvent {
   is_text: boolean;
 }
 
-// ─── Visual grid navigation ────────────────────────────────────────────────
-
-/** Find the nearest card in a given arrow direction based on screen coordinates. */
-function findVisualNeighbor(
-  currentSlug: string,
-  direction: string,
-): string | null {
-  const current = findBlockElement(currentSlug);
-  if (!current) return null;
-
-  const rect = current.getBoundingClientRect();
-  const cx = rect.left + rect.width / 2;
-  const cy = rect.top + rect.height / 2;
-
-  const horizontal = direction === "ArrowLeft" || direction === "ArrowRight";
-  let bestSlug: string | null = null;
-  let bestScore = Infinity;
-
-  for (const card of document.querySelectorAll<HTMLElement>("[data-block-slug]")) {
-    const slug = card.getAttribute("data-block-slug");
-    if (slug === currentSlug) continue;
-
-    const r = card.getBoundingClientRect();
-    const dx = (r.left + r.width / 2) - cx;
-    const dy = (r.top + r.height / 2) - cy;
-
-    // Must be in the correct direction (10px dead zone)
-    const valid =
-      direction === "ArrowRight" ? dx > 10 :
-      direction === "ArrowLeft"  ? dx < -10 :
-      direction === "ArrowDown"  ? dy > 10 :
-      /* ArrowUp */                dy < -10;
-
-    if (!valid) continue;
-
-    // Primary axis + 3× cross axis — prefers cards in the same "lane"
-    const score = horizontal
-      ? Math.abs(dx) + Math.abs(dy) * 3
-      : Math.abs(dy) + Math.abs(dx) * 3;
-
-    if (score < bestScore) {
-      bestScore = score;
-      bestSlug = slug!;
-    }
-  }
-
-  return bestSlug;
-}
-
 // ─── Root ──────────────────────────────────────────────────────────────────
 
 export function App() {
@@ -354,7 +289,10 @@ export function AppWithVault({
   const [detailChromeClosing, setDetailChromeClosing] = useState(false);
   const [closingDetailBlock, setClosingDetailBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [closingDetailTags, setClosingDetailTags] = useState<string[]>([]);
-  const [focusedBlockId, setFocusedBlockId] = useState<number | null>(null);
+  const [gridFocusRestore, setGridFocusRestore] = useState<{
+    slug: string;
+    sequence: number;
+  } | null>(null);
   const [scrollToTopSignal, setScrollToTopSignal] = useState(0);
   const [sidebarKeyboardNavigationFocus, setSidebarKeyboardNavigationFocus] = useState<{
     rowKey: string;
@@ -372,6 +310,8 @@ export function AppWithVault({
   vaultPathRef.current = vaultPath;
   const currentTagRef = useRef(currentTag);
   currentTagRef.current = currentTag;
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
   const loadRequestIdRef = useRef(0);
   const taxonomyRequestIdRef = useRef(0);
   const routeSnapshotCacheRef = useRef<Map<string, GridSnapshot>>(new Map());
@@ -409,12 +349,18 @@ export function AppWithVault({
     };
   }, []);
 
+  const requestGridFocusRestore = useCallback((slug: string) => {
+    setGridFocusRestore((current) => ({
+      slug,
+      sequence: (current?.sequence ?? 0) + 1,
+    }));
+  }, []);
+
   const openDetailBlock = useCallback((
     block: LightBlock | IndexedBlock,
     anchor: string | null = null,
   ) => {
     cancelPendingDetailClose();
-    setFocusedBlockId(null);
     setSelectedBlockAnchor(anchor);
     setSelectedBlock(block);
   }, [cancelPendingDetailClose]);
@@ -449,6 +395,13 @@ export function AppWithVault({
   const renderedLinkedTags = selectedBlock
     ? selectedBlockTags
     : (detailChromeClosing ? closingDetailTags : []);
+  const gridKeyboardNavigationDisabled = Boolean(renderedDetailBlock)
+    || searchOpen
+    || designSystemOpen
+    || importOpen
+    || renamingBlock !== null
+    || deleteTargetSlug !== null
+    || isCreatingChannel;
 
   useEffect(() => {
     setImagePreview(null);
@@ -458,81 +411,14 @@ export function AppWithVault({
     gridColumnCountRef.current = n;
   }, []);
 
-  // Close Detail and clear grid focus when navigating to a different route
+  // Close Detail when navigating to a different route. Feed keyboard focus is
+  // owned by Grid and resets with the route-scoped Grid instance.
   useEffect(() => {
     cancelPendingDetailClose();
     setSelectedBlock(null);
     setSelectedBlockAnchor(null);
-    setFocusedBlockId(null);
+    setGridFocusRestore(null);
   }, [location.pathname, cancelPendingDetailClose]);
-
-  // ── Grid keyboard navigation (when Detail is closed) ───────────────────
-  // Refs avoid re-subscribing the keydown listener on every focus change
-  const focusedRef = useRef(focusedBlockId);
-  focusedRef.current = focusedBlockId;
-  const activeBlocksRef = useRef(activeBlocks);
-  activeBlocksRef.current = activeBlocks;
-  const blocksRef = useRef(blocks);
-  blocksRef.current = blocks;
-
-  useEffect(() => {
-    if (selectedBlock || searchOpen) return; // Detail or search handles keys
-
-    const handler = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || isEditableKeyboardTarget(e.target) || isOverlayKeyboardTarget(e.target)) return;
-      if (e.metaKey || e.altKey || e.ctrlKey) return;
-
-      const cur = focusedRef.current;
-      const ab = activeBlocksRef.current;
-
-      if (e.key === "Enter" && cur !== null) {
-        const block = ab.find((b) => b.id === cur);
-        if (block) {
-          openDetailBlock(block);
-        }
-        return;
-      }
-
-      if (e.key === "Escape") {
-        if (cur !== null) setFocusedBlockId(null);
-        return;
-      }
-
-      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
-      e.preventDefault();
-
-      if (cur === null) {
-        if (ab.length > 0) setFocusedBlockId(ab[0]!.id);
-        return;
-      }
-
-      // Visual navigation: find nearest card by screen coordinates
-      const currentBlock = ab.find((b) => b.id === cur);
-      if (!currentBlock) { setFocusedBlockId(ab[0]?.id ?? null); return; }
-
-      const targetSlug = findVisualNeighbor(currentBlock.slug, e.key);
-      if (!targetSlug) return;
-
-      const targetBlock = ab.find((b) => b.slug === targetSlug);
-      if (targetBlock) {
-        setFocusedBlockId(targetBlock.id);
-      }
-    };
-
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [selectedBlock, searchOpen, openDetailBlock]);
-
-  // Auto-scroll to focused card
-  useEffect(() => {
-    if (focusedBlockId === null) return;
-    const block = activeBlocks.find((b) => b.id === focusedBlockId);
-    if (!block) return;
-    requestAnimationFrame(() => {
-      const el = findBlockElement(block.slug);
-      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    });
-  }, [focusedBlockId, activeBlocks]);
 
   // ── Sidebar resize ──────────────────────────────────────────────────────
   const {
@@ -1181,7 +1067,7 @@ export function AppWithVault({
 
   const handleDetailClose = useCallback(() => {
     if (!selectedBlock || detailChromeClosing) return;
-    setFocusedBlockId(selectedBlock.id);
+    requestGridFocusRestore(selectedBlock.slug);
     setSelectedBlockAnchor(null);
     setClosingDetailBlock(selectedBlock);
     setClosingDetailTags(selectedBlockTags);
@@ -1194,12 +1080,11 @@ export function AppWithVault({
       detailCloseTimerRef.current = null;
       cancelPendingDetailClose();
     }, DETAIL_CHROME_TRANSITION_MS);
-  }, [selectedBlock, selectedBlockTags, detailChromeClosing, cancelPendingDetailClose]);
+  }, [selectedBlock, selectedBlockTags, detailChromeClosing, cancelPendingDetailClose, requestGridFocusRestore]);
 
   const handleScrollToTop = useCallback(() => {
     if (selectedBlock) {
       if (detailChromeClosing) return;
-      setFocusedBlockId(selectedBlock.id);
       setSelectedBlockAnchor(null);
       setClosingDetailBlock(selectedBlock);
       setClosingDetailTags(selectedBlockTags);
@@ -1837,8 +1722,7 @@ export function AppWithVault({
       console.log("[DELETE] start", slug, "currentTag:", currentTag, "selectedBlock:", selectedBlock?.slug);
       setSelectedBlock(null);
       setSelectedBlockAnchor(null);
-      setFocusedBlockId(null);
-      console.log("[DELETE] cleared selectedBlock/focusedBlockId");
+      console.log("[DELETE] cleared selectedBlock");
       try {
         console.log("[DELETE] calling deleteBlock IPC...");
         await deleteBlock(slug, deleteUnusedMedia);
@@ -2031,7 +1915,9 @@ export function AppWithVault({
                 currentTag={currentTag}
                 scrollToTop={scrollToTopSignal}
                 sidebarCollapsed={sidebarCollapsed}
-                focusedBlockId={focusedBlockId}
+                keyboardNavigationDisabled={gridKeyboardNavigationDisabled}
+                restoreFocusSlug={gridFocusRestore?.slug ?? null}
+                restoreFocusSequence={gridFocusRestore?.sequence ?? 0}
                 onBlockClick={handleBlockClick}
                 onToggleTag={handleToggleTag}
                 onCreateAndAssign={handleCreateTagFromMenu}
@@ -2241,7 +2127,9 @@ interface RouteContext {
   currentTag?: string;
   scrollToTop: number;
   sidebarCollapsed: boolean;
-  focusedBlockId: number | null;
+  keyboardNavigationDisabled: boolean;
+  restoreFocusSlug: string | null;
+  restoreFocusSequence: number;
   onBlockClick: (block: LightBlock) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;

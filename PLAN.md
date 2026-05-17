@@ -660,7 +660,7 @@ Goal: полноценная клавиатурная навигация, рес
 | 10.2 | Detail: рефакторинг с Radix Dialog на plain div (`absolute inset-0 z-10` внутри `<main isolation: isolate>`) | [x] |
 | 10.3 | Исправление кнопки X в Detail: перенос ниже 32px Tauri drag region (`top-10 right-4`) | [x] |
 | 10.4 | Исправление навигации сайдбара при открытом Detail: `useEffect` на `location.pathname` сбрасывает `selectedBlock` | [x] |
-| 10.5 | Клавиатурная навигация в Grid: визуальная навигация по `getBoundingClientRect()` (4 стрелки + Enter + Esc), `focusedBlockId` state, автоподскрол, восстановление фокуса при закрытии Detail | [x] |
+| 10.5 | Клавиатурная навигация в Grid: Grid-owned `focusedSlug`, визуальная навигация по `layout.positions` (4 стрелки + Enter + Esc), viewport resync после ручного scroll, автоподскрол по layout position, restore по slug после закрытия Detail | [x] |
 | 10.6 | Клавиатурная навигация в Detail: влево/вправо (линейная), capture phase + stopPropagation, пропуск модификаторов | [x] |
 | 10.7 | Переключение каналов Opt+Cmd+Up/Down: навигация по `orderedTags`, автоподскрол сайдбара к `[aria-current="page"]` | [x] |
 | 10.8 | Устойчивость к iCloud: сброс ошибки загрузки карточек через событие `vault-refreshed` при `loadData` | [x] |

@@ -96,14 +96,22 @@ vi.mock("@/components/Grid", () => ({
   Grid: ({
     blocks,
     currentTag,
+    keyboardNavigationDisabled,
+    restoreFocusSlug,
+    restoreFocusSequence,
     onBlockClick,
   }: {
     blocks: LightBlock[];
     currentTag?: string;
+    keyboardNavigationDisabled?: boolean;
+    restoreFocusSlug?: string | null;
+    restoreFocusSequence?: number;
     onBlockClick: (block: LightBlock) => void;
   }) => (
     <div>
       <div data-testid="grid">{`${currentTag ?? "__all__"}:${blocks.length}`}</div>
+      <div data-testid="grid-keyboard-disabled">{String(Boolean(keyboardNavigationDisabled))}</div>
+      <div data-testid="grid-restore">{`${restoreFocusSlug ?? "none"}:${restoreFocusSequence ?? 0}`}</div>
       {blocks.map((item) => (
         <div key={`${item.slug}-title`} data-testid={`grid-title-${item.slug}`}>
           {item.title ?? item.slug}
@@ -125,13 +133,18 @@ vi.mock("@/components/Search", () => ({
 vi.mock("@/components/Detail", () => ({
   Detail: ({
     block,
+    onClose,
     onRequestDelete,
   }: {
     block: LightBlock | IndexedBlock;
+    onClose: () => void;
     onRequestDelete: (slug: string) => void;
   }) => (
     <div role="dialog" aria-label={`${block.slug}.md`} data-detail-root>
       <div data-testid="detail-title">{block.title ?? block.slug}</div>
+      <button type="button" onClick={onClose}>
+        Close detail
+      </button>
       <button type="button" onClick={() => onRequestDelete(block.slug)}>
         Delete detail
       </button>
@@ -441,6 +454,32 @@ describe("AppWithVault", () => {
     expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
     expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeShortcut);
+  });
+
+  it("lets Grid own feed keyboard focus and sends a restore request after Detail closes", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("false");
+    expect(screen.getByTestId("grid-restore")).toHaveTextContent("none:0");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    });
+    expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid-restore")).toHaveTextContent("alpha-block:1");
+    });
   });
 
   it("copies the open card markdown path with Command-L", async () => {

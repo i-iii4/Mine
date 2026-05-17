@@ -107,6 +107,26 @@ select,
   background-color: var(--border-accent);
 }
 
+[data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] > [data-block-slug] {
+  border-color: var(--border-accent);
+  transition: border-color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-card-graphic-surface]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--graphic-card-focus-overlay);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-card-graphic-surface]::after {
+  opacity: 1;
+}
+
 [data-sidebar-scroll][data-sidebar-row-switching="true"] [data-sidebar-row-text] {
   transition-duration: 0ms;
 }
@@ -220,6 +240,10 @@ body {
     transform: none;
     transition: none;
   }
+
+  [data-card-graphic-surface]::after {
+    transition: none;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -330,6 +354,7 @@ body {
   --primary-hover: oklch(0.4495 0 0);
   --primary-active: oklch(0.2178 0 0);
   --card-hover-overlay: transparent;
+  --graphic-card-focus-overlay: oklch(0 0 0 / 14%);
   --destructive: oklch(0.577 0.245 27.325);
   /* surface +3 / border */
   --border: oklch(0.95 0 0);
@@ -393,6 +418,7 @@ body {
     --primary-hover: oklch(0.8 0 0);
     --primary-active: oklch(0.7 0 0);
     --card-hover-overlay: transparent;
+    --graphic-card-focus-overlay: oklch(1 0 0 / 18%);
     --destructive: oklch(0.704 0.191 22.216);
     --ring: oklch(0.6268 0 0);
     --chart-1: oklch(0.488 0.243 264.376);
@@ -442,6 +468,7 @@ body {
   --primary-hover: oklch(0.8 0 0);
   --primary-active: oklch(0.7 0 0);
   --card-hover-overlay: transparent;
+  --graphic-card-focus-overlay: oklch(1 0 0 / 18%);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(0.2311 0 0);
   --border-accent: oklch(0.985 0 0 / 16%);
@@ -484,6 +511,7 @@ body {
   --primary-hover: oklch(0.4495 0 0);
   --primary-active: oklch(0.2178 0 0);
   --card-hover-overlay: transparent;
+  --graphic-card-focus-overlay: oklch(0 0 0 / 14%);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.95 0 0);
   --border-accent: oklch(0.145 0 0 / 12%);

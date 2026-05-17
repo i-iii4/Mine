@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { ComponentProps } from "react";
 import { MoreHorizontal, Trash2, Plus, ExternalLink, FolderOpen, Copy, Pencil } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -33,11 +33,13 @@ interface CardMenuActionsProps<TBlock extends LightBlock | IndexedBlock> {
 interface CardMoreMenuProps<TBlock extends LightBlock | IndexedBlock> extends CardMenuActionsProps<TBlock> {
   className?: string;
   onOpenChange?: (open: boolean) => void;
+  openRequestSequence?: number;
   triggerVariant?: ComponentProps<typeof Button>["variant"];
 }
 
 type CardHoverMenuProps = CardMenuActionsProps<LightBlock>;
 type CardHoverMenuPropsWithState = CardHoverMenuProps & {
+  openMoreMenuRequestSequence?: number;
   onInteractiveOpenChange?: (open: boolean) => void;
   onInteractionStart?: () => void;
 };
@@ -57,12 +59,21 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
   onRequestDelete,
   className,
   onOpenChange,
+  openRequestSequence = 0,
   triggerVariant = "default",
 }: CardMoreMenuProps<TBlock>) {
   const hasUrl = !!block.url;
   const filePath = `${vaultPath}/${block.slug}.md`;
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const lastOpenRequestSequenceRef = useRef(0);
+
+  useEffect(() => {
+    if (openRequestSequence <= lastOpenRequestSequenceRef.current) return;
+    lastOpenRequestSequenceRef.current = openRequestSequence;
+    setMenuOpen(true);
+    onOpenChange?.(true);
+  }, [onOpenChange, openRequestSequence]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -79,6 +90,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
 
   return (
     <DropdownMenu
+      open={menuOpen}
       onOpenChange={(open) => {
         setMenuOpen(open);
         onOpenChange?.(open);
@@ -164,18 +176,31 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   onCreateAndAssign,
   onRequestRename,
   onRequestDelete,
+  openMoreMenuRequestSequence = 0,
   onInteractiveOpenChange,
   onInteractionStart,
 }: CardHoverMenuPropsWithState) {
   const hasUrl = !!block.url;
   const [menuOpen, setMenuOpen] = useState(false);
   const [channelOpen, setChannelOpen] = useState(false);
+  const [keyboardMenuOpen, setKeyboardMenuOpen] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const anyOpen = menuOpen || channelOpen;
+  const lastOpenMoreMenuRequestSequenceRef = useRef(0);
+  const keyboardMenuRequestPending =
+    openMoreMenuRequestSequence > lastOpenMoreMenuRequestSequenceRef.current;
+  const effectiveKeyboardMenuOpen = keyboardMenuOpen || keyboardMenuRequestPending;
+  const anyMenuOpen = menuOpen || channelOpen;
+  const hoverActionsPinned = channelOpen || (menuOpen && !effectiveKeyboardMenuOpen);
 
   useEffect(() => {
-    onInteractiveOpenChange?.(anyOpen);
-  }, [anyOpen, onInteractiveOpenChange]);
+    if (openMoreMenuRequestSequence <= lastOpenMoreMenuRequestSequenceRef.current) return;
+    lastOpenMoreMenuRequestSequenceRef.current = openMoreMenuRequestSequence;
+    setKeyboardMenuOpen(true);
+  }, [openMoreMenuRequestSequence]);
+
+  useEffect(() => {
+    onInteractiveOpenChange?.(anyMenuOpen);
+  }, [anyMenuOpen, onInteractiveOpenChange]);
 
   const shouldLoadTags = menuOpen || channelOpen;
 
@@ -195,11 +220,15 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   return (
     <>
       {/* Overlay — затенение при hover */}
-      <div className={cn("pointer-events-none absolute inset-0 z-[4] bg-[var(--card-hover-overlay)] transition-opacity group-hover:opacity-100", anyOpen ? "opacity-100" : "opacity-0")} />
+      <div
+        className={cn("pointer-events-none absolute inset-0 z-[4] bg-[var(--card-hover-overlay)] transition-opacity group-hover:opacity-100", hoverActionsPinned ? "opacity-100" : "opacity-0")}
+        data-card-hover-overlay=""
+      />
 
       {/* More (···) — верхний правый */}
       <div
-        className={cn("absolute right-2 top-2 z-[5] transition-opacity group-hover:opacity-100", anyOpen ? "opacity-100" : "opacity-0")}
+        className={cn("absolute right-2 top-2 z-[5] transition-opacity group-hover:opacity-100", anyMenuOpen ? "opacity-100" : "opacity-0")}
+        data-card-hover-more-action=""
         onClick={stopProp}
         onPointerDown={stopProp}
       >
@@ -212,9 +241,12 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           onCreateAndAssign={onCreateAndAssign}
           onRequestRename={onRequestRename}
           onRequestDelete={onRequestDelete}
+          openRequestSequence={openMoreMenuRequestSequence}
           onOpenChange={(open) => {
             if (open) {
               onInteractionStart?.();
+            } else {
+              setKeyboardMenuOpen(false);
             }
             setMenuOpen(open);
           }}
@@ -223,7 +255,8 @@ export const CardHoverMenu = memo(function CardHoverMenu({
 
       {/* Нижний ряд: Source (лево) + Connect (право) */}
       <div
-        className={cn("absolute bottom-2 left-2 right-2 z-[5] flex gap-2 transition-opacity group-hover:opacity-100", anyOpen ? "opacity-100" : "opacity-0")}
+        className={cn("absolute bottom-2 left-2 right-2 z-[5] flex gap-2 transition-opacity group-hover:opacity-100", hoverActionsPinned ? "opacity-100" : "opacity-0")}
+        data-card-hover-bottom-actions=""
         onClick={stopProp}
         onPointerDown={stopProp}
       >

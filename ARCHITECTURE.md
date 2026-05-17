@@ -479,7 +479,7 @@ iOS UI contract:
 - Контентные карточки больше не кодируют spacing через variant-specific `mt-*` ветки. Введён slot-based contract: frame карточки задаёт общий inset, media идёт первой, а текстовые слоты живут единым text-stack ниже (`media -> display title/preview -> author`). Внутренние gap'ы появляются только между реально существующими соседними слотами. Это устраняет phantom top gap и сохраняет системный отступ под media.
 - Layout generation теперь keyed by `layoutGenerationKey = route + width bucket + ordered block layout fingerprint`. Fingerprint включает layout-relevant content блока, в том числе `preview_manifest`, поэтому same-id content/preview changes не могут reuse stale heights/layout.
 - `heightCache` и `layoutCache` generation-aware: exact heights и exact layouts кэшируются только для текущего generation key, а не просто по `slug` или набору ids.
-- Layout вычисляется чистой функцией (`src/lib/masonryLayout.ts`): `containerWidth + current-generation heights -> columnCount + positions + totalHeight`. Exact heights текущего generation используются там, где они уже есть; для остальных блоков provisional path использует heuristic only for skeleton geometry.
+- Layout вычисляется чистой функцией (`src/lib/masonryLayout.ts`): `containerWidth + current-generation heights -> columnCount + positions + totalHeight`. `columnWidth` и horizontal positions снапятся к целым CSS-пикселям; measurement pass и visible render используют один `getMasonryColumnWidth`, чтобы transformed card controls не получали subpixel jitter. Exact heights текущего generation используются там, где они уже есть; для остальных блоков provisional path использует heuristic only for skeleton geometry.
 - Visible contract двуслойный:
   - `committed` prefix — contiguous range `0..committedEndIndex`, для которой exact heights уже получены и разрешён live `Card`;
   - provisional remainder — только skeleton cards в heuristic envelope текущего generation.
@@ -734,14 +734,15 @@ Rationale: минимальная сложность. Позже — изоли�
 
 Rationale: пользователь может открыть любой `.md` файл в Obsidian, VS Code или текстовом редакторе и увидеть как метаданные, так и содержимое. Wikilinks работают в Obsidian нативно.
 
-### 006: Визуальная навигация по координатам вместо индексной
+### 006: Визуальная навигация по layout positions вместо индексной
 
 | Approach | Problem |
 |---|---|
 | Навигация по индексу массива (index ± 1 / ± columnCount) | В masonry-сетке с разной высотой карточек визуальный сосед не совпадает с соседом по индексу — стрелка «вправо» перебрасывает в другой конец экрана |
-| Навигация по `getBoundingClientRect()` (chosen) | Для каждого нажатия стрелки перебираются все карточки в DOM, фильтруются по направлению, оцениваются по расстоянию (`primaryAxis + 3 × crossAxis`). Выбирается ближайшая |
+| Навигация по `getBoundingClientRect()` | Хрупко связывает focus с текущим DOM: виртуализация, preview-card с тем же `data-block-slug`, skeleton/committed phase и clipped wrappers могут оставить state без видимого выделения |
+| Навигация по `layout.positions` внутри Grid (chosen) | Grid уже владеет masonry geometry, scrollport, committed range и viewport; сосед выбирается из layout positions по расстоянию (`primaryAxis + 3 × crossAxis`) без DOM lookup |
 
-Rationale: masonry-раскладка с round-robin распределением и переменной высотой карточек делает индексную навигацию непредсказуемой. Визуальная навигация всегда соответствует тому, что видит пользователь. `getBoundingClientRect()` для ~80 видимых карточек — наносекунды.
+Rationale: masonry-раскладка с round-robin распределением и переменной высотой карточек делает индексную навигацию непредсказуемой. Визуальная навигация должна соответствовать тому, что видит пользователь, но source of truth должен оставаться в Grid layout, а не в DOM. Если ручной scroll уводит прежний `focusedSlug` за пределы viewport, следующее нажатие стрелки сначала ресинхронизирует фокус с текущим viewport по `layout.positions`. App только блокирует Grid keyboard mode для Detail/search/dialog states и передаёт restore-сигнал после закрытия Detail.
 
 ### 007: Detail — plain div вместо Radix Dialog
 

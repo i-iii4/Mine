@@ -11,7 +11,7 @@
 // same column may have top coordinates that overlap.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, act } from "@testing-library/react";
+import { render, act, fireEvent, screen } from "@testing-library/react";
 import { Grid } from "./Grid";
 import { computeMasonryLayout } from "@/lib/masonryLayout";
 import type { LightBlock } from "@/types";
@@ -161,8 +161,10 @@ function testColumnWidth(parentWidth: number): number {
   );
   return Math.max(
     1,
-    (Math.max(0, parentWidth - TEST_GAP * (provisionalColumnCount - 1))) /
-      provisionalColumnCount,
+    Math.floor(
+      (Math.max(0, parentWidth - TEST_GAP * (provisionalColumnCount - 1))) /
+        provisionalColumnCount,
+    ),
   );
 }
 
@@ -304,14 +306,14 @@ interface RenderedPosition {
 /**
  * Read the currently-rendered visible cards and their absolute positions
  * from the DOM. Grid uses inline `transform: translate3d(left, top, 0)`
- * and inline `width` on the wrapper of each visible card.
+ * and inline `width` on the GridItem wrapper around each visible card.
  */
 function readRenderedPositions(): RenderedPosition[] {
   const cards = Array.from(
     document.querySelectorAll("[data-block-slug]"),
   ) as HTMLElement[];
   return cards.map((card) => {
-    const wrapper = card.parentElement as HTMLElement;
+    const wrapper = card.closest("[data-feed-grid-item]") as HTMLElement;
     const transform = wrapper.style.transform || "";
     const match = transform.match(
       /translate3d\(\s*([^,]+)px\s*,\s*([^,]+)px\s*,/,
@@ -331,6 +333,12 @@ function readRenderedPositions(): RenderedPosition[] {
       height,
     };
   });
+}
+
+function gridItemForSlug(slug: string): HTMLElement | null {
+  const card = document.querySelector(`[data-block-slug="${slug}"]`);
+  if (!card) return null;
+  return card.closest("[data-feed-grid-item]") as HTMLElement | null;
 }
 
 /**
@@ -417,6 +425,187 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(layoutEl).toBeTruthy();
     expect(scrollEl).not.toHaveClass("pt-16");
     expect(layoutEl?.style.marginTop).toBe("64px");
+  });
+
+  it("restores feed focus by slug and marks the GridItem without Card focus props", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9101), makeBlock(9102), makeBlock(9103)];
+    setBlockHeight(9101, 200);
+    setBlockHeight(9102, 220);
+    setBlockHeight(9103, 240);
+
+    render(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        restoreFocusSlug="block-9102"
+        restoreFocusSequence={1}
+      />,
+    );
+    await flushAsync();
+
+    const focused = document.querySelector(
+      '[data-block-slug="block-9102"]',
+    ) as HTMLElement | null;
+    const focusedWrapper = gridItemForSlug("block-9102");
+    const scroll = document.querySelector("[data-grid-scroll]");
+
+    expect(focused).toBeTruthy();
+    expect(focused).not.toHaveAttribute("data-feed-card-focused");
+    expect(focused).not.toHaveClass("ring-2");
+    expect(focusedWrapper?.style.height).toBe("220px");
+    expect(scroll).toHaveAttribute("data-feed-grid-focus-mode", "true");
+    expect(focusedWrapper).toHaveAttribute("data-feed-grid-item-focused", "true");
+    expect(focusedWrapper?.querySelector("[data-feed-grid-focus-frame]")).toBeNull();
+  });
+
+  it("owns arrow-key navigation in Grid and uses layout positions instead of DOM rectangles", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeBlock(9201),
+      makeBlock(9202),
+      makeBlock(9203),
+      makeBlock(9204),
+      makeBlock(9205),
+    ];
+    setBlockHeight(9201, 200);
+    setBlockHeight(9202, 220);
+    setBlockHeight(9203, 240);
+    setBlockHeight(9204, 260);
+    setBlockHeight(9205, 200);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const firstFocusedWrapper = gridItemForSlug("block-9201");
+    expect(firstFocusedWrapper).toHaveAttribute("data-feed-grid-item-focused", "true");
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const nextFocusedWrapper = gridItemForSlug("block-9205");
+    expect(nextFocusedWrapper).toHaveAttribute("data-feed-grid-item-focused", "true");
+  });
+
+  it("shows the Command-K badge on feed keyboard focus and opens the focused card overflow menu", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9251), makeBlock(9252)];
+    setBlockHeight(9251, 200);
+    setBlockHeight(9252, 220);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const focusedWrapper = gridItemForSlug("block-9251");
+    expect(focusedWrapper).toHaveAttribute("data-feed-grid-item-focused", "true");
+    const actionLayer = focusedWrapper?.querySelector("[data-feed-grid-action-layer]");
+    expect(actionLayer).toHaveClass("inset-px");
+    const actionBadge = focusedWrapper?.querySelector("[data-feed-grid-action-badge]");
+    expect(actionBadge).toHaveTextContent("⌘K");
+    expect(actionBadge).toHaveClass("left-2", "top-2");
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await flushAsync();
+
+    expect(screen.getByText("Rename…")).toBeInTheDocument();
+    expect(
+      focusedWrapper?.querySelector("[data-card-hover-more-action]"),
+    ).toHaveClass("opacity-100");
+    expect(
+      focusedWrapper?.querySelector("[data-card-hover-bottom-actions]"),
+    ).toHaveClass("opacity-0");
+  });
+
+  it("resynchronizes arrow-key navigation to the current viewport after manual scroll", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeBlock(9401),
+      makeBlock(9402),
+      makeBlock(9403),
+      makeBlock(9404),
+    ];
+    setBlockHeight(9401, 200);
+    setBlockHeight(9402, 200);
+    setBlockHeight(9403, 200);
+    setBlockHeight(9404, 200);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+
+    act(() => {
+      triggerResize(280, 300);
+    });
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gridItemForSlug("block-9401")).toHaveAttribute(
+      "data-feed-grid-item-focused",
+      "true",
+    );
+
+    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
+    expect(scrollEl).toBeTruthy();
+
+    act(() => {
+      if (scrollEl) {
+        scrollEl.scrollTop = 528;
+        scrollEl.dispatchEvent(new Event("scroll"));
+      }
+    });
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gridItemForSlug("block-9401")).not.toHaveAttribute(
+      "data-feed-grid-item-focused",
+    );
+    expect(gridItemForSlug("block-9402")).not.toHaveAttribute(
+      "data-feed-grid-item-focused",
+    );
+    expect(gridItemForSlug("block-9403")).toHaveAttribute(
+      "data-feed-grid-item-focused",
+      "true",
+    );
+  });
+
+  it("does not handle feed keyboard navigation while disabled by App", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9301), makeBlock(9302)];
+    setBlockHeight(9301, 200);
+    setBlockHeight(9302, 220);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} keyboardNavigationDisabled />);
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector("[data-feed-grid-item-focused]")).toBeNull();
   });
 
   it("keeps the first paint skeleton-only until the current generation is measured", async () => {

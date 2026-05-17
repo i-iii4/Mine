@@ -152,6 +152,38 @@ describe("Card", () => {
     expect(card).not.toHaveClass("transition-colors");
   });
 
+  it("marks real graphic surfaces without adding a focus prop to Card", () => {
+    const { container, rerender } = render(
+      <Card
+        block={block({ block_type: "image", media_file: "sunset.jpg" })}
+        vaultPath={VAULT}
+        onClick={vi.fn()}
+      />,
+    );
+
+    const graphicSurface = container.querySelector("[data-card-graphic-surface]");
+    expect(graphicSurface).toBeInTheDocument();
+    expect(graphicSurface?.querySelector("img")).toBeInTheDocument();
+    expect(screen.getByRole("button")).not.toHaveAttribute("data-feed-card-focused");
+
+    rerender(
+      <Card
+        block={block({
+          block_type: "article",
+          card_kind: "article",
+          body: "Only text",
+          first_image: null,
+          media_urls: null,
+          thumbnail: null,
+        })}
+        vaultPath={VAULT}
+        onClick={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector("[data-card-graphic-surface]")).toBeNull();
+  });
+
   // ── Image card ────────────────────────────────────────────────────────
 
   it("prefers the source media file over the cached thumbnail", () => {
@@ -259,6 +291,7 @@ describe("Card", () => {
     expect(screen.getByText("noimage.example.com")).toBeInTheDocument();
     // The img element should be gone (compact card has no image)
     expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("[data-card-graphic-surface]")).toBeNull();
   });
 
   // ── Article card ──────────────────────────────────────────────────────
