@@ -517,6 +517,8 @@ that belongs to `storage::media_refs`.
 - Hover overlay содержит `Source` и `Connect`; `Connect` открывает
   `CollectionPicker` для связи карточки с каналами.
 - Overflow `…` menu содержит action `Rename…` и тот же `Connect` submenu.
+- Overflow `…` menu uses the shared `DropdownMenu` focus surface: item
+  hover/focus and open submenu trigger render `bg-active`, not `bg-accent`.
 - Открывает единый rename dialog для выбранного блока
 - Rename не делает silent auto-fix: занятое имя и invalid stem показываются как явные ошибки
 

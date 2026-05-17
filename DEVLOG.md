@@ -1,5 +1,21 @@
 # Devlog
 
+## 16.05.2026 [change] — Use active surface for DropdownMenu focus
+
+### Context
+
+- Card overflow menus in dark theme used the soft `accent` (+1) focus surface,
+  which was too close to the popover background.
+
+### Completed
+
+- Changed shared `DropdownMenu` item focus/hover surface from `bg-accent` to
+  `bg-active`.
+- Changed open `DropdownMenuSubTrigger` surface to the same `bg-active`.
+- Kept `ContextMenu` and `Command` on their existing `bg-accent` contracts.
+- Updated `DESIGN_SYSTEM.md` and `SPEC_FRONTEND.md`.
+- Added a regression test for DropdownMenu focus/open submenu tokens.
+
 ## 15.05.2026 [change] — Move feed keyboard focus ownership into Grid
 
 ### Context

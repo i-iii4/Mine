@@ -311,7 +311,7 @@ Input и Command — тоже 32px (`h-8`).
 
 Content: `rounded-1 border bg-popover p-1 text-popover-foreground`, тень — единая для всплывающих элементов (см. «Всплывающие элементы»).
 Item: `rounded-1 px-2 py-1.5 text-base cursor-default`.
-Item `variant="destructive"`: красный текст (`text-destructive`), стандартный ховер-фон (`focus:bg-accent`).
+Item hover/focus uses the active surface swatch: `focus:bg-active focus:text-accent-foreground`. Submenu trigger open state uses the same `bg-active`. Item `variant="destructive"`: красный текст (`text-destructive`), тот же hover/focus фон (`focus:bg-active`).
 
 ### Tooltip
 
@@ -438,7 +438,9 @@ Radix-обёртка: `size-4 rounded-[2px] border border-primary`. Checked: `bg
 
 ## Всплывающие элементы (floating UI)
 
-ContextMenu, DropdownMenu, Command — три всплывающих компонента с единым стандартом.
+ContextMenu, DropdownMenu, Command — три всплывающих компонента с единым
+container/radius/spacing standard. Focus surface может отличаться по типу
+компонента.
 
 ### Контейнер (Content)
 
@@ -452,11 +454,14 @@ SubContent (подменю) — та же тень.
 
 ### Пункты (Item)
 
-`rounded-1 px-2 py-1.5 text-base focus:bg-accent`.
+`rounded-1 px-2 py-1.5 text-base`. `DropdownMenu` использует
+`focus:bg-active`; `DropdownMenuSubTrigger[data-state=open]` использует тот же
+`bg-active`. `ContextMenu` и `Command` сохраняют `bg-accent`/selected
+поведение.
 
 ### Деструктивные пункты
 
-Текст красный (`text-destructive`), фон при фокусе — стандартный (`focus:bg-accent`). Без красного фона при наведении.
+Текст красный (`text-destructive`), фон при фокусе — стандартный DropdownMenu/ContextMenu focus surface (`focus:bg-active` для DropdownMenu, `focus:bg-accent` для ContextMenu). Без красного фона при наведении.
 
 ## Состояния Drag-and-Drop
 
