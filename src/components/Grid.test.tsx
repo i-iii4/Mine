@@ -529,6 +529,176 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(
       focusedWrapper?.querySelector("[data-card-hover-bottom-actions]"),
     ).toHaveClass("opacity-0");
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await flushAsync();
+
+    expect(screen.queryByText("Rename…")).not.toBeInTheDocument();
+  });
+
+  it("keeps the keyboard-opened menu anchor visually pinned while pointer hover moves elsewhere", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9256), makeBlock(9257), makeBlock(9258)];
+    setBlockHeight(9256, 200);
+    setBlockHeight(9257, 220);
+    setBlockHeight(9258, 240);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    const gridScroll = document.querySelector("[data-grid-scroll]") as HTMLElement;
+    const anchorWrapper = gridItemForSlug("block-9256");
+    const pointerWrapper = gridItemForSlug("block-9257");
+    expect(anchorWrapper).toBeTruthy();
+    expect(pointerWrapper).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await flushAsync();
+
+    expect(screen.getByText("Rename…")).toBeInTheDocument();
+    expect(anchorWrapper).toHaveAttribute("data-feed-grid-item-focused", "true");
+
+    fireEvent.pointerMove(pointerWrapper!, {
+      clientX: 260,
+      clientY: 180,
+      movementX: 1,
+      movementY: 0,
+      pointerId: 1,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gridScroll).toHaveAttribute("data-feed-grid-interaction-mode", "pointer");
+    expect(gridScroll).toHaveAttribute("data-feed-grid-focus-mode", "true");
+    expect(anchorWrapper).toHaveAttribute("data-feed-grid-item-focused", "true");
+    expect(anchorWrapper?.querySelector("[data-feed-grid-action-badge]")).toHaveTextContent("⌘K");
+    expect(
+      anchorWrapper?.querySelector("[data-card-hover-more-action]"),
+    ).toHaveClass("opacity-100");
+    expect(
+      anchorWrapper?.querySelector("[data-card-hover-bottom-actions]"),
+    ).not.toHaveClass("group-hover:opacity-100");
+    expect(
+      pointerWrapper?.querySelector("[data-card-hover-more-action]"),
+    ).toHaveClass("group-hover:opacity-100");
+    expect(screen.getByText("Rename…")).toBeInTheDocument();
+  });
+
+  it("does not let stationary pointer hover compete with feed keyboard focus", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9261), makeBlock(9262), makeBlock(9263)];
+    setBlockHeight(9261, 200);
+    setBlockHeight(9262, 220);
+    setBlockHeight(9263, 240);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    const gridScroll = document.querySelector("[data-grid-scroll]") as HTMLElement;
+    const firstWrapper = gridItemForSlug("block-9261");
+    const secondWrapper = gridItemForSlug("block-9262");
+    expect(firstWrapper).toBeTruthy();
+    expect(secondWrapper).toBeTruthy();
+
+    fireEvent.pointerMove(firstWrapper!, { clientX: 120, clientY: 160, pointerId: 1 });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(gridScroll).toHaveAttribute("data-feed-grid-interaction-mode", "pointer");
+    expect(firstWrapper?.querySelector("[data-card-hover-more-action]")).toHaveClass("group-hover:opacity-100");
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gridScroll).toHaveAttribute("data-feed-grid-interaction-mode", "keyboard");
+    expect(
+      document.querySelector("[data-feed-grid-item-focused='true']"),
+    ).toBeTruthy();
+    expect(
+      document.querySelector("[data-card-hover-more-action]"),
+    ).not.toHaveClass("group-hover:opacity-100");
+
+    fireEvent.pointerMove(secondWrapper!, { clientX: 120, clientY: 160, pointerId: 1 });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gridScroll).toHaveAttribute("data-feed-grid-interaction-mode", "keyboard");
+    expect(
+      document.querySelector("[data-card-hover-more-action]"),
+    ).not.toHaveClass("group-hover:opacity-100");
+
+    fireEvent.pointerMove(secondWrapper!, { clientX: 121, clientY: 160, pointerId: 1 });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gridScroll).toHaveAttribute("data-feed-grid-interaction-mode", "pointer");
+    expect(secondWrapper?.querySelector("[data-card-hover-more-action]")).toHaveClass("group-hover:opacity-100");
+    expect(document.querySelector("[data-feed-grid-item-focused='true']")).toBeNull();
+  });
+
+  it("does not let a first stationary pointermove claim the feed after keyboard focus", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9271), makeBlock(9272), makeBlock(9273)];
+    setBlockHeight(9271, 200);
+    setBlockHeight(9272, 220);
+    setBlockHeight(9273, 240);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    const gridScroll = document.querySelector("[data-grid-scroll]") as HTMLElement;
+    const secondWrapper = gridItemForSlug("block-9272");
+    expect(secondWrapper).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gridScroll).toHaveAttribute("data-feed-grid-interaction-mode", "keyboard");
+
+    fireEvent.pointerMove(secondWrapper!, {
+      clientX: 220,
+      clientY: 180,
+      movementX: 0,
+      movementY: 0,
+      pointerId: 1,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gridScroll).toHaveAttribute("data-feed-grid-interaction-mode", "keyboard");
+    expect(
+      secondWrapper?.querySelector("[data-card-hover-more-action]"),
+    ).not.toHaveClass("group-hover:opacity-100");
+
+    fireEvent.pointerMove(secondWrapper!, {
+      clientX: 221,
+      clientY: 180,
+      movementX: 1,
+      movementY: 0,
+      pointerId: 1,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gridScroll).toHaveAttribute("data-feed-grid-interaction-mode", "pointer");
+    expect(secondWrapper?.querySelector("[data-card-hover-more-action]")).toHaveClass("group-hover:opacity-100");
   });
 
   it("resynchronizes arrow-key navigation to the current viewport after manual scroll", async () => {

@@ -356,7 +356,11 @@ Content: `rounded-1 border bg-popover p-1`, тень — единая для в�
 - **Source** (`ExternalLink`, `size="default"` 32px, текст «Source») — нижний левый угол
 - **Connect** (`Plus`, `size="default"` 32px, текст «Connect») — нижний правый угол
 
-**Появление:** `opacity-0 group-hover:opacity-100 transition-opacity`
+**Появление:** `opacity-0 group-hover:opacity-100 transition-opacity`, только
+когда текущий interaction owner — pointer. В Grid keyboard mode карточка
+получает `hoverEnabled=false`: `group-hover:opacity-100` снимается с overlay,
+top `More` и bottom action row, но программное открытие `Cmd+K` всё равно
+может показать top `More`/overflow menu.
 
 **Поведение:**
 - Parent card открывается по keyboard только когда `keydown` пришёл с самой
@@ -394,12 +398,21 @@ CollectionPicker membership rows:
 - Checkbox не используется.
 - Название канала слева остаётся обычным UI-шрифтом.
 - Правый slot имеет `w-[10ch]`; connected row всегда показывает кнопку
-  `Connected`, а на hover/focus строки текст замещается на `Disconnect`.
-- Unconnected row показывает count по умолчанию; на hover/focus count скрывается
+  `Connected`, а на active row текст замещается на `Disconnect`.
+- Unconnected row показывает count по умолчанию; на active row count скрывается
   и появляется `Connect`.
+- Active row имеет один source of truth: общий `activeIndex`, который обновляют
+  pointer move и ArrowUp/ArrowDown. CSS `:hover` не должен создавать
+  второй независимый selected state.
+- Pointer enter не меняет `activeIndex`: после keyboard navigation список может
+  прокручиваться под неподвижной мышью, и такой synthetic hover не должен
+  отбирать выделение у стрелок. Pointer ownership включается только после
+  реального `pointermove` с новыми координатами.
 - Action button: `h-6 w-[10ch] rounded-1 bg-component-fill px-[1ch]
   font-semibold`, hover/focus outline `outline-1 -outline-offset-1
-  outline-component-fill-hover`.
+  outline-component-fill-hover`. Count/action visibility переключается без
+  opacity transition, чтобы keyboard navigation не оставляла fade-tail на
+  предыдущей строке.
 - Видимое состояние `Disconnect` использует destructive button semantics:
   `text-destructive` при той же серой заливке и той же hover/focus outline.
 - Клик по action button не должен всплывать в parent row/menu surface.
@@ -703,6 +716,22 @@ rounded-1 bg-component-fill px-[1ch] font-semibold`, hover/focus outline
 `outline-1 -outline-offset-1 outline-component-fill-hover`.
 Видимый текст `Disconnect` использует `text-destructive`; `Connected` и
 `Connect` остаются `text-foreground`.
+
+CollectionPicker inside card/Detail menus follows the same row action visual
+model but keeps sidebar taxonomy order exactly as provided. Connected/recent
+state never reorders rows while the menu is open. Search input is a standard
+`Input` with `focus-visible:border-border-accent`; active keyboard row uses
+`bg-active`, hides the count, and reveals the right action button. `ArrowUp` /
+`ArrowDown` move the active row, `Enter` runs the visible
+`Connect`/`Disconnect` action, and `Escape` from a submenu returns to the
+parent `Connect` item instead of closing the whole overflow menu.
+Pointer and keyboard navigation share the same `activeIndex`: moving the mouse
+selects that row, pressing arrows transfers ownership back to keyboard, and
+there is never a simultaneous pointer hover and keyboard hover. Right-slot
+visibility changes are immediate, without opacity transition.
+Keyboard-triggered scroll cannot transfer ownership to a stationary pointer:
+rows ignore `pointerenter` and ignore the first post-keyboard `pointermove` if
+its coordinates match the last known pointer position.
 Slot сохраняет `h-8` vertical centering. Count не должен прыгать при появлении
 action button.
 
@@ -722,9 +751,23 @@ Top inset ленты: 64px (`--spacing-s7`) от верхнего меню до 
 
 Карточки: `border border-border`, без скругления (`rounded-0`). Обводка = +1 уровень к фону. Hover не меняет frame карточки: без смены цвета рамки, второй линии, тени, glow, inset overlay или transition. Hover-affordance карточки — только action controls. Keyboard/focused state принадлежит GridItem, не Card: focused item получает `data-feed-grid-item-focused="true"`, а существующий Card frame меняет border color на тот же token, что left sidebar row focus seam — `var(--border-accent)` — с тем же `180ms cubic-bezier(0.22, 1, 0.36, 1)` transition. Без card-frame overlay, extra line, ring/glow или `foreground` border; Card не получает focus props/classes.
 
+Grid поддерживает один interaction owner: `keyboard` или `pointer`.
+Arrow-навигация переводит ленту в keyboard mode и отключает CSS-hover affordance
+карточек (`hoverEnabled=false` у CardHoverMenu), поэтому неподвижный курсор не
+может одновременно подсветить другую карточку. Реальное движение pointer с
+новыми координатами возвращает pointer mode; stationary pointermove после
+keyboard-scroll игнорируется.
+
+Overflow menu, opened from focused-card `Cmd+K`, pins its anchor visuals while
+the menu is open: the anchor keeps `data-feed-grid-item-focused`, `⌘K` badge,
+frame focus and graphic wash even after pointer movement switches Grid back to
+pointer mode. This pin is visual only; pointer hover works on other cards. The
+pinned anchor keeps `CardHoverMenu.hoverEnabled=false`, so bottom hover actions
+do not appear under an open keyboard menu.
+
 Графические поверхности карточек помечаются единым `GraphicSurface`/`data-card-graphic-surface` контрактом. При keyboard focus GridItem применяет только к этим surfaces дополнительный wash: light theme `oklch(0 0 0 / 14%)` затемняет, dark theme `oklch(1 0 0 / 18%)` высветляет. Текстовые карточки и текстовые области mixed cards не получают этот state.
 
-Focused GridItem дополнительно показывает shortcut badge в левом верхнем углу: `data-feed-grid-action-badge`, внутри `data-feed-grid-action-layer` (`absolute inset-px`), затем `absolute left-2 top-2`, `h-6`, `px-[1ch]`, `rounded-1` (3px), `bg-component-fill`, `text-sm font-semibold text-foreground`, `pointer-events-none`. Action layer компенсирует 1px Card frame, поэтому offsets badge считаются из той же внутренней плоскости карточки, что и Card Hover Menu controls: `top-2` как у верхнего `More`, `left-2` как у нижнего action row. Текст badge — `⌘K`; он сообщает scoped action shortcut для открытия card overflow menu и не является hover affordance. При `Cmd+K` pin-ится только top-right `More`/overflow menu; нижние `Source`/`Connect` не появляются.
+Focused GridItem дополнительно показывает shortcut badge в левом верхнем углу: `data-feed-grid-action-badge`, внутри `data-feed-grid-action-layer` (`absolute inset-px`), затем `absolute left-2 top-2`, `h-6`, `px-[1ch]`, `rounded-1` (3px), `bg-component-fill`, `text-sm font-semibold text-foreground`, `pointer-events-none`. Action layer компенсирует 1px Card frame, поэтому offsets badge считаются из той же внутренней плоскости карточки, что и Card Hover Menu controls: `top-2` как у верхнего `More`, `left-2` как у нижнего action row. Текст badge — `⌘K`; он сообщает scoped action shortcut для открытия card overflow menu и не является hover affordance. `Cmd+K` toggles top-right `More`/overflow menu; нижние `Source`/`Connect` не появляются.
 
 Article-карточки в ленте используют дополнительную surface-заливку только в тёмной теме: `feed-article-card` применяет `background: var(--accent)` при `data-theme="dark"` или системной dark theme, если не выбран `data-theme="light"`. В светлой теме article-карточка остаётся на стандартном `bg-background`.
 

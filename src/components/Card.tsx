@@ -40,6 +40,8 @@ interface CardProps {
   priority?: boolean;
   allowPlayback?: boolean;
   openMoreMenuRequestSequence?: number;
+  hoverEnabled?: boolean;
+  onKeyboardMoreMenuOpenChange?: (open: boolean) => void;
   onClick: (block: LightBlock) => void;
   tags?: import("@/types").TagCount[];
   currentTag?: string;
@@ -104,7 +106,7 @@ export function MeasuredCardFrame({
   );
 }
 
-export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, onKeyboardMoreMenuOpenChange, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
     data: {
@@ -151,6 +153,8 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, prior
           onRequestRename={onRequestRename}
           onRequestDelete={onRequestDelete}
           openMoreMenuRequestSequence={openMoreMenuRequestSequence}
+          hoverEnabled={hoverEnabled}
+          onKeyboardMoreMenuOpenChange={onKeyboardMoreMenuOpenChange}
         />
       )}
       <CardContent block={block} vaultPath={vaultPath} thumbsRootPath={thumbsRootPath} priority={priority} allowPlayback={allowPlayback} />

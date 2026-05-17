@@ -5,6 +5,7 @@ import {
   useMemo,
   useCallback,
   memo,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
   ContextMenu,
@@ -61,9 +62,39 @@ const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
 const GRID_TOP_INSET_PX = 64;
 
 type GridArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
+type FeedInteractionMode = "keyboard" | "pointer";
+type FeedPointerPosition = {
+  x: number;
+  y: number;
+  pointerId: number;
+};
 
 function isGridArrowKey(key: string): key is GridArrowKey {
   return key === "ArrowLeft" || key === "ArrowRight" || key === "ArrowUp" || key === "ArrowDown";
+}
+
+function feedPointerPosition(event: ReactPointerEvent): FeedPointerPosition {
+  return {
+    x: event.clientX,
+    y: event.clientY,
+    pointerId: event.pointerId,
+  };
+}
+
+function isSameFeedPointerPosition(
+  first: FeedPointerPosition | null,
+  second: FeedPointerPosition,
+): boolean {
+  return (
+    first !== null &&
+    first.pointerId === second.pointerId &&
+    first.x === second.x &&
+    first.y === second.y
+  );
+}
+
+function isStationaryFeedPointerMove(event: ReactPointerEvent): boolean {
+  return event.movementX === 0 && event.movementY === 0;
 }
 
 function positionCenter(position: MasonryPosition): { x: number; y: number } {
@@ -217,7 +248,11 @@ interface GridContext {
   vaultPath: string;
   thumbsRootPath?: string;
   focusedSlug: string | null;
+  pinnedActionMenuSlug: string | null;
   actionMenuRequest: { slug: string; sequence: number } | null;
+  hoverEnabled: boolean;
+  onGridItemPointerMove: (slug: string, event: ReactPointerEvent<HTMLDivElement>) => void;
+  onKeyboardActionMenuOpenChange: (slug: string, open: boolean) => void;
   onBlockClick: (block: LightBlock) => void;
   tags: TagCount[];
   currentTag?: string;
@@ -299,11 +334,15 @@ export function Grid({
   const [scrollTop, setScrollTop] = useState(0);
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
   const [focusedSlug, setFocusedSlug] = useState<string | null>(null);
+  const [feedInteractionMode, setFeedInteractionMode] = useState<FeedInteractionMode>("pointer");
   const [actionMenuRequest, setActionMenuRequest] = useState<{
     slug: string;
     sequence: number;
   } | null>(null);
+  const [pinnedActionMenuSlug, setPinnedActionMenuSlug] = useState<string | null>(null);
   const lastRestoreFocusSequenceRef = useRef(0);
+  const lastPointerPositionRef = useRef<FeedPointerPosition | null>(null);
+  const blockedPointerPositionRef = useRef<FeedPointerPosition | null>(null);
 
   // Grid has exactly three pieces of genuine state:
   //
@@ -567,13 +606,18 @@ export function Grid({
 
   useEffect(() => {
     setFocusedSlug(null);
+    setFeedInteractionMode("pointer");
+    setPinnedActionMenuSlug(null);
   }, [currentTag]);
 
   useEffect(() => {
     if (focusedSlug && !blocksBySlug.has(focusedSlug)) {
       setFocusedSlug(null);
     }
-  }, [blocksBySlug, focusedSlug]);
+    if (pinnedActionMenuSlug && !blocksBySlug.has(pinnedActionMenuSlug)) {
+      setPinnedActionMenuSlug(null);
+    }
+  }, [blocksBySlug, focusedSlug, pinnedActionMenuSlug]);
 
   useEffect(() => {
     if (!restoreFocusSlug || restoreFocusSequence <= lastRestoreFocusSequenceRef.current) {
@@ -581,11 +625,13 @@ export function Grid({
     }
     lastRestoreFocusSequenceRef.current = restoreFocusSequence;
     if (blocksBySlug.has(restoreFocusSlug)) {
+      setFeedInteractionMode("keyboard");
       setFocusedSlug(restoreFocusSlug);
     }
   }, [blocksBySlug, restoreFocusSequence, restoreFocusSlug]);
 
   useEffect(() => {
+    if (feedInteractionMode !== "keyboard") return;
     if (!focusedSlug) return;
     const scrollElement = parentRef.current;
     if (!scrollElement) return;
@@ -594,31 +640,58 @@ export function Grid({
     requestAnimationFrame(() => {
       scrollPositionIntoView(scrollElement, position);
     });
-  }, [blocks, focusedSlug, layout.positions]);
+  }, [blocks, feedInteractionMode, focusedSlug, layout.positions]);
+
+  const handleGridItemPointerMove = useCallback((
+    slug: string,
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
+    const nextPointerPosition = feedPointerPosition(event);
+    const blockedPointerPosition = blockedPointerPositionRef.current;
+    lastPointerPositionRef.current = nextPointerPosition;
+
+    if (isSameFeedPointerPosition(blockedPointerPosition, nextPointerPosition)) {
+      return;
+    }
+
+    if (
+      feedInteractionMode === "keyboard" &&
+      !blockedPointerPosition &&
+      isStationaryFeedPointerMove(event)
+    ) {
+      blockedPointerPositionRef.current = nextPointerPosition;
+      return;
+    }
+
+    blockedPointerPositionRef.current = null;
+    setFeedInteractionMode("pointer");
+    setFocusedSlug(slug);
+  }, [feedInteractionMode]);
+
+  const handleKeyboardActionMenuOpenChange = useCallback((slug: string, open: boolean) => {
+    setPinnedActionMenuSlug((current) => {
+      if (open) return slug;
+      return current === slug ? null : current;
+    });
+  }, []);
 
   useEffect(() => {
     if (keyboardNavigationDisabled) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented ||
-        isEditableKeyboardTarget(event.target) ||
-        isOverlayKeyboardTarget(event.target)
-      ) {
-        return;
-      }
-
-      const scrollElement = parentRef.current;
-      const currentScrollTop = scrollElement?.scrollTop ?? scrollTop;
-      const currentViewportHeight = scrollElement?.clientHeight || viewportHeight;
       const commandK =
         event.metaKey &&
         !event.shiftKey &&
         !event.altKey &&
         !event.ctrlKey &&
         event.key.toLowerCase() === "k";
+      const scrollElement = parentRef.current;
+      const currentScrollTop = scrollElement?.scrollTop ?? scrollTop;
+      const currentViewportHeight = scrollElement?.clientHeight || viewportHeight;
 
       if (commandK) {
+        if (event.defaultPrevented) return;
+        if (feedInteractionMode !== "keyboard") return;
         if (!focusedSlug || committedEndIndex < 0) return;
         const focusedPosition = findPositionForSlug(
           layout.positions,
@@ -645,19 +718,29 @@ export function Grid({
         return;
       }
 
+      if (
+        event.defaultPrevented ||
+        isEditableKeyboardTarget(event.target) ||
+        isOverlayKeyboardTarget(event.target)
+      ) {
+        return;
+      }
+
       if (event.metaKey || event.altKey || event.ctrlKey) {
         return;
       }
 
       if (event.key === "Escape") {
-        if (focusedSlug !== null) {
+        if (feedInteractionMode === "keyboard" && focusedSlug !== null) {
           event.preventDefault();
           setFocusedSlug(null);
+          setFeedInteractionMode("pointer");
         }
         return;
       }
 
       if (event.key === "Enter") {
+        if (feedInteractionMode !== "keyboard") return;
         if (!focusedSlug) return;
         const block = blocksBySlug.get(focusedSlug);
         if (!block) return;
@@ -668,6 +751,8 @@ export function Grid({
 
       if (!isGridArrowKey(event.key)) return;
       event.preventDefault();
+      blockedPointerPositionRef.current = lastPointerPositionRef.current;
+      setFeedInteractionMode("keyboard");
       if (committedEndIndex < 0) return;
 
       if (!focusedSlug) {
@@ -728,6 +813,7 @@ export function Grid({
     blocks,
     blocksBySlug,
     committedEndIndex,
+    feedInteractionMode,
     focusedSlug,
     keyboardNavigationDisabled,
     layout.positions,
@@ -889,12 +975,19 @@ export function Grid({
     onRequestDelete(slug);
   }, [onRequestDelete]);
 
+  const keyboardFocusedSlug = feedInteractionMode === "keyboard" ? focusedSlug : null;
+  const visualFocusActive = keyboardFocusedSlug !== null || pinnedActionMenuSlug !== null;
+
   const gridContext: GridContext = useMemo(
     () => ({
       vaultPath,
       thumbsRootPath,
-      focusedSlug,
+      focusedSlug: keyboardFocusedSlug,
+      pinnedActionMenuSlug,
       actionMenuRequest,
+      hoverEnabled: feedInteractionMode !== "keyboard",
+      onGridItemPointerMove: handleGridItemPointerMove,
+      onKeyboardActionMenuOpenChange: handleKeyboardActionMenuOpenChange,
       onBlockClick,
       tags,
       currentTag,
@@ -906,8 +999,12 @@ export function Grid({
     [
       vaultPath,
       thumbsRootPath,
-      focusedSlug,
+      keyboardFocusedSlug,
+      pinnedActionMenuSlug,
       actionMenuRequest,
+      feedInteractionMode,
+      handleGridItemPointerMove,
+      handleKeyboardActionMenuOpenChange,
       onBlockClick,
       tags,
       currentTag,
@@ -932,7 +1029,8 @@ export function Grid({
             transition: "padding-left 200ms ease, padding-right 200ms ease",
           }}
           data-grid-scroll
-          data-feed-grid-focus-mode={focusedSlug ? "true" : undefined}
+          data-feed-grid-interaction-mode={feedInteractionMode}
+          data-feed-grid-focus-mode={visualFocusActive ? "true" : undefined}
         >
           {parentWidth > 0 && blocks.length > 0 && (
             <VirtualMasonryLayout
@@ -1021,7 +1119,10 @@ function VirtualMasonryLayout({
             }
             isCommitted={item.index <= committedEndIndex}
             allowPlayback={activePlaybackSlugs.has(block.slug)}
-            isFocused={block.slug === context.focusedSlug}
+            isFocused={
+              block.slug === context.focusedSlug ||
+              block.slug === context.pinnedActionMenuSlug
+            }
             context={context}
           />
         );
@@ -1051,6 +1152,7 @@ const GridItem = memo(function GridItem({
     context.actionMenuRequest?.slug === block.slug
       ? context.actionMenuRequest.sequence
       : 0;
+  const isPinnedActionMenuAnchor = block.slug === context.pinnedActionMenuSlug;
 
   return (
     <div
@@ -1071,6 +1173,11 @@ const GridItem = memo(function GridItem({
       data-feed-grid-item=""
       data-feed-grid-item-focused={isCommitted && isFocused ? "true" : undefined}
       data-feed-grid-item-slug={block.slug}
+      onPointerMove={(event) => {
+        if (isCommitted) {
+          context.onGridItemPointerMove(block.slug, event);
+        }
+      }}
     >
       {isCommitted ? (
         <Card
@@ -1080,6 +1187,10 @@ const GridItem = memo(function GridItem({
           priority={priority}
           allowPlayback={allowPlayback}
           openMoreMenuRequestSequence={openMoreMenuRequestSequence}
+          hoverEnabled={context.hoverEnabled && !isPinnedActionMenuAnchor}
+          onKeyboardMoreMenuOpenChange={(open) => {
+            context.onKeyboardActionMenuOpenChange(block.slug, open);
+          }}
           onClick={context.onBlockClick}
           tags={context.tags}
           currentTag={context.currentTag}

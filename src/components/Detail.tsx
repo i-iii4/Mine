@@ -227,6 +227,8 @@ export function Detail({
   const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
     isIndexedBlock(block) ? block : null,
   );
+  const [topMenuRequestSequence, setTopMenuRequestSequence] = useState(0);
+  const [topMenuOpen, setTopMenuOpen] = useState(false);
   const displayBlock = fullBlock ?? block;
   const currentBlockSlugRef = useRef(block.slug);
   const { containerRef: detailLayoutRef, isStackedLayout } = useDetailStackedLayout();
@@ -311,6 +313,18 @@ export function Detail({
     return () => document.removeEventListener("keydown", handler, true);
   }, [onClose]);
 
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!isDetailCommandK(event)) return;
+      if (shouldIgnoreDetailCommandK(event) && !topMenuOpen) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setTopMenuRequestSequence((current) => current + 1);
+    };
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
+  }, [topMenuOpen]);
+
   // Auto-focus the panel so keyboard events work immediately
   useEffect(() => {
     panelRef.current?.focus({ preventScroll: true });
@@ -364,6 +378,8 @@ export function Detail({
           onRequestDelete={onRequestDelete}
           triggerVariant="ghost"
           className="shrink-0 text-muted-foreground hover:text-foreground"
+          openRequestSequence={topMenuRequestSequence}
+          onOpenChange={setTopMenuOpen}
         />
         <Button
           variant="ghost"
@@ -2922,6 +2938,25 @@ function shouldIgnoreDetailEscape(event: KeyboardEvent): boolean {
   return !!target.closest(
     "[data-image-preview-overlay], [data-radix-popper-content-wrapper], [role='menu'], [role='listbox']",
   );
+}
+
+function isDetailCommandK(event: KeyboardEvent): boolean {
+  return (
+    event.metaKey &&
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    event.key.toLowerCase() === "k"
+  );
+}
+
+function shouldIgnoreDetailCommandK(event: KeyboardEvent): boolean {
+  if (event.defaultPrevented) return true;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.closest("[data-image-preview-overlay]")) return true;
+  const dialog = target.closest("[role='dialog']");
+  return !!dialog && !(dialog as HTMLElement).hasAttribute("data-detail-root");
 }
 
 type MarkdownPositionedNode = {

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { CardHoverMenu } from "./CardHoverMenu";
+import { CardHoverMenu, CardMoreMenu } from "./CardHoverMenu";
 import type { LightBlock } from "@/types";
 
 vi.mock("@/lib/commands", () => ({
@@ -37,7 +37,7 @@ function makeBlock(): LightBlock {
 
 describe("CardHoverMenu", () => {
   it("opens the overflow menu from a keyboard action request", async () => {
-    const { container } = render(
+    const { container, rerender } = render(
       <CardHoverMenu
         block={makeBlock()}
         vaultPath="/vault"
@@ -53,6 +53,23 @@ describe("CardHoverMenu", () => {
     expect(await screen.findByText("Rename…")).toBeInTheDocument();
     expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-100");
     expect(container.querySelector("[data-card-hover-bottom-actions]")).toHaveClass("opacity-0");
+
+    rerender(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        openMoreMenuRequestSequence={2}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Rename…")).not.toBeInTheDocument();
+    });
   });
 
   it("shows Rename in the overflow menu", async () => {
@@ -80,5 +97,88 @@ describe("CardHoverMenu", () => {
     await waitFor(() => {
       expect(onRequestRename).toHaveBeenCalledWith(expect.objectContaining({ slug: "alpha-block" }));
     });
+  });
+
+  it("closes the overflow menu from Command-K inside the menu surface", async () => {
+    render(
+      <CardMoreMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        openRequestSequence={1}
+      />,
+    );
+
+    const renameItem = await screen.findByText("Rename…");
+    fireEvent.keyDown(renameItem, { key: "k", metaKey: true });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Rename…")).not.toBeInTheDocument();
+    });
+  });
+
+  it("can disable CSS hover affordances while keeping programmatic menu requests", async () => {
+    const { container } = render(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        openMoreMenuRequestSequence={1}
+        hoverEnabled={false}
+      />,
+    );
+
+    expect(await screen.findByText("Rename…")).toBeInTheDocument();
+    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-100");
+    expect(container.querySelector("[data-card-hover-more-action]")).not.toHaveClass("group-hover:opacity-100");
+    expect(container.querySelector("[data-card-hover-bottom-actions]")).toHaveClass("opacity-0");
+    expect(container.querySelector("[data-card-hover-bottom-actions]")).not.toHaveClass("group-hover:opacity-100");
+  });
+
+  it("reports keyboard-opened overflow menu state separately from pointer menus", async () => {
+    const onKeyboardMoreMenuOpenChange = vi.fn();
+    const { rerender } = render(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        openMoreMenuRequestSequence={1}
+        onKeyboardMoreMenuOpenChange={onKeyboardMoreMenuOpenChange}
+      />,
+    );
+
+    expect(await screen.findByText("Rename…")).toBeInTheDocument();
+    expect(onKeyboardMoreMenuOpenChange).toHaveBeenCalledWith(true);
+
+    rerender(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        openMoreMenuRequestSequence={2}
+        onKeyboardMoreMenuOpenChange={onKeyboardMoreMenuOpenChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Rename…")).not.toBeInTheDocument();
+    });
+    expect(onKeyboardMoreMenuOpenChange).toHaveBeenLastCalledWith(false);
   });
 });

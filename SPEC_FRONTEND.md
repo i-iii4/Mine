@@ -519,6 +519,10 @@ that belongs to `storage::media_refs`.
 - Overflow `…` menu содержит action `Rename…` и тот же `Connect` submenu.
 - Overflow `…` menu uses the shared `DropdownMenu` focus surface: item
   hover/focus and open submenu trigger render `bg-active`, not `bg-accent`.
+- Programmatic `Cmd+K` requests toggle this overflow menu: first request opens,
+  repeated request closes, including when focus is already inside the menu or
+  its `Connect` submenu. Keyboard-opened card menus pin only top-right `…`;
+  bottom hover actions remain hidden.
 - Открывает единый rename dialog для выбранного блока
 - Rename не делает silent auto-fix: занятое имя и invalid stem показываются как явные ошибки
 
@@ -566,14 +570,40 @@ Image media expansion:
 для связи карточки с каналами. Он не использует checkbox UI. Строка канала сама
 по себе не toggles membership; toggle делает только правая action button.
 
+- Порядок каналов всегда равен порядку `tags`, полученному из taxonomy/sidebar.
+  `selectedTags`, recent tags, current route и optimistic membership changes не
+  пересортировывают список; connected-канал после действия не прыгает наверх.
+- Search input использует стандартный `Input` с focus border
+  `focus-visible:border-border-accent`, тем же state-token, что sidebar/feed
+  focus seam.
+- Printable key из любого места внутри picker фокусирует search input и
+  добавляет символ в search query; parent DropdownMenu typeahead не перехватывает
+  эти клавиши.
+- `ArrowUp` / `ArrowDown` перемещают active row внутри отфильтрованного списка.
+  Active row использует `bg-active`, показывает правую action button и скрывает
+  count. Pointer hover и keyboard navigation не являются двумя независимыми
+  visual states: pointer move и ArrowUp/ArrowDown обновляют один общий
+  `activeIndex`. Pointer enter не меняет active row: keyboard-triggered scroll
+  не должен отдавать выделение неподвижному курсору, а первый post-keyboard
+  pointermove с теми же координатами игнорируется.
+- `Enter` на active row выполняет `Connect`/`Disconnect`, оставляя меню
+  пригодным для дальнейшей навигации.
+- `Escape` внутри submenu закрывает только Connect submenu и возвращает фокус
+  на parent `Connect` item в overflow menu. В standalone DropdownMenu content
+  `Escape` отдаётся родительскому меню.
+  Directional back arrow также закрывает Connect submenu по реальному
+  `data-side`: `right -> ArrowLeft`, `left -> ArrowRight`,
+  `bottom -> ArrowUp`, `top -> ArrowDown`.
 - Connected channel: action button видна всегда и показывает `Connected`; на
-  hover/focus строки текст замещается на `Disconnect`.
-- Unconnected channel: без hover/focus справа остаётся count; на hover/focus
+  active row текст замещается на `Disconnect`.
+- Unconnected channel: без active row справа остаётся count; на active row
   count скрывается и появляется `Connect`.
-- `Connect`/`Disconnect` используют absolute overlay поверх строки:
-  `right-0 top-1/2 -translate-y-1/2 z-10 h-6 w-[10ch] rounded-1
-  bg-component-fill px-[1ch] font-semibold` и button hover outline
+- `Connect`/`Disconnect` используют absolute overlay внутри фиксированного
+  right slot `relative h-6 w-[10ch]`: action button —
+  `absolute right-0 h-6 w-[10ch] rounded-1 bg-component-fill px-[1ch]
+  font-semibold`, button hover outline —
   `outline-1 -outline-offset-1 outline-component-fill-hover`.
+  Count/action visibility переключается мгновенно, без `transition-opacity`.
 - Overlay-кнопка не является flex item и не меняет ширину thumbnail strip или
   положение gradient mask.
 - Видимый `Disconnect` использует destructive button semantics:
@@ -581,7 +611,8 @@ Image media expansion:
 - Клик по action button должен останавливать propagation/default, чтобы событие
   не уходило в parent card, dropdown/context menu trigger или sidebar row.
 - UI оптимистически обновляет selected membership внутри открытого picker после
-  клика, пока backend mutation и snapshot reload догоняют состояние.
+  клика и не откатывается от stale `selectedTags`, пока backend mutation и
+  snapshot reload догоняют состояние.
 
 ### RenameBlockDialog
 
@@ -747,6 +778,21 @@ Image media expansion:
   вне текущего viewport, следующее нажатие стрелки сначала ресинхронизирует
   фокус на первую видимую committed-card текущего viewport и не продолжает
   навигацию от старой offscreen-позиции.
+- У ленты один interaction owner: `keyboard` или `pointer`. Arrow navigation
+  переводит Grid в `keyboard` mode: keyboard focus/badge/media wash включены,
+  а CardHoverMenu получает `hoverEnabled=false`, поэтому CSS `group-hover` от
+  неподвижного курсора не может параллельно показать hover controls. Реальное
+  движение pointer с новыми координатами переводит Grid обратно в `pointer`
+  mode. Pointer events с теми же координатами, включая первый stationary
+  `pointermove` после keyboard-scroll, игнорируются.
+- Меню `…`, открытое через focused-card `Cmd+K`, создаёт отдельный pinned
+  anchor visual state: пока menu open, исходная карточка сохраняет
+  `data-feed-grid-item-focused`, `⌘K` badge, frame focus и graphic wash даже
+  если pointer уже вернул Grid в `pointer` mode. Это не второй interaction
+  owner: pointer hover продолжает работать на других карточках. На pinned
+  anchor `CardHoverMenu.hoverEnabled=false`, поэтому bottom hover actions не
+  появляются и под открытым menu ничего не меняет layout/opacity. Pin снимается
+  при закрытии этого keyboard-opened menu.
 - Enter — открыть выделенную карточку в Detail
 - Esc — сбросить фокус
 - Выделение: GridItem получает `data-feed-grid-item-focused="true"`, а
@@ -770,11 +816,12 @@ Image media expansion:
 - `Cmd+K` — scoped override глобального Search shortcut: если Grid keyboard
   focus активен и focused committed-card видна в текущем viewport, Grid
   предотвращает открытие Search, показывает/pin-ит top-right `…` action button
-  и открывает overflow menu этой карточки. Нижний hover action row (`Source` /
-  `Connect`) при этом не появляется и не pin-ится; он остаётся только pointer
-  hover / interactive hover-action affordance. Если Grid focus отсутствует,
-  focused card невалидна/offscreen или открыт Detail/Search/dialog/menu,
-  `Cmd+K` остаётся глобальным Search shortcut.
+  и toggles overflow menu этой карточки: первое нажатие открывает, повторное
+  закрывает. Нижний hover action row (`Source` / `Connect`) при этом не
+  появляется и не pin-ится; он остаётся только pointer hover / interactive
+  hover-action affordance. Если Grid focus отсутствует, focused card
+  невалидна/offscreen или открыт Detail/Search/dialog/menu, `Cmd+K` остаётся
+  глобальным Search shortcut.
 - Автоподскрол идёт по `layout.positions` и scroll container, без
   `scrollIntoView`/DOM lookup.
 - При закрытии Detail фокус возвращается на последнюю просмотренную карточку
@@ -787,6 +834,10 @@ Image media expansion:
   карточки.
 - `Cmd+L` при открытом Detail копирует абсолютный путь к текущему `.md` файлу
   карточки (`<vault>/<slug>.md`).
+- `Cmd+K` внутри открытого Detail toggles верхнее `…` меню classic top bar:
+  первое нажатие открывает card overflow menu, повторное закрывает. Shortcut
+  перехватывается до глобального Search и не срабатывает внутри nested dialog
+  / image preview overlay.
 - Остальные модификаторы (Cmd/Alt/Ctrl) пропускаются — Detail не перехватывает
   системные/browser shortcuts.
 

@@ -1,4 +1,11 @@
-import { memo, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import type { ComponentProps } from "react";
 import { MoreHorizontal, Trash2, Plus, ExternalLink, FolderOpen, Copy, Pencil } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -40,12 +47,24 @@ interface CardMoreMenuProps<TBlock extends LightBlock | IndexedBlock> extends Ca
 type CardHoverMenuProps = CardMenuActionsProps<LightBlock>;
 type CardHoverMenuPropsWithState = CardHoverMenuProps & {
   openMoreMenuRequestSequence?: number;
+  hoverEnabled?: boolean;
+  onKeyboardMoreMenuOpenChange?: (open: boolean) => void;
   onInteractiveOpenChange?: (open: boolean) => void;
   onInteractionStart?: () => void;
 };
 
 function stopProp(e: React.MouseEvent | React.PointerEvent) {
   e.stopPropagation();
+}
+
+function isCommandK(event: ReactKeyboardEvent): boolean {
+  return (
+    event.metaKey &&
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    event.key.toLowerCase() === "k"
+  );
 }
 
 export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
@@ -65,15 +84,33 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
   const hasUrl = !!block.url;
   const filePath = `${vaultPath}/${block.slug}.md`;
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuOpenRef = useRef(false);
+  const [connectSubmenuOpen, setConnectSubmenuOpen] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const lastOpenRequestSequenceRef = useRef(0);
+  const connectTriggerRef = useRef<HTMLDivElement>(null);
+
+  const updateMenuOpen = useCallback((open: boolean) => {
+    menuOpenRef.current = open;
+    setMenuOpen(open);
+    if (!open) {
+      setConnectSubmenuOpen(false);
+    }
+    onOpenChange?.(open);
+  }, [onOpenChange]);
+
+  const handleMenuKeyDownCapture = useCallback((event: ReactKeyboardEvent) => {
+    if (!isCommandK(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    updateMenuOpen(false);
+  }, [updateMenuOpen]);
 
   useEffect(() => {
     if (openRequestSequence <= lastOpenRequestSequenceRef.current) return;
     lastOpenRequestSequenceRef.current = openRequestSequence;
-    setMenuOpen(true);
-    onOpenChange?.(true);
-  }, [onOpenChange, openRequestSequence]);
+    updateMenuOpen(!menuOpenRef.current);
+  }, [openRequestSequence, updateMenuOpen]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -91,10 +128,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
   return (
     <DropdownMenu
       open={menuOpen}
-      onOpenChange={(open) => {
-        setMenuOpen(open);
-        onOpenChange?.(open);
-      }}
+      onOpenChange={updateMenuOpen}
       modal={false}
     >
       <DropdownMenuTrigger asChild>
@@ -102,13 +136,16 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
           <MoreHorizontal className="size-4" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
+      <DropdownMenuContent align="end" onKeyDownCapture={handleMenuKeyDownCapture}>
+        <DropdownMenuSub open={connectSubmenuOpen} onOpenChange={setConnectSubmenuOpen}>
+          <DropdownMenuSubTrigger ref={connectTriggerRef}>
             <Plus className="size-3" />
             Connect
           </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
+          <DropdownMenuSubContent
+            className="flex w-64 max-h-80 flex-col overflow-hidden p-0"
+            onKeyDownCapture={handleMenuKeyDownCapture}
+          >
             <CollectionPicker
               blockSlug={block.slug}
               selectedTags={selectedTags}
@@ -117,6 +154,10 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
               onToggleTag={onToggleTag}
               onCreateAndAssign={onCreateAndAssign}
               stopKeyPropagation
+              onRequestClose={() => {
+                setConnectSubmenuOpen(false);
+                requestAnimationFrame(() => connectTriggerRef.current?.focus());
+              }}
             />
           </DropdownMenuSubContent>
         </DropdownMenuSub>
@@ -177,6 +218,8 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   onRequestRename,
   onRequestDelete,
   openMoreMenuRequestSequence = 0,
+  hoverEnabled = true,
+  onKeyboardMoreMenuOpenChange,
   onInteractiveOpenChange,
   onInteractionStart,
 }: CardHoverMenuPropsWithState) {
@@ -195,7 +238,6 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   useEffect(() => {
     if (openMoreMenuRequestSequence <= lastOpenMoreMenuRequestSequenceRef.current) return;
     lastOpenMoreMenuRequestSequenceRef.current = openMoreMenuRequestSequence;
-    setKeyboardMenuOpen(true);
   }, [openMoreMenuRequestSequence]);
 
   useEffect(() => {
@@ -221,14 +263,24 @@ export const CardHoverMenu = memo(function CardHoverMenu({
     <>
       {/* Overlay — затенение при hover */}
       <div
-        className={cn("pointer-events-none absolute inset-0 z-[4] bg-[var(--card-hover-overlay)] transition-opacity group-hover:opacity-100", hoverActionsPinned ? "opacity-100" : "opacity-0")}
+        className={cn(
+          "pointer-events-none absolute inset-0 z-[4] bg-[var(--card-hover-overlay)] transition-opacity",
+          hoverEnabled && "group-hover:opacity-100",
+          hoverActionsPinned ? "opacity-100" : "opacity-0",
+        )}
         data-card-hover-overlay=""
+        data-card-hover-enabled={hoverEnabled ? "true" : undefined}
       />
 
       {/* More (···) — верхний правый */}
       <div
-        className={cn("absolute right-2 top-2 z-[5] transition-opacity group-hover:opacity-100", anyMenuOpen ? "opacity-100" : "opacity-0")}
+        className={cn(
+          "absolute right-2 top-2 z-[5] transition-opacity",
+          hoverEnabled && "group-hover:opacity-100",
+          anyMenuOpen ? "opacity-100" : "opacity-0",
+        )}
         data-card-hover-more-action=""
+        data-card-hover-enabled={hoverEnabled ? "true" : undefined}
         onClick={stopProp}
         onPointerDown={stopProp}
       >
@@ -244,8 +296,15 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           openRequestSequence={openMoreMenuRequestSequence}
           onOpenChange={(open) => {
             if (open) {
+              if (keyboardMenuRequestPending) {
+                setKeyboardMenuOpen(true);
+                onKeyboardMoreMenuOpenChange?.(true);
+              }
               onInteractionStart?.();
             } else {
+              if (keyboardMenuOpen || keyboardMenuRequestPending) {
+                onKeyboardMoreMenuOpenChange?.(false);
+              }
               setKeyboardMenuOpen(false);
             }
             setMenuOpen(open);
@@ -255,8 +314,13 @@ export const CardHoverMenu = memo(function CardHoverMenu({
 
       {/* Нижний ряд: Source (лево) + Connect (право) */}
       <div
-        className={cn("absolute bottom-2 left-2 right-2 z-[5] flex gap-2 transition-opacity group-hover:opacity-100", hoverActionsPinned ? "opacity-100" : "opacity-0")}
+        className={cn(
+          "absolute bottom-2 left-2 right-2 z-[5] flex gap-2 transition-opacity",
+          hoverEnabled && "group-hover:opacity-100",
+          hoverActionsPinned ? "opacity-100" : "opacity-0",
+        )}
         data-card-hover-bottom-actions=""
+        data-card-hover-enabled={hoverEnabled ? "true" : undefined}
         onClick={stopProp}
         onPointerDown={stopProp}
       >

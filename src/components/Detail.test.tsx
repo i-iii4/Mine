@@ -147,6 +147,32 @@ describe("Detail", () => {
     expect(topMenu).toHaveClass("h-8", "bg-accent", "px-8");
   });
 
+  it("toggles the classic top overflow menu with Command-K", async () => {
+    render(
+      <Detail
+        block={block()}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    expect(await screen.findByText("Rename…")).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    await waitFor(() => {
+      expect(screen.queryByText("Rename…")).not.toBeInTheDocument();
+    });
+  });
+
   it("names the detail dialog with the active filename", () => {
     render(
       <Detail

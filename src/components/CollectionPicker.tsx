@@ -1,9 +1,15 @@
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import type { TagCount } from "@/types";
 import { collectionRefLabel } from "@/lib/collections";
-import { getRecentTags } from "@/lib/recentTags";
 import { cn } from "@/lib/utils";
 
 interface CollectionPickerProps {
@@ -11,10 +17,66 @@ interface CollectionPickerProps {
   selectedTags: string[];
   tags: TagCount[];
   currentTag?: string;
-  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
-  onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void | Promise<void>;
+  onCreateAndAssign: (tag: string, blockSlug: string) => void | Promise<void>;
   /** Prevent parent menu typeahead from capturing keystrokes */
   stopKeyPropagation?: boolean;
+  onRequestClose?: () => void;
+}
+
+function isPrintableKeyboardKey(event: ReactKeyboardEvent): boolean {
+  return event.key.length === 1 && !event.metaKey && !event.altKey && !event.ctrlKey;
+}
+
+function applyPendingMembership(
+  selectedTags: readonly string[],
+  pendingStates: ReadonlyMap<string, boolean>,
+): string[] {
+  if (pendingStates.size === 0) return [...selectedTags];
+  const next = new Set(selectedTags);
+  for (const [tag, connected] of pendingStates) {
+    if (connected) {
+      next.add(tag);
+    } else {
+      next.delete(tag);
+    }
+  }
+  return [...next];
+}
+
+function closeKeyForSubmenuSide(side: string | null): string | null {
+  if (side === "right") return "ArrowLeft";
+  if (side === "left") return "ArrowRight";
+  if (side === "bottom") return "ArrowUp";
+  if (side === "top") return "ArrowDown";
+  return null;
+}
+
+type MembershipInteractionMode = "keyboard" | "pointer";
+type PointerPosition = {
+  x: number;
+  y: number;
+  pointerId: number;
+};
+
+function pointerPosition(event: ReactPointerEvent): PointerPosition {
+  return {
+    x: event.clientX,
+    y: event.clientY,
+    pointerId: event.pointerId,
+  };
+}
+
+function isSamePointerPosition(
+  first: PointerPosition | null,
+  second: PointerPosition,
+): boolean {
+  return (
+    first !== null &&
+    first.pointerId === second.pointerId &&
+    first.x === second.x &&
+    first.y === second.y
+  );
 }
 
 /**
@@ -25,88 +87,240 @@ export function CollectionPicker({
   blockSlug,
   selectedTags,
   tags,
-  currentTag,
   onToggleTag,
   onCreateAndAssign,
   stopKeyPropagation = false,
+  onRequestClose,
 }: CollectionPickerProps) {
   const [search, setSearch] = useState("");
-  const [optimisticTags, setOptimisticTags] = useState(selectedTags);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [interactionMode, setInteractionMode] = useState<MembershipInteractionMode>("keyboard");
+  const [pendingMembership, setPendingMembership] = useState<{
+    blockSlug: string;
+    states: Map<string, boolean>;
+  }>(() => ({ blockSlug, states: new Map() }));
+  const inputRef = useRef<HTMLInputElement>(null);
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
+  const lastPointerPositionRef = useRef<PointerPosition | null>(null);
+  const blockedPointerPositionRef = useRef<PointerPosition | null>(null);
   const selectedTagsKey = selectedTags.join("\0");
+  const pendingStates = pendingMembership.blockSlug === blockSlug
+    ? pendingMembership.states
+    : new Map<string, boolean>();
+  const optimisticTags = useMemo(
+    () => applyPendingMembership(selectedTags, pendingStates),
+    [pendingStates, selectedTags, selectedTagsKey],
+  );
 
   useEffect(() => {
-    setOptimisticTags(selectedTags);
-  }, [blockSlug, selectedTagsKey]);
+    setPendingMembership((current) => (
+      current.blockSlug === blockSlug ? current : { blockSlug, states: new Map() }
+    ));
+  }, [blockSlug]);
 
-  const recentTags = getRecentTags();
-  const recentSet = new Set(recentTags);
-
-  const sortedTags = [...tags].sort((a, b) => {
-    if (currentTag) {
-      const aCur = a.tag === currentTag;
-      const bCur = b.tag === currentTag;
-      if (aCur !== bCur) return aCur ? -1 : 1;
-    }
-
-    const aHas = optimisticTags.includes(a.tag);
-    const bHas = optimisticTags.includes(b.tag);
-    if (aHas !== bHas) return aHas ? -1 : 1;
-
-    const aRecent = recentSet.has(a.tag);
-    const bRecent = recentSet.has(b.tag);
-    if (aRecent !== bRecent) return aRecent ? -1 : 1;
-    if (aRecent && bRecent) {
-      return recentTags.indexOf(a.tag) - recentTags.indexOf(b.tag);
-    }
-
-    return a.tag.localeCompare(b.tag);
-  });
+  useEffect(() => {
+    setPendingMembership((current) => {
+      if (current.blockSlug !== blockSlug || current.states.size === 0) return current;
+      let changed = false;
+      const nextStates = new Map(current.states);
+      for (const [tag, connected] of current.states) {
+        if (selectedTags.includes(tag) === connected) {
+          nextStates.delete(tag);
+          changed = true;
+        }
+      }
+      return changed ? { blockSlug, states: nextStates } : current;
+    });
+  }, [blockSlug, selectedTags, selectedTagsKey]);
 
   const lc = search.toLowerCase();
   const filtered = lc
-    ? sortedTags.filter((tc) => collectionRefLabel(tc.tag).toLowerCase().includes(lc))
-    : sortedTags;
+    ? tags.filter((tc) => collectionRefLabel(tc.tag).toLowerCase().includes(lc))
+    : tags;
 
   const trimmed = search.trim();
   const canCreate = trimmed.length > 0 && filtered.length === 0;
+  const boundedActiveIndex =
+    filtered.length > 0 ? Math.min(activeIndex, filtered.length - 1) : -1;
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [search]);
+
+  useEffect(() => {
+    if (filtered.length === 0 && activeIndex !== 0) {
+      setActiveIndex(0);
+    } else if (filtered.length > 0 && activeIndex > filtered.length - 1) {
+      setActiveIndex(filtered.length - 1);
+    }
+  }, [activeIndex, filtered.length]);
+
+  useEffect(() => {
+    if (boundedActiveIndex < 0) return;
+    const tag = filtered[boundedActiveIndex]?.tag;
+    if (!tag) return;
+    rowRefs.current.get(tag)?.scrollIntoView?.({ block: "nearest" });
+  }, [boundedActiveIndex, filtered]);
 
   const toggleTag = (tag: string, hasTag: boolean) => {
-    setOptimisticTags((current) => (
-      hasTag
-        ? current.filter((item) => item !== tag)
-        : current.includes(tag) ? current : [...current, tag]
-    ));
-    onToggleTag(blockSlug, tag, hasTag);
+    const nextConnected = !hasTag;
+    setPendingMembership((current) => {
+      const states = current.blockSlug === blockSlug
+        ? new Map(current.states)
+        : new Map<string, boolean>();
+      states.set(tag, nextConnected);
+      return { blockSlug, states };
+    });
+    void onToggleTag(blockSlug, tag, hasTag);
+  };
+
+  const createAndAssign = () => {
+    if (!canCreate) return;
+    setPendingMembership((current) => {
+      const states = current.blockSlug === blockSlug
+        ? new Map(current.states)
+        : new Map<string, boolean>();
+      states.set(trimmed, true);
+      return { blockSlug, states };
+    });
+    void onCreateAndAssign(trimmed, blockSlug);
+    setSearch("");
+  };
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      if (onRequestClose) {
+        event.preventDefault();
+        event.stopPropagation();
+        onRequestClose();
+      }
+      return;
+    }
+
+    const submenuCloseKey = closeKeyForSubmenuSide(
+      event.currentTarget
+        .closest("[data-slot='dropdown-menu-sub-content']")
+        ?.getAttribute("data-side") ?? null,
+    );
+    if (onRequestClose && event.key === submenuCloseKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      onRequestClose();
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (filtered.length > 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        blockedPointerPositionRef.current = lastPointerPositionRef.current;
+        setInteractionMode("keyboard");
+        setActiveIndex((current) => {
+          const start = filtered.length > 0 ? Math.min(current, filtered.length - 1) : 0;
+          if (event.key === "ArrowDown") {
+            return (start + 1) % filtered.length;
+          }
+          return (start - 1 + filtered.length) % filtered.length;
+        });
+      } else if (stopKeyPropagation) {
+        event.stopPropagation();
+      }
+      return;
+    }
+
+    if (event.key === "Enter") {
+      const activeTag = boundedActiveIndex >= 0 ? filtered[boundedActiveIndex] : null;
+      if (activeTag) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleTag(activeTag.tag, optimisticTags.includes(activeTag.tag));
+      } else if (canCreate) {
+        event.preventDefault();
+        event.stopPropagation();
+        createAndAssign();
+      } else if (stopKeyPropagation) {
+        event.stopPropagation();
+      }
+      return;
+    }
+
+    if (isPrintableKeyboardKey(event) && event.target !== inputRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      setSearch((current) => `${current}${event.key}`);
+      inputRef.current?.focus();
+      return;
+    }
+
+    if (stopKeyPropagation) {
+      event.stopPropagation();
+    }
+  };
+
+  const handleRowPointerMove = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    rowIndex: number,
+  ) => {
+    const nextPointerPosition = pointerPosition(event);
+    const blockedPointerPosition = blockedPointerPositionRef.current;
+    lastPointerPositionRef.current = nextPointerPosition;
+
+    if (isSamePointerPosition(blockedPointerPosition, nextPointerPosition)) {
+      return;
+    }
+
+    blockedPointerPositionRef.current = null;
+    if (boundedActiveIndex === rowIndex && interactionMode === "pointer") return;
+    setInteractionMode("pointer");
+    setActiveIndex(rowIndex);
   };
 
   return (
-    <>
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      data-collection-picker=""
+      onKeyDownCapture={handleKeyDown}
+    >
       {/* Search */}
-      <div
-        className="shrink-0 p-2 pb-1"
-        onKeyDown={stopKeyPropagation ? (e) => e.stopPropagation() : undefined}
-      >
+      <div className="shrink-0 p-2 pb-1">
         <Input
+          ref={inputRef}
           autoFocus
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search channels..."
-          className="h-auto py-1.5"
+          className="h-auto py-1.5 focus-visible:border-border-accent"
         />
       </div>
 
       {/* Tag list */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-1 py-0.5">
-          {filtered.map((tc) => {
+          {filtered.map((tc, rowIndex) => {
             const hasTag = optimisticTags.includes(tc.tag);
+            const isActive = rowIndex === boundedActiveIndex;
             const actionLabel = hasTag ? "Disconnect" : "Connect";
+            const buttonVisible = hasTag || isActive;
             const title = collectionRefLabel(tc.tag);
             return (
               <div
                 key={tc.tag}
-                className="group flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base hover:bg-accent focus-within:bg-accent"
+                ref={(node) => {
+                  if (node) {
+                    rowRefs.current.set(tc.tag, node);
+                  } else {
+                    rowRefs.current.delete(tc.tag);
+                  }
+                }}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base",
+                  isActive && "bg-active",
+                )}
+                data-collection-picker-row=""
+                data-collection-picker-row-active={isActive ? "true" : undefined}
+                data-collection-picker-interaction-mode={isActive ? interactionMode : undefined}
+                onPointerMove={(event) => handleRowPointerMove(event, rowIndex)}
               >
                 <span className="flex-1 truncate text-left text-foreground">
                   {title}
@@ -114,10 +328,8 @@ export function CollectionPicker({
                 <div className="relative flex h-6 w-[10ch] shrink-0 items-center justify-end">
                   <span
                     className={cn(
-                      "absolute right-0 text-sm text-muted-foreground transition-opacity duration-[160ms]",
-                      hasTag
-                        ? "opacity-0"
-                        : "opacity-100 group-hover:opacity-0 group-focus-within:opacity-0",
+                      "absolute right-0 text-sm text-muted-foreground",
+                      buttonVisible ? "opacity-0" : "opacity-100",
                     )}
                   >
                     {tc.count}
@@ -137,21 +349,13 @@ export function CollectionPicker({
                       event.stopPropagation();
                     }}
                     className={cn(
-                      "absolute right-0 inline-flex h-6 w-[10ch] cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent transition-opacity duration-[160ms] hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
-                      hasTag
-                        ? "opacity-100"
-                        : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+                      "absolute right-0 inline-flex h-6 w-[10ch] cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+                      buttonVisible ? "opacity-100" : "pointer-events-none opacity-0",
+                      hasTag && isActive && "text-destructive",
                     )}
                     aria-label={`${actionLabel} ${title}`}
                   >
-                    {hasTag ? (
-                      <>
-                        <span className="group-hover:hidden group-focus-within:hidden">Connected</span>
-                        <span className="hidden text-destructive group-hover:inline group-focus-within:inline">Disconnect</span>
-                      </>
-                    ) : (
-                      "Connect"
-                    )}
+                    {hasTag ? (isActive ? "Disconnect" : "Connected") : "Connect"}
                   </button>
                 </div>
               </div>
@@ -167,13 +371,9 @@ export function CollectionPicker({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                setOptimisticTags((current) => (
-                  current.includes(trimmed) ? current : [...current, trimmed]
-                ));
-                onCreateAndAssign(trimmed, blockSlug);
-                setSearch("");
+                createAndAssign();
               }}
-              className="flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base font-semibold text-foreground hover:bg-accent"
+              className="flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base font-semibold text-foreground hover:bg-active"
             >
               <Plus className="size-4 shrink-0" />
               <span>
@@ -189,6 +389,6 @@ export function CollectionPicker({
           )}
         </div>
       </div>
-    </>
+    </div>
   );
 }

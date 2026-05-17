@@ -1,5 +1,53 @@
 # Devlog
 
+## 16.05.2026 [change] — Add keyboard-first card action menus
+
+### Context
+
+- `Cmd+K` opened focused feed card overflow but could not close it, and Detail
+  still reserved `Cmd+K` for global Search.
+- Connect channel picker behaved like a pointer-only list: connected channels
+  jumped to the top, keyboard navigation was incomplete and the search input
+  focus ring used the generic input border.
+- Pointer hover, keyboard active row and fading right-slot actions could overlap,
+  leaving two visible menu hovers or a delayed `Connect`/`Disconnect` tail after
+  Arrow navigation.
+
+### Completed
+
+- Made programmatic card overflow requests toggle `CardMoreMenu`; repeated
+  `Cmd+K` closes the feed card menu without pinning bottom hover actions,
+  including when focus is already inside the menu surface.
+- Added Detail-level `Cmd+K` capture to toggle the classic top-bar overflow
+  menu before the global Search shortcut.
+- Reworked `CollectionPicker` order to preserve taxonomy/sidebar order exactly
+  while still applying optimistic membership state.
+- Added keyboard flow for Connect submenu: printable keys focus search,
+  `ArrowUp`/`ArrowDown` move an active row, `Enter` connects/disconnects and
+  `Escape` returns to the parent `Connect` item. Directional back arrows close
+  the submenu according to its actual `data-side`.
+- Made pointer and keyboard selection share one `activeIndex`; removed CSS
+  `:hover` as a separate selected state and removed opacity transitions from
+  the right count/action slot.
+- Prevented keyboard scroll from handing selection back to a stationary pointer:
+  rows no longer select on `pointerenter`, and unchanged pointer coordinates are
+  ignored immediately after Arrow navigation.
+- Applied the same one-owner interaction contract to the main feed: Arrow
+  navigation switches Grid to keyboard mode, disables CardHoverMenu CSS hover
+  affordances, and ignores stationary pointer moves after keyboard-driven
+  scrolling until the pointer actually moves.
+- Added a pinned keyboard menu anchor for feed `Cmd+K`: while the keyboard-opened
+  overflow menu is open, its card keeps the focus frame, media wash and `⌘K`
+  badge even if pointer hover moves to another card; the anchor still suppresses
+  bottom hover actions so nothing shifts under the open menu.
+- Kept membership optimistic state local to the open picker so stale
+  `selectedTags` from background refreshes cannot briefly revert the visible
+  `Connect`/`Connected` state.
+- Changed picker search input focus border to `border-accent` and active row
+  surface to `bg-active`.
+- Added regression tests for `CollectionPicker`, feed `Cmd+K` close and Detail
+  top menu `Cmd+K` toggle.
+
 ## 16.05.2026 [change] — Use active surface for DropdownMenu focus
 
 ### Context
