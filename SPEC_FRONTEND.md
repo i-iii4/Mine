@@ -1,6 +1,6 @@
 # SPEC: Frontend
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 ## Overview
 
@@ -604,6 +604,10 @@ Image media expansion:
   font-semibold`, button hover outline —
   `outline-1 -outline-offset-1 outline-component-fill-hover`.
   Count/action visibility переключается мгновенно, без `transition-opacity`.
+- Batch Connect использует `BatchCollectionPicker` из того же
+  `CollectionPicker.tsx`, а не отдельную самодельную menu-разметку. Отличается
+  только membership adapter: `all -> Disconnect`, `not-all -> Connect`, без
+  partial labels вроде `1/3`.
 - Overlay-кнопка не является flex item и не меняет ширину thumbnail strip или
   положение gradient mask.
 - Видимый `Disconnect` использует destructive button semantics:
@@ -831,6 +835,35 @@ Image media expansion:
   `scrollIntoView`/DOM lookup.
 - При закрытии Detail фокус возвращается на последнюю просмотренную карточку
   по slug.
+
+#### Grid Group Selection
+
+Полный контракт группового выделения и batch actions живёт в
+[SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md). Кратко:
+
+- `Cmd+click` and `Shift+click` both toggle only the clicked committed card
+  without opening Detail.
+- Empty-area pointer drag renders a marquee rectangle and selects every
+  committed card whose `layout.positions` rectangle intersects it.
+- Grid owns `selectedSlugs` and transient `marqueeSelection`; Card receives
+  only derived visual state.
+- Marquee visual uses design-system tokens: fill from `--active`, border from
+  `--border`, no radius.
+- Selected GridItem renders `data-feed-grid-item-selected="true"` and an
+  individual monochrome external selection frame: `2px` black/white frame with
+  a `1px` gap outside the card and no corner radius.
+- When at least one card is selected, Grid renders a bottom floating action
+  island centered inside the main/right content pane at `bottom-s3` (`16px`
+  above the `h-8` app bottom bar), fixed
+  `h-8`, opaque theme-surface `bg-accent text-foreground`, no internal
+  separators, horizontal overflow when needed, gray Russian count text using
+  Detail-top-bar typography
+  (`font-mono text-sm text-muted-foreground`, regular weight) and direct
+  standard Button actions: `Connect`, text-only collection-scoped
+  `Disconnect`, text-only destructive `Delete`; the icon-only `X` clear button
+  is the rightmost control.
+- Selection clears on plain empty-Grid click, route/channel change and plain
+  card opening.
 
 #### Detail
 - Escape закрывает Detail, кроме случаев, когда keyboard event уже

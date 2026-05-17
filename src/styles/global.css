@@ -107,7 +107,7 @@ select,
   background-color: var(--border-accent);
 }
 
-[data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] > [data-block-slug] {
+[data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-block-slug] {
   border-color: var(--border-accent);
   transition: border-color 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -125,6 +125,26 @@ select,
 
 [data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-card-graphic-surface]::after {
   opacity: 1;
+}
+
+[data-feed-grid-selection-frame] {
+  position: absolute;
+  inset: -3px;
+  z-index: 8;
+  box-sizing: border-box;
+  box-shadow: inset 0 0 0 2px var(--feed-selection-frame);
+  border-radius: 0;
+  pointer-events: none;
+}
+
+[data-feed-grid-marquee-selection] {
+  position: absolute;
+  z-index: 9;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  background: color-mix(in oklch, var(--active) 72%, transparent);
+  border-radius: 0;
+  pointer-events: none;
 }
 
 [data-sidebar-scroll][data-sidebar-row-switching="true"] [data-sidebar-row-text] {
@@ -355,6 +375,7 @@ body {
   --primary-active: oklch(0.2178 0 0);
   --card-hover-overlay: transparent;
   --graphic-card-focus-overlay: oklch(0 0 0 / 14%);
+  --feed-selection-frame: oklch(0.145 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   /* surface +3 / border */
   --border: oklch(0.95 0 0);
@@ -419,6 +440,7 @@ body {
     --primary-active: oklch(0.7 0 0);
     --card-hover-overlay: transparent;
     --graphic-card-focus-overlay: oklch(1 0 0 / 18%);
+    --feed-selection-frame: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
     --ring: oklch(0.6268 0 0);
     --chart-1: oklch(0.488 0.243 264.376);
@@ -469,6 +491,7 @@ body {
   --primary-active: oklch(0.7 0 0);
   --card-hover-overlay: transparent;
   --graphic-card-focus-overlay: oklch(1 0 0 / 18%);
+  --feed-selection-frame: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(0.2311 0 0);
   --border-accent: oklch(0.985 0 0 / 16%);
@@ -512,6 +535,7 @@ body {
   --primary-active: oklch(0.2178 0 0);
   --card-hover-overlay: transparent;
   --graphic-card-focus-overlay: oklch(0 0 0 / 14%);
+  --feed-selection-frame: oklch(0.145 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.95 0 0);
   --border-accent: oklch(0.145 0 0 / 12%);

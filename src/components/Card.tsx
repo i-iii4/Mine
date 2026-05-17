@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef } from "react";
+import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef, type MouseEvent as ReactMouseEvent } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
 import type { IndexedBlock, LightBlock } from "@/types";
@@ -42,6 +42,7 @@ interface CardProps {
   openMoreMenuRequestSequence?: number;
   hoverEnabled?: boolean;
   onKeyboardMoreMenuOpenChange?: (open: boolean) => void;
+  onModifiedClick?: (block: LightBlock, event: ReactMouseEvent<HTMLDivElement>) => boolean;
   onClick: (block: LightBlock) => void;
   tags?: import("@/types").TagCount[];
   currentTag?: string;
@@ -106,7 +107,7 @@ export function MeasuredCardFrame({
   );
 }
 
-export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, onKeyboardMoreMenuOpenChange, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, onKeyboardMoreMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
     data: {
@@ -117,7 +118,12 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, prior
   });
   const isArticleFeedCard = getRuntimeCardKind(block) === "article";
 
-  const handleClick = () => onClick(block);
+  const handleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (onModifiedClick?.(block, event)) {
+      return;
+    }
+    onClick(block);
+  };
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {

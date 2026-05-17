@@ -11,7 +11,7 @@
 // same column may have top coordinates that overlap.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, act, fireEvent, screen } from "@testing-library/react";
+import { render, act, fireEvent, screen, within } from "@testing-library/react";
 import { Grid } from "./Grid";
 import { computeMasonryLayout } from "@/lib/masonryLayout";
 import type { LightBlock } from "@/types";
@@ -373,6 +373,12 @@ const BASE_PROPS = {
   onBlockClick: vi.fn(),
   onToggleTag: vi.fn(),
   onCreateAndAssign: vi.fn(),
+  onLoadBlockTags: vi.fn(async (slugs: string[]) => (
+    new Map(slugs.map((slug) => [slug, ["test"]]))
+  )),
+  onBatchSetTag: vi.fn(),
+  onCreateAndAssignBatch: vi.fn(),
+  onDeleteSelectedBlocks: vi.fn(),
   onRequestRename: vi.fn(),
   onRequestDelete: vi.fn(),
 };
@@ -776,6 +782,388 @@ describe("Grid — no collapse after add / revisit", () => {
     });
 
     expect(document.querySelector("[data-feed-grid-item-focused]")).toBeNull();
+  });
+
+  it("toggles group selection with Command-click without opening Detail", async () => {
+    vi.useFakeTimers();
+
+    const onBlockClick = vi.fn();
+    const blocks = [makeBlock(9501), makeBlock(9502)];
+    setBlockHeight(9501, 200);
+    setBlockHeight(9502, 220);
+
+    render(<Grid {...BASE_PROPS} onBlockClick={onBlockClick} blocks={blocks} />);
+    await flushAsync();
+
+    const card = document.querySelector('[data-block-slug="block-9501"]') as HTMLElement;
+    fireEvent.click(card, { metaKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const selectedWrapper = gridItemForSlug("block-9501");
+    expect(onBlockClick).not.toHaveBeenCalled();
+    expect(selectedWrapper).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(selectedWrapper?.style.overflow).toBe("visible");
+    expect(selectedWrapper?.querySelector("[data-feed-grid-card-clip]")).toHaveClass(
+      "overflow-hidden",
+    );
+    expect(
+      selectedWrapper?.querySelector("[data-feed-grid-selection-frame]"),
+    ).toBeTruthy();
+    const actionBar = document.querySelector("[data-feed-selection-action-bar]");
+    expect(actionBar).toHaveClass(
+      "absolute",
+      "left-1/2",
+      "bottom-s3",
+      "max-w-[calc(100%-3rem)]",
+      "-translate-x-1/2",
+    );
+    expect(actionBar).not.toHaveClass("fixed", "right-6");
+    expect(actionBar?.firstElementChild).toHaveClass(
+      "h-8",
+      "overflow-x-auto",
+      "border-border",
+      "bg-accent",
+      "text-foreground",
+    );
+    expect(actionBar?.firstElementChild).not.toHaveClass(
+      "bg-accent/90",
+      "bg-foreground",
+      "text-background",
+      "backdrop-blur-sm",
+      "backdrop-saturate-150",
+    );
+    expect(actionBar?.querySelector(".w-px")).toBeNull();
+    expect(screen.getByText("1 карточка")).toHaveClass(
+      "font-mono",
+      "text-sm",
+      "text-muted-foreground",
+    );
+    expect(screen.getByText("1 карточка")).not.toHaveClass("font-semibold");
+    expect(screen.getByRole("button", { name: "Clear selection" })).toBeInTheDocument();
+    const actionBarQueries = within(actionBar as HTMLElement);
+    expect(
+      actionBarQueries.getAllByRole("button").at(-1),
+    ).toHaveAccessibleName("Clear selection");
+    expect(actionBarQueries.getByRole("button", { name: /Connect/i })).toHaveAttribute(
+      "data-variant",
+      "default",
+    );
+    expect(actionBarQueries.getByRole("button", { name: /Connect/i })).toHaveClass(
+      "bg-component-fill",
+    );
+    expect(actionBarQueries.getByRole("button", { name: /Connect/i })).not.toHaveClass(
+      "bg-background/15",
+      "text-background",
+    );
+    expect(actionBarQueries.queryByRole("button", { name: /Disconnect/i })).toBeNull();
+    expect(actionBarQueries.getByRole("button", { name: /Delete/i })).toHaveAttribute(
+      "data-variant",
+      "destructive",
+    );
+    expect(actionBarQueries.getByRole("button", { name: /Delete/i })).toHaveClass(
+      "text-destructive",
+    );
+    expect(actionBarQueries.getByRole("button", { name: /Delete/i }).querySelector("svg")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Remove from Collection/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Source/i })).not.toBeInTheDocument();
+
+    fireEvent.click(card, { metaKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(selectedWrapper).not.toHaveAttribute("data-feed-grid-item-selected");
+    expect(screen.queryByText("1 карточка")).not.toBeInTheDocument();
+  });
+
+  it("clears group selection on empty-grid click, route change and opening a card", async () => {
+    vi.useFakeTimers();
+
+    const onBlockClick = vi.fn();
+    const blocks = [makeBlock(9551), makeBlock(9552)];
+    setBlockHeight(9551, 200);
+    setBlockHeight(9552, 220);
+
+    const { rerender } = render(
+      <Grid {...BASE_PROPS} blocks={blocks} onBlockClick={onBlockClick} />,
+    );
+    await flushAsync();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9551"]')!, {
+      metaKey: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(gridItemForSlug("block-9551")).toHaveAttribute("data-feed-grid-item-selected", "true");
+
+    fireEvent.pointerDown(document.querySelector("[data-grid-scroll]")!, {
+      pointerId: 1,
+      button: 0,
+      clientX: 120,
+      clientY: 120,
+    });
+    fireEvent.pointerUp(document.querySelector("[data-grid-scroll]")!, {
+      pointerId: 1,
+      clientX: 120,
+      clientY: 120,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(gridItemForSlug("block-9551")).not.toHaveAttribute("data-feed-grid-item-selected");
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9551"]')!, {
+      metaKey: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    fireEvent.click(document.querySelector('[data-block-slug="block-9552"]')!);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onBlockClick).toHaveBeenCalledWith(blocks[1]);
+    expect(gridItemForSlug("block-9551")).not.toHaveAttribute("data-feed-grid-item-selected");
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9551"]')!, {
+      metaKey: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(gridItemForSlug("block-9551")).toHaveAttribute("data-feed-grid-item-selected", "true");
+
+    rerender(<Grid {...BASE_PROPS} blocks={blocks} currentTag="next-channel" onBlockClick={onBlockClick} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(gridItemForSlug("block-9551")).not.toHaveAttribute("data-feed-grid-item-selected");
+  });
+
+  it("toggles individual cards with Shift-click instead of selecting a range", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeBlock(9511),
+      makeBlock(9512),
+      makeBlock(9513),
+      makeBlock(9514),
+    ];
+    for (const block of blocks) {
+      setBlockHeight(block.id, 200);
+    }
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9511"]')!, {
+      shiftKey: true,
+    });
+    fireEvent.click(document.querySelector('[data-block-slug="block-9513"]')!, {
+      shiftKey: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gridItemForSlug("block-9511")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(gridItemForSlug("block-9512")).not.toHaveAttribute("data-feed-grid-item-selected");
+    expect(gridItemForSlug("block-9513")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(gridItemForSlug("block-9514")).not.toHaveAttribute("data-feed-grid-item-selected");
+    expect(screen.getByText("2 карточки")).toBeInTheDocument();
+  });
+
+  it("selects every card intersecting an empty-area marquee drag", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeBlock(9541),
+      makeBlock(9542),
+      makeBlock(9543),
+      makeBlock(9544),
+    ];
+    for (const block of blocks) {
+      setBlockHeight(block.id, 200);
+    }
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement;
+    const layoutEl = document.querySelector("[data-grid-layout]") as HTMLElement;
+    layoutEl.getBoundingClientRect = vi.fn(() => ({
+      width: 1200,
+      height: 300,
+      top: 0,
+      left: 0,
+      right: 1200,
+      bottom: 300,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect);
+
+    fireEvent.pointerDown(scrollEl, {
+      pointerId: 1,
+      button: 0,
+      clientX: 300,
+      clientY: 10,
+    });
+    fireEvent.pointerMove(scrollEl, {
+      pointerId: 1,
+      clientX: 700,
+      clientY: 220,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const marquee = document.querySelector("[data-feed-grid-marquee-selection]") as HTMLElement;
+    expect(marquee).toBeTruthy();
+    expect(marquee).toHaveStyle({
+      left: "300px",
+      top: "10px",
+      width: "400px",
+      height: "210px",
+    });
+    expect(gridItemForSlug("block-9541")).not.toHaveAttribute("data-feed-grid-item-selected");
+    expect(gridItemForSlug("block-9542")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(gridItemForSlug("block-9543")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(gridItemForSlug("block-9544")).not.toHaveAttribute("data-feed-grid-item-selected");
+
+    fireEvent.pointerUp(scrollEl, {
+      pointerId: 1,
+      clientX: 700,
+      clientY: 220,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector("[data-feed-grid-marquee-selection]")).toBeNull();
+    expect(screen.getByText("2 карточки")).toBeInTheDocument();
+  });
+
+  it("runs the collection-scoped Disconnect action against the selected slugs", async () => {
+    vi.useFakeTimers();
+
+    const onBatchSetTag = vi.fn();
+    const blocks = [makeBlock(9521), makeBlock(9522)];
+    setBlockHeight(9521, 200);
+    setBlockHeight(9522, 220);
+
+    render(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        currentTag="test"
+        onBatchSetTag={onBatchSetTag}
+      />,
+    );
+    await flushAsync();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9521"]')!, {
+      metaKey: true,
+    });
+    fireEvent.click(document.querySelector('[data-block-slug="block-9522"]')!, {
+      metaKey: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const disconnectButton = screen.getByRole("button", { name: /Disconnect/i });
+    expect(disconnectButton.querySelector("svg")).toBeNull();
+    fireEvent.click(disconnectButton);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onBatchSetTag).toHaveBeenCalledWith(
+      ["block-9521", "block-9522"],
+      "test",
+      false,
+    );
+  });
+
+  it("connects or disconnects every selected slug from the batch picker without mixed counts", async () => {
+    vi.useFakeTimers();
+
+    const onBatchSetTag = vi.fn();
+    const blocks = [makeBlock(9531), makeBlock(9532)];
+    setBlockHeight(9531, 200);
+    setBlockHeight(9532, 220);
+
+    render(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        tags={[
+          { tag: "test", count: 1 },
+          { tag: "all-connected", count: 2 },
+        ]}
+        onLoadBlockTags={vi.fn(async () => (
+          new Map([
+            ["block-9531", ["test", "all-connected"]],
+            ["block-9532", ["all-connected"]],
+          ])
+        ))}
+        onBatchSetTag={onBatchSetTag}
+      />,
+    );
+    await flushAsync();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9531"]')!, {
+      metaKey: true,
+    });
+    fireEvent.click(document.querySelector('[data-block-slug="block-9532"]')!, {
+      metaKey: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const connectTrigger = within(
+      document.querySelector("[data-feed-selection-action-bar]") as HTMLElement,
+    ).getByRole("button", { name: /Connect/i });
+    fireEvent.pointerDown(connectTrigger, { button: 0, ctrlKey: false });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const testRow = screen.getByText("test").closest("[data-batch-collection-row]") as HTMLElement;
+    expect(testRow).toHaveAttribute("data-batch-collection-row-state", "not-all");
+    expect(within(testRow).getByRole("button", { name: "Connect test" })).toBeInTheDocument();
+    expect(within(testRow).queryByText("1/2")).not.toBeInTheDocument();
+    expect(testRow).toHaveAttribute("data-collection-picker-row-active", "true");
+
+    fireEvent.click(within(testRow).getByRole("button", { name: "Connect test" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onBatchSetTag).toHaveBeenCalledWith(
+      ["block-9531", "block-9532"],
+      "test",
+      true,
+    );
+
+    const allConnectedRow = screen.getByText("all-connected").closest("[data-batch-collection-row]") as HTMLElement;
+    expect(allConnectedRow).toHaveAttribute("data-batch-collection-row-state", "all");
+    expect(within(allConnectedRow).getByRole("button", { name: "Disconnect all-connected" })).toHaveTextContent("Connected");
+    fireEvent.pointerMove(allConnectedRow);
+    expect(within(allConnectedRow).getByRole("button", { name: "Disconnect all-connected" })).toHaveTextContent("Disconnect");
+    fireEvent.click(within(allConnectedRow).getByRole("button", { name: "Disconnect all-connected" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onBatchSetTag).toHaveBeenCalledWith(
+      ["block-9531", "block-9532"],
+      "all-connected",
+      false,
+    );
   });
 
   it("keeps the first paint skeleton-only until the current generation is measured", async () => {

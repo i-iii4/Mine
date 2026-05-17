@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Goal
 
@@ -1089,6 +1089,24 @@ Specification: [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md).
 | 25.6 | Media delete command | [x] | Prepare referenced-card plan, show exact media preview in confirmation, delete media file, remove parseable refs, keep `.md` cards/notes |
 | 25.7 | Reveal/Copy Path/Copy | [x] | Finder/path/native clipboard actions resolve the media file, not source card `.md` |
 | 25.8 | Tests + manual QA | [ ] | Automated Rust/frontend coverage is in place; real-vault manual QA for frontmatter media and inline media parity remains |
+
+### Phase 26 — Grid Group Selection / Batch Card Actions
+
+Goal: enable spatial multi-selection in the masonry feed and batch actions from
+a bottom floating action island.
+
+Specification: [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
+
+| # | Slice | Status | Scope |
+|---|---|---|---|
+| 26.1 | Selection state | [x] | Grid-owned `selectedSlugs` + transient `marqueeSelection`, prune missing slugs, reset on route/channel changes, plain card open and empty-grid click |
+| 26.2 | Modifier click handling | [x] | `Cmd+click` and `Shift+click` both toggle only clicked cards; plain click keeps Detail behavior |
+| 26.2.1 | Marquee selection | [x] | Empty-area drag renders DS-token marquee rectangle and selects cards by `layout.positions` rectangle intersection |
+| 26.3 | Selected visual | [x] | `data-feed-grid-item-selected`, external square-corner 2px monochrome frame with 1px outside gap, no layout shift, light/dark tokens |
+| 26.4 | Bottom action island | [x] | Main-pane-centered `h-8` opaque island, `bottom-s3`, clear button, Detail-top-bar-style muted Russian selected-card count, direct Button actions `Connect`, text-only collection-scoped `Disconnect`, red text-only `Delete`, horizontal overflow |
+| 26.5 | Batch Connect | [x] | `BatchCollectionPicker` reuses `CollectionPicker` row/input/action styling; binary all/not-all states, sidebar-order rows, optimistic state without row reordering or partial count labels |
+| 26.6 | Batch Disconnect/Delete | [x] | Disconnect selected cards from current collection; batch destructive confirmation for Delete; batch delete keeps media files in v1 |
+| 26.7 | Tests + manual QA | [ ] | Automated modifier selection, range geometry and action-bar coverage is in place; real-vault manual QA for dark/light frame and batch actions remains |
 
 ### Backlog
 

@@ -739,6 +739,11 @@ its coordinates match the last known pointer position.
 Slot сохраняет `h-8` vertical centering. Count не должен прыгать при появлении
 action button.
 
+Batch Connect must reuse the same CollectionPicker row/input/action language
+through `BatchCollectionPicker`, not a separate hand-styled list. Batch changes
+only membership semantics: all selected cards connected -> `Disconnect`;
+otherwise -> `Connect`; no partial selected-card counters like `1/3`.
+
 Stable preview invariant: обычный sidebar и link-editor используют один и тот
 же row component и один thumbnail strip. При открытии карточки нельзя
 размонтировать строки каналов или `<img>` thumbnail'ы; меняется только правый
@@ -772,6 +777,41 @@ do not appear under an open keyboard menu.
 Графические поверхности карточек помечаются единым `GraphicSurface`/`data-card-graphic-surface` контрактом. При keyboard focus GridItem применяет только к этим surfaces дополнительный wash: light theme `oklch(0 0 0 / 14%)` затемняет, dark theme `oklch(1 0 0 / 18%)` высветляет. Текстовые карточки и текстовые области mixed cards не получают этот state.
 
 Focused GridItem дополнительно показывает shortcut badge в левом верхнем углу: `data-feed-grid-action-badge`, внутри `data-feed-grid-action-layer` (`absolute inset-px`), затем `absolute left-2 top-2`, `h-6`, `px-[1ch]`, `rounded-1` (3px), `bg-component-fill`, `text-sm font-semibold text-foreground`, `pointer-events-none`. Action layer компенсирует 1px Card frame, поэтому offsets badge считаются из той же внутренней плоскости карточки, что и Card Hover Menu controls: `top-2` как у верхнего `More`, `left-2` как у нижнего action row. Текст badge — `⌘K`; он сообщает scoped action shortcut для открытия card overflow menu и не является hover affordance. `Cmd+K` toggles top-right `More`/overflow menu; нижние `Source`/`Connect` не появляются.
+
+Group-selected GridItem показывает индивидуальный selected frame, не цветной
+system-selection outline. Contract: `data-feed-grid-item-selected="true"` на
+GridItem, sibling overlay `pointer-events-none` вне clipped card layer,
+external frame `inset: -3px` — это 2px frame + 1px gap снаружи карточки,
+`box-shadow: inset 0 0 0 2px var(--feed-selection-frame)`. Token:
+`--feed-selection-frame: oklch(0.145 0 0)` в light theme и
+`oklch(0.985 0 0)` в dark theme. Рамка
+рисуется без скруглений вокруг каждой выбранной карточки, а не вокруг всей
+selection area, не меняет masonry layout и должна быть сильнее hover/focus.
+
+Marquee selection rectangle принадлежит Grid и рисуется только во время
+empty-area drag внутри `data-grid-layout`: `data-feed-grid-marquee-selection`,
+`border-radius: 0`, `pointer-events: none`, fill из design-system surface +2
+`--active` (`color-mix(in oklch, var(--active) 72%, transparent)` для
+читаемости поверх контента), border из surface +3 `--border`. Без glow, blur,
+gradient, shadow или цветных selection-токенов.
+
+Group selection bottom action island появляется при `selectedSlugs.size >= 1`:
+absolute внутри main/content pane, центрирован по правой рабочей области
+(`bottom-s3 left-1/2 -translate-x-1/2`), `h-8`, `rounded-1 border border-border
+bg-accent text-foreground px-1`, compact horizontal layout, horizontal
+overflow when content does not fit, без внутренних разделителей, прозрачности,
+blur, glow/gradient. Островок не зеркалит тему, а остаётся в обычной
+surface-иерархии приложения. Secondary text внутри островка использует
+Detail-top-bar typography: `font-mono text-sm`, regular weight, no
+`font-semibold`, with `text-muted-foreground`. Прямые Button actions используют
+стандартные design-system `Button` variants: `Connect`/`Disconnect` —
+`default`, `Delete` — `destructive` (`bg-component-fill text-destructive`).
+Порядок внутри островка: серое русское количество
+(`1 карточка`, `2 карточки`, `5 карточек`, `25 карточек`), прямые Button
+actions `Connect`, text-only `Disconnect` только внутри collection route,
+text-only red `Delete`, затем rightmost icon-only `X` clear button. Полный
+контракт:
+[SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
 
 Article-карточки в ленте используют дополнительную surface-заливку только в тёмной теме: `feed-article-card` применяет `background: var(--accent)` при `data-theme="dark"` или системной dark theme, если не выбран `data-theme="light"`. В светлой теме article-карточка остаётся на стандартном `bg-background`.
 

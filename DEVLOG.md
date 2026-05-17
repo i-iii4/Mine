@@ -1,5 +1,50 @@
 # Devlog
 
+## 17.05.2026 [change] — Add Grid group selection and batch actions
+
+### Context
+
+- Grid needs group card selection for batch actions without compromising the
+  existing masonry keyboard focus, pointer hover and `Cmd+K` menu contracts.
+- Selection must be spatial for broad selection, but modifier-click should stay
+  simple: `Cmd+click` and `Shift+click` toggle one card, while empty-area
+  marquee drag handles larger visual selection.
+
+### Completed
+
+- Added [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) as the canonical
+  contract for Grid-owned `selectedSlugs`, transient `marqueeSelection`,
+  modifier-click toggles, bottom action island and batch actions.
+- Simplified modified-click selection: `Cmd+click` and `Shift+click` both
+  toggle only the clicked card.
+- Added empty-area marquee drag selection: Grid renders a DS-token rectangle
+  over `data-grid-layout` and selects committed cards by `layout.positions`
+  rectangle intersection, without DOM rect or index navigation.
+- Added selected-card GridItem overlay outside the clipped card layer: square
+  `2px` `var(--feed-selection-frame)` monochrome frame with a `1px` outside
+  gap, layout-neutral and owned by Grid rather than Card.
+- Added bottom floating action island with Russian count pluralization and
+  a rightmost clear button plus direct `Connect`, collection-scoped `Disconnect`
+  and `Delete` actions. The island is centered inside the right content pane,
+  uses `bottom-s3` (`16px`) above the app bottom bar, is opaque, `32px` tall, uses the normal theme
+  surface `bg-accent text-foreground`, has no internal separators and is
+  horizontally scrollable when its content does not fit. The counter uses
+  Detail-top-bar typography (`font-mono text-sm`, regular weight);
+  `Disconnect` and `Delete` are text-only, and `Delete` uses the standard
+  destructive button variant.
+- Added batch Connect with per-open membership lookup, binary all/not-all row
+  states, taxonomy-order rows and optimistic updates that do not reorder the
+  picker or show partial membership counters. Batch Connect now uses
+  `BatchCollectionPicker` inside the existing `CollectionPicker.tsx` menu
+  implementation family, so it inherits the same active row, input and right
+  action button hover contract as single-card Connect.
+- Added collection-scoped batch Disconnect and batch Delete. Delete uses the
+  safe v1 path and keeps media files in the vault.
+- Selection now clears on empty Grid click, plain card open and channel route
+  change.
+- Linked the new spec from architecture, frontend spec, design system, plan and
+  agent required reading.
+
 ## 16.05.2026 [change] — Add keyboard-first card action menus
 
 ### Context

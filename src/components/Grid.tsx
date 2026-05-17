@@ -5,6 +5,7 @@ import {
   useMemo,
   useCallback,
   memo,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
@@ -15,6 +16,7 @@ import type { LightBlock, TagCount } from "@/types";
 import { Card, CardSkeleton } from "./Card";
 import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
+import { GroupSelectionActionBar } from "./GroupSelectionActionBar";
 import {
   computeMasonryLayout,
   createVisibilityIndex,
@@ -60,6 +62,7 @@ const COMMIT_LOOKAHEAD_BLOCKS = 24;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
 const GRID_TOP_INSET_PX = 64;
+const MARQUEE_DRAG_THRESHOLD_PX = 4;
 
 type GridArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
 type FeedInteractionMode = "keyboard" | "pointer";
@@ -67,6 +70,22 @@ type FeedPointerPosition = {
   x: number;
   y: number;
   pointerId: number;
+};
+type LayoutPoint = {
+  x: number;
+  y: number;
+};
+type LayoutRect = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+type MarqueeSelection = {
+  pointerId: number;
+  start: LayoutPoint;
+  current: LayoutPoint;
+  active: boolean;
 };
 
 function isGridArrowKey(key: string): key is GridArrowKey {
@@ -220,6 +239,88 @@ function scrollPositionIntoView(
   }
 }
 
+function rectFromPoints(first: LayoutPoint, second: LayoutPoint): LayoutRect {
+  const left = Math.min(first.x, second.x);
+  const top = Math.min(first.y, second.y);
+  return {
+    left,
+    top,
+    width: Math.abs(second.x - first.x),
+    height: Math.abs(second.y - first.y),
+  };
+}
+
+function rectsIntersect(first: LayoutRect, second: LayoutRect): boolean {
+  return (
+    first.left <= second.left + second.width &&
+    first.left + first.width >= second.left &&
+    first.top <= second.top + second.height &&
+    first.top + first.height >= second.top
+  );
+}
+
+function marqueeIsActive(start: LayoutPoint, current: LayoutPoint): boolean {
+  return (
+    Math.abs(current.x - start.x) >= MARQUEE_DRAG_THRESHOLD_PX ||
+    Math.abs(current.y - start.y) >= MARQUEE_DRAG_THRESHOLD_PX
+  );
+}
+
+function findMarqueeSelectionSlugs(
+  positions: readonly MasonryPosition[],
+  blocks: readonly LightBlock[],
+  rect: LayoutRect,
+  committedEndIndex: number,
+): string[] {
+  const selected: string[] = [];
+
+  for (const candidate of positions) {
+    if (candidate.index > committedEndIndex) continue;
+    const block = blocks[candidate.index];
+    if (!block) continue;
+    if (rectsIntersect(rect, {
+      left: candidate.left,
+      top: candidate.top,
+      width: candidate.width,
+      height: candidate.height,
+    })) {
+      selected.push(block.slug);
+    }
+  }
+
+  return selected;
+}
+
+function layoutPointFromPointerEvent(
+  scrollElement: HTMLElement,
+  event: ReactPointerEvent<HTMLElement>,
+): LayoutPoint | null {
+  const layoutElement = scrollElement.querySelector("[data-grid-layout]");
+  if (!(layoutElement instanceof HTMLElement)) return null;
+  const rect = layoutElement.getBoundingClientRect();
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  };
+}
+
+function isEmptyGridPointerTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return !target.closest(
+    [
+      "[data-block-slug]",
+      "button",
+      "a",
+      "input",
+      "textarea",
+      "select",
+      "[contenteditable='true']",
+      "[role='button']",
+      "[data-radix-popper-content-wrapper]",
+    ].join(","),
+  );
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 interface GridProps {
@@ -236,6 +337,10 @@ interface GridProps {
   onBlockClick: (block: LightBlock) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
+  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
+  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
+  onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
   onRequestRename: (block: LightBlock) => void;
   onRequestDelete: (slug: string) => void;
   onColumnCountChange?: (count: number) => void;
@@ -249,10 +354,12 @@ interface GridContext {
   thumbsRootPath?: string;
   focusedSlug: string | null;
   pinnedActionMenuSlug: string | null;
+  selectedSlugs: ReadonlySet<string>;
   actionMenuRequest: { slug: string; sequence: number } | null;
   hoverEnabled: boolean;
   onGridItemPointerMove: (slug: string, event: ReactPointerEvent<HTMLDivElement>) => void;
   onKeyboardActionMenuOpenChange: (slug: string, open: boolean) => void;
+  onModifiedCardClick: (block: LightBlock, event: ReactMouseEvent<HTMLDivElement>) => boolean;
   onBlockClick: (block: LightBlock) => void;
   tags: TagCount[];
   currentTag?: string;
@@ -321,6 +428,10 @@ export function Grid({
   onBlockClick,
   onToggleTag,
   onCreateAndAssign,
+  onLoadBlockTags,
+  onBatchSetTag,
+  onCreateAndAssignBatch,
+  onDeleteSelectedBlocks,
   onRequestRename,
   onRequestDelete,
   onColumnCountChange,
@@ -334,6 +445,8 @@ export function Grid({
   const [scrollTop, setScrollTop] = useState(0);
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
   const [focusedSlug, setFocusedSlug] = useState<string | null>(null);
+  const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(() => new Set());
+  const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelection | null>(null);
   const [feedInteractionMode, setFeedInteractionMode] = useState<FeedInteractionMode>("pointer");
   const [actionMenuRequest, setActionMenuRequest] = useState<{
     slug: string;
@@ -608,6 +721,8 @@ export function Grid({
     setFocusedSlug(null);
     setFeedInteractionMode("pointer");
     setPinnedActionMenuSlug(null);
+    setSelectedSlugs(new Set());
+    setMarqueeSelection(null);
   }, [currentTag]);
 
   useEffect(() => {
@@ -617,6 +732,18 @@ export function Grid({
     if (pinnedActionMenuSlug && !blocksBySlug.has(pinnedActionMenuSlug)) {
       setPinnedActionMenuSlug(null);
     }
+    setSelectedSlugs((current) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const slug of current) {
+        if (blocksBySlug.has(slug)) {
+          next.add(slug);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
   }, [blocksBySlug, focusedSlug, pinnedActionMenuSlug]);
 
   useEffect(() => {
@@ -675,6 +802,115 @@ export function Grid({
     });
   }, []);
 
+  const clearSelection = useCallback(() => {
+    setSelectedSlugs(new Set());
+    setMarqueeSelection(null);
+  }, []);
+
+  const handleBlockClick = useCallback((block: LightBlock) => {
+    clearSelection();
+    onBlockClick(block);
+  }, [clearSelection, onBlockClick]);
+
+  const handleModifiedCardClick = useCallback((
+    block: LightBlock,
+    event: ReactMouseEvent<HTMLDivElement>,
+  ): boolean => {
+    if (event.metaKey || event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      const next = new Set(selectedSlugs);
+      if (next.has(block.slug)) {
+        next.delete(block.slug);
+      } else {
+        next.add(block.slug);
+      }
+      setSelectedSlugs(next);
+      setFeedInteractionMode("pointer");
+      setFocusedSlug(block.slug);
+      return true;
+    }
+
+    return false;
+  }, [selectedSlugs]);
+
+  const marqueeRect = useMemo(
+    () => marqueeSelection?.active
+      ? rectFromPoints(marqueeSelection.start, marqueeSelection.current)
+      : null,
+    [marqueeSelection],
+  );
+
+  const applyMarqueeSelection = useCallback((selection: MarqueeSelection) => {
+    const rect = rectFromPoints(selection.start, selection.current);
+    setSelectedSlugs(new Set(
+      findMarqueeSelectionSlugs(
+        layout.positions,
+        blocks,
+        rect,
+        committedEndIndex,
+      ),
+    ));
+  }, [blocks, committedEndIndex, layout.positions]);
+
+  const handleGridPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.shiftKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      !isEmptyGridPointerTarget(event.target)
+    ) {
+      return;
+    }
+
+    const start = layoutPointFromPointerEvent(event.currentTarget, event);
+    if (!start) return;
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setMarqueeSelection({
+      pointerId: event.pointerId,
+      start,
+      current: start,
+      active: false,
+    });
+    setFeedInteractionMode("pointer");
+    setFocusedSlug(null);
+  }, []);
+
+  const handleGridPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!marqueeSelection || marqueeSelection.pointerId !== event.pointerId) return;
+    const current = layoutPointFromPointerEvent(event.currentTarget, event);
+    if (!current) return;
+
+    event.preventDefault();
+    const next = {
+      ...marqueeSelection,
+      current,
+      active: marqueeSelection.active || marqueeIsActive(marqueeSelection.start, current),
+    };
+    setMarqueeSelection(next);
+    if (next.active) {
+      applyMarqueeSelection(next);
+    }
+  }, [applyMarqueeSelection, marqueeSelection]);
+
+  const finishMarqueeSelection = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!marqueeSelection || marqueeSelection.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    if (marqueeSelection.active) {
+      applyMarqueeSelection(marqueeSelection);
+    } else {
+      clearSelection();
+    }
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setMarqueeSelection(null);
+  }, [applyMarqueeSelection, clearSelection, marqueeSelection]);
+
   useEffect(() => {
     if (keyboardNavigationDisabled) return;
 
@@ -731,6 +967,11 @@ export function Grid({
       }
 
       if (event.key === "Escape") {
+        if (selectedSlugs.size > 0) {
+          event.preventDefault();
+          clearSelection();
+          return;
+        }
         if (feedInteractionMode === "keyboard" && focusedSlug !== null) {
           event.preventDefault();
           setFocusedSlug(null);
@@ -745,7 +986,7 @@ export function Grid({
         const block = blocksBySlug.get(focusedSlug);
         if (!block) return;
         event.preventDefault();
-        onBlockClick(block);
+        handleBlockClick(block);
         return;
       }
 
@@ -812,12 +1053,14 @@ export function Grid({
   }, [
     blocks,
     blocksBySlug,
+    clearSelection,
     committedEndIndex,
     feedInteractionMode,
     focusedSlug,
+    handleBlockClick,
     keyboardNavigationDisabled,
     layout.positions,
-    onBlockClick,
+    selectedSlugs.size,
     scrollTop,
     viewportHeight,
   ]);
@@ -975,6 +1218,11 @@ export function Grid({
     onRequestDelete(slug);
   }, [onRequestDelete]);
 
+  const selectedBlocks = useMemo(
+    () => blocks.filter((block) => selectedSlugs.has(block.slug)),
+    [blocks, selectedSlugs],
+  );
+
   const keyboardFocusedSlug = feedInteractionMode === "keyboard" ? focusedSlug : null;
   const visualFocusActive = keyboardFocusedSlug !== null || pinnedActionMenuSlug !== null;
 
@@ -984,11 +1232,13 @@ export function Grid({
       thumbsRootPath,
       focusedSlug: keyboardFocusedSlug,
       pinnedActionMenuSlug,
+      selectedSlugs,
       actionMenuRequest,
       hoverEnabled: feedInteractionMode !== "keyboard",
       onGridItemPointerMove: handleGridItemPointerMove,
       onKeyboardActionMenuOpenChange: handleKeyboardActionMenuOpenChange,
-      onBlockClick,
+      onModifiedCardClick: handleModifiedCardClick,
+      onBlockClick: handleBlockClick,
       tags,
       currentTag,
       onToggleTag,
@@ -1001,11 +1251,13 @@ export function Grid({
       thumbsRootPath,
       keyboardFocusedSlug,
       pinnedActionMenuSlug,
+      selectedSlugs,
       actionMenuRequest,
       feedInteractionMode,
       handleGridItemPointerMove,
       handleKeyboardActionMenuOpenChange,
-      onBlockClick,
+      handleModifiedCardClick,
+      handleBlockClick,
       tags,
       currentTag,
       onToggleTag,
@@ -1021,6 +1273,10 @@ export function Grid({
         <div
           ref={parentRef}
           onContextMenu={handleContextMenu}
+          onPointerDown={handleGridPointerDown}
+          onPointerMove={handleGridPointerMove}
+          onPointerUp={finishMarqueeSelection}
+          onPointerCancel={finishMarqueeSelection}
           className="h-full overflow-x-hidden overflow-y-auto pb-8"
           style={{
             paddingLeft: sidebarCollapsed ? 72 : 32,
@@ -1041,6 +1297,7 @@ export function Grid({
               priorityBounds={priorityBounds}
               committedEndIndex={committedEndIndex}
               activePlaybackSlugs={activePlaybackSlugs}
+              marqueeRect={marqueeRect}
               context={gridContext}
             />
           )}
@@ -1064,6 +1321,17 @@ export function Grid({
           )}
         </div>
       </ContextMenuTrigger>
+
+      <GroupSelectionActionBar
+        selectedBlocks={selectedBlocks}
+        tags={tags}
+        currentTag={currentTag}
+        onLoadBlockTags={onLoadBlockTags}
+        onBatchSetTag={onBatchSetTag}
+        onCreateAndAssignBatch={onCreateAndAssignBatch}
+        onDeleteSelectedBlocks={onDeleteSelectedBlocks}
+        onClearSelection={clearSelection}
+      />
 
       {menuBlock && (
         <CardTagMenu
@@ -1090,6 +1358,7 @@ function VirtualMasonryLayout({
   priorityBounds,
   committedEndIndex,
   activePlaybackSlugs,
+  marqueeRect,
   context,
 }: {
   blocks: LightBlock[];
@@ -1098,6 +1367,7 @@ function VirtualMasonryLayout({
   priorityBounds: { start: number; end: number };
   committedEndIndex: number;
   activePlaybackSlugs: Set<string>;
+  marqueeRect: LayoutRect | null;
   context: GridContext;
 }) {
   return (
@@ -1123,10 +1393,23 @@ function VirtualMasonryLayout({
               block.slug === context.focusedSlug ||
               block.slug === context.pinnedActionMenuSlug
             }
+            isSelected={context.selectedSlugs.has(block.slug)}
             context={context}
           />
         );
       })}
+      {marqueeRect && (
+        <div
+          aria-hidden="true"
+          data-feed-grid-marquee-selection=""
+          style={{
+            left: marqueeRect.left,
+            top: marqueeRect.top,
+            width: marqueeRect.width,
+            height: marqueeRect.height,
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1138,6 +1421,7 @@ const GridItem = memo(function GridItem({
   isCommitted,
   allowPlayback,
   isFocused,
+  isSelected,
   context,
 }: {
   block: LightBlock;
@@ -1146,6 +1430,7 @@ const GridItem = memo(function GridItem({
   isCommitted: boolean;
   allowPlayback: boolean;
   isFocused: boolean;
+  isSelected: boolean;
   context: GridContext;
 }) {
   const openMoreMenuRequestSequence =
@@ -1167,11 +1452,12 @@ const GridItem = memo(function GridItem({
         // as vertical overlap. Heights are already ceil()'d during hidden
         // measurement, so clamping the wrapper here is the safer invariant.
         height: item.height,
-        overflow: "hidden",
+        overflow: "visible",
         transform: `translate3d(${item.left}px, ${item.top}px, 0)`,
       }}
       data-feed-grid-item=""
       data-feed-grid-item-focused={isCommitted && isFocused ? "true" : undefined}
+      data-feed-grid-item-selected={isCommitted && isSelected ? "true" : undefined}
       data-feed-grid-item-slug={block.slug}
       onPointerMove={(event) => {
         if (isCommitted) {
@@ -1179,42 +1465,51 @@ const GridItem = memo(function GridItem({
         }
       }}
     >
-      {isCommitted ? (
-        <Card
-          block={block}
-          vaultPath={context.vaultPath}
-          thumbsRootPath={context.thumbsRootPath}
-          priority={priority}
-          allowPlayback={allowPlayback}
-          openMoreMenuRequestSequence={openMoreMenuRequestSequence}
-          hoverEnabled={context.hoverEnabled && !isPinnedActionMenuAnchor}
-          onKeyboardMoreMenuOpenChange={(open) => {
-            context.onKeyboardActionMenuOpenChange(block.slug, open);
-          }}
-          onClick={context.onBlockClick}
-          tags={context.tags}
-          currentTag={context.currentTag}
-          onToggleTag={context.onToggleTag}
-          onCreateAndAssign={context.onCreateAndAssign}
-          onRequestRename={context.onRequestRename}
-          onRequestDelete={context.onRequestDelete}
-        />
-      ) : (
-        <CardSkeleton block={block} />
-      )}
-      {isCommitted && isFocused && (
+      <div className="relative h-full overflow-hidden" data-feed-grid-card-clip="">
+        {isCommitted ? (
+          <Card
+            block={block}
+            vaultPath={context.vaultPath}
+            thumbsRootPath={context.thumbsRootPath}
+            priority={priority}
+            allowPlayback={allowPlayback}
+            openMoreMenuRequestSequence={openMoreMenuRequestSequence}
+            hoverEnabled={context.hoverEnabled && !isPinnedActionMenuAnchor}
+            onKeyboardMoreMenuOpenChange={(open) => {
+              context.onKeyboardActionMenuOpenChange(block.slug, open);
+            }}
+            onModifiedClick={context.onModifiedCardClick}
+            onClick={context.onBlockClick}
+            tags={context.tags}
+            currentTag={context.currentTag}
+            onToggleTag={context.onToggleTag}
+            onCreateAndAssign={context.onCreateAndAssign}
+            onRequestRename={context.onRequestRename}
+            onRequestDelete={context.onRequestDelete}
+          />
+        ) : (
+          <CardSkeleton block={block} />
+        )}
+        {isCommitted && isFocused && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-px z-[6]"
+            data-feed-grid-action-layer=""
+          >
+            <div
+              className="absolute left-2 top-2 flex h-6 items-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground"
+              data-feed-grid-action-badge=""
+            >
+              ⌘K
+            </div>
+          </div>
+        )}
+      </div>
+      {isCommitted && isSelected && (
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-px z-[6]"
-          data-feed-grid-action-layer=""
-        >
-          <div
-            className="absolute left-2 top-2 flex h-6 items-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground"
-            data-feed-grid-action-badge=""
-          >
-            ⌘K
-          </div>
-        </div>
+          data-feed-grid-selection-frame=""
+        />
       )}
     </div>
   );

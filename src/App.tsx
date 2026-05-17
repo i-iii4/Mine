@@ -1707,6 +1707,84 @@ export function AppWithVault({
     [reloadAllSnapshots, selectedBlock?.slug],
   );
 
+  const handleLoadBlockTags = useCallback(async (slugs: string[]) => {
+    const entries = await Promise.all(
+      slugs.map(async (slug) => {
+        const block = await getBlock(slug);
+        return [slug, block?.tags ?? []] as const;
+      }),
+    );
+    return new Map(entries);
+  }, []);
+
+  const handleBatchSetTag = useCallback(
+    async (slugs: string[], tag: string, connected: boolean) => {
+      if (slugs.length === 0) return;
+      try {
+        for (const slug of slugs) {
+          if (connected) {
+            await addTag(slug, tag);
+          } else {
+            await removeTag(slug, tag);
+          }
+        }
+        if (connected) {
+          pushRecentTag(tag);
+        }
+        if (selectedBlock && slugs.includes(selectedBlock.slug)) {
+          setSelectedBlockTags((current) => {
+            if (connected) {
+              return current.includes(tag) ? current : [...current, tag];
+            }
+            return current.filter((item) => item !== tag);
+          });
+          setSelectedBlock((current) => (
+            current && slugs.includes(current.slug) && "tags" in current
+              ? {
+                  ...current,
+                  tags: connected
+                    ? (current.tags.includes(tag) ? current.tags : [...current.tags, tag])
+                    : current.tags.filter((item) => item !== tag),
+                }
+              : current
+          ));
+        }
+      } catch (err) {
+        console.error("Failed to batch update tags:", err);
+        throw err;
+      } finally {
+        await reloadAllSnapshots();
+      }
+    },
+    [reloadAllSnapshots, selectedBlock],
+  );
+
+  const handleCreateTagFromBatchMenu = useCallback(
+    async (tag: string, slugs: string[]) => {
+      await handleBatchSetTag(slugs, tag, true);
+    },
+    [handleBatchSetTag],
+  );
+
+  const handleDeleteSelectedBlocks = useCallback(
+    async (slugs: string[]) => {
+      if (slugs.length === 0) return;
+      setSelectedBlock(null);
+      setSelectedBlockAnchor(null);
+      try {
+        for (const slug of slugs) {
+          await deleteBlock(slug, false);
+        }
+      } catch (err) {
+        console.error("Failed to delete selected blocks:", err);
+        throw err;
+      } finally {
+        await reloadAllSnapshots();
+      }
+    },
+    [reloadAllSnapshots],
+  );
+
   const requestDeleteBlock = useCallback((slug: string) => {
     setDeleteTargetSlug(slug);
   }, []);
@@ -1921,6 +1999,10 @@ export function AppWithVault({
                 onBlockClick={handleBlockClick}
                 onToggleTag={handleToggleTag}
                 onCreateAndAssign={handleCreateTagFromMenu}
+                onLoadBlockTags={handleLoadBlockTags}
+                onBatchSetTag={handleBatchSetTag}
+                onCreateAndAssignBatch={handleCreateTagFromBatchMenu}
+                onDeleteSelectedBlocks={handleDeleteSelectedBlocks}
                 onRequestRename={setRenamingBlock}
                 onRequestDelete={requestDeleteBlock}
                 onColumnCountChange={handleColumnCountChange}
@@ -2133,6 +2215,10 @@ interface RouteContext {
   onBlockClick: (block: LightBlock) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
+  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
+  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
+  onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
   onRequestDelete: (slug: string) => void;
   onColumnCountChange: (count: number) => void;
