@@ -40,6 +40,9 @@
   overflow menu is open, its card keeps the focus frame, media wash and `⌘K`
   badge even if pointer hover moves to another card; the anchor still suppresses
   bottom hover actions so nothing shifts under the open menu.
+- Prevented Radix dropdown triggers from opening menus on modified shortcut
+  keys such as `Cmd+ArrowDown`; this stops a hidden/focused card `…` trigger
+  from opening a random overflow menu on the main feed.
 - Kept membership optimistic state local to the open picker so stale
   `selectedTags` from background refreshes cannot briefly revert the visible
   `Connect`/`Connected` state.

@@ -764,6 +764,11 @@ Image media expansion:
 - Shortcut не срабатывает из input/textarea/select/contenteditable и вложенных
   overlay/menu/listbox/dialog. Из корня Detail shortcut разрешён: route change
   закрывает Detail тем же путём, что обычная навигация.
+- Dropdown/menu triggers не открываются от modified shortcut keys:
+  `Cmd`/`Ctrl`/`Alt` + `ArrowDown`/`ArrowUp`/`Enter`/`Space` считаются
+  глобальными/системными shortcut candidates, а не keyboard-командой trigger.
+  Поэтому `Cmd+ArrowDown` на главной странице не может открыть случайное
+  card overflow menu, даже если DOM focus остался на скрытой кнопке `…`.
 
 #### Grid (экран коллекции)
 - Стрелки (4 направления) — перемещение фокуса между карточками

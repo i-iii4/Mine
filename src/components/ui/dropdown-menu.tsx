@@ -20,12 +20,36 @@ function DropdownMenuPortal({
   )
 }
 
+function shouldIgnoreModifiedTriggerKey(event: React.KeyboardEvent): boolean {
+  if (!event.metaKey && !event.altKey && !event.ctrlKey) return false
+  return (
+    event.key === "ArrowDown" ||
+    event.key === "ArrowUp" ||
+    event.key === "Enter" ||
+    event.key === " "
+  )
+}
+
 function DropdownMenuTrigger({
+  onKeyDownCapture,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Trigger>) {
+  const handleKeyDownCapture = React.useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      onKeyDownCapture?.(event)
+      if (event.defaultPrevented) return
+      if (!shouldIgnoreModifiedTriggerKey(event)) return
+
+      event.preventDefault()
+      event.stopPropagation()
+    },
+    [onKeyDownCapture]
+  )
+
   return (
     <DropdownMenuPrimitive.Trigger
       data-slot="dropdown-menu-trigger"
+      onKeyDownCapture={handleKeyDownCapture}
       {...props}
     />
   )

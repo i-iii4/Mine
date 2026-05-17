@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -12,6 +12,24 @@ import {
 } from "./dropdown-menu";
 
 describe("DropdownMenu", () => {
+  it("does not open trigger menus from modified arrow shortcuts", () => {
+    render(
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem>Action item</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+
+    fireEvent.keyDown(screen.getByText("Open menu"), {
+      key: "ArrowDown",
+      metaKey: true,
+    });
+
+    expect(screen.queryByText("Action item")).not.toBeInTheDocument();
+  });
+
   it("uses active surface for item focus and open submenu state", () => {
     render(
       <DropdownMenu open modal={false}>

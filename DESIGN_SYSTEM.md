@@ -312,6 +312,10 @@ Input и Command — тоже 32px (`h-8`).
 Content: `rounded-1 border bg-popover p-1 text-popover-foreground`, тень — единая для всплывающих элементов (см. «Всплывающие элементы»).
 Item: `rounded-1 px-2 py-1.5 text-base cursor-default`.
 Item hover/focus uses the active surface swatch: `focus:bg-active focus:text-accent-foreground`. Submenu trigger open state uses the same `bg-active`. Item `variant="destructive"`: красный текст (`text-destructive`), тот же hover/focus фон (`focus:bg-active`).
+Trigger ignores modified opening keys: `Cmd`/`Ctrl`/`Alt` +
+`ArrowDown`/`ArrowUp`/`Enter`/`Space` must not open a dropdown. Those
+combinations remain app/global shortcut candidates even when DOM focus is on a
+hidden or hover-only trigger.
 
 ### Tooltip
 
