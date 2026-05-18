@@ -2,6 +2,7 @@ import {
   useRef,
   useState,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useCallback,
   memo,
@@ -17,6 +18,7 @@ import { Card, CardSkeleton } from "./Card";
 import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
 import { GroupSelectionActionBar } from "./GroupSelectionActionBar";
+import { GroupSelectionCardMenu } from "./GroupSelectionCardMenu";
 import {
   computeMasonryLayout,
   createVisibilityIndex,
@@ -62,7 +64,9 @@ const COMMIT_LOOKAHEAD_BLOCKS = 24;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
 const GRID_TOP_INSET_PX = 64;
+const GRID_BOTTOM_INSET_PX = 32;
 const MARQUEE_DRAG_THRESHOLD_PX = 4;
+const SCROLL_ANCHOR_REFERENCE_OFFSET_PX = 32;
 
 type GridArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
 type FeedInteractionMode = "keyboard" | "pointer";
@@ -86,6 +90,20 @@ type MarqueeSelection = {
   start: LayoutPoint;
   current: LayoutPoint;
   active: boolean;
+};
+type ScrollAnchor = {
+  slug: string;
+  offsetTop: number;
+};
+type ScrollAnchorSnapshot = {
+  routeKey: string;
+  parentWidth: number;
+  blocks: readonly LightBlock[];
+  positions: readonly MasonryPosition[];
+};
+type PendingScrollAnchor = {
+  routeKey: string;
+  anchor: ScrollAnchor;
 };
 
 function isGridArrowKey(key: string): key is GridArrowKey {
@@ -202,6 +220,82 @@ function firstVisibleSlug(
   }
 
   return best ? blocks[best.index]?.slug ?? null : null;
+}
+
+function hasRemovedBlocks(
+  previousBlocks: readonly LightBlock[],
+  currentSlugs: ReadonlySet<string>,
+): boolean {
+  return previousBlocks.some((block) => !currentSlugs.has(block.slug));
+}
+
+function findViewportPreservationAnchor(
+  positions: readonly MasonryPosition[],
+  blocks: readonly LightBlock[],
+  currentSlugs: ReadonlySet<string>,
+  scrollTop: number,
+  viewportHeight: number,
+): ScrollAnchor | null {
+  if (viewportHeight <= 0) return null;
+
+  const viewportTop = scrollTop;
+  const viewportBottom = scrollTop + viewportHeight;
+  const referenceY = viewportTop + Math.min(
+    SCROLL_ANCHOR_REFERENCE_OFFSET_PX,
+    viewportHeight / 2,
+  );
+  let best: (ScrollAnchor & { score: number; itemTop: number; itemLeft: number }) | null = null;
+
+  for (const position of positions) {
+    const block = blocks[position.index];
+    if (!block || !currentSlugs.has(block.slug)) continue;
+
+    const itemTop = GRID_TOP_INSET_PX + position.top;
+    const itemBottom = GRID_TOP_INSET_PX + position.bottom;
+    const visible = itemBottom >= viewportTop && itemTop <= viewportBottom;
+    const distanceFromReference =
+      referenceY < itemTop
+        ? itemTop - referenceY
+        : referenceY > itemBottom
+          ? referenceY - itemBottom
+          : 0;
+    const score = (visible ? 0 : 1_000_000) + distanceFromReference;
+
+    if (
+      !best ||
+      score < best.score - 0.5 ||
+      (Math.abs(score - best.score) <= 0.5 && itemTop < best.itemTop - 0.5) ||
+      (
+        Math.abs(score - best.score) <= 0.5 &&
+        Math.abs(itemTop - best.itemTop) <= 0.5 &&
+        position.left < best.itemLeft
+      )
+    ) {
+      best = {
+        slug: block.slug,
+        offsetTop: itemTop - viewportTop,
+        score,
+        itemTop,
+        itemLeft: position.left,
+      };
+    }
+  }
+
+  return best ? { slug: best.slug, offsetTop: best.offsetTop } : null;
+}
+
+function clampedScrollTopForAnchor(
+  layout: MasonryLayout,
+  viewportHeight: number,
+  position: MasonryPosition,
+  anchor: ScrollAnchor,
+): number {
+  const unclamped = GRID_TOP_INSET_PX + position.top - anchor.offsetTop;
+  const maxScrollTop = Math.max(
+    0,
+    GRID_TOP_INSET_PX + layout.totalHeight + GRID_BOTTOM_INSET_PX - viewportHeight,
+  );
+  return Math.min(Math.max(0, unclamped), maxScrollTop);
 }
 
 function isPositionVisibleInViewport(
@@ -321,6 +415,43 @@ function isEmptyGridPointerTarget(target: EventTarget | null): boolean {
   );
 }
 
+function blockSlugFromKeyboardTarget(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  return target.closest("[data-block-slug]")?.getAttribute("data-block-slug") ?? null;
+}
+
+function isPassiveGridKeyboardTarget(
+  target: EventTarget | null,
+  scrollElement: HTMLElement | null,
+): boolean {
+  if (!(target instanceof HTMLElement)) return target === document.body;
+  if (target === document.body || target === scrollElement) return true;
+  if (!scrollElement?.contains(target)) return false;
+  return !target.closest(
+    [
+      "[data-block-slug]",
+      "button",
+      "a",
+      "input",
+      "textarea",
+      "select",
+      "[contenteditable='true']",
+      "[role='button']",
+      "[data-radix-popper-content-wrapper]",
+    ].join(","),
+  );
+}
+
+function isCommittedSlug(
+  positions: readonly MasonryPosition[],
+  blocks: readonly LightBlock[],
+  slug: string,
+  committedEndIndex: number,
+): boolean {
+  const position = findPositionForSlug(positions, blocks, slug);
+  return Boolean(position && position.index <= committedEndIndex);
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 interface GridProps {
@@ -331,6 +462,8 @@ interface GridProps {
   currentTag?: string;
   scrollToTop: number;
   sidebarCollapsed?: boolean;
+  blockDragActive?: boolean;
+  detailOpen?: boolean;
   keyboardNavigationDisabled?: boolean;
   restoreFocusSlug?: string | null;
   restoreFocusSequence?: number;
@@ -355,16 +488,23 @@ interface GridContext {
   focusedSlug: string | null;
   pinnedActionMenuSlug: string | null;
   selectedSlugs: ReadonlySet<string>;
+  selectedBlocks: readonly LightBlock[];
   actionMenuRequest: { slug: string; sequence: number } | null;
+  selectionBatchMenuRequest: { slug: string; sequence: number } | null;
   hoverEnabled: boolean;
   onGridItemPointerMove: (slug: string, event: ReactPointerEvent<HTMLDivElement>) => void;
   onKeyboardActionMenuOpenChange: (slug: string, open: boolean) => void;
+  onClearSelection: () => void;
   onModifiedCardClick: (block: LightBlock, event: ReactMouseEvent<HTMLDivElement>) => boolean;
   onBlockClick: (block: LightBlock) => void;
   tags: TagCount[];
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
+  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
+  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
+  onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
   onRequestRename: (block: LightBlock) => void;
   onRequestDelete: (slug: string) => void;
 }
@@ -422,6 +562,8 @@ export function Grid({
   currentTag,
   scrollToTop,
   sidebarCollapsed = false,
+  blockDragActive = false,
+  detailOpen = false,
   keyboardNavigationDisabled = false,
   restoreFocusSlug = null,
   restoreFocusSequence = 0,
@@ -452,10 +594,18 @@ export function Grid({
     slug: string;
     sequence: number;
   } | null>(null);
+  const [selectionBatchMenuRequest, setSelectionBatchMenuRequest] = useState<{
+    slug: string;
+    sequence: number;
+  } | null>(null);
   const [pinnedActionMenuSlug, setPinnedActionMenuSlug] = useState<string | null>(null);
   const lastRestoreFocusSequenceRef = useRef(0);
   const lastPointerPositionRef = useRef<FeedPointerPosition | null>(null);
   const blockedPointerPositionRef = useRef<FeedPointerPosition | null>(null);
+  const latestScrollTopRef = useRef(0);
+  const scrollAnchorSnapshotRef = useRef<ScrollAnchorSnapshot | null>(null);
+  const pendingScrollAnchorRef = useRef<PendingScrollAnchor | null>(null);
+  const suppressFocusedScrollOnceRef = useRef(false);
 
   // Grid has exactly three pieces of genuine state:
   //
@@ -497,6 +647,7 @@ export function Grid({
     setParentWidth(el.clientWidth);
     setViewportHeight(el.clientHeight);
     setScrollTop(el.scrollTop);
+    latestScrollTopRef.current = el.scrollTop;
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
@@ -511,16 +662,19 @@ export function Grid({
       rafId = null;
       setScrollTop((current) => {
         const next = el.scrollTop;
+        latestScrollTopRef.current = next;
         return current === next ? current : next;
       });
     };
 
     const handleScroll = () => {
+      latestScrollTopRef.current = el.scrollTop;
       if (rafId !== null) return;
       rafId = requestAnimationFrame(updateScrollTop);
     };
 
     setScrollTop(el.scrollTop);
+    latestScrollTopRef.current = el.scrollTop;
     el.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
       el.removeEventListener("scroll", handleScroll);
@@ -693,6 +847,68 @@ export function Grid({
     return "committed";
   }, [blocks.length, committedEndIndex, parentWidth, targetCommittedEndIndex]);
 
+  useLayoutEffect(() => {
+    const scrollElement = parentRef.current;
+    const routeKey = currentTag ?? "__all__";
+    const previous = scrollAnchorSnapshotRef.current;
+
+    if (
+      scrollElement &&
+      previous &&
+      previous.routeKey === routeKey &&
+      Math.abs(previous.parentWidth - parentWidth) <= 0.5 &&
+      viewportHeight > 0
+    ) {
+      const currentSlugs = new Set(blocks.map((block) => block.slug));
+      if (hasRemovedBlocks(previous.blocks, currentSlugs)) {
+        const anchor = findViewportPreservationAnchor(
+          previous.positions,
+          previous.blocks,
+          currentSlugs,
+          latestScrollTopRef.current,
+          scrollElement.clientHeight || viewportHeight,
+        );
+        if (anchor) {
+          pendingScrollAnchorRef.current = { routeKey, anchor };
+        }
+      }
+    }
+
+    const pending = pendingScrollAnchorRef.current;
+    if (scrollElement && pending) {
+      if (pending.routeKey !== routeKey) {
+        pendingScrollAnchorRef.current = null;
+      } else {
+        const nextPosition = findPositionForSlug(layout.positions, blocks, pending.anchor.slug);
+        if (!nextPosition) {
+          pendingScrollAnchorRef.current = null;
+        } else if (nextPosition.index <= committedEndIndex) {
+          const nextScrollTop = clampedScrollTopForAnchor(
+            layout,
+            scrollElement.clientHeight || viewportHeight,
+            nextPosition,
+            pending.anchor,
+          );
+          pendingScrollAnchorRef.current = null;
+          if (Math.abs(scrollElement.scrollTop - nextScrollTop) > 0.5) {
+            scrollElement.scrollTop = nextScrollTop;
+            latestScrollTopRef.current = nextScrollTop;
+            setScrollTop(nextScrollTop);
+            scrollElement.dispatchEvent(new Event("scroll"));
+            suppressFocusedScrollOnceRef.current = true;
+          }
+        }
+      }
+    }
+
+    scrollAnchorSnapshotRef.current = {
+      routeKey,
+      parentWidth,
+      blocks,
+      positions: layout.positions,
+    };
+  }, [blocks, committedEndIndex, currentTag, layout, parentWidth, viewportHeight]);
+
   const autoplayEligibleBySlug = useMemo(() => {
     const eligible = new Map<string, ReturnType<typeof normalizeFeedPlayback>>();
     for (const block of blocks) {
@@ -760,6 +976,11 @@ export function Grid({
   useEffect(() => {
     if (feedInteractionMode !== "keyboard") return;
     if (!focusedSlug) return;
+    if (pendingScrollAnchorRef.current) return;
+    if (suppressFocusedScrollOnceRef.current) {
+      suppressFocusedScrollOnceRef.current = false;
+      return;
+    }
     const scrollElement = parentRef.current;
     if (!scrollElement) return;
     const position = findPositionForSlug(layout.positions, blocks, focusedSlug);
@@ -807,6 +1028,23 @@ export function Grid({
     setMarqueeSelection(null);
   }, []);
 
+  useEffect(() => {
+    if (!detailOpen) return;
+    clearSelection();
+  }, [clearSelection, detailOpen]);
+
+  const toggleSelectedSlug = useCallback((slug: string) => {
+    setSelectedSlugs((current) => {
+      const next = new Set(current);
+      if (next.has(slug)) {
+        next.delete(slug);
+      } else {
+        next.add(slug);
+      }
+      return next;
+    });
+  }, []);
+
   const handleBlockClick = useCallback((block: LightBlock) => {
     clearSelection();
     onBlockClick(block);
@@ -816,23 +1054,17 @@ export function Grid({
     block: LightBlock,
     event: ReactMouseEvent<HTMLDivElement>,
   ): boolean => {
-    if (event.metaKey || event.shiftKey) {
+    if (event.metaKey || event.shiftKey || selectedSlugs.size > 0) {
       event.preventDefault();
       event.stopPropagation();
-      const next = new Set(selectedSlugs);
-      if (next.has(block.slug)) {
-        next.delete(block.slug);
-      } else {
-        next.add(block.slug);
-      }
-      setSelectedSlugs(next);
+      toggleSelectedSlug(block.slug);
       setFeedInteractionMode("pointer");
       setFocusedSlug(block.slug);
       return true;
     }
 
     return false;
-  }, [selectedSlugs]);
+  }, [selectedSlugs.size, toggleSelectedSlug]);
 
   const marqueeRect = useMemo(
     () => marqueeSelection?.active
@@ -947,10 +1179,17 @@ export function Grid({
         }
         event.preventDefault();
         event.stopPropagation();
-        setActionMenuRequest((current) => ({
-          slug: focusedSlug,
-          sequence: (current?.sequence ?? 0) + 1,
-        }));
+        if (selectedSlugs.size > 0) {
+          setSelectionBatchMenuRequest((current) => ({
+            slug: focusedSlug,
+            sequence: (current?.sequence ?? 0) + 1,
+          }));
+        } else {
+          setActionMenuRequest((current) => ({
+            slug: focusedSlug,
+            sequence: (current?.sequence ?? 0) + 1,
+          }));
+        }
         return;
       }
 
@@ -981,11 +1220,45 @@ export function Grid({
       }
 
       if (event.key === "Enter") {
+        if (selectedSlugs.size > 0) {
+          const targetSlug = blockSlugFromKeyboardTarget(event.target);
+          const keyboardSlug =
+            feedInteractionMode === "keyboard" ? focusedSlug : null;
+          const pointerSlug =
+            feedInteractionMode === "pointer"
+              ? targetSlug ?? (
+                isPassiveGridKeyboardTarget(event.target, scrollElement ?? null)
+                  ? focusedSlug
+                  : null
+              )
+              : null;
+          const selectionSlug = keyboardSlug ?? pointerSlug;
+          if (
+            !selectionSlug ||
+            !isCommittedSlug(
+              layout.positions,
+              blocks,
+              selectionSlug,
+              committedEndIndex,
+            )
+          ) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          toggleSelectedSlug(selectionSlug);
+          setFocusedSlug(selectionSlug);
+          return;
+        }
         if (feedInteractionMode !== "keyboard") return;
         if (!focusedSlug) return;
         const block = blocksBySlug.get(focusedSlug);
         if (!block) return;
         event.preventDefault();
+        if (event.shiftKey || selectedSlugs.size > 0) {
+          toggleSelectedSlug(focusedSlug);
+          return;
+        }
         handleBlockClick(block);
         return;
       }
@@ -1062,6 +1335,7 @@ export function Grid({
     layout.positions,
     selectedSlugs.size,
     scrollTop,
+    toggleSelectedSlug,
     viewportHeight,
   ]);
 
@@ -1233,16 +1507,23 @@ export function Grid({
       focusedSlug: keyboardFocusedSlug,
       pinnedActionMenuSlug,
       selectedSlugs,
+      selectedBlocks,
       actionMenuRequest,
-      hoverEnabled: feedInteractionMode !== "keyboard",
+      selectionBatchMenuRequest,
+      hoverEnabled: feedInteractionMode !== "keyboard" && selectedSlugs.size === 0,
       onGridItemPointerMove: handleGridItemPointerMove,
       onKeyboardActionMenuOpenChange: handleKeyboardActionMenuOpenChange,
+      onClearSelection: clearSelection,
       onModifiedCardClick: handleModifiedCardClick,
       onBlockClick: handleBlockClick,
       tags,
       currentTag,
       onToggleTag,
       onCreateAndAssign,
+      onLoadBlockTags,
+      onBatchSetTag,
+      onCreateAndAssignBatch,
+      onDeleteSelectedBlocks,
       onRequestRename,
       onRequestDelete: handleRequestDelete,
     }),
@@ -1252,16 +1533,23 @@ export function Grid({
       keyboardFocusedSlug,
       pinnedActionMenuSlug,
       selectedSlugs,
+      selectedBlocks,
       actionMenuRequest,
+      selectionBatchMenuRequest,
       feedInteractionMode,
       handleGridItemPointerMove,
       handleKeyboardActionMenuOpenChange,
+      clearSelection,
       handleModifiedCardClick,
       handleBlockClick,
       tags,
       currentTag,
       onToggleTag,
       onCreateAndAssign,
+      onLoadBlockTags,
+      onBatchSetTag,
+      onCreateAndAssignBatch,
+      onDeleteSelectedBlocks,
       onRequestRename,
       handleRequestDelete,
     ],
@@ -1301,37 +1589,30 @@ export function Grid({
               context={gridContext}
             />
           )}
-          {parentWidth > 0 && blocks.length > 0 && phase !== "committed" && (
-            <>
-              <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex justify-center">
-                <p className="rounded-1 border border-border bg-background/90 px-3 py-1 text-sm text-muted-foreground backdrop-blur">
-                  Refining layout…
-                </p>
-              </div>
-              {measurementBatch.length > 0 && (
-                <MeasurementPass
-                  blocks={measurementBatch}
-                  columnWidth={deriveColumnWidth(parentWidth)}
-                  vaultPath={vaultPath}
-                  thumbsRootPath={thumbsRootPath}
-                  onMeasured={handleMeasured}
-                />
-              )}
-            </>
+          {parentWidth > 0 && blocks.length > 0 && phase !== "committed" && measurementBatch.length > 0 && (
+            <MeasurementPass
+              blocks={measurementBatch}
+              columnWidth={deriveColumnWidth(parentWidth)}
+              vaultPath={vaultPath}
+              thumbsRootPath={thumbsRootPath}
+              onMeasured={handleMeasured}
+            />
           )}
         </div>
       </ContextMenuTrigger>
 
-      <GroupSelectionActionBar
-        selectedBlocks={selectedBlocks}
-        tags={tags}
-        currentTag={currentTag}
-        onLoadBlockTags={onLoadBlockTags}
-        onBatchSetTag={onBatchSetTag}
-        onCreateAndAssignBatch={onCreateAndAssignBatch}
-        onDeleteSelectedBlocks={onDeleteSelectedBlocks}
-        onClearSelection={clearSelection}
-      />
+      {!blockDragActive && (
+        <GroupSelectionActionBar
+          selectedBlocks={selectedBlocks}
+          tags={tags}
+          currentTag={currentTag}
+          onLoadBlockTags={onLoadBlockTags}
+          onBatchSetTag={onBatchSetTag}
+          onCreateAndAssignBatch={onCreateAndAssignBatch}
+          onDeleteSelectedBlocks={onDeleteSelectedBlocks}
+          onClearSelection={clearSelection}
+        />
+      )}
 
       {menuBlock && (
         <CardTagMenu
@@ -1437,6 +1718,10 @@ const GridItem = memo(function GridItem({
     context.actionMenuRequest?.slug === block.slug
       ? context.actionMenuRequest.sequence
       : 0;
+  const openSelectionBatchMenuRequestSequence =
+    context.selectionBatchMenuRequest?.slug === block.slug
+      ? context.selectionBatchMenuRequest.sequence
+      : 0;
   const isPinnedActionMenuAnchor = block.slug === context.pinnedActionMenuSlug;
 
   return (
@@ -1475,6 +1760,19 @@ const GridItem = memo(function GridItem({
             allowPlayback={allowPlayback}
             openMoreMenuRequestSequence={openMoreMenuRequestSequence}
             hoverEnabled={context.hoverEnabled && !isPinnedActionMenuAnchor}
+            dragBlocks={
+              isSelected
+                ? [
+                    block,
+                    ...context.selectedBlocks.filter((item) => item.slug !== block.slug),
+                  ]
+                : [block]
+            }
+            clearSelectionOnDragStart={
+              !isSelected && context.selectedSlugs.size > 0
+                ? context.onClearSelection
+                : undefined
+            }
             onKeyboardMoreMenuOpenChange={(open) => {
               context.onKeyboardActionMenuOpenChange(block.slug, open);
             }}
@@ -1503,6 +1801,21 @@ const GridItem = memo(function GridItem({
               ⌘K
             </div>
           </div>
+        )}
+        {isCommitted &&
+          context.selectedSlugs.size > 0 &&
+          (block.slug === context.focusedSlug || openSelectionBatchMenuRequestSequence > 0) && (
+          <GroupSelectionCardMenu
+            selectedBlocks={context.selectedBlocks}
+            tags={context.tags}
+            currentTag={context.currentTag}
+            openRequestSequence={openSelectionBatchMenuRequestSequence}
+            onLoadBlockTags={context.onLoadBlockTags}
+            onBatchSetTag={context.onBatchSetTag}
+            onCreateAndAssignBatch={context.onCreateAndAssignBatch}
+            onDeleteSelectedBlocks={context.onDeleteSelectedBlocks}
+            onClearSelection={context.onClearSelection}
+          />
         )}
       </div>
       {isCommitted && isSelected && (

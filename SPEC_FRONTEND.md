@@ -416,7 +416,7 @@ tail перед левой направляющей. Title slot остаётся
 `min-w-[100px] max-w-[150px] flex-1`: пока хватает места, сначала сужается
 preview strip, и только после этого начинает ужиматься текстовая колонка.
 
-**Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время любого drag-to-channel (`isDropDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию. Drag-over карточки, inline-media или выделенного фрагмента над channel row визуально равен обычному sidebar row hover/focus-mode: `data-sidebar-row-focus-mode`, `data-sidebar-row-focused` и seam accent; отдельный `ring-2 ring-ring ring-inset` для sidebar drop target запрещён. `SortableContext` получает полный список channels IDs независимо от видимости.
+**Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время любого drag-to-channel (`isDropDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию. Для sidebar drop-target применяется `sidebarPointerWithin`: фактический row под курсором берётся через `document.elementsFromPoint()` и `[data-sidebar-row]`, после чего fallback идёт в `pointerWithin`. Это защищает drop/hover от stale droppable rects при sidebar scroll/перерисовке и привязывает цель к реальному положению курсора. Drag-over карточки, inline-media или выделенного фрагмента над channel row визуально равен обычному sidebar row hover/focus-mode: `data-sidebar-row-focus-mode`, `data-sidebar-row-focused` и seam accent; отдельный `ring-2 ring-ring ring-inset` для sidebar drop target запрещён. `SortableContext` получает полный список channels IDs независимо от видимости.
 
 **Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`, `vault-changed`), а не через polling. Initial state и event refresh идут через `listChannelPreviews(20)`; `useChannelPreviewsEvents` коалесцирует события и фильтрует `has_thumb=false` как defense-in-depth. Cache-bust: initial load использует `?m=<mtime>` из SQLite `thumb_mtime`, real-time updates используют `?v=<counter>` (per-slug version counter, инкрементируется на `thumb:updated`). Два механизма дополняют друг друга: `?m=` покрывает межсессионные изменения (Phase 2 worker перезаписал PNG→JPEG), `?v=` покрывает live-обновления внутри сессии.
 
@@ -843,6 +843,8 @@ Image media expansion:
 
 - `Cmd+click` and `Shift+click` both toggle only the clicked committed card
   without opening Detail.
+- While group selection is active, plain card click also toggles the clicked
+  card and does not open Detail.
 - Empty-area pointer drag renders a marquee rectangle and selects every
   committed card whose `layout.positions` rectangle intersects it.
 - Grid owns `selectedSlugs` and transient `marqueeSelection`; Card receives
@@ -852,6 +854,18 @@ Image media expansion:
 - Selected GridItem renders `data-feed-grid-item-selected="true"` and an
   individual monochrome external selection frame: `2px` black/white frame with
   a `1px` gap outside the card and no corner radius.
+- While one or more cards are selected, Grid suppresses CardHoverMenu hover
+  affordances for every feed card. Hidden hover action layers stay
+  non-interactive.
+- Keyboard batch selection is fully usable from Grid focus: `Shift+Enter`
+  toggles the focused card, and once selection exists plain `Enter` toggles the
+  focused card instead of opening Detail. Keyboard mode uses Grid `focusedSlug`
+  as the source of truth and ignores stale DOM focus on another card. Pointer
+  mode can still toggle a committed pointer-hovered or DOM-focused feed card.
+  `Enter` must not fall through to Card activation. `Cmd+K` opens a contextual
+  batch menu anchored to the focused card's top-right overflow action; the menu
+  contains a muted selected-count header plus `Connect`, collection-scoped
+  `Disconnect` outside Everything and `Delete`.
 - When at least one card is selected, Grid renders a bottom floating action
   island centered inside the main/right content pane at `bottom-s3` (`16px`
   above the `h-8` app bottom bar), fixed
@@ -862,8 +876,23 @@ Image media expansion:
   standard Button actions: `Connect`, text-only collection-scoped
   `Disconnect`, text-only destructive `Delete`; the icon-only `X` clear button
   is the rightmost control.
-- Selection clears on plain empty-Grid click, route/channel change and plain
-  card opening.
+- Selection clears on plain empty-Grid click, route/channel change, plain card
+  opening and any App-level Detail open from Sidebar/Search/related surfaces.
+- After single-card or batch card deletion, Grid preserves the approximate
+  viewport by anchoring to a surviving card from the previous
+  `layout.positions` and restoring that card's viewport offset after the new
+  masonry generation is committed. Delete reflow must not be driven by the old
+  absolute `scrollTop`, and stale keyboard focus must not autoscroll over the
+  pending delete anchor.
+- Dragging a selected card creates a group block drag: draggable data carries
+  every selected slug, App applies channel drops to all dragged slugs, and
+  DragOverlay renders a macOS-style `data-feed-drag-stack` preview capped at
+  four visible real frozen card-preview layers. The front layer is not
+  transformed; back layers use only integer `translate3d(...)` and small
+  `rotate(...)`; `scale(...)` is forbidden. If selected count exceeds the
+  visible cap, the preview shows a count badge while the payload still carries
+  every slug. Dragging a non-selected card while selection exists is a
+  single-card drag and clears the old selection on drag start.
 
 #### Detail
 - Escape закрывает Detail, кроме случаев, когда keyboard event уже

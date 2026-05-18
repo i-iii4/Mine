@@ -953,7 +953,19 @@ property. `Cmd+click` and `Shift+click` both toggle only the clicked card.
 Broader selection uses empty-area marquee drag, and Grid computes selected slugs
 from `layout.positions` rectangle intersection. The selected visual is rendered
 by GridItem as a layout-neutral overlay, while batch actions live in a bottom
-floating island.
+floating island. When a selected card is dragged, Grid exports the selected
+slug set through the draggable Card payload; App applies channel drops to every
+dragged slug and renders a capped macOS-style DragOverlay stack. The stack keeps
+each visible item as a real frozen card preview, not an interactive `Card` and
+not an empty plate; front card stays untransformed, back cards use integer
+offsets with small rotations and never use `scale(...)`. DOM state never becomes
+the source of truth for the dragged group.
+
+Sidebar channel targeting uses `sidebarPointerWithin`: before falling back to
+dnd-kit `pointerWithin`, App resolves the actual `[data-sidebar-row]` under
+`pointerCoordinates` via `document.elementsFromPoint()`. This keeps drop hover
+and final drop aligned to the visible cursor row even when sidebar rows were
+scrolled or remeasured during drag.
 
 Детальная спецификация: [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
 

@@ -421,7 +421,7 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.8 | Исправление сброса прокрутки Grid: blocksFingerprint вместо ссылки на массив + отображение ошибок в DropZone | [x] |
 | 7.9 | Бэкенд: команда rename_channel (обновление тега во всех .md + индексе) | [x] |
 | 7.10 | Теги в сайдбаре: отображение всех уникальных тегов из frontmatter, контекстное меню (переименовать/удалить), inline-редактирование | [x] |
-| 7.11 | Drag-and-drop карточки / открытого Detail на тег (dnd-kit + PointerSensor): pointerWithin коллизия, autoScroll сайдбара, shared block payload | [x] |
+| 7.11 | Drag-and-drop карточки / открытого Detail на тег (dnd-kit + PointerSensor): sidebarPointerWithin row-under-cursor collision, autoScroll сайдбара, shared block payload | [x] |
 | 7.12 | Контекстное меню карточки (правый клик): теги с чекбоксами, поиск, создание нового тега, удаление с подтверждением | [x] |
 | 7.13 | Drag-and-drop каналов: @dnd-kit/sortable, SortableContext, reorder_channels с автосозданием записей, кнопка «New channel» | [x] |
 | 7.14 | Багфиксы drop-зоны: тег текущего канала при file drop, защита от дублирования, isCardDragging для синего кольца, удаление канала при удалении тега, Unicode в slugifyTag | [x] |
@@ -1106,7 +1106,8 @@ Specification: [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
 | 26.4 | Bottom action island | [x] | Main-pane-centered `h-8` opaque island, `bottom-s3`, clear button, Detail-top-bar-style muted Russian selected-card count, direct Button actions `Connect`, text-only collection-scoped `Disconnect`, red text-only `Delete`, horizontal overflow |
 | 26.5 | Batch Connect | [x] | `BatchCollectionPicker` reuses `CollectionPicker` row/input/action styling; binary all/not-all states, sidebar-order rows, optimistic state without row reordering or partial count labels |
 | 26.6 | Batch Disconnect/Delete | [x] | Disconnect selected cards from current collection; batch destructive confirmation for Delete; batch delete keeps media files in v1 |
-| 26.7 | Tests + manual QA | [ ] | Automated modifier selection, range geometry and action-bar coverage is in place; real-vault manual QA for dark/light frame and batch actions remains |
+| 26.7 | Group drag-to-channel | [x] | Dragging a selected card drags the selected slug set, renders a capped macOS-style flocking stack of real frozen card previews, and connects all dragged cards on channel/create-channel drop |
+| 26.8 | Tests + manual QA | [ ] | Automated modifier selection, range geometry, action-bar, group drag payload and stack preview coverage is in place; real-vault manual QA for dark/light frame and batch actions remains |
 
 ### Backlog
 

@@ -813,6 +813,15 @@ text-only red `Delete`, затем rightmost icon-only `X` clear button. Пол�
 контракт:
 [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
 
+Group drag preview использует macOS-style drag flocking: каждый видимый слой —
+реальный frozen card preview из selected set, не пустая plate и не interactive
+`Card`. До четырёх слоёв видимы; полный payload остаётся в `dragSlugs`, а при
+переполнении показывается count badge. Front card не трансформируется; back
+cards используют только integer `translate3d` + малые углы:
+`-6/-6/-0.9deg`, `7/-11/0.75deg`, `-2/-16/-0.45deg`. `scale(...)` запрещён.
+Stack не вводит новые радиусы и не двигает реальные masonry cards; bottom
+action island скрыт во время block drag.
+
 Article-карточки в ленте используют дополнительную surface-заливку только в тёмной теме: `feed-article-card` применяет `background: var(--accent)` при `data-theme="dark"` или системной dark theme, если не выбран `data-theme="light"`. В светлой теме article-карточка остаётся на стандартном `bg-background`.
 
 Expanded image preview использует минималистичное разделение primary/secondary plane: фон страницы становится вторичным через `background: rgb(0 0 0 / 0.56)` и `backdrop-filter: saturate(0.55)` без blur; foreground image получает только утилитарное отделение `box-shadow: 0 24px 96px rgb(0 0 0 / 0.45)` и `outline: 1px solid rgb(255 255 255 / 0.08)`. Кнопка выхода из preview — не `X`, а inward-arrows `Minimize2` с действием `Collapse image preview`.

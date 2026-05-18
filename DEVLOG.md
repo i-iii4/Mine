@@ -1,5 +1,64 @@
 # Devlog
 
+## 18.05.2026 [fix] — Keep selection-mode commands inside Grid
+
+### Context
+
+- While group selection was active, pressing `Enter` on a pointer-hovered or
+  DOM-focused feed card could still fall through to `Card` activation.
+- That opened Detail instead of toggling the card in the current selected set.
+- In keyboard selection mode, browser DOM focus could stay on an older card
+  while Grid `focusedSlug` had already moved with arrows.
+- The focused-card `Cmd+K` batch menu only exposed `Connect` and `Delete`,
+  even inside a concrete collection where `Disconnect` is valid.
+
+### Completed
+
+- Moved selection-mode `Enter` handling ahead of the keyboard-only Grid branch.
+- `Enter` now uses Grid `focusedSlug` as the source of truth in keyboard mode,
+  ignoring stale DOM focus on another card. Pointer mode still uses the
+  committed keyboard target or pointer-hovered Grid card.
+- Added collection-scoped `Disconnect` to the focused-card batch menu when
+  `currentTag` exists; it remains absent in Everything.
+- Added Grid regression coverage proving `Enter` does not call `onBlockClick`
+  in selection mode and that stale DOM focus cannot select the wrong card.
+
+## 18.05.2026 [fix] — Preserve Grid viewport after card removal
+
+### Context
+
+- Deleting one card or a scattered selected set could leave Grid at the old
+  absolute `scrollTop` after masonry reflow.
+- If removed cards were above the current viewport, the same `scrollTop` now
+  pointed at different visual content; keyboard focus could also try to scroll
+  an old focused card back into view during the same reflow.
+
+### Completed
+
+- Added Grid-owned scroll anchoring for same-route block removals.
+- Grid captures a surviving card near the viewport top before removal, waits
+  until that card is committed in the new layout generation, then restores its
+  viewport offset.
+- Suppressed stale keyboard-focus autoscroll while a delete scroll anchor is
+  pending or has just been applied.
+- Added Grid regression coverage for scattered removals and stale keyboard
+  focus after deletion.
+
+## 18.05.2026 [fix] — Hide Grid layout refinement notice
+
+### Context
+
+- During feed layout refinement, Grid briefly showed the internal
+  `Refining layout…` status near the load range.
+- The message communicated implementation state rather than a user action and
+  read as a rendering artifact.
+
+### Completed
+
+- Removed the visible refinement notice from `Grid`.
+- Kept the hidden `MeasurementPass` and skeleton/committed layout pipeline
+  unchanged.
+
 ## 17.05.2026 [change] — Add Grid group selection and batch actions
 
 ### Context
@@ -38,10 +97,38 @@
   `BatchCollectionPicker` inside the existing `CollectionPicker.tsx` menu
   implementation family, so it inherits the same active row, input and right
   action button hover contract as single-card Connect.
+- Moved batch Connect/Disconnect persistence behind the optimistic UI update:
+  row labels switch before the background mutation starts, and App schedules
+  grid/taxonomy/previews refresh through the coalesced refresh queue instead of
+  blocking the open menu with `reloadAllSnapshots()`.
 - Added collection-scoped batch Disconnect and batch Delete. Delete uses the
   safe v1 path and keeps media files in the vault.
-- Selection now clears on empty Grid click, plain card open and channel route
-  change.
+- Added group drag-to-channel: dragging a selected card now carries the selected
+  slug set, hides the bottom action island during block drag, renders a capped
+  macOS-style card stack preview and connects every dragged card on channel or
+  create-channel drop. The stack preview follows drag flocking: up to four real
+  frozen card previews are visible, the front layer is untransformed, back
+  layers use integer offsets with small rotations, and no layer uses
+  `scale(...)`; overflow selected items are represented by a count badge.
+- Replaced global `pointerWithin` sidebar targeting with `sidebarPointerWithin`:
+  sidebar drop/hover first resolves the actual `[data-sidebar-row]` under the
+  cursor via `document.elementsFromPoint()`, then falls back to dnd-kit
+  `pointerWithin`. This keeps single-card and group-card drops aligned with the
+  visible cursor row even after sidebar scroll/repaint.
+- Suppressed feed card hover action controls while group selection is active:
+  selected and unselected cards no longer reveal CardHoverMenu buttons on
+  pointer hover, and hidden action layers do not intercept clicks.
+- Extended selection mode click behavior: once at least one card is selected,
+  a plain card click toggles that card in the selection instead of opening
+  Detail.
+- Added keyboard group-selection flow: `Shift+Enter` toggles the focused card,
+  and after selection exists plain `Enter` toggles focused cards while arrow
+  keys continue to move Grid focus.
+- Added focused-card `Cmd+K` batch menu for keyboard users. In selection mode
+  `Cmd+K` opens a contextual menu on the focused card's top-right overflow
+  anchor with a selected-count header and only `Connect` plus `Delete`.
+- Selection now clears on empty Grid click, plain card open, channel route
+  change and App-level Detail open from Sidebar/Search/related surfaces.
 - Linked the new spec from architecture, frontend spec, design system, plan and
   agent required reading.
 

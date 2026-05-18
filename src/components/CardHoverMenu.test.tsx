@@ -138,8 +138,10 @@ describe("CardHoverMenu", () => {
 
     expect(await screen.findByText("Rename…")).toBeInTheDocument();
     expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-100");
+    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("pointer-events-auto");
     expect(container.querySelector("[data-card-hover-more-action]")).not.toHaveClass("group-hover:opacity-100");
     expect(container.querySelector("[data-card-hover-bottom-actions]")).toHaveClass("opacity-0");
+    expect(container.querySelector("[data-card-hover-bottom-actions]")).toHaveClass("pointer-events-none");
     expect(container.querySelector("[data-card-hover-bottom-actions]")).not.toHaveClass("group-hover:opacity-100");
   });
 

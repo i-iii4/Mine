@@ -766,6 +766,117 @@ describe("Grid — no collapse after add / revisit", () => {
     );
   });
 
+  it("preserves the viewport anchor when cards are removed from different feed positions", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeBlock(9601),
+      makeBlock(9602),
+      makeBlock(9603),
+      makeBlock(9604),
+      makeBlock(9605),
+      makeBlock(9606),
+      makeBlock(9607),
+      makeBlock(9608),
+    ];
+    for (const block of blocks) {
+      setBlockHeight(block.id, 200);
+    }
+
+    const { rerender } = render(
+      <Grid {...BASE_PROPS} blocks={blocks} currentTag="delete-anchor" />,
+    );
+
+    act(() => {
+      triggerResize(280, 300);
+    });
+    await flushAsync();
+
+    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
+    expect(scrollEl).toBeTruthy();
+
+    act(() => {
+      if (scrollEl) {
+        scrollEl.scrollTop = 528;
+        scrollEl.dispatchEvent(new Event("scroll"));
+      }
+    });
+    await flushAsync();
+
+    expect(gridItemForSlug("block-9603")).toBeTruthy();
+
+    rerender(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks.filter((block) => block.id !== 9601 && block.id !== 9605)}
+        currentTag="delete-anchor"
+      />,
+    );
+    await flushAsync();
+
+    expect(scrollEl?.scrollTop).toBe(296);
+    expect(gridItemForSlug("block-9603")).toBeTruthy();
+  });
+
+  it("does not let stale keyboard focus override delete scroll anchoring", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeBlock(9611),
+      makeBlock(9612),
+      makeBlock(9613),
+      makeBlock(9614),
+      makeBlock(9615),
+      makeBlock(9616),
+    ];
+    for (const block of blocks) {
+      setBlockHeight(block.id, 200);
+    }
+
+    const { rerender } = render(
+      <Grid {...BASE_PROPS} blocks={blocks} currentTag="delete-keyboard-anchor" />,
+    );
+
+    act(() => {
+      triggerResize(280, 300);
+    });
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(gridItemForSlug("block-9611")).toHaveAttribute(
+      "data-feed-grid-item-focused",
+      "true",
+    );
+
+    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
+    expect(scrollEl).toBeTruthy();
+    act(() => {
+      if (scrollEl) {
+        scrollEl.scrollTop = 760;
+        scrollEl.dispatchEvent(new Event("scroll"));
+      }
+    });
+    await flushAsync();
+
+    const scrollToMock = vi.mocked(Element.prototype.scrollTo);
+    scrollToMock.mockClear();
+
+    rerender(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks.filter((block) => block.id !== 9612)}
+        currentTag="delete-keyboard-anchor"
+      />,
+    );
+    await flushAsync();
+
+    expect(scrollEl?.scrollTop).toBe(528);
+    expect(scrollToMock).not.toHaveBeenCalled();
+  });
+
   it("does not handle feed keyboard navigation while disabled by App", async () => {
     vi.useFakeTimers();
 
@@ -811,6 +922,22 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(
       selectedWrapper?.querySelector("[data-feed-grid-selection-frame]"),
     ).toBeTruthy();
+    expect(
+      selectedWrapper?.querySelector("[data-card-hover-more-action]"),
+    ).not.toHaveClass("group-hover:opacity-100");
+    expect(
+      selectedWrapper?.querySelector("[data-card-hover-more-action]"),
+    ).toHaveClass("pointer-events-none");
+    expect(
+      selectedWrapper?.querySelector("[data-card-hover-more-action]"),
+    ).not.toHaveAttribute("data-card-hover-enabled");
+    const unselectedWrapper = gridItemForSlug("block-9502");
+    expect(
+      unselectedWrapper?.querySelector("[data-card-hover-more-action]"),
+    ).not.toHaveClass("group-hover:opacity-100");
+    expect(
+      unselectedWrapper?.querySelector("[data-card-hover-bottom-actions]"),
+    ).not.toHaveClass("group-hover:opacity-100");
     const actionBar = document.querySelector("[data-feed-selection-action-bar]");
     expect(actionBar).toHaveClass(
       "absolute",
@@ -878,7 +1005,317 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(screen.queryByText("1 карточка")).not.toBeInTheDocument();
   });
 
-  it("clears group selection on empty-grid click, route change and opening a card", async () => {
+  it("turns plain card clicks into selection toggles while group selection is active", async () => {
+    vi.useFakeTimers();
+
+    const onBlockClick = vi.fn();
+    const blocks = [makeBlock(9511), makeBlock(9512)];
+    setBlockHeight(9511, 200);
+    setBlockHeight(9512, 220);
+
+    render(<Grid {...BASE_PROPS} onBlockClick={onBlockClick} blocks={blocks} />);
+    await flushAsync();
+
+    const firstCard = document.querySelector('[data-block-slug="block-9511"]') as HTMLElement;
+    const secondCard = document.querySelector('[data-block-slug="block-9512"]') as HTMLElement;
+
+    fireEvent.click(firstCard, { metaKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.click(secondCard);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onBlockClick).not.toHaveBeenCalled();
+    expect(gridItemForSlug("block-9511")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(gridItemForSlug("block-9512")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(screen.getByText("2 карточки")).toBeInTheDocument();
+
+    fireEvent.click(firstCard);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onBlockClick).not.toHaveBeenCalled();
+    expect(gridItemForSlug("block-9511")).not.toHaveAttribute("data-feed-grid-item-selected");
+    expect(gridItemForSlug("block-9512")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(screen.getByText("1 карточка")).toBeInTheDocument();
+  });
+
+  it("toggles the pointer-hovered card with Enter while group selection is active", async () => {
+    vi.useFakeTimers();
+
+    const onBlockClick = vi.fn();
+    const blocks = [makeBlock(9515), makeBlock(9516), makeBlock(9517)];
+    setBlockHeight(9515, 200);
+    setBlockHeight(9516, 220);
+    setBlockHeight(9517, 240);
+
+    render(<Grid {...BASE_PROPS} onBlockClick={onBlockClick} blocks={blocks} />);
+    await flushAsync();
+
+    const firstCard = document.querySelector('[data-block-slug="block-9515"]') as HTMLElement;
+    const thirdCard = document.querySelector('[data-block-slug="block-9517"]') as HTMLElement;
+    const secondWrapper = gridItemForSlug("block-9516");
+    expect(secondWrapper).toBeTruthy();
+
+    fireEvent.click(firstCard, { metaKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.pointerMove(secondWrapper!, {
+      clientX: 240,
+      clientY: 160,
+      movementX: 1,
+      movementY: 0,
+      pointerId: 1,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.keyDown(document.body, { key: "Enter" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onBlockClick).not.toHaveBeenCalled();
+    expect(gridItemForSlug("block-9515")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(gridItemForSlug("block-9516")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(screen.getByText("2 карточки")).toBeInTheDocument();
+
+    fireEvent.keyDown(thirdCard, { key: "Enter" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onBlockClick).not.toHaveBeenCalled();
+    expect(gridItemForSlug("block-9517")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(screen.getByText("3 карточки")).toBeInTheDocument();
+  });
+
+  it("supports keyboard-only group selection with Shift-Enter and Enter", async () => {
+    vi.useFakeTimers();
+
+    const onBlockClick = vi.fn();
+    const blocks = [makeBlock(9521), makeBlock(9522), makeBlock(9523)];
+    setBlockHeight(9521, 200);
+    setBlockHeight(9522, 220);
+    setBlockHeight(9523, 240);
+
+    render(<Grid {...BASE_PROPS} onBlockClick={onBlockClick} blocks={blocks} />);
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(gridItemForSlug("block-9521")).toHaveAttribute("data-feed-grid-item-focused", "true");
+
+    fireEvent.keyDown(window, { key: "Enter", shiftKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onBlockClick).not.toHaveBeenCalled();
+    expect(gridItemForSlug("block-9521")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(screen.getByText("1 карточка")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(gridItemForSlug("block-9522")).toHaveAttribute("data-feed-grid-item-focused", "true");
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onBlockClick).not.toHaveBeenCalled();
+    expect(gridItemForSlug("block-9521")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(gridItemForSlug("block-9522")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(screen.getByText("2 карточки")).toBeInTheDocument();
+  });
+
+  it("uses Grid keyboard focus, not stale DOM focus, for Enter in group selection", async () => {
+    vi.useFakeTimers();
+
+    const onBlockClick = vi.fn();
+    const blocks = [makeBlock(9524), makeBlock(9525), makeBlock(9526)];
+    setBlockHeight(9524, 200);
+    setBlockHeight(9525, 220);
+    setBlockHeight(9526, 240);
+
+    render(<Grid {...BASE_PROPS} onBlockClick={onBlockClick} blocks={blocks} />);
+    await flushAsync();
+
+    const firstCard = document.querySelector('[data-block-slug="block-9524"]') as HTMLElement;
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "Enter", shiftKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(gridItemForSlug("block-9524")).toHaveAttribute("data-feed-grid-item-selected", "true");
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(gridItemForSlug("block-9525")).toHaveAttribute("data-feed-grid-item-focused", "true");
+
+    fireEvent.keyDown(firstCard, { key: "Enter" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onBlockClick).not.toHaveBeenCalled();
+    expect(gridItemForSlug("block-9524")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(gridItemForSlug("block-9525")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(screen.getByText("2 карточки")).toBeInTheDocument();
+  });
+
+  it("opens a focused-card batch menu with Command-K while group selection is active", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9531), makeBlock(9532)];
+    setBlockHeight(9531, 200);
+    setBlockHeight(9532, 220);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "Enter", shiftKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const focusedWrapper = gridItemForSlug("block-9531");
+    const batchMenu = document.querySelector("[data-feed-grid-batch-menu]") as HTMLElement;
+    expect(focusedWrapper?.querySelector("[data-feed-grid-batch-menu-trigger]")).toHaveAttribute("data-state", "open");
+    expect(batchMenu).toBeInTheDocument();
+    expect(within(batchMenu).getByText("1 карточка")).toBeInTheDocument();
+    expect(within(batchMenu).getByText("Connect")).toBeInTheDocument();
+    expect(within(batchMenu).getByText("Delete")).toBeInTheDocument();
+    expect(within(batchMenu).queryByText("Disconnect")).toBeNull();
+    expect(within(batchMenu).queryByText("Source")).toBeNull();
+    expect(within(batchMenu).queryByText("Rename…")).toBeNull();
+
+    fireEvent.keyDown(batchMenu, { key: "Escape" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector("[data-feed-grid-batch-menu]")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeInTheDocument();
+    expect(gridItemForSlug("block-9531")).toHaveAttribute("data-feed-grid-item-selected", "true");
+  });
+
+  it("shows collection-scoped Disconnect in the focused-card batch menu outside Everything", async () => {
+    vi.useFakeTimers();
+
+    const onBatchSetTag = vi.fn();
+    const blocks = [makeBlock(9533), makeBlock(9534)];
+    setBlockHeight(9533, 200);
+    setBlockHeight(9534, 220);
+
+    render(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        currentTag="test"
+        onBatchSetTag={onBatchSetTag}
+      />,
+    );
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "Enter", shiftKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const batchMenu = document.querySelector("[data-feed-grid-batch-menu]") as HTMLElement;
+    expect(within(batchMenu).getByText("Disconnect")).toBeInTheDocument();
+
+    fireEvent.click(within(batchMenu).getByText("Disconnect"));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector("[data-feed-grid-batch-menu]")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeNull();
+    expect(onBatchSetTag).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await Promise.resolve();
+    });
+
+    expect(onBatchSetTag).toHaveBeenCalledWith(["block-9533"], "test", false);
+  });
+
+  it("exports selected cards as the drag group and hides the action island while dragging", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9571), makeBlock(9572), makeBlock(9573)];
+    setBlockHeight(9571, 200);
+    setBlockHeight(9572, 220);
+    setBlockHeight(9573, 240);
+
+    const { rerender } = render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9571"]')!, { metaKey: true });
+    fireEvent.click(document.querySelector('[data-block-slug="block-9572"]')!, { metaKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector('[data-block-slug="block-9571"]')).toHaveAttribute(
+      "data-feed-card-drag-count",
+      "2",
+    );
+    expect(document.querySelector('[data-block-slug="block-9571"]')).toHaveAttribute(
+      "data-feed-card-drag-slugs",
+      "block-9571 block-9572",
+    );
+    expect(document.querySelector('[data-block-slug="block-9572"]')).toHaveAttribute(
+      "data-feed-card-drag-slugs",
+      "block-9572 block-9571",
+    );
+    expect(document.querySelector('[data-block-slug="block-9573"]')).not.toHaveAttribute(
+      "data-feed-card-drag-count",
+    );
+    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeInTheDocument();
+
+    rerender(<Grid {...BASE_PROPS} blocks={blocks} blockDragActive />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeNull();
+    expect(gridItemForSlug("block-9571")).toHaveAttribute(
+      "data-feed-grid-item-selected",
+      "true",
+    );
+  });
+
+  it("clears group selection on empty-grid click and route change", async () => {
     vi.useFakeTimers();
 
     const onBlockClick = vi.fn();
@@ -925,8 +1362,9 @@ describe("Grid — no collapse after add / revisit", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(onBlockClick).toHaveBeenCalledWith(blocks[1]);
-    expect(gridItemForSlug("block-9551")).not.toHaveAttribute("data-feed-grid-item-selected");
+    expect(onBlockClick).not.toHaveBeenCalled();
+    expect(gridItemForSlug("block-9551")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(gridItemForSlug("block-9552")).toHaveAttribute("data-feed-grid-item-selected", "true");
 
     fireEvent.click(document.querySelector('[data-block-slug="block-9551"]')!, {
       metaKey: true,
@@ -934,13 +1372,44 @@ describe("Grid — no collapse after add / revisit", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(gridItemForSlug("block-9551")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(gridItemForSlug("block-9551")).not.toHaveAttribute("data-feed-grid-item-selected");
+    expect(gridItemForSlug("block-9552")).toHaveAttribute("data-feed-grid-item-selected", "true");
 
     rerender(<Grid {...BASE_PROPS} blocks={blocks} currentTag="next-channel" onBlockClick={onBlockClick} />);
     await act(async () => {
       await Promise.resolve();
     });
     expect(gridItemForSlug("block-9551")).not.toHaveAttribute("data-feed-grid-item-selected");
+    expect(gridItemForSlug("block-9552")).not.toHaveAttribute("data-feed-grid-item-selected");
+  });
+
+  it("clears group selection when Detail opens outside Grid", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9561), makeBlock(9562)];
+    setBlockHeight(9561, 200);
+    setBlockHeight(9562, 220);
+
+    const { rerender } = render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9561"]')!, {
+      metaKey: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gridItemForSlug("block-9561")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeInTheDocument();
+
+    rerender(<Grid {...BASE_PROPS} blocks={blocks} detailOpen />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gridItemForSlug("block-9561")).not.toHaveAttribute("data-feed-grid-item-selected");
+    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeNull();
   });
 
   it("toggles individual cards with Shift-click instead of selecting a range", async () => {
@@ -1082,6 +1551,14 @@ describe("Grid — no collapse after add / revisit", () => {
       await Promise.resolve();
     });
 
+    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeNull();
+    expect(onBatchSetTag).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await Promise.resolve();
+    });
+
     expect(onBatchSetTag).toHaveBeenCalledWith(
       ["block-9521", "block-9522"],
       "test",
@@ -1144,7 +1621,16 @@ describe("Grid — no collapse after add / revisit", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(onBatchSetTag).toHaveBeenCalledWith(
+
+    expect(testRow).toHaveAttribute("data-batch-collection-row-state", "all");
+    expect(within(testRow).getByRole("button", { name: "Disconnect test" })).toHaveTextContent("Disconnect");
+    expect(onBatchSetTag).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await Promise.resolve();
+    });
+    expect(onBatchSetTag).toHaveBeenLastCalledWith(
       ["block-9531", "block-9532"],
       "test",
       true,
@@ -1159,7 +1645,16 @@ describe("Grid — no collapse after add / revisit", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(onBatchSetTag).toHaveBeenCalledWith(
+
+    expect(allConnectedRow).toHaveAttribute("data-batch-collection-row-state", "not-all");
+    expect(within(allConnectedRow).getByRole("button", { name: "Connect all-connected" })).toHaveTextContent("Connect");
+    expect(onBatchSetTag).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await Promise.resolve();
+    });
+    expect(onBatchSetTag).toHaveBeenLastCalledWith(
       ["block-9531", "block-9532"],
       "all-connected",
       false,

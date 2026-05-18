@@ -30,6 +30,7 @@ interface BatchCollectionPickerProps {
   tagLookup: ReadonlyMap<string, readonly string[]>;
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssign: (tag: string) => void | Promise<void>;
+  onRequestClose?: () => void;
 }
 
 type BatchMembershipState = "all" | "not-all";
@@ -426,6 +427,7 @@ export function BatchCollectionPicker({
   tagLookup,
   onBatchSetTag,
   onCreateAndAssign,
+  onRequestClose,
 }: BatchCollectionPickerProps) {
   const [search, setSearch] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -487,6 +489,15 @@ export function BatchCollectionPicker({
   };
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      if (onRequestClose) {
+        event.preventDefault();
+        event.stopPropagation();
+        onRequestClose();
+      }
+      return;
+    }
+
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       if (filtered.length > 0) {
         event.preventDefault();

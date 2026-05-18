@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -23,6 +24,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { BatchCollectionPicker } from "./CollectionPicker";
 import type { LightBlock, TagCount } from "@/types";
+import {
+  patchTagLookup,
+  scheduleAfterOptimisticUiUpdate,
+  selectedCardCountLabel,
+} from "@/lib/groupSelection";
 
 interface GroupSelectionActionBarProps {
   selectedBlocks: LightBlock[];
@@ -33,38 +39,6 @@ interface GroupSelectionActionBarProps {
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
   onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
   onClearSelection: () => void;
-}
-
-function selectedCardCountLabel(count: number): string {
-  const mod10 = count % 10;
-  const mod100 = count % 100;
-  if (mod10 === 1 && mod100 !== 11) return `${count} карточка`;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
-    return `${count} карточки`;
-  }
-  return `${count} карточек`;
-}
-
-function patchLookup(
-  lookup: ReadonlyMap<string, readonly string[]>,
-  slugs: readonly string[],
-  tag: string,
-  connected: boolean,
-): Map<string, string[]> {
-  const next = new Map<string, string[]>();
-  for (const [slug, tags] of lookup) {
-    next.set(slug, [...tags]);
-  }
-  for (const slug of slugs) {
-    const current = new Set(next.get(slug) ?? []);
-    if (connected) {
-      current.add(tag);
-    } else {
-      current.delete(tag);
-    }
-    next.set(slug, [...current]);
-  }
-  return next;
 }
 
 export function GroupSelectionActionBar({
@@ -107,34 +81,34 @@ export function GroupSelectionActionBar({
     };
   }, [connectOpen, onLoadBlockTags, selectedSlugs]);
 
-  const handleBatchSetTag = async (
+  const reportActionError = useCallback((err: unknown) => {
+    setActionError(err instanceof Error ? err.message : String(err));
+  }, []);
+
+  const handleBatchSetTag = (
     targetSlugs: string[],
     tag: string,
     connected: boolean,
   ) => {
     if (targetSlugs.length === 0) return;
-    setTagLookup((current) => patchLookup(current, targetSlugs, tag, connected));
-    try {
-      await onBatchSetTag(targetSlugs, tag, connected);
-      setActionError(null);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
-    }
+    setTagLookup((current) => patchTagLookup(current, targetSlugs, tag, connected));
+    setActionError(null);
+    scheduleAfterOptimisticUiUpdate(() => {
+      void Promise.resolve(onBatchSetTag(targetSlugs, tag, connected)).catch(reportActionError);
+    });
   };
 
-  const handleCreateAndAssignBatch = async (tag: string) => {
-    setTagLookup((current) => patchLookup(current, selectedSlugs, tag, true));
-    try {
-      await onCreateAndAssignBatch(tag, selectedSlugs);
-      setActionError(null);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
-    }
+  const handleCreateAndAssignBatch = (tag: string) => {
+    setTagLookup((current) => patchTagLookup(current, selectedSlugs, tag, true));
+    setActionError(null);
+    scheduleAfterOptimisticUiUpdate(() => {
+      void Promise.resolve(onCreateAndAssignBatch(tag, selectedSlugs)).catch(reportActionError);
+    });
   };
 
-  const handleRemoveFromCollection = async () => {
+  const handleRemoveFromCollection = () => {
     if (!currentTag) return;
-    await handleBatchSetTag(selectedSlugs, currentTag, false);
+    handleBatchSetTag(selectedSlugs, currentTag, false);
     onClearSelection();
   };
 

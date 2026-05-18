@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { Card, ReadOnlyCardPreview } from "./Card";
+import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
 import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
 import type { LightBlock } from "@/types";
 
@@ -150,6 +150,71 @@ describe("Card", () => {
     });
     expect(card).not.toHaveClass("hover:border-component-fill-hover");
     expect(card).not.toHaveClass("transition-colors");
+  });
+
+  it("publishes the selected drag group on the draggable card", () => {
+    const alpha = block({ slug: "alpha" });
+    const beta = block({ slug: "beta" });
+    render(
+      <Card
+        block={alpha}
+        dragBlocks={[alpha, beta]}
+        vaultPath={VAULT}
+        onClick={vi.fn()}
+      />,
+    );
+
+    const card = screen.getByRole("button");
+    expect(card).toHaveAttribute("data-feed-card-drag-count", "2");
+    expect(card).toHaveAttribute("data-feed-card-drag-slugs", "alpha beta");
+  });
+
+  it("renders selected drags as a bounded macOS-style stack preview", () => {
+    const blocks = [
+      block({ slug: "front", block_type: "image", media_file: "front.jpg" }),
+      block({ slug: "second", block_type: "image", media_file: "second.jpg" }),
+      block({ slug: "third", block_type: "image", media_file: "third.jpg" }),
+      block({ slug: "fourth", block_type: "image", media_file: "fourth.jpg" }),
+      block({ slug: "fifth", block_type: "image", media_file: "fifth.jpg" }),
+    ];
+
+    const { container } = render(
+      <DragCardStackPreview
+        blocks={blocks}
+        vaultPath={VAULT}
+      />,
+    );
+
+    const stack = container.querySelector("[data-feed-drag-stack]");
+    expect(stack).toHaveAttribute("data-feed-drag-stack-count", "5");
+    expect(stack).toHaveAttribute("data-feed-drag-stack-visible-count", "4");
+    expect(container.querySelectorAll("[data-feed-drag-stack-layer]")).toHaveLength(4);
+    expect(
+      Array.from(container.querySelectorAll("[data-feed-drag-stack-layer]"))
+        .map((node) => node.getAttribute("data-feed-drag-stack-layer-index")),
+    ).toEqual(["3", "2", "1", "0"]);
+
+    const layers = Array.from(container.querySelectorAll<HTMLElement>("[data-feed-drag-stack-layer]"));
+    const backLayers = layers.filter(
+      (layer) => layer.getAttribute("data-feed-drag-stack-layer-index") !== "0",
+    );
+    expect(container.querySelector("[data-feed-drag-stack-plate]")).toBeNull();
+    expect(container.querySelectorAll("[data-feed-drag-stack-card]")).toHaveLength(4);
+    expect(container.querySelectorAll("[data-feed-drag-stack-card] img")).toHaveLength(4);
+    expect(container.querySelectorAll("[data-feed-drag-stack-front] img")).toHaveLength(1);
+    expect(container.querySelectorAll("[data-feed-drag-stack] img")).toHaveLength(4);
+    expect(screen.getByText("5")).toHaveAttribute("data-feed-drag-stack-count-badge");
+
+    for (const layer of backLayers) {
+      expect(layer.style.transform).toMatch(
+        /^translate3d\(-?\d+px, -?\d+px, 0\) rotate\(-?\d+(\.\d+)?deg\)$/,
+      );
+      expect(layer.style.transform).not.toContain("scale");
+    }
+    expect(
+      layers.find((layer) => layer.getAttribute("data-feed-drag-stack-layer-index") === "0")
+        ?.style.transform,
+    ).toBe("");
   });
 
   it("marks real graphic surfaces without adding a focus prop to Card", () => {

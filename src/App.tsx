@@ -13,7 +13,6 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
-  pointerWithin,
   useSensor,
   useSensors,
   type DragStartEvent,
@@ -63,6 +62,8 @@ const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform })
   };
 };
 
+const BATCH_TAG_REFRESH_DELAY_MS = 750;
+
 import type { DeleteBlockPlan, IndexedBlock, LightBlock, TagCount, ChannelDto, GridSnapshot, MediaAssetRef } from "@/types";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -94,6 +95,13 @@ import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
 import { pushRecentTag } from "@/lib/recentTags";
 import {
+  resolveBlockDragBlocks,
+  resolveBlockDragSlugs,
+  uniqueDragSlugs,
+  type BlockDragData,
+} from "@/lib/blockDrag";
+import { sidebarPointerWithin } from "@/lib/sidebarDndCollision";
+import {
   clearActiveMineTextSelectionDragPayload,
   getActiveMineTextSelectionDragPayload,
   type MineTextSelectionDragPayload,
@@ -108,7 +116,7 @@ import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { ClipperRecoveryBanner } from "@/components/ClipperRecoveryBanner";
 import { VaultConflictsBanner } from "@/components/VaultConflictsBanner";
 import { Grid } from "@/components/Grid";
-import { DragCardPreview } from "@/components/Card";
+import { DragCardStackPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
@@ -183,6 +191,7 @@ type TextSelectionDragPreview = {
 
 type PendingCreateChannelDrop =
   | { type: "block"; slug: string }
+  | { type: "blocks"; slugs: string[] }
   | { type: "media_asset"; payload: MediaAssetDragPayload }
   | { type: "text_selection"; payload: MineTextSelectionDragPayload };
 
@@ -298,7 +307,7 @@ export function AppWithVault({
     rowKey: string;
     sequence: number;
   } | null>(null);
-  const [activeDragBlock, setActiveDragBlock] = useState<LightBlock | null>(null);
+  const [activeDragBlocks, setActiveDragBlocks] = useState<LightBlock[]>([]);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
   const [activeDragMediaAsset, setActiveDragMediaAsset] = useState<MediaAssetDragPreview | null>(null);
   const [activeDragTextSelection, setActiveDragTextSelection] = useState<TextSelectionDragPreview | null>(null);
@@ -328,6 +337,7 @@ export function AppWithVault({
   const [vaultReady, setVaultReady] = useState(false);
   const [migrationRequired, setMigrationRequired] = useState(false);
   const [thumbsRootPath, setThumbsRootPath] = useState<string | null>(null);
+  const activeDragBlock = activeDragBlocks[0] ?? null;
 
   const routeKeyFor = useCallback((tag?: string) => tag ?? "__all__", []);
 
@@ -1243,6 +1253,32 @@ export function AppWithVault({
 
   // ── Channel management ─────────────────────────────────────────────────
 
+  const attachBlocksToTag = useCallback(
+    async (slugs: string[], tag: string) => {
+      const uniqueSlugs = uniqueDragSlugs(slugs);
+      if (uniqueSlugs.length === 0) return;
+
+      for (const slug of uniqueSlugs) {
+        await addTag(slug, tag);
+      }
+
+      if (selectedBlock && uniqueSlugs.includes(selectedBlock.slug)) {
+        setSelectedBlockTags((current) => (
+          current.includes(tag) ? current : [...current, tag]
+        ));
+        setSelectedBlock((current) => (
+          current && uniqueSlugs.includes(current.slug) && "tags" in current
+            ? {
+                ...current,
+                tags: current.tags.includes(tag) ? current.tags : [...current.tags, tag],
+              }
+            : current
+        ));
+      }
+    },
+    [selectedBlock],
+  );
+
   const handleCreateChannel = useCallback(
     async (tag: string) => {
       const pendingDrop = pendingCreateChannelDrop;
@@ -1252,22 +1288,13 @@ export function AppWithVault({
         pushRecentTag(channel.tag);
 
         if (pendingDrop?.type === "block") {
-          await addTag(pendingDrop.slug, channel.tag);
-          if (selectedBlock?.slug === pendingDrop.slug) {
-            setSelectedBlockTags((current) => (
-              current.includes(channel.tag) ? current : [...current, channel.tag]
-            ));
-            setSelectedBlock((current) => (
-              current && current.slug === pendingDrop.slug && "tags" in current
-                ? {
-                    ...current,
-                    tags: current.tags.includes(channel.tag)
-                      ? current.tags
-                      : [...current.tags, channel.tag],
-                  }
-                : current
-            ));
-          }
+          await attachBlocksToTag([pendingDrop.slug], channel.tag);
+          await reloadAllSnapshots();
+          return;
+        }
+
+        if (pendingDrop?.type === "blocks") {
+          await attachBlocksToTag(pendingDrop.slugs, channel.tag);
           await reloadAllSnapshots();
           return;
         }
@@ -1312,11 +1339,11 @@ export function AppWithVault({
       }
     },
     [
+      attachBlocksToTag,
       invalidateRoutesForTags,
       pendingCreateChannelDrop,
       reloadAllSnapshots,
       scheduleRefresh,
-      selectedBlock?.slug,
     ],
   );
 
@@ -1354,26 +1381,25 @@ export function AppWithVault({
   const handleCardDrop = useCallback(
     async (slug: string, tag: string) => {
       try {
-        await addTag(slug, tag);
-        if (selectedBlock?.slug === slug) {
-          setSelectedBlockTags((current) => (
-            current.includes(tag) ? current : [...current, tag]
-          ));
-          setSelectedBlock((current) => (
-            current && current.slug === slug && "tags" in current
-              ? {
-                  ...current,
-                  tags: current.tags.includes(tag) ? current.tags : [...current.tags, tag],
-                }
-              : current
-          ));
-        }
+        await attachBlocksToTag([slug], tag);
       } catch (err) {
         console.error("Failed to add tag:", err);
       }
       await reloadAllSnapshots();
     },
-    [reloadAllSnapshots, selectedBlock?.slug],
+    [attachBlocksToTag, reloadAllSnapshots],
+  );
+
+  const handleCardsDrop = useCallback(
+    async (slugs: string[], tag: string) => {
+      try {
+        await attachBlocksToTag(slugs, tag);
+      } catch (err) {
+        console.error("Failed to add tags:", err);
+      }
+      await reloadAllSnapshots();
+    },
+    [attachBlocksToTag, reloadAllSnapshots],
   );
 
   const handleMediaAssetDrop = useCallback(
@@ -1503,12 +1529,12 @@ export function AppWithVault({
         type?: string;
         slug?: string;
         block?: LightBlock;
-      } & Partial<MediaAssetDragPayload> & Partial<MineTextSelectionDragPayload>) | undefined;
+      } & Partial<BlockDragData> & Partial<MediaAssetDragPayload> & Partial<MineTextSelectionDragPayload>) | undefined;
       if (data?.type === "media_asset") {
         setActiveDragMediaAsset({
           src: data.imageSrc ?? "",
         });
-        setActiveDragBlock(null);
+        setActiveDragBlocks([]);
         setActiveDragTag(null);
         setActiveDragTextSelection(null);
         return;
@@ -1522,26 +1548,21 @@ export function AppWithVault({
         setActiveDragTextSelection({
           selectedText: textSelectionPayload.selectedText,
         });
-        setActiveDragBlock(null);
+        setActiveDragBlocks([]);
         setActiveDragTag(null);
         setActiveDragMediaAsset(null);
         return;
       }
       if (id.startsWith("tag:")) {
         setActiveDragTag(id.slice(4));
-        setActiveDragBlock(null);
+        setActiveDragBlocks([]);
         setActiveDragMediaAsset(null);
         setActiveDragTextSelection(null);
       } else {
-        const slug = data?.type === "block" && data.slug
-          ? data.slug
-          : id.startsWith("detail:")
-            ? id.slice("detail:".length)
-            : id;
-        const block = data?.type === "block" && data.block
-          ? data.block
-          : blocks.find((b) => b.slug === slug);
-        if (block) setActiveDragBlock(block);
+        if (data?.type === "block") {
+          data.clearSelectionOnDragStart?.();
+        }
+        setActiveDragBlocks(resolveBlockDragBlocks(id, data, blocks));
         setActiveDragTag(null);
         setActiveDragMediaAsset(null);
         setActiveDragTextSelection(null);
@@ -1552,7 +1573,7 @@ export function AppWithVault({
 
   const handleDndEnd = useCallback(
     (event: DragEndEvent) => {
-      setActiveDragBlock(null);
+      setActiveDragBlocks([]);
       setActiveDragTag(null);
       setActiveDragMediaAsset(null);
       setActiveDragTextSelection(null);
@@ -1567,7 +1588,7 @@ export function AppWithVault({
       const activeData = active.data.current as ({
         type?: string;
         slug?: string;
-      } & Partial<MediaAssetDragPayload> & Partial<MineTextSelectionDragPayload>) | undefined;
+      } & Partial<BlockDragData> & Partial<MediaAssetDragPayload> & Partial<MineTextSelectionDragPayload>) | undefined;
       if (activeData?.type === "media_asset") {
         if (overId === "create-channel") {
           beginCreateChannelFromDrop({
@@ -1607,6 +1628,9 @@ export function AppWithVault({
         : activeId.startsWith("detail:")
           ? activeId.slice("detail:".length)
           : activeId;
+      const activeSlugs = !activeIsTag
+        ? resolveBlockDragSlugs(activeId, activeData)
+        : [];
 
       // Tag reorder in sidebar
       if (activeIsTag && overId.startsWith("tag:")) {
@@ -1615,18 +1639,27 @@ export function AppWithVault({
       }
 
       if (!activeIsTag && overId === "create-channel") {
-        beginCreateChannelFromDrop({ type: "block", slug: activeSlug });
+        beginCreateChannelFromDrop(
+          activeSlugs.length > 1
+            ? { type: "blocks", slugs: activeSlugs }
+            : { type: "block", slug: activeSlug },
+        );
         return;
       }
 
       // Card dropped on tag
       if (!activeIsTag && overId.startsWith("tag:")) {
-        handleCardDrop(activeSlug, overId.slice(4));
+        if (activeSlugs.length > 1) {
+          handleCardsDrop(activeSlugs, overId.slice(4));
+        } else {
+          handleCardDrop(activeSlug, overId.slice(4));
+        }
       }
     },
     [
       beginCreateChannelFromDrop,
       handleCardDrop,
+      handleCardsDrop,
       handleMediaAssetDrop,
       handleReorderTag,
       handleTextSelectionDrop,
@@ -1634,7 +1667,7 @@ export function AppWithVault({
   );
 
   const handleDndCancel = useCallback(() => {
-    setActiveDragBlock(null);
+    setActiveDragBlocks([]);
     setActiveDragTag(null);
     setActiveDragMediaAsset(null);
     setActiveDragTextSelection(null);
@@ -1753,10 +1786,15 @@ export function AppWithVault({
         console.error("Failed to batch update tags:", err);
         throw err;
       } finally {
-        await reloadAllSnapshots();
+        invalidateRoutesForTags([tag]);
+        scheduleRefresh({
+          grid: currentTagRef.current === undefined || currentTagRef.current === tag,
+          taxonomy: true,
+          previews: true,
+        }, BATCH_TAG_REFRESH_DELAY_MS);
       }
     },
-    [reloadAllSnapshots, selectedBlock],
+    [invalidateRoutesForTags, scheduleRefresh, selectedBlock],
   );
 
   const handleCreateTagFromBatchMenu = useCallback(
@@ -1877,7 +1915,7 @@ export function AppWithVault({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={pointerWithin}
+      collisionDetection={sidebarPointerWithin}
       autoScroll={{ canScroll: (el) => el.hasAttribute("data-sidebar-scroll") }}
       onDragStart={handleDndStart}
       onDragEnd={handleDndEnd}
@@ -1993,6 +2031,8 @@ export function AppWithVault({
                 currentTag={currentTag}
                 scrollToTop={scrollToTopSignal}
                 sidebarCollapsed={sidebarCollapsed}
+                blockDragActive={activeDragBlocks.length > 0}
+                detailOpen={Boolean(renderedDetailBlock)}
                 keyboardNavigationDisabled={gridKeyboardNavigationDisabled}
                 restoreFocusSlug={gridFocusRestore?.slug ?? null}
                 restoreFocusSequence={gridFocusRestore?.sequence ?? 0}
@@ -2157,10 +2197,14 @@ export function AppWithVault({
       />
     </div>{/* end flex-col */}
 
-    <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
-      {activeDragBlock && (
-        <DragCardPreview
-          block={activeDragBlock}
+    <DragOverlay
+      dropAnimation={null}
+      modifiers={[snapToCursor]}
+      style={{ pointerEvents: "none" }}
+    >
+      {activeDragBlocks.length > 0 && (
+        <DragCardStackPreview
+          blocks={activeDragBlocks}
           vaultPath={vaultPath}
           thumbsRootPath={thumbsRootPath ?? undefined}
         />
@@ -2209,6 +2253,8 @@ interface RouteContext {
   currentTag?: string;
   scrollToTop: number;
   sidebarCollapsed: boolean;
+  blockDragActive: boolean;
+  detailOpen: boolean;
   keyboardNavigationDisabled: boolean;
   restoreFocusSlug: string | null;
   restoreFocusSequence: number;

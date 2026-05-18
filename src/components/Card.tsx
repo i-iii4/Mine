@@ -22,6 +22,10 @@ import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
 import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
 import { buildFeedVideoPosterCandidates } from "@/lib/feedVideoPoster";
 import { getDisplayTitle, getNavigationLabel } from "@/lib/displayTitle";
+import {
+  uniqueDragBlocks,
+  type BlockDragData,
+} from "@/lib/blockDrag";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
 import { FeedVideoSurface } from "./FeedVideoSurface";
@@ -41,6 +45,8 @@ interface CardProps {
   allowPlayback?: boolean;
   openMoreMenuRequestSequence?: number;
   hoverEnabled?: boolean;
+  dragBlocks?: readonly LightBlock[];
+  clearSelectionOnDragStart?: () => void;
   onKeyboardMoreMenuOpenChange?: (open: boolean) => void;
   onModifiedClick?: (block: LightBlock, event: ReactMouseEvent<HTMLDivElement>) => boolean;
   onClick: (block: LightBlock) => void;
@@ -107,14 +113,28 @@ export function MeasuredCardFrame({
   );
 }
 
-export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, onKeyboardMoreMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
+  const dragBlocks = useMemo(() => {
+    const candidateBlocks = dragBlocksProp && dragBlocksProp.length > 0
+      ? dragBlocksProp
+      : [block];
+    const uniqueBlocks = uniqueDragBlocks(candidateBlocks);
+    return uniqueBlocks.length > 0 ? uniqueBlocks : [block];
+  }, [block, dragBlocksProp]);
+  const dragSlugs = useMemo(
+    () => dragBlocks.map((item) => item.slug),
+    [dragBlocks],
+  );
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.slug,
     data: {
       type: "block",
       slug: block.slug,
       block,
-    },
+      dragSlugs,
+      dragBlocks,
+      clearSelectionOnDragStart,
+    } satisfies BlockDragData,
   });
   const isArticleFeedCard = getRuntimeCardKind(block) === "article";
 
@@ -136,6 +156,8 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, prior
     <CardFrame
       ref={setNodeRef}
       data-block-slug={block.slug}
+      data-feed-card-drag-count={dragSlugs.length > 1 ? String(dragSlugs.length) : undefined}
+      data-feed-card-drag-slugs={dragSlugs.length > 1 ? dragSlugs.join(" ") : undefined}
       {...attributes}
       {...listeners}
       role="button"
@@ -174,13 +196,26 @@ export function ReadOnlyCardPreview({
   thumbsRootPath,
   width = 240,
   previewMode = "full",
+  shadow = "lg",
+  className,
 }: {
   block: LightBlock & Partial<Pick<IndexedBlock, "thumb_format" | "thumb_mtime">>;
   vaultPath: string;
   thumbsRootPath?: string;
   width?: number;
   previewMode?: "full" | "micro";
+  shadow?: "none" | "sm" | "md" | "lg";
+  className?: string;
 }) {
+  const shadowClassName =
+    shadow === "none"
+      ? null
+      : shadow === "sm"
+        ? "shadow-sm"
+        : shadow === "md"
+          ? "shadow-md"
+          : "shadow-lg";
+
   if (previewMode === "micro") {
     const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
     const mtime = typeof block.thumb_mtime === "number" && block.thumb_mtime > 0
@@ -204,7 +239,7 @@ export function ReadOnlyCardPreview({
 
     return (
       <CardFrame
-        className="pointer-events-none rounded-1 shadow-lg"
+        className={cn("pointer-events-none rounded-1", shadowClassName, className)}
         style={{ width }}
       >
         <div className="p-4">
@@ -257,7 +292,7 @@ export function ReadOnlyCardPreview({
 
   return (
     <CardFrame
-      className="pointer-events-none rounded-1 shadow-lg"
+      className={cn("pointer-events-none rounded-1", shadowClassName, className)}
       style={{ width }}
     >
       <CardContent
@@ -277,6 +312,117 @@ export function DragCardPreview(props: {
   width?: number;
 }) {
   return <ReadOnlyCardPreview {...props} />;
+}
+
+const DRAG_STACK_LAYERS = [
+  { index: 0, x: 0, y: 0, rotate: 0, shadow: "lg" },
+  { index: 1, x: -6, y: -6, rotate: -0.9, shadow: "md" },
+  { index: 2, x: 7, y: -11, rotate: 0.75, shadow: "sm" },
+  { index: 3, x: -2, y: -16, rotate: -0.45, shadow: "sm" },
+] as const;
+
+function DragStackCardPreview({
+  block,
+  vaultPath,
+  thumbsRootPath,
+  width,
+  shadow,
+}: {
+  block: LightBlock;
+  vaultPath: string;
+  thumbsRootPath?: string;
+  width: number;
+  shadow: "sm" | "md" | "lg";
+}) {
+  return (
+    <div data-feed-drag-stack-card="">
+      <ReadOnlyCardPreview
+        block={block}
+        vaultPath={vaultPath}
+        thumbsRootPath={thumbsRootPath}
+        width={width}
+        shadow={shadow}
+      />
+    </div>
+  );
+}
+
+export function DragCardStackPreview({
+  blocks,
+  vaultPath,
+  thumbsRootPath,
+  width = 240,
+}: {
+  blocks: readonly LightBlock[];
+  vaultPath: string;
+  thumbsRootPath?: string;
+  width?: number;
+}) {
+  const visibleBlocks = blocks.slice(0, DRAG_STACK_LAYERS.length);
+  const visibleCount = visibleBlocks.length;
+  const frontBlock = blocks[0];
+  if (!frontBlock) return null;
+  if (visibleCount === 1) {
+    return (
+      <DragCardPreview
+        block={frontBlock}
+        vaultPath={vaultPath}
+        thumbsRootPath={thumbsRootPath}
+        width={width}
+      />
+    );
+  }
+
+  const visibleLayers = visibleBlocks
+    .map((block, index) => ({
+      block,
+      layer: DRAG_STACK_LAYERS[index] ?? DRAG_STACK_LAYERS[0],
+    }))
+    .reverse();
+
+  return (
+    <div
+      className="pointer-events-none relative"
+      style={{ width }}
+      data-feed-drag-stack=""
+      data-feed-drag-stack-count={String(blocks.length)}
+      data-feed-drag-stack-visible-count={String(visibleCount)}
+    >
+      {visibleLayers.map(({ block, layer }) => (
+        <div
+          key={block.slug}
+          className={cn(layer.index === 0 ? "relative" : "absolute inset-0")}
+          style={{
+            zIndex: DRAG_STACK_LAYERS.length - layer.index,
+            transform:
+              layer.index === 0
+                ? undefined
+                : `translate3d(${layer.x}px, ${layer.y}px, 0) rotate(${layer.rotate}deg)`,
+            transformOrigin: "center center",
+          }}
+          data-feed-drag-stack-layer=""
+          data-feed-drag-stack-layer-index={String(layer.index)}
+          data-feed-drag-stack-front={layer.index === 0 ? "" : undefined}
+        >
+          <DragStackCardPreview
+            block={block}
+            vaultPath={vaultPath}
+            thumbsRootPath={thumbsRootPath}
+            width={width}
+            shadow={layer.shadow}
+          />
+        </div>
+      ))}
+      {blocks.length > visibleCount && (
+        <div
+          className="absolute -right-2 -top-2 z-10 flex h-5 min-w-5 items-center justify-center rounded-full border border-background bg-foreground px-1.5 font-mono text-[11px] leading-none text-background shadow-sm"
+          data-feed-drag-stack-count-badge=""
+        >
+          {blocks.length}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function InteractiveCardPreview({

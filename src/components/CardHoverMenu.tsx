@@ -275,9 +275,9 @@ export const CardHoverMenu = memo(function CardHoverMenu({
       {/* More (···) — верхний правый */}
       <div
         className={cn(
-          "absolute right-2 top-2 z-[5] transition-opacity",
-          hoverEnabled && "group-hover:opacity-100",
-          anyMenuOpen ? "opacity-100" : "opacity-0",
+          "pointer-events-none absolute right-2 top-2 z-[5] transition-opacity",
+          hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
+          anyMenuOpen ? "pointer-events-auto opacity-100" : "opacity-0",
         )}
         data-card-hover-more-action=""
         data-card-hover-enabled={hoverEnabled ? "true" : undefined}
@@ -315,9 +315,9 @@ export const CardHoverMenu = memo(function CardHoverMenu({
       {/* Нижний ряд: Source (лево) + Connect (право) */}
       <div
         className={cn(
-          "absolute bottom-2 left-2 right-2 z-[5] flex gap-2 transition-opacity",
-          hoverEnabled && "group-hover:opacity-100",
-          hoverActionsPinned ? "opacity-100" : "opacity-0",
+          "pointer-events-none absolute bottom-2 left-2 right-2 z-[5] flex gap-2 transition-opacity",
+          hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
+          hoverActionsPinned ? "pointer-events-auto opacity-100" : "opacity-0",
         )}
         data-card-hover-bottom-actions=""
         data-card-hover-enabled={hoverEnabled ? "true" : undefined}

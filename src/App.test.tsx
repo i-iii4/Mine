@@ -96,6 +96,7 @@ vi.mock("@/components/Grid", () => ({
   Grid: ({
     blocks,
     currentTag,
+    detailOpen,
     keyboardNavigationDisabled,
     restoreFocusSlug,
     restoreFocusSequence,
@@ -103,6 +104,7 @@ vi.mock("@/components/Grid", () => ({
   }: {
     blocks: LightBlock[];
     currentTag?: string;
+    detailOpen?: boolean;
     keyboardNavigationDisabled?: boolean;
     restoreFocusSlug?: string | null;
     restoreFocusSequence?: number;
@@ -110,6 +112,7 @@ vi.mock("@/components/Grid", () => ({
   }) => (
     <div>
       <div data-testid="grid">{`${currentTag ?? "__all__"}:${blocks.length}`}</div>
+      <div data-testid="grid-detail-open">{String(Boolean(detailOpen))}</div>
       <div data-testid="grid-keyboard-disabled">{String(Boolean(keyboardNavigationDisabled))}</div>
       <div data-testid="grid-restore">{`${restoreFocusSlug ?? "none"}:${restoreFocusSequence ?? 0}`}</div>
       {blocks.map((item) => (
@@ -467,6 +470,7 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
     expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("false");
+    expect(screen.getByTestId("grid-detail-open")).toHaveTextContent("false");
     expect(screen.getByTestId("grid-restore")).toHaveTextContent("none:0");
 
     fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
@@ -474,6 +478,7 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
     });
     expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("true");
+    expect(screen.getByTestId("grid-detail-open")).toHaveTextContent("true");
 
     fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
 
