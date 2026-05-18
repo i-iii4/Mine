@@ -4,8 +4,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
-import { MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { MoreHorizontal, Plus } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -45,6 +46,18 @@ interface GroupSelectionCardMenuProps {
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
   onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
   onClearSelection: () => void;
+}
+
+function MenuIconSlot({ children }: { children?: ReactNode }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="flex size-3 shrink-0 items-center justify-center"
+      data-card-menu-icon-slot=""
+    >
+      {children}
+    </span>
+  );
 }
 
 export function GroupSelectionCardMenu({
@@ -186,7 +199,9 @@ export function GroupSelectionCardMenu({
           <DropdownMenuSeparator />
           <DropdownMenuSub open={connectOpen} onOpenChange={setConnectOpen}>
             <DropdownMenuSubTrigger ref={connectTriggerRef}>
-              <Plus className="size-3" />
+              <MenuIconSlot>
+                <Plus className="size-3" />
+              </MenuIconSlot>
               Connect
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="flex w-72 max-h-80 flex-col overflow-hidden p-0">
@@ -205,6 +220,7 @@ export function GroupSelectionCardMenu({
           </DropdownMenuSub>
           {currentTag && (
             <DropdownMenuItem onSelect={handleDisconnectFromCollection}>
+              <MenuIconSlot />
               Disconnect
             </DropdownMenuItem>
           )}
@@ -215,7 +231,7 @@ export function GroupSelectionCardMenu({
               setDeleteOpen(true);
             }}
           >
-            <Trash2 className="size-3" />
+            <MenuIconSlot />
             Delete
           </DropdownMenuItem>
           {actionError && (

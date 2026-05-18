@@ -373,7 +373,13 @@ top `More` и bottom action row, но программное открытие `C
 - `stopPropagation` на контейнере — клик по кнопкам не открывает Detail
 - Source: `window.open(url)`. Disabled если `block.url` нет
 - Connect: `DropdownMenu` со списком каналов (`CollectionPicker`)
-- More: `DropdownMenu` — Connect (подменю), Source, Remove from collection, Delete
+- More / right-click menu: `DropdownMenu` / `ContextMenu` — Connect
+  (подменю), Source, Reveal in Finder, Copy Path, Rename…, Disconnect from
+  current collection, Delete. Иконки используются только у `Connect` и
+  `Source`; остальные строки получают пустой leading-slot той же ширины, чтобы
+  текстовая колонка была выровнена по одному уровню. Термин `Remove from
+  collection` запрещён для card membership actions — в UI используется только
+  `Disconnect`.
 
 ### Media Asset Hover Menu
 
@@ -393,7 +399,7 @@ in Finder`, `Copy Path`, `Copy Media`, `Rename Media...`, `Remove from Card`,
 `Delete`.
 
 **Граница ответственности:** все команды target'ят media file. В этом меню нет
-card-level `Source`, card rename, card delete или `Remove from collection`.
+card-level `Source`, card rename, card delete или collection `Disconnect`.
 
 **Видео:** кнопка занимает только top-right corner и не создаёт full-surface
 overlay, чтобы не блокировать native video controls.
@@ -812,6 +818,10 @@ actions `Connect`, text-only `Disconnect` только внутри collection r
 text-only red `Delete`, затем rightmost icon-only `X` clear button. Полный
 контракт:
 [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
+
+Focused-card batch `Cmd+K` menu следует тому же icon economy: иконка есть у
+`Connect`, у `Disconnect` и `Delete` иконок нет, но сохраняется пустой
+leading-slot для выравнивания текста.
 
 Group drag preview использует macOS-style drag flocking: каждый видимый слой —
 реальный frozen card preview из selected set, не пустая plate и не interactive

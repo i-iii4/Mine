@@ -5,9 +5,10 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import type { ComponentProps } from "react";
-import { MoreHorizontal, Trash2, Plus, ExternalLink, FolderOpen, Copy, Pencil } from "lucide-react";
+import { MoreHorizontal, Plus, ExternalLink } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import {
@@ -64,6 +65,18 @@ function isCommandK(event: ReactKeyboardEvent): boolean {
     !event.altKey &&
     !event.ctrlKey &&
     event.key.toLowerCase() === "k"
+  );
+}
+
+function MenuIconSlot({ children }: { children?: ReactNode }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="flex size-3 shrink-0 items-center justify-center"
+      data-card-menu-icon-slot=""
+    >
+      {children}
+    </span>
   );
 }
 
@@ -139,7 +152,9 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
       <DropdownMenuContent align="end" onKeyDownCapture={handleMenuKeyDownCapture}>
         <DropdownMenuSub open={connectSubmenuOpen} onOpenChange={setConnectSubmenuOpen}>
           <DropdownMenuSubTrigger ref={connectTriggerRef}>
-            <Plus className="size-3" />
+            <MenuIconSlot>
+              <Plus className="size-3" />
+            </MenuIconSlot>
             Connect
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent
@@ -164,7 +179,9 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
 
         {hasUrl && (
           <DropdownMenuItem onSelect={() => openUrl(block.url!)}>
-            <ExternalLink className="size-3" />
+            <MenuIconSlot>
+              <ExternalLink className="size-3" />
+            </MenuIconSlot>
             Source
           </DropdownMenuItem>
         )}
@@ -172,19 +189,19 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
         <DropdownMenuSeparator />
 
         <DropdownMenuItem onSelect={() => revealItemInDir(filePath)}>
-          <FolderOpen className="size-3" />
+          <MenuIconSlot />
           Reveal in Finder
         </DropdownMenuItem>
 
         <DropdownMenuItem onSelect={() => navigator.clipboard.writeText(filePath)}>
-          <Copy className="size-3" />
+          <MenuIconSlot />
           Copy Path
         </DropdownMenuItem>
 
         <DropdownMenuSeparator />
 
         <DropdownMenuItem onSelect={() => onRequestRename(block)}>
-          <Pencil className="size-3" />
+          <MenuIconSlot />
           Rename…
         </DropdownMenuItem>
 
@@ -192,7 +209,8 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
           <DropdownMenuItem
             onSelect={() => onToggleTag(block.slug, currentTag, true)}
           >
-            Remove from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
+            <MenuIconSlot />
+            Disconnect from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
           </DropdownMenuItem>
         )}
 
@@ -200,7 +218,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
           variant="destructive"
           onSelect={() => onRequestDelete(block.slug)}
         >
-          <Trash2 className="size-3" />
+          <MenuIconSlot />
           Delete
         </DropdownMenuItem>
       </DropdownMenuContent>

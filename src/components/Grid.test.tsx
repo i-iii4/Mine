@@ -1204,8 +1204,11 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(focusedWrapper?.querySelector("[data-feed-grid-batch-menu-trigger]")).toHaveAttribute("data-state", "open");
     expect(batchMenu).toBeInTheDocument();
     expect(within(batchMenu).getByText("1 карточка")).toBeInTheDocument();
-    expect(within(batchMenu).getByText("Connect")).toBeInTheDocument();
-    expect(within(batchMenu).getByText("Delete")).toBeInTheDocument();
+    const connectItem = within(batchMenu).getByText("Connect").closest("[role='menuitem']");
+    const deleteItem = within(batchMenu).getByText("Delete").closest("[role='menuitem']");
+    expect(connectItem?.querySelector("svg")).toBeTruthy();
+    expect(deleteItem?.querySelector("[data-card-menu-icon-slot]")).toBeTruthy();
+    expect(deleteItem?.querySelector("svg")).toBeNull();
     expect(within(batchMenu).queryByText("Disconnect")).toBeNull();
     expect(within(batchMenu).queryByText("Source")).toBeNull();
     expect(within(batchMenu).queryByText("Rename…")).toBeNull();
@@ -1250,7 +1253,9 @@ describe("Grid — no collapse after add / revisit", () => {
     });
 
     const batchMenu = document.querySelector("[data-feed-grid-batch-menu]") as HTMLElement;
-    expect(within(batchMenu).getByText("Disconnect")).toBeInTheDocument();
+    const disconnectItem = within(batchMenu).getByText("Disconnect").closest("[role='menuitem']");
+    expect(disconnectItem?.querySelector("[data-card-menu-icon-slot]")).toBeTruthy();
+    expect(disconnectItem?.querySelector("svg")).toBeNull();
 
     fireEvent.click(within(batchMenu).getByText("Disconnect"));
     await act(async () => {

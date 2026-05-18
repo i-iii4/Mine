@@ -6,8 +6,8 @@ import {
   ContextMenuSubContent,
   ContextMenuSubTrigger,
 } from "@/components/ui/context-menu";
-import { useEffect, useState } from "react";
-import { Copy, ExternalLink, FolderOpen, Pencil, Plus, Trash2 } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { ExternalLink, Plus } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { LightBlock, TagCount } from "@/types";
 import { getBlock } from "@/lib/commands";
@@ -23,6 +23,18 @@ interface CardTagMenuProps {
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onRequestRename: (block: LightBlock) => void;
   onRequestDelete: (blockSlug: string) => void;
+}
+
+function MenuIconSlot({ children }: { children?: ReactNode }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="flex size-3 shrink-0 items-center justify-center"
+      data-card-menu-icon-slot=""
+    >
+      {children}
+    </span>
+  );
 }
 
 /**
@@ -61,7 +73,9 @@ export function CardTagMenu({
     <ContextMenuContent>
       <ContextMenuSub>
         <ContextMenuSubTrigger>
-          <Plus className="size-3" />
+          <MenuIconSlot>
+            <Plus className="size-3" />
+          </MenuIconSlot>
           Connect
         </ContextMenuSubTrigger>
         <ContextMenuSubContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
@@ -79,7 +93,9 @@ export function CardTagMenu({
 
       {hasUrl && (
         <ContextMenuItem onSelect={() => openUrl(block.url!)}>
-          <ExternalLink className="size-3" />
+          <MenuIconSlot>
+            <ExternalLink className="size-3" />
+          </MenuIconSlot>
           Source
         </ContextMenuItem>
       )}
@@ -87,25 +103,26 @@ export function CardTagMenu({
       <ContextMenuSeparator />
 
       <ContextMenuItem onSelect={() => revealItemInDir(filePath)}>
-        <FolderOpen className="size-3" />
+        <MenuIconSlot />
         Reveal in Finder
       </ContextMenuItem>
 
       <ContextMenuItem onSelect={() => navigator.clipboard.writeText(filePath)}>
-        <Copy className="size-3" />
+        <MenuIconSlot />
         Copy Path
       </ContextMenuItem>
 
       <ContextMenuSeparator />
 
       <ContextMenuItem onSelect={() => onRequestRename(block)}>
-        <Pencil className="size-3" />
+        <MenuIconSlot />
         Rename…
       </ContextMenuItem>
 
       {currentTag && selectedTags.includes(currentTag) && (
         <ContextMenuItem onSelect={() => onToggleTag(block.slug, currentTag, true)}>
-          Remove from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
+          <MenuIconSlot />
+          Disconnect from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
         </ContextMenuItem>
       )}
 
@@ -113,7 +130,7 @@ export function CardTagMenu({
         variant="destructive"
         onSelect={() => onRequestDelete(block.slug)}
       >
-        <Trash2 className="size-3" />
+        <MenuIconSlot />
         Delete
       </ContextMenuItem>
     </ContextMenuContent>

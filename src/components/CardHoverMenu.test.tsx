@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { CardHoverMenu, CardMoreMenu } from "./CardHoverMenu";
+import { getBlock } from "@/lib/commands";
 import type { LightBlock } from "@/types";
 
 vi.mock("@/lib/commands", () => ({
@@ -97,6 +98,44 @@ describe("CardHoverMenu", () => {
     await waitFor(() => {
       expect(onRequestRename).toHaveBeenCalledWith(expect.objectContaining({ slug: "alpha-block" }));
     });
+  });
+
+  it("uses conservative overflow menu icons and Disconnect terminology", async () => {
+    vi.mocked(getBlock).mockResolvedValueOnce(
+      { tags: ["design"] } as Awaited<ReturnType<typeof getBlock>>,
+    );
+
+    render(
+      <CardMoreMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        currentTag="design"
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        openRequestSequence={1}
+      />,
+    );
+
+    const connectItem = await screen.findByText("Connect");
+    const sourceItem = await screen.findByText("Source");
+    const revealItem = await screen.findByText("Reveal in Finder");
+    const copyItem = await screen.findByText("Copy Path");
+    const renameItem = await screen.findByText("Rename…");
+    const disconnectItem = await screen.findByText('Disconnect from “design”');
+    const deleteItem = await screen.findByText("Delete");
+
+    expect(screen.queryByText(/Remove from/)).not.toBeInTheDocument();
+
+    expect(connectItem.closest("[role='menuitem']")?.querySelector("svg")).toBeTruthy();
+    expect(sourceItem.closest("[role='menuitem']")?.querySelector("svg")).toBeTruthy();
+    for (const item of [revealItem, copyItem, renameItem, disconnectItem, deleteItem]) {
+      const menuItem = item.closest("[role='menuitem']");
+      expect(menuItem?.querySelector("[data-card-menu-icon-slot]")).toBeTruthy();
+      expect(menuItem?.querySelector("svg")).toBeNull();
+    }
   });
 
   it("closes the overflow menu from Command-K inside the menu surface", async () => {

@@ -1,5 +1,22 @@
 # Devlog
 
+## 18.05.2026 [fix] — Normalize card menu labels and icon rhythm
+
+### Context
+
+- Card overflow/right-click menus mixed `Remove from ...` with `Disconnect`.
+- Menu rows used a different icon for nearly every command, making the command
+  list noisier than the design-system intent.
+
+### Completed
+
+- Renamed card-level membership removal to `Disconnect from "..."`.
+- Limited card menu icons to `Connect` and `Source`.
+- Added empty leading icon slots for text-only commands so `Reveal in Finder`,
+  `Copy Path`, `Rename…`, `Disconnect…` and `Delete` align to the same label
+  column without rendering decorative icons.
+- Applied the same icon-slot contract to the focused-card batch menu.
+
 ## 18.05.2026 [fix] — Keep selection-mode commands inside Grid
 
 ### Context

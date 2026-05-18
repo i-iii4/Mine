@@ -162,6 +162,10 @@ count header (`1 карточка`, `2 карточки`, `5 карточек`) 
   cards from that current collection;
 - `Delete` opens the existing batch delete confirmation.
 
+Only `Connect` has a visible icon in the focused-card batch menu. `Disconnect`
+and `Delete` are text commands with an empty leading icon slot, so labels align
+with `Connect` without adding visual noise.
+
 `Source`, `Rename`, `Reveal`, `Copy Path`, single-card collection actions and
 other single-card actions are not present in this focused-card batch menu. This
 keeps keyboard batch actions local to the active card while the count header

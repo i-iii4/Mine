@@ -516,9 +516,16 @@ that belongs to `storage::media_refs`.
 
 - Hover overlay содержит `Source` и `Connect`; `Connect` открывает
   `CollectionPicker` для связи карточки с каналами.
-- Overflow `…` menu содержит action `Rename…` и тот же `Connect` submenu.
+- Overflow `…` menu содержит `Connect` submenu, `Source`, `Reveal in Finder`,
+  `Copy Path`, `Rename…`, collection-scoped `Disconnect from “…”` и `Delete`.
+  Правый клик (`CardTagMenu`) зеркалит этот контракт.
 - Overflow `…` menu uses the shared `DropdownMenu` focus surface: item
   hover/focus and open submenu trigger render `bg-active`, not `bg-accent`.
+- Overflow/right-click menu icon policy is conservative: only `Connect` and
+  `Source` render icons. `Reveal in Finder`, `Copy Path`, `Rename…`,
+  `Disconnect…` and `Delete` reserve the same leading icon slot but render it
+  empty, so labels stay aligned. Card membership removal is always named
+  `Disconnect`, never `Remove`.
 - Programmatic `Cmd+K` requests toggle this overflow menu: first request opens,
   repeated request closes, including when focus is already inside the menu or
   its `Connect` submenu. Keyboard-opened card menus pin only top-right `…`;
@@ -865,7 +872,9 @@ Image media expansion:
   `Enter` must not fall through to Card activation. `Cmd+K` opens a contextual
   batch menu anchored to the focused card's top-right overflow action; the menu
   contains a muted selected-count header plus `Connect`, collection-scoped
-  `Disconnect` outside Everything and `Delete`.
+  `Disconnect` outside Everything and `Delete`. Its icon policy matches the
+  card menu: icon only for `Connect`, empty leading slots for `Disconnect` and
+  `Delete`.
 - When at least one card is selected, Grid renders a bottom floating action
   island centered inside the main/right content pane at `bottom-s3` (`16px`
   above the `h-8` app bottom bar), fixed
