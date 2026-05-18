@@ -126,11 +126,6 @@ import {
   type ImagePreviewRequest,
 } from "@/components/ImagePreviewOverlay";
 
-const Search = lazy(async () => {
-  const mod = await import("@/components/Search");
-  return { default: mod.Search };
-});
-
 const Detail = lazy(async () => {
   const mod = await import("@/components/Detail");
   return { default: mod.Detail };
@@ -281,7 +276,6 @@ export function AppWithVault({
   const [loadingMoreBlocks, setLoadingMoreBlocks] = useState(false);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [channels, setChannels] = useState<ChannelDto[]>([]);
-  const [searchOpen, setSearchOpen] = useState(false);
   const [designSystemOpen, setDesignSystemOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
@@ -406,7 +400,6 @@ export function AppWithVault({
     ? selectedBlockTags
     : (detailChromeClosing ? closingDetailTags : []);
   const gridKeyboardNavigationDisabled = Boolean(renderedDetailBlock)
-    || searchOpen
     || designSystemOpen
     || importOpen
     || renamingBlock !== null
@@ -1051,10 +1044,7 @@ export function AppWithVault({
       }
       if (isOverlayKeyboardTarget(e.target)) return;
       if (!e.metaKey) return;
-      if (e.key === "k") {
-        e.preventDefault();
-        setSearchOpen((v) => !v);
-      } else if (e.shiftKey && e.key === "O") {
+      if (e.shiftKey && e.key === "O") {
         e.preventDefault();
         handleSwitchVault();
       } else if (e.shiftKey && e.key === "N") {
@@ -1207,7 +1197,6 @@ export function AppWithVault({
       if (
         e.defaultPrevented
         || selectedBlock
-        || searchOpen
         || isEditableKeyboardTarget(e.target)
         || isOverlayKeyboardTarget(e.target)
       ) {
@@ -1248,7 +1237,7 @@ export function AppWithVault({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [currentTag, orderedTags, navigate, searchOpen, selectedBlock]);
+  }, [currentTag, orderedTags, navigate, selectedBlock]);
 
 
   // ── Channel management ─────────────────────────────────────────────────
@@ -2111,17 +2100,6 @@ export function AppWithVault({
       </main>
 
       <Suspense fallback={null}>
-        <Search
-          open={searchOpen}
-          onClose={() => setSearchOpen(false)}
-          onSelect={(block) => {
-            openDetailBlock(block);
-            setSearchOpen(false);
-          }}
-        />
-      </Suspense>
-
-      <Suspense fallback={null}>
         <ImportDialog
           open={importOpen}
           onClose={() => setImportOpen(false)}
@@ -2178,9 +2156,6 @@ export function AppWithVault({
         {isSyncing && (
           <span className="text-sm text-muted-foreground">Syncing…</span>
         )}
-        <ActionButton hotkey="⌘K" onClick={() => setSearchOpen(true)}>
-          Search
-        </ActionButton>
       </div>
 
       <Suspense fallback={null}>

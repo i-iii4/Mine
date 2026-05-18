@@ -239,10 +239,6 @@ export const renameChannel = (old_tag: string, new_tag: string) =>
 export const deleteTagFromAll = (tag: string) =>
   invoke<void>("delete_tag_from_all", { tag });
 
-// Search
-export const search = (query: string) =>
-  invoke<IndexedBlock[]>("search", { query });
-
 // Channels
 export const listChannels = () =>
   invoke<ChannelDto[]>("list_channels");

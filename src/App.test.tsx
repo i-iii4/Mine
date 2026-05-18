@@ -129,10 +129,6 @@ vi.mock("@/components/Grid", () => ({
   ),
 }));
 
-vi.mock("@/components/Search", () => ({
-  Search: () => null,
-}));
-
 vi.mock("@/components/Detail", () => ({
   Detail: ({
     block,
@@ -457,6 +453,25 @@ describe("AppWithVault", () => {
     expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
     expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeShortcut);
+  });
+
+  it("does not expose or open the removed global Search command", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("false");
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+
+    expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("false");
+    expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
   });
 
   it("lets Grid own feed keyboard focus and sends a restore request after Detail closes", async () => {

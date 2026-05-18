@@ -1,5 +1,23 @@
 # Devlog
 
+## 18.05.2026 [change] — Remove global Cmd+K Search
+
+### Context
+
+- Global `Cmd+K` still opened the legacy Search command palette, while `Cmd+K`
+  is now reserved for scoped card and Detail overflow menus.
+- Keeping a dead global Search surface made the shortcut contract ambiguous.
+
+### Completed
+
+- Removed the frontend Search surface: `Search.tsx`, its test, the shadcn
+  command wrapper and the `cmdk` dependency.
+- Removed `searchOpen`, the global `Cmd+K` handler, the bottom-bar Search
+  button and Search rendering from App.
+- Kept scoped `Cmd+K` behavior for Grid focused-card menus and Detail top
+  overflow menus.
+- Updated specs/design docs so `Cmd+K` no longer has a global Search fallback.
+
 ## 18.05.2026 [fix] — Normalize card menu labels and icon rhythm
 
 ### Context

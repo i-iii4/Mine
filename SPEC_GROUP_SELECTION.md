@@ -33,7 +33,7 @@ Out of scope for the first implementation:
 - `Cmd+A` / keyboard-only range extension.
 - Cross-channel persistent selection.
 - Selecting skeleton/provisional cards.
-- Batch actions in Detail or Search results.
+- Batch actions in Detail or non-Grid surfaces.
 
 ## Ownership
 
@@ -111,8 +111,8 @@ Selection is cleared when:
   marquee drag threshold;
 - a batch `Delete` or collection-scoped `Disconnect` completes successfully;
 - plain click opens Detail from a non-selection state;
-- Detail opens from another surface such as Sidebar previews, Search results,
-  related notes or external App-level navigation.
+- Detail opens from another surface such as Sidebar previews, related notes or
+  external App-level navigation.
 
 Selection is preserved when:
 

@@ -1,13 +1,13 @@
 import "@testing-library/jest-dom/vitest";
 
-// Mock ResizeObserver — required by cmdk (command palette)
+// Mock ResizeObserver for components that measure their layout in tests.
 globalThis.ResizeObserver = class ResizeObserver {
   observe() {}
   unobserve() {}
   disconnect() {}
 };
 
-// Mock scrollIntoView — used by cmdk for item focus
+// Mock scrollIntoView for keyboard navigation in virtualized UI.
 Element.prototype.scrollIntoView = vi.fn();
 
 // Mock @tauri-apps/api/core — all invoke calls return empty by default.

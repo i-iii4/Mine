@@ -194,10 +194,10 @@ web-clipper при закрытом desktop UI, iCloud sync или внешни�
 
 ### Current audit hardening — 03.05.2026 [COMPLETED]
 
-- Frontend async route/search guards:
+- Frontend async route guards:
   - initial route load and pagination ignore stale responses;
-  - Search ignores out-of-order responses after query/open state changes;
-  - global channel shortcuts do not fire inside Detail, Search, overlays,
+  - legacy Cmd+K Search palette has been removed from the frontend;
+  - global channel shortcuts do not fire inside Detail, overlays,
     editable fields, or defaultPrevented events.
 - Frontend interaction/a11y:
   - Detail keeps arrow keys native to the reading surface and only Escape closes
@@ -383,7 +383,7 @@ Goal: полноценный UI — сетка, sidebar, детальный ви
 | 5.4 | Sidebar: каналы, счётчики, навигация, кнопка импорта | [x] |
 | 5.5 | Grid: чанковый рендеринг (IntersectionObserver, 80+60 батчи) | [x] |
 | 5.6 | Card: адаптивные карточки по типу блока (5 типов) + фолбэк для сломанных изображений | [x] |
-| 5.7 | Search: Cmd+K, command palette, debounced FTS5 | [x] |
+| 5.7 | Legacy Search: Cmd+K command palette removed from frontend; backend FTS remains index infrastructure | [x] |
 | 5.8 | Detail: lightbox, теги (добавить/удалить), навигация стрелками | [x] |
 | 5.9 | App: роутинг (react-router), состояние vault, загрузка данных | [x] |
 | 5.10 | Drag-and-drop файлов → создание блока (DropZone) | [x] |
@@ -589,7 +589,7 @@ Goal: довести проект до продакшен-качества по 
 | 9.9.5 | Разделить ошибки импорта: recoverable vs fatal | MED-11 | [ ] |
 | 9.9.6 | Deadlock risk: задокументировать порядок блокировки мьютексов или объединить state | HIGH-22 | [ ] |
 | 9.9.7 | Mutex на время импорта: разбить на короткие блокировки | HIGH-23 | [ ] |
-| 9.9.8 | Утечка таймера в Search.tsx: cleanup useEffect | MED-27 | [ ] |
+| 9.9.8 | Утечка таймера в legacy Search.tsx: obsolete after removing frontend Search surface | MED-27 | [x] |
 | 9.9.9 | Гонка записи thumbnail: атомарная запись (temp + rename) | MED-32 | [ ] |
 
 #### 9.10 — Рефакторинг [PENDING]
@@ -678,7 +678,7 @@ Goal: табличный вид сайдбара (название + превь�
 | 11.4 | Направляющие между строками (`border-b`) | [x] |
 | 11.5 | Сохранение классического вида Sidebar/ChannelIcon как `.classic.tsx` | [x] |
 | 11.6 | Убрана нижняя панель сайдбара (Import, Search) | [x] |
-| 11.7 | Наполнение тулбара (поиск, действия) | [ ] |
+| 11.7 | Наполнение тулбара (действия без глобального Search) | [ ] |
 | 11.8 | Финальная калибровка отступов и типографики | [ ] |
 | 11.9 | Текстовые миниатюры статей: `generate_text_thumbnail()` (ab_glyph + imageproc, Noto Sans 28KB embedded) | [x] |
 | 11.10 | Оптимизация миниатюр: O1 — пропуск свежих (mtime), O2 — LazyLock для шрифта, O3 — фоновая генерация в full_scan | [x] |
@@ -1051,7 +1051,7 @@ Specification: [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md).
 |---|---|---|---|
 | 22.1 | Domain parser + derived fields | [x] | `content_heading`, `display_title`, `fallback_label` derived from body H1 → legacy title → filename |
 | 22.2 | Backend read-model | [x] | `IndexedBlock` / `LightBlock` expose derived title fields while physical `blocks.title` stays legacy metadata |
-| 22.3 | Frontend title rendering | [x] | Card/Search/Detail consume `display_title`; Detail renders body H1 as normal Markdown content without duplicate metadata heading |
+| 22.3 | Frontend title rendering | [x] | Card/Detail consume `display_title`; Detail renders body H1 as normal Markdown content without duplicate metadata heading |
 | 22.4 | Write-path switch | [x] | New link/article/video page clips write real page heading as body H1; tweet/selection/media/file paths do not synthesize `title:` or H1 |
 | 22.5 | Rename and derived artifacts | [x] | Filename rename no longer rewrites `frontmatter.title` or body H1; text thumbnails and article-audio use derived display-title/speakable content |
 | 22.6 | Compatibility and migration boundary | [x] | Existing `frontmatter.title` remains read fallback; no automatic vault-wide rewrite |
@@ -1059,12 +1059,12 @@ Specification: [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md).
 
 ### Phase 23 — Media Contract / Derived Card Kind [COMPLETE]
 
-Goal: demote non-channel `type` to compatibility metadata and make feed/detail/search consume a derived runtime card kind. Preserve Markdown-first source files by writing primary media as Obsidian wikilinks in `file`, while keeping legacy raw `file` values readable.
+Goal: demote non-channel `type` to compatibility metadata and make feed/detail consume a derived runtime card kind. Preserve Markdown-first source files by writing primary media as Obsidian wikilinks in `file`, while keeping legacy raw `file` values readable.
 
 | # | Slice | Status | Scope |
 |---|---|---|---|
 | 23.1 | Type demotion | [x] | `type` remains in Markdown as source/compat metadata; only `type: channel` is a runtime marker |
-| 23.2 | Derived runtime kind | [x] | `channel` for collection docs, `article` for non-empty body, `media` for empty body; feed/detail/search use the derived kind |
+| 23.2 | Derived runtime kind | [x] | `channel` for collection docs, `article` for non-empty body, `media` for empty body; feed/detail use the derived kind |
 | 23.3 | Canonical file wikilinks | [x] | New writes serialize `file: "[[name.ext]]"`; parser remains compatible with `file: name.ext` |
 | 23.4 | Existing content migration boundary | [x] | Migration rewrites frontmatter `file` only; body bytes are unchanged, so singleton embed bodies become article |
 | 23.5 | Inline-media extraction output | [x] | New extraction creates empty-body media-card with canonical `file` wikilink instead of singleton embed body |

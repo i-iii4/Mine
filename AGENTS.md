@@ -47,8 +47,8 @@
 | Vite | Сборка фронтенда, HMR |
 | TypeScript | Язык фронтенда |
 | TailwindCSS v4 | Стилизация (CSS-first конфигурация) |
-| shadcn/ui | Дизайн-система: OKLCH-токены, 14 Radix-примитивов (Button, Dialog, Command, ContextMenu и др.), glass-вариант, `cn()` |
-| radix-ui + cmdk | Headless UI-примитивы (основа shadcn), command palette (Cmd+K поиск) |
+| shadcn/ui | Дизайн-система: OKLCH-токены, Radix-примитивы (Button, Dialog, ContextMenu и др.), glass-вариант, `cn()` |
+| radix-ui | Headless UI-примитивы (основа shadcn) |
 | lucide-react | Иконки (замена ручных SVG) |
 | class-variance-authority | Варианты компонентов (CVA) |
 | tw-animate-css | CSS-анимации для Tailwind v4 (Dialog, DropdownMenu, ContextMenu) |
@@ -123,7 +123,6 @@ local-arena/
 │   │   ├── Detail.tsx          # Lightbox: просмотр, коллекции, навигация стрелками
 │   │   ├── RenameBlockDialog.tsx # Unified filename rename modal
 │   │   ├── ArticleAudioControls.tsx # Desktop AUDIO rail: create/remove/play/persist progress
-│   │   ├── Search.tsx          # Cmd+K поиск (command palette)
 │   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог
 │   │   ├── DropZone.tsx        # Drag-and-drop файлов для создания блоков
 │   │   ├── ImportDialog.tsx    # 4-шаговый импорт из Are.na

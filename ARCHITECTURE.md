@@ -23,7 +23,7 @@ Mine решает это: визуальный букмаркинг с лока�
 ### Блок = `.md` source + медиафайл (опционально)
 
 `type` пока остаётся в frontmatter как compatibility/source hint, но больше не
-является source-of-truth для feed/detail/search. Исключение — collection page с
+является source-of-truth для feed/detail read models. Исключение — collection page с
 `type: channel`: это временный явный маркер коллекции. Для обычных карточек
 runtime/card kind выводится так:
 
@@ -286,9 +286,9 @@ Frontend feed-video runtime теперь использует единый poste
 │  │                    │    │                        │  │
 │  │  Grid / Cards      │    │  Commands (IPC)        │  │
 │  │  Tag Sidebar       │    │  ├── blocks.rs         │  │
-│  │  Search            │    │  ├── tags.rs           │  │
+│  │  Detail View       │    │  ├── tags.rs           │  │
 │  │  Channel View      │    │  ├── search.rs         │  │
-│  │  Detail View       │    │  └── thumbnails.rs     │  │
+│  │  Batch Actions     │    │  └── thumbnails.rs     │  │
 │  └──────────────────┘    │                        │  │
 │                           │  Indexer               │  │
 │                           │  ├── watcher (notify)  │  │
@@ -742,7 +742,7 @@ Rationale: пользователь может открыть любой `.md` �
 | Навигация по `getBoundingClientRect()` | Хрупко связывает focus с текущим DOM: виртуализация, preview-card с тем же `data-block-slug`, skeleton/committed phase и clipped wrappers могут оставить state без видимого выделения |
 | Навигация по `layout.positions` внутри Grid (chosen) | Grid уже владеет masonry geometry, scrollport, committed range и viewport; сосед выбирается из layout positions по расстоянию (`primaryAxis + 3 × crossAxis`) без DOM lookup |
 
-Rationale: masonry-раскладка с round-robin распределением и переменной высотой карточек делает индексную навигацию непредсказуемой. Визуальная навигация должна соответствовать тому, что видит пользователь, но source of truth должен оставаться в Grid layout, а не в DOM. Если ручной scroll уводит прежний `focusedSlug` за пределы viewport, следующее нажатие стрелки сначала ресинхронизирует фокус с текущим viewport по `layout.positions`. App только блокирует Grid keyboard mode для Detail/search/dialog states и передаёт restore-сигнал после закрытия Detail.
+Rationale: masonry-раскладка с round-robin распределением и переменной высотой карточек делает индексную навигацию непредсказуемой. Визуальная навигация должна соответствовать тому, что видит пользователь, но source of truth должен оставаться в Grid layout, а не в DOM. Если ручной scroll уводит прежний `focusedSlug` за пределы viewport, следующее нажатие стрелки сначала ресинхронизирует фокус с текущим viewport по `layout.positions`. App только блокирует Grid keyboard mode для Detail/dialog states и передаёт restore-сигнал после закрытия Detail.
 
 ### 007: Detail — plain div вместо Radix Dialog
 
@@ -989,9 +989,8 @@ scrolled or remeasured during drag.
 | vite | latest | Сборщик | MIT |
 | ureq | 2.x | Синхронный HTTP-клиент (импорт Are.na) | MIT/Apache-2.0 |
 | tailwindcss | 4.x | Стилизация | MIT |
-| shadcn/ui | latest | Компонентная библиотека: 14 примитивов (Button, Dialog, Command и др.) | MIT |
+| shadcn/ui | latest | Компонентная библиотека: Button, Dialog, ContextMenu и др. | MIT |
 | radix-ui | latest | Headless UI-примитивы (основа shadcn) | MIT |
-| cmdk | latest | Command palette (поиск Cmd+K) | MIT |
 | lucide-react | latest | Иконки (замена ручных SVG) | ISC |
 | class-variance-authority | latest | Варианты компонентов (CVA) | Apache-2.0 |
 | tw-animate-css | latest | CSS-анимации для Tailwind v4 | MIT |

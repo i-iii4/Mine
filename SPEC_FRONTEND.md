@@ -45,7 +45,7 @@ card title slots use `display_title` and render it as one line with ellipsis.
 If `display_title` is null, social/quote/media cards do not invent a title
 slot; utility surfaces can still show `fallback_label`.
 
-`card_kind` is the source of truth for card/search/detail routing. `block_type`
+`card_kind` is the source of truth for card/detail rendering. `block_type`
 is still delivered for compatibility and diagnostics, but the frontend must
 not branch on legacy source types such as `image`, `link`, `video`, or `file`.
 Media presentation is resolved from `card_kind`, `media_file`, `thumbnail`,
@@ -116,7 +116,6 @@ renameBlockFile(oldSlug: string, newStem: string): Promise<RenameBlockResult>
 listTags(): Promise<TagCount[]>
 addTag(slug: string, tag: string): Promise<void>
 removeTag(slug: string, tag: string): Promise<void>
-search(query: string): Promise<IndexedBlock[]>
 listChannels(): Promise<ChannelDto[]>
 createChannel(tag: string): Promise<ChannelDto>
 deleteChannel(tag: string): Promise<boolean>
@@ -243,7 +242,6 @@ After successful extraction:
 |---|---|---|
 | `/` | AllBlocks | Все блоки (по умолчанию после выбора vault) |
 | `/channel/:tag` | ChannelView | Blocks filtered by percent-encoded `CollectionRef` |
-| `/search?q=...` | SearchResults | Результаты поиска |
 
 Route params encode `CollectionRef`, derived from the Obsidian wikilink target,
 not a normalized tag. The URL currently keeps `/channel/:tag` for compatibility,
@@ -482,7 +480,7 @@ handle ставит `body.sidebar-resizing`, вызывает `preventDefault()`
 |---|---|
 | `article` | Body preview, optional body-derived media preview, display title if present |
 | `media` | Resolved `media_file` / thumbnail / extension-specific affordance; no synthetic title |
-| `channel` | Not rendered in feed/grid/search results as a normal card |
+| `channel` | Not rendered in feed/grid as a normal card |
 
 Thumbnail отображается через `convertFileSrc(vaultPath + "/.arena/cache/thumbs/" + slug + ".jpg")`.
 
@@ -635,15 +633,12 @@ Image media expansion:
 - При success закрывается и UI уже работает с `new_slug`
 - Ошибки `name_taken` / `invalid_filename` показываются inline
 
-### Search (Cmd+K)
+### Search
 
-Модальное окно command palette:
-- Слушает глобальный `Cmd+K`
-- Текстовое поле с автофокусом
-- Debounce 200ms перед вызовом `search(query)`
-- Результаты: список карточек с иконкой типа + заголовок + теги
-- Enter / клик — навигация к блоку (scroll-to в grid)
-- Esc — закрытие
+Глобальная frontend-палитра поиска удалена. В приложении больше нет Search
+route, нижней кнопки Search, `Search.tsx`, `cmdk` UI и глобального `Cmd+K`
+shortcut. Backend FTS/index commands остаются инфраструктурой индекса, но не
+имеют пользовательского `Cmd+K` входа.
 
 ### Detail (fullscreen overlay)
 
@@ -829,15 +824,14 @@ Image media expansion:
   `absolute left-2 top-2` и interface radius `rounded-1` (3px): `top-2`
   зеркалит `More` (`top-2 right-2`), `left-2` зеркалит bottom action row
   (`left-2 right-2 bottom-2`).
-- `Cmd+K` — scoped override глобального Search shortcut: если Grid keyboard
-  focus активен и focused committed-card видна в текущем viewport, Grid
-  предотвращает открытие Search, показывает/pin-ит top-right `…` action button
-  и toggles overflow menu этой карточки: первое нажатие открывает, повторное
-  закрывает. Нижний hover action row (`Source` / `Connect`) при этом не
-  появляется и не pin-ится; он остаётся только pointer hover / interactive
-  hover-action affordance. Если Grid focus отсутствует, focused card
-  невалидна/offscreen или открыт Detail/Search/dialog/menu, `Cmd+K` остаётся
-  глобальным Search shortcut.
+- `Cmd+K` — scoped Grid shortcut: если Grid keyboard focus активен и focused
+  committed-card видна в текущем viewport, Grid показывает/pin-ит top-right
+  `…` action button и toggles overflow menu этой карточки: первое нажатие
+  открывает, повторное закрывает. Нижний hover action row (`Source` /
+  `Connect`) при этом не появляется и не pin-ится; он остаётся только pointer
+  hover / interactive hover-action affordance. Если Grid focus отсутствует,
+  focused card невалидна/offscreen или открыт Detail/dialog/menu, `Cmd+K` не
+  открывает глобальный Search, потому что такого surface больше нет.
 - Автоподскрол идёт по `layout.positions` и scroll container, без
   `scrollIntoView`/DOM lookup.
 - При закрытии Detail фокус возвращается на последнюю просмотренную карточку
@@ -886,7 +880,7 @@ Image media expansion:
   `Disconnect`, text-only destructive `Delete`; the icon-only `X` clear button
   is the rightmost control.
 - Selection clears on plain empty-Grid click, route/channel change, plain card
-  opening and any App-level Detail open from Sidebar/Search/related surfaces.
+  opening and any App-level Detail open from Sidebar/related surfaces.
 - After single-card or batch card deletion, Grid preserves the approximate
   viewport by anchoring to a surviving card from the previous
   `layout.positions` and restoring that card's viewport offset after the new
@@ -912,14 +906,13 @@ Image media expansion:
   карточки (`<vault>/<slug>.md`).
 - `Cmd+K` внутри открытого Detail toggles верхнее `…` меню classic top bar:
   первое нажатие открывает card overflow menu, повторное закрывает. Shortcut
-  перехватывается до глобального Search и не срабатывает внутри nested dialog
-  / image preview overlay.
+  не срабатывает внутри nested dialog / image preview overlay.
 - Остальные модификаторы (Cmd/Alt/Ctrl) пропускаются — Detail не перехватывает
   системные/browser shortcuts.
 
 #### Переключение каналов
 - Opt+Cmd+Up/Down — навигация по `orderedTags` (All → каналы по порядку)
-- Shortcut не срабатывает, когда открыт Detail, Search, overlay/dialog/menu, или
+- Shortcut не срабатывает, когда открыт Detail, overlay/dialog/menu, или
   фокус находится в input/textarea/select/contenteditable.
 - Автоподскрол сайдбара к активному каналу (`[aria-current="page"]`)
 - При переключении Detail закрывается (`useEffect` на `location.pathname`)
@@ -960,6 +953,5 @@ const mediaUrl = convertFileSrc(vaultPath + "/" + mediaFile);
 3. VaultPicker — экран выбора vault
 4. Layout + Sidebar — навигация
 5. Grid + Card — сетка карточек
-6. Search — Cmd+K палитра
-7. Detail — lightbox
-8. Доработки: drag-and-drop, горячие клавиши, анимации
+6. Detail — lightbox
+7. Доработки: drag-and-drop, горячие клавиши, анимации

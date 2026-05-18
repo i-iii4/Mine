@@ -89,7 +89,6 @@ export function ComponentTestBench() {
       </Section>
 
       <Section label="ActionButton (bottom bar)">
-        <ActionButton hotkey="⌘K">Search</ActionButton>
         <ActionButton hotkey="⌘⇧N">New Channel</ActionButton>
         <ActionButton hotkey="⌘,">Settings</ActionButton>
         <ActionButton>No hotkey</ActionButton>

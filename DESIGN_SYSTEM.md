@@ -335,12 +335,6 @@ Content: `rounded-1 bg-foreground text-background px-3 py-1.5 text-sm`. Стре
 
 Кастомный скроллбар: `w-2.5 rounded-full bg-border`. Скроллбары WebKit скрыты глобально.
 
-### Command (Cmd+K)
-
-Палитра команд. `CommandDialog > CommandInput > CommandList > CommandGroup > CommandItem`.
-
-Input: иконка поиска + `text-base`, без бордера. List: `max-h-[300px] overflow-auto`. Item: `rounded-1 px-2 py-1.5`, выделенный — `bg-accent text-accent-foreground`. Separator: `bg-border`. Shortcut (подсказка клавиши): `text-sm text-muted-foreground ml-auto`.
-
 ### ContextMenu
 
 `ContextMenuTrigger > ContextMenuContent > ContextMenuItem`.
@@ -519,7 +513,9 @@ SubContent (подменю) — та же тень.
 
 ### Нижняя панель действий (Action Bar)
 
-`h-8 bg-accent border-t border-border px-8`. Отступы 32px с обеих сторон. Search прижат вправо через flex-spacer.
+`h-8 bg-accent border-t border-border px-8`. Отступы 32px с обеих сторон.
+Правая часть остаётся свободной для transient status text вроде `Syncing…`;
+глобальной Search-кнопки в нижней панели нет.
 
 Компонент `ActionButton` — двуслойная кнопка (две «пули»). Использует токены `--component-fill-*`, изолированные от поверхностей.
 
@@ -548,7 +544,6 @@ SubContent (подменю) — та же тень.
 | ⌘⇧O | Имя vault | Выбор папки через нативный диалог | слева |
 | ⌘⇧N | New Channel | Инлайн-инпут в сайдбаре | слева |
 | ⌘, | Settings | DropdownMenu переключения темы и article menu mode | слева |
-| ⌘K | Search | Открытие Command palette | справа |
 | ⌘[ / ⌘] | History | Назад / вперёд по истории страниц | глобально |
 
 ### Сайдбар
@@ -890,7 +885,7 @@ wordmark-пробы не являются частью продукта.
 |---|---|---|
 | Размер окна | Полноэкранное | 360x600px (popup) |
 | Layout | Sidebar + Grid + Detail | Компактная форма (preview + channels + save) |
-| Навигация | react-router, стрелки, Cmd+K | Нет — одно состояние |
+| Навигация | react-router, стрелки, scoped card/Detail Cmd+K | Нет — одно состояние |
 | IPC | Tauri commands | Native messaging (`chrome.runtime.sendNativeMessage`) |
 | CSS entry | `global.css` | `popup-layout.css` (импортирует `global.css` + добавляет popup-размеры) |
 
