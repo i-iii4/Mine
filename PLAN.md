@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Goal
 
@@ -1108,6 +1108,43 @@ Specification: [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
 | 26.6 | Batch Disconnect/Delete | [x] | Disconnect selected cards from current collection; batch destructive confirmation for Delete; batch delete keeps media files in v1 |
 | 26.7 | Group drag-to-channel | [x] | Dragging a selected card drags the selected slug set, renders a capped macOS-style flocking stack of real frozen card previews, and connects all dragged cards on channel/create-channel drop |
 | 26.8 | Tests + manual QA | [ ] | Automated modifier selection, range geometry, action-bar, group drag payload and stack preview coverage is in place; real-vault manual QA for dark/light frame and batch actions remains |
+
+### Phase 27 — Surface Search
+
+Goal: add scoped search as filtering for existing surfaces: `Cmd+F` filters the
+current Grid route in the right content pane, `Shift+Cmd+F` filters the left
+Sidebar channel list. Search is not a modal, not a route and not `Cmd+K`.
+
+Specification: [SPEC_SEARCH.md](SPEC_SEARCH.md).
+
+| # | Slice | Status | Scope |
+|---|---|---|---|
+| 27.1 | Search read model | [x] | Extend `list_grid_blocks` with optional query, FTS5 route filtering, relevance ranking and paginated lightweight `LightBlock` projection |
+| 27.2 | Match excerpts | [x] | Add search-only match metadata: title/description/body visible fields plus author/url searchable metadata, plain-text excerpt and frontend-safe ranges |
+| 27.3 | Main/Grid search UI | [x] | `Cmd+F` and bottom `Search cards` toggle the bottom search bar, debounced route reload, stale response guard, Escape close contract |
+| 27.4 | Sidebar search UI | [x] | `Shift+Cmd+F` opens/focuses sidebar inline search and filters channel rows without changing Grid route |
+| 27.5 | Card highlighting | [x] | Article title/body match rendering with design-system mark token and stable masonry measurement in search mode |
+| 27.6 | Tests + manual QA | [ ] | Automated backend/frontend coverage is in place; real-vault dark/light QA remains |
+
+### Phase 28 — Hybrid Search
+
+Goal: upgrade Surface Search from lexical-only retrieval to an architecturally
+mature hybrid search experience. The user should be able to type a Russian
+query and retrieve relevant English cards by meaning, while exact lexical
+matches remain explainable and trusted.
+
+Specification: [SPEC_SEARCH.md](SPEC_SEARCH.md).
+
+| # | Slice | Status | Scope |
+|---|---|---|---|
+| 28.1 | Hybrid search SPEC | [x] | Document lexical + alias/transliteration + multilingual semantic retrieval, fusion ranking, semantic excerpts and no-fake-highlight behavior |
+| 28.2 | SearchEngine boundary | [x] | Non-empty Grid queries delegate to `storage::search_engine`; frontend still calls one route-facing command independent of the internal backend |
+| 28.3 | Search documents/chunks | [x] | Build normalized `SearchDocument`/`SearchChunk` derived model with offsets, hashes, route refs and hidden searchable metadata chunks |
+| 28.4 | Alias/transliteration index | [x] | Add first deterministic query-planning slice for app/domain terms and Russian-English aliases (`память`/`memory`, `стая`/`flock`, `птиц`/`birds`, `майн`/`mine`) |
+| 28.5 | Local semantic embeddings | [x] | Add local-first multilingual embedding generation, model metadata and background indexing lifecycle |
+| 28.6 | Fusion/rerank | [x] | Merge lexical, alias, fuzzy and semantic candidates with deterministic ranking and tests preserving exact-match trust |
+| 28.7 | Semantic UX | [x] | Render semantic-only excerpts without fake highlights and keep progressive result snapshots stable |
+| 28.8 | Verification | [x] | Cross-language, typo, alias, stale-index, route-filter and performance tests on realistic vault data |
 
 ### Backlog
 

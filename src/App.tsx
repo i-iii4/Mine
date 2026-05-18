@@ -50,6 +50,11 @@ function historyDirectionForShortcut(e: KeyboardEvent): -1 | 1 | null {
   return null;
 }
 
+function isSearchShortcut(e: KeyboardEvent): boolean {
+  if (!e.metaKey || e.altKey || e.ctrlKey) return false;
+  return e.code === "KeyF" || e.key.toLowerCase() === "f";
+}
+
 /** Pin the DragOverlay so the cursor tip sits just outside the top-left corner. */
 const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
   if (!activatorEvent || !draggingNodeRect) return transform;
@@ -63,6 +68,21 @@ const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform })
 };
 
 const BATCH_TAG_REFRESH_DELAY_MS = 750;
+
+function normalizeSurfaceSearchQuery(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function fetchGridBlocks(
+  tag: string | undefined,
+  offset: number,
+  limit: number,
+  query: string,
+) {
+  return query
+    ? listGridBlocks(tag, offset, limit, query)
+    : listGridBlocks(tag, offset, limit);
+}
 
 import type { DeleteBlockPlan, IndexedBlock, LightBlock, TagCount, ChannelDto, GridSnapshot, MediaAssetRef } from "@/types";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -117,6 +137,7 @@ import { ClipperRecoveryBanner } from "@/components/ClipperRecoveryBanner";
 import { VaultConflictsBanner } from "@/components/VaultConflictsBanner";
 import { Grid } from "@/components/Grid";
 import { DragCardStackPreview } from "@/components/Card";
+import { MainSearchBottomBar } from "@/components/MainSearchBottomBar";
 import { ActionButton } from "@/components/ActionButton";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
@@ -148,6 +169,7 @@ const ComponentTestBench = lazy(async () => {
 
 const GRID_PAGE_SIZE = 200;
 const DETAIL_CHROME_TRANSITION_MS = 360;
+const SURFACE_SEARCH_CHROME_TRANSITION_MS = 260;
 
 interface VaultChangedEvent {
   path: string;
@@ -169,6 +191,8 @@ interface BlockAddedEvent {
   tags: string[];
   is_text: boolean;
 }
+
+type SurfaceSearchShortcutTarget = "main" | "sidebar";
 
 type MediaAssetDragPayload = {
   type: "media_asset";
@@ -296,6 +320,13 @@ export function AppWithVault({
     slug: string;
     sequence: number;
   } | null>(null);
+  const [mainSearchOpen, setMainSearchOpen] = useState(false);
+  const [mainSearchQuery, setMainSearchQuery] = useState("");
+  const [mainSearchMounted, setMainSearchMounted] = useState(false);
+  const [mainSearchBarEntered, setMainSearchBarEntered] = useState(false);
+  const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
+  const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
+  const [sidebarSearchFocusSequence, setSidebarSearchFocusSequence] = useState(0);
   const [scrollToTopSignal, setScrollToTopSignal] = useState(0);
   const [sidebarKeyboardNavigationFocus, setSidebarKeyboardNavigationFocus] = useState<{
     rowKey: string;
@@ -306,6 +337,7 @@ export function AppWithVault({
   const [activeDragMediaAsset, setActiveDragMediaAsset] = useState<MediaAssetDragPreview | null>(null);
   const [activeDragTextSelection, setActiveDragTextSelection] = useState<TextSelectionDragPreview | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
+  const mainSearchInputRef = useRef<HTMLInputElement>(null);
   const themeMenuRef = useRef<ThemeMenuHandle>(null);
   const gridColumnCountRef = useRef(1);
   const suppressRedirectRef = useRef(false);
@@ -313,6 +345,8 @@ export function AppWithVault({
   vaultPathRef.current = vaultPath;
   const currentTagRef = useRef(currentTag);
   currentTagRef.current = currentTag;
+  const mainSearchQueryRef = useRef(mainSearchQuery);
+  mainSearchQueryRef.current = mainSearchQuery;
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
   const loadRequestIdRef = useRef(0);
@@ -322,6 +356,7 @@ export function AppWithVault({
   const refreshTimerRef = useRef<number | null>(null);
   const refreshInFlightRef = useRef(false);
   const detailCloseTimerRef = useRef<number | null>(null);
+  const mainSearchExitTimerRef = useRef<number | null>(null);
   const pendingRefreshRef = useRef({
     grid: false,
     taxonomy: false,
@@ -350,6 +385,9 @@ export function AppWithVault({
       if (detailCloseTimerRef.current !== null) {
         window.clearTimeout(detailCloseTimerRef.current);
       }
+      if (mainSearchExitTimerRef.current !== null) {
+        window.clearTimeout(mainSearchExitTimerRef.current);
+      }
     };
   }, []);
 
@@ -369,8 +407,10 @@ export function AppWithVault({
     setSelectedBlock(block);
   }, [cancelPendingDetailClose]);
 
-  const applyGridSnapshot = useCallback((tag: string | undefined, grid: GridSnapshot) => {
-    routeSnapshotCacheRef.current.set(routeKeyFor(tag), grid);
+  const applyGridSnapshot = useCallback((tag: string | undefined, grid: GridSnapshot, query = "") => {
+    if (!query) {
+      routeSnapshotCacheRef.current.set(routeKeyFor(tag), grid);
+    }
     setBlocks(grid.blocks);
     setTotalBlocks(grid.total_blocks);
     setHasMoreBlocks(grid.has_more);
@@ -405,10 +445,40 @@ export function AppWithVault({
     || renamingBlock !== null
     || deleteTargetSlug !== null
     || isCreatingChannel;
+  const normalizedMainSearchQuery = normalizeSurfaceSearchQuery(mainSearchQuery);
+  const mainSearchActive = mainSearchOpen || normalizedMainSearchQuery.length > 0;
+  const mainSearchShouldShow =
+    (mainSearchOpen || normalizedMainSearchQuery.length > 0)
+    && !renderedDetailBlock
+    && !designSystemOpen;
 
   useEffect(() => {
     setImagePreview(null);
   }, [selectedBlock?.slug]);
+
+  useEffect(() => {
+    if (mainSearchExitTimerRef.current !== null) {
+      window.clearTimeout(mainSearchExitTimerRef.current);
+      mainSearchExitTimerRef.current = null;
+    }
+
+    if (!mainSearchShouldShow) {
+      setMainSearchBarEntered(false);
+      if (mainSearchMounted) {
+        mainSearchExitTimerRef.current = window.setTimeout(() => {
+          setMainSearchMounted(false);
+          mainSearchExitTimerRef.current = null;
+        }, SURFACE_SEARCH_CHROME_TRANSITION_MS);
+      }
+      return;
+    }
+
+    setMainSearchMounted(true);
+    const frame = window.requestAnimationFrame(() => {
+      setMainSearchBarEntered(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [mainSearchMounted, mainSearchShouldShow]);
 
   const handleColumnCountChange = useCallback((n: number) => {
     gridColumnCountRef.current = n;
@@ -468,43 +538,48 @@ export function AppWithVault({
 
   const loadGridSnapshot = useCallback(async ({
     tag = currentTagRef.current,
+    query = mainSearchQueryRef.current,
     preferCachedRoute = false,
     invalidateCachedRoutes = false,
   }: {
     tag?: string;
+    query?: string;
     preferCachedRoute?: boolean;
     invalidateCachedRoutes?: boolean;
   } = {}) => {
     const requestId = ++loadRequestIdRef.current;
     const pathAtStart = vaultPathRef.current;
     const tagAtStart = tag;
+    const queryAtStart = normalizeSurfaceSearchQuery(query);
     const routeKey = routeKeyFor(tagAtStart);
     const started = performance.now();
     if (invalidateCachedRoutes) {
       invalidateRouteSnapshots();
     }
-    if (preferCachedRoute) {
+    if (preferCachedRoute && !queryAtStart) {
       const cached = routeSnapshotCacheRef.current.get(routeKey);
       if (cached) {
-        applyGridSnapshot(tagAtStart, cached);
+        applyGridSnapshot(tagAtStart, cached, queryAtStart);
         setLoadError(null);
       }
     }
     console.info("[startup] loadGrid:start", {
       requestId,
       tag: tagAtStart ?? "__all__",
+      query: queryAtStart ? "yes" : "no",
       preferCachedRoute,
     });
     try {
-      const grid = await listGridBlocks(tagAtStart, 0, GRID_PAGE_SIZE);
+      const grid = await fetchGridBlocks(tagAtStart, 0, GRID_PAGE_SIZE, queryAtStart);
       if (
         loadRequestIdRef.current !== requestId
         || vaultPathRef.current !== pathAtStart
         || currentTagRef.current !== tagAtStart
+        || normalizeSurfaceSearchQuery(mainSearchQueryRef.current) !== queryAtStart
       ) {
         return;
       }
-      applyGridSnapshot(tagAtStart, grid);
+      applyGridSnapshot(tagAtStart, grid, queryAtStart);
       setLoadError(null);
       window.dispatchEvent(new Event("vault-refreshed"));
       console.info("[startup] loadGrid:done", {
@@ -518,6 +593,7 @@ export function AppWithVault({
         loadRequestIdRef.current === requestId
         && vaultPathRef.current === pathAtStart
         && currentTagRef.current === tagAtStart
+        && normalizeSurfaceSearchQuery(mainSearchQueryRef.current) === queryAtStart
       ) {
         console.error("[LOAD_GRID] FAILED:", msg, err);
         setLoadError(msg);
@@ -698,34 +774,49 @@ export function AppWithVault({
     if (loadingMoreBlocks || !hasMoreBlocks) return;
     const pathAtStart = vaultPathRef.current;
     const tagAtStart = currentTagRef.current;
+    const queryAtStart = normalizeSurfaceSearchQuery(mainSearchQueryRef.current);
     const offsetAtStart = blocksRef.current.length;
     setLoadingMoreBlocks(true);
     try {
-      const grid = await listGridBlocks(tagAtStart, offsetAtStart, GRID_PAGE_SIZE);
-      if (vaultPathRef.current !== pathAtStart || currentTagRef.current !== tagAtStart) {
+      const grid = await fetchGridBlocks(tagAtStart, offsetAtStart, GRID_PAGE_SIZE, queryAtStart);
+      if (
+        vaultPathRef.current !== pathAtStart
+        || currentTagRef.current !== tagAtStart
+        || normalizeSurfaceSearchQuery(mainSearchQueryRef.current) !== queryAtStart
+      ) {
         return;
       }
       setBlocks((prev) => {
         const seen = new Set(prev.map((block) => block.id));
         const appended = grid.blocks.filter((block) => !seen.has(block.id));
         const nextBlocks = appended.length > 0 ? [...prev, ...appended] : prev;
-        routeSnapshotCacheRef.current.set(routeKeyFor(tagAtStart), {
-          blocks: nextBlocks,
-          total_blocks: grid.total_blocks,
-          has_more: grid.has_more,
-        });
+        if (!queryAtStart) {
+          routeSnapshotCacheRef.current.set(routeKeyFor(tagAtStart), {
+            blocks: nextBlocks,
+            total_blocks: grid.total_blocks,
+            has_more: grid.has_more,
+          });
+        }
         return nextBlocks;
       });
       setTotalBlocks(grid.total_blocks);
       setHasMoreBlocks(grid.has_more);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (vaultPathRef.current === pathAtStart && currentTagRef.current === tagAtStart) {
+      if (
+        vaultPathRef.current === pathAtStart
+        && currentTagRef.current === tagAtStart
+        && normalizeSurfaceSearchQuery(mainSearchQueryRef.current) === queryAtStart
+      ) {
         console.error("[LOAD_MORE] FAILED:", msg, err);
         setLoadError(msg);
       }
     } finally {
-      if (vaultPathRef.current === pathAtStart && currentTagRef.current === tagAtStart) {
+      if (
+        vaultPathRef.current === pathAtStart
+        && currentTagRef.current === tagAtStart
+        && normalizeSurfaceSearchQuery(mainSearchQueryRef.current) === queryAtStart
+      ) {
         setLoadingMoreBlocks(false);
       }
     }
@@ -886,6 +977,23 @@ export function AppWithVault({
   }, [currentTag, routeKeyFor, vaultReady]);
 
   useEffect(() => {
+    if (!vaultReady || !initialRouteLoadDoneRef.current) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const query = normalizeSurfaceSearchQuery(mainSearchQueryRef.current);
+      void loadGridSnapshotRef.current({
+        tag: currentTagRef.current,
+        query,
+        preferCachedRoute: !query,
+      });
+    }, 100);
+
+    return () => window.clearTimeout(timer);
+  }, [mainSearchQuery, vaultReady]);
+
+  useEffect(() => {
     if (!vaultReady) {
       return;
     }
@@ -1016,10 +1124,73 @@ export function AppWithVault({
     onVaultSelected(selected);
   }, [navigate, onVaultSelected]);
 
+  const closeMainSearch = useCallback(() => {
+    setMainSearchQuery("");
+    setMainSearchOpen(false);
+  }, []);
+
+  const focusMainSearch = useCallback(() => {
+    setMainSearchOpen(true);
+    window.requestAnimationFrame(() => {
+      mainSearchInputRef.current?.focus();
+      mainSearchInputRef.current?.select();
+    });
+  }, []);
+
+  const toggleMainSearch = useCallback(() => {
+    if (renderedDetailBlock || designSystemOpen) return;
+    if (mainSearchActive) {
+      closeMainSearch();
+      return;
+    }
+    focusMainSearch();
+  }, [closeMainSearch, designSystemOpen, focusMainSearch, mainSearchActive, renderedDetailBlock]);
+
+  const focusSidebarSearch = useCallback(() => {
+    setSidebarSearchOpen(true);
+    setSidebarSearchFocusSequence((sequence) => sequence + 1);
+  }, []);
+
+  const handleSurfaceSearchShortcut = useCallback((target: SurfaceSearchShortcutTarget) => {
+    if (isOverlayKeyboardTarget(document.activeElement)) return;
+    if (target === "sidebar") {
+      focusSidebarSearch();
+      return;
+    }
+    toggleMainSearch();
+  }, [focusSidebarSearch, toggleMainSearch]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const unlisten = listen<SurfaceSearchShortcutTarget>(
+      "surface-search-shortcut",
+      (event) => {
+        if (cancelled) return;
+        handleSurfaceSearchShortcut(event.payload);
+      },
+    );
+    return () => {
+      cancelled = true;
+      unlisten.then((fn) => fn());
+    };
+  }, [handleSurfaceSearchShortcut]);
+
   // Global keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || isEditableKeyboardTarget(e.target)) return;
+      if (e.defaultPrevented) return;
+      if (isSearchShortcut(e)) {
+        if (isOverlayKeyboardTarget(e.target)) return;
+        if (e.shiftKey) {
+          e.preventDefault();
+          handleSurfaceSearchShortcut("sidebar");
+          return;
+        }
+        e.preventDefault();
+        handleSurfaceSearchShortcut("main");
+        return;
+      }
+      if (isEditableKeyboardTarget(e.target)) return;
       const historyDirection = historyDirectionForShortcut(e);
       if (historyDirection !== null) {
         if (isDetailShortcutBlockedTarget(e.target)) return;
@@ -1057,7 +1228,7 @@ export function AppWithVault({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleSwitchVault, navigate, selectedBlock, vaultPath]);
+  }, [handleSurfaceSearchShortcut, handleSwitchVault, navigate, selectedBlock, vaultPath]);
 
   // ── Block navigation ──────────────────────────────────────────────────────
 
@@ -1956,6 +2127,11 @@ export function AppWithVault({
         onNavClick={handleDetailClose}
         onScrollToTop={handleScrollToTop}
         keyboardNavigationFocus={sidebarKeyboardNavigationFocus}
+        searchOpen={sidebarSearchOpen}
+        searchQuery={sidebarSearchQuery}
+        searchFocusSequence={sidebarSearchFocusSequence}
+        onSearchOpenChange={setSidebarSearchOpen}
+        onSearchQueryChange={setSidebarSearchQuery}
         headerSlot={
           <>
             <ClipperRecoveryBanner
@@ -2009,6 +2185,16 @@ export function AppWithVault({
             </div>
           </div>
         )}
+        {mainSearchMounted && (
+          <MainSearchBottomBar
+            ref={mainSearchInputRef}
+            entered={mainSearchBarEntered && mainSearchShouldShow}
+            query={mainSearchQuery}
+            onQueryChange={setMainSearchQuery}
+            onClearQuery={closeMainSearch}
+            onClose={closeMainSearch}
+          />
+        )}
         <Routes>
           <Route
             element={
@@ -2025,6 +2211,7 @@ export function AppWithVault({
                 keyboardNavigationDisabled={gridKeyboardNavigationDisabled}
                 restoreFocusSlug={gridFocusRestore?.slug ?? null}
                 restoreFocusSequence={gridFocusRestore?.sequence ?? 0}
+                searchQuery={normalizedMainSearchQuery}
                 onBlockClick={handleBlockClick}
                 onToggleTag={handleToggleTag}
                 onCreateAndAssign={handleCreateTagFromMenu}
@@ -2156,6 +2343,13 @@ export function AppWithVault({
         {isSyncing && (
           <span className="text-sm text-muted-foreground">Syncing…</span>
         )}
+        <ActionButton
+          hotkey="⌘F"
+          onClick={toggleMainSearch}
+          isSelected={mainSearchShouldShow}
+        >
+          Search cards
+        </ActionButton>
       </div>
 
       <Suspense fallback={null}>
@@ -2233,6 +2427,7 @@ interface RouteContext {
   keyboardNavigationDisabled: boolean;
   restoreFocusSlug: string | null;
   restoreFocusSequence: number;
+  searchQuery: string;
   onBlockClick: (block: LightBlock) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;

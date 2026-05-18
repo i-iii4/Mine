@@ -257,15 +257,22 @@ pub async fn list_grid_blocks(
     current_tag: Option<String>,
     offset: Option<usize>,
     limit: Option<usize>,
+    query: Option<String>,
 ) -> Result<GridSnapshot, CommandError> {
     append_startup_trace(
         &app,
         "list_grid_blocks",
         &format!(
-            "start tag={} offset={} limit={}",
+            "start tag={} offset={} limit={} query={}",
             current_tag.as_deref().unwrap_or("__all__"),
             offset.unwrap_or(0),
-            limit.unwrap_or(200)
+            limit.unwrap_or(200),
+            query
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|_| "yes")
+                .unwrap_or("no")
         ),
     );
     let vault = current_vault_layout(&state)?;
@@ -277,14 +284,24 @@ pub async fn list_grid_blocks(
     let page_limit = limit.unwrap_or(200).max(1);
     let db_path = vault.index_db_path();
     let current_tag_for_task = current_tag.clone();
+    let query_for_task = query
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
     let snapshot =
         tauri::async_runtime::spawn_blocking(move || -> Result<GridSnapshot, CommandError> {
-            let conn = db::open_read_only(&db_path)?;
-            let (blocks, has_more) = index::list_grid_blocks(
+            let conn = if query_for_task.is_some() {
+                db::open_or_create(&db_path)?
+            } else {
+                db::open_read_only(&db_path)?
+            };
+            let (blocks, has_more) = index::list_grid_blocks_with_query(
                 &conn,
                 current_tag_for_task.as_deref(),
                 page_offset,
                 page_limit,
+                query_for_task.as_deref(),
             )?;
             Ok(GridSnapshot {
                 blocks,
@@ -1894,13 +1911,13 @@ fn read_media_asset_action_block(
     vault: &VaultLayout,
     path: &Path,
 ) -> Result<Block, MediaAssetActionError> {
-    let (slug, content) = files::read_block_file(vault, path).map_err(internal_media_asset_error)?;
-    let parsed =
-        parse_markdown_document(&slug, &content, file_saved_at(path)).map_err(|e| {
-            MediaAssetActionError::Internal {
-                message: format!("failed to parse {}: {e}", path.display()),
-            }
-        })?;
+    let (slug, content) =
+        files::read_block_file(vault, path).map_err(internal_media_asset_error)?;
+    let parsed = parse_markdown_document(&slug, &content, file_saved_at(path)).map_err(|e| {
+        MediaAssetActionError::Internal {
+            message: format!("failed to parse {}: {e}", path.display()),
+        }
+    })?;
     Ok(parsed.block)
 }
 

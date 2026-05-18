@@ -28,6 +28,7 @@ use crate::storage::preview_plan::{
     is_image_media, is_remote_media, is_video_media, local_media_items, media_ext_lower,
     primary_preview_path, PREVIEW_TILE_LIMIT,
 };
+use crate::storage::search_engine;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -135,6 +136,44 @@ pub struct LightBlock {
     pub media_dimensions: Option<String>,
     pub preview_manifest: Option<String>,
     pub feed_playback: Option<String>,
+    pub search_match: Option<SearchMatch>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchMatchField {
+    Title,
+    Description,
+    Author,
+    Body,
+    Url,
+    Semantic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchMatchKind {
+    Exact,
+    Prefix,
+    Fuzzy,
+    Alias,
+    Semantic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SearchTextRange {
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SearchMatch {
+    pub field: SearchMatchField,
+    pub kind: SearchMatchKind,
+    pub excerpt: String,
+    pub ranges: Vec<SearchTextRange>,
+    pub score: f64,
+    pub explanation: Option<String>,
 }
 
 /// Minimal block projection for Phase 2 thumbnail upgrade candidate scans.
@@ -211,7 +250,7 @@ pub struct FeedPlaybackDescriptor {
     pub profile: FeedPlaybackProfile,
 }
 
-const LIGHT_BLOCK_BODY_PREVIEW_CHARS: i64 = 220;
+pub(crate) const LIGHT_BLOCK_BODY_PREVIEW_CHARS: i64 = 220;
 const FEED_AUTOPLAY_STANDARD_MAX_SOURCE_BYTES: u64 = 10 * 1024 * 1024;
 const FEED_AUTOPLAY_STANDARD_MAX_LONGEST_SIDE_PX: u32 = 2560;
 const FEED_AUTOPLAY_STANDARD_MAX_PIXEL_AREA: u64 = 4_000_000;
@@ -330,7 +369,7 @@ fn parse_related_notes_json(raw: Option<String>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn is_social_url(url: Option<&str>) -> bool {
+pub(crate) fn is_social_url(url: Option<&str>) -> bool {
     let Some(url) = url else {
         return false;
     };
@@ -865,7 +904,10 @@ fn row_to_preview_block(
     })
 }
 
-fn parse_block_type_row(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<BlockType> {
+pub(crate) fn parse_block_type_row(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+) -> rusqlite::Result<BlockType> {
     let raw: String = row.get(index)?;
     BlockType::from_str(&raw).map_err(|_| {
         rusqlite::Error::FromSqlConversionFailure(
@@ -876,7 +918,10 @@ fn parse_block_type_row(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Resu
     })
 }
 
-fn parse_card_kind_row(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<CardKind> {
+pub(crate) fn parse_card_kind_row(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+) -> rusqlite::Result<CardKind> {
     let raw: String = row.get(index)?;
     CardKind::from_str(&raw).ok_or_else(|| {
         rusqlite::Error::FromSqlConversionFailure(
@@ -1915,32 +1960,7 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
     )?;
 
     let blocks: Vec<LightBlock> = stmt
-        .query_map([LIGHT_BLOCK_BODY_PREVIEW_CHARS], |row| {
-            Ok(LightBlock {
-                id: row.get(0)?,
-                slug: row.get(1)?,
-                block_type: parse_block_type_row(row, 2)?,
-                card_kind: parse_card_kind_row(row, 3)?,
-                title: row.get(4)?,
-                content_heading: row.get(5)?,
-                display_title: row.get(6)?,
-                fallback_label: row.get(7)?,
-                url: row.get(8)?,
-                media_file: row.get(9)?,
-                thumbnail: row.get(10)?,
-                saved_at: row.get(11)?,
-                width: row.get::<_, Option<i64>>(12)?.map(|v| v as u32),
-                height: row.get::<_, Option<i64>>(13)?.map(|v| v as u32),
-                author: row.get(14)?,
-                body: row.get(15)?,
-                preview_text: row.get(16)?,
-                first_image: row.get(17)?,
-                media_urls: row.get(18)?,
-                media_dimensions: row.get(19)?,
-                preview_manifest: row.get(20)?,
-                feed_playback: row.get(21)?,
-            })
-        })?
+        .query_map([LIGHT_BLOCK_BODY_PREVIEW_CHARS], light_block_from_row)?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(blocks)
@@ -1955,6 +1975,21 @@ pub fn list_grid_blocks(
     offset: usize,
     limit: usize,
 ) -> Result<(Vec<LightBlock>, bool)> {
+    list_grid_blocks_with_query(conn, tag, offset, limit, None)
+}
+
+pub fn list_grid_blocks_with_query(
+    conn: &Connection,
+    tag: Option<&str>,
+    offset: usize,
+    limit: usize,
+    query: Option<&str>,
+) -> Result<(Vec<LightBlock>, bool)> {
+    let normalized_query = normalize_search_query(query.unwrap_or(""));
+    if !normalized_query.is_empty() {
+        return search_engine::search_grid_blocks(conn, tag, offset, limit, &normalized_query);
+    }
+
     let fetch_limit = limit.saturating_add(1);
     let sql = match tag {
         Some(_) => {
@@ -1981,44 +2016,18 @@ pub fn list_grid_blocks(
     };
 
     let mut stmt = conn.prepare(sql)?;
-    let map_row = |row: &rusqlite::Row<'_>| {
-        Ok(LightBlock {
-            id: row.get(0)?,
-            slug: row.get(1)?,
-            block_type: parse_block_type_row(row, 2)?,
-            card_kind: parse_card_kind_row(row, 3)?,
-            title: row.get(4)?,
-            content_heading: row.get(5)?,
-            display_title: row.get(6)?,
-            fallback_label: row.get(7)?,
-            url: row.get(8)?,
-            media_file: row.get(9)?,
-            thumbnail: row.get(10)?,
-            saved_at: row.get(11)?,
-            width: row.get::<_, Option<i64>>(12)?.map(|v| v as u32),
-            height: row.get::<_, Option<i64>>(13)?.map(|v| v as u32),
-            author: row.get(14)?,
-            body: row.get(15)?,
-            preview_text: row.get(16)?,
-            first_image: row.get(17)?,
-            media_urls: row.get(18)?,
-            media_dimensions: row.get(19)?,
-            preview_manifest: row.get(20)?,
-            feed_playback: row.get(21)?,
-        })
-    };
 
     let mut blocks = match tag {
         Some(tag) => stmt
             .query_map(
                 params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, tag, fetch_limit, offset],
-                map_row,
+                light_block_from_row,
             )?
             .collect::<Result<Vec<_>, _>>()?,
         None => stmt
             .query_map(
                 params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, fetch_limit, offset],
-                map_row,
+                light_block_from_row,
             )?
             .collect::<Result<Vec<_>, _>>()?,
     };
@@ -2398,6 +2407,38 @@ pub fn remove_channel(conn: &Connection, tag: &str) -> Result<bool> {
 }
 
 // ─── Private helpers ────────────────────────────────────────────────────────
+
+pub(crate) fn light_block_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LightBlock> {
+    Ok(LightBlock {
+        id: row.get(0)?,
+        slug: row.get(1)?,
+        block_type: parse_block_type_row(row, 2)?,
+        card_kind: parse_card_kind_row(row, 3)?,
+        title: row.get(4)?,
+        content_heading: row.get(5)?,
+        display_title: row.get(6)?,
+        fallback_label: row.get(7)?,
+        url: row.get(8)?,
+        media_file: row.get(9)?,
+        thumbnail: row.get(10)?,
+        saved_at: row.get(11)?,
+        width: row.get::<_, Option<i64>>(12)?.map(|v| v as u32),
+        height: row.get::<_, Option<i64>>(13)?.map(|v| v as u32),
+        author: row.get(14)?,
+        body: row.get(15)?,
+        preview_text: row.get(16)?,
+        first_image: row.get(17)?,
+        media_urls: row.get(18)?,
+        media_dimensions: row.get(19)?,
+        preview_manifest: row.get(20)?,
+        feed_playback: row.get(21)?,
+        search_match: None,
+    })
+}
+
+fn normalize_search_query(input: &str) -> String {
+    input.split_whitespace().collect::<Vec<_>>().join(" ")
+}
 
 /// Escape FTS5 special characters in user input.
 /// Wraps each word in double quotes to treat them as literal tokens.
@@ -3259,6 +3300,158 @@ mod tests {
             preview_text_cap,
             Some(FEED_PREVIEW_TEXT_BUFFER_CHARS as i64)
         );
+    }
+
+    #[test]
+    fn list_grid_blocks_with_query_filters_route_and_returns_match_excerpt() {
+        let conn = test_conn();
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "alpha-title",
+                "article",
+                Some("Aristotle notes"),
+                "2026-01-01T00:00:00Z",
+                &["alpha"],
+                "",
+            ),
+            None,
+        )
+        .unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "alpha-body",
+                "article",
+                Some("Greek philosophy"),
+                "2026-01-03T00:00:00Z",
+                &["alpha"],
+                "Plato opens the section. Aristotle appears in the body excerpt and should be highlighted.",
+            ),
+            None,
+        )
+        .unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "beta-title",
+                "article",
+                Some("Aristotle elsewhere"),
+                "2026-01-04T00:00:00Z",
+                &["beta"],
+                "",
+            ),
+            None,
+        )
+        .unwrap();
+
+        let (blocks, has_more) =
+            list_grid_blocks_with_query(&conn, Some("alpha"), 0, 20, Some("Aristotle")).unwrap();
+
+        assert!(!has_more);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].slug, "alpha-title");
+        assert_eq!(
+            blocks[0].search_match.as_ref().unwrap().field,
+            SearchMatchField::Title
+        );
+        let body_match = blocks
+            .iter()
+            .find(|block| block.slug == "alpha-body")
+            .and_then(|block| block.search_match.as_ref())
+            .unwrap();
+        assert_eq!(body_match.field, SearchMatchField::Body);
+        assert!(body_match.excerpt.contains("Aristotle"));
+        assert_eq!(body_match.ranges.len(), 1);
+
+        let (prefix_blocks, prefix_has_more) =
+            list_grid_blocks_with_query(&conn, Some("alpha"), 0, 20, Some("Aris")).unwrap();
+        assert!(!prefix_has_more);
+        assert_eq!(prefix_blocks.len(), 2);
+        assert!(prefix_blocks
+            .iter()
+            .any(|block| block.slug == "alpha-title"));
+        assert!(prefix_blocks.iter().any(|block| block.slug == "alpha-body"));
+    }
+
+    #[test]
+    fn list_grid_blocks_with_query_uses_visible_body_match_before_fallback_label() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "memory-in-slug",
+            "article",
+            Some("Memory Machines hidden social title"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "Social card body contains Memory and must be highlighted.",
+        );
+        block.frontmatter.url = Some("https://x.com/user/status/1".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+
+        let (blocks, has_more) =
+            list_grid_blocks_with_query(&conn, None, 0, 20, Some("memo")).unwrap();
+
+        assert!(!has_more);
+        assert_eq!(blocks.len(), 1);
+        let search_match = blocks[0].search_match.as_ref().unwrap();
+        assert_eq!(search_match.field, SearchMatchField::Body);
+        assert!(search_match.excerpt.contains("Memory"));
+        let range = search_match.ranges.first().unwrap();
+        let highlighted = search_match
+            .excerpt
+            .chars()
+            .skip(range.start)
+            .take(range.end - range.start)
+            .collect::<String>();
+        assert_eq!(highlighted, "Memo");
+    }
+
+    #[test]
+    fn list_grid_blocks_with_query_matches_cross_language_alias_phrase() {
+        let conn = test_conn();
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "memory-flock",
+                "article",
+                Some("Hopfield sketch"),
+                "2026-01-01T00:00:00Z",
+                &["research"],
+                "Memory is a flock of birds in a small Hopfield network.",
+            ),
+            None,
+        )
+        .unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "unrelated-memory",
+                "article",
+                Some("Memory table"),
+                "2026-01-02T00:00:00Z",
+                &["other"],
+                "Memory appears here without birds or flock context.",
+            ),
+            None,
+        )
+        .unwrap();
+
+        let (blocks, has_more) = list_grid_blocks_with_query(
+            &conn,
+            Some("research"),
+            0,
+            20,
+            Some("память как стая птиц"),
+        )
+        .unwrap();
+
+        assert!(!has_more);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].slug, "memory-flock");
+        let search_match = blocks[0].search_match.as_ref().unwrap();
+        assert_eq!(search_match.field, SearchMatchField::Body);
+        assert_eq!(search_match.kind, SearchMatchKind::Alias);
+        assert!(search_match.excerpt.contains("Memory"));
     }
 
     #[test]

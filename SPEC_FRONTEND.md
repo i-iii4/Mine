@@ -1,6 +1,6 @@
 # SPEC: Frontend
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 ## Overview
 
@@ -39,6 +39,25 @@ interface IndexedBlock {
   tags: string[]; // legacy physical name; semantic meaning: CollectionRef[]
 }
 ```
+
+`LightBlock` mirrors the feed-safe subset of `IndexedBlock`. In active Surface
+Search mode it may include search-only metadata. The Hybrid Search metadata
+shape is:
+
+```typescript
+interface SearchMatch {
+  field: "title" | "description" | "author" | "body" | "url" | "semantic";
+  kind: "exact" | "prefix" | "fuzzy" | "alias" | "semantic";
+  excerpt: string;
+  ranges: Array<{ start: number; end: number }>;
+  score: number;
+  explanation?: string;
+}
+```
+
+`search_match` is search-only metadata. It must be absent or `null` in normal
+route snapshots. `ranges` are backend character offsets, so Card rendering
+slices excerpts by Unicode characters rather than JavaScript UTF-16 code units.
 
 Frontend title rendering follows [SPEC_DISPLAY_TITLE.md](./SPEC_DISPLAY_TITLE.md):
 card title slots use `display_title` and render it as one line with ellipsis.
@@ -635,10 +654,40 @@ Image media expansion:
 
 ### Search
 
-Глобальная frontend-палитра поиска удалена. В приложении больше нет Search
-route, нижней кнопки Search, `Search.tsx`, `cmdk` UI и глобального `Cmd+K`
-shortcut. Backend FTS/index commands остаются инфраструктурой индекса, но не
-имеют пользовательского `Cmd+K` входа.
+Новый поиск — surface filter, а не command palette. Полный контракт:
+[SPEC_SEARCH.md](SPEC_SEARCH.md).
+
+- `Cmd+F` открывает main search как нижний `h-8` бар в правой content pane,
+  вторым слоем прямо над app bottom bar, и фильтрует текущий Grid route:
+  Everything или текущую коллекцию. Бар не участвует в Grid layout: shell/input
+  стоят в финальной позиции, анимируется только нефокусируемая chrome plane.
+- В правой части bottom app bar есть `Search cards` action с shortcut label
+  `⌘F`. Кнопка и повторное `Cmd+F` закрывают main search; `Escape` в main
+  search тоже закрывает его и очищает query. Закрытие идёт через тот же exit
+  motion, без скачка страницы.
+- `Shift+Cmd+F` открывает inline search в левом Sidebar и фильтрует только
+  список каналов.
+- Desktop shortcut delivery идёт через native Tauri menu accelerators:
+  `Cmd+F`/`Shift+Cmd+F` emit `surface-search-shortcut` (`main`/`sidebar`).
+  DOM `keydown` остаётся browser/dev fallback и принимает physical
+  `KeyboardEvent.code === "KeyF"` плюс Latin `key === "f"`.
+- `Cmd+K` не участвует в поиске; он остаётся scoped shortcut для card/Detail
+  overflow menus.
+- Main/Grid search вызывает route-facing `list_grid_blocks` с query, получает
+  тот же `GridSnapshot`, но отфильтрованный и отсортированный по релевантности.
+  Frontend не знает, какой backend дал результат: FTS5, alias/transliteration,
+  fuzzy или semantic. Разница видна только через `search_match.kind`.
+- Article-derived feed cards в search mode получают optional `search_match`,
+  включая social cards с media preview: title matches подсвечиваются в title,
+  body matches заменяют обычный preview на 2-3 строки excerpt вокруг первого
+  совпадения. Author/URL matches являются searchable metadata: карточка
+  попадает в выдачу и ранжируется, но preview не заменяется, URL не
+  раскрывается, `<mark>` не рисуется. Semantic-only matches заменяют preview
+  на excerpt, но не рисуют fake `<mark>`, потому что `ranges` пустой.
+- Semantic-only matches заменяют обычный preview на semantic excerpt, но не
+  рисуют `mark`, если backend не вернул реальный текстовый range.
+- Глобальная Search route, нижняя Search-кнопка, `Search.tsx`, `cmdk` UI и
+  `Cmd+K` Search fallback остаются удалёнными.
 
 ### Detail (fullscreen overlay)
 

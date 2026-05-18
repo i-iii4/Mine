@@ -82,6 +82,7 @@ tauri-specta = { version = "=2.0.0-rc.21", features = ["typescript"] }
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 trash = "5"
 openh264 = "0.6"
+fastembed = "5"
 
 [[bin]]
 name = "native-host"

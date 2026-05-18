@@ -1,6 +1,6 @@
 # SPEC: storage layer
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 Персистентный слой: SQLite-индекс, файловые операции, thumbnail-генерация.
 Зависит от domain/ для типов. Не зависит от commands/ и watcher/.
@@ -81,10 +81,53 @@ CREATE TABLE wikilinks (
 );
 ```
 
-FTS5 синхронизируется через триггеры (INSERT/DELETE/UPDATE на blocks).
+FTS5 синхронизируется через триггеры (INSERT/DELETE/UPDATE на blocks) и
+остаётся текущим lexical backend. Целевой Search contract добавляет
+rebuildable derived stores для alias/transliteration и semantic chunks/
+embeddings в local app data store; пользовательские `.md` файлы не
+переписываются ради поиска.
 `title` in the physical schema is legacy metadata. The body column carries
 Markdown H1 text, so search still sees new content headings without storing a
 generated `frontmatter.title`.
+
+Surface Search query terms are escaped and sent to FTS5 as prefix tokens, e.g.
+`mem` becomes `"mem"*`, so incremental typing finds `memory` without requiring
+the full token.
+
+Target hybrid search derived tables/indexes:
+
+```sql
+CREATE TABLE search_document_state (
+    block_id INTEGER PRIMARY KEY REFERENCES blocks(id) ON DELETE CASCADE,
+    slug TEXT NOT NULL,
+    document_hash TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE search_chunks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    block_id INTEGER NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
+    slug TEXT NOT NULL,
+    field TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    start_char INTEGER NOT NULL,
+    end_char INTEGER NOT NULL,
+    text_hash TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(block_id, field, chunk_index)
+);
+
+CREATE TABLE search_embeddings (
+    chunk_id INTEGER NOT NULL REFERENCES search_chunks(id) ON DELETE CASCADE,
+    model_id TEXT NOT NULL,
+    dim INTEGER NOT NULL,
+    vector BLOB NOT NULL,
+    text_hash TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY(chunk_id, model_id)
+);
+```
 
 ### Прагмы
 
@@ -190,6 +233,8 @@ remove_block(conn: &Connection, slug: &str) -> Result<bool>
 get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>>
 list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>>
 list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>>
+list_grid_blocks(conn: &Connection, tag: Option<&str>, offset: usize, limit: usize) -> Result<(Vec<LightBlock>, bool)>
+list_grid_blocks_with_query(conn: &Connection, tag: Option<&str>, offset: usize, limit: usize, query: Option<&str>) -> Result<(Vec<LightBlock>, bool)>
 list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlock>>
 get_all_tags(conn: &Connection) -> Result<Vec<TagCount>>
 slug_exists(conn: &Connection, slug: &str) -> Result<bool>
@@ -275,6 +320,52 @@ a normalized tag. Legacy normalized values are migration inputs only.
   `frontmatter.type`
 - Фильтр tag: `JOIN block_tags WHERE tag = ?`
 - Комбинация: AND между фильтрами
+
+### Поведение Grid search
+
+Surface Search не возвращает отдельный `IndexedBlock` result set в frontend.
+Main/Grid search расширяет route-facing `list_grid_blocks`:
+
+- `query` пустой — текущий route path, `ORDER BY saved_at DESC`;
+- `query` непустой — `JOIN blocks_fts`, optional collection `JOIN block_tags`,
+  `WHERE blocks_fts MATCH ?`;
+- ranking: `ORDER BY bm25(blocks_fts, 8.0, 3.0, 1.0) ASC, b.saved_at DESC`;
+- projection остаётся lightweight `LightBlock`, без полного body payload для
+  media cards и без per-block tags;
+- search excerpt/highlight metadata строится только для возвращаемых rows;
+- FTS columns: `title` = `display_title` + legacy `title` + `fallback_label`,
+  `description`, `body`.
+- derived `search_chunks` дополнительно содержат searchable metadata fields:
+  `author` и `url`. Эти chunks участвуют в lexical/fuzzy candidate generation
+  и ranking, но не считаются visible highlight surfaces.
+
+Hybrid behavior:
+
+- lexical/alias candidates and semantic candidates are collected behind one
+  storage-level `SearchEngine` boundary;
+- non-empty Grid queries delegate to `storage::search_engine`;
+- lexical and alias candidates use SQLite FTS5, with deterministic
+  aliases/transliteration before matching;
+- fuzzy candidates use normalized `search_chunks` and real text ranges;
+- semantic candidates use persisted `search_embeddings` generated by local
+  `fastembed` `intfloat/multilingual-e5-small`;
+- model files are cached outside the project tree at
+  `~/Library/Application Support/com.mine.app/cache/fastembed` by default, with
+  `FASTEMBED_CACHE_DIR` as the explicit override;
+- single-token Latin queries bypass semantic embedding work and do not admit
+  semantic-only rows into Grid results; semantic-only rows are reserved for
+  Cyrillic cross-language queries and multi-token semantic queries;
+- collection route filtering is applied before final projection;
+- candidate chunks collapse to one card result per slug;
+- exact/prefix/alias matches carry real highlight ranges;
+- author/url metadata matches carry empty highlight ranges; author can explain
+  why a card matched, but URL remains hidden in card rendering;
+- semantic-only matches carry an excerpt and empty highlight ranges;
+- embedding generation is background derived work after vault open; non-empty
+  search never downloads the model or generates missing vectors in the
+  foreground, and falls back to lexical/alias/fuzzy while semantic state warms.
+
+Полный surface contract: [SPEC_SEARCH.md](SPEC_SEARCH.md).
 
 ---
 

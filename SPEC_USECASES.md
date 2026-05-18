@@ -1,6 +1,6 @@
 # Use Cases: Mine
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Референсы
 
@@ -113,13 +113,33 @@ stripe-og.png
 
 ---
 
-## UC-05: Полнотекстовый поиск [removed]
+## UC-05: Surface Search
 
-Глобальный поиск через `Cmd+K` удалён из frontend-контракта. Пользователь не
-получает command palette, Search route или нижнюю кнопку Search. FTS5 остаётся
-внутренней индексной инфраструктурой без пользовательского shortcut surface.
+**Актор:** пользователь ищет карточки или каналы без ухода с текущей страницы.
 
-`Cmd+K` используется только scoped-сценариями карточки и Detail.
+**Сценарий A — поиск в текущем Grid:**
+1. Пользователь находится на Everything или внутри конкретной коллекции.
+2. Нажимает `Cmd+F`.
+3. В правой content pane открывается inline search input.
+4. По мере ввода текущий Grid фильтруется по `display_title`, filename fallback,
+   description и полному Markdown body.
+5. Результаты остаются карточками того же Grid и сортируются по релевантности:
+   title matches выше body-only matches.
+6. Если совпадение найдено в article body, карточка показывает excerpt вокруг
+   первого совпадения и подсвечивает matched text.
+7. Если query на другом языке (`память`) семантически соответствует английской
+   карточке (`memory is a flock of birds`), hybrid search может вернуть эту
+   карточку даже без буквального совпадения. В этом случае карточка показывает
+   semantic excerpt без фальшивой подсветки.
+8. Очистка query возвращает обычный порядок текущей страницы.
+
+**Сценарий B — поиск в Sidebar:**
+1. Пользователь нажимает `Shift+Cmd+F`.
+2. В левом Sidebar открывается inline search input.
+3. Фильтруются только каналы; текущий Grid route не меняется.
+4. `Escape` очищает query, повторный `Escape` закрывает Sidebar search.
+
+`Cmd+K` не участвует в поиске и остаётся scoped-сценарием карточки/Detail.
 
 ---
 
@@ -194,7 +214,8 @@ stripe-og.png
 **Сценарий:**
 1. `Cmd+K` при keyboard-focused карточке открывает её scoped overflow menu.
 2. `Cmd+K` в Detail открывает верхнее scoped overflow menu.
-3. Глобальной command palette и глобального Search действия нет.
+3. Глобальной command palette и глобального Search действия нет; поиск живёт
+   только в `Cmd+F` / `Shift+Cmd+F` surface modes.
    - Сменить вид (сетка/masonry/список)
    - Открыть vault в Finder
    - Пересобрать индекс

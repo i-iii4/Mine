@@ -15,6 +15,7 @@
 - `SPEC_STORAGE.md` — спецификации storage/db, index, files, thumbnails
 - `SPEC_INTEGRATION.md` — спецификации watcher/events, handler, commands
 - `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
+- `SPEC_SEARCH.md` — спецификация Surface Search и целевой Hybrid Search: `Cmd+F` Grid filter, `Shift+Cmd+F` Sidebar filter, lexical/alias/semantic retrieval, fusion ranking, excerpts/highlights
 - `SPEC_GROUP_SELECTION.md` — спецификация Grid group selection и batch card actions
 - `SPEC_THUMBNAILS.md` — полная спецификация preview/thumbnail pipeline
 - `SPEC_FEED_VIDEO.md` — спецификация desktop feed video contract: surfaces, `feed_playback`, autoplay gating
@@ -39,6 +40,7 @@
 | Tauri v2 | Десктопная оболочка, системные API, файловый доступ |
 | Rust | Бэкенд: файловые операции, индексирование, thumbnails |
 | rusqlite | SQLite + FTS5 — поисковый индекс и связи между блоками |
+| fastembed | Local multilingual semantic embeddings for Hybrid Search |
 | notify | File watcher — отслеживание изменений в vault |
 | image + ab_glyph + imageproc | Генерация thumbnails (изображения — resize, статьи — text-to-image) |
 | ureq | Синхронный HTTP-клиент (импорт Are.na) |
@@ -204,6 +206,8 @@ local-arena/
 ├── thumbs/
 └── cache/
     └── audio/                     # Article audio sidecars + .wav artifacts
+
+~/Library/Application Support/com.mine.app/cache/fastembed/  # Local semantic model cache
 ```
 
 Коллекции = `.md` файлы с `type: channel` (метаданные в frontmatter: position, color, icon). Блок = `.md` файл + опциональный медиафайл. Collection membership — через `Mine Collections` с quoted Obsidian wikilinks, например `- "[[Красивый веб]]"`; `tags` остаётся пользовательским Obsidian-полем.

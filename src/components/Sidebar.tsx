@@ -41,6 +41,7 @@ import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import { cn } from "@/lib/utils";
 import { ReadOnlyCardPreview } from "./Card";
 import { MicroPreviewThumbnail, microPreviewFromPreviewCard } from "./MicroPreviewThumbnail";
+import { Input } from "@/components/ui/input";
 
 const SIDEBAR_PREVIEW_WIDTH = 240;
 const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
@@ -136,6 +137,11 @@ interface SidebarProps {
   onNavClick?: () => void;
   onScrollToTop?: () => void;
   keyboardNavigationFocus?: SidebarKeyboardNavigationFocus | null;
+  searchOpen?: boolean;
+  searchQuery?: string;
+  searchFocusSequence?: number;
+  onSearchOpenChange?: (open: boolean) => void;
+  onSearchQueryChange?: (query: string) => void;
   /** Optional slot for a header banner (e.g. iCloud conflict surface). */
   headerSlot?: React.ReactNode;
   linkedBlockSlug?: string | null;
@@ -185,6 +191,11 @@ export function Sidebar({
   onNavClick,
   onScrollToTop,
   keyboardNavigationFocus,
+  searchOpen = false,
+  searchQuery = "",
+  searchFocusSequence = 0,
+  onSearchOpenChange,
+  onSearchQueryChange,
   headerSlot,
   linkedBlockSlug,
   linkedTags = [],
@@ -194,6 +205,7 @@ export function Sidebar({
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [linkMode, setLinkMode] = useState<"all" | "linked">("all");
   const navRef = useRef<HTMLElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
   const previewRef = useRef<HTMLDivElement | null>(null);
   const previewOpenTimerRef = useRef<number | null>(null);
@@ -235,9 +247,17 @@ export function Sidebar({
   const isLinkingBlock = !!linkedBlockSlug && !!onToggleLinkedTag;
   const isLinkEditorActive = isLinkingBlock && !detailChromeClosing;
   const linkedTagSet = new Set(linkedTags);
-  const visibleTags = isLinkEditorActive && linkMode === "linked"
+  const baseVisibleTags = isLinkEditorActive && linkMode === "linked"
     ? orderedTags.filter((tc) => linkedTagSet.has(tc.tag))
     : orderedTags;
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const visibleTags = normalizedSearchQuery
+    ? baseVisibleTags.filter((tc) =>
+        collectionRefLabel(tc.tag).toLowerCase().includes(normalizedSearchQuery)
+        || tc.tag.toLowerCase().includes(normalizedSearchQuery),
+      )
+    : baseVisibleTags;
+  const searchVisible = !collapsed && (searchOpen || searchQuery.trim().length > 0);
   const editingRowKey = !isLinkEditorActive && editingTag !== null
     ? `tag:${editingTag}`
     : isCreatingChannel
@@ -383,6 +403,14 @@ export function Sidebar({
     clearSidebarKeyboardFocusTimer();
   }, [clearSidebarKeyboardFocusTimer]);
 
+  useEffect(() => {
+    if (!searchVisible) return;
+    window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    });
+  }, [searchFocusSequence, searchVisible]);
+
   const closePreview = useCallback(() => {
     clearPreviewOpenTimer();
     clearPreviewCloseTimer();
@@ -524,13 +552,34 @@ export function Sidebar({
           onChange={setLinkMode}
         />
       )}
+      {searchVisible && (
+        <div className={cn("absolute top-8 z-20", compact ? "left-2 right-2" : "left-8 right-8")}>
+          <Input
+            ref={searchInputRef}
+            aria-label="Search channels"
+            placeholder="Search channels..."
+            value={searchQuery}
+            onChange={(event) => onSearchQueryChange?.(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              if (searchQuery) {
+                onSearchQueryChange?.("");
+                return;
+              }
+              onSearchOpenChange?.(false);
+            }}
+            className="bg-background"
+          />
+        </div>
+      )}
 
       {/* Navigation */}
       <nav
         ref={navRef}
         className={cn(
           "relative flex-1 overflow-y-auto",
-          isLinkingBlock ? linkEditorNavPadding : "pt-16",
+          searchVisible ? "pt-20" : isLinkingBlock ? linkEditorNavPadding : "pt-16",
           "pb-8",
           compact ? "px-2" : "px-8",
         )}

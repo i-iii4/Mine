@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
 
 ## Context
 
@@ -461,7 +461,7 @@ iOS UI contract:
 | Rust Commands | API для фронтенда: CRUD блоков, коллекции, поиск | Rust, `#[tauri::command]` |
 | Indexer | Сканирование vault, парсинг frontmatter, file watcher | Rust, notify crate |
 | Frontmatter Parser | Извлечение атрибутов из `.md` файлов | Rust (yaml parsing) |
-| DB | Поисковый индекс, collection-ref cache, список каналов | rusqlite + FTS5 |
+| DB | Поисковый индекс, collection-ref cache, список каналов | rusqlite + FTS5 + local search chunks/embeddings |
 | Thumbnail Generator | Превью 240px: изображения (resize), статьи (text-to-image) | Rust, image + ab_glyph + imageproc |
 | Import | Импорт каналов из Are.na | Rust, ureq (sync HTTP) |
 | Web Clipper | Chrome/Safari расширение: сохранение из браузера | Manifest V3, Defuddle, native messaging |
@@ -471,6 +471,7 @@ iOS UI contract:
 ### Frontend rendering model
 
 - `App.tsx` больше не хранит в памяти весь корпус `LightBlock` ради клиентской фильтрации. Горячий путь — `list_grid_blocks(current_tag)`: backend сразу отдаёт карточки текущего маршрута, исключает channel-документы и не передаёт per-block tag arrays. Полные теги блока догружаются через `get_block(slug)` только когда открыт hover/context menu или Detail.
+- Surface Search расширяет тот же route-facing read model: `Cmd+F` передаёт `query` в `list_grid_blocks`, backend фильтрует текущий route и возвращает `GridSnapshot` с relevance ordering и optional match excerpts. Non-empty Grid search проходит через `storage::search_engine`: SQLite FTS5 lexical/alias retrieval, searchable metadata chunks (`author`, `url` без видимого highlight), chunk-based fuzzy matching, local multilingual `fastembed` semantic vectors и deterministic fusion/rerank. Single-token Latin queries are strict, bypass semantic embedding work and do not inject semantic-only cards without a visible match; semantic-only retrieval is reserved for Cyrillic cross-language and multi-token semantic queries. Отдельной Search route/palette нет; `Shift+Cmd+F` фильтрует только sidebar taxonomy. Полный контракт: [SPEC_SEARCH.md](SPEC_SEARCH.md).
 - Открытие vault двухфазное: `select_vault` / `get_vault_path` поднимают SQLite, watcher и последний индексированный snapshot сразу, а `full_scan()` уходит в фоновый поток. Фронтенд слушает `vault-sync-started` / `vault-sync-finished` и обновляет snapshot после завершения синхронизации, не блокируя первый usable paint.
 - Переключение vault не делает `window.location.reload()`. `App.tsx` remount'ит `AppWithVault` по `key={vaultPath}`, сбрасывает локальное состояние и игнорирует stale async-ответы через `vaultPathRef + requestId`.
 - `App.tsx` держит per-route snapshot cache (`tag -> GridSnapshot`). Повторный переход в уже посещённый канал сначала применяет локальный snapshot синхронно, а taxonomy (`list_tags` / `list_channels`) не перезапрашивается на чистом route switch. Это убирает лишний IPC round-trip и второй `list_grid_blocks` на старте после `setTags/setChannels`.
@@ -674,6 +675,13 @@ CREATE VIRTUAL TABLE blocks_fts USING fts5(
     content='blocks',
     content_rowid='id'
 );
+
+-- Hybrid search derived state (rebuildable, local app data store):
+-- search_document_state(block_id, slug, document_hash)
+-- search_chunks(block_id, slug, field, chunk_index, text, offsets, text_hash)
+-- search_embeddings(chunk_id, model_id, dim, vector, text_hash)
+-- fastembed model files live outside the repo in app data cache:
+-- ~/Library/Application Support/com.mine.app/cache/fastembed
 
 -- Wikilinks между блоками
 CREATE TABLE wikilinks (
@@ -975,6 +983,7 @@ scrolled or remeasured during drag.
 |---|---|---|---|
 | tauri | 2.x | Десктопная оболочка | MIT/Apache-2.0 |
 | rusqlite | latest | SQLite из Rust | MIT |
+| fastembed | 5.x | Local multilingual semantic embeddings (`intfloat/multilingual-e5-small`) | Apache-2.0 |
 | notify | latest | File system watcher | CC0/Artistic-2.0 |
 | image | latest | Обработка изображений | MIT/Apache-2.0 |
 | ab_glyph | latest | Парсинг TTF-шрифтов для текстовых миниатюр | Apache-2.0 |

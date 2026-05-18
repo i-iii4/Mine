@@ -1,6 +1,6 @@
 # SPEC: domain layer (collection, tag, channel, vault, search)
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 Модули domain layer, кроме эталонного domain/block. Все чистые — нет зависимостей от Tauri, SQLite, файловой системы.
 
@@ -224,18 +224,32 @@ resolve_slug_conflict(slug: &str, existing: &HashSet<String>) -> String
 
 ## domain/search
 
-Парсинг поисковых запросов в структурированную форму для FTS5 и фильтрации.
+Парсинг поисковых запросов в структурированную форму для route filtering,
+lexical search, alias/transliteration expansion и semantic retrieval.
 
 ### Типы
 
 ```rust
 struct SearchQuery {
-    text: String,                    // свободный текст для FTS5
+    text: String,                    // исходный пользовательский текст
+    literal_terms: Vec<String>,      // токены для lexical/prefix search
+    normalized_terms: Vec<String>,   // lowercase/diacritic-normalized terms
+    alias_terms: Vec<String>,        // aliases/transliteration/localized terms
+    semantic_text: Option<String>,   // полный запрос для embedding search
+    language_hint: Option<String>,   // best-effort script/language hint
     filters: Vec<SearchFilter>,
 }
 
+enum SearchMatchKind {
+    Exact,
+    Prefix,
+    Fuzzy,
+    Alias,
+    Semantic,
+}
+
 enum SearchFilter {
-    Type(BlockType),                 // type:image
+    Type(CardKind),                  // type:media / type:article / type:channel
     Tag(String),                     // tag:design
 }
 ```
@@ -254,12 +268,17 @@ SearchQuery::has_filters(&self) -> bool
 type:image tag:design sunset tokyo
 ```
 
-- `type:X` — фильтр по типу блока. X = image, article, link, video, file
+- `type:X` — фильтр по derived card kind. X = media, article, channel; legacy
+  aliases image/link/video/file map to media
 - `tag:X` — фильтр по тегу
-- Всё остальное — свободный текст для FTS5
+- Всё остальное — свободный текст для lexical + semantic search
 - Несколько фильтров одного типа: AND (все должны совпасть)
 - Неизвестные фильтры (например `foo:bar`) — трактуются как текст
 - Пустой запрос — `SearchQuery { text: "", filters: [] }`
+- `language_hint` и alias expansion не являются фильтрами: они влияют на recall
+  и ranking, но не должны исключать результаты.
+- Semantic query сохраняет исходную фразу целиком, чтобы русский запрос мог
+  найти английский контент по смыслу.
 
 ### Edge cases
 

@@ -1,6 +1,6 @@
 # SPEC: integration layer (watcher + commands)
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 Связующий слой: file watcher отслеживает изменения в vault, Tauri commands предоставляют API для фронтенда. Оркестрация файл → парсинг → индексация → thumbnail.
 
@@ -153,6 +153,7 @@ enum CommandError {
 
 ```rust
 #[tauri::command] list_blocks(state) -> Result<Vec<IndexedBlock>, CommandError>
+#[tauri::command] list_grid_blocks(state, current_tag: Option<String>, offset: Option<usize>, limit: Option<usize>, query: Option<String>) -> Result<GridSnapshot, CommandError>
 #[tauri::command] get_block(state, slug: String) -> Result<Option<IndexedBlock>, CommandError>
 #[tauri::command] create_block(state, ...) -> Result<IndexedBlock, CommandError>
 #[tauri::command] extract_text_selection(state, ...) -> Result<IndexedBlock, TextSelectionExtractError>
@@ -273,6 +274,13 @@ Boundary:
 ```
 
 Делегирует в `domain::search::parse_search_query` → `storage::index::search_blocks`.
+Это legacy/backend utility command. Новый пользовательский Surface Search не
+должен восстанавливать отдельный Search frontend или `Cmd+K` command palette:
+Main/Grid search идёт через `list_grid_blocks(..., query)` и возвращает
+`GridSnapshot`, чтобы текущий Grid route фильтровался in place. Hybrid Search
+остаётся за тем же command boundary: lexical/alias/fuzzy/semantic retrieval и
+fusion/rerank реализуются внутри backend SearchEngine, без нового frontend route
+или отдельной command palette.
 
 ---
 

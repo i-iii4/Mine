@@ -13,9 +13,16 @@ mod watcher;
 #[cfg(feature = "desktop")]
 use commands::state::AppState;
 #[cfg(feature = "desktop")]
-use tauri::menu::{AboutMetadata, MenuBuilder, SubmenuBuilder};
+use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+#[cfg(feature = "desktop")]
+use tauri::Emitter;
 #[cfg(feature = "desktop")]
 use tauri::Manager;
+
+#[cfg(feature = "desktop")]
+const MENU_ID_FIND_CARDS: &str = "surface-search-find-cards";
+#[cfg(feature = "desktop")]
+const MENU_ID_FIND_CHANNELS: &str = "surface-search-find-channels";
 
 #[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -74,6 +81,15 @@ pub fn run() {
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            MENU_ID_FIND_CARDS => {
+                let _ = app.emit("surface-search-shortcut", "main");
+            }
+            MENU_ID_FIND_CHANNELS => {
+                let _ = app.emit("surface-search-shortcut", "sidebar");
+            }
+            _ => {}
+        })
         .setup(|app| {
             match crate::util::acquire_single_instance("com.mine.app")? {
                 crate::util::SingleInstanceAcquire::Primary(guard) => {
@@ -112,6 +128,14 @@ pub fn run() {
                 .quit()
                 .build()?;
 
+            let find_cards_item = MenuItemBuilder::with_id(MENU_ID_FIND_CARDS, "Find Cards")
+                .accelerator("CmdOrCtrl+F")
+                .build(app)?;
+            let find_channels_item =
+                MenuItemBuilder::with_id(MENU_ID_FIND_CHANNELS, "Find Channels")
+                    .accelerator("CmdOrCtrl+Shift+F")
+                    .build(app)?;
+
             let edit_menu = SubmenuBuilder::new(app, "Edit")
                 .undo()
                 .redo()
@@ -120,6 +144,9 @@ pub fn run() {
                 .copy()
                 .paste()
                 .select_all()
+                .separator()
+                .item(&find_cards_item)
+                .item(&find_channels_item)
                 .build()?;
 
             let view_menu = SubmenuBuilder::new(app, "View").fullscreen().build()?;

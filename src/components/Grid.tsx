@@ -467,6 +467,7 @@ interface GridProps {
   keyboardNavigationDisabled?: boolean;
   restoreFocusSlug?: string | null;
   restoreFocusSequence?: number;
+  searchQuery?: string;
   onBlockClick: (block: LightBlock) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
@@ -567,6 +568,7 @@ export function Grid({
   keyboardNavigationDisabled = false,
   restoreFocusSlug = null,
   restoreFocusSequence = 0,
+  searchQuery = "",
   onBlockClick,
   onToggleTag,
   onCreateAndAssign,
@@ -1027,6 +1029,12 @@ export function Grid({
     setSelectedSlugs(new Set());
     setMarqueeSelection(null);
   }, []);
+
+  useEffect(() => {
+    if (searchQuery.trim()) {
+      clearSelection();
+    }
+  }, [clearSelection, searchQuery]);
 
   useEffect(() => {
     if (!detailOpen) return;

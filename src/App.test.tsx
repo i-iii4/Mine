@@ -11,7 +11,7 @@ import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 const commandMocks = vi.hoisted(() => ({
   openVault: vi.fn<(path: string) => Promise<VaultOpenResult>>(),
   startVaultSync: vi.fn<() => Promise<boolean>>(),
-  listGridBlocks: vi.fn<(tag?: string, offset?: number, limit?: number) => Promise<GridSnapshot>>(),
+  listGridBlocks: vi.fn<(tag?: string, offset?: number, limit?: number, query?: string) => Promise<GridSnapshot>>(),
   listTaxonomySnapshot: vi.fn<() => Promise<TaxonomySnapshot>>(),
   renameBlockFile: vi.fn(),
   prepareDeleteBlock: vi.fn<(slug: string) => Promise<DeleteBlockPlan>>(),
@@ -163,11 +163,14 @@ vi.mock("@/components/ActionButton", () => ({
   ActionButton: ({
     children,
     onClick,
+    hotkey,
   }: {
     children: ReactNode;
     onClick?: () => void;
+    hotkey?: string;
   }) => (
     <button type="button" onClick={onClick}>
+      {hotkey ? `${hotkey} ` : null}
       {children}
     </button>
   ),
@@ -185,17 +188,32 @@ vi.mock("@/components/Sidebar", async () => {
     Sidebar: ({
       orderedTags,
       totalBlocks,
+      searchOpen,
+      searchQuery = "",
+      onSearchQueryChange,
     }: {
       orderedTags: Array<{ tag: string; count: number }>;
       totalBlocks: number;
+      searchOpen?: boolean;
+      searchQuery?: string;
+      onSearchQueryChange?: (query: string) => void;
     }) => (
       <nav>
+        {searchOpen && (
+          <input
+            aria-label="Search channels"
+            value={searchQuery}
+            onChange={(event) => onSearchQueryChange?.(event.target.value)}
+          />
+        )}
         <Link to="/">Everything {totalBlocks}</Link>
-        {orderedTags.map((tag) => (
-          <Link key={tag.tag} to={`/channel/${encodeURIComponent(tag.tag)}`}>
-            {tag.tag}
-          </Link>
-        ))}
+        {orderedTags
+          .filter((tag) => !searchQuery || tag.tag.includes(searchQuery))
+          .map((tag) => (
+            <Link key={tag.tag} to={`/channel/${encodeURIComponent(tag.tag)}`}>
+              {tag.tag}
+            </Link>
+          ))}
       </nav>
     ),
   };
@@ -289,9 +307,10 @@ describe("AppWithVault", () => {
     });
     commandMocks.deleteBlock.mockResolvedValue(true);
     commandMocks.getBlock.mockImplementation(async (slug: string) => indexedBlock(1, slug, slug));
-    commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit) => {
+    commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
       expect(offset).toBe(0);
       expect(limit).toBe(200);
+      expect(query).toBeUndefined();
       return snapshots.get(tag ?? "__all__") ?? snapshots.get("__all__")!;
     });
     commandMocks.listTaxonomySnapshot.mockResolvedValue({
@@ -472,6 +491,166 @@ describe("AppWithVault", () => {
 
     expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("false");
     expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
+  });
+
+  it("opens bottom grid search with Command-F and queries the current route", async () => {
+    commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
+      expect(offset).toBe(0);
+      expect(limit).toBe(200);
+      if (query === "aristotle") {
+        return {
+          blocks: [block(3, "aristotle-block")],
+          total_blocks: 2,
+          has_more: false,
+        };
+      }
+      return {
+        blocks: [block(1, "alpha-block"), block(2, "beta-block")],
+        total_blocks: 2,
+        has_more: false,
+      };
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    expect(screen.getByRole("button", { name: /Search cards/ })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "а", code: "KeyF", metaKey: true });
+    const input = screen.getByRole("textbox", { name: "Search cards" });
+    const searchBar = document.querySelector("[data-main-search-bottom-bar]") as HTMLElement | null;
+    const searchBarPlane = document.querySelector("[data-main-search-bottom-bar-plane]") as HTMLElement | null;
+    expect(searchBar).toBeInTheDocument();
+    expect(searchBar).toHaveClass("absolute", "bottom-0", "h-8");
+    expect(searchBarPlane).toHaveClass("absolute", "inset-0", "border-t", "bg-accent");
+    expect(input).toHaveClass("h-full", "px-0", "py-0");
+    fireEvent.change(input, { target: { value: "aristotle" } });
+
+    await waitFor(() => {
+      expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith(
+        undefined,
+        0,
+        200,
+        "aristotle",
+      );
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
+    });
+  });
+
+  it("toggles bottom grid search from the bottom bar and closes it with Escape", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Search cards/ }));
+    const input = screen.getByRole("textbox", { name: "Search cards" });
+    const searchBar = document.querySelector("[data-main-search-bottom-bar]") as HTMLElement;
+    await waitFor(() => {
+      expect(searchBar).toHaveAttribute("data-entered", "true");
+    });
+
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    expect(searchBar).toHaveAttribute("data-entered", "false");
+  });
+
+  it("uses Command-F as a toggle for bottom grid search", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.keyDown(window, { key: "f", code: "KeyF", metaKey: true });
+    const searchBar = document.querySelector("[data-main-search-bottom-bar]") as HTMLElement;
+    await waitFor(() => {
+      expect(searchBar).toHaveAttribute("data-entered", "true");
+    });
+
+    fireEvent.keyDown(window, { key: "f", code: "KeyF", metaKey: true });
+
+    expect(searchBar).toHaveAttribute("data-entered", "false");
+  });
+
+  it("opens bottom grid search from the native menu accelerator event", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent(
+      window,
+      new CustomEvent("surface-search-shortcut", {
+        detail: { payload: "main" },
+      }),
+    );
+
+    expect(screen.getByRole("textbox", { name: "Search cards" })).toBeInTheDocument();
+  });
+
+  it("opens sidebar search with Shift-Command-F without touching grid query", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    const gridCallsBeforeSearch = commandMocks.listGridBlocks.mock.calls.length;
+
+    fireEvent.keyDown(window, { key: "А", code: "KeyF", metaKey: true, shiftKey: true });
+    const input = screen.getByRole("textbox", { name: "Search channels" });
+    fireEvent.change(input, { target: { value: "alp" } });
+
+    expect(screen.getByRole("link", { name: /alpha/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /beta/ })).not.toBeInTheDocument();
+    expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeSearch);
+  });
+
+  it("opens sidebar search from the native Shift-Command-F menu accelerator event", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    const gridCallsBeforeSearch = commandMocks.listGridBlocks.mock.calls.length;
+
+    fireEvent(
+      window,
+      new CustomEvent("surface-search-shortcut", {
+        detail: { payload: "sidebar" },
+      }),
+    );
+
+    expect(screen.getByRole("textbox", { name: "Search channels" })).toBeInTheDocument();
+    expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeSearch);
   });
 
   it("lets Grid own feed keyboard focus and sends a restore request after Detail closes", async () => {

@@ -137,6 +137,45 @@ fn create_schema(conn: &Connection) -> Result<()> {
             PRIMARY KEY (source_id, target_slug)
         );
 
+        CREATE TABLE IF NOT EXISTS search_document_state (
+            block_id INTEGER PRIMARY KEY REFERENCES blocks(id) ON DELETE CASCADE,
+            slug TEXT NOT NULL,
+            document_hash TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS search_chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            block_id INTEGER NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
+            slug TEXT NOT NULL,
+            field TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            start_char INTEGER NOT NULL,
+            end_char INTEGER NOT NULL,
+            text_hash TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(block_id, field, chunk_index)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_search_chunks_block
+            ON search_chunks(block_id);
+        CREATE INDEX IF NOT EXISTS idx_search_chunks_slug
+            ON search_chunks(slug);
+
+        CREATE TABLE IF NOT EXISTS search_embeddings (
+            chunk_id INTEGER NOT NULL REFERENCES search_chunks(id) ON DELETE CASCADE,
+            model_id TEXT NOT NULL,
+            dim INTEGER NOT NULL,
+            vector BLOB NOT NULL,
+            text_hash TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY(chunk_id, model_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_search_embeddings_model
+            ON search_embeddings(model_id);
+
         -- FTS5 content-sync triggers: keep index in sync with blocks table.
         DROP TRIGGER IF EXISTS blocks_ai;
         DROP TRIGGER IF EXISTS blocks_ad;

@@ -117,6 +117,179 @@ describe("Card", () => {
     expect(screen.getByText("by @fish_elysium")).toBeInTheDocument();
   });
 
+  it("uses search match excerpt and mark for article body matches", () => {
+    render(
+      <Card
+        block={block({
+          block_type: "article",
+          card_kind: "article",
+          title: "Greek philosophy",
+          body: "Regular body",
+          preview_text: "Regular preview",
+          search_match: {
+            field: "body",
+            kind: "exact",
+            excerpt: "Plato and Aristotle in one paragraph",
+            ranges: [{ start: 10, end: 19 }],
+            score: 1,
+          },
+        })}
+        vaultPath={VAULT}
+        onClick={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Regular preview")).not.toBeInTheDocument();
+    const mark = screen.getByText("Aristotle");
+    expect(mark.tagName).toBe("MARK");
+    expect(mark).toHaveClass("bg-active");
+  });
+
+  it("uses search match excerpt and mark for social cards with media", () => {
+    render(
+      <Card
+        block={block({
+          block_type: "article",
+          card_kind: "article",
+          url: "https://x.com/a/status/1",
+          author: "@artist",
+          body: "Social body text\n![](tweet-photo.jpg)",
+          media_urls: "[\"tweet-photo.jpg\"]",
+          preview_text: "Regular social preview",
+          search_match: {
+            field: "body",
+            kind: "exact",
+            excerpt: "Introducing Claude Managed Agents",
+            ranges: [{ start: 12, end: 18 }],
+            score: 1,
+          },
+        })}
+        vaultPath={VAULT}
+        onClick={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Regular social preview")).not.toBeInTheDocument();
+    const mark = screen.getByText("Claude");
+    expect(mark.tagName).toBe("MARK");
+    expect(mark).toHaveClass("bg-active");
+  });
+
+  it("highlights only the matched prefix in search excerpts", () => {
+    render(
+      <Card
+        block={block({
+          block_type: "article",
+          card_kind: "article",
+          title: "Postcards",
+          body: "Regular body",
+          preview_text: "Regular preview",
+          search_match: {
+            field: "body",
+            kind: "prefix",
+            excerpt: "someone called Zizako Mindo inked over blank postcards",
+            ranges: [{ start: 22, end: 24 }],
+            score: 1,
+          },
+        })}
+        vaultPath={VAULT}
+        onClick={vi.fn()}
+      />,
+    );
+
+    const mark = screen.getByText("Mi");
+    expect(mark.tagName).toBe("MARK");
+    expect(mark).toHaveClass("bg-active");
+    expect(mark).toHaveClass("p-0");
+    expect(mark.className).not.toContain("px-");
+    expect(mark.className).not.toContain("rounded");
+    expect(screen.queryByText("Mindo")).not.toBeInTheDocument();
+  });
+
+  it("uses semantic search excerpts without fake highlight ranges", () => {
+    render(
+      <Card
+        block={block({
+          block_type: "article",
+          card_kind: "article",
+          title: "Neural archive",
+          body: "Regular body",
+          preview_text: "Regular preview",
+          search_match: {
+            field: "semantic",
+            kind: "semantic",
+            excerpt: "A neural archive keeps experience available for later recall.",
+            ranges: [],
+            score: 0.72,
+            explanation: "semantic: intfloat/multilingual-e5-small (0.720)",
+          },
+        })}
+        vaultPath={VAULT}
+        onClick={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Regular preview")).not.toBeInTheDocument();
+    expect(screen.getByText("A neural archive keeps experience available for later recall.")).toBeInTheDocument();
+    expect(document.querySelector("mark")).toBeNull();
+  });
+
+  it("keeps author-only search matches searchable but visually hidden", () => {
+    render(
+      <Card
+        block={block({
+          block_type: "article",
+          card_kind: "article",
+          title: "Visible title",
+          body: "Regular body",
+          preview_text: "Regular preview",
+          author: "@poetengineer__",
+          search_match: {
+            field: "author",
+            kind: "prefix",
+            excerpt: "@poetengineer__",
+            ranges: [],
+            score: 1,
+          },
+        })}
+        vaultPath={VAULT}
+        onClick={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Regular preview")).toBeInTheDocument();
+    expect(screen.getByText("@poetengineer__")).toBeInTheDocument();
+    expect(document.querySelector("mark")).toBeNull();
+  });
+
+  it("keeps url-only search matches searchable but visually hidden", () => {
+    render(
+      <Card
+        block={block({
+          block_type: "article",
+          card_kind: "article",
+          title: "Visible title",
+          body: "Regular body",
+          preview_text: "Regular preview",
+          url: "https://example.com/memory-lab",
+          search_match: {
+            field: "url",
+            kind: "exact",
+            excerpt: "https://example.com/memory-lab",
+            ranges: [],
+            score: 1,
+          },
+        })}
+        vaultPath={VAULT}
+        onClick={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Regular preview")).toBeInTheDocument();
+    expect(screen.queryByText("https://example.com/memory-lab")).not.toBeInTheDocument();
+    expect(document.querySelector("mark")).toBeNull();
+  });
+
   it("does not open the card when a nested hover action receives keyboard input", () => {
     const onClick = vi.fn();
     render(

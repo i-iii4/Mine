@@ -74,11 +74,17 @@ export const setArticleAudioPosition = (
 export const listBlocks = () =>
   invoke<LightBlock[]>("list_blocks");
 
-export const listGridBlocks = (current_tag?: string, offset?: number, limit?: number) =>
+export const listGridBlocks = (
+  current_tag?: string,
+  offset?: number,
+  limit?: number,
+  query?: string,
+) =>
   invoke<GridSnapshot>("list_grid_blocks", {
     current_tag: current_tag ?? null,
     offset: offset ?? null,
     limit: limit ?? null,
+    query: query ?? null,
   });
 
 export const getBlock = (slug: string) =>

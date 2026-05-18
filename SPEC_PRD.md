@@ -1,6 +1,6 @@
 # PRD: Mine
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md)
 
 ## Продукт
 
@@ -248,9 +248,23 @@ design-systems-book.pdf     ← файл
 
 ### Поиск
 
-Глобальный Search UI удалён из продукта: нет command palette, нижней кнопки
-Search, Search route и глобального `Cmd+K` входа. FTS5-индекс остаётся частью
-локальной инфраструктуры данных, но не является пользовательским surface.
+- `Cmd+F` — поиск внутри текущей правой поверхности: текущий Grid остаётся на
+  Everything или выбранной коллекции, но карточки фильтруются по запросу и
+  ранжируются по релевантности.
+- `Shift+Cmd+F` — поиск по левому Sidebar: фильтруется список каналов,
+  текущая коллекция и Grid не меняются.
+- Поиск по карточкам использует локальный route-facing Hybrid Search index:
+  SQLite FTS5 по `display_title`, legacy title, filename fallback, description
+  и полному Markdown body; alias/transliteration; fuzzy typo matching; local
+  multilingual semantic embeddings, чтобы русский запрос мог находить
+  английские карточки по смыслу.
+- Article cards показывают контекст первого совпадения: совпадение в заголовке
+  подсвечивается в title, совпадение в body подставляет excerpt на 2-3 строки.
+- Semantic-only результаты показывают релевантный excerpt без фальшивой
+  подсветки текста; highlight используется только когда есть реальный
+  lexical/alias/fuzzy range.
+- Глобальной command palette, Search route, нижней Search-кнопки и `Cmd+K`
+  поиска нет. `Cmd+K` остаётся shortcut для card/Detail overflow menus.
 
 ---
 

@@ -46,6 +46,23 @@ export interface IndexedBlock {
   tags: string[];
 }
 
+export type SearchMatchField = "title" | "description" | "author" | "body" | "url" | "semantic";
+export type SearchMatchKind = "exact" | "prefix" | "fuzzy" | "alias" | "semantic";
+
+export interface SearchTextRange {
+  start: number;
+  end: number;
+}
+
+export interface SearchMatch {
+  field: SearchMatchField;
+  kind: SearchMatchKind;
+  excerpt: string;
+  ranges: SearchTextRange[];
+  score: number;
+  explanation?: string | null;
+}
+
 /** Lightweight block for grid/list views (short body preview, no tag array). */
 export interface LightBlock {
   id: number;
@@ -71,6 +88,7 @@ export interface LightBlock {
   media_dimensions: string | null;
   preview_manifest: string | null;
   feed_playback: string | null;
+  search_match?: SearchMatch | null;
 }
 
 export type FeedPreviewKind = "text" | "image" | "video_poster" | "composite";

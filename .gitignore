@@ -28,6 +28,8 @@ tsconfig.tsbuildinfo
 # Tauri
 src-tauri/WixTools/
 src-tauri/gen/
+.fastembed_cache/
+src-tauri/.fastembed_cache/
 
 # Vault cache (user data, not project files)
 .arena/

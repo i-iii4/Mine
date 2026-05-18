@@ -1,5 +1,162 @@
 # Devlog
 
+## 18.05.2026 [change] — Finalize Surface Search metadata contract
+
+### Context
+
+- Search must find cards by `author` and hidden source `url`, not only by
+  visible title/description/body text.
+- Those fields are retrieval metadata, not visual card surfaces: author can
+  explain why a card matched, while URL remains hidden in the feed.
+- Main search now lives in the bottom chrome and must close through the same
+  smooth motion path as it opens.
+
+### Completed
+
+- Added `author` and `url` as searchable `SearchMatchField` variants and
+  durable `search_chunks` fields.
+- Added hidden metadata candidate generation for author/URL matches; these
+  candidates participate in ranking but return empty highlight ranges.
+- Kept semantic embeddings scoped to visible text chunks by excluding
+  `author`/`url` from semantic candidate generation.
+- Updated Card rendering so author-only and URL-only matches do not replace
+  preview text, do not reveal hidden URL text and never render `mark`.
+- Added a bottom app-bar `Search cards` action with `⌘F`, repeat `Cmd+F`
+  toggle and `Escape` close behavior.
+- Refactored the bottom search bar into `MainSearchBottomBar` with mirrored
+  enter/exit animation that does not move the Grid layout or the focused input.
+- Updated search, frontend, storage, architecture, design-system and plan docs
+  for the searchable-hidden-metadata contract.
+- Added backend and frontend regression coverage for author/URL retrieval
+  without visible highlight ranges.
+
+## 18.05.2026 [change] — Implement Hybrid Search
+
+### Context
+
+- Hybrid Search must remain one `Cmd+F` surface, not a second semantic-search UI.
+- The implementation must be final-path architecture: durable search documents,
+  local multilingual embeddings, fusion/rerank and semantic excerpts behind the
+  existing route-facing Grid search command.
+
+### Completed
+
+- Added `storage::search_engine` as the backend boundary for non-empty Grid
+  queries.
+- Kept frontend API unchanged: `list_grid_blocks(..., query)` still returns one
+  `GridSnapshot` for the current route.
+- Added durable `search_document_state`, `search_chunks` and
+  `search_embeddings` tables in the local derived SQLite store.
+- Added normalized `SearchDocument`/`SearchChunk` rebuild with hashes and
+  character offsets for title, description and body chunks.
+- Added local multilingual semantic embeddings through `fastembed` with
+  `intfloat/multilingual-e5-small`; vectors are persisted as model-scoped BLOBs
+  and warmed in background metadata backfill.
+- Moved the `fastembed` model cache out of the project tree into
+  `~/Library/Application Support/com.mine.app/cache/fastembed`, with
+  `FASTEMBED_CACHE_DIR` kept as an explicit override.
+- Added deterministic query planning with stopword filtering, Cyrillic
+  transliteration and Russian-English alias groups.
+- Added alias retrieval for `память`/`memory`, `стая`/`flock`,
+  `птиц`/`birds`, `майн`/`mine` and related domain terms.
+- Added typo-tolerant fuzzy candidates with real text ranges.
+- Added deterministic fusion/rerank across lexical, alias, fuzzy and semantic
+  evidence; exact title matches stay above semantic-only body matches.
+- Tightened semantic admission after UI validation: single-token Latin queries
+  such as `memory` stay strict, bypass semantic embedding work and do not inject
+  semantic-only cards without a visible literal/fuzzy/alias match.
+- Extended `search_match` metadata with `kind`, `score` and optional
+  explanation so UI can distinguish exact/prefix/alias/semantic evidence.
+- Semantic-only results render the returned excerpt with an empty range set, so
+  the UI does not invent fake highlight marks.
+- Keypress search never downloads the semantic model or generates missing
+  vectors in the foreground; if the model is still warming, the same input
+  falls back to lexical/alias/fuzzy results.
+- Prefix highlights now cover only the typed prefix (`mi` → `Mi` inside
+  `Mindo`), not the full token.
+- Frontend search marks slice excerpts by Unicode characters, matching backend
+  character ranges and avoiding false gaps around highlighted text.
+- Added regression coverage for `память как стая птиц` matching English body
+  text `Memory is a flock of birds...` through the same Grid search path.
+- Added regression coverage for semantic-only retrieval, fuzzy typo matching,
+  durable chunk rebuild and exact-over-semantic ranking.
+
+## 18.05.2026 [spec] — Define Hybrid Search target architecture
+
+### Context
+
+- Lexical Surface Search works, but the desired user experience is broader:
+  a Russian query should be able to retrieve English cards by meaning.
+- A single fuzzy library is not enough for this requirement; the durable
+  contract needs lexical trust, aliases/transliteration and multilingual
+  semantic retrieval behind one route-facing search surface.
+
+### Completed
+
+- Extended [SPEC_SEARCH.md](SPEC_SEARCH.md) from lexical Surface Search into
+  the target Hybrid Search contract.
+- Documented `SearchDocument`/`SearchChunk`, alias/transliteration indexes,
+  local semantic embeddings, fusion/rerank rules and semantic-only excerpt
+  behavior without fake highlights.
+- Updated architecture, storage, domain, frontend, PRD, use-case and plan docs.
+- Added Phase 28 to [PLAN.md](PLAN.md).
+
+## 18.05.2026 [change] — Implement Surface Search
+
+### Context
+
+- The Surface Search contract was documented, but the app still lacked the
+  route-scoped `Cmd+F` / `Shift+Cmd+F` implementation.
+- Search must filter the current surfaces in place, not revive the removed
+  global command palette.
+
+### Completed
+
+- Extended `list_grid_blocks` IPC with optional `query` and added
+  `list_grid_blocks_with_query` on the storage layer.
+- Added FTS5 route filtering, `bm25(blocks_fts, 8.0, 3.0, 1.0)` relevance
+  ordering and search-only `search_match` metadata.
+- Added `Cmd+F` main-pane search with debounce, stale-response guards and
+  cache-safe restore when the query is cleared.
+- Added `Shift+Cmd+F` Sidebar search that filters channel rows without changing
+  the Grid route.
+- Made `Cmd+F` / `Shift+Cmd+F` desktop delivery native: Tauri menu
+  accelerators emit `surface-search-shortcut`, while DOM `keydown` remains a
+  layout-independent fallback via physical `KeyboardEvent.code === "KeyF"` plus
+  Latin `key === "f"`.
+- Switched Surface Search FTS query terms to prefix tokens, so incremental
+  input like `mem` matches indexed tokens like `memory`.
+- Prefix highlight ranges now cover the typed prefix only; frontend rendering
+  keeps the surrounding word contiguous without inserting false gaps.
+- Made social-card search metadata ignore hidden title matches and target the
+  rendered preview/body excerpt instead.
+- Rendered article title/body matches with design-system `bg-active` marks and
+  body-match excerpts, including social cards that also render media previews.
+- Added backend/frontend regression coverage for route-filtered search,
+  shortcuts and highlight rendering.
+
+## 18.05.2026 [spec] — Define Surface Search architecture
+
+### Context
+
+- Global `Cmd+K` Search was removed, but search is still needed as a scoped
+  filtering mode for the current app surfaces.
+- The required UX is not a separate result window: `Cmd+F` should filter the
+  current Grid route in place, while `Shift+Cmd+F` should filter the Sidebar.
+- Article cards need visible context for the first match, not only filtered
+  presence in the result set.
+
+### Completed
+
+- Added [SPEC_SEARCH.md](SPEC_SEARCH.md) as the source of truth for Surface
+  Search.
+- Documented `Cmd+F` Main/Grid search, `Shift+Cmd+F` Sidebar search, FTS5
+  relevance ranking, optional match excerpts/ranges and frontend stale-response
+  guards.
+- Updated frontend, storage, integration, PRD, use-case, architecture,
+  design-system and plan docs to point at the new search contract.
+- Added Phase 27 to [PLAN.md](PLAN.md).
+
 ## 18.05.2026 [change] — Remove global Cmd+K Search
 
 ### Context

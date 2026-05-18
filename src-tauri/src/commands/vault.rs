@@ -17,6 +17,7 @@ use crate::commands::state::{AppState, CommandError, VaultState};
 use crate::domain::vault::VaultLayout;
 use crate::storage::db;
 use crate::storage::index;
+use crate::storage::search_engine;
 use crate::util::{append_startup_trace, reset_startup_trace};
 use crate::watcher::handler::{self, ScanResult};
 use crate::watcher::watch;
@@ -659,13 +660,31 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                     return;
                 }
             };
+            let search_updated = match search_engine::warm_search_index_with_default_provider(&conn)
+            {
+                Ok(updated) => updated,
+                Err(err) => {
+                    log::warn!(
+                        "search index backfill failed for {}: {:#}",
+                        path_for_thread,
+                        err
+                    );
+                    append_startup_trace(
+                        &app_for_thread,
+                        "index_metadata_backfill",
+                        &format!("search_failed path={} err={:#}", path_for_thread, err),
+                    );
+                    0
+                }
+            };
 
             let total_updated = media_updated
                 + collections_updated
                 + preview_updated
                 + thumb_updated
                 + playback_updated
-                + preview_text_updated;
+                + preview_text_updated
+                + search_updated;
             if total_updated == 0 {
                 append_startup_trace(
                     &app_for_thread,
@@ -676,27 +695,29 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
             }
 
             log::info!(
-                "index metadata backfill: media={} collections={} preview={} thumb={} playback={} preview_text={} for {}",
+                "index metadata backfill: media={} collections={} preview={} thumb={} playback={} preview_text={} search={} for {}",
                 media_updated,
                 collections_updated,
                 preview_updated,
                 thumb_updated,
                 playback_updated,
                 preview_text_updated,
+                search_updated,
                 path_for_thread,
             );
             append_startup_trace(
                 &app_for_thread,
                 "index_metadata_backfill",
                 &format!(
-                    "updated path={} media={} collections={} preview={} thumb={} playback={} preview_text={}",
+                    "updated path={} media={} collections={} preview={} thumb={} playback={} preview_text={} search={}",
                     path_for_thread,
                     media_updated,
                     collections_updated,
                     preview_updated,
                     thumb_updated,
                     playback_updated,
-                    preview_text_updated
+                    preview_text_updated,
+                    search_updated
                 ),
             );
             let _ = app_for_thread.emit(

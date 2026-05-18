@@ -281,6 +281,55 @@ Input и Command — тоже 32px (`h-8`).
 
 Фокус (default): `border-foreground`. Плейсхолдер: `text-tertiary-foreground`.
 
+### Surface Search
+
+Surface Search описан в [SPEC_SEARCH.md](SPEC_SEARCH.md). Это inline state
+существующих поверхностей, не modal и не command palette.
+
+Main/Grid search (`Cmd+F`) рисуется как нижний search bar в правой content
+pane: второй `h-8` слой прямо над app bottom bar, `absolute inset-x-0 bottom-0`,
+не участвует в layout Grid и не меняет scroll viewport. Chrome plane
+(`border-t border-border bg-accent`) анимируется отдельно от focused input:
+shell/input всегда стоят в финальной позиции, а нефокусируемая plane входит
+зеркально снизу через `translateY(100% → 0)` + `opacity` с тем же motion tempo,
+что Detail chrome (`opacity` 220ms, `transform` 260ms,
+`cubic-bezier(0.22, 1, 0.36, 1)`). Внутри только `Search` icon
+(`size-4 text-muted-foreground`) и один `Input ghost` (`h-full px-0 py-0`).
+Bottom app bar справа содержит `ActionButton` `Search cards` с `hotkey="⌘F"`;
+button и повторный shortcut закрывают search тем же reverse motion. `Escape`
+в main search закрывает search и очищает query.
+
+Sidebar search (`Shift+Cmd+F`) использует `Input default` в левой панели.
+Высота search input — `h-8`, radius — `rounded-1`, focus border —
+`border-foreground`; дополнительных glow/ring нет.
+
+Search match mark внутри карточек:
+
+- element: `mark` или inline `span`;
+- typography наследуется от родительского title/excerpt;
+- background: `bg-active`;
+- text: `text-foreground`;
+- radius: none;
+- horizontal padding: `p-0`;
+- no border, no underline, no color accent.
+
+Prefix search подсвечивает только введённый префикс: `memo` в слове `memory`
+даёт mark вокруг `memo`, а не вокруг всего токена. Чтобы после mark не
+появлялся ложный визуальный пробел, frontend режет excerpt по Unicode-символам
+и не вставляет дополнительных separator nodes, padding или rounded caps вокруг
+подсветки. Search mark не должен менять метрики текста.
+
+Article/social-card body match excerpt uses normal card preview typography and
+clamps to the same 2-3 line footprint as the regular article/social preview.
+Search mode may replace preview text only while the query is active; clearing search restores
+normal preview rendering.
+
+Semantic-only search excerpts use the same preview typography but do not use
+`mark`: highlight is reserved for real lexical/alias/fuzzy text ranges.
+Author and URL matches are searchable metadata only: they can return a card
+from search, but they do not replace card preview text, do not reveal hidden
+URL text and never render `mark`.
+
 ### Badge
 
 | Вариант | Стиль |

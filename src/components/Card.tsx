@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef, type MouseEvent as ReactMouseEvent } from "react";
+import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
 import type { IndexedBlock, LightBlock } from "@/types";
@@ -36,6 +36,47 @@ const usePriority = () => useContext(PriorityContext);
 const contentCardPreviewTextStyle = {
   lineHeight: `${CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX}px`,
 } as const;
+
+function renderSearchHighlightedText(text: string, match: LightBlock["search_match"] | null | undefined): ReactNode {
+  if (!match || match.ranges.length === 0 || match.excerpt !== text) {
+    return text;
+  }
+
+  const chars = Array.from(text);
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  match.ranges
+    .filter((range) => range.start >= 0 && range.end > range.start && range.end <= chars.length)
+    .sort((a, b) => a.start - b.start)
+    .forEach((range, index) => {
+      if (range.start < cursor) return;
+      if (range.start > cursor) {
+        nodes.push(chars.slice(cursor, range.start).join(""));
+      }
+      nodes.push(
+        <mark
+          key={`search-match-${index}`}
+          className="bg-active p-0 text-foreground"
+        >
+          {chars.slice(range.start, range.end).join("")}
+        </mark>,
+      );
+      cursor = range.end;
+    });
+  if (cursor < chars.length) {
+    nodes.push(chars.slice(cursor).join(""));
+  }
+
+  return nodes.length > 0 ? nodes : text;
+}
+
+function searchExcerptText(
+  match: LightBlock["search_match"] | null | undefined,
+  fallback: string,
+): string {
+  const excerpt = match?.excerpt;
+  return excerpt && excerpt.trim().length > 0 ? excerpt : fallback;
+}
 
 interface CardProps {
   block: LightBlock;
@@ -977,7 +1018,11 @@ const SocialCard = memo(function SocialCard({
   measurementMode?: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
-  const text = descriptor.previewText;
+  const previewSearchMatch =
+    block.search_match?.field === "description" || block.search_match?.field === "body" || block.search_match?.field === "semantic"
+      ? block.search_match
+      : null;
+  const text = searchExcerptText(previewSearchMatch, descriptor.previewText);
   const media = descriptor.mediaItems;
   const slots = deriveContentCardSlots(descriptor);
   const hasPreviewText = text.length > 0;
@@ -1065,7 +1110,7 @@ const SocialCard = memo(function SocialCard({
               className="line-clamp-3 text-sm text-muted-foreground"
               style={contentCardPreviewTextStyle}
             >
-              {text}
+              {renderSearchHighlightedText(text, previewSearchMatch)}
             </p>
           )}
 
@@ -1113,9 +1158,15 @@ const ArticleCard = memo(function ArticleCard({
     primaryMedia,
   });
   const displayTitle = getDisplayTitle(block);
+  const titleSearchMatch = block.search_match?.field === "title" ? block.search_match : null;
+  const previewSearchMatch =
+    block.search_match?.field === "description" || block.search_match?.field === "body" || block.search_match?.field === "semantic"
+      ? block.search_match
+      : null;
+  const previewText = searchExcerptText(previewSearchMatch, descriptor.previewText);
   const slots = deriveContentCardSlots(descriptor);
   const hasBottomMeta = slots?.hasBottomMeta ?? false;
-  const hasTextStack = Boolean(displayTitle) || descriptor.previewText.length > 0 || hasBottomMeta;
+  const hasTextStack = Boolean(displayTitle) || previewText.length > 0 || hasBottomMeta;
 
   return (
     <div className="p-4">
@@ -1175,9 +1226,9 @@ const ArticleCard = memo(function ArticleCard({
             className="line-clamp-2 text-sm font-semibold text-foreground"
             style={{ lineHeight: "16px" }}
           >
-            {displayTitle}
+            {displayTitle ? renderSearchHighlightedText(displayTitle, titleSearchMatch) : null}
           </p>
-          {descriptor.previewText && (
+          {previewText && (
             <p
               className={cn(
                 "text-sm text-muted-foreground",
@@ -1186,14 +1237,14 @@ const ArticleCard = memo(function ArticleCard({
               )}
               style={contentCardPreviewTextStyle}
             >
-              {descriptor.previewText}
+              {renderSearchHighlightedText(previewText, previewSearchMatch)}
             </p>
           )}
           {hasBottomMeta && (
             <p
               className={cn(
                 "text-sm text-muted-foreground",
-                (descriptor.previewText.length > 0 || (displayTitle ?? "").length > 0) && "mt-2",
+                (previewText.length > 0 || (displayTitle ?? "").length > 0) && "mt-2",
               )}
               style={{ lineHeight: "16px" }}
             >
