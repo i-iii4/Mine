@@ -286,22 +286,44 @@ Input и Command — тоже 32px (`h-8`).
 Surface Search описан в [SPEC_SEARCH.md](SPEC_SEARCH.md). Это inline state
 существующих поверхностей, не modal и не command palette.
 
-Main/Grid search (`Cmd+F`) рисуется как нижний search bar в правой content
-pane: второй `h-8` слой прямо над app bottom bar, `absolute inset-x-0 bottom-0`,
-не участвует в layout Grid и не меняет scroll viewport. Chrome plane
-(`border-t border-border bg-accent`) анимируется отдельно от focused input:
-shell/input всегда стоят в финальной позиции, а нефокусируемая plane входит
-зеркально снизу через `translateY(100% → 0)` + `opacity` с тем же motion tempo,
-что Detail chrome (`opacity` 220ms, `transform` 260ms,
-`cubic-bezier(0.22, 1, 0.36, 1)`). Внутри только `Search` icon
-(`size-4 text-muted-foreground`) и один `Input ghost` (`h-full px-0 py-0`).
-Bottom app bar справа содержит `ActionButton` `Search cards` с `hotkey="⌘F"`;
-button и повторный shortcut закрывают search тем же reverse motion. `Escape`
-в main search закрывает search и очищает query.
+Main/Grid search (`Cmd+F`) сохраняет backend/query механизм, но visual search
+component сейчас временно не rendered. Top chrome всё равно делится тем же
+`--sidebar-width`, что и body: левая часть держит traffic-light spacer, space
+selector, sidebar channel search и `border-r border-sidebar-border`, поэтому
+разделитель Sidebar/Main продолжается до верхнего края окна. Правая часть top
+chrome остаётся пустой до нового search surface. Поиск не участвует в layout
+Grid, не анимирует страницу и не меняет scroll viewport.
+Bottom app bar справа содержит `ActionButton` `Search cards` с `hotkey="⌘F"`.
+Это command trigger, а не selected/toggle visual state: кнопка не получает
+`isSelected` и не остаётся зажатой, даже когда search state активен. Button и
+повторный shortcut переключают App-owned main search state без показа input.
+При входе в Grid group selection пустой search state перестаёт быть active,
+непустой query/filter остаётся активным.
 
-Sidebar search (`Shift+Cmd+F`) использует `Input default` в левой панели.
-Высота search input — `h-8`, radius — `rounded-1`, focus border —
-`border-foreground`; дополнительных glow/ring нет.
+Sidebar search (`Shift+Cmd+F`) живёт в левом сегменте top chrome. Порядок:
+traffic-light spacer, separator `w-px bg-border`, space selector, separator
+`w-px bg-border`, search input, затем штатный `border-r border-sidebar-border`
+между Sidebar и Main.
+
+Space selector — это top-chrome вариант `VaultSwitcher`: `h-full`,
+`max-w-[50%]`, `flex-none`, `min-w-0`, `px-3`, `rounded-0`, `text-base`,
+`truncate`; без folder icon. Root trigger не заливается и не рисует отдельную
+обводку: он только задаёт layout slot. Ширина подстраивается под имя текущей
+папки, но не может занять больше половины доступной search/space зоны.
+
+Визуальный hover/open/focus state принадлежит внутренней пуле вокруг
+`name + chevron`: `h-6 rounded-1 px-2 bg-component-fill-hover`. Текст выровнен
+по левому краю через `justify-start` + `text-left`, а внешний отступ
+соответствует остальному top chrome (`px-3`). Если имя папки не помещается, оно
+режется обычным end ellipsis.
+
+Search input не использует иконку. Сам input использует `Input ghost`: `h-8`,
+`min-w-0`, `flex-1`, `rounded-0`, `px-3`, `py-0`, `bg-transparent`,
+`border-none`. Search занимает весь остаток ширины после selector. При вводе
+длинного query используется нативное поведение `input`: caret остаётся видимым,
+поэтому пользователь видит последние вводимые символы. Это сохраняет системный
+horizontal inset из дизайн-системы и не добавляет второй framed surface внутри
+titlebar.
 
 Search match mark внутри карточек:
 
@@ -353,6 +375,12 @@ URL text and never render `mark`.
 | `sm` | `max-w-sm` |
 
 Оверлей: `bg-black/50`. Action с `variant="destructive"` — красная кнопка.
+
+AlertDialog content is a fixed-width surface, not content-sized chrome. Any
+body section that contains lists, rows, filenames, card titles or other
+untrusted text must keep a complete `min-w-0` chain from content → section →
+scroll area/list → row label. Long labels truncate or wrap inside the dialog;
+they must never widen the dialog or overlap footer actions.
 
 ### DropdownMenu
 
@@ -590,7 +618,7 @@ SubContent (подменю) — та же тень.
 
 | Hotkey | Label | Действие | Положение |
 |---|---|---|---|
-| ⌘⇧O | Имя vault | Выбор папки через нативный диалог | слева |
+| ⌘⇧O | Space selector | Выбор папки через нативный диалог | top chrome |
 | ⌘⇧N | New Channel | Инлайн-инпут в сайдбаре | слева |
 | ⌘, | Settings | DropdownMenu переключения темы и article menu mode | слева |
 | ⌘[ / ⌘] | History | Назад / вперёд по истории страниц | глобально |

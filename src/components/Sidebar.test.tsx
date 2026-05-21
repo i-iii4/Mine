@@ -121,6 +121,21 @@ describe("Sidebar", () => {
     expect(links[2]).toHaveTextContent("beta");
   });
 
+  it("hides Everything when sidebar search does not match it", () => {
+    renderSidebar({ ...defaultProps, searchQuery: "alp" });
+
+    expect(screen.queryByRole("link", { name: /Everything/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /alpha/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /beta/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps Everything visible when sidebar search matches it", () => {
+    renderSidebar({ ...defaultProps, searchQuery: "every" });
+
+    expect(screen.getByRole("link", { name: /Everything/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /alpha/ })).not.toBeInTheDocument();
+  });
+
   it("renders the new-channel row outside the guided channel grid", () => {
     const { container } = renderSidebar({ ...defaultProps, width: 600 });
 

@@ -957,6 +957,15 @@ metadata backfill from the existing thumb cache.
   the same thumb metadata on `IndexedBlock`.
 - `useChannelPreviewsEvents` coalesces preview refresh events and filters
   `has_thumb=false` defensively.
+- `useChannelPreviewsEvents.refresh()` is generation-guarded: it captures the
+  current `thumbsRootPath` and a monotonically increasing request id before
+  `list_channel_previews`. If a vault/space switch changes the root or a newer
+  refresh starts before the IPC resolves, the old response must be ignored and
+  must not overwrite the current `channelPreviews` map.
+- The hook also performs a throttled recovery refresh on window focus,
+  `visibilitychange`, and the app-level `vault-refreshed` event. This is a
+  self-healing path for a live window whose in-memory preview map was already
+  stale before the current code loaded.
 - Phase 2 WebView upgrade remains responsible for replacing PNG placeholders
   with real decoded JPEG previews when the desktop app is open.
 

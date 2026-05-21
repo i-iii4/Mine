@@ -1363,6 +1363,79 @@ describe("Detail", () => {
     });
   });
 
+  it("keeps long connected card titles inside the delete media confirmation width", async () => {
+    const longTitle =
+      "A very long connected card title that should be truncated inside the media delete confirmation instead of widening the dialog";
+    getBlockMock.mockResolvedValueOnce(block({
+      id: 4,
+      slug: "Long Source Article",
+      fallback_label: longTitle,
+      display_title: longTitle,
+      title: longTitle,
+      card_kind: "article",
+      block_type: "article",
+      body: "Article body",
+    }));
+    prepareDeleteMediaAssetMock.mockResolvedValueOnce({
+      media_ref: "photo.jpg",
+      media_kind: "image",
+      referenced_by: [
+        {
+          slug: "Long Source Article",
+          title: longTitle,
+          display_title: longTitle,
+          fallback_label: longTitle,
+          card_kind: "article",
+          reference_kinds: ["body_embed"],
+        },
+      ],
+    });
+    const b = block({
+      card_kind: "media",
+      block_type: "image",
+      title: "Photo",
+      url: null,
+      media_file: "photo.jpg",
+    });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    const trigger = container.querySelector("[data-detail-media-more-button]");
+    fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger!);
+    const dropdownMenu = await screen.findByRole("menu");
+    fireEvent.click(within(dropdownMenu).getByText("Delete"));
+
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete media file?" });
+    const row = await within(dialog).findByRole("button", { name: longTitle });
+    const scrollArea = dialog.querySelector("[data-delete-media-connected-cards-scroll]");
+    const section = row.closest("[data-related-notes-block]");
+    const list = row.closest("[data-related-notes-list]");
+    const label = row.querySelector("span");
+
+    expect(dialog).toHaveClass("min-w-0", "overflow-hidden");
+    expect(scrollArea).toHaveClass("min-w-0", "overflow-y-auto");
+    expect(section).toHaveClass("min-w-0");
+    expect(list).toHaveClass("w-full", "min-w-0");
+    expect(row).toHaveClass("w-full", "min-w-0", "overflow-hidden");
+    expect(label).toHaveClass("min-w-0", "flex-1", "truncate");
+  });
+
   it("opens referenced cards from the delete media confirmation", async () => {
     getBlockMock.mockImplementation(async (slug: string) => {
       if (slug === "Source Article") {

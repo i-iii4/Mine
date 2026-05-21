@@ -36,12 +36,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
 import { getBlock } from "@/lib/commands";
+import { filterAndRankChannelSearch, normalizeChannelSearchText } from "@/lib/channelSearch";
 import { collectionRefLabel } from "@/lib/collections";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import { cn } from "@/lib/utils";
 import { ReadOnlyCardPreview } from "./Card";
 import { MicroPreviewThumbnail, microPreviewFromPreviewCard } from "./MicroPreviewThumbnail";
-import { Input } from "@/components/ui/input";
 
 const SIDEBAR_PREVIEW_WIDTH = 240;
 const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
@@ -137,11 +137,7 @@ interface SidebarProps {
   onNavClick?: () => void;
   onScrollToTop?: () => void;
   keyboardNavigationFocus?: SidebarKeyboardNavigationFocus | null;
-  searchOpen?: boolean;
   searchQuery?: string;
-  searchFocusSequence?: number;
-  onSearchOpenChange?: (open: boolean) => void;
-  onSearchQueryChange?: (query: string) => void;
   /** Optional slot for a header banner (e.g. iCloud conflict surface). */
   headerSlot?: React.ReactNode;
   linkedBlockSlug?: string | null;
@@ -150,8 +146,15 @@ interface SidebarProps {
   detailChromeClosing?: boolean;
 }
 
-function buildSidebarRowOrder(visibleTags: TagCount[], includeCreateRow = false): string[] {
-  const rowKeys = ["all", ...visibleTags.map((tc) => `tag:${tc.tag}`)];
+function buildSidebarRowOrder(
+  visibleTags: TagCount[],
+  includeEverythingRow: boolean,
+  includeCreateRow = false,
+): string[] {
+  const rowKeys = [
+    ...(includeEverythingRow ? ["all"] : []),
+    ...visibleTags.map((tc) => `tag:${tc.tag}`),
+  ];
   if (includeCreateRow) {
     rowKeys.push("create-channel");
   }
@@ -191,11 +194,7 @@ export function Sidebar({
   onNavClick,
   onScrollToTop,
   keyboardNavigationFocus,
-  searchOpen = false,
   searchQuery = "",
-  searchFocusSequence = 0,
-  onSearchOpenChange,
-  onSearchQueryChange,
   headerSlot,
   linkedBlockSlug,
   linkedTags = [],
@@ -205,7 +204,6 @@ export function Sidebar({
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [linkMode, setLinkMode] = useState<"all" | "linked">("all");
   const navRef = useRef<HTMLElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
   const previewRef = useRef<HTMLDivElement | null>(null);
   const previewOpenTimerRef = useRef<number | null>(null);
@@ -250,20 +248,27 @@ export function Sidebar({
   const baseVisibleTags = isLinkEditorActive && linkMode === "linked"
     ? orderedTags.filter((tc) => linkedTagSet.has(tc.tag))
     : orderedTags;
-  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
-  const visibleTags = normalizedSearchQuery
-    ? baseVisibleTags.filter((tc) =>
-        collectionRefLabel(tc.tag).toLowerCase().includes(normalizedSearchQuery)
-        || tc.tag.toLowerCase().includes(normalizedSearchQuery),
+  const visibleTags = searchQuery.trim()
+    ? filterAndRankChannelSearch(
+        baseVisibleTags.map((tc) => ({
+          item: tc,
+          texts: [collectionRefLabel(tc.tag), tc.tag],
+        })),
+        searchQuery,
       )
     : baseVisibleTags;
-  const searchVisible = !collapsed && (searchOpen || searchQuery.trim().length > 0);
+  const normalizedSearchQuery = normalizeChannelSearchText(searchQuery);
+  const showEverythingRow = normalizedSearchQuery
+    ? "everything".includes(normalizedSearchQuery)
+      || "all".includes(normalizedSearchQuery)
+      || "__all__".includes(normalizedSearchQuery)
+    : true;
   const editingRowKey = !isLinkEditorActive && editingTag !== null
     ? `tag:${editingTag}`
     : isCreatingChannel
       ? "create-channel"
       : null;
-  const orderedRowKeys = buildSidebarRowOrder(visibleTags, true);
+  const orderedRowKeys = buildSidebarRowOrder(visibleTags, showEverythingRow, true);
   const activePreviewRowKey = hoveredPreview?.rowKey ?? null;
   const overId = isDropDragging && over?.id != null ? String(over.id) : null;
   const dropOverRowKey = overId?.startsWith("tag:")
@@ -388,7 +393,9 @@ export function Sidebar({
   useEffect(() => {
     if (!keyboardNavigationFocus) return;
     const rowKey = keyboardNavigationFocus.rowKey;
-    const rowIsVisible = rowKey === "all" || visibleTags.some((tc) => `tag:${tc.tag}` === rowKey);
+    const rowIsVisible = rowKey === "all"
+      ? showEverythingRow
+      : visibleTags.some((tc) => `tag:${tc.tag}` === rowKey);
     if (!rowIsVisible) return;
 
     clearSidebarKeyboardFocusTimer();
@@ -402,14 +409,6 @@ export function Sidebar({
   useEffect(() => () => {
     clearSidebarKeyboardFocusTimer();
   }, [clearSidebarKeyboardFocusTimer]);
-
-  useEffect(() => {
-    if (!searchVisible) return;
-    window.requestAnimationFrame(() => {
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
-    });
-  }, [searchFocusSequence, searchVisible]);
 
   const closePreview = useCallback(() => {
     clearPreviewOpenTimer();
@@ -552,34 +551,12 @@ export function Sidebar({
           onChange={setLinkMode}
         />
       )}
-      {searchVisible && (
-        <div className={cn("absolute top-8 z-20", compact ? "left-2 right-2" : "left-8 right-8")}>
-          <Input
-            ref={searchInputRef}
-            aria-label="Search channels"
-            placeholder="Search channels..."
-            value={searchQuery}
-            onChange={(event) => onSearchQueryChange?.(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
-              event.preventDefault();
-              if (searchQuery) {
-                onSearchQueryChange?.("");
-                return;
-              }
-              onSearchOpenChange?.(false);
-            }}
-            className="bg-background"
-          />
-        </div>
-      )}
-
       {/* Navigation */}
       <nav
         ref={navRef}
         className={cn(
           "relative flex-1 overflow-y-auto",
-          searchVisible ? "pt-20" : isLinkingBlock ? linkEditorNavPadding : "pt-16",
+          isLinkingBlock ? linkEditorNavPadding : "pt-16",
           "pb-8",
           compact ? "px-2" : "px-8",
         )}
@@ -612,25 +589,27 @@ export function Sidebar({
             </div>
           )}
 
-          <NavItem
-            to="/"
-            label="Everything"
-            count={totalBlocks}
-            cards={channelPreviews.get("__all__") ?? []}
-            previewKeyPrefix="all"
-            onPreviewEnter={schedulePreviewOpen}
-            onPreviewLeave={requestPreviewClose}
-            onPreviewClick={openPreviewBlock}
-            onPreviewTriggerRef={setPreviewTriggerRef}
-            activePreviewKey={hoveredPreview?.key ?? null}
-            compact={compact}
-            end
-            onClick={onNavClick}
-            onSameClick={isLinkEditorActive ? onNavClick : onScrollToTop}
-            rowKey="all"
-            isSidebarRowFocused={effectiveSidebarRowFocusKey === "all"}
-            isSidebarRowSeamAccent={seamAccentKeys.has("all")}
-          />
+          {showEverythingRow && (
+            <NavItem
+              to="/"
+              label="Everything"
+              count={totalBlocks}
+              cards={channelPreviews.get("__all__") ?? []}
+              previewKeyPrefix="all"
+              onPreviewEnter={schedulePreviewOpen}
+              onPreviewLeave={requestPreviewClose}
+              onPreviewClick={openPreviewBlock}
+              onPreviewTriggerRef={setPreviewTriggerRef}
+              activePreviewKey={hoveredPreview?.key ?? null}
+              compact={compact}
+              end
+              onClick={onNavClick}
+              onSameClick={isLinkEditorActive ? onNavClick : onScrollToTop}
+              rowKey="all"
+              isSidebarRowFocused={effectiveSidebarRowFocusKey === "all"}
+              isSidebarRowSeamAccent={seamAccentKeys.has("all")}
+            />
+          )}
 
           <SortableContext
             items={visibleTags.map((tc) => `tag:${tc.tag}`)}

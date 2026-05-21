@@ -85,7 +85,21 @@ vi.mock("@/components/VaultPicker", () => ({
 }));
 
 vi.mock("@/components/VaultSwitcher", () => ({
-  VaultSwitcher: () => <button type="button">Vault Switcher</button>,
+  VaultSwitcher: ({
+    currentPath,
+    surface = "actionBar",
+  }: {
+    currentPath: string;
+    surface?: string;
+  }) => (
+    <button
+      type="button"
+      data-vault-switcher=""
+      data-vault-switcher-surface={surface}
+    >
+      {currentPath.split("/").pop() ?? currentPath}
+    </button>
+  ),
 }));
 
 vi.mock("@/components/SidebarResizeHandle", () => ({
@@ -101,6 +115,7 @@ vi.mock("@/components/Grid", () => ({
     restoreFocusSlug,
     restoreFocusSequence,
     onBlockClick,
+    onGroupSelectionStart,
   }: {
     blocks: LightBlock[];
     currentTag?: string;
@@ -109,12 +124,16 @@ vi.mock("@/components/Grid", () => ({
     restoreFocusSlug?: string | null;
     restoreFocusSequence?: number;
     onBlockClick: (block: LightBlock) => void;
+    onGroupSelectionStart?: () => void;
   }) => (
     <div>
       <div data-testid="grid">{`${currentTag ?? "__all__"}:${blocks.length}`}</div>
       <div data-testid="grid-detail-open">{String(Boolean(detailOpen))}</div>
       <div data-testid="grid-keyboard-disabled">{String(Boolean(keyboardNavigationDisabled))}</div>
       <div data-testid="grid-restore">{`${restoreFocusSlug ?? "none"}:${restoreFocusSequence ?? 0}`}</div>
+      <button type="button" onClick={() => onGroupSelectionStart?.()}>
+        Start group selection
+      </button>
       {blocks.map((item) => (
         <div key={`${item.slug}-title`} data-testid={`grid-title-${item.slug}`}>
           {item.title ?? item.slug}
@@ -164,12 +183,18 @@ vi.mock("@/components/ActionButton", () => ({
     children,
     onClick,
     hotkey,
+    isSelected,
   }: {
     children: ReactNode;
     onClick?: () => void;
     hotkey?: string;
+    isSelected?: boolean;
   }) => (
-    <button type="button" onClick={onClick}>
+    <button
+      type="button"
+      data-action-selected={isSelected ? "true" : undefined}
+      onClick={onClick}
+    >
       {hotkey ? `${hotkey} ` : null}
       {children}
     </button>
@@ -188,34 +213,30 @@ vi.mock("@/components/Sidebar", async () => {
     Sidebar: ({
       orderedTags,
       totalBlocks,
-      searchOpen,
       searchQuery = "",
-      onSearchQueryChange,
     }: {
       orderedTags: Array<{ tag: string; count: number }>;
       totalBlocks: number;
-      searchOpen?: boolean;
       searchQuery?: string;
-      onSearchQueryChange?: (query: string) => void;
-    }) => (
-      <nav>
-        {searchOpen && (
-          <input
-            aria-label="Search channels"
-            value={searchQuery}
-            onChange={(event) => onSearchQueryChange?.(event.target.value)}
-          />
-        )}
-        <Link to="/">Everything {totalBlocks}</Link>
-        {orderedTags
-          .filter((tag) => !searchQuery || tag.tag.includes(searchQuery))
-          .map((tag) => (
-            <Link key={tag.tag} to={`/channel/${encodeURIComponent(tag.tag)}`}>
-              {tag.tag}
-            </Link>
-          ))}
-      </nav>
-    ),
+    }) => {
+      const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+      const showEverything = !normalizedSearchQuery
+        || "everything".includes(normalizedSearchQuery)
+        || "__all__".includes(normalizedSearchQuery);
+
+      return (
+        <nav>
+          {showEverything && <Link to="/">Everything {totalBlocks}</Link>}
+          {orderedTags
+            .filter((tag) => !normalizedSearchQuery || tag.tag.toLowerCase().includes(normalizedSearchQuery))
+            .map((tag) => (
+              <Link key={tag.tag} to={`/channel/${encodeURIComponent(tag.tag)}`}>
+                {tag.tag}
+              </Link>
+            ))}
+        </nav>
+      );
+    },
   };
 });
 
@@ -493,24 +514,7 @@ describe("AppWithVault", () => {
     expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
   });
 
-  it("opens bottom grid search with Command-F and queries the current route", async () => {
-    commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
-      expect(offset).toBe(0);
-      expect(limit).toBe(200);
-      if (query === "aristotle") {
-        return {
-          blocks: [block(3, "aristotle-block")],
-          total_blocks: 2,
-          has_more: false,
-        };
-      }
-      return {
-        blocks: [block(1, "alpha-block"), block(2, "beta-block")],
-        total_blocks: 2,
-        has_more: false,
-      };
-    });
-
+  it("keeps the top chrome search component unrendered while preserving the chrome divider", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -520,30 +524,20 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
-    expect(screen.getByRole("button", { name: /Search cards/ })).toBeInTheDocument();
 
-    fireEvent.keyDown(window, { key: "а", code: "KeyF", metaKey: true });
-    const input = screen.getByRole("textbox", { name: "Search cards" });
-    const searchBar = document.querySelector("[data-main-search-bottom-bar]") as HTMLElement | null;
-    const searchBarPlane = document.querySelector("[data-main-search-bottom-bar-plane]") as HTMLElement | null;
-    expect(searchBar).toBeInTheDocument();
-    expect(searchBar).toHaveClass("absolute", "bottom-0", "h-8");
-    expect(searchBarPlane).toHaveClass("absolute", "inset-0", "border-t", "bg-accent");
-    expect(input).toHaveClass("h-full", "px-0", "py-0");
-    fireEvent.change(input, { target: { value: "aristotle" } });
-
-    await waitFor(() => {
-      expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith(
-        undefined,
-        0,
-        200,
-        "aristotle",
-      );
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
-    });
+    const topSidebarSegment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement | null;
+    expect(topSidebarSegment).toHaveStyle({ width: "var(--sidebar-width)" });
+    expect(topSidebarSegment).toHaveClass("border-r", "border-sidebar-border");
+    const spaceSwitcher = topSidebarSegment?.querySelector("[data-vault-switcher]") as HTMLElement | null;
+    expect(spaceSwitcher).toHaveAttribute("data-vault-switcher-surface", "topChrome");
+    expect(spaceSwitcher).toHaveTextContent("vault");
+    expect(topSidebarSegment?.querySelector("[data-top-chrome-space-separator]")).toBeInTheDocument();
+    expect(topSidebarSegment?.querySelector("[data-top-chrome-search-separator]")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Search cards" })).not.toBeInTheDocument();
+    expect(document.querySelector("[data-main-search-top-bar]")).toBeNull();
   });
 
-  it("toggles bottom grid search from the bottom bar and closes it with Escape", async () => {
+  it("keeps Command-F and the bottom action wired without rendering the hidden main search component", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -553,42 +547,19 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
+    const gridCallsBeforeSearchToggle = commandMocks.listGridBlocks.mock.calls.length;
+    const searchButton = screen.getByRole("button", { name: /Search cards/ });
 
-    fireEvent.click(screen.getByRole("button", { name: /Search cards/ }));
-    const input = screen.getByRole("textbox", { name: "Search cards" });
-    const searchBar = document.querySelector("[data-main-search-bottom-bar]") as HTMLElement;
-    await waitFor(() => {
-      expect(searchBar).toHaveAttribute("data-entered", "true");
-    });
-
-    fireEvent.keyDown(input, { key: "Escape" });
-
-    expect(searchBar).toHaveAttribute("data-entered", "false");
-  });
-
-  it("uses Command-F as a toggle for bottom grid search", async () => {
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
-    });
-
-    fireEvent.keyDown(window, { key: "f", code: "KeyF", metaKey: true });
-    const searchBar = document.querySelector("[data-main-search-bottom-bar]") as HTMLElement;
-    await waitFor(() => {
-      expect(searchBar).toHaveAttribute("data-entered", "true");
-    });
-
+    fireEvent.click(searchButton);
+    expect(searchButton).not.toHaveAttribute("data-action-selected");
     fireEvent.keyDown(window, { key: "f", code: "KeyF", metaKey: true });
 
-    expect(searchBar).toHaveAttribute("data-entered", "false");
+    expect(screen.queryByRole("textbox", { name: "Search cards" })).not.toBeInTheDocument();
+    expect(document.querySelector("[data-main-search-top-bar]")).toBeNull();
+    expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeSearchToggle);
   });
 
-  it("opens bottom grid search from the native menu accelerator event", async () => {
+  it("keeps the native main-search accelerator event wired without rendering the hidden component", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -606,7 +577,7 @@ describe("AppWithVault", () => {
       }),
     );
 
-    expect(screen.getByRole("textbox", { name: "Search cards" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Search cards" })).not.toBeInTheDocument();
   });
 
   it("opens sidebar search with Shift-Command-F without touching grid query", async () => {
@@ -623,8 +594,12 @@ describe("AppWithVault", () => {
 
     fireEvent.keyDown(window, { key: "А", code: "KeyF", metaKey: true, shiftKey: true });
     const input = screen.getByRole("textbox", { name: "Search channels" });
+    await waitFor(() => {
+      expect(input).toHaveFocus();
+    });
     fireEvent.change(input, { target: { value: "alp" } });
 
+    expect(screen.queryByRole("link", { name: /Everything/ })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /alpha/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /beta/ })).not.toBeInTheDocument();
     expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeSearch);
@@ -649,7 +624,10 @@ describe("AppWithVault", () => {
       }),
     );
 
-    expect(screen.getByRole("textbox", { name: "Search channels" })).toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "Search channels" });
+    await waitFor(() => {
+      expect(input).toHaveFocus();
+    });
     expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeSearch);
   });
 

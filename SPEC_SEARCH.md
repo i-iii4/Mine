@@ -7,8 +7,10 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_FRONTEND.md](SPEC_
 Search is a scoped filter mode for existing surfaces, not a command palette and
 not a separate results route.
 
-- `Cmd+F` toggles search in the right content pane and filters the current Grid.
-- `Shift+Cmd+F` opens search in the left sidebar and filters the channel list.
+- `Cmd+F` toggles App-owned main search state; the visual main search component
+  is temporarily hidden.
+- `Shift+Cmd+F` focuses search in the left top chrome segment and filters the
+  channel list.
 - `Cmd+K` remains reserved for scoped card/Detail overflow actions and never
   opens search.
 
@@ -43,21 +45,32 @@ under vague semantic-neighbor results.
 
 ### Main/Grid Search (`Cmd+F`)
 
-`Cmd+F` opens/focuses or closes the bottom Grid search bar in the right content
-pane. The bottom app bar also exposes a right-side `Search cards` action with
-the `⌘F` shortcut label and the same toggle behavior.
-The bar is a second `h-8` layer directly above the app bottom bar: it spans the
-main pane, uses the same `bg-accent` / `border-t border-border` chrome, and
-contains only a search icon plus a single ghost search input. The bar must not
-participate in Grid layout or change the Grid scroll viewport. Its shell and
-focused input stay in final position; only a non-focusable chrome plane is
-animated on enter and exit, then the bar unmounts after the exit transition.
-Opening Detail or another full-surface mode hides the bar with the same exit
-animation. The active route remains unchanged:
+`Cmd+F` opens or closes the App-owned Grid search state. The visual main search
+component is temporarily not rendered; the route-facing search mechanism,
+state, shortcuts and backend query path remain in place.
+The top chrome is split by the same `--sidebar-width` boundary as the body: the
+left segment contains the native traffic-light spacer, the space selector,
+sidebar channel search and a `border-r border-sidebar-border`, so the
+Sidebar/Main divider continues to the top edge of the window. The right segment
+is currently empty until the next visual search surface is introduced. The
+bottom app bar also exposes a right-side `Search cards` action with the `⌘F`
+shortcut label and the same toggle behavior. This action is a command trigger,
+not a selected-state control: it must not remain visually pressed while search
+is active.
+Opening from either `Cmd+F` or `Search cards` updates App-owned search state but
+does not render an input while the visual component is disabled.
+The temporary hidden state must not participate in Grid layout, animate over the
+content, or change the Grid scroll viewport.
+Opening Detail or another full-surface mode disables/hides the top-chrome search
+slot. The active route remains unchanged:
 
 - on Everything, search covers all non-channel cards;
 - inside a collection, search covers only cards connected to that collection;
 - clearing the query restores the normal route snapshot and normal ordering.
+
+When Grid group selection starts, empty main search state becomes inactive. If
+the query is non-empty, the filtered result set remains active, but keyboard
+ownership moves to Grid selection so the next `Escape` clears selection first.
 
 When `query` is non-empty, Grid ordering is relevance-first. Normal route order
 is still `saved_at DESC`.
@@ -77,25 +90,45 @@ not own IPC and does not run local filtering over stale blocks.
 
 ### Sidebar Search (`Shift+Cmd+F`)
 
-`Shift+Cmd+F` opens or focuses an inline search control in the left sidebar.
-It filters only sidebar channel rows and does not change the route or Grid
-dataset.
+Sidebar search is a permanent top-chrome control inside the left
+`--sidebar-width` segment. The visual order is: native traffic-light spacer,
+one vertical `bg-border` separator, the `VaultSwitcher`/space selector, a
+second vertical `bg-border` separator, a no-icon `Input ghost` search field
+with the design-system `h-8 px-3` geometry, then the existing
+`border-r border-sidebar-border` Sidebar/Main divider. The space selector and
+input are hidden only when the sidebar is collapsed.
 
-Sidebar search can be client-side because taxonomy/channel rows are already a
-small App-owned read model. If the channel list becomes large enough to make
-client filtering visible, it can move to a backend read model without changing
-the keyboard contract.
+The space selector shows the current folder name, truncates before the search
+field, and opens the existing known-vault dropdown. It uses the same switch
+path as the previous bottom-bar vault switcher; `Cmd+Shift+O` still opens the
+native folder picker.
+The selector width follows the current folder name but is capped at 50% of the
+remaining left chrome width (`max-w-[50%]`). Folder names use end ellipsis.
+The root trigger stays transparent; hover/open/focus state is drawn only by the
+inner pill around `name + chevron` (`h-6 rounded-1 px-2
+bg-component-fill-hover`). The search field takes the remaining width and keeps
+native input scrolling so the latest typed characters remain visible.
+
+`Shift+Cmd+F` focuses/selects that top-chrome input. It filters only sidebar
+channel rows and does not change the route or Grid dataset.
+`Everything` is part of the filtered row set: it remains visible only when the
+query is empty or matches `Everything` / `__all__`.
+
+Sidebar search is client-side because taxonomy/channel rows are already a small
+App-owned read model. Matching is centralized in `src/lib/channelSearch.ts`:
+case-insensitive exact/prefix/word-prefix/substring ranking first, then bounded
+Damerau-Levenshtein typo tolerance for queries of at least 3 characters. Ties
+keep the current channel order, so the sidebar remains deterministic.
 
 ## Keyboard Contract
 
 | Shortcut | Scope | Behavior |
 |---|---|---|
-| `Cmd+F` | Main/Grid | Toggle main search input; opening focuses the input, repeat closes it |
-| `Shift+Cmd+F` | Sidebar | Open or focus sidebar search input |
-| `Escape` in main search input | Main/Grid | Close main search and clear the query |
-| `Escape` in sidebar search input | Sidebar | Close sidebar search and clear the query |
-| `Enter` in main search input | Main/Grid | Move focus to first committed Grid result when present |
+| `Cmd+F` | Main/Grid | Toggle App-owned main search state; visual input is temporarily hidden |
+| `Shift+Cmd+F` | Sidebar | Focus/select the top-chrome channel search input |
+| `Escape` in sidebar search input | Sidebar | Clear the query; if empty, blur the input |
 | Arrow keys after focus returns to Grid | Main/Grid | Use existing Grid keyboard navigation over filtered `layout.positions` |
+| Group selection starts while main search is active | Main/Grid | Deactivate empty search, preserve non-empty query/filter |
 
 Shortcut handlers must ignore editable/nested overlay targets using the shared
 keyboard target helpers. `Cmd+F` and `Shift+Cmd+F` must call `preventDefault()`
@@ -378,8 +411,8 @@ App owns:
 
 - `mainSearchOpen`;
 - `mainSearchQuery`;
-- `sidebarSearchOpen`;
 - `sidebarSearchQuery`;
+- `sidebarSearchFocusSequence`;
 - per-route normal snapshot cache;
 - per-route+query search request sequence.
 
@@ -458,6 +491,9 @@ Search behavior by semantic state:
 
 Entering main search mode clears active group selection. Selection over a
 dataset that is about to be filtered is ambiguous and can hide selected cards.
+Entering group selection deactivates empty main search state so `Escape`
+belongs to selection. Non-empty query remains active as the selected filtered
+result set.
 
 Grid keyboard focus is pruned to visible filtered results:
 
@@ -517,15 +553,16 @@ Backend:
 
 Frontend:
 
-- `Cmd+F` opens/focuses main search and filters the current Grid route;
+- `Cmd+F` toggles App-owned main search state; route filtering remains wired
+  through the same `searchQuery` mechanism;
 - bottom app bar `Search cards` with `⌘F` toggles the same main search state;
-- main search renders as the bottom `h-8` search bar above the app bottom bar,
-  with the same motion tempo as Detail chrome, but mirrored through a
-  non-focusable chrome plane (`translateY(100% -> 0)` + opacity), while the
-  input remains untransformed;
-- repeat `Cmd+F`, bottom app bar toggle, `Escape`, opening Detail and other
-  surface exits close main search through the same smooth exit animation;
-- `Shift+Cmd+F` opens/focuses sidebar search and does not change Grid;
+- the visual main search component is temporarily absent; the top app chrome
+  still renders the Sidebar/Main divider up to the window top edge;
+- repeat `Cmd+F` and bottom app bar toggle clear/close search state without
+  animating or shifting the Grid surface;
+- starting Grid group selection clears empty active search state, while a
+  non-empty query/filter remains active;
+- `Shift+Cmd+F` focuses/selects top-chrome sidebar search and does not change Grid;
 - stale search responses are ignored;
 - clearing query restores normal route order;
 - article body matches replace preview with highlighted excerpt;

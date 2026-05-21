@@ -159,6 +159,8 @@ enum CommandError {
 #[tauri::command] extract_text_selection(state, ...) -> Result<IndexedBlock, TextSelectionExtractError>
 #[tauri::command] prepare_delete_block(state, slug: String) -> Result<DeleteBlockPlan, CommandError>
 #[tauri::command] delete_block(state, slug: String, delete_unused_media: Option<bool>) -> Result<bool, CommandError>
+#[tauri::command] prepare_delete_blocks(state, slugs: Vec<String>) -> Result<DeleteBlocksPlan, CommandError>
+#[tauri::command] delete_blocks(state, slugs: Vec<String>, delete_unused_media: bool) -> Result<bool, CommandError>
 #[tauri::command] rename_block_file(state, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError>
 ```
 
@@ -227,6 +229,31 @@ targets:
 4. `delete_block(..., delete_unused_media=false)` удаляет только `.md` и derived artifacts.
 5. Legacy-вызов без `delete_unused_media` сохраняет старый режим: удаляет `.md` и только slug-owned primary media.
 6. Индекс удаляется только после успешного file cleanup; если удаление файлов упало, карточка не получает ложный successful delete.
+
+### Поведение batch delete
+
+1. `prepare_delete_blocks(slugs)` строит один aggregate `DeleteBlocksPlan` для
+   всего выбранного множества.
+2. План резолвит media refs тем же backend resolver, что single delete:
+   `frontmatter.file`, `thumbnail`, Obsidian wikilinks, legacy Markdown image
+   URLs, nested/relative/basename lookup.
+3. `unused_media` считается после мысленного удаления всех `slugs`: media,
+   referenced only by selected cards, попадает в план один раз даже если его
+   используют несколько выбранных карточек.
+4. `shared_media` — media, у которого остаётся хотя бы одна parseable reference
+   из невыбранной карточки/заметки; batch command никогда не удаляет такие
+   файлы.
+5. `delete_blocks(..., delete_unused_media=false)` удаляет `.md` выбранных
+   карточек и derived artifacts, но оставляет все media files.
+6. `delete_blocks(..., delete_unused_media=true)` удаляет `.md` выбранных
+   карточек и только eligible `unused_media` из свежего batch plan; shared media
+   остаётся на диске.
+7. Commit command должен пересобрать или валидировать план внутри backend перед
+   file mutation, чтобы stale frontend plan не удалил media, которая стала
+   shared после открытия dialog.
+8. Frontend не должен выполнять batch delete как N вызовов `delete_block`.
+   Один backend command нужен для единого плана, дедупликации media, одного
+   refresh path и понятного failure surface.
 
 ### Поведение rename_block_file
 

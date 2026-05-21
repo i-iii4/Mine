@@ -1,4 +1,14 @@
-import { Suspense, lazy, useState, useEffect, useCallback, useRef, useMemo } from "react";
+import {
+  Suspense,
+  lazy,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+  useLayoutEffect,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import {
   BrowserRouter,
   Routes,
@@ -27,6 +37,7 @@ import {
   isEditableKeyboardTarget,
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
+import { Input } from "@/components/ui/input";
 
 function baseRelatedNoteSlug(target: string): string {
   return target.split("#", 1)[0] ?? target;
@@ -137,7 +148,6 @@ import { ClipperRecoveryBanner } from "@/components/ClipperRecoveryBanner";
 import { VaultConflictsBanner } from "@/components/VaultConflictsBanner";
 import { Grid } from "@/components/Grid";
 import { DragCardStackPreview } from "@/components/Card";
-import { MainSearchBottomBar } from "@/components/MainSearchBottomBar";
 import { ActionButton } from "@/components/ActionButton";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
@@ -169,7 +179,6 @@ const ComponentTestBench = lazy(async () => {
 
 const GRID_PAGE_SIZE = 200;
 const DETAIL_CHROME_TRANSITION_MS = 360;
-const SURFACE_SEARCH_CHROME_TRANSITION_MS = 260;
 
 interface VaultChangedEvent {
   path: string;
@@ -322,9 +331,6 @@ export function AppWithVault({
   } | null>(null);
   const [mainSearchOpen, setMainSearchOpen] = useState(false);
   const [mainSearchQuery, setMainSearchQuery] = useState("");
-  const [mainSearchMounted, setMainSearchMounted] = useState(false);
-  const [mainSearchBarEntered, setMainSearchBarEntered] = useState(false);
-  const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
   const [sidebarSearchFocusSequence, setSidebarSearchFocusSequence] = useState(0);
   const [scrollToTopSignal, setScrollToTopSignal] = useState(0);
@@ -337,7 +343,8 @@ export function AppWithVault({
   const [activeDragMediaAsset, setActiveDragMediaAsset] = useState<MediaAssetDragPreview | null>(null);
   const [activeDragTextSelection, setActiveDragTextSelection] = useState<TextSelectionDragPreview | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
-  const mainSearchInputRef = useRef<HTMLInputElement>(null);
+  const sidebarSearchInputRef = useRef<HTMLInputElement>(null);
+  const lastSidebarSearchFocusSequenceRef = useRef(0);
   const themeMenuRef = useRef<ThemeMenuHandle>(null);
   const gridColumnCountRef = useRef(1);
   const suppressRedirectRef = useRef(false);
@@ -356,7 +363,6 @@ export function AppWithVault({
   const refreshTimerRef = useRef<number | null>(null);
   const refreshInFlightRef = useRef(false);
   const detailCloseTimerRef = useRef<number | null>(null);
-  const mainSearchExitTimerRef = useRef<number | null>(null);
   const pendingRefreshRef = useRef({
     grid: false,
     taxonomy: false,
@@ -384,9 +390,6 @@ export function AppWithVault({
     return () => {
       if (detailCloseTimerRef.current !== null) {
         window.clearTimeout(detailCloseTimerRef.current);
-      }
-      if (mainSearchExitTimerRef.current !== null) {
-        window.clearTimeout(mainSearchExitTimerRef.current);
       }
     };
   }, []);
@@ -447,38 +450,10 @@ export function AppWithVault({
     || isCreatingChannel;
   const normalizedMainSearchQuery = normalizeSurfaceSearchQuery(mainSearchQuery);
   const mainSearchActive = mainSearchOpen || normalizedMainSearchQuery.length > 0;
-  const mainSearchShouldShow =
-    (mainSearchOpen || normalizedMainSearchQuery.length > 0)
-    && !renderedDetailBlock
-    && !designSystemOpen;
 
   useEffect(() => {
     setImagePreview(null);
   }, [selectedBlock?.slug]);
-
-  useEffect(() => {
-    if (mainSearchExitTimerRef.current !== null) {
-      window.clearTimeout(mainSearchExitTimerRef.current);
-      mainSearchExitTimerRef.current = null;
-    }
-
-    if (!mainSearchShouldShow) {
-      setMainSearchBarEntered(false);
-      if (mainSearchMounted) {
-        mainSearchExitTimerRef.current = window.setTimeout(() => {
-          setMainSearchMounted(false);
-          mainSearchExitTimerRef.current = null;
-        }, SURFACE_SEARCH_CHROME_TRANSITION_MS);
-      }
-      return;
-    }
-
-    setMainSearchMounted(true);
-    const frame = window.requestAnimationFrame(() => {
-      setMainSearchBarEntered(true);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [mainSearchMounted, mainSearchShouldShow]);
 
   const handleColumnCountChange = useCallback((n: number) => {
     gridColumnCountRef.current = n;
@@ -1129,13 +1104,14 @@ export function AppWithVault({
     setMainSearchOpen(false);
   }, []);
 
-  const focusMainSearch = useCallback(() => {
-    setMainSearchOpen(true);
-    window.requestAnimationFrame(() => {
-      mainSearchInputRef.current?.focus();
-      mainSearchInputRef.current?.select();
-    });
+  const releaseMainSearchForGroupSelection = useCallback(() => {
+    setMainSearchOpen(false);
   }, []);
+
+  const focusMainSearch = useCallback(() => {
+    if (renderedDetailBlock || designSystemOpen) return;
+    setMainSearchOpen(true);
+  }, [designSystemOpen, renderedDetailBlock]);
 
   const toggleMainSearch = useCallback(() => {
     if (renderedDetailBlock || designSystemOpen) return;
@@ -1147,9 +1123,32 @@ export function AppWithVault({
   }, [closeMainSearch, designSystemOpen, focusMainSearch, mainSearchActive, renderedDetailBlock]);
 
   const focusSidebarSearch = useCallback(() => {
-    setSidebarSearchOpen(true);
     setSidebarSearchFocusSequence((sequence) => sequence + 1);
   }, []);
+
+  useLayoutEffect(() => {
+    if (sidebarCollapsed) return;
+    if (sidebarSearchFocusSequence <= lastSidebarSearchFocusSequenceRef.current) return;
+    const input = sidebarSearchInputRef.current;
+    if (!input) return;
+    lastSidebarSearchFocusSequenceRef.current = sidebarSearchFocusSequence;
+    input.focus({ preventScroll: true });
+    input.select();
+  }, [sidebarCollapsed, sidebarSearchFocusSequence]);
+
+  const handleSidebarSearchChange = useCallback((query: string) => {
+    setSidebarSearchQuery(query);
+  }, []);
+
+  const handleSidebarSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    if (sidebarSearchQuery) {
+      setSidebarSearchQuery("");
+      return;
+    }
+    sidebarSearchInputRef.current?.blur();
+  }, [sidebarSearchQuery]);
 
   const handleSurfaceSearchShortcut = useCallback((target: SurfaceSearchShortcutTarget) => {
     if (isOverlayKeyboardTarget(document.activeElement)) return;
@@ -2088,12 +2087,55 @@ export function AppWithVault({
       {/* Top toolbar */}
       <header
         data-tauri-drag-region
-        className="flex h-8 shrink-0 items-center border-b border-border"
+        className="flex h-8 shrink-0 items-center border-b border-border bg-background"
       >
-        {/* Traffic light spacer (macOS) */}
-        <div data-tauri-drag-region className="w-20 shrink-0" />
-        {/* Toolbar content area */}
-        <div data-tauri-drag-region className="flex flex-1 items-center px-3" />
+        <div
+          data-tauri-drag-region
+          data-app-top-sidebar-segment=""
+          className="flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border"
+          style={{ width: "var(--sidebar-width)" }}
+        >
+          <div data-tauri-drag-region className="w-20 max-w-full shrink-0" />
+          {!sidebarCollapsed && (
+            <>
+              <div
+                aria-hidden="true"
+                className="h-full w-px shrink-0 bg-border"
+                data-top-chrome-space-separator=""
+              />
+              <div
+                className="flex h-full min-w-0 flex-1"
+                data-top-chrome-space-search-group=""
+              >
+                <VaultSwitcher
+                  currentPath={vaultPath}
+                  onVaultSelected={(path) => {
+                    navigate("/", { replace: true });
+                    onVaultSelected(path);
+                  }}
+                  surface="topChrome"
+                />
+                <div
+                  aria-hidden="true"
+                  className="h-full w-px shrink-0 bg-border"
+                  data-top-chrome-search-separator=""
+                />
+                <Input
+                  ref={sidebarSearchInputRef}
+                  aria-label="Search channels"
+                  placeholder="Search channels..."
+                  variant="ghost"
+                  value={sidebarSearchQuery}
+                  onChange={(event) => handleSidebarSearchChange(event.target.value)}
+                  onKeyDown={handleSidebarSearchKeyDown}
+                  className="h-full min-w-0 flex-1 rounded-0 px-3 py-0"
+                  data-sidebar-top-search=""
+                />
+              </div>
+            </>
+          )}
+        </div>
+        <div data-tauri-drag-region className="flex h-full min-w-0 flex-1 items-center" />
       </header>
 
       {/* Body: sidebar + main */}
@@ -2127,11 +2169,7 @@ export function AppWithVault({
         onNavClick={handleDetailClose}
         onScrollToTop={handleScrollToTop}
         keyboardNavigationFocus={sidebarKeyboardNavigationFocus}
-        searchOpen={sidebarSearchOpen}
         searchQuery={sidebarSearchQuery}
-        searchFocusSequence={sidebarSearchFocusSequence}
-        onSearchOpenChange={setSidebarSearchOpen}
-        onSearchQueryChange={setSidebarSearchQuery}
         headerSlot={
           <>
             <ClipperRecoveryBanner
@@ -2185,16 +2223,6 @@ export function AppWithVault({
             </div>
           </div>
         )}
-        {mainSearchMounted && (
-          <MainSearchBottomBar
-            ref={mainSearchInputRef}
-            entered={mainSearchBarEntered && mainSearchShouldShow}
-            query={mainSearchQuery}
-            onQueryChange={setMainSearchQuery}
-            onClearQuery={closeMainSearch}
-            onClose={closeMainSearch}
-          />
-        )}
         <Routes>
           <Route
             element={
@@ -2219,6 +2247,7 @@ export function AppWithVault({
                 onBatchSetTag={handleBatchSetTag}
                 onCreateAndAssignBatch={handleCreateTagFromBatchMenu}
                 onDeleteSelectedBlocks={handleDeleteSelectedBlocks}
+                onGroupSelectionStart={releaseMainSearchForGroupSelection}
                 onRequestRename={setRenamingBlock}
                 onRequestDelete={requestDeleteBlock}
                 onColumnCountChange={handleColumnCountChange}
@@ -2319,14 +2348,6 @@ export function AppWithVault({
 
       {/* Bottom action bar */}
       <div className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-8">
-        <VaultSwitcher
-          currentPath={vaultPath}
-          onVaultSelected={(path) => {
-            navigate("/", { replace: true });
-            onVaultSelected(path);
-          }}
-          hotkey="⌘⇧O"
-        />
         <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>
           New Channel
         </ActionButton>
@@ -2346,7 +2367,6 @@ export function AppWithVault({
         <ActionButton
           hotkey="⌘F"
           onClick={toggleMainSearch}
-          isSelected={mainSearchShouldShow}
         >
           Search cards
         </ActionButton>
@@ -2435,6 +2455,7 @@ interface RouteContext {
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
   onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
+  onGroupSelectionStart?: () => void;
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
   onRequestDelete: (slug: string) => void;
   onColumnCountChange: (count: number) => void;

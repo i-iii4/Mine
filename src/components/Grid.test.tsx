@@ -899,11 +899,19 @@ describe("Grid — no collapse after add / revisit", () => {
     vi.useFakeTimers();
 
     const onBlockClick = vi.fn();
+    const onGroupSelectionStart = vi.fn();
     const blocks = [makeBlock(9501), makeBlock(9502)];
     setBlockHeight(9501, 200);
     setBlockHeight(9502, 220);
 
-    render(<Grid {...BASE_PROPS} onBlockClick={onBlockClick} blocks={blocks} />);
+    render(
+      <Grid
+        {...BASE_PROPS}
+        onBlockClick={onBlockClick}
+        onGroupSelectionStart={onGroupSelectionStart}
+        blocks={blocks}
+      />,
+    );
     await flushAsync();
 
     const card = document.querySelector('[data-block-slug="block-9501"]') as HTMLElement;
@@ -914,6 +922,7 @@ describe("Grid — no collapse after add / revisit", () => {
 
     const selectedWrapper = gridItemForSlug("block-9501");
     expect(onBlockClick).not.toHaveBeenCalled();
+    expect(onGroupSelectionStart).toHaveBeenCalledTimes(1);
     expect(selectedWrapper).toHaveAttribute("data-feed-grid-item-selected", "true");
     expect(selectedWrapper?.style.overflow).toBe("visible");
     expect(selectedWrapper?.querySelector("[data-feed-grid-card-clip]")).toHaveClass(

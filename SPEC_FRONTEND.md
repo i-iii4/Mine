@@ -131,6 +131,8 @@ createBlock(params: CreateBlockParams): Promise<IndexedBlock>
 extractTextSelection(params: ExtractTextSelectionParams): Promise<IndexedBlock>
 prepareDeleteBlock(slug: string): Promise<DeleteBlockPlan>
 deleteBlock(slug: string, deleteUnusedMedia?: boolean): Promise<boolean>
+prepareDeleteBlocks(slugs: string[]): Promise<DeleteBlocksPlan>
+deleteBlocks(slugs: string[], deleteUnusedMedia: boolean): Promise<boolean>
 renameBlockFile(oldSlug: string, newStem: string): Promise<RenameBlockResult>
 listTags(): Promise<TagCount[]>
 addTag(slug: string, tag: string): Promise<void>
@@ -146,6 +148,11 @@ deleteChannel(tag: string): Promise<boolean>
 - If the plan has `unused_media`, the dialog shows compact previews, uses the card thumbnail/poster for video previews, and offers both `Keep media` and `Delete`.
 - `Keep media` commits with `deleteUnusedMedia=false`: only the `.md` card and derived artifacts are removed.
 - Media referenced by other cards is never offered for deletion and remains on disk.
+- Batch delete uses the same plan-first contract through
+  `prepareDeleteBlocks(slugs)`. The returned `DeleteBlocksPlan` is computed
+  against the whole selected set, so media shared only among selected cards can
+  be offered as `unused_media` once. Commit uses one `deleteBlocks(slugs,
+  deleteUnusedMedia)` backend command instead of looping over `deleteBlock`.
 
 ## File drop overlay
 
@@ -567,6 +574,10 @@ Frontend rules:
   `Rename Media...`, `Remove from Card`, `Delete`;
 - `Delete` opens a media-level confirmation that shows the exact media preview
   and all cards/notes returned by `prepare_delete_media_asset`;
+- the media-level delete confirmation must not grow or overflow horizontally:
+  connected-card rows use the related-note row component, but every wrapper in
+  the dialog/list chain is `min-w-0` and long titles truncate inside the fixed
+  AlertDialog width;
 - image drag uses `type: "media_asset"` and drops on sidebar collections call
   the media materialization command;
 - video gets the hover menu but no drag payload;
@@ -657,16 +668,38 @@ Image media expansion:
 Новый поиск — surface filter, а не command palette. Полный контракт:
 [SPEC_SEARCH.md](SPEC_SEARCH.md).
 
-- `Cmd+F` открывает main search как нижний `h-8` бар в правой content pane,
-  вторым слоем прямо над app bottom bar, и фильтрует текущий Grid route:
-  Everything или текущую коллекцию. Бар не участвует в Grid layout: shell/input
-  стоят в финальной позиции, анимируется только нефокусируемая chrome plane.
+- `Cmd+F` сейчас переключает App-owned main search state без rendered main
+  search component. Route-facing механизм поиска не удалён: `searchQuery`
+  остаётся входом для фильтрации Grid route: Everything или текущей коллекции.
+  Top chrome делится той же границей `--sidebar-width`, что и body: слева
+  traffic-light spacer, space selector, sidebar channel search и
+  `border-r border-sidebar-border`, справа временно пустой chrome slot. Так
+  разделитель Sidebar/Main продолжается до верхнего края окна, а search не
+  является overlay над Grid.
 - В правой части bottom app bar есть `Search cards` action с shortcut label
-  `⌘F`. Кнопка и повторное `Cmd+F` закрывают main search; `Escape` в main
-  search тоже закрывает его и очищает query. Закрытие идёт через тот же exit
-  motion, без скачка страницы.
-- `Shift+Cmd+F` открывает inline search в левом Sidebar и фильтрует только
-  список каналов.
+  `⌘F`. Это command trigger, не selected/toggle visual state: кнопка не
+  остаётся визуально нажатой при активном search state. Кнопка и повторное
+  `Cmd+F` закрывают main search state и очищают query. Закрытие не анимирует
+  страницу и не меняет scroll viewport.
+- Пока visual component скрыт, `Cmd+F`/`Search cards` не создают input и не
+  переносят caret.
+- Если пользователь начинает Grid group selection при активном main search,
+  пустой search становится inactive; непустой
+  query/filter остаётся активным, но следующий `Escape` принадлежит selection.
+- `Shift+Cmd+F` фокусирует search в левом top chrome segment и фильтрует
+  только список каналов. Визуальный порядок в сегменте: traffic-light spacer,
+  separator `w-px bg-border`, top-chrome `VaultSwitcher`/space selector,
+  separator `w-px bg-border`, no-icon `Input ghost` (`h-8 px-3 py-0
+  rounded-0`), затем штатный `border-r border-sidebar-border`.
+- Space selector показывает текущую папку, открывает dropdown известных vaults
+  и заменяет старый bottom-bar vault switcher. `Cmd+Shift+O` продолжает
+  открывать native folder picker.
+- Space selector подстраивается под имя текущей папки, но ограничен половиной
+  доступной ширины после traffic-light зоны (`max-w-[50%]`). Имя папки режется
+  end ellipsis. Root trigger остаётся прозрачным; hover/open/focus рисует
+  только inner pill вокруг `name + chevron` (`h-6 rounded-1 px-2
+  bg-component-fill-hover`). Search input занимает остаток и полагается на
+  native input scrolling, чтобы при вводе были видны последние символы.
 - Desktop shortcut delivery идёт через native Tauri menu accelerators:
   `Cmd+F`/`Shift+Cmd+F` emit `surface-search-shortcut` (`main`/`sidebar`).
   DOM `keydown` остаётся browser/dev fallback и принимает physical
@@ -899,6 +932,8 @@ Image media expansion:
   committed card whose `layout.positions` rectangle intersects it.
 - Grid owns `selectedSlugs` and transient `marqueeSelection`; Card receives
   only derived visual state.
+- Starting group selection deactivates empty main search state; non-empty
+  query/filter remains active.
 - Marquee visual uses design-system tokens: fill from `--active`, border from
   `--border`, no radius.
 - Selected GridItem renders `data-feed-grid-item-selected="true"` and an
@@ -928,6 +963,11 @@ Image media expansion:
   standard Button actions: `Connect`, text-only collection-scoped
   `Disconnect`, text-only destructive `Delete`; the icon-only `X` clear button
   is the rightmost control.
+- Batch Delete opens a plan-first destructive dialog equivalent to single-card
+  deletion. It calls `prepareDeleteBlocks(selectedSlugs)`, shows eligible
+  unused media when present, offers `Keep media` and `Delete media`, and commits
+  through one backend `deleteBlocks` command. Media still referenced by
+  non-selected cards/notes is never offered for deletion.
 - Selection clears on plain empty-Grid click, route/channel change, plain card
   opening and any App-level Detail open from Sidebar/related surfaces.
 - After single-card or batch card deletion, Grid preserves the approximate

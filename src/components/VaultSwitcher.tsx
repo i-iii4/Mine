@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Check, Plus } from "lucide-react";
+import { Check, ChevronDown, Plus } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   DropdownMenu,
@@ -15,13 +15,20 @@ interface VaultSwitcherProps {
   currentPath: string;
   onVaultSelected: (path: string) => void;
   hotkey?: string;
+  surface?: "actionBar" | "topChrome";
 }
 
 function vaultName(path: string): string {
-  return path.split("/").pop() ?? path;
+  const trimmed = path.replace(/\/+$/, "");
+  return trimmed.split("/").pop() || path;
 }
 
-export function VaultSwitcher({ currentPath, onVaultSelected, hotkey }: VaultSwitcherProps) {
+export function VaultSwitcher({
+  currentPath,
+  onVaultSelected,
+  hotkey,
+  surface = "actionBar",
+}: VaultSwitcherProps) {
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
 
   useEffect(() => {
@@ -42,35 +49,58 @@ export function VaultSwitcher({ currentPath, onVaultSelected, hotkey }: VaultSwi
   };
 
   // Sort: current first, then alphabetical
-  const sorted = [...knownVaults].sort((a, b) => {
+  const sorted = Array.from(new Set([currentPath, ...knownVaults])).sort((a, b) => {
     if (a === currentPath) return -1;
     if (b === currentPath) return 1;
     return vaultName(a).localeCompare(vaultName(b));
   });
+  const triggerLabel = vaultName(currentPath);
+  const isTopChrome = surface === "topChrome";
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <div
-          role="button"
-          tabIndex={0}
+        <button
+          type="button"
+          aria-label={`Switch space: ${triggerLabel}`}
+          data-vault-switcher=""
+          data-vault-switcher-surface={surface}
           className={cn(
-            "action-button group inline-flex h-6 shrink-0 cursor-pointer items-center rounded-1 p-[2px] font-mono text-sm",
-            "select-none overflow-hidden outline-0",
-            "bg-transparent hover:bg-component-fill-hover",
+            "group inline-flex shrink-0 cursor-pointer items-center select-none overflow-hidden bg-transparent text-foreground outline-0",
+            isTopChrome
+              ? "h-full min-w-0 max-w-[50%] flex-none justify-start rounded-0 px-3 text-base focus-visible:outline-none"
+              : "action-button h-6 rounded-1 p-[2px] font-mono text-sm hover:bg-component-fill-hover",
           )}
         >
-          {hotkey && (
-            <span className="shrink-0 px-[1ch] py-[2px] text-foreground">
-              {hotkey}
+          {isTopChrome ? (
+            <span className="inline-flex h-6 min-w-0 max-w-full items-center rounded-1 px-2 text-foreground group-hover:bg-component-fill-hover group-focus-visible:bg-component-fill-hover group-data-[state=open]:bg-component-fill-hover">
+              <span className="min-w-0 truncate text-left">
+                {triggerLabel}
+              </span>
+              <ChevronDown
+                aria-hidden="true"
+                className="ml-2 size-3 shrink-0 text-muted-foreground"
+              />
             </span>
+          ) : (
+            <>
+              {hotkey && (
+                <span className="shrink-0 px-[1ch] py-[2px] text-foreground">
+                  {hotkey}
+                </span>
+              )}
+              <span className="min-w-0 truncate text-foreground shrink-0 rounded-[2px] bg-component-fill-inner px-[1ch] py-[2px]">
+                {triggerLabel}
+              </span>
+            </>
           )}
-          <span className="shrink-0 rounded-[2px] bg-component-fill-inner px-[1ch] py-[2px] text-foreground">
-            {vaultName(currentPath)}
-          </span>
-        </div>
+        </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start" sideOffset={8}>
+      <DropdownMenuContent
+        side={isTopChrome ? "bottom" : "top"}
+        align="start"
+        sideOffset={isTopChrome ? 4 : 8}
+      >
         {sorted.map((path) => (
           <DropdownMenuItem
             key={path}

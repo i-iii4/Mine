@@ -1105,14 +1105,18 @@ Specification: [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
 | 26.3 | Selected visual | [x] | `data-feed-grid-item-selected`, external square-corner 2px monochrome frame with 1px outside gap, no layout shift, light/dark tokens |
 | 26.4 | Bottom action island | [x] | Main-pane-centered `h-8` opaque island, `bottom-s3`, clear button, Detail-top-bar-style muted Russian selected-card count, direct Button actions `Connect`, text-only collection-scoped `Disconnect`, red text-only `Delete`, horizontal overflow |
 | 26.5 | Batch Connect | [x] | `BatchCollectionPicker` reuses `CollectionPicker` row/input/action styling; binary all/not-all states, sidebar-order rows, optimistic state without row reordering or partial count labels |
-| 26.6 | Batch Disconnect/Delete | [x] | Disconnect selected cards from current collection; batch destructive confirmation for Delete; batch delete keeps media files in v1 |
+| 26.6 | Batch Disconnect/Delete v1 | [x] | Disconnect selected cards from current collection; conservative batch destructive confirmation for Delete |
+| 26.6.1 | Batch delete backend plan | [ ] | Add `prepare_delete_blocks(slugs)` with aggregate `DeleteBlocksPlan`: selected `.md` files, deduped `unused_media` after deleting the whole selected set, and `shared_media` kept by non-selected refs |
+| 26.6.2 | Batch delete backend commit | [ ] | Add `delete_blocks(slugs, delete_unused_media)` as one command; validate/rebuild plan at commit, delete selected cards plus optional eligible unused media, never delete shared media |
+| 26.6.3 | Batch delete dialog parity | [ ] | Replace v1 copy with single-delete-equivalent dialog: card count, optional unused-media previews, `Keep media` and `Delete media` actions, shared media kept |
+| 26.6.4 | Batch delete tests | [ ] | Rust and frontend coverage for media shared only inside selection, media shared with unselected cards, stale plan validation, viewport preservation and selection clear |
 | 26.7 | Group drag-to-channel | [x] | Dragging a selected card drags the selected slug set, renders a capped macOS-style flocking stack of real frozen card previews, and connects all dragged cards on channel/create-channel drop |
 | 26.8 | Tests + manual QA | [ ] | Automated modifier selection, range geometry, action-bar, group drag payload and stack preview coverage is in place; real-vault manual QA for dark/light frame and batch actions remains |
 
 ### Phase 27 — Surface Search
 
 Goal: add scoped search as filtering for existing surfaces: `Cmd+F` filters the
-current Grid route in the right content pane, `Shift+Cmd+F` filters the left
+current Grid route from the top app chrome, `Shift+Cmd+F` filters the left
 Sidebar channel list. Search is not a modal, not a route and not `Cmd+K`.
 
 Specification: [SPEC_SEARCH.md](SPEC_SEARCH.md).
@@ -1121,8 +1125,8 @@ Specification: [SPEC_SEARCH.md](SPEC_SEARCH.md).
 |---|---|---|---|
 | 27.1 | Search read model | [x] | Extend `list_grid_blocks` with optional query, FTS5 route filtering, relevance ranking and paginated lightweight `LightBlock` projection |
 | 27.2 | Match excerpts | [x] | Add search-only match metadata: title/description/body visible fields plus author/url searchable metadata, plain-text excerpt and frontend-safe ranges |
-| 27.3 | Main/Grid search UI | [x] | `Cmd+F` and bottom `Search cards` toggle the bottom search bar, debounced route reload, stale response guard, Escape close contract |
-| 27.4 | Sidebar search UI | [x] | `Shift+Cmd+F` opens/focuses sidebar inline search and filters channel rows without changing Grid route |
+| 27.3 | Main/Grid search UI | [x] | Main search mechanism remains App-owned and route-facing; visual search component temporarily removed, top chrome divider preserved |
+| 27.4 | Sidebar search UI | [x] | Top chrome now contains traffic-light spacer, space selector, and no-icon channel search; `Shift+Cmd+F` focuses search while Sidebar consumes the query and filters/ranks channel rows without changing Grid route |
 | 27.5 | Card highlighting | [x] | Article title/body match rendering with design-system mark token and stable masonry measurement in search mode |
 | 27.6 | Tests + manual QA | [ ] | Automated backend/frontend coverage is in place; real-vault dark/light QA remains |
 

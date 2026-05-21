@@ -52,16 +52,27 @@ export function useChannelPreviewsEvents({ thumbsRootPath, limit }: Options): {
 
   const thumbsRootPathRef = useRef(thumbsRootPath);
   thumbsRootPathRef.current = thumbsRootPath;
+  const refreshRequestIdRef = useRef(0);
+  const lastRecoveryRefreshAtRef = useRef(0);
 
   // Single source of truth for channelPreviews updates. App-level invalidation
   // calls `refresh()`, while this hook stays a pure reader/cache-buster.
   const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current;
     const root = thumbsRootPathRef.current;
     if (!root) {
-      setChannelPreviews(new Map());
+      if (refreshRequestIdRef.current === requestId) {
+        setChannelPreviews(new Map());
+      }
       return;
     }
     const raw = await listChannelPreviews(limit);
+    if (
+      refreshRequestIdRef.current !== requestId
+      || thumbsRootPathRef.current !== root
+    ) {
+      return;
+    }
     const next = new Map<string, PreviewCard[]>();
     for (const [key, items] of Object.entries(raw)) {
       next.set(
@@ -88,8 +99,29 @@ export function useChannelPreviewsEvents({ thumbsRootPath, limit }: Options): {
 
   // Initial load on mount / vault switch.
   useEffect(() => {
+    versionsRef.current.clear();
     void refresh();
   }, [thumbsRootPath, refresh]);
+
+  useEffect(() => {
+    const runRecoveryRefresh = () => {
+      if (!thumbsRootPathRef.current) return;
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastRecoveryRefreshAtRef.current < 1000) return;
+      lastRecoveryRefreshAtRef.current = now;
+      void refresh();
+    };
+
+    window.addEventListener("focus", runRecoveryRefresh);
+    window.addEventListener("vault-refreshed", runRecoveryRefresh);
+    document.addEventListener("visibilitychange", runRecoveryRefresh);
+    return () => {
+      window.removeEventListener("focus", runRecoveryRefresh);
+      window.removeEventListener("vault-refreshed", runRecoveryRefresh);
+      document.removeEventListener("visibilitychange", runRecoveryRefresh);
+    };
+  }, [refresh]);
 
   const bumpThumbVersion = useCallback((slug: string) => {
     const version = (versionsRef.current.get(slug) ?? 0) + 1;

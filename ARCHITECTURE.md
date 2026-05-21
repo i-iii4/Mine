@@ -508,6 +508,13 @@ iOS UI contract:
 
 - Sidebar previews больше не строятся через полный `list_blocks_light()` с фильтрацией по всем тегам в памяти. Бэкенд отдаёт top-N preview rows отдельными SQL-запросами: один для `__all__`, один window-function запрос для `top N per tag`.
 - Frontend считает previews производным состоянием сервера: `useChannelPreviewsEvents` делает initial refresh и затем коалесцирует `block:added`, `block:removed`, `thumb:updated`, `vault-changed` в повторный `list_channel_previews`, вместо локального patch-state.
+- Каждый preview refresh помечается request sequence и root snapshot. Ответ от
+  предыдущего `thumbsRootPath`/vault игнорируется, даже если IPC завершился
+  позже текущего `openVault`; иначе `__all__` может быть заполнен старым
+  snapshot, а строки текущих каналов останутся без thumbnails.
+- Recovery refresh запускается на `focus`, `visibilitychange` и внутренний
+  `vault-refreshed` с коротким throttle. Это восстанавливает уже устаревший
+  in-memory preview map без ручного reload окна.
 - Таблица `blocks` хранит `thumb_format` (`jpeg` / `png`) и `thumb_mtime`. Эти поля синхронизируются в точках записи thumb (`generate_for_block`, `save_thumb`, direct create path) и позволяют `list_channel_previews` отвечать без filesystem syscall-ов на горячем пути.
 - Native host после source-vault commit делает best-effort `upsert_block`,
   затем `generate_for_block` и `sync_thumb_metadata`. Поэтому клиппер при

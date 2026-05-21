@@ -475,6 +475,7 @@ interface GridProps {
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
   onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
+  onGroupSelectionStart?: () => void;
   onRequestRename: (block: LightBlock) => void;
   onRequestDelete: (slug: string) => void;
   onColumnCountChange?: (count: number) => void;
@@ -576,6 +577,7 @@ export function Grid({
   onBatchSetTag,
   onCreateAndAssignBatch,
   onDeleteSelectedBlocks,
+  onGroupSelectionStart,
   onRequestRename,
   onRequestDelete,
   onColumnCountChange,
@@ -1035,6 +1037,12 @@ export function Grid({
       clearSelection();
     }
   }, [clearSelection, searchQuery]);
+
+  useEffect(() => {
+    if (selectedSlugs.size > 0) {
+      onGroupSelectionStart?.();
+    }
+  }, [onGroupSelectionStart, selectedSlugs.size]);
 
   useEffect(() => {
     if (!detailOpen) return;

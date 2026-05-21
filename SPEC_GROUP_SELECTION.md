@@ -121,6 +121,11 @@ Selection is preserved when:
 - keyboard focus moves through the Grid;
 - `Cmd+K` opens a card overflow menu or the selected-card batch menu.
 
+When selection starts while the main search input is focused, Grid notifies App
+to release search keyboard ownership. Empty main search chrome closes; a
+non-empty search query/filter stays active, but `Escape` now clears selection
+instead of first blurring or closing the search input.
+
 Keyboard focus, pointer hover, pinned `Cmd+K` menu anchor, and group selection
 are separate states. A card can be focused, hovered, pinned, selected, or any
 compatible combination of those states.
@@ -395,9 +400,56 @@ the first implementation:
 ellipsis overflow menu is not required unless the island becomes too crowded in
 future work.
 
-Implementation note: `Delete` uses the safe batch path for v1 and calls the
-existing card delete command with `delete_unused_media=false`, so selected cards
-are removed while media files stay in the vault.
+## Batch Delete
+
+Batch Delete must match the single-card delete model: plan first, then commit.
+It must not be implemented as a loop over `deleteBlock(slug, false)` because
+that makes media behavior different from ordinary card deletion and cannot
+detect media that becomes unused only after the whole selected set is removed.
+
+Backend owns the aggregate plan:
+
+```ts
+type DeleteBlocksPlan = {
+  slugs: string[];
+  markdown_files: string[];
+  unused_media: DeleteBlockMedia[];
+  shared_media: DeleteBlockMedia[];
+};
+```
+
+`unused_media` means media that will have no remaining parseable references
+after deleting all selected cards. `shared_media` means media referenced by at
+least one non-selected card/note and must never be deleted by this batch action.
+
+Examples:
+
+- one selected card owns one image and no other note references it ->
+  `unused_media` includes that image;
+- two selected cards both reference the same image and no unselected note
+  references it -> `unused_media` includes that image once;
+- a selected card and an unselected article both reference the same image ->
+  `shared_media` includes that image and the image stays on disk.
+
+The dialog copy follows the single delete confirmation semantics:
+
+- title: `Delete selected cards?`;
+- description always names the selected-card count;
+- when `unused_media.length === 0`, only one destructive commit action is
+  needed and the dialog states that media files stay in the vault;
+- when `unused_media.length > 0`, the dialog shows compact media previews and
+  offers both `Keep media` and `Delete media`;
+- `Keep media` deletes selected `.md` cards and derived artifacts only;
+- `Delete media` deletes selected `.md` cards plus eligible `unused_media`;
+- `shared_media` is never offered for deletion, but may be summarized as kept
+  when useful for clarity.
+
+The commit path must be one backend batch command, not N independent frontend
+calls. The backend command receives the selected slugs plus
+`delete_unused_media`, rebuilds or validates the plan at commit time, deletes
+only eligible media, refreshes affected index rows/previews, and returns one
+success/failure result. After success, Grid clears selection and preserves the
+viewport using the existing delete scroll-anchor contract.
 
 ## Batch Connect
 

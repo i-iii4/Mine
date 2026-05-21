@@ -942,9 +942,9 @@ function RelatedNotesSection({
   onRelatedNotePreviewLeave: () => void;
 }) {
   return (
-    <section className="flex flex-col gap-1" data-related-notes-block>
+    <section className="flex min-w-0 flex-col gap-1" data-related-notes-block>
       {label !== null && <div className={METADATA_LABEL_CLASSES}>{label}</div>}
-      <div className="flex min-w-0 flex-col gap-1" data-related-notes-list>
+      <div className="flex w-full min-w-0 flex-col gap-1" data-related-notes-list>
         {relatedNotes.map((slug, index) => {
           const baseSlug = baseRelatedNoteSlug(slug);
           const rowKey = `${index}:${slug}`;
@@ -1930,8 +1930,8 @@ function RemoveMediaAssetFromCardDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
+      <AlertDialogContent className="min-w-0 overflow-hidden">
+        <AlertDialogHeader className="min-w-0">
           <AlertDialogTitle>Remove media from card?</AlertDialogTitle>
           <AlertDialogDescription>
             This removes only this media reference from the current card. The media file stays in the vault.
@@ -2034,14 +2034,14 @@ function DeleteMediaAssetDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
+      <AlertDialogContent className="min-w-0 overflow-hidden" data-delete-media-dialog="">
+        <AlertDialogHeader className="min-w-0">
           <AlertDialogTitle>Delete media file?</AlertDialogTitle>
           <AlertDialogDescription>
             This deletes the local media file and removes its references from every listed card. Markdown cards stay in the vault.
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="flex">
+        <div className="flex min-w-0">
           <div className="flex h-24 w-32 items-center justify-center overflow-hidden rounded-1 border border-border bg-component-fill">
             {asset.media_kind === "image" ? (
               <img
@@ -2063,10 +2063,10 @@ function DeleteMediaAssetDialog({
             )}
           </div>
         </div>
-        <div className="space-y-1">
+        <div className="min-w-0 space-y-1">
           <div className={METADATA_LABEL_CLASSES}>Connected cards</div>
           <div
-            className="overflow-y-auto pr-1"
+            className="min-w-0 overflow-y-auto pr-1"
             style={{ maxHeight: DELETE_MEDIA_CONNECTED_CARDS_MAX_HEIGHT_PX }}
             data-delete-media-connected-cards-scroll
             data-visible-card-count={DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT}

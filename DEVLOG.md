@@ -1,5 +1,129 @@
 # Devlog
 
+## 21.05.2026 [change] — Move channel search into top chrome
+
+### Context
+
+- Channel search should live in the window top bar after the native traffic
+  light area, not as a floating control inside the Sidebar list.
+- The search field must not add an icon; spacing should follow the existing
+  design-system input inset.
+
+### Completed
+
+- Added a no-icon `Input ghost` channel search to the left top chrome segment:
+  traffic-light spacer, `w-px bg-border` separator, space selector, second
+  separator, `h-8 px-3 py-0` input, then the existing Sidebar/Main divider.
+- Moved `VaultSwitcher` into that top-chrome space selector slot and removed
+  the duplicate bottom-bar switcher; `Cmd+Shift+O` still opens the native
+  folder picker.
+- Let the space selector size to the current folder name while capping it at
+  50% of the remaining left-chrome width; folder names truncate with end
+  ellipsis, while search takes the rest and keeps native input scrolling for the
+  latest typed characters.
+- Moved the top-chrome hover/open/focus affordance from the full selector slot
+  to an inner `name + chevron` pill, so the titlebar area stays transparent and
+  only the semantic trigger gets the design-system `component-fill-hover`
+  state.
+- Fixed a stale Sidebar preview race during space/vault switching:
+  `useChannelPreviewsEvents` now ignores `list_channel_previews` responses from
+  an older `thumbsRootPath`, so old `__all__` thumbnails cannot overwrite the
+  current per-channel preview map.
+- Added a throttled recovery refresh on focus, visibility return and
+  `vault-refreshed`, so an already stale in-memory preview map repairs itself
+  without a manual app reload.
+- Removed the old absolute Sidebar search input and kept Sidebar as a pure
+  consumer of `searchQuery`.
+- Made `Everything` part of the filtered sidebar row set, so it disappears
+  when the active channel query does not match it.
+- Centralized channel filtering/ranking in `src/lib/channelSearch.ts` with
+  case-insensitive exact/prefix/word-prefix/substring matching plus bounded
+  typo tolerance.
+- Updated App and channel-search regression tests for the top-chrome focus
+  contract.
+
+## 21.05.2026 [change] — Temporarily hide main search component
+
+### Context
+
+- The main search input in the top app chrome is being removed from the visible
+  UI while the search architecture remains in place.
+- The route-facing search mechanism should stay intact for the next visual
+  surface iteration.
+
+### Completed
+
+- Removed `MainSearchTopBar` from the App render tree and deleted the component.
+- Kept App-owned `mainSearchOpen` / `mainSearchQuery` state, `Cmd+F` /
+  `surface-search-shortcut` plumbing and the Grid `searchQuery` contract.
+- Preserved the top chrome Sidebar/Main divider using `--sidebar-width` and
+  `border-r border-sidebar-border`.
+- Updated App tests to assert that the visual main search component is absent
+  while shortcut/action plumbing remains wired.
+
+## 20.05.2026 [change] — Move main search into top app chrome
+
+### Context
+
+- The previous main search lived as an `absolute` overlay inside the right
+  Grid pane.
+- The desired Zed-like contract is a real top chrome slot: the search belongs
+  to the window chrome, and the Sidebar/Main divider must continue to the top
+  edge instead of stopping under the titlebar.
+
+### Completed
+
+- Split the app top bar by the same `--sidebar-width` boundary as the body.
+- Added the top-bar `border-r border-sidebar-border` so the vertical
+  Sidebar/Main separator reaches the top edge of the window.
+- Moved `MainSearchTopBar` into the right side of the permanent top chrome.
+- Removed the old main-pane search overlay and its enter/exit chrome-plane CSS.
+- Kept `Cmd+F`, bottom `Search cards`, `Escape` and group-selection focus
+  handoff behavior on the same App-owned search state.
+- Updated App search regression tests for the top-chrome contract.
+
+## 20.05.2026 [docs] — Plan batch delete media parity
+
+### Context
+
+- Current Grid batch delete is conservative: it removes selected card `.md`
+  files and keeps all media files.
+- Desired behavior is parity with single-card delete: batch deletion should
+  first compute a media plan and then let the user choose whether to remove
+  eligible unused media.
+
+### Planned
+
+- Add backend `prepare_delete_blocks(slugs)` returning one aggregate
+  `DeleteBlocksPlan`.
+- Add backend `delete_blocks(slugs, delete_unused_media)` so frontend does not
+  loop over `deleteBlock`.
+- Compute `unused_media` after removing the whole selected set, so media shared
+  only among selected cards is eligible once.
+- Keep media that is still referenced by non-selected cards/notes.
+- Update the batch delete dialog to match single delete: card count, optional
+  unused-media previews, `Keep media` and `Delete media`.
+
+## 20.05.2026 [fix] — Constrain delete-media connected-card rows
+
+### Context
+
+- Delete media confirmation reused the related-note row component for connected
+  cards.
+- Long connected-card titles could force max-content width inside the
+  AlertDialog grid and visually escape the modal, overlapping the footer
+  action area.
+
+### Completed
+
+- Added a complete `min-w-0` chain to the media delete dialog, scroll area and
+  related-note list.
+- Kept connected-card row labels truncated inside the fixed AlertDialog width.
+- Added regression coverage for a long connected-card title in the delete media
+  confirmation.
+- Updated media-asset, frontend and design-system docs with the fixed-width
+  dialog overflow rule.
+
 ## 18.05.2026 [change] — Finalize Surface Search metadata contract
 
 ### Context
@@ -8,8 +132,10 @@
   visible title/description/body text.
 - Those fields are retrieval metadata, not visual card surfaces: author can
   explain why a card matched, while URL remains hidden in the feed.
-- Main search now lives in the bottom chrome and must close through the same
-  smooth motion path as it opens.
+- Main search now lives in the top chrome and must not animate or shift the
+  Grid surface.
+- Main search focus must not steal `Escape` from Grid group selection after
+  the user switches modes.
 
 ### Completed
 
@@ -23,8 +149,13 @@
   preview text, do not reveal hidden URL text and never render `mark`.
 - Added a bottom app-bar `Search cards` action with `⌘F`, repeat `Cmd+F`
   toggle and `Escape` close behavior.
-- Refactored the bottom search bar into `MainSearchBottomBar` with mirrored
-  enter/exit animation that does not move the Grid layout or the focused input.
+- Refactored the Grid search bar into `MainSearchTopBar`: it is now a permanent
+  top-chrome slot in the right side of the app header.
+- Replaced the racy requestAnimationFrame focus call with an App-owned focus
+  request, so `Cmd+F` and `Search cards` put the caret in the input immediately.
+- Added a Grid-to-App handoff for group selection: empty focused search chrome
+  closes, while non-empty query/filter stays active but releases input focus so
+  `Escape` clears selection first.
 - Updated search, frontend, storage, architecture, design-system and plan docs
   for the searchable-hidden-metadata contract.
 - Added backend and frontend regression coverage for author/URL retrieval
