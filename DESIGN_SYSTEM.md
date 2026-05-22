@@ -317,13 +317,31 @@ Space selector — это top-chrome вариант `VaultSwitcher`: `h-full`,
 соответствует остальному top chrome (`px-3`). Если имя папки не помещается, оно
 режется обычным end ellipsis.
 
-Search input не использует иконку. Сам input использует `Input ghost`: `h-8`,
-`min-w-0`, `flex-1`, `rounded-0`, `px-3`, `py-0`, `bg-transparent`,
-`border-none`. Search занимает весь остаток ширины после selector. При вводе
-длинного query используется нативное поведение `input`: caret остаётся видимым,
-поэтому пользователь видит последние вводимые символы. Это сохраняет системный
-horizontal inset из дизайн-системы и не добавляет второй framed surface внутри
-titlebar.
+Search input не использует иконку. Search surface — wrapper `h-8 min-w-0
+flex-1`, внутри прозрачный `Input ghost` (`rounded-0 px-3 py-0 border-none`)
+и опциональный clear action справа. Search занимает весь остаток ширины после
+selector. При вводе длинного query используется нативное поведение `input`:
+caret остаётся видимым, поэтому пользователь видит последние вводимые символы.
+Пустое поле на hover/focus не получает фон: реагирует только placeholder,
+`text-tertiary-foreground` → `text-muted-foreground`. Когда trimmed query
+непустой, только search surface получает `bg-accent`, тот же surface token, что
+нижняя action bar; весь header, space selector и separator lines остаются без
+заливки.
+
+Clear action появляется только когда value непустой: `button h-6 w-6
+rounded-1`, иконка `X` из `lucide-react`, `aria-label="Clear channel search"`.
+Hover/focus clear action использует `bg-component-fill-hover text-foreground`.
+Click очищает query, восстанавливает полный список каналов и возвращает focus
+в input. `Escape` с непустым value очищает поле; `Escape` с пустым value
+снимает focus.
+
+Top chrome controls are dual-purpose. A short pointer gesture keeps the native
+control action: click opens the space selector, click/focus enters channel
+search. Movement beyond `4px` starts native window drag through
+`useChromeDragGesture()` / `getCurrentWindow().startDragging()` and suppresses
+the following click. This keeps the Zed-like behavior where even filled chrome
+can be used to move the window without turning controls into dead drag-only
+areas.
 
 Search match mark внутри карточек:
 
@@ -586,7 +604,11 @@ SubContent (подменю) — та же тень.
 
 ### Тулбар
 
-`<header>`: `h-8 border-b border-border`, `data-tauri-drag-region` для перетаскивания окна. Высота строго 32px.
+`<header>`: `h-8 border-b border-border`, `data-tauri-drag-region` для
+пустых зон перетаскивания окна. Высота строго 32px. Интерактивные элементы
+внутри top chrome не выключают drag целиком: они используют общий threshold
+gesture (`4px`) — короткий жест остаётся click/focus, движение за порог
+запускает native window drag и гасит последующий click.
 
 ### Нижняя панель действий (Action Bar)
 

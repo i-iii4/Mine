@@ -597,8 +597,24 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(input).toHaveFocus();
     });
+    const searchSurface = input.closest("[data-sidebar-top-search-surface]") as HTMLElement;
+    expect(searchSurface).not.toHaveClass("bg-accent");
+    expect(screen.queryByRole("button", { name: "Clear channel search" })).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "alp" } });
 
+    expect(searchSurface).toHaveClass("bg-accent");
+    fireEvent.click(screen.getByRole("button", { name: "Clear channel search" }));
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("");
+    expect(searchSurface).not.toHaveClass("bg-accent");
+    expect(screen.queryByRole("button", { name: "Clear channel search" })).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "alp" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("");
+
+    fireEvent.change(input, { target: { value: "alp" } });
     expect(screen.queryByRole("link", { name: /Everything/ })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /alpha/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /beta/ })).not.toBeInTheDocument();

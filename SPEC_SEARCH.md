@@ -107,12 +107,20 @@ remaining left chrome width (`max-w-[50%]`). Folder names use end ellipsis.
 The root trigger stays transparent; hover/open/focus state is drawn only by the
 inner pill around `name + chevron` (`h-6 rounded-1 px-2
 bg-component-fill-hover`). The search field takes the remaining width and keeps
-native input scrolling so the latest typed characters remain visible.
+native input scrolling so the latest typed characters remain visible. The
+search control is a wrapper surface with a transparent input, not a standalone
+framed input. Empty hover/focus changes only placeholder color from tertiary to
+muted. A non-empty trimmed query fills only that search surface with
+`bg-accent`, matching the bottom action bar, and shows an icon-only
+`Clear channel search` button (`X`, `h-6 w-6 rounded-1`) on the right. Clear
+restores the full channel list and returns focus to the input.
 
 `Shift+Cmd+F` focuses/selects that top-chrome input. It filters only sidebar
 channel rows and does not change the route or Grid dataset.
 `Everything` is part of the filtered row set: it remains visible only when the
 query is empty or matches `Everything` / `__all__`.
+`Escape` clears a non-empty sidebar search value; with an empty value it blurs
+the input.
 
 Sidebar search is client-side because taxonomy/channel rows are already a small
 App-owned read model. Matching is centralized in `src/lib/channelSearch.ts`:

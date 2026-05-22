@@ -25,6 +25,17 @@
   to an inner `name + chevron` pill, so the titlebar area stays transparent and
   only the semantic trigger gets the design-system `component-fill-hover`
   state.
+- Added `useChromeDragGesture()` for interactive top chrome controls:
+  the space selector and channel search keep normal click/focus behavior for
+  short gestures, while movement beyond `4px` starts native window drag and
+  suppresses the trailing click.
+- Added active-query surface feedback for sidebar search: the search input slot
+  uses `bg-accent` only while it contains a non-empty query, matching the bottom
+  action bar without filling the whole top header.
+- Finalized sidebar search control states: empty hover/focus now only promotes
+  placeholder text from tertiary to muted, non-empty value shows an icon-only
+  clear action, and clear/Escape restore the full channel list while preserving
+  focus where appropriate.
 - Fixed a stale Sidebar preview race during space/vault switching:
   `useChannelPreviewsEvents` now ignores `list_channel_previews` responses from
   an older `thumbsRootPath`, so old `__all__` thumbnails cannot overwrite the

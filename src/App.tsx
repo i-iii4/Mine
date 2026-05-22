@@ -18,6 +18,7 @@ import {
   useNavigate,
   useLocation,
 } from "react-router";
+import { X } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import {
   DndContext,
@@ -140,6 +141,7 @@ import {
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
+import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import { VaultPicker } from "@/components/VaultPicker";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { Sidebar } from "@/components/Sidebar";
@@ -332,6 +334,8 @@ export function AppWithVault({
   const [mainSearchOpen, setMainSearchOpen] = useState(false);
   const [mainSearchQuery, setMainSearchQuery] = useState("");
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
+  const sidebarSearchHasValue = sidebarSearchQuery.length > 0;
+  const sidebarSearchHasActiveQuery = sidebarSearchQuery.trim().length > 0;
   const [sidebarSearchFocusSequence, setSidebarSearchFocusSequence] = useState(0);
   const [scrollToTopSignal, setScrollToTopSignal] = useState(0);
   const [sidebarKeyboardNavigationFocus, setSidebarKeyboardNavigationFocus] = useState<{
@@ -345,6 +349,7 @@ export function AppWithVault({
   const mainRef = useRef<HTMLDivElement>(null);
   const sidebarSearchInputRef = useRef<HTMLInputElement>(null);
   const lastSidebarSearchFocusSequenceRef = useRef(0);
+  const sidebarSearchChromeDragGesture = useChromeDragGesture();
   const themeMenuRef = useRef<ThemeMenuHandle>(null);
   const gridColumnCountRef = useRef(1);
   const suppressRedirectRef = useRef(false);
@@ -1140,15 +1145,20 @@ export function AppWithVault({
     setSidebarSearchQuery(query);
   }, []);
 
+  const handleClearSidebarSearch = useCallback(() => {
+    setSidebarSearchQuery("");
+    sidebarSearchInputRef.current?.focus({ preventScroll: true });
+  }, []);
+
   const handleSidebarSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Escape") return;
     event.preventDefault();
-    if (sidebarSearchQuery) {
-      setSidebarSearchQuery("");
+    if (sidebarSearchHasValue) {
+      handleClearSidebarSearch();
       return;
     }
     sidebarSearchInputRef.current?.blur();
-  }, [sidebarSearchQuery]);
+  }, [handleClearSidebarSearch, sidebarSearchHasValue]);
 
   const handleSurfaceSearchShortcut = useCallback((target: SurfaceSearchShortcutTarget) => {
     if (isOverlayKeyboardTarget(document.activeElement)) return;
@@ -2120,17 +2130,37 @@ export function AppWithVault({
                   className="h-full w-px shrink-0 bg-border"
                   data-top-chrome-search-separator=""
                 />
-                <Input
-                  ref={sidebarSearchInputRef}
-                  aria-label="Search channels"
-                  placeholder="Search channels..."
-                  variant="ghost"
-                  value={sidebarSearchQuery}
-                  onChange={(event) => handleSidebarSearchChange(event.target.value)}
-                  onKeyDown={handleSidebarSearchKeyDown}
-                  className="h-full min-w-0 flex-1 rounded-0 px-3 py-0"
-                  data-sidebar-top-search=""
-                />
+                <div
+                  {...sidebarSearchChromeDragGesture}
+                  className={[
+                    "group/sidebar-search flex h-full min-w-0 flex-1 items-center",
+                    sidebarSearchHasActiveQuery ? "bg-accent" : "",
+                  ].filter(Boolean).join(" ")}
+                  data-sidebar-top-search-surface=""
+                >
+                  <Input
+                    ref={sidebarSearchInputRef}
+                    aria-label="Search channels"
+                    placeholder="Search channels..."
+                    variant="ghost"
+                    value={sidebarSearchQuery}
+                    onChange={(event) => handleSidebarSearchChange(event.target.value)}
+                    onKeyDown={handleSidebarSearchKeyDown}
+                    className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 hover:placeholder:text-muted-foreground focus:placeholder:text-muted-foreground group-hover/sidebar-search:placeholder:text-muted-foreground"
+                    data-sidebar-top-search=""
+                  />
+                  {sidebarSearchHasValue && (
+                    <button
+                      type="button"
+                      aria-label="Clear channel search"
+                      className="mr-3 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-1 text-muted-foreground hover:bg-component-fill-hover hover:text-foreground focus-visible:bg-component-fill-hover focus-visible:text-foreground focus-visible:outline-none"
+                      onClick={handleClearSidebarSearch}
+                      data-sidebar-top-search-clear=""
+                    >
+                      <X aria-hidden="true" className="size-3" />
+                    </button>
+                  )}
+                </div>
               </div>
             </>
           )}

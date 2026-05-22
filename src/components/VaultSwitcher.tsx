@@ -8,6 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import { listKnownVaults, selectVault } from "@/lib/commands";
 import { cn } from "@/lib/utils";
 
@@ -56,6 +57,7 @@ export function VaultSwitcher({
   });
   const triggerLabel = vaultName(currentPath);
   const isTopChrome = surface === "topChrome";
+  const chromeDragGesture = useChromeDragGesture({ disabled: !isTopChrome });
 
   return (
     <DropdownMenu>
@@ -65,6 +67,7 @@ export function VaultSwitcher({
           aria-label={`Switch space: ${triggerLabel}`}
           data-vault-switcher=""
           data-vault-switcher-surface={surface}
+          {...chromeDragGesture}
           className={cn(
             "group inline-flex shrink-0 cursor-pointer items-center select-none overflow-hidden bg-transparent text-foreground outline-0",
             isTopChrome

@@ -1126,7 +1126,7 @@ Specification: [SPEC_SEARCH.md](SPEC_SEARCH.md).
 | 27.1 | Search read model | [x] | Extend `list_grid_blocks` with optional query, FTS5 route filtering, relevance ranking and paginated lightweight `LightBlock` projection |
 | 27.2 | Match excerpts | [x] | Add search-only match metadata: title/description/body visible fields plus author/url searchable metadata, plain-text excerpt and frontend-safe ranges |
 | 27.3 | Main/Grid search UI | [x] | Main search mechanism remains App-owned and route-facing; visual search component temporarily removed, top chrome divider preserved |
-| 27.4 | Sidebar search UI | [x] | Top chrome now contains traffic-light spacer, space selector, and no-icon channel search; `Shift+Cmd+F` focuses search while Sidebar consumes the query and filters/ranks channel rows without changing Grid route |
+| 27.4 | Sidebar search UI | [x] | Top chrome now contains traffic-light spacer, space selector, and no-icon channel search; `Shift+Cmd+F` focuses search while Sidebar consumes the query and filters/ranks channel rows without changing Grid route; interactive top-chrome controls support threshold native window drag |
 | 27.5 | Card highlighting | [x] | Article title/body match rendering with design-system mark token and stable masonry measurement in search mode |
 | 27.6 | Tests + manual QA | [ ] | Automated backend/frontend coverage is in place; real-vault dark/light QA remains |
 

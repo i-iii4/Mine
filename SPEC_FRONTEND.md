@@ -700,6 +700,23 @@ Image media expansion:
   только inner pill вокруг `name + chevron` (`h-6 rounded-1 px-2
   bg-component-fill-hover`). Search input занимает остаток и полагается на
   native input scrolling, чтобы при вводе были видны последние символы.
+- Sidebar search renders as a `data-sidebar-top-search-surface` wrapper with a
+  transparent `Input ghost` and an optional clear action. Empty hover/focus
+  changes only placeholder text from tertiary to muted; it does not add a
+  background. When the trimmed query is non-empty, only the search surface is
+  filled with `bg-accent`, matching the bottom action bar surface. The top
+  header, space selector and separator lines remain unfilled.
+- The clear action appears only when the input value is non-empty. It is an
+  icon-only `X` button (`h-6 w-6 rounded-1`, `aria-label="Clear channel
+  search"`). Clicking it clears the query, restores the full channel list and
+  returns focus to the input. `Escape` with a non-empty value clears the field;
+  `Escape` with an empty value blurs the input.
+- Top chrome controls must remain usable as window drag handles. The space
+  selector and sidebar search input use `useChromeDragGesture()`: movement
+  below `4px` is handled as normal click/focus/editing, movement at or above
+  `4px` calls `getCurrentWindow().startDragging()` and suppresses the click
+  generated at the end of that drag gesture. Empty chrome regions still use
+  `data-tauri-drag-region`.
 - Desktop shortcut delivery идёт через native Tauri menu accelerators:
   `Cmd+F`/`Shift+Cmd+F` emit `surface-search-shortcut` (`main`/`sidebar`).
   DOM `keydown` остаётся browser/dev fallback и принимает physical

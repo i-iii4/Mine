@@ -984,6 +984,21 @@ scrolled or remeasured during drag.
 
 Детальная спецификация: [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
 
+### 018: Top chrome controls use threshold window-drag gestures
+
+| Approach | Problem |
+|---|---|
+| Make only empty header pixels draggable with `data-tauri-drag-region` | As the top bar fills with controls, the practical drag target becomes too small |
+| Put `data-tauri-drag-region` over the whole control strip | Native drag capture conflicts with normal click/focus/edit interactions |
+| Shared pointer threshold hook for interactive controls (chosen) | Controls keep normal click/focus behavior for short gestures, but movement beyond `4px` starts native window drag and suppresses the trailing click |
+
+Rationale: Mine's top chrome is a native titlebar replacement, not a web form
+row. The user should be able to grab the space selector or channel search area
+to move the window, while still being able to click the same pixels to open the
+selector or focus the input. `useChromeDragGesture()` centralizes this behavior
+and calls Tauri's `getCurrentWindow().startDragging()` only after the gesture is
+clearly a drag. Empty chrome remains covered by `data-tauri-drag-region`.
+
 ## Dependencies
 
 | Package | Version | Purpose | License |
