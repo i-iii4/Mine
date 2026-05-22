@@ -78,7 +78,7 @@ export function CardTagMenu({
           </MenuIconSlot>
           Connect
         </ContextMenuSubTrigger>
-        <ContextMenuSubContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
+        <ContextMenuSubContent widthRole="picker" className="flex max-h-80 flex-col overflow-hidden p-0">
           <CollectionPicker
             blockSlug={block.slug}
             selectedTags={selectedTags}

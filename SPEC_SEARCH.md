@@ -52,7 +52,8 @@ The top chrome is split by the same `--sidebar-width` boundary as the body: the
 left segment contains the native traffic-light spacer, the space selector,
 sidebar channel search and a `border-r border-sidebar-border`, so the
 Sidebar/Main divider continues to the top edge of the window. The right segment
-is currently empty until the next visual search surface is introduced. The
+starts with a current collection switcher and leaves the remaining pixels as
+drag region until the next visual search surface is introduced. The
 bottom app bar also exposes a right-side `Search cards` action with the `⌘F`
 shortcut label and the same toggle behavior. This action is a command trigger,
 not a selected-state control: it must not remain visually pressed while search
@@ -95,8 +96,15 @@ Sidebar search is a permanent top-chrome control inside the left
 one vertical `bg-border` separator, the `VaultSwitcher`/space selector, a
 second vertical `bg-border` separator, a no-icon `Input ghost` search field
 with the design-system `h-8 px-3` geometry, then the existing
-`border-r border-sidebar-border` Sidebar/Main divider. The space selector and
-input are hidden only when the sidebar is collapsed.
+`border-r border-sidebar-border` Sidebar/Main divider. Collapsed sidebar does
+not collapse the top chrome safety zone to zero and does not reserve an empty
+search slot: the left segment uses CSS intrinsic sizing (`w-auto`) with an
+`80px` traffic-light reserve, a `1px` separator and a `VaultSwitcher` capped at
+`159px`, so the whole collapsed segment cannot exceed `240px`. It hides only
+the channel search input and lets the right collection switcher start
+immediately after that compact collapsed segment. There is no JS measurement or
+hidden probe in this path; short folder names must never be truncated by the
+collapsed container.
 
 The space selector shows the current folder name, truncates before the search
 field, and opens the existing known-vault dropdown. It uses the same switch
@@ -105,9 +113,15 @@ native folder picker.
 The selector width follows the current folder name but is capped at 50% of the
 remaining left chrome width (`max-w-[50%]`). Folder names use end ellipsis.
 The root trigger stays transparent; hover/open/focus state is drawn only by the
-inner pill around `name + chevron` (`h-6 rounded-1 px-2
-bg-component-fill-hover`). The search field takes the remaining width and keeps
-native input scrolling so the latest typed characters remain visible. The
+inner pill around the name (`h-6 rounded-1 px-2 bg-active`), with focus fill
+restricted to keyboard focus. Top-chrome triggers do not show dropdown
+chevrons.
+Pointer-open closes prevent Radix trigger auto-focus and blur the trigger, so a
+single pointer click cannot leave a sticky hover-colored pill. Pointer drag
+also cannot open the dropdown: pointer activation is deferred to click and a
+drag-threshold gesture suppresses that click. The search field takes the
+remaining width and keeps native input scrolling so the latest typed characters
+remain visible. The
 search control is a wrapper surface with a transparent input, not a standalone
 framed input. Empty hover/focus changes only placeholder color from tertiary to
 muted. A non-empty trimmed query fills only that search surface with
@@ -121,6 +135,34 @@ channel rows and does not change the route or Grid dataset.
 query is empty or matches `Everything` / `__all__`.
 `Escape` clears a non-empty sidebar search value; with an empty value it blurs
 the input.
+
+### Collection Switcher Search
+
+The right top chrome collection switcher is route navigation, not a second
+Grid search scope. Its trigger displays the current route collection
+(`Everything` or the active channel). Its dropdown contains a small search
+field that filters only destination collections using the same
+case-insensitive exact/prefix/substring/fuzzy channel matcher as Sidebar
+search and the same Sidebar ordering before ranking. The trigger keeps the
+right-side top-chrome spacing in expanded mode: transparent root `px-6` plus an
+inner `px-2` hover/open pill, placing text on a `32px` content axis from the
+segment edge. In compact/collapsed sidebar mode that wide right-side inset is
+removed: the collection trigger switches to `px-3`, matching the space selector
+root padding so the current collection starts immediately after the compact
+space segment without an extra 32px gap.
+
+The current collection is excluded from the dropdown result set entirely. It is
+not duplicated as a disabled row, not marked with a check/radio icon and not
+styled as selected. Choosing any visible item immediately navigates to that
+collection route and closes the menu.
+
+The collection switcher dropdown has a pinned bottom create action. Empty query
+shows disabled `Create New Channel`; a non-empty query without an exact
+existing channel match enables `Create "{query}"`. Creation uses the normal
+channel create command, refreshes App snapshots and navigates to the created
+channel. Space switcher dropdown follows the same no-current/no-check/no-icon
+menu language and lists only destination spaces plus a plain `Add space`
+action.
 
 Sidebar search is client-side because taxonomy/channel rows are already a small
 App-owned read model. Matching is centralized in `src/lib/channelSearch.ts`:

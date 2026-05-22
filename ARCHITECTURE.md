@@ -998,6 +998,59 @@ to move the window, while still being able to click the same pixels to open the
 selector or focus the input. `useChromeDragGesture()` centralizes this behavior
 and calls Tauri's `getCurrentWindow().startDragging()` only after the gesture is
 clearly a drag. Empty chrome remains covered by `data-tauri-drag-region`.
+When Sidebar is collapsed, the left top-chrome segment does not follow the
+`0px` body sidebar width and does not keep a fixed empty search slot. It
+uses CSS intrinsic sizing: `80px` macOS traffic-light reserve + `1px`
+separator + a capped intrinsic `VaultSwitcher` trigger (`max-w-[159px]`),
+with the whole segment capped at `240px`. Channel search is the only element
+hidden. There is no JS width measurement, hidden probe, or self-referential
+layout dependency, so short folder names cannot be truncated by the collapsed
+container that is supposed to fit them.
+Top-chrome dropdown triggers share `useTopChromeTriggerInteraction()`: pointer
+activation keeps pointer hover and open state, but suppresses Radix auto-focus
+on close so click does not leave a sticky focus-colored pill; keyboard
+activation restores focus and keeps the keyboard focus affordance.
+The same hook defers Radix pointer-open until click. If pointer movement crosses
+the window-drag threshold, the trailing click is suppressed and no dropdown is
+opened. This keeps top chrome controls usable as both controls and drag handles
+without relying on overlapping transparent drag regions.
+
+### 019: Current collection switcher is route-derived top chrome navigation
+
+| Approach | Problem |
+|---|---|
+| Duplicate the active collection inside the dropdown with a checkmark/disabled row | The trigger already states the current route, so repeating it creates redundant chrome and a fake selectable state |
+| Keep a local selected collection state inside the dropdown | Route, Sidebar and Grid can drift from an independent menu state |
+| Derive trigger from `currentTag` and omit the active item from destinations (chosen) | App route remains the single source of truth; the menu contains only possible navigation targets |
+
+Rationale: the right top chrome collection switcher is navigation, not a
+preference selector. It displays the current Grid route in the trigger, opens a
+searchable `DropdownMenu` of other collections ordered like Sidebar, and
+navigates immediately on item select. There are no checkmarks, radio markers,
+disabled current rows or highlighted "current" items because the active
+collection is not part of the destination list. Channel creation from this menu
+is the same App-level create-channel path used elsewhere: create the collection,
+refresh App snapshots, then navigate to the created route.
+
+### 020: Floating menu width is semantic, not ad-hoc
+
+| Approach | Problem |
+|---|---|
+| One width for every DropdownMenu | Command menus become too wide and picker menus remain cramped, so minimalism turns into visual noise |
+| Local `w-64` / `w-72` at each feature call site | Different menus drift without a product reason; screenshots look inconsistent and fixes become class-by-class chasing |
+| Trigger-width matching by default | Works for combobox/select, but fails for icon triggers such as `…`, where a 32px trigger must not define menu width |
+| Semantic roles (chosen): `command`, `selector`, `picker` | Width follows the menu job: compact commands, stable top-chrome navigation selectors, wider searchable channel pickers |
+
+Rationale: Radix provides collision/available-size variables, but it does not
+decide product width. Mine keeps Radix as geometry/collision owner and adds a
+design-system width taxonomy above it. `command` menus are content-sized with
+`12rem` minimum and `18.75rem` maximum. Top-chrome navigation selectors use a
+stable `18rem` width. `CollectionPicker` and `BatchCollectionPicker` use
+`20rem`, because their rows reserve a fixed `10ch` action slot and need enough
+remaining width for Russian collection names. Product components should request
+a semantic menu width role through shared `DropdownMenuContent`,
+`DropdownMenuSubContent`, `ContextMenuContent` or `ContextMenuSubContent`
+instead of hardcoding raw Tailwind width utilities.
 
 ## Dependencies
 

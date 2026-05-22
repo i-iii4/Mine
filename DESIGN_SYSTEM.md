@@ -291,8 +291,9 @@ component сейчас временно не rendered. Top chrome всё рав�
 `--sidebar-width`, что и body: левая часть держит traffic-light spacer, space
 selector, sidebar channel search и `border-r border-sidebar-border`, поэтому
 разделитель Sidebar/Main продолжается до верхнего края окна. Правая часть top
-chrome остаётся пустой до нового search surface. Поиск не участвует в layout
-Grid, не анимирует страницу и не меняет scroll viewport.
+chrome начинается с current collection switcher, а оставшаяся область остаётся
+drag region до нового search surface. Поиск не участвует в layout Grid, не
+анимирует страницу и не меняет scroll viewport.
 Bottom app bar справа содержит `ActionButton` `Search cards` с `hotkey="⌘F"`.
 Это command trigger, а не selected/toggle visual state: кнопка не получает
 `isSelected` и не остаётся зажатой, даже когда search state активен. Button и
@@ -305,17 +306,48 @@ traffic-light spacer, separator `w-px bg-border`, space selector, separator
 `w-px bg-border`, search input, затем штатный `border-r border-sidebar-border`
 между Sidebar и Main.
 
+Когда sidebar collapsed, top chrome не схлопывается до `0px` и не держит
+пустой слот под исчезнувший поиск. Левый segment сжимается до реального
+содержимого: `80px` traffic-light safety area + `1px` separator + intrinsic
+width space selector. Channel search скрывается, а правая часть top chrome с
+current collection switcher начинается сразу после compact collapsed segment.
+Collapsed layout строится только CSS intrinsic sizing: левый segment получает
+`w-auto max-w-[240px]`, а `VaultSwitcher` в collapsed mode получает
+`max-w-[159px]` (`240 - 80 - 1`). JS measurement, hidden probe и вычисление
+ширины по уже обрезанному visible trigger запрещены.
+
 Space selector — это top-chrome вариант `VaultSwitcher`: `h-full`,
 `max-w-[50%]`, `flex-none`, `min-w-0`, `px-3`, `rounded-0`, `text-base`,
-`truncate`; без folder icon. Root trigger не заливается и не рисует отдельную
-обводку: он только задаёт layout slot. Ширина подстраивается под имя текущей
-папки, но не может занять больше половины доступной search/space зоны.
+`truncate`; без folder icon и без dropdown chevron. Root trigger не заливается
+и не рисует отдельную обводку: он только задаёт layout slot. Ширина
+подстраивается под имя текущей папки, но не может занять больше половины
+доступной search/space зоны. В collapsed sidebar state, когда search скрыт,
+ограничение меняется на `max-w-[159px]`, а сам segment shrink-wrap'ится по
+intrinsic width selector, чтобы справа не оставалось пустой ячейки. Короткое
+имя (`Mine`, `Тест`) обязано отображаться полностью; ellipsis допустим только
+для длинных названий, которые превышают collapsed selector cap.
 
-Визуальный hover/open/focus state принадлежит внутренней пуле вокруг
-`name + chevron`: `h-6 rounded-1 px-2 bg-component-fill-hover`. Текст выровнен
-по левому краю через `justify-start` + `text-left`, а внешний отступ
-соответствует остальному top chrome (`px-3`). Если имя папки не помещается, оно
-режется обычным end ellipsis.
+Визуальный hover/open/keyboard-focus state принадлежит внутренней пуле вокруг
+имени: `h-6 rounded-1 px-2 bg-active`. Это тот же system hover/active token,
+что используется для row hover/focus в `DropdownMenu`. Текст выровнен по
+левому краю через `justify-start` + `text-left`. Space selector уже стоит после
+traffic-light reserve, поэтому использует компактный root inset `px-3`, а не
+правую content axis. Вместе с внутренним `px-2` пули текст начинается на `20px`
+после separator. Если имя папки не помещается, оно режется обычным end ellipsis.
+Pointer-click не должен оставлять trigger в focus-colored состоянии после
+закрытия dropdown: top chrome triggers используют общий interaction hook,
+который различает pointer и keyboard open. После pointer-close Radix
+auto-focus на trigger отменяется и trigger blur'ится; после keyboard-close
+focus возвращается на trigger и сохраняет keyboard-focus fill.
+Pointer-drag не открывает dropdown: trigger defers Radix pointer-open до
+обычного click. Если жест пересёк drag threshold, click подавляется и меню не
+появляется.
+
+Space dropdown не показывает текущий space повторно и не использует checkmark
+или другие selected markers. В списке остаются только destination spaces,
+обычные `DropdownMenuItem` rows и pinned `Add space` action без иконки. Ширина
+dropdown — floating width role `selector` (`18rem` с available-width cap), а не
+ширина trigger и не content-fit.
 
 Search input не использует иконку. Search surface — wrapper `h-8 min-w-0
 flex-1`, внутри прозрачный `Input ghost` (`rounded-0 px-3 py-0 border-none`)
@@ -334,6 +366,23 @@ Hover/focus clear action использует `bg-component-fill-hover text-fore
 Click очищает query, восстанавливает полный список каналов и возвращает focus
 в input. `Escape` с непустым value очищает поле; `Escape` с пустым value
 снимает focus.
+
+Right collection switcher живёт в правом top chrome segment и показывает
+текущую Grid route collection: `Everything` или имя текущего канала. Геометрия
+повторяет space selector: root slot `h-full min-w-0 max-w-[50%] flex-none
+rounded-0 bg-transparent`, без dropdown chevron; root padding `px-6` в expanded
+mode и `px-3` в compact/collapsed mode, чтобы после collapsed space selector не
+оставалось лишнего 32px inset. Hover/open/keyboard-focus рисует только inner
+pill `h-6 rounded-1 px-2 bg-active` вокруг имени. При клике
+открывается обычный `DropdownMenu` со search field `Input ghost` и пунктами
+коллекций в том же порядке, что Sidebar. Текущая коллекция не дублируется в
+списке вообще: нет checkbox/radio/check icon, нет selected row, нет disabled
+current item. Внизу dropdown закреплён create action: пустой query показывает
+disabled `Create New Channel`, непустой query без exact match показывает
+`Create "{query}"`. Создание вызывает штатный channel create command,
+обновляет taxonomy/grid snapshots и переводит route в новый канал. Ширина
+dropdown — floating width role `selector` (`18rem`), такая же как у Space
+dropdown.
 
 Top chrome controls are dual-purpose. A short pointer gesture keeps the native
 control action: click opens the space selector, click/focus enters channel
@@ -407,6 +456,12 @@ they must never widen the dialog or overlap footer actions.
 Content: `rounded-1 border bg-popover p-1 text-popover-foreground`, тень — единая для всплывающих элементов (см. «Всплывающие элементы»).
 Item: `rounded-1 px-2 py-1.5 text-base cursor-default`.
 Item hover/focus uses the active surface swatch: `focus:bg-active focus:text-accent-foreground`. Submenu trigger open state uses the same `bg-active`. Item `variant="destructive"`: красный текст (`text-destructive`), тот же hover/focus фон (`focus:bg-active`).
+Width is semantic, not local/ad-hoc. Product components must choose one of the
+floating width roles from «Всплывающие элементы» through
+`DropdownMenuContent` / `DropdownMenuSubContent` `widthRole`: `command`,
+`selector`, `picker`. Raw `w-64` / `w-72` in feature components is invalid
+unless it is the implementation of a named role inside the shared menu
+primitive.
 Trigger ignores modified opening keys: `Cmd`/`Ctrl`/`Alt` +
 `ArrowDown`/`ArrowUp`/`Enter`/`Space` must not open a dropdown. Those
 combinations remain app/global shortcut candidates even when DOM focus is on a
@@ -563,6 +618,30 @@ shadow-[0_4px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.4)]
 ```
 
 SubContent (подменю) — та же тень.
+
+### Ширина
+
+Ширина всплывающих меню задаётся по роли поверхности, а не по месту вызова.
+Один общий размер для всех меню запрещён: command menu, navigation selector и
+searchable picker решают разные задачи и должны оставаться визуально разными,
+но предсказуемыми.
+
+| Role | Surface | Width contract |
+|---|---|---|
+| `command` | Card overflow, ContextMenu, Theme menu, простые списки команд | `width: max-content; min-width: 12rem; max-width: min(18.75rem, available-width)` |
+| `selector` | Top-chrome Space selector, Current collection selector | `width: min(18rem, available-width)` |
+| `picker` | `CollectionPicker` / `BatchCollectionPicker` с search input и правым action slot | `width: min(20rem, available-width)` |
+
+`available-width` берётся из Radix collision variables
+(`--radix-dropdown-menu-content-available-width` /
+`--radix-context-menu-content-available-width`) с viewport fallback
+`calc(100vw - 1rem)`. Height по-прежнему ограничивается Radix
+`--radix-*-content-available-height`.
+
+Trigger width не является шириной menu по умолчанию. Его можно использовать
+только для select-like surfaces, где popup является прямым продолжением input
+или combobox. Для `…`/icon triggers trigger width запрещён: маленькая кнопка не
+должна диктовать ширину command menu.
 
 ### Пункты (Item)
 
@@ -833,6 +912,10 @@ Pointer and keyboard navigation share the same `activeIndex`: moving the mouse
 selects that row, pressing arrows transfers ownership back to keyboard, and
 there is never a simultaneous pointer hover and keyboard hover. Right-slot
 visibility changes are immediate, without opacity transition.
+CollectionPicker menu content uses floating width role `picker` (`20rem` with
+available-width cap). `20rem` is required because the right action slot is fixed
+at `10ch`; narrower menus leave too little scan width for Russian collection
+names. The ordinary Card overflow menu around it remains role `command`.
 Keyboard-triggered scroll cannot transfer ownership to a stationary pointer:
 rows ignore `pointerenter` and ignore the first post-keyboard `pointermove` if
 its coordinates match the last known pointer position.

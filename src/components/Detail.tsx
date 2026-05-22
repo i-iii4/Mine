@@ -904,7 +904,7 @@ function DetailActionRow({
             <Plus className="size-3" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0" align="start">
+        <DropdownMenuContent widthRole="picker" className="flex max-h-80 flex-col overflow-hidden p-0" align="start">
           <CollectionPicker
             blockSlug={block.slug}
             selectedTags={selectedTags}
@@ -1620,7 +1620,7 @@ function MediaAssetMoreMenu({
               <Plus className="size-3" />
               Create Card
             </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0">
+            <DropdownMenuSubContent widthRole="picker" className="flex max-h-80 flex-col overflow-hidden p-0">
               <MediaAssetCollectionPicker
                 asset={asset}
                 tags={tags}

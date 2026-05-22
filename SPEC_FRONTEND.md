@@ -545,6 +545,10 @@ that belongs to `storage::media_refs`.
   Правый клик (`CardTagMenu`) зеркалит этот контракт.
 - Overflow `…` menu uses the shared `DropdownMenu` focus surface: item
   hover/focus and open submenu trigger render `bg-active`, not `bg-accent`.
+- Overflow `…` menu uses floating width role `command`: content-sized with
+  `12rem` minimum and `18.75rem` maximum. Its `Connect` submenu and the
+  bottom-row standalone `Connect` dropdown use width role `picker` (`20rem`)
+  because they host `CollectionPicker`.
 - Overflow/right-click menu icon policy is conservative: only `Connect` and
   `Source` render icons. `Reveal in Finder`, `Copy Path`, `Rename…`,
   `Disconnect…` and `Delete` reserve the same leading icon slot but render it
@@ -605,6 +609,10 @@ Image media expansion:
 для связи карточки с каналами. Он не использует checkbox UI. Строка канала сама
 по себе не toggles membership; toggle делает только правая action button.
 
+- Host dropdown/submenu content uses floating width role `picker`:
+  `width: min(20rem, available-width)`. The width is intentionally wider than a
+  command menu because rows contain a search field, collection label and fixed
+  `10ch` action slot.
 - Порядок каналов всегда равен порядку `tags`, полученному из taxonomy/sidebar.
   `selectedTags`, recent tags, current route и optimistic membership changes не
   пересортировывают список; connected-канал после действия не прыгает наверх.
@@ -673,9 +681,9 @@ Image media expansion:
   остаётся входом для фильтрации Grid route: Everything или текущей коллекции.
   Top chrome делится той же границей `--sidebar-width`, что и body: слева
   traffic-light spacer, space selector, sidebar channel search и
-  `border-r border-sidebar-border`, справа временно пустой chrome slot. Так
-  разделитель Sidebar/Main продолжается до верхнего края окна, а search не
-  является overlay над Grid.
+  `border-r border-sidebar-border`, справа current collection switcher и
+  оставшийся drag region. Так разделитель Sidebar/Main продолжается до
+  верхнего края окна, а search не является overlay над Grid.
 - В правой части bottom app bar есть `Search cards` action с shortcut label
   `⌘F`. Это command trigger, не selected/toggle visual state: кнопка не
   остаётся визуально нажатой при активном search state. Кнопка и повторное
@@ -691,15 +699,37 @@ Image media expansion:
   separator `w-px bg-border`, top-chrome `VaultSwitcher`/space selector,
   separator `w-px bg-border`, no-icon `Input ghost` (`h-8 px-3 py-0
   rounded-0`), затем штатный `border-r border-sidebar-border`.
+- При свернутом Sidebar левый top chrome segment не следует за
+  `--sidebar-width: 0px` и не держит пустой слот под скрытый search. Он
+  shrink-wrap'ится через CSS intrinsic sizing: `80px` traffic-light reserve +
+  `1px` separator + `VaultSwitcher` в collapsed mode с `max-w-[159px]`; весь
+  segment capped by `max-w-[240px]`. Space selector остаётся видимым, channel
+  search скрывается, а правая часть top chrome начинается сразу после compact
+  collapsed segment. Hidden measurement/probe и вычисление ширины по visible
+  `[data-vault-switcher]` запрещены. Короткие имена пространства не получают
+  ellipsis; truncation допустим только для длинных имён, превышающих cap.
 - Space selector показывает текущую папку, открывает dropdown известных vaults
   и заменяет старый bottom-bar vault switcher. `Cmd+Shift+O` продолжает
   открывать native folder picker.
 - Space selector подстраивается под имя текущей папки, но ограничен половиной
   доступной ширины после traffic-light зоны (`max-w-[50%]`). Имя папки режется
-  end ellipsis. Root trigger остаётся прозрачным; hover/open/focus рисует
-  только inner pill вокруг `name + chevron` (`h-6 rounded-1 px-2
-  bg-component-fill-hover`). Search input занимает остаток и полагается на
-  native input scrolling, чтобы при вводе были видны последние символы.
+  end ellipsis. Root trigger остаётся прозрачным, использует `px-3` и не
+  содержит dropdown
+  chevron; hover/open/focus рисует только inner pill вокруг имени (`h-6
+  rounded-1 px-2 bg-active`), тем же state token, что `DropdownMenuItem`
+  hover/focus. Space selector уже идёт после traffic-light reserve, поэтому
+  root `px-3` плюс inner pill `px-2` ставят текст на compact `20px` axis после
+  separator, а не на правую `32px` content axis. Focus fill разрешён только для keyboard focus. Pointer-open не
+  восстанавливает focus на trigger после закрытия dropdown, чтобы click не
+  оставлял sticky hover-colored state. Pointer drag не открывает dropdown:
+  Radix pointer-open отложен до click, а click подавляется, если gesture
+  перешёл в window drag. В collapsed sidebar state selector использует
+  `max-w-full`, потому что search input скрыт. Search input занимает остаток и полагается на native
+  input scrolling, чтобы при вводе были видны последние символы.
+- Space dropdown renders only destination spaces. The current space is omitted
+  entirely, with no checkmark/selected/disabled duplicate row. `Add space` is a
+  plain pinned action without an icon. The dropdown uses floating width role
+  `selector`: `width: min(18rem, available-width)`.
 - Sidebar search renders as a `data-sidebar-top-search-surface` wrapper with a
   transparent `Input ghost` and an optional clear action. Empty hover/focus
   changes only placeholder text from tertiary to muted; it does not add a
@@ -711,6 +741,24 @@ Image media expansion:
   search"`). Clicking it clears the query, restores the full channel list and
   returns focus to the input. `Escape` with a non-empty value clears the field;
   `Escape` with an empty value blurs the input.
+- Right top chrome contains a current collection switcher. The trigger shows
+  the active Grid route label (`Everything` or current channel name), uses the
+  same transparent root + inner `bg-active` hover/open/keyboard-focus pill
+  contract as the space selector. Expanded mode keeps the right-side `32px`
+  content axis (`px-6` root + `px-2` pill); compact/collapsed sidebar mode uses
+  `px-3` root padding to align with the space selector and remove the extra gap.
+  It contains no dropdown chevron and opens a
+  `DropdownMenu` with a `Search collections` input. Dropdown rows are ordered
+  exactly like Sidebar collections and use the shared
+  `filterAndRankChannelSearch` matcher. The active collection is not rendered
+  in the dropdown at all: no duplicated current label, no checkmark, no radio
+  marker, no selected/current row. Selecting an item immediately navigates to
+  `/` or `/channel/:tag`; the switcher derives current state only from route.
+  A pinned bottom action creates a new channel from the current search query
+  when the query is non-empty and does not exactly match an existing
+  destination. Creation refreshes snapshots and navigates to the new channel.
+  The dropdown uses the same floating width role `selector` as Space dropdown:
+  `width: min(18rem, available-width)`.
 - Top chrome controls must remain usable as window drag handles. The space
   selector and sidebar search input use `useChromeDragGesture()`: movement
   below `4px` is handled as normal click/focus/editing, movement at or above
@@ -969,7 +1017,8 @@ Image media expansion:
   contains a muted selected-count header plus `Connect`, collection-scoped
   `Disconnect` outside Everything and `Delete`. Its icon policy matches the
   card menu: icon only for `Connect`, empty leading slots for `Disconnect` and
-  `Delete`.
+  `Delete`. The menu shell uses floating width role `command`; its `Connect`
+  submenu uses role `picker`.
 - When at least one card is selected, Grid renders a bottom floating action
   island centered inside the main/right content pane at `bottom-s3` (`16px`
   above the `h-8` app bottom bar), fixed

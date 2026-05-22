@@ -33,6 +33,7 @@ import {
 import { arrayMove } from "@dnd-kit/sortable";
 import { collectionRefLabel } from "@/lib/collections";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
+import { cn } from "@/lib/utils";
 import {
   isDetailShortcutBlockedTarget,
   isEditableKeyboardTarget,
@@ -144,6 +145,7 @@ import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import { VaultPicker } from "@/components/VaultPicker";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
+import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar } from "@/components/Sidebar";
 import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { ClipperRecoveryBanner } from "@/components/ClipperRecoveryBanner";
@@ -2102,29 +2104,37 @@ export function AppWithVault({
         <div
           data-tauri-drag-region
           data-app-top-sidebar-segment=""
-          className="flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border"
-          style={{ width: "var(--sidebar-width)" }}
+          className={cn(
+            "flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
+            sidebarCollapsed && "w-auto max-w-[240px]",
+            !sidebarResizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
+          )}
+          style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
         >
           <div data-tauri-drag-region className="w-20 max-w-full shrink-0" />
-          {!sidebarCollapsed && (
-            <>
-              <div
-                aria-hidden="true"
-                className="h-full w-px shrink-0 bg-border"
-                data-top-chrome-space-separator=""
-              />
-              <div
-                className="flex h-full min-w-0 flex-1"
-                data-top-chrome-space-search-group=""
-              >
-                <VaultSwitcher
-                  currentPath={vaultPath}
-                  onVaultSelected={(path) => {
-                    navigate("/", { replace: true });
-                    onVaultSelected(path);
-                  }}
-                  surface="topChrome"
-                />
+          <div
+            aria-hidden="true"
+            className="h-full w-px shrink-0 bg-border"
+            data-top-chrome-space-separator=""
+          />
+          <div
+            className={cn(
+              "flex h-full min-w-0",
+              sidebarCollapsed ? "flex-none" : "flex-1",
+            )}
+            data-top-chrome-space-search-group=""
+          >
+            <VaultSwitcher
+              currentPath={vaultPath}
+              onVaultSelected={(path) => {
+                navigate("/", { replace: true });
+                onVaultSelected(path);
+              }}
+              surface="topChrome"
+              topChromeCollapsed={sidebarCollapsed}
+            />
+            {!sidebarCollapsed && (
+              <>
                 <div
                   aria-hidden="true"
                   className="h-full w-px shrink-0 bg-border"
@@ -2161,11 +2171,27 @@ export function AppWithVault({
                     </button>
                   )}
                 </div>
-              </div>
-            </>
-          )}
+              </>
+            )}
+          </div>
         </div>
-        <div data-tauri-drag-region className="flex h-full min-w-0 flex-1 items-center" />
+        <div data-tauri-drag-region className="flex h-full min-w-0 flex-1 items-center">
+          <TopCollectionSwitcher
+            currentTag={currentTag}
+            orderedTags={orderedTags}
+            compact={sidebarCollapsed}
+            onNavigate={(tag) => {
+              navigate(tag ? `/channel/${encodeURIComponent(tag)}` : "/");
+            }}
+            onCreateCollection={async (tag) => {
+              const channel = await createChannel(tag);
+              pushRecentTag(channel.tag);
+              await reloadAllSnapshots();
+              navigate(`/channel/${encodeURIComponent(channel.tag)}`);
+            }}
+          />
+          <div data-tauri-drag-region className="h-full min-w-0 flex-1" />
+        </div>
       </header>
 
       {/* Body: sidebar + main */}

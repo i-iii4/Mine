@@ -1,5 +1,60 @@
 # Devlog
 
+## 22.05.2026 [change] — Add right top-chrome collection switcher
+
+### Context
+
+- The right side of top chrome should state the current collection instead of
+  staying visually empty.
+- The dropdown is navigation to another collection, not a selected-state menu:
+  the current collection must not be duplicated in the list.
+- Top chrome trigger labels needed to align to the `32px` content axis instead
+  of the previous `20px` axis created by `px-3` root padding plus `px-2` pill
+  padding.
+
+### Completed
+
+- Added `TopCollectionSwitcher` in the right top chrome segment. It shows
+  `Everything` or the active channel name from the current route.
+- Added a searchable `DropdownMenu` of destination collections ordered like the
+  Sidebar, using the shared channel search ranking.
+- Omitted the active collection from dropdown rows entirely: no checkmarks, no
+  selected row, no disabled duplicate of the trigger label.
+- Kept the trigger on the same transparent root + inner hover pill contract as
+  the space selector and wired it through the top-chrome drag threshold hook.
+- Added App regression coverage for Everything/current-channel omission and
+  route navigation from the dropdown.
+- Fixed the collapsed Sidebar top-chrome layout by removing the JS measurement
+  path entirely. The left segment now uses CSS intrinsic sizing: `80px` macOS
+  traffic-light reserve, `1px` separator, capped intrinsic space selector
+  (`max-w-[159px]`) and `max-w-[240px]` on the segment. It hides only channel
+  search and lets the right collection switcher start immediately after the
+  compact collapsed segment.
+- Switched the collection trigger to compact `px-3` root padding only in
+  collapsed sidebar mode, matching the space selector padding and removing the
+  extra right-side 32px inset before the current collection label.
+- Added shared top-chrome trigger interaction state: pointer-open dropdowns
+  blur the trigger on close to avoid sticky hover-colored pills, while keyboard
+  opens still restore focus for accessibility.
+- Switched top-chrome trigger pills to the same `bg-active` hover/open token as
+  dropdown rows and removed dropdown chevrons from the space/collection
+  triggers.
+- Kept the right collection trigger on the `32px` content axis, but returned
+  the space selector to compact `px-3` root padding because it already follows
+  the macOS traffic-light reserve.
+- Made top-chrome pointer drag suppress dropdown opening: Radix pointer-open is
+  deferred until click, and drag-threshold gestures suppress that click.
+- Aligned space and collection dropdown language: no current duplicate rows, no
+  checkmarks/selected markers, no destination-row icons.
+- Added a pinned bottom create action to the collection switcher dropdown; it
+  creates a new channel from the search query, refreshes snapshots and
+  navigates to the new channel.
+- Documented semantic floating menu widths: `command` for compact overflow
+  menus, `selector` for top-chrome navigation dropdowns and `picker` for
+  searchable collection membership menus.
+- Implemented the width taxonomy in shared DropdownMenu/ContextMenu primitives
+  via `widthRole`, replacing product-level `w-64`/`w-72` menu widths.
+
 ## 21.05.2026 [change] — Move channel search into top chrome
 
 ### Context

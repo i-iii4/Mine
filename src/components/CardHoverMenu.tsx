@@ -158,7 +158,8 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
             Connect
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent
-            className="flex w-64 max-h-80 flex-col overflow-hidden p-0"
+            widthRole="picker"
+            className="flex max-h-80 flex-col overflow-hidden p-0"
             onKeyDownCapture={handleMenuKeyDownCapture}
           >
             <CollectionPicker
@@ -374,7 +375,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
               <Plus className="size-3" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="flex w-64 max-h-80 flex-col overflow-hidden p-0" align="end">
+          <DropdownMenuContent widthRole="picker" className="flex max-h-80 flex-col overflow-hidden p-0" align="end">
             <CollectionPicker
               blockSlug={block.slug}
               selectedTags={selectedTags}

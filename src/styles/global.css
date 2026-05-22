@@ -177,6 +177,27 @@ body.sidebar-resizing ::selection {
   -webkit-user-drag: none;
 }
 
+[data-floating-menu-width] {
+  --floating-menu-available-width: var(
+    --radix-dropdown-menu-content-available-width,
+    var(--radix-context-menu-content-available-width, calc(100vw - 1rem))
+  );
+}
+
+[data-floating-menu-width="command"] {
+  width: max-content;
+  min-width: 12rem;
+  max-width: min(18.75rem, var(--floating-menu-available-width));
+}
+
+[data-floating-menu-width="selector"] {
+  width: min(18rem, var(--floating-menu-available-width));
+}
+
+[data-floating-menu-width="picker"] {
+  width: min(20rem, var(--floating-menu-available-width));
+}
+
 /* Hide scrollbars in WebKit (Tauri/Safari) */
 .overflow-y-auto::-webkit-scrollbar {
   display: none;

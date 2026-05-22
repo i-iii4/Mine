@@ -56,4 +56,30 @@ describe("DropdownMenu", () => {
       "data-[state=open]:bg-accent",
     );
   });
+
+  it("marks menu width by semantic role", () => {
+    render(
+      <DropdownMenu open modal={false}>
+        <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+        <DropdownMenuContent widthRole="selector">
+          <DropdownMenuItem>Action item</DropdownMenuItem>
+          <DropdownMenuSub open>
+            <DropdownMenuSubTrigger>Nested actions</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent widthRole="picker">
+              <DropdownMenuItem>Nested item</DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+
+    expect(document.querySelector("[data-slot='dropdown-menu-content']")).toHaveAttribute(
+      "data-floating-menu-width",
+      "selector",
+    );
+    expect(document.querySelector("[data-slot='dropdown-menu-sub-content']")).toHaveAttribute(
+      "data-floating-menu-width",
+      "picker",
+    );
+  });
 });

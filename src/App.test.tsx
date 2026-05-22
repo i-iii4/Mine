@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
-import type { DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult } from "@/types";
+import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult } from "@/types";
 import { AppWithVault } from "./App";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 
@@ -13,12 +13,19 @@ const commandMocks = vi.hoisted(() => ({
   startVaultSync: vi.fn<() => Promise<boolean>>(),
   listGridBlocks: vi.fn<(tag?: string, offset?: number, limit?: number, query?: string) => Promise<GridSnapshot>>(),
   listTaxonomySnapshot: vi.fn<() => Promise<TaxonomySnapshot>>(),
+  createChannel: vi.fn<(tag: string) => Promise<ChannelDto>>(),
   renameBlockFile: vi.fn(),
   prepareDeleteBlock: vi.fn<(slug: string) => Promise<DeleteBlockPlan>>(),
   deleteBlock: vi.fn<(slug: string, deleteUnusedMedia?: boolean) => Promise<boolean>>(),
   getBlock: vi.fn(),
   extractInlineMedia: vi.fn(),
   extractTextSelection: vi.fn(),
+}));
+
+const sidebarResizeState = vi.hoisted(() => ({
+  width: 300,
+  collapsed: false,
+  isResizing: false,
 }));
 
 const clipboardWriteText = vi.fn<(text: string) => Promise<void>>();
@@ -30,7 +37,7 @@ vi.mock("@/lib/commands", () => ({
   startVaultSync: commandMocks.startVaultSync,
   listGridBlocks: commandMocks.listGridBlocks,
   listTaxonomySnapshot: commandMocks.listTaxonomySnapshot,
-  createChannel: vi.fn(),
+  createChannel: commandMocks.createChannel,
   deleteChannel: vi.fn(),
   reorderChannels: vi.fn(),
   renameChannel: vi.fn(),
@@ -58,9 +65,9 @@ vi.mock("@/lib/articleAudioDesktopGateway", () => ({
 
 vi.mock("@/hooks/useSidebarResize", () => ({
   useSidebarResize: () => ({
-    width: 300,
-    collapsed: false,
-    isResizing: false,
+    width: sidebarResizeState.width,
+    collapsed: sidebarResizeState.collapsed,
+    isResizing: sidebarResizeState.isResizing,
     startResize: vi.fn(),
     updateResize: vi.fn(),
     endResize: vi.fn(),
@@ -88,14 +95,17 @@ vi.mock("@/components/VaultSwitcher", () => ({
   VaultSwitcher: ({
     currentPath,
     surface = "actionBar",
+    topChromeCollapsed = false,
   }: {
     currentPath: string;
     surface?: string;
+    topChromeCollapsed?: boolean;
   }) => (
     <button
       type="button"
       data-vault-switcher=""
       data-vault-switcher-surface={surface}
+      data-vault-switcher-top-chrome-collapsed={String(topChromeCollapsed)}
     >
       {currentPath.split("/").pop() ?? currentPath}
     </button>
@@ -301,6 +311,9 @@ function deferred<T>() {
 describe("AppWithVault", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sidebarResizeState.width = 300;
+    sidebarResizeState.collapsed = false;
+    sidebarResizeState.isResizing = false;
     clipboardWriteText.mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -319,6 +332,15 @@ describe("AppWithVault", () => {
 
     commandMocks.openVault.mockResolvedValue(vaultOpenResult());
     commandMocks.startVaultSync.mockResolvedValue(true);
+    commandMocks.createChannel.mockImplementation(async (tag: string) => ({
+      tag,
+      description: null,
+      color: null,
+      icon: null,
+      position: 2,
+      created_at: "2026-04-17T00:00:00Z",
+      block_count: 0,
+    }));
     commandMocks.renameBlockFile.mockReset();
     commandMocks.prepareDeleteBlock.mockResolvedValue({
       slug: "alpha-block",
@@ -537,6 +559,37 @@ describe("AppWithVault", () => {
     expect(document.querySelector("[data-main-search-top-bar]")).toBeNull();
   });
 
+  it("keeps space and collection controls while hiding channel search when the sidebar is collapsed", async () => {
+    sidebarResizeState.width = 0;
+    sidebarResizeState.collapsed = true;
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const topSidebarSegment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement | null;
+    expect(topSidebarSegment).toHaveClass("w-auto", "max-w-[240px]");
+    expect(topSidebarSegment).not.toHaveStyle({ width: "var(--sidebar-width)" });
+    expect(topSidebarSegment).toHaveClass("transition-[width]", "duration-200", "ease-out");
+    const spaceSwitcher = topSidebarSegment?.querySelector("[data-vault-switcher]") as HTMLElement | null;
+    expect(spaceSwitcher).toHaveAttribute("data-vault-switcher-surface", "topChrome");
+    expect(spaceSwitcher).toHaveAttribute("data-vault-switcher-top-chrome-collapsed", "true");
+    expect(spaceSwitcher).toHaveTextContent("vault");
+    expect(topSidebarSegment?.querySelector("[data-top-chrome-space-separator]")).toBeInTheDocument();
+    expect(topSidebarSegment?.querySelector("[data-top-chrome-search-separator]")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-top-chrome-space-measure]")).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Search channels" })).not.toBeInTheDocument();
+    const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
+    expect(collectionSwitcher).toHaveClass("px-3");
+    expect(collectionSwitcher).not.toHaveClass("px-6");
+  });
+
   it("keeps Command-F and the bottom action wired without rendering the hidden main search component", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -619,6 +672,118 @@ describe("AppWithVault", () => {
     expect(screen.getByRole("link", { name: /alpha/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /beta/ })).not.toBeInTheDocument();
     expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeSearch);
+  });
+
+  it("shows a right top-chrome collection switcher without duplicating the current collection", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
+    expect(collectionSwitcher).toHaveClass("px-6");
+    expect(collectionSwitcher).not.toHaveClass("px-3");
+    fireEvent.click(collectionSwitcher);
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Search collections" })).toHaveFocus();
+    });
+
+    expect(screen.queryByRole("menuitem", { name: "Everything" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "alpha" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "beta" })).toBeInTheDocument();
+
+    const search = screen.getByRole("textbox", { name: "Search collections" });
+    fireEvent.change(search, { target: { value: "bet" } });
+    expect(screen.queryByRole("menuitem", { name: "alpha" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "beta" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("beta:1");
+    });
+    expect(screen.getByRole("button", { name: "Switch collection: beta" })).not.toHaveFocus();
+  });
+
+  it("omits the active channel from the right top-chrome collection dropdown", async () => {
+    render(
+      <MemoryRouter initialEntries={["/channel/alpha"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch collection: alpha" }));
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Search collections" })).toHaveFocus();
+    });
+
+    expect(screen.getByRole("menuitem", { name: "Everything" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "alpha" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "beta" })).toBeInTheDocument();
+  });
+
+  it("does not open the right top-chrome collection dropdown while starting a window drag", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const trigger = screen.getByRole("button", { name: "Switch collection: Everything" });
+    fireEvent.pointerDown(trigger, {
+      button: 0,
+      pointerId: 1,
+      clientX: 120,
+      clientY: 12,
+    });
+    fireEvent.pointerMove(window, {
+      pointerId: 1,
+      clientX: 132,
+      clientY: 12,
+    });
+    fireEvent.pointerUp(window, {
+      pointerId: 1,
+      clientX: 132,
+      clientY: 12,
+    });
+    fireEvent.click(trigger);
+
+    expect(screen.queryByRole("textbox", { name: "Search collections" })).not.toBeInTheDocument();
+  });
+
+  it("creates a new channel from the pinned collection switcher action", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch collection: Everything" }));
+    const search = await screen.findByRole("textbox", { name: "Search collections" });
+    fireEvent.change(search, { target: { value: "gamma" } });
+    fireEvent.click(screen.getByRole("menuitem", { name: 'Create "gamma"' }));
+
+    await waitFor(() => {
+      expect(commandMocks.createChannel).toHaveBeenCalledWith("gamma");
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Switch collection: gamma" })).toBeInTheDocument();
+    });
   });
 
   it("opens sidebar search from the native Shift-Command-F menu accelerator event", async () => {

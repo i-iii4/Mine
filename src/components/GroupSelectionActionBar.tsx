@@ -154,7 +154,7 @@ export function GroupSelectionActionBar({
                 Connect
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="flex w-72 max-h-80 flex-col overflow-hidden p-0" align="center">
+            <DropdownMenuContent widthRole="picker" className="flex max-h-80 flex-col overflow-hidden p-0" align="center">
               <BatchCollectionPicker
                 selectedSlugs={selectedSlugs}
                 tags={tags}
