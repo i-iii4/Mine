@@ -369,6 +369,80 @@ Hybrid behavior:
 
 ---
 
+## storage/vault_stats
+
+Источник данных для main secondary statistics bar. Это read-model snapshot для
+UI chrome, а не analytics subsystem: он должен быть быстрым, детерминированным
+и обновляться после каждого изменения vault/index state.
+
+### Типы
+
+```rust
+struct VaultStats {
+    markdown_file_count: u64,
+    media_file_count: u64,
+    source_bytes: u64,
+    current_collection_card_count: u64,
+    current_collection: Option<String>, // None means Everything
+    updated_at_ms: u64,
+}
+```
+
+### Функции
+
+```rust
+get_vault_stats(conn: &Connection, vault: &VaultLayout, current_collection: Option<&str>) -> Result<VaultStats>
+count_current_collection_cards(conn: &Connection, current_collection: Option<&str>) -> Result<u64>
+scan_source_vault_file_stats(vault: &VaultLayout) -> Result<SourceVaultFileStats>
+```
+
+### Поведение source vault stats
+
+- `markdown_file_count` считает физические `.md` файлы в source vault
+  рекурсивно, включая collection pages и ordinary Obsidian notes.
+- `media_file_count` считает физические source assets, которые не являются
+  `.md` файлами: images, video, audio, PDF/other local files. Derived artifacts
+  приложения не входят.
+- `source_bytes` — сумма byte size всех файлов, вошедших в
+  `markdown_file_count` и `media_file_count`. Это размер source vault, не
+  `Application Support`, не thumbnails, не semantic model cache и не
+  audio/cache.
+- Hidden/service directories исключаются тем же правилом, что `scan_md_files`:
+  `.arena/`, `.obsidian/`, `.trash/`, `.git/`, `node_modules/`, `target/`,
+  `__pycache__/`.
+- Symlink traversal за пределы vault запрещён. Symlink-файлы внутри vault можно
+  считать как сам symlink metadata entry, но нельзя следовать наружу и
+  прибавлять внешний каталог.
+
+### Поведение collection card count
+
+- `current_collection = None` (`Everything`) считает все indexed rows, где
+  `card_kind != channel`.
+- `Some(collection_ref)` считает indexed non-channel rows, связанные с этим
+  `CollectionRef` через `block_tags`.
+- Surface/Grid search query не влияет на `current_collection_card_count`.
+- Count строится из SQLite read-model, а не из текущего frontend массива
+  карточек, чтобы virtualized/paginated Grid не становился источником истины.
+
+### Realtime contract
+
+- `get_vault_stats` возвращает complete snapshot; frontend не применяет
+  increments и не считает статистику из текущего Grid массива.
+- После in-app commands, меняющих source files, media files, membership,
+  channels или index rows, существующие grid/taxonomy/vault invalidation events
+  являются сигналом заново вызвать `get_vault_stats` для текущего route scope.
+- Допустима frontend-коалесценция нескольких invalidation событий в один
+  snapshot через animation frame. Видимой задержки ради debounce быть не
+  должно: UI chrome должен обновиться в тот же пользовательский цикл, в котором
+  обновляется Grid/Sidebar.
+- Если backend позже публикует отдельный `vault:stats-updated`, event payload
+  должен быть complete `VaultStats` snapshot, не delta.
+- Initial load вызывает `get_vault_stats` один раз после vault open/index
+  readiness. До первого snapshot frontend показывает пустую fixed-height
+  statistics row, а не placeholder text.
+
+---
+
 ## storage/files
 
 Файловые операции: создание/чтение/удаление блоков и медиафайлов в vault.

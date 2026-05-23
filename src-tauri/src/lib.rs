@@ -37,6 +37,7 @@ pub fn run() {
             commands::vault::start_vault_sync,
             commands::vault::rebuild_index,
             commands::vault::sweep_vault_thumbnails,
+            commands::vault_stats::get_vault_stats,
             commands::article_audio::get_article_audio_state,
             commands::article_audio::generate_article_audio,
             commands::article_audio::delete_article_audio,

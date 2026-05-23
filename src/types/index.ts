@@ -284,6 +284,15 @@ export interface TaxonomySnapshot {
   total_blocks: number;
 }
 
+export interface VaultStats {
+  markdownFileCount: number;
+  mediaFileCount: number;
+  sourceBytes: number;
+  currentCollectionCardCount: number;
+  currentCollection: string | null;
+  updatedAtMs: number;
+}
+
 // ─── Channel preview (sidebar icons) ────────────────────────────────────────
 
 export interface PreviewItem {

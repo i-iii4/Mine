@@ -79,6 +79,19 @@ interface TagCount {
 }
 ```
 
+### VaultStats
+
+```typescript
+interface VaultStats {
+  markdownFileCount: number;
+  mediaFileCount: number;
+  sourceBytes: number;
+  currentCollectionCardCount: number;
+  currentCollection: string | null; // null means Everything
+  updatedAtMs: number;
+}
+```
+
 ### ChannelDto
 
 ```typescript
@@ -140,6 +153,7 @@ removeTag(slug: string, tag: string): Promise<void>
 listChannels(): Promise<ChannelDto[]>
 createChannel(tag: string): Promise<ChannelDto>
 deleteChannel(tag: string): Promise<boolean>
+getVaultStats(currentCollection?: string | null): Promise<VaultStats>
 ```
 
 ## Delete confirmation
@@ -467,6 +481,47 @@ App-level Detail chrome: sidebar segment показывает `Channels:` + `All
 Connected`, content segment показывает title/filename, `CardMoreMenu` и close.
 Sidebar и Detail body не должны рендерить свои дополнительные top overlays в
 этот момент; иначе получается третий слой chrome под вторым bar.
+
+В main/Grid state этот второй bar рендерит `MainSecondaryStatsBar`, а не
+toolbar. Левый segment (`data-main-secondary-top-bar-sidebar-segment`) получает
+space-level stats из `VaultStats`: Markdown file count, media file count и
+source vault byte size. Правый segment
+(`data-main-secondary-top-bar-content-segment`) получает
+`currentCollectionCardCount`: в `Everything` это все non-channel карточки, в
+канале — карточки, прикреплённые к этому каналу. Active Grid search не меняет
+этот счётчик.
+
+Форматирование принадлежит frontend helper layer, а не JSX inline logic:
+
+- `formatCompactCount(markdownFileCount, "md")`
+- `formatCompactCount(mediaFileCount, "media")`
+- `formatCardCount(currentCollectionCardCount)` returns `1 card`, otherwise
+  `cards`
+- `formatStorageBytes(sourceBytes)` with decimal units `B`, `KB`, `MB`, `GB`,
+  `TB`
+
+Числа форматируются через `Intl.NumberFormat("ru-RU")`; storage size показывает
+один десятичный знак только для значений меньше `10` в выбранной единице.
+Строка левого segment: `260 md    1 204 media    4,8 GB`, где разделение
+делается layout gap, а не символом-разделителем. Строка правого segment:
+`260 cards`, выровнена по левой оси content segment.
+
+Realtime behavior: `MainSecondaryStatsBar` resolves all data through
+`getVaultStats(currentCollection)`. It loads once after vault open, refreshes on
+route changes that alter `currentCollection`, and reuses existing
+grid/taxonomy/vault invalidation paths as stats invalidation signals. The
+frontend may coalesce multiple invalidations into one animation frame, but must
+not poll, debounce for visible delay, or show transient service text. If a
+future backend path emits `vault:stats-updated`, the payload must be a complete
+`VaultStats` snapshot, not a delta. Until the first snapshot is available, the
+bar keeps its fixed geometry and renders empty text slots.
+
+Responsive behavior: stats never wrap and never increase the `h-8` bar height.
+The left cluster hides whole atoms from right to left when space is tight:
+storage size, then media count, then Markdown count. The right card count has
+higher priority than the left cluster and remains visible while any meaningful
+content width exists. When Sidebar is collapsed, the left stats cluster is not
+rendered; its segment remains an inert drag region.
 
 **Thumbnail upgrade.** Для блоков с inline media которое Rust не умеет декодировать (WebP VP8X, HEIC, AVIF, HEVC), Rust Phase 1 пишет text placeholder на диск. Main app через `useThumbnailUpgrade` hook подписан на `thumb:upgrade-requested` event и отправляет работу в Web Worker (`src/workers/thumbWorker.ts`). Worker декодирует через `createImageBitmap` (native browser decoder, поддерживает все форматы которые WebView рендерит) → `OffscreenCanvas.convertToBlob('image/jpeg', 0.85)` → IPC `save_thumb` → Rust пишет поверх placeholder. После `thumb:updated` event sidebar cache-bust'ит `<img>` URL. Полная архитектура: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md).
 

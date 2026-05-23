@@ -959,6 +959,66 @@ Sidebar/Detail в App shell запрещены: они создают трети
 | Main secondary top bar | `h-8 border-b border-border bg-background`, split sidebar/content |
 | Detail/link-editor secondary bar | тот же second-level bar, `bg-accent`; sidebar segment `px-8 gap-2`, content segment `px-8 gap-3` |
 
+В main/Grid state второй top-bar level — тихая информационная строка, а не
+навигация и не toolbar. Она показывает статистику текущего пространства и
+текущего канала без кнопок, иконок, плашек, hover-состояний и внутренних
+вертикальных разделителей.
+
+Art direction: это ambient metadata, а не dashboard. Строка должна считываться
+как часть системного chrome: ровная, низкоконтрастная, без KPI-акцента и без
+визуального соревнования с карточками. Запрещены icons, badges, bold numbers,
+colored deltas, cards, pills, uppercase labels и отдельные hover/focus states.
+
+Левый segment (`data-main-secondary-top-bar-sidebar-segment`) показывает
+статистику пространства и выравнивается с колонкой Sidebar: `px-8`, `h-full`,
+`items-center`, `overflow-hidden`. Текстовый режим:
+`font-mono text-sm text-tertiary-foreground leading-none`, regular weight.
+Строка собирается как spacing-only inline cluster:
+`260 md    1 204 media    4,8 GB`. Между показателями нет пунктуации,
+иконок или вертикальных разделителей; группы разделяет только стабильный
+`gap-5`. Названия показателей не выделяются жирным; числа и слова находятся в
+самом слабом текстовом уровне, потому что это secondary metadata, а не KPI.
+
+Текстовый контракт левого segment:
+
+- Markdown files: compact label `md`, пример `260 md`
+- Media files: compact label `media`, пример `1 204 media`
+- storage size без дополнительного слова `used`: `4,8 GB`, не `used 4,8 GB`
+
+Числа форматируются по `ru-RU`: группировка пробелами, десятичная запятая.
+Storage units — compact decimal units: `B`, `KB`, `MB`, `GB`, `TB`.
+Для значений меньше `10` в текущей единице показывается один десятичный знак
+(`4,8 GB`), дальше целое значение (`18 GB`).
+
+Правый segment (`data-main-secondary-top-bar-content-segment`) показывает
+количество карточек в текущем route scope и выравнивается по левой оси
+контентной области: `px-8`, `justify-start`, `font-mono text-sm
+text-tertiary-foreground leading-none`. Текст: `260 cards`. В `Everything`
+это количество всех карточек, в канале — количество карточек, прикреплённых к
+этому каналу. Search/filter state не меняет этот счётчик: это статистика
+канала, а не количество видимых результатов.
+
+Текстовый контракт правого segment:
+
+- `1 card`, otherwise `cards`
+- `0 cards` для пустого канала
+- никаких labels вроде `Cards:` или имени канала; контекст уже задан route
+  title в permanent top chrome
+
+Responsive contract: строка не переносится и не меняет высоту. Если левому
+segment не хватает ширины, показатели скрываются справа налево по приоритету:
+сначала storage size, затем media count; Markdown count остаётся последним.
+Нельзя частично обрезать число или слово внутри одного показателя. В collapsed
+Sidebar state левый statistics cluster скрывается целиком, segment остаётся
+пустой drag region. Правый count остаётся на левой оси content segment; на
+экстремально узкой ширине он может truncate только как единый текстовый блок.
+
+Realtime contract: обновление статистики не анимирует числа и не показывает
+loading/skeleton text. Пока snapshot не загружен, segment рендерит пустое место
+на той же геометрии. После backend event строка меняется атомарно в следующий
+React commit; запрещены промежуточные `calculating`, `rendering layout` и
+прочие служебные сообщения в chrome.
+
 Содержимое surface: `Channels:` + selector `All / Connected`. `Channels:`
 использует `font-mono text-sm text-muted-foreground`. Selector повторяет
 ActionButton geometry: outer `h-6 p-[2px] rounded-1`, segments `h-5

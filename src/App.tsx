@@ -100,14 +100,94 @@ const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform })
 };
 
 const BATCH_TAG_REFRESH_DELAY_MS = 750;
+const RU_INTEGER_FORMATTER = new Intl.NumberFormat("ru-RU", {
+  maximumFractionDigits: 0,
+});
+
+const STORAGE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
 
 function normalizeSurfaceSearchQuery(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
 
+function formatCompactCount(count: number, label: string): string {
+  return `${RU_INTEGER_FORMATTER.format(count)} ${label}`;
+}
+
+function formatCardCount(count: number): string {
+  return `${RU_INTEGER_FORMATTER.format(count)} ${count === 1 ? "card" : "cards"}`;
+}
+
+function formatStorageBytes(bytes: number): string {
+  let value = Math.max(0, bytes);
+  let unitIndex = 0;
+  while (value >= 1000 && unitIndex < STORAGE_UNITS.length - 1) {
+    value /= 1000;
+    unitIndex += 1;
+  }
+  const formatter = new Intl.NumberFormat("ru-RU", {
+    maximumFractionDigits: value > 0 && value < 10 && unitIndex > 0 ? 1 : 0,
+    minimumFractionDigits: 0,
+  });
+  return `${formatter.format(value)} ${STORAGE_UNITS[unitIndex]!}`;
+}
+
+function MainSecondaryStatsLeft({
+  stats,
+  sidebarCollapsed,
+}: {
+  stats: VaultStats | null;
+  sidebarCollapsed: boolean;
+}) {
+  const markdownCount = stats ? formatCompactCount(stats.markdownFileCount, "md") : "";
+  const mediaCount = stats ? formatCompactCount(stats.mediaFileCount, "media") : "";
+  const sourceSize = stats ? formatStorageBytes(stats.sourceBytes) : "";
+
+  if (sidebarCollapsed) return null;
+
+  return (
+    <div
+      data-main-secondary-stats-left=""
+      className="flex h-full min-w-0 items-center overflow-hidden px-8 font-mono text-sm leading-none text-tertiary-foreground"
+    >
+      {stats && (
+        <div className="flex min-w-0 items-center gap-5 overflow-hidden whitespace-nowrap">
+          <span data-main-secondary-stat-atom="markdown" className="shrink-0">
+            {markdownCount}
+          </span>
+          <span data-main-secondary-stat-atom="media" className="shrink-0">
+            {mediaCount}
+          </span>
+          <span data-main-secondary-stat-atom="storage" className="shrink-0">
+            {sourceSize}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MainSecondaryStatsRight({ stats }: { stats: VaultStats | null }) {
+  const cardCount = stats ? formatCardCount(stats.currentCollectionCardCount) : "";
+
+  return (
+    <div
+      data-main-secondary-stats-right=""
+      className="flex h-full min-w-0 items-center justify-start overflow-hidden px-8 font-mono text-sm leading-none text-tertiary-foreground"
+    >
+      {stats && (
+        <span className="truncate whitespace-nowrap" title={cardCount}>
+          {cardCount}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function MainSecondaryTopBar({
   sidebarCollapsed,
   sidebarResizing,
+  stats,
   detailBlock,
   detailTitle,
   detailEntered,
@@ -125,6 +205,7 @@ function MainSecondaryTopBar({
 }: {
   sidebarCollapsed: boolean;
   sidebarResizing: boolean;
+  stats: VaultStats | null;
   detailBlock?: LightBlock | IndexedBlock | null;
   detailTitle?: string;
   detailEntered?: boolean;
@@ -194,13 +275,16 @@ function MainSecondaryTopBar({
             />
           </div>
         )}
+        {!detailBlock && (
+          <MainSecondaryStatsLeft stats={stats} sidebarCollapsed={sidebarCollapsed} />
+        )}
       </div>
       <div
         data-tauri-drag-region
         data-main-secondary-top-bar-content-segment=""
         className="flex h-full min-w-0 flex-1 items-center"
       >
-        {detailBlock && (
+        {detailBlock ? (
           <div
             className="detail-top-bar-enter flex h-full min-w-0 flex-1 items-center gap-3 px-8"
             data-entered={detailEntered ? "true" : "false"}
@@ -245,6 +329,8 @@ function MainSecondaryTopBar({
               <X className="size-4" />
             </Button>
           </div>
+        ) : (
+          <MainSecondaryStatsRight stats={stats} />
         )}
       </div>
     </div>
@@ -262,13 +348,23 @@ function fetchGridBlocks(
     : listGridBlocks(tag, offset, limit);
 }
 
-import type { DeleteBlockPlan, IndexedBlock, LightBlock, TagCount, ChannelDto, GridSnapshot, MediaAssetRef } from "@/types";
+import type {
+  DeleteBlockPlan,
+  IndexedBlock,
+  LightBlock,
+  TagCount,
+  ChannelDto,
+  GridSnapshot,
+  MediaAssetRef,
+  VaultStats,
+} from "@/types";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   getVaultPath,
   openVault,
   selectVault,
   startVaultSync,
+  getVaultStats,
   listGridBlocks,
   listTaxonomySnapshot,
   createChannel,
@@ -599,6 +695,7 @@ export function AppWithVault({
 
   const [blocks, setBlocks] = useState<LightBlock[]>([]);
   const [totalBlocks, setTotalBlocks] = useState(0);
+  const [vaultStats, setVaultStats] = useState<VaultStats | null>(null);
   const [hasMoreBlocks, setHasMoreBlocks] = useState(false);
   const [loadingMoreBlocks, setLoadingMoreBlocks] = useState(false);
   const [tags, setTags] = useState<TagCount[]>([]);
@@ -665,6 +762,8 @@ export function AppWithVault({
   blocksRef.current = blocks;
   const loadRequestIdRef = useRef(0);
   const taxonomyRequestIdRef = useRef(0);
+  const vaultStatsRequestIdRef = useRef(0);
+  const vaultStatsFrameRef = useRef<number | null>(null);
   const routeSnapshotCacheRef = useRef<Map<string, GridSnapshot>>(new Map());
   const lastRevalidatedRouteKeyRef = useRef<string | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
@@ -955,11 +1054,42 @@ export function AppWithVault({
     }
   }, []);
 
+  const loadVaultStats = useCallback(async (tag = currentTagRef.current) => {
+    const requestId = ++vaultStatsRequestIdRef.current;
+    const pathAtStart = vaultPathRef.current;
+    const tagAtStart = tag ?? null;
+    try {
+      const stats = await getVaultStats(tagAtStart);
+      if (
+        vaultStatsRequestIdRef.current !== requestId
+        || vaultPathRef.current !== pathAtStart
+        || (currentTagRef.current ?? null) !== tagAtStart
+      ) {
+        return;
+      }
+      setVaultStats(stats);
+    } catch (err) {
+      console.warn("[VAULT_STATS] failed:", err);
+    }
+  }, []);
+
   const loadGridSnapshotRef = useRef(loadGridSnapshot);
   loadGridSnapshotRef.current = loadGridSnapshot;
   const loadTaxonomySnapshotRef = useRef(loadTaxonomySnapshotState);
   loadTaxonomySnapshotRef.current = loadTaxonomySnapshotState;
+  const loadVaultStatsRef = useRef(loadVaultStats);
+  loadVaultStatsRef.current = loadVaultStats;
   const initialRouteLoadDoneRef = useRef(false);
+
+  const requestVaultStatsRefresh = useCallback(() => {
+    if (!vaultReady || vaultStatsFrameRef.current !== null) {
+      return;
+    }
+    vaultStatsFrameRef.current = window.requestAnimationFrame(() => {
+      vaultStatsFrameRef.current = null;
+      void loadVaultStatsRef.current();
+    });
+  }, [vaultReady]);
 
   useEffect(() => {
     if (!selectedBlock) {
@@ -1053,6 +1183,9 @@ export function AppWithVault({
     if (!vaultReady) {
       return;
     }
+    if (flags.grid || flags.taxonomy) {
+      requestVaultStatsRefresh();
+    }
     if (flags.grid) pendingRefreshRef.current.grid = true;
     if (flags.taxonomy) pendingRefreshRef.current.taxonomy = true;
     if (flags.previews) pendingRefreshRef.current.previews = true;
@@ -1067,16 +1200,17 @@ export function AppWithVault({
       refreshTimerRef.current = null;
       void flushRefreshQueue();
     }, delayMs);
-  }, [flushRefreshQueue, vaultReady]);
+  }, [flushRefreshQueue, requestVaultStatsRefresh, vaultReady]);
 
   const reloadAllSnapshots = useCallback(async () => {
     invalidateRouteSnapshots();
     await Promise.all([
       loadGridSnapshot({ invalidateCachedRoutes: true }),
       loadTaxonomySnapshotState(),
+      loadVaultStats(),
       loadPreviews(),
     ]);
-  }, [invalidateRouteSnapshots, loadGridSnapshot, loadPreviews, loadTaxonomySnapshotState]);
+  }, [invalidateRouteSnapshots, loadGridSnapshot, loadPreviews, loadTaxonomySnapshotState, loadVaultStats]);
 
   const loadMoreBlocks = useCallback(async () => {
     if (loadingMoreBlocks || !hasMoreBlocks) return;
@@ -1134,6 +1268,7 @@ export function AppWithVault({
     let cancelled = false;
     setVaultReady(false);
     setLoadError(null);
+    setVaultStats(null);
     setThumbsRootPath(null);
     invalidateRouteSnapshots();
     pendingRefreshRef.current = {
@@ -1145,6 +1280,10 @@ export function AppWithVault({
     if (refreshTimerRef.current !== null) {
       window.clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = null;
+    }
+    if (vaultStatsFrameRef.current !== null) {
+      window.cancelAnimationFrame(vaultStatsFrameRef.current);
+      vaultStatsFrameRef.current = null;
     }
     const started = performance.now();
     console.info("[startup] openVault:start", { vaultPath });
@@ -1195,6 +1334,7 @@ export function AppWithVault({
       await Promise.all([
         loadGridSnapshotRef.current({ tag: initialTag }),
         loadTaxonomySnapshotRef.current(),
+        loadVaultStatsRef.current(initialTag),
       ]);
       if (cancelled) return;
       initialRouteLoadDoneRef.current = true;
@@ -1233,6 +1373,13 @@ export function AppWithVault({
       }
     };
   }, [routeKeyFor, vaultPath, vaultReady]);
+
+  useEffect(() => {
+    if (!vaultReady) {
+      return;
+    }
+    void loadVaultStatsRef.current(currentTag);
+  }, [currentTag, vaultReady]);
 
   // Passive thumb sweep on window focus / visibility changes.
   // Covers the gap where `notify` on iCloud Drive does not reliably
@@ -1377,6 +1524,15 @@ export function AppWithVault({
       });
     }));
 
+    unlistenFns.push(listen<VaultStats>("vault:stats-updated", (event) => {
+      const currentCollection = currentTagRef.current ?? null;
+      if (event.payload.currentCollection === currentCollection) {
+        setVaultStats(event.payload);
+        return;
+      }
+      requestVaultStatsRefresh();
+    }));
+
     unlistenFns.push(listen<VaultSyncStartedEvent>("vault-sync-started", (event) => {
       if (event.payload.path === vaultPathRef.current) {
         setIsSyncing(true);
@@ -1411,13 +1567,17 @@ export function AppWithVault({
         unlisten.then((fn) => fn());
       }
     };
-  }, [bumpThumbVersion, invalidateRouteSnapshots, invalidateRoutesForTags, migrationRequired, reloadAllSnapshots, scheduleRefresh, vaultReady]);
+  }, [bumpThumbVersion, invalidateRouteSnapshots, invalidateRoutesForTags, migrationRequired, reloadAllSnapshots, requestVaultStatsRefresh, scheduleRefresh, vaultReady]);
 
   useEffect(() => {
     return () => {
       if (refreshTimerRef.current !== null) {
         window.clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = null;
+      }
+      if (vaultStatsFrameRef.current !== null) {
+        window.cancelAnimationFrame(vaultStatsFrameRef.current);
+        vaultStatsFrameRef.current = null;
       }
     };
   }, []);
@@ -2665,6 +2825,7 @@ export function AppWithVault({
         <MainSecondaryTopBar
           sidebarCollapsed={sidebarCollapsed}
           sidebarResizing={sidebarResizing}
+          stats={vaultStats}
           detailBlock={renderedDetailBlock}
           detailTitle={compactDetailCardTitle}
           detailEntered={compactDetailChromeEntered}

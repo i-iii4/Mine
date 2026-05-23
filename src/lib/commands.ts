@@ -12,6 +12,7 @@ import type {
   TagCount,
   ChannelDto,
   TaxonomySnapshot,
+  VaultStats,
   VaultOpenResult,
   CreateBlockParams,
   ArenaChannelInfo,
@@ -47,6 +48,11 @@ export const listKnownVaults = () =>
 
 export const startVaultSync = () =>
   invoke<boolean>("start_vault_sync");
+
+export const getVaultStats = (current_collection?: string | null) =>
+  invoke<VaultStats>("get_vault_stats", {
+    current_collection: current_collection ?? null,
+  });
 
 export const getArticleAudioState = (slug: string) =>
   invoke<ArticleAudioState>("get_article_audio_state", { slug });

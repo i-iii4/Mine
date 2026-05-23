@@ -274,6 +274,22 @@ body {
   outline: 1px solid rgb(255 255 255 / 0.08);
 }
 
+[data-main-secondary-top-bar-sidebar-segment] {
+  container-type: inline-size;
+}
+
+@container (max-width: 280px) {
+  [data-main-secondary-stat-atom="storage"] {
+    display: none;
+  }
+}
+
+@container (max-width: 190px) {
+  [data-main-secondary-stat-atom="media"] {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .detail-top-bar-enter,
   .detail-top-bar-line-enter {

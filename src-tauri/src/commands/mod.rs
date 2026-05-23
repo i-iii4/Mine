@@ -12,3 +12,4 @@ pub mod state;
 pub mod tags;
 pub mod thumbnails;
 pub mod vault;
+pub mod vault_stats;

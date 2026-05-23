@@ -5,7 +5,7 @@ import { render, screen, waitFor, fireEvent, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult } from "@/types";
+import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
 import { AppWithVault } from "./App";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 
@@ -14,6 +14,7 @@ const commandMocks = vi.hoisted(() => ({
   startVaultSync: vi.fn<() => Promise<boolean>>(),
   listGridBlocks: vi.fn<(tag?: string, offset?: number, limit?: number, query?: string) => Promise<GridSnapshot>>(),
   listTaxonomySnapshot: vi.fn<() => Promise<TaxonomySnapshot>>(),
+  getVaultStats: vi.fn<(currentCollection?: string | null) => Promise<VaultStats>>(),
   createChannel: vi.fn<(tag: string) => Promise<ChannelDto>>(),
   renameBlockFile: vi.fn(),
   prepareDeleteBlock: vi.fn<(slug: string) => Promise<DeleteBlockPlan>>(),
@@ -38,6 +39,7 @@ vi.mock("@/lib/commands", () => ({
   startVaultSync: commandMocks.startVaultSync,
   listGridBlocks: commandMocks.listGridBlocks,
   listTaxonomySnapshot: commandMocks.listTaxonomySnapshot,
+  getVaultStats: commandMocks.getVaultStats,
   createChannel: commandMocks.createChannel,
   deleteChannel: vi.fn(),
   reorderChannels: vi.fn(),
@@ -421,6 +423,14 @@ describe("AppWithVault", () => {
       ],
       total_blocks: 2,
     });
+    commandMocks.getVaultStats.mockImplementation(async (currentCollection = null) => ({
+      markdownFileCount: 260,
+      mediaFileCount: 1204,
+      sourceBytes: 4_800_000_000,
+      currentCollectionCardCount: currentCollection ? 1 : 2,
+      currentCollection,
+      updatedAtMs: 1,
+    }));
   });
 
   it("reserves the app minimum from max sidebar plus right pane minimum", async () => {
@@ -618,6 +628,18 @@ describe("AppWithVault", () => {
     expect(sidebarSegment).toHaveStyle({ width: "var(--sidebar-width)" });
     expect(sidebarSegment).toHaveClass("border-r", "border-sidebar-border");
     expect(contentSegment).toHaveClass("flex-1");
+    expect(sidebarSegment).toHaveTextContent("260 md1 204 media4,8 GB");
+    expect(contentSegment).toHaveTextContent("2 cards");
+    expect(sidebarSegment?.querySelector("[data-main-secondary-stats-left] > div")).toHaveClass(
+      "gap-5",
+    );
+    expect(sidebarSegment?.querySelector("[data-main-secondary-stats-left]")).toHaveClass(
+      "text-tertiary-foreground",
+    );
+    expect(contentSegment?.querySelector("[data-main-secondary-stats-right]")).toHaveClass(
+      "justify-start",
+      "text-tertiary-foreground",
+    );
   });
 
   it("uses the secondary top bar for non-compact Detail chrome instead of body overlays", async () => {

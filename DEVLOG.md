@@ -1,5 +1,50 @@
 # Devlog
 
+## 23.05.2026 [implementation] — Render main secondary statistics bar
+
+### Context
+
+- The main secondary bar contract is now compact ambient metadata, not a
+  dashboard row.
+- The content-side card count should align to the left edge of the content
+  segment, matching the rest of the second-level chrome.
+
+### Completed
+
+- Added backend `VaultStats` read model and `get_vault_stats` IPC command.
+- Rendered the left metadata cluster as `260 md    1 204 media    4,8 GB`
+  with spacing-only grouping and `text-tertiary-foreground`.
+- Rendered the route card count as `260 cards`, left-aligned in the content
+  segment.
+- Refreshed stats on initial load, route changes and existing vault/grid/
+  taxonomy invalidation paths.
+- Added focused frontend and Rust coverage for the statistics contract.
+
+## 23.05.2026 [docs] — Specify main secondary statistics bar
+
+### Context
+
+- The main screen second-level bar should carry useful ambient state instead
+  of staying visually empty.
+- The UI needs space-level file/media/storage stats on the left and current
+  route card count in the content segment, with compact microcopy and
+  immediate updates.
+
+### Completed
+
+- Documented the art-direction contract for the main secondary statistics bar:
+  `h-8`, `bg-background`, quiet `font-mono text-sm text-tertiary-foreground`,
+  no icons, no pills, no hover states, no KPI styling.
+- Specified left-side copy and formatting:
+  `260 md    1 204 media    4,8 GB`, grouped by spacing only.
+- Specified content-segment route count copy:
+  `260 cards`, left-aligned in the content segment, scoped to Everything or
+  the current channel and independent from Grid search filters.
+- Added frontend formatting requirements for `ru-RU` numbers, compact labels
+  and decimal storage units.
+- Added storage-level `VaultStats` snapshot contract and `vault:stats-updated`
+  realtime event semantics.
+
 ## 23.05.2026 [change] — Add top chrome surface token
 
 ### Context

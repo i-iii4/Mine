@@ -10,3 +10,4 @@ pub mod media_refs;
 pub mod preview_plan;
 pub mod search_engine;
 pub mod thumbnails;
+pub mod vault_stats;
