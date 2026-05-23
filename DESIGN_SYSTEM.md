@@ -101,13 +101,17 @@ typography must stay inside the 12/14/18px design-system scale.
 | Уровень | Токен | Светлая (L) | Тёмная (L) | Назначение |
 |---|---|---|---|---|
 | 0 | `--background` | 1.0 | 0.1567 | Фон страницы |
+| +0.5 | `--chrome` | 0.99 | 0.1691 | App/top chrome между фоном и action bar |
 | +1 | `--accent` | 0.98 | 0.1815 | Hover фон, action bar |
 | +2 | `--sidebar-accent`, `--active` | 0.965 | 0.2063 | Legacy/sidebar surface, нажатие |
 | +3 | `--border` | 0.95 | 0.2311 | Границы, разделители |
 
 **Шаг от accent:** светлая тема — 0.015, тёмная — 0.0248.
 
-**Примечание:** токены `--muted`, `--secondary` имеют то же значение, что и `--accent` (для совместимости с shadcn). В коде используем только `bg-accent`.
+**Примечание:** `--chrome` — отдельная роль app shell, не sidebar state.
+Токены `--muted`, `--secondary` имеют то же значение, что и `--accent` (для
+совместимости с shadcn). Для нижней панели и активных search surfaces
+используем `bg-accent`, для верхнего chrome — `bg-chrome`.
 
 ### Заливки компонентов (component fills)
 
@@ -306,6 +310,11 @@ traffic-light spacer, separator `w-px bg-border`, space selector, separator
 `w-px bg-border`, search input, затем штатный `border-r border-sidebar-border`
 между Sidebar и Main.
 
+Permanent top chrome использует `bg-chrome`, промежуточный surface между
+`bg-background` и `bg-accent`. Это оставляет активному search surface следующий
+видимый уровень заливки: когда query непустой, search wrapper получает
+`bg-accent`, а остальной header остаётся `bg-chrome`.
+
 Когда sidebar collapsed, top chrome не схлопывается до `0px` и не держит
 пустой слот под исчезнувший поиск. Левый segment сжимается до реального
 содержимого: `80px` traffic-light safety area + `1px` separator + intrinsic
@@ -367,8 +376,8 @@ text-muted-foreground`. Search занимает весь остаток шири
 hover/focus не получает фон: реагирует только placeholder,
 `text-tertiary-foreground` → `text-muted-foreground`. Когда trimmed query
 непустой, только search surface получает `bg-accent`, тот же surface token, что
-нижняя action bar; весь header, space selector и separator lines остаются без
-заливки.
+нижняя action bar; весь header, space selector и separator lines остаются на
+`bg-chrome`.
 
 Clear action появляется только когда value непустой: `button h-6 w-6
 rounded-1`, иконка `X` из `lucide-react`, `aria-label="Clear channel search"`.
@@ -418,8 +427,8 @@ Compact Detail top menu — экспериментальная настройк�
 `Compact Detail top menu`. Настройка заранее переводит right top chrome в
 compact geometry: collection switcher использует `px-3` уже на главной
 странице, поэтому `Everything`/название текущего канала не меняет X-position
-при открытии и закрытии Detail. Когда Detail открыт, весь permanent top chrome
-плавно получает `bg-accent`, а внутренний Detail top bar и sidebar
+при открытии и закрытии Detail. Permanent top chrome всегда остаётся
+`bg-chrome`; открытие Detail не меняет его surface. Внутренний Detail top bar и sidebar
 `Channels:` bar не рендерятся. Segmented control `All / Connected`
 принадлежит левому Sidebar/search segment: в expanded state он стоит внутри
 search surface справа от `Search channels...` и слева от вертикального sidebar
@@ -431,8 +440,10 @@ divider; в collapsed state search скрыт и `All / Connected` не ренд
 Геометрия Compact Detail top menu:
 
 - Height: `h-8`, как permanent top chrome.
-- Surface: `bg-background` в main/Grid state; при открытом Detail плавно
-  переходит в `bg-accent`, тот же surface token, что bottom app bar.
+- Surface: всегда `bg-chrome`. Это жёсткий permanent app chrome surface; он не
+  переходит в `bg-accent` при открытии Detail. Активный search по-прежнему
+  получает `bg-accent`, поэтому остаётся следующим уровнем заливки над ordinary
+  chrome.
 - Spacing: только compact axis `px-3`; правые `px-6`, `px-8` и любые 32px
   content-axis insets запрещены во всём режиме настройки, включая main/Grid
   state до открытия Detail.
@@ -465,8 +476,8 @@ Motion: Detail-only элементы в compact top chrome входят и вы�
 `detail-top-bar-enter`, а separator line — через `detail-top-bar-line-enter`.
 Collection switcher, space selector, channel search и Sidebar divider не
 анимируются при открытии Detail и не меняют позицию. Цвет permanent top chrome
-анимируется между `bg-background` и `bg-accent` через `transition-colors`
-`220ms cubic-bezier(0.22, 1, 0.36, 1)`. Exit state выставляется синхронно в
+никогда не анимируется и остаётся `bg-chrome`; Detail-only controls анимируются
+через `220ms cubic-bezier(0.22, 1, 0.36, 1)`. Exit state выставляется синхронно в
 close handler до очистки selected Detail state; выход должен идти тем же
 motion path, что появление, без промежуточного скачка в normal top chrome.
 
@@ -778,7 +789,7 @@ Trigger width не является шириной menu по умолчанию.
 
 ### Тулбар
 
-`<header>`: `h-8 border-b border-border`, `data-tauri-drag-region` для
+`<header>`: `h-8 border-b border-border bg-chrome`, `data-tauri-drag-region` для
 пустых зон перетаскивания окна. Высота строго 32px. Интерактивные элементы
 внутри top chrome не выключают drag целиком: они используют общий threshold
 gesture (`4px`) — короткий жест остаётся click/focus, движение за порог
@@ -931,16 +942,22 @@ Row focus-mode:
 без checkbox. Список строк каналов использует ту же геометрию, что обычный
 sidebar.
 
-Top inset списка в раскрытой карточке не меняет геометрию обычного sidebar:
-список всегда использует `pt-8` (32px), а link-editor chrome рендерится
-абсолютным overlay (`absolute inset-x-0 top-0 h-8`) в этой защитной зоне. Открытие
-Detail не должно сдвигать строки левого меню вниз.
+Top inset списка в раскрытой карточке не меняет геометрию обычного sidebar.
+Основной shell использует второй top-bar level (`h-8 border-b border-border`)
+с отдельными sidebar/content сегментами; сам sidebar scroll-content всегда
+использует `pt-8` (32px). В expanded главной это даёт общий visual top offset
+64px: второй bar 32px + content inset 32px. Когда Detail открыт в
+non-compact shell, второй bar становится Detail/link-editor chrome: в sidebar
+segment живёт `Channels:` + `All / Connected`, в content segment — filename,
+overflow и close. Body-level `absolute inset-x-0 top-0 h-8` overlays для
+Sidebar/Detail в App shell запрещены: они создают третий слой под вторым bar.
 
 Верхняя surface:
 
 | Surface | Geometry |
 |---|---|
-| Detail/link-editor top bar | `absolute inset-x-0 top-0 h-8 bg-accent px-8 gap-2` + отдельная нижняя hairline |
+| Main secondary top bar | `h-8 border-b border-border bg-background`, split sidebar/content |
+| Detail/link-editor secondary bar | тот же second-level bar, `bg-accent`; sidebar segment `px-8 gap-2`, content segment `px-8 gap-3` |
 
 Содержимое surface: `Channels:` + selector `All / Connected`. `Channels:`
 использует `font-mono text-sm text-muted-foreground`. Selector повторяет
@@ -1039,7 +1056,10 @@ row-action slot (`count/menu` ↔ `Connected/Connect/Disconnect`). Это уби
 
 Masonry с round-robin распределением по колонкам. Gap: 32px (`--spacing-s5`). Минимальная ширина карточки: 220px; максимальная ширина не фиксируется токеном и определяется алгоритмически перед переходом к следующему числу колонок. Ленивая подгрузка через IntersectionObserver.
 
-Top inset ленты: 64px (`--spacing-s7`) от верхнего меню до верхнего края masonry layout. Inset живёт на внутреннем virtual layout через `marginTop`, а не на scrollport.
+Top inset ленты на главной: 64px от permanent top chrome до верхнего края
+masonry layout складываются из второго shell top-bar level `h-8` и внутреннего
+virtual layout inset `32px` через `marginTop`. Inset живёт на внутреннем
+virtual layout, а не на scrollport.
 
 Паддинги сетки: 32px по бокам (при развёрнутом сайдбаре), 72px (при свёрнутом — компенсация ширины).
 

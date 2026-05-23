@@ -26,6 +26,7 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  useDraggable,
   type DragStartEvent,
   type DragEndEvent,
   type Modifier,
@@ -102,6 +103,152 @@ const BATCH_TAG_REFRESH_DELAY_MS = 750;
 
 function normalizeSurfaceSearchQuery(value: string): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+function MainSecondaryTopBar({
+  sidebarCollapsed,
+  sidebarResizing,
+  detailBlock,
+  detailTitle,
+  detailEntered,
+  detailLinkMode,
+  onDetailLinkModeChange,
+  vaultPath,
+  tags,
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
+  onDetailClose,
+  detailMenuOpenRequestSequence,
+}: {
+  sidebarCollapsed: boolean;
+  sidebarResizing: boolean;
+  detailBlock?: LightBlock | IndexedBlock | null;
+  detailTitle?: string;
+  detailEntered?: boolean;
+  detailLinkMode: DetailLinkMode;
+  onDetailLinkModeChange: (value: DetailLinkMode) => void;
+  vaultPath: string;
+  tags: TagCount[];
+  currentTag?: string;
+  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestRename: (block: LightBlock | IndexedBlock) => void;
+  onRequestDelete: (slug: string) => void;
+  onDetailClose: () => void;
+  detailMenuOpenRequestSequence: number;
+}) {
+  const closeChromeGesture = useChromeDragGesture({ disabled: !detailBlock });
+  const {
+    attributes: dragAttributes,
+    listeners: dragListeners,
+    setNodeRef: setDragHandleRef,
+    isDragging,
+  } = useDraggable({
+    id: `detail-secondary:${detailBlock?.slug ?? "__empty__"}`,
+    disabled: !detailBlock,
+    data: detailBlock
+      ? {
+        type: "block",
+        slug: detailBlock.slug,
+        block: detailBlock,
+      }
+      : undefined,
+  });
+
+  return (
+    <div
+      data-tauri-drag-region
+      data-main-secondary-top-bar=""
+      className={cn(
+        "flex h-8 shrink-0 items-center border-b border-border transition-colors duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+        detailBlock ? "bg-accent" : "bg-background",
+      )}
+    >
+      <div
+        data-tauri-drag-region
+        data-main-secondary-top-bar-sidebar-segment=""
+        className={cn(
+          "flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
+          sidebarCollapsed && "w-auto max-w-[240px]",
+          !sidebarResizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
+        )}
+        style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
+      >
+        {detailBlock && !sidebarCollapsed && (
+          <div
+            className="detail-top-bar-enter flex h-full min-w-0 items-center gap-2 px-8"
+            data-entered={detailEntered ? "true" : "false"}
+            data-secondary-sidebar-link-mode-bar=""
+          >
+            <span className="shrink-0 font-mono text-sm text-muted-foreground">
+              Channels:
+            </span>
+            <CompactDetailLinkModeSwitch
+              value={detailLinkMode}
+              onChange={onDetailLinkModeChange}
+              chromeDragEnabled={false}
+              entered={detailEntered}
+            />
+          </div>
+        )}
+      </div>
+      <div
+        data-tauri-drag-region
+        data-main-secondary-top-bar-content-segment=""
+        className="flex h-full min-w-0 flex-1 items-center"
+      >
+        {detailBlock && (
+          <div
+            className="detail-top-bar-enter flex h-full min-w-0 flex-1 items-center gap-3 px-8"
+            data-entered={detailEntered ? "true" : "false"}
+            data-secondary-detail-top-menu=""
+          >
+            <div
+              ref={setDragHandleRef}
+              {...dragAttributes}
+              {...dragListeners}
+              className={cn(
+                "min-w-0 flex-1 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
+                isDragging && "opacity-30",
+              )}
+              title={detailTitle}
+              data-secondary-detail-drag-handle=""
+            >
+              {detailTitle}
+            </div>
+            <CardMoreMenu
+              block={detailBlock}
+              vaultPath={vaultPath}
+              tags={tags}
+              currentTag={currentTag}
+              onToggleTag={onToggleTag}
+              onCreateAndAssign={onCreateAndAssign}
+              onRequestRename={onRequestRename}
+              onRequestDelete={onRequestDelete}
+              triggerVariant="ghost"
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+              openRequestSequence={detailMenuOpenRequestSequence}
+              topChromeInteraction
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Close detail"
+              {...closeChromeGesture}
+              onClick={onDetailClose}
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function fetchGridBlocks(
@@ -603,6 +750,7 @@ export function AppWithVault({
     ? selectedBlockTags
     : (detailChromeClosing ? closingDetailTags : []);
   const compactDetailTopMenuActive = compactDetailTopMenuEnabled && renderedDetailBlock !== null;
+  const mainSecondaryTopBarVisible = !compactDetailTopMenuActive;
   const compactDetailCardTitle = renderedDetailBlock
     ? renderedDetailBlock.title ?? renderedDetailBlock.media_file ?? `${renderedDetailBlock.slug}.md`
     : "";
@@ -623,7 +771,7 @@ export function AppWithVault({
   }, [compactDetailTopMenuEnabled]);
 
   useEffect(() => {
-    if (!compactDetailTopMenuActive || detailChromeClosing) {
+    if (!renderedDetailBlock || detailChromeClosing) {
       setCompactDetailChromeEntered(false);
       return;
     }
@@ -632,7 +780,7 @@ export function AppWithVault({
       setCompactDetailChromeEntered(true);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [compactDetailTopMenuActive, detailChromeClosing]);
+  }, [detailChromeClosing, renderedDetailBlock]);
 
   useEffect(() => {
     setImagePreview(null);
@@ -1388,7 +1536,6 @@ export function AppWithVault({
         && !e.altKey
         && !e.ctrlKey
         && e.key.toLowerCase() === "k"
-        && compactDetailTopMenuActive
         && renderedDetailBlock
       ) {
         if (isDetailShortcutBlockedTarget(e.target)) return;
@@ -2391,10 +2538,7 @@ export function AppWithVault({
       {/* Top toolbar */}
       <header
         data-tauri-drag-region
-        className={cn(
-          "flex h-8 shrink-0 items-center border-b border-border transition-colors duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-          compactDetailChromeEntered ? "bg-accent" : "bg-background",
-        )}
+        className="flex h-8 shrink-0 items-center border-b border-border bg-chrome"
       >
         <div
           data-tauri-drag-region
@@ -2517,6 +2661,27 @@ export function AppWithVault({
         </div>
       </header>
 
+      {mainSecondaryTopBarVisible && (
+        <MainSecondaryTopBar
+          sidebarCollapsed={sidebarCollapsed}
+          sidebarResizing={sidebarResizing}
+          detailBlock={renderedDetailBlock}
+          detailTitle={compactDetailCardTitle}
+          detailEntered={compactDetailChromeEntered}
+          detailLinkMode={detailLinkMode}
+          onDetailLinkModeChange={setDetailLinkMode}
+          vaultPath={vaultPath}
+          tags={tags}
+          currentTag={currentTag}
+          onToggleTag={handleToggleTag}
+          onCreateAndAssign={handleCreateTagFromMenu}
+          onRequestRename={setRenamingBlock}
+          onRequestDelete={requestDeleteBlock}
+          onDetailClose={handleDetailClose}
+          detailMenuOpenRequestSequence={compactDetailTopMenuRequestSequence}
+        />
+      )}
+
       {/* Body: sidebar + main */}
       <div className="flex min-h-0 flex-1">
       <Sidebar
@@ -2566,7 +2731,7 @@ export function AppWithVault({
         onToggleLinkedTag={handleToggleTag}
         linkMode={detailLinkMode}
         onLinkModeChange={setDetailLinkMode}
-        showLinkModeChrome={!compactDetailTopMenuActive}
+        showLinkModeChrome={false}
         detailChromeClosing={detailChromeClosing}
       />
 
@@ -2663,7 +2828,7 @@ export function AppWithVault({
               vaultPath={vaultPath}
               thumbsRootPath={thumbsRootPath ?? undefined}
               isClosing={detailChromeClosing}
-              topChromeMode={compactDetailTopMenuActive ? "external" : "classic"}
+              topChromeMode="external"
               onClose={handleDetailClose}
               onNavigate={handleDetailNavigate}
               tags={tags}

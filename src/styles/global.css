@@ -334,6 +334,7 @@ body {
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-chrome: var(--chrome);
   --color-destructive: var(--destructive);
   --color-border: var(--border);
   --color-border-accent: var(--border-accent);
@@ -383,6 +384,8 @@ body {
   --muted-foreground: oklch(0.5693 0 0);
   /* extra text tier is intentionally kept on the shadcn muted scale */
   --tertiary-foreground: oklch(0.7572 0 0);
+  /* chrome surface: midway between page background and accent */
+  --chrome: oklch(0.99 0 0);
   --accent: oklch(0.98 0 0);
   --accent-foreground: oklch(0.205 0 0);
   /* component fills (buttons, interactive elements) */
@@ -443,6 +446,8 @@ body {
     --muted-foreground: oklch(0.6862 0 0);
     /* text-tertiary: #666666 */
     --tertiary-foreground: oklch(0.5103 0 0);
+    /* chrome surface: midway between page background and accent */
+    --chrome: oklch(0.1691 0 0);
     /* surface +1 */
     --accent: oklch(0.1815 0 0);
     --accent-foreground: oklch(0.985 0 0);
@@ -501,6 +506,7 @@ body {
   --muted: oklch(0.1815 0 0);
   --muted-foreground: oklch(0.6862 0 0);
   --tertiary-foreground: oklch(0.5103 0 0);
+  --chrome: oklch(0.1691 0 0);
   --accent: oklch(0.1815 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --component-fill: oklch(0.22 0 0);
@@ -545,6 +551,7 @@ body {
   --muted: oklch(0.98 0 0);
   --muted-foreground: oklch(0.5693 0 0);
   --tertiary-foreground: oklch(0.7572 0 0);
+  --chrome: oklch(0.99 0 0);
   --accent: oklch(0.98 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --component-fill: oklch(0.9702 0 0);

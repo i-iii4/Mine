@@ -1,5 +1,51 @@
 # Devlog
 
+## 23.05.2026 [change] — Add top chrome surface token
+
+### Context
+
+- The top chrome needs a quieter surface between the page background and the
+  brighter bottom/action/search surface.
+- Active channel search must still show a stronger filled state when the query
+  is non-empty.
+
+### Completed
+
+- Added `--chrome` / `bg-chrome` to the design system as the chrome step between
+  `--background` and `--accent`: light `oklch(0.99 0 0)`, dark
+  `oklch(0.1691 0 0)`.
+- Applied `bg-chrome` only to the permanent app top chrome.
+- Kept the secondary top bar on the previous contract: main screen
+  `bg-background`, open Detail `bg-accent`.
+- Kept active Sidebar search on `bg-accent`, so the search field still gains a
+  visible extra fill over the chrome surface.
+- Updated frontend specs, design-system docs and App regression coverage for
+  the new surface role.
+
+## 23.05.2026 [change] — Add main secondary top bar
+
+### Context
+
+- The expanded, non-compact main screen needs the old spacious top offset, but
+  it should be expressed as real chrome, not as an arbitrary empty padding slab.
+- Grid and Sidebar should align as one layout under a second `h-8` shell row.
+
+### Completed
+
+- Added a structural main secondary top bar below the permanent top chrome.
+- Split the second row into sidebar and content segments with the same sidebar
+  width, resize transition and border contract as the primary chrome.
+- Moved non-compact Detail chrome into that second row: `Channels: All /
+  Connected` lives in the sidebar segment, while title, overflow and close live
+  in the content segment.
+- Disabled the old Sidebar/Detail body-level top overlays in App shell so
+  opening Detail no longer creates a third chrome layer below the secondary bar.
+- Kept Grid and Sidebar content inset at `32px`; together with the second bar,
+  the main screen returns to the intended ~64px visual offset.
+- Kept the inset on the scroll/content layer, so optional banners cannot leave
+  empty slabs.
+- Updated regression tests and documentation for the second-level bar contract.
+
 ## 23.05.2026 [change] — Add optional Compact Detail top menu
 
 ### Context
@@ -15,10 +61,10 @@
   even before Detail opens, so `Everything` and channel labels keep a stable
   horizontal position. Detail adds animated sibling controls instead of
   remounting or shifting the collection switcher.
-- When Detail is open, the global top chrome transitions to `bg-accent`;
-  `All / Connected` is embedded into the Sidebar search segment left of the
-  Sidebar divider, while the right segment renders card title, overflow and
-  close next to the persistent clickable collection switcher.
+- When Detail is open, the global top chrome keeps its permanent chrome
+  surface; `All / Connected` is embedded into the Sidebar search segment left
+  of the Sidebar divider, while the right segment renders card title, overflow
+  and close next to the persistent clickable collection switcher.
 - Suppressed the internal Detail top bar and Sidebar `Channels:` chrome in that
   mode, while keeping the same App-owned link filter state for Sidebar rows.
 - Kept compact spacing only: no 32px content-axis insets in the compact Detail

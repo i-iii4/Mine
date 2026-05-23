@@ -476,7 +476,7 @@ describe("Sidebar", () => {
     expect(onTextSelectionDrop).not.toHaveBeenCalled();
   });
 
-  it("keeps the main sidebar insets on the scroll container without a fixed empty header slot", () => {
+  it("keeps the main sidebar inset on the scroll container without a fixed empty header slot", () => {
     function EmptySlot() {
       return null;
     }

@@ -213,6 +213,7 @@ export function ComponentTestBench() {
       <Section label="Surfaces (background layering)" vertical>
         <div className="flex gap-2">
           <Swatch label="background" className="bg-background border border-border" />
+          <Swatch label="chrome (+0.5)" className="bg-chrome border border-border" />
           <Swatch label="accent (+1)" className="bg-accent" />
           <Swatch label="sidebar-accent (+2)" className="bg-sidebar-accent" />
           <Swatch label="active/border (+3)" className="bg-active" />

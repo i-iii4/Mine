@@ -368,11 +368,15 @@ versioned collection-index backfill до формирования стабиль
    только правый action slot. Это предотвращает remount `<img>` и blink превью
    при открытии карточки.
 
-Geometry не имеет переключаемых режимов: список sidebar всегда держит один
-visual top inset `32px` через `pt-8` на `data-sidebar-scroll`. Link-editor
-selector живёт в полноширинном `absolute inset-x-0 top-0 h-8 bg-accent` overlay
-с отдельной нижней hairline внутри этой защитной зоны. Открытие Detail не
-должно добавлять flow-элемент над списком и сдвигать левое меню вниз.
+Geometry не добавляет ad-hoc пустой header над списком. Основной shell имеет
+второй top-bar level: `h-8 border-b border-border bg-background`, split на
+sidebar segment и main/content segment, с тем же sidebar width contract
+(`var(--sidebar-width)`) и `border-r border-sidebar-border`. Сам список sidebar
+держит только `pt-8` (`32px`) на `data-sidebar-scroll`; суммарный visual top
+offset expanded главной = второй bar `32px` + list inset `32px` = `64px`.
+Link-editor selector живёт в полноширинном
+`bg-accent` second-level shell row, а не как дополнительная flow-плашка или body
+overlay. Открытие Detail не должно добавлять случайный flow-элемент над списком.
 
 Sidebar link-editor chrome использует тот же motion contract, что и Detail top
 chrome: мягкий `opacity + translateY` enter/exit (`220–280ms`,
@@ -451,10 +455,18 @@ and deliberately ignores `preview_manifest.tiles`. This keeps the left menu
 aligned with the thumbnail strip contract even when the full feed card is a
 multi-image composite/gallery. Related Notes keeps its richer hover preview.
 
-**Main sidebar top inset.** На главной sidebar использует `pt-8` (32px) прямо на
-`data-sidebar-scroll`. Не создавать отдельную пустую header surface для
+**Main secondary top bar + sidebar inset.** На главной под permanent top chrome
+есть второй structural bar `h-8`, split на sidebar/content segments. Sidebar
+scroll-content использует `pt-8` (32px), поэтому вместе с bar получается
+визуальный offset 64px без пустой плашки внутри scroll container. Не создавать
+отдельную пустую header surface для
 опциональных баннеров: если banner component возвращает `null`, над списком не
 должно оставаться фиксированной белой плашки, которая обрезает scroll-content.
+Когда Detail открыт в non-compact режиме, этот же второй bar становится
+App-level Detail chrome: sidebar segment показывает `Channels:` + `All /
+Connected`, content segment показывает title/filename, `CardMoreMenu` и close.
+Sidebar и Detail body не должны рендерить свои дополнительные top overlays в
+этот момент; иначе получается третий слой chrome под вторым bar.
 
 **Thumbnail upgrade.** Для блоков с inline media которое Rust не умеет декодировать (WebP VP8X, HEIC, AVIF, HEVC), Rust Phase 1 пишет text placeholder на диск. Main app через `useThumbnailUpgrade` hook подписан на `thumb:upgrade-requested` event и отправляет работу в Web Worker (`src/workers/thumbWorker.ts`). Worker декодирует через `createImageBitmap` (native browser decoder, поддерживает все форматы которые WebView рендерит) → `OffscreenCanvas.convertToBlob('image/jpeg', 0.85)` → IPC `save_thumb` → Rust пишет поверх placeholder. После `thumb:updated` event sidebar cache-bust'ит `<img>` URL. Полная архитектура: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md).
 
@@ -686,6 +698,8 @@ Image media expansion:
 - `Cmd+F` сейчас переключает App-owned main search state без rendered main
   search component. Route-facing механизм поиска не удалён: `searchQuery`
   остаётся входом для фильтрации Grid route: Everything или текущей коллекции.
+  Permanent top chrome uses `bg-chrome`, the app-shell surface midway between
+  `bg-background` and the bottom/action/search `bg-accent` surface.
   Top chrome делится той же границей `--sidebar-width`, что и body: слева
   traffic-light spacer, space selector, sidebar channel search и
   `border-r border-sidebar-border`, справа current collection switcher и
@@ -751,7 +765,7 @@ Image media expansion:
   as Detail top bar: `font-mono text-sm text-muted-foreground`, regular
   weight. When the trimmed query is non-empty, only the search surface is filled
   with `bg-accent`, matching the bottom action bar surface. The top header,
-  space selector and separator lines remain unfilled.
+  space selector and separator lines remain on `bg-chrome`.
 - The clear action appears only when the input value is non-empty. It is an
   icon-only `X` button (`h-6 w-6 rounded-1`, `aria-label="Clear channel
   search"`). Clicking it clears the query, restores the full channel list and
@@ -812,9 +826,9 @@ Image media expansion:
   names keep the same horizontal position before, during and after Detail.
   Opening Detail must not remount or shift that collection switcher; Detail only
   adds animated sibling controls. When the flag is on and Detail is open, the
-  global top chrome transitions to the same `bg-accent` surface as the bottom
-  app bar and owns the Detail controls. The internal Detail top bar is not
-  rendered, and the Sidebar `Channels:` link-editor top bar is not rendered.
+  global top chrome still remains on `bg-chrome` and owns the Detail controls. The
+  internal Detail top bar is not rendered, and the Sidebar `Channels:`
+  link-editor top bar is not rendered.
 - In Compact Detail mode the `All / Connected` segmented control is part of
   the left Sidebar/search segment, not the right Detail title segment. In
   expanded Sidebar state it sits inside the same search surface as
@@ -849,7 +863,7 @@ Image media expansion:
   Detail-only controls (`All / Connected`, card title, overflow, close and
   their collapsed-sidebar separator) enter and exit with `opacity + translateY`
   using `detail-top-bar-enter` / `detail-top-bar-line-enter`. The top chrome
-  background color transitions between `bg-background` and `bg-accent` with the
+  background is not animated and remains `bg-chrome`; Detail-only controls use the
   same `cubic-bezier(0.22, 1, 0.36, 1)` motion. Route/collection labels that
   already existed on the main Grid screen must not animate, remount or move.
   Close starts the exit state synchronously in the close handler, before
@@ -890,12 +904,16 @@ Image media expansion:
 Полноэкранный detail layer при клике на карточку:
 - Занимает app content area: `absolute inset-0 z-10`
 - Не использует отдельный dim/blur overlay; это полноценный режим просмотра внутри приложения
-- Верхнее меню detail имеет фиксированную высоту `h-8`
-- В верхнем меню показывается filename (`media_file`, иначе `${slug}.md`) в `font-mono text-sm text-muted-foreground`
-- Справа в верхнем меню находятся shared overflow menu (`CardMoreMenu`) и close button
+- Верхнее меню detail имеет фиксированную высоту `h-8`.
+- В App shell Detail chrome всегда внешний: в non-compact режиме он живёт во
+  втором top-bar level, в Compact Detail top menu — в permanent top chrome.
+  Detail body получает `topChromeMode="external"` и не рендерит внутренний
+  top menu.
+- Внешний non-compact Detail chrome показывает filename/title в
+  `font-mono text-sm text-muted-foreground`; справа находятся shared overflow
+  menu (`CardMoreMenu`) и close button.
 - Если Detail получает `topChromeMode="external"`, внутреннее верхнее меню не
-  рендерится, а `Cmd+K`/overflow/close принадлежат App-level Compact Detail top
-  menu.
+  рендерится, а `Cmd+K`/overflow/close принадлежат App-level chrome.
 - Верхний chrome Detail входит и выходит через мягкий `opacity + translateY`
   transition; нижняя hairline живёт отдельным visual layer и анимируется
   отдельно от fill

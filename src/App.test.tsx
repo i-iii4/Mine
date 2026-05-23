@@ -178,9 +178,11 @@ vi.mock("@/components/Detail", () => ({
       data-detail-top-chrome-mode={topChromeMode ?? "classic"}
     >
       <div data-testid="detail-title">{block.title ?? block.slug}</div>
-      <button type="button" onClick={onClose}>
-        Close detail
-      </button>
+      {topChromeMode !== "external" && (
+        <button type="button" onClick={onClose}>
+          Close detail
+        </button>
+      )}
       <button type="button" onClick={() => onRequestDelete(block.slug)}>
         Delete detail
       </button>
@@ -582,6 +584,7 @@ describe("AppWithVault", () => {
     });
 
     const topSidebarSegment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement | null;
+    expect(topSidebarSegment?.parentElement).toHaveClass("bg-chrome");
     expect(topSidebarSegment).toHaveStyle({ width: "var(--sidebar-width)" });
     expect(topSidebarSegment).toHaveClass("border-r", "border-sidebar-border");
     const spaceSwitcher = topSidebarSegment?.querySelector("[data-vault-switcher]") as HTMLElement | null;
@@ -591,6 +594,66 @@ describe("AppWithVault", () => {
     expect(topSidebarSegment?.querySelector("[data-top-chrome-search-separator]")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Search cards" })).not.toBeInTheDocument();
     expect(document.querySelector("[data-main-search-top-bar]")).toBeNull();
+  });
+
+  it("renders the main secondary top bar as a real shell row split across sidebar and content", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const secondaryBar = document.querySelector("[data-main-secondary-top-bar]") as HTMLElement | null;
+    const sidebarSegment = document.querySelector(
+      "[data-main-secondary-top-bar-sidebar-segment]",
+    ) as HTMLElement | null;
+    const contentSegment = document.querySelector(
+      "[data-main-secondary-top-bar-content-segment]",
+    ) as HTMLElement | null;
+    expect(secondaryBar).toHaveClass("h-8", "border-b", "border-border", "bg-background");
+    expect(sidebarSegment).toHaveStyle({ width: "var(--sidebar-width)" });
+    expect(sidebarSegment).toHaveClass("border-r", "border-sidebar-border");
+    expect(contentSegment).toHaveClass("flex-1");
+  });
+
+  it("uses the secondary top bar for non-compact Detail chrome instead of body overlays", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    });
+
+    const secondarySidebarBar = document.querySelector(
+      "[data-secondary-sidebar-link-mode-bar]",
+    ) as HTMLElement | null;
+    const secondaryDetailMenu = document.querySelector(
+      "[data-secondary-detail-top-menu]",
+    ) as HTMLElement | null;
+    expect(screen.getByRole("dialog")).toHaveAttribute("data-detail-top-chrome-mode", "external");
+    expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-accent");
+    expect(secondarySidebarBar).toBeInTheDocument();
+    expect(secondaryDetailMenu).toBeInTheDocument();
+    expect(secondarySidebarBar).toHaveTextContent("Channels:");
+    expect(within(secondarySidebarBar!).getByRole("button", { name: "All" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(within(secondaryDetailMenu!).getByText("alpha-block")).toBeInTheDocument();
+    expect(document.querySelector("[data-sidebar-link-mode-bar]")).not.toBeInTheDocument();
+    expect(document.querySelector('[data-detail-top-menu="classic"]')).not.toBeInTheDocument();
   });
 
   it("keeps space and collection controls while hiding channel search when the sidebar is collapsed", async () => {
@@ -1005,7 +1068,11 @@ describe("AppWithVault", () => {
 
     const compactMenu = document.querySelector("[data-compact-detail-top-menu]") as HTMLElement;
     const sidebarSearchSurface = document.querySelector("[data-sidebar-top-search-surface]") as HTMLElement;
+    const topSidebarSegment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
     expect(compactMenu).toBeInTheDocument();
+    expect(topSidebarSegment.parentElement).toHaveClass("bg-chrome");
+    expect(topSidebarSegment.parentElement).not.toHaveClass("bg-accent");
+    expect(document.querySelector("[data-main-secondary-top-bar]")).not.toBeInTheDocument();
     expect(sidebarSearchSurface).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toHaveAttribute("data-detail-top-chrome-mode", "external");
     expect(within(sidebarSearchSurface).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
