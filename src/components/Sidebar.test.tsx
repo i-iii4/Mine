@@ -487,7 +487,7 @@ describe("Sidebar", () => {
     });
 
     const nav = container.querySelector("[data-sidebar-scroll]");
-    expect(nav).toHaveClass("pt-16");
+    expect(nav).toHaveClass("pt-8");
     expect(nav).toHaveClass("pb-8");
     expect(container.querySelector("aside")?.firstElementChild).toBe(nav);
   });
@@ -835,7 +835,7 @@ describe("Sidebar", () => {
     expect(screen.queryByText("beta")).not.toBeInTheDocument();
   });
 
-  it("uses classic detail-menu geometry for the link editor", () => {
+  it("keeps link-editor chrome out of sidebar layout flow", () => {
     const { container } = renderSidebar({
       ...defaultProps,
       linkedBlockSlug: "open-block",
@@ -844,6 +844,8 @@ describe("Sidebar", () => {
     });
 
     expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("h-8");
+    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("absolute");
+    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("top-0");
     expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("gap-2");
     expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("detail-top-bar-enter");
     expect(

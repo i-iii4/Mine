@@ -317,9 +317,10 @@ Collapsed layout строится только CSS intrinsic sizing: левый 
 ширины по уже обрезанному visible trigger запрещены.
 
 Space selector — это top-chrome вариант `VaultSwitcher`: `h-full`,
-`max-w-[50%]`, `flex-none`, `min-w-0`, `px-3`, `rounded-0`, `text-base`,
-`truncate`; без folder icon и без dropdown chevron. Root trigger не заливается
-и не рисует отдельную обводку: он только задаёт layout slot. Ширина
+`max-w-[50%]`, `flex-none`, `min-w-0`, `px-3`, `rounded-0`,
+`font-mono text-sm text-muted-foreground`, `truncate`; без folder icon и без
+dropdown chevron. Root trigger не заливается и не рисует отдельную обводку: он
+только задаёт layout slot. Ширина
 подстраивается под имя текущей папки, но не может занять больше половины
 доступной search/space зоны. В collapsed sidebar state, когда search скрыт,
 ограничение меняется на `max-w-[159px]`, а сам segment shrink-wrap'ится по
@@ -328,9 +329,12 @@ intrinsic width selector, чтобы справа не оставалось пу
 для длинных названий, которые превышают collapsed selector cap.
 
 Визуальный hover/open/keyboard-focus state принадлежит внутренней пуле вокруг
-имени: `h-6 rounded-1 px-2 bg-active`. Это тот же system hover/active token,
-что используется для row hover/focus в `DropdownMenu`. Текст выровнен по
-левому краю через `justify-start` + `text-left`. Space selector уже стоит после
+имени: `h-6 rounded-1 px-2 bg-active text-foreground`. В покое текст пули
+остаётся `text-muted-foreground`, как в Detail top bar; hover/open/keyboard
+focus поднимает только эту интерактивную плашку до `text-foreground`. Это тот
+же system hover/active token, что используется для row hover/focus в
+`DropdownMenu`. Текст выровнен по левому краю через `justify-start` +
+`text-left`. Space selector уже стоит после
 traffic-light reserve, поэтому использует компактный root inset `px-3`, а не
 правую content axis. Вместе с внутренним `px-2` пули текст начинается на `20px`
 после separator. Если имя папки не помещается, оно режется обычным end ellipsis.
@@ -355,10 +359,12 @@ root inset `px-3`.
 
 Search input не использует иконку. Search surface — wrapper `h-8 min-w-0
 flex-1`, внутри прозрачный `Input ghost` (`rounded-0 px-3 py-0 border-none`)
-и опциональный clear action справа. Search занимает весь остаток ширины после
-selector. При вводе длинного query используется нативное поведение `input`:
-caret остаётся видимым, поэтому пользователь видит последние вводимые символы.
-Пустое поле на hover/focus не получает фон: реагирует только placeholder,
+и опциональный clear action справа. Текст permanent top-chrome search также
+использует Detail top bar typography: `font-mono text-sm
+text-muted-foreground`. Search занимает весь остаток ширины после selector. При
+вводе длинного query используется нативное поведение `input`: caret остаётся
+видимым, поэтому пользователь видит последние вводимые символы. Пустое поле на
+hover/focus не получает фон: реагирует только placeholder,
 `text-tertiary-foreground` → `text-muted-foreground`. Когда trimmed query
 непустой, только search surface получает `bg-accent`, тот же surface token, что
 нижняя action bar; весь header, space selector и separator lines остаются без
@@ -375,15 +381,21 @@ Top-chrome search inputs use input-owned keyboard navigation. `ArrowUp` /
 `ArrowDown` change `aria-activedescendant` and the visual active row; DOM focus
 stays in the input so the user can keep typing. This applies to Sidebar channel
 search, `Search spaces` and `Search collections`. `Enter` activates the active
-row. Pointer hover can update the active row but must not blur the input.
+row. Pointer hover can update the active row but must not blur the input. Все
+search inputs отключают нативные подсказки ввода через общий
+`SEARCH_INPUT_SUPPRESSION_PROPS`: `autoComplete="off"`, `autoCorrect="off"`,
+`autoCapitalize="none"`, `spellCheck={false}`. Это относится к top chrome,
+space/collection dropdowns и channel connect pickers; обычные поля ввода вроде
+rename/create остаются самостоятельными.
 
 Right collection switcher живёт в правом top chrome segment и показывает
 текущую Grid route collection: `Everything` или имя текущего канала. Геометрия
 повторяет space selector: root slot `h-full min-w-0 max-w-[50%] flex-none
-rounded-0 bg-transparent`, без dropdown chevron; root padding `px-6` в expanded
-mode и `px-3` в compact/collapsed mode, чтобы после collapsed space selector не
-оставалось лишнего 32px inset. Hover/open/keyboard-focus рисует только inner
-pill `h-6 rounded-1 px-2 bg-active` вокруг имени. При клике
+rounded-0 bg-transparent font-mono text-sm text-muted-foreground`, без dropdown
+chevron; root padding `px-6` в expanded mode и `px-3` в compact/collapsed mode,
+чтобы после collapsed space selector не оставалось лишнего 32px inset.
+Hover/open/keyboard-focus рисует только inner pill
+`h-6 rounded-1 px-2 bg-active text-foreground` вокруг имени. При клике
 открывается обычный `DropdownMenu` со search field `Input ghost` и пунктами
 коллекций в том же порядке, что Sidebar. Текущая коллекция не дублируется в
 списке вообще: нет checkbox/radio/check icon, нет selected row, нет disabled
@@ -717,13 +729,15 @@ gesture (`4px`) — короткий жест остаётся click/focus, дв
 
 - Структура: `<div role="button">` (внешняя пуля) → `<span hotkey>` + `<span label>` (внутренняя пуля)
 - Внешняя пуля: `rounded-1` (3px), `h-6` (24px), `p-[2px]`, `overflow-hidden`
-- Внутренняя пуля: `rounded-[2px]`, `bg-component-fill-inner`, `px-[1ch] py-[2px]`
-- Hotkey: текст на фоне внешней пули, `px-[1ch] py-[2px]`
+- Внутренняя пуля: `rounded-[2px]`, `bg-component-fill-inner`, `h-5`, `inline-flex items-center`, `px-[1ch]`, `leading-none`
+- Hotkey: текст на фоне внешней пули, `h-5`, `inline-flex items-center`, `px-[1ch]`, `leading-none`
 - Зазор между внешней и внутренней пулей: 2px (все стороны, через `p-[2px]` на внешней)
 - Шрифт: `font-mono text-sm`
 - `forwardRef<HTMLDivElement>` для программного управления
 
-Размеры: внешняя — 24px (h-6), внутренняя — 20px (24 - 2×2px зазора).
+Размеры: внешняя — 24px (`h-6`), внутренняя — 20px (`h-5`, 24 - 2×2px зазора).
+Вертикальное центрирование фиксируется высотой inner text boxes, а не `py`, чтобы
+метрики monospace-шрифта не давали оптический сдвиг в 1px.
 
 Состояния:
 
@@ -760,14 +774,14 @@ gesture (`4px`) — короткий жест остаётся click/focus, дв
 
 Шрифт названий: `font-sans text-base` (14px). Счётчики справа:
 `font-mono text-sm text-right`. Строки разделены
-`border-b border-sidebar-border`. Паддинги навигации: `px-8 pt-16`;
+`border-b border-sidebar-border`. Паддинги навигации: `px-8 pt-8`;
 строки в полном режиме не имеют собственного горизонтального padding, чтобы
 названия каналов, правые счётчики и link-editor action buttons стояли
 заподлицо с краями navigation column. Это отдаёт свободную ширину центральной
 полосе preview-карточек. Для визуальной компенсации glyph side bearings label
 text получает `translate-x-px`, а правый count text получает `-translate-x-px`;
 это не меняет layout box и не влияет на preview-strip ширину.
-Top inset должен жить на scroll-container (`data-sidebar-scroll`), а не в
+Top inset 32px должен жить на scroll-container (`data-sidebar-scroll`), а не в
 отдельной фиксированной header-плашке: если header slot (например iCloud
 conflict banner) ничего не рендерит, он не должен оставлять пустой блок над
 списком.
@@ -852,15 +866,16 @@ Row focus-mode:
 без checkbox. Список строк каналов использует ту же геометрию, что обычный
 sidebar.
 
-Top inset списка в раскрытой карточке — общий visual start `64px`: classic
-link-editor chrome занимает `h-8` в потоке, поэтому список использует `pt-8`.
-Это держит левый sidebar, article body и правый Detail rail на одной линии.
+Top inset списка в раскрытой карточке не меняет геометрию обычного sidebar:
+список всегда использует `pt-8` (32px), а link-editor chrome рендерится
+абсолютным overlay (`absolute inset-x-0 top-0 h-8`) в этой защитной зоне. Открытие
+Detail не должно сдвигать строки левого меню вниз.
 
 Верхняя surface:
 
 | Surface | Geometry |
 |---|---|
-| Detail/link-editor top bar | `h-8 bg-accent px-8 gap-2` + отдельная нижняя hairline |
+| Detail/link-editor top bar | `absolute inset-x-0 top-0 h-8 bg-accent px-8 gap-2` + отдельная нижняя hairline |
 
 Содержимое surface: `Channels:` + selector `All / Connected`. `Channels:`
 использует `font-mono text-sm text-muted-foreground`. Selector повторяет

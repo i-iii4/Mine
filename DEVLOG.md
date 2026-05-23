@@ -1,5 +1,33 @@
 # Devlog
 
+## 23.05.2026 [change] — Align permanent top chrome typography with Detail
+
+### Context
+
+- The always-visible app top chrome and the Detail top bar were using different
+  text systems.
+- Top chrome labels (`Mine`, `Everything`, channel search) were visually too
+  prominent compared with the quieter Detail chrome.
+
+### Completed
+
+- Switched permanent top-chrome space selector, collection selector and channel
+  search text to the Detail top bar typography mode: `font-mono text-sm
+  text-muted-foreground`, regular weight.
+- Kept hover/open/keyboard focus localized to the visible selector pill and
+  raised only that interactive text to `text-foreground`.
+- Reworked `ActionButton` inner text boxes from vertical padding to fixed
+  `h-5 inline-flex items-center leading-none`, removing the 1px optical
+  vertical drift in the bottom app bar.
+- Added shared search-input suppression attributes so browser/WebKit typing
+  suggestions do not overlay search controls.
+- Set the main Sidebar and Grid top content inset to 32px (`pt-8` /
+  `GRID_TOP_INSET_PX = 32`) and rolled back the intermediate sidebar color
+  experiment.
+- Moved the Detail link-editor sidebar chrome out of layout flow so opening a
+  card no longer pushes the left menu rows down.
+- Left dropdown menu rows on the normal menu typography contract.
+
 ## 22.05.2026 [docs] — Add distribution specification
 
 ### Context

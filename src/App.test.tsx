@@ -652,6 +652,14 @@ describe("AppWithVault", () => {
     });
     const searchSurface = input.closest("[data-sidebar-top-search-surface]") as HTMLElement;
     expect(searchSurface).not.toHaveClass("bg-accent");
+    expect(input).toHaveClass("font-mono");
+    expect(input).toHaveClass("text-sm");
+    expect(input).toHaveClass("text-muted-foreground");
+    expect(input).not.toHaveClass("text-base");
+    expect(input).toHaveAttribute("autocomplete", "off");
+    expect(input).toHaveAttribute("autocorrect", "off");
+    expect(input).toHaveAttribute("autocapitalize", "none");
+    expect(input).toHaveAttribute("spellcheck", "false");
     expect(screen.queryByRole("button", { name: "Clear channel search" })).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "alp" } });
 
@@ -724,6 +732,14 @@ describe("AppWithVault", () => {
     const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
     expect(collectionSwitcher).toHaveClass("px-6");
     expect(collectionSwitcher).not.toHaveClass("px-3");
+    expect(collectionSwitcher).toHaveClass("font-mono");
+    expect(collectionSwitcher).toHaveClass("text-sm");
+    expect(collectionSwitcher).toHaveClass("text-muted-foreground");
+    expect(collectionSwitcher).not.toHaveClass("text-base");
+    const collectionPill = screen.getByText("Everything").parentElement as HTMLElement;
+    expect(collectionPill).toHaveClass("text-muted-foreground");
+    expect(collectionPill).toHaveClass("group-hover:text-foreground");
+    expect(collectionPill).toHaveClass("group-data-[state=open]:text-foreground");
     fireEvent.click(collectionSwitcher);
     await waitFor(() => {
       expect(screen.getByRole("textbox", { name: "Search collections" })).toHaveFocus();
@@ -739,6 +755,10 @@ describe("AppWithVault", () => {
     expect(screen.getByRole("menuitem", { name: "beta" })).toBeInTheDocument();
 
     const search = screen.getByRole("textbox", { name: "Search collections" });
+    expect(search).toHaveAttribute("autocomplete", "off");
+    expect(search).toHaveAttribute("autocorrect", "off");
+    expect(search).toHaveAttribute("autocapitalize", "none");
+    expect(search).toHaveAttribute("spellcheck", "false");
     fireEvent.pointerMove(screen.getByRole("menuitem", { name: "alpha" }));
     expect(search).toHaveFocus();
 

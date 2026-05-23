@@ -77,6 +77,7 @@ import { cn } from "@/lib/utils";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
+import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import {
   findPreviewTileForSource,
@@ -1765,8 +1766,8 @@ function MediaAssetCollectionPicker({
         onKeyDown={(event) => event.stopPropagation()}
       >
         <Input
+          {...SEARCH_INPUT_SUPPRESSION_PROPS}
           autoFocus
-          type="text"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search channels..."

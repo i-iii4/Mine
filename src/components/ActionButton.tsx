@@ -28,14 +28,16 @@ export const ActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
         )}
       >
         {hotkey ? (
-          <span className={cn(
-            "shrink-0 px-[1ch] py-[2px]",
-            "text-foreground",
-          )}>
+          <span
+            className={cn(
+              "inline-flex h-5 shrink-0 items-center px-[1ch] leading-none",
+              "text-foreground",
+            )}
+          >
             {hotkey}
           </span>
         ) : null}
-        <span className="shrink-0 rounded-[2px] bg-component-fill-inner px-[1ch] py-[2px] text-foreground">
+        <span className="inline-flex h-5 shrink-0 items-center rounded-[2px] bg-component-fill-inner px-[1ch] leading-none text-foreground">
           {children}
         </span>
       </div>

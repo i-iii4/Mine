@@ -93,6 +93,10 @@ describe("CollectionPicker", () => {
     const input = screen.getByPlaceholderText("Search channels...");
 
     expect(input).toHaveClass("focus-visible:border-border-accent");
+    expect(input).toHaveAttribute("autocomplete", "off");
+    expect(input).toHaveAttribute("autocorrect", "off");
+    expect(input).toHaveAttribute("autocapitalize", "none");
+    expect(input).toHaveAttribute("spellcheck", "false");
 
     fireEvent.keyDown(picker, { key: "ArrowDown" });
     expect(

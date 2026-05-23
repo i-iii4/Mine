@@ -28,6 +28,7 @@ import {
   normalizeChannelSearchText,
 } from "@/lib/channelSearch";
 import { collectionRefLabel } from "@/lib/collections";
+import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { cn } from "@/lib/utils";
 import type { TagCount } from "@/types";
 
@@ -248,14 +249,14 @@ export function TopCollectionSwitcher({
             data-top-collection-switcher=""
             {...topChromeTrigger.triggerProps}
             className={cn(
-              "group inline-flex h-full min-w-0 max-w-[50%] flex-none cursor-pointer items-center overflow-hidden rounded-0 bg-transparent text-base text-foreground outline-0",
+              "group inline-flex h-full min-w-0 max-w-[50%] flex-none cursor-pointer items-center overflow-hidden rounded-0 bg-transparent font-mono text-sm text-muted-foreground outline-0",
               compact ? "px-3" : "px-6",
             )}
           >
             <span
               className={cn(
-                "inline-flex h-6 min-w-0 max-w-full items-center rounded-1 px-2 text-foreground group-hover:bg-active group-data-[state=open]:bg-active",
-                topChromeTrigger.keyboardFocus && "bg-active",
+                "inline-flex h-6 min-w-0 max-w-full items-center rounded-1 px-2 text-muted-foreground group-hover:bg-active group-hover:text-foreground group-data-[state=open]:bg-active group-data-[state=open]:text-foreground",
+                topChromeTrigger.keyboardFocus && "bg-active text-foreground",
               )}
             >
               <span className="min-w-0 truncate text-left">
@@ -278,6 +279,7 @@ export function TopCollectionSwitcher({
           <div className="border-b border-border p-1">
             <Input
               ref={searchInputRef}
+              {...SEARCH_INPUT_SUPPRESSION_PROPS}
               aria-label="Search collections"
               aria-activedescendant={activeActionId}
               placeholder="Search collections..."

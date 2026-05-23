@@ -471,7 +471,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(scrollEl).toBeTruthy();
     expect(layoutEl).toBeTruthy();
     expect(scrollEl).not.toHaveClass("pt-16");
-    expect(layoutEl?.style.marginTop).toBe("64px");
+    expect(layoutEl?.style.marginTop).toBe("32px");
   });
 
   it("restores feed focus by slug and marks the GridItem without Card focus props", async () => {

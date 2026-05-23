@@ -20,6 +20,7 @@ import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import { filterAndRankChannelSearch } from "@/lib/channelSearch";
 import { listKnownVaults, selectVault } from "@/lib/commands";
+import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { cn } from "@/lib/utils";
 
 interface VaultSwitcherProps {
@@ -204,10 +205,10 @@ export function VaultSwitcher({
           data-vault-switcher-surface={surface}
           {...(isTopChrome ? topChromeTrigger.triggerProps : {})}
           className={cn(
-            "group inline-flex shrink-0 cursor-pointer items-center select-none overflow-hidden bg-transparent text-foreground outline-0",
+            "group inline-flex shrink-0 cursor-pointer items-center select-none overflow-hidden bg-transparent outline-0",
             isTopChrome
               ? cn(
-                  "h-full min-w-0 flex-none justify-start rounded-0 px-3 text-base focus-visible:outline-none",
+                  "h-full min-w-0 flex-none justify-start rounded-0 px-3 font-mono text-sm text-muted-foreground focus-visible:outline-none",
                   topChromeCollapsed ? "max-w-[159px]" : "max-w-[50%]",
                 )
               : "action-button h-6 rounded-1 p-[2px] font-mono text-sm hover:bg-component-fill-hover",
@@ -216,8 +217,8 @@ export function VaultSwitcher({
           {isTopChrome ? (
             <span
               className={cn(
-                "inline-flex h-6 min-w-0 max-w-full items-center rounded-1 px-2 text-foreground group-hover:bg-active group-data-[state=open]:bg-active",
-                topChromeTrigger.keyboardFocus && "bg-active",
+                "inline-flex h-6 min-w-0 max-w-full items-center rounded-1 px-2 text-muted-foreground group-hover:bg-active group-hover:text-foreground group-data-[state=open]:bg-active group-data-[state=open]:text-foreground",
+                topChromeTrigger.keyboardFocus && "bg-active text-foreground",
               )}
             >
               <span className="min-w-0 truncate text-left">
@@ -253,6 +254,7 @@ export function VaultSwitcher({
           <div className="border-b border-border p-1">
             <Input
               ref={searchInputRef}
+              {...SEARCH_INPUT_SUPPRESSION_PROPS}
               aria-label="Search spaces"
               aria-activedescendant={activeActionId}
               placeholder="Search spaces..."

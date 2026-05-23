@@ -45,6 +45,7 @@ import {
   sidebarRowDomId,
   sidebarRowKeyToRoute,
 } from "@/lib/sidebarSearch";
+import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { Input } from "@/components/ui/input";
 
 function baseRelatedNoteSlug(target: string): string {
@@ -2239,6 +2240,7 @@ export function AppWithVault({
                 >
                   <Input
                     ref={sidebarSearchInputRef}
+                    {...SEARCH_INPUT_SUPPRESSION_PROPS}
                     aria-label="Search channels"
                     aria-activedescendant={
                       sidebarSearchKeyboardNavigationFocus
@@ -2250,7 +2252,7 @@ export function AppWithVault({
                     value={sidebarSearchQuery}
                     onChange={(event) => handleSidebarSearchChange(event.target.value)}
                     onKeyDown={handleSidebarSearchKeyDown}
-                    className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 hover:placeholder:text-muted-foreground focus:placeholder:text-muted-foreground group-hover/sidebar-search:placeholder:text-muted-foreground"
+                    className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 font-mono text-sm text-muted-foreground hover:placeholder:text-muted-foreground focus:placeholder:text-muted-foreground group-hover/sidebar-search:placeholder:text-muted-foreground"
                     data-sidebar-top-search=""
                   />
                   {sidebarSearchHasValue && (

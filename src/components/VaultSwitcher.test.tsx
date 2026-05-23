@@ -40,6 +40,10 @@ describe("VaultSwitcher", () => {
     expect(trigger).toHaveClass("max-w-[50%]");
     expect(trigger).not.toHaveClass("max-w-[159px]");
     expect(trigger).toHaveClass("px-3");
+    expect(trigger).toHaveClass("font-mono");
+    expect(trigger).toHaveClass("text-sm");
+    expect(trigger).toHaveClass("text-muted-foreground");
+    expect(trigger).not.toHaveClass("text-base");
     expect(trigger).not.toHaveClass("hover:bg-component-fill-hover");
     expect(trigger).not.toHaveClass("focus-visible:outline-1");
     expect(trigger.querySelector("svg")).toBeNull();
@@ -47,8 +51,11 @@ describe("VaultSwitcher", () => {
     const pill = screen.getByText("Mine").parentElement as HTMLElement;
     expect(pill).toHaveClass("rounded-1");
     expect(pill).toHaveClass("px-2");
+    expect(pill).toHaveClass("text-muted-foreground");
     expect(pill).toHaveClass("group-hover:bg-active");
+    expect(pill).toHaveClass("group-hover:text-foreground");
     expect(pill).toHaveClass("group-data-[state=open]:bg-active");
+    expect(pill).toHaveClass("group-data-[state=open]:text-foreground");
     expect(pill).not.toHaveClass("group-hover:bg-component-fill-hover");
     expect(pill).not.toHaveClass("group-focus-visible:bg-component-fill-hover");
   });
@@ -128,6 +135,10 @@ describe("VaultSwitcher", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Switch space: Mine/ }));
     const search = await screen.findByRole("textbox", { name: "Search spaces" });
+    expect(search).toHaveAttribute("autocomplete", "off");
+    expect(search).toHaveAttribute("autocorrect", "off");
+    expect(search).toHaveAttribute("autocapitalize", "none");
+    expect(search).toHaveAttribute("spellcheck", "false");
     fireEvent.change(search, { target: { value: "фо" } });
 
     expect(screen.queryByRole("menuitem", { name: "Журнал" })).not.toBeInTheDocument();

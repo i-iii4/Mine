@@ -268,7 +268,6 @@ export function Sidebar({
     orderedRowKeys,
     effectiveSidebarRowFocusKey,
   );
-  const linkEditorNavPadding = "pt-8";
   const [linkChromeEntered, setLinkChromeEntered] = useState(false);
 
   const setPreviewTriggerRef = useCallback((key: string, node: HTMLElement | null) => {
@@ -556,7 +555,7 @@ export function Sidebar({
         ref={navRef}
         className={cn(
           "relative flex-1 overflow-y-auto",
-          isLinkingBlock ? linkEditorNavPadding : "pt-16",
+          "pt-8",
           "pb-8",
           compact ? "px-2" : "px-8",
         )}
@@ -797,7 +796,7 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
 
   return (
     <div
-      className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-2 bg-accent px-8"
+      className="detail-top-bar-enter absolute inset-x-0 top-0 z-10 flex h-8 items-center gap-2 bg-accent px-8"
       data-entered={entered ? "true" : "false"}
       data-sidebar-link-mode-bar
     >

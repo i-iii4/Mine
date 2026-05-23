@@ -368,10 +368,11 @@ versioned collection-index backfill до формирования стабиль
    только правый action slot. Это предотвращает remount `<img>` и blink превью
    при открытии карточки.
 
-Geometry не имеет переключаемых режимов: selector живёт в полноширинном
-`h-8 bg-accent` баре с отдельной нижней hairline. Список сохраняет общий
-visual top inset `64px`: in-flow верхний бар занимает `32px`, поэтому список
-компенсируется `pt-8`.
+Geometry не имеет переключаемых режимов: список sidebar всегда держит один
+visual top inset `32px` через `pt-8` на `data-sidebar-scroll`. Link-editor
+selector живёт в полноширинном `absolute inset-x-0 top-0 h-8 bg-accent` overlay
+с отдельной нижней hairline внутри этой защитной зоны. Открытие Detail не
+должно добавлять flow-элемент над списком и сдвигать левое меню вниз.
 
 Sidebar link-editor chrome использует тот же motion contract, что и Detail top
 chrome: мягкий `opacity + translateY` enter/exit (`220–280ms`,
@@ -450,7 +451,7 @@ and deliberately ignores `preview_manifest.tiles`. This keeps the left menu
 aligned with the thumbnail strip contract even when the full feed card is a
 multi-image composite/gallery. Related Notes keeps its richer hover preview.
 
-**Main sidebar top inset.** На главной sidebar использует `pt-16` прямо на
+**Main sidebar top inset.** На главной sidebar использует `pt-8` (32px) прямо на
 `data-sidebar-scroll`. Не создавать отдельную пустую header surface для
 опциональных баннеров: если banner component возвращает `null`, над списком не
 должно оставаться фиксированной белой плашки, которая обрезает scroll-content.
@@ -468,7 +469,7 @@ multi-image composite/gallery. Related Notes keeps its richer hover preview.
   чтобы hover controls внутри `translate3d`-позиционированных карточек не
   переснапливались при opacity/focus transitions.
 - Карточки позиционируются абсолютно (`translate(x, y)`), контейнер имеет вычисленную `totalHeight`
-- Top inset ленты — `64px` через `marginTop` на `data-grid-layout`, не через padding scrollport.
+- Top inset ленты — `32px` через `marginTop` на `data-grid-layout`, не через padding scrollport.
 - Empty channel state: when a real channel route has no cards and Grid search
   is inactive, Grid renders a centered italic text placeholder instead of an
   empty masonry layout: `Cards connected to this channel will appear here.`
@@ -695,6 +696,9 @@ Image media expansion:
   остаётся визуально нажатой при активном search state. Кнопка и повторное
   `Cmd+F` закрывают main search state и очищают query. Закрытие не анимирует
   страницу и не меняет scroll viewport.
+- Bottom app bar actions use `ActionButton`: outer `h-6 p-[2px]`, inner text
+  boxes `h-5 inline-flex items-center leading-none`. Vertical centering is
+  owned by fixed 20px inner boxes, not by vertical padding.
 - Пока visual component скрыт, `Cmd+F`/`Search cards` не создают input и не
   переносят caret.
 - Если пользователь начинает Grid group selection при активном main search,
@@ -720,9 +724,10 @@ Image media expansion:
 - Space selector подстраивается под имя текущей папки, но ограничен половиной
   доступной ширины после traffic-light зоны (`max-w-[50%]`). Имя папки режется
   end ellipsis. Root trigger остаётся прозрачным, использует `px-3` и не
-  содержит dropdown
-  chevron; hover/open/focus рисует только inner pill вокруг имени (`h-6
-  rounded-1 px-2 bg-active`), тем же state token, что `DropdownMenuItem`
+  содержит dropdown chevron. Текст использует тот же typography mode, что
+  Detail top bar: `font-mono text-sm text-muted-foreground`, regular weight.
+  Hover/open/focus рисует только inner pill вокруг имени (`h-6 rounded-1 px-2
+  bg-active text-foreground`), тем же state token, что `DropdownMenuItem`
   hover/focus. Space selector уже идёт после traffic-light reserve, поэтому
   root `px-3` плюс inner pill `px-2` ставят текст на compact `20px` axis после
   separator, а не на правую `32px` content axis. Focus fill разрешён только для keyboard focus. Pointer-open не
@@ -742,9 +747,11 @@ Image media expansion:
 - Sidebar search renders as a `data-sidebar-top-search-surface` wrapper with a
   transparent `Input ghost` and an optional clear action. Empty hover/focus
   changes only placeholder text from tertiary to muted; it does not add a
-  background. When the trimmed query is non-empty, only the search surface is
-  filled with `bg-accent`, matching the bottom action bar surface. The top
-  header, space selector and separator lines remain unfilled.
+  background. Search input text uses the same permanent top-chrome typography
+  as Detail top bar: `font-mono text-sm text-muted-foreground`, regular
+  weight. When the trimmed query is non-empty, only the search surface is filled
+  with `bg-accent`, matching the bottom action bar surface. The top header,
+  space selector and separator lines remain unfilled.
 - The clear action appears only when the input value is non-empty. It is an
   icon-only `X` button (`h-6 w-6 rounded-1`, `aria-label="Clear channel
   search"`). Clicking it clears the query, restores the full channel list and
@@ -754,13 +761,20 @@ Image media expansion:
   navigate visible Sidebar rows through `aria-activedescendant`; DOM focus
   stays in the input, so typing can continue without re-focusing the field.
   `Enter` activates the active row, including the create-channel row.
+- All search inputs suppress native browser/WebKit typing suggestions through
+  shared `SEARCH_INPUT_SUPPRESSION_PROPS`: `autoComplete="off"`,
+  `autoCorrect="off"`, `autoCapitalize="none"`, `spellCheck={false}`. This
+  applies to top chrome search, `Search spaces`, `Search collections` and
+  channel connect pickers, without changing normal text-entry dialogs.
 - Right top chrome contains a current collection switcher. The trigger shows
   the active Grid route label (`Everything` or current channel name), uses the
   same transparent root + inner `bg-active` hover/open/keyboard-focus pill
-  contract as the space selector. Expanded mode keeps the right-side `32px`
-  content axis (`px-6` root + `px-2` pill); compact/collapsed sidebar mode uses
-  `px-3` root padding to align with the space selector and remove the extra gap.
-  It contains no dropdown chevron and opens a
+  contract as the space selector. Trigger typography matches Detail top bar:
+  `font-mono text-sm text-muted-foreground`, regular weight; hover/open/focus
+  raises only the inner pill text to `text-foreground`. Expanded mode keeps the
+  right-side `32px` content axis (`px-6` root + `px-2` pill);
+  compact/collapsed sidebar mode uses `px-3` root padding to align with the
+  space selector and remove the extra gap. It contains no dropdown chevron and opens a
   `DropdownMenu` with a `Search collections` input. Dropdown rows are ordered
   exactly like Sidebar collections and use the shared
   `filterAndRankChannelSearch` matcher. The active collection is not rendered

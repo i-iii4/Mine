@@ -10,6 +10,7 @@ import { Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import type { TagCount } from "@/types";
 import { collectionRefLabel } from "@/lib/collections";
+import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { cn } from "@/lib/utils";
 
 interface CollectionPickerProps {
@@ -313,8 +314,8 @@ export function CollectionPicker({
       <div className="shrink-0 p-2 pb-1">
         <Input
           ref={inputRef}
+          {...SEARCH_INPUT_SUPPRESSION_PROPS}
           autoFocus
-          type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search channels..."
@@ -566,8 +567,8 @@ export function BatchCollectionPicker({
       <div className="shrink-0 p-2 pb-1">
         <Input
           ref={inputRef}
+          {...SEARCH_INPUT_SUPPRESSION_PROPS}
           autoFocus
-          type="text"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search channels..."
