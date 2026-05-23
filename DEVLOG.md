@@ -1,5 +1,20 @@
 # Devlog
 
+## 22.05.2026 [docs] — Add distribution specification
+
+### Context
+
+- Production distribution needs a documented contract for signing, delivery,
+  updates, diagnostics and telemetry before release implementation work.
+
+### Completed
+
+- Added `SPEC_DISTRIBUTION.md` with the production contract for direct macOS
+  distribution, Developer ID signing, notarization, release artifacts, update
+  channels, static policy, update recovery, diagnostics and telemetry.
+- Added the new spec to required reading in `AGENTS.md` and to related
+  documents in `ARCHITECTURE.md`.
+
 ## 22.05.2026 [fix] — Anchor top-chrome selector menus to visible pills
 
 ### Context
