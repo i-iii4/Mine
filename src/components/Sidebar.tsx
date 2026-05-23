@@ -3,6 +3,7 @@ import {
   useRef,
   useCallback,
   useEffect,
+  useMemo,
   memo,
   forwardRef,
   type CSSProperties,
@@ -36,9 +37,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
 import { getBlock } from "@/lib/commands";
-import { filterAndRankChannelSearch, normalizeChannelSearchText } from "@/lib/channelSearch";
 import { collectionRefLabel } from "@/lib/collections";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
+import {
+  buildSidebarRowOrder,
+  filterSidebarTags,
+  shouldShowSidebarEverythingRow,
+  sidebarRowDomId,
+} from "@/lib/sidebarSearch";
 import { cn } from "@/lib/utils";
 import { ReadOnlyCardPreview } from "./Card";
 import { MicroPreviewThumbnail, microPreviewFromPreviewCard } from "./MicroPreviewThumbnail";
@@ -137,6 +143,7 @@ interface SidebarProps {
   onNavClick?: () => void;
   onScrollToTop?: () => void;
   keyboardNavigationFocus?: SidebarKeyboardNavigationFocus | null;
+  keyboardNavigationFocusPersistent?: boolean;
   searchQuery?: string;
   /** Optional slot for a header banner (e.g. iCloud conflict surface). */
   headerSlot?: React.ReactNode;
@@ -144,21 +151,6 @@ interface SidebarProps {
   linkedTags?: string[];
   onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
   detailChromeClosing?: boolean;
-}
-
-function buildSidebarRowOrder(
-  visibleTags: TagCount[],
-  includeEverythingRow: boolean,
-  includeCreateRow = false,
-): string[] {
-  const rowKeys = [
-    ...(includeEverythingRow ? ["all"] : []),
-    ...visibleTags.map((tc) => `tag:${tc.tag}`),
-  ];
-  if (includeCreateRow) {
-    rowKeys.push("create-channel");
-  }
-  return rowKeys;
 }
 
 function createSidebarSeamAccentSet(
@@ -194,6 +186,7 @@ export function Sidebar({
   onNavClick,
   onScrollToTop,
   keyboardNavigationFocus,
+  keyboardNavigationFocusPersistent = false,
   searchQuery = "",
   headerSlot,
   linkedBlockSlug,
@@ -244,25 +237,16 @@ export function Sidebar({
   const compact = width > 0 && width < 320;
   const isLinkingBlock = !!linkedBlockSlug && !!onToggleLinkedTag;
   const isLinkEditorActive = isLinkingBlock && !detailChromeClosing;
-  const linkedTagSet = new Set(linkedTags);
-  const baseVisibleTags = isLinkEditorActive && linkMode === "linked"
-    ? orderedTags.filter((tc) => linkedTagSet.has(tc.tag))
-    : orderedTags;
-  const visibleTags = searchQuery.trim()
-    ? filterAndRankChannelSearch(
-        baseVisibleTags.map((tc) => ({
-          item: tc,
-          texts: [collectionRefLabel(tc.tag), tc.tag],
-        })),
-        searchQuery,
-      )
-    : baseVisibleTags;
-  const normalizedSearchQuery = normalizeChannelSearchText(searchQuery);
-  const showEverythingRow = normalizedSearchQuery
-    ? "everything".includes(normalizedSearchQuery)
-      || "all".includes(normalizedSearchQuery)
-      || "__all__".includes(normalizedSearchQuery)
-    : true;
+  const linkedTagSet = useMemo(() => new Set(linkedTags), [linkedTags]);
+  const baseVisibleTags = useMemo(() => (
+    isLinkEditorActive && linkMode === "linked"
+      ? orderedTags.filter((tc) => linkedTagSet.has(tc.tag))
+      : orderedTags
+  ), [isLinkEditorActive, linkMode, linkedTagSet, orderedTags]);
+  const visibleTags = useMemo(() => (
+    filterSidebarTags(baseVisibleTags, searchQuery)
+  ), [baseVisibleTags, searchQuery]);
+  const showEverythingRow = shouldShowSidebarEverythingRow(searchQuery);
   const editingRowKey = !isLinkEditorActive && editingTag !== null
     ? `tag:${editingTag}`
     : isCreatingChannel
@@ -391,7 +375,11 @@ export function Sidebar({
   }, [deactivateSidebarRowFocusMode]);
 
   useEffect(() => {
-    if (!keyboardNavigationFocus) return;
+    if (!keyboardNavigationFocus) {
+      clearSidebarKeyboardFocusTimer();
+      deactivateSidebarRowFocusMode();
+      return;
+    }
     const rowKey = keyboardNavigationFocus.rowKey;
     const rowIsVisible = rowKey === "all"
       ? showEverythingRow
@@ -400,11 +388,23 @@ export function Sidebar({
 
     clearSidebarKeyboardFocusTimer();
     activateSidebarRowFocus(rowKey);
+    if (keyboardNavigationFocusPersistent) {
+      return;
+    }
     sidebarKeyboardFocusTimerRef.current = window.setTimeout(() => {
       sidebarKeyboardFocusTimerRef.current = null;
       deactivateSidebarRowFocusMode();
     }, 1000);
-  }, [keyboardNavigationFocus?.sequence]);
+  }, [
+    activateSidebarRowFocus,
+    clearSidebarKeyboardFocusTimer,
+    deactivateSidebarRowFocusMode,
+    keyboardNavigationFocus?.rowKey,
+    keyboardNavigationFocus?.sequence,
+    keyboardNavigationFocusPersistent,
+    showEverythingRow,
+    visibleTags,
+  ]);
 
   useEffect(() => () => {
     clearSidebarKeyboardFocusTimer();
@@ -861,6 +861,7 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
 
   return (
     <div
+      id={sidebarRowDomId(rowKey)}
       ref={setRefs}
       style={style}
       {...domProps}

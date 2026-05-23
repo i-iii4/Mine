@@ -107,7 +107,7 @@ hidden probe in this path; short folder names must never be truncated by the
 collapsed container.
 
 The space selector shows the current folder name, truncates before the search
-field, and opens the existing known-vault dropdown. It uses the same switch
+field, and opens a searchable known-vault dropdown. It uses the same switch
 path as the previous bottom-bar vault switcher; `Cmd+Shift+O` still opens the
 native folder picker.
 The selector width follows the current folder name but is capped at 50% of the
@@ -133,8 +133,12 @@ restores the full channel list and returns focus to the input.
 channel rows and does not change the route or Grid dataset.
 `Everything` is part of the filtered row set: it remains visible only when the
 query is empty or matches `Everything` / `__all__`.
-`Escape` clears a non-empty sidebar search value; with an empty value it blurs
-the input.
+While that input is focused, unmodified `ArrowUp`/`ArrowDown` move a persistent
+active descendant across visible Sidebar rows, including the bottom create row,
+without moving DOM focus out of the input; the user can keep typing after arrow
+navigation. `Enter` activates the active row. `Escape` clears a non-empty
+sidebar search value; with an empty value it blurs the input and clears the
+active descendant.
 
 ### Collection Switcher Search
 
@@ -156,13 +160,19 @@ not duplicated as a disabled row, not marked with a check/radio icon and not
 styled as selected. Choosing any visible item immediately navigates to that
 collection route and closes the menu.
 
-The collection switcher dropdown has a pinned bottom create action. Empty query
-shows disabled `Create New Channel`; a non-empty query without an exact
-existing channel match enables `Create "{query}"`. Creation uses the normal
-channel create command, refreshes App snapshots and navigates to the created
-channel. Space switcher dropdown follows the same no-current/no-check/no-icon
-menu language and lists only destination spaces plus a plain `Add space`
-action.
+The collection switcher dropdown has a pinned bottom `Create channel` action
+that is always available and never appears as an inline search result.
+Activating it closes the dropdown and opens a separate create-channel dialog.
+The dialog may prefill from the current search query, validates empty/duplicate
+names, uses the normal channel create command, refreshes App snapshots and
+navigates to the created channel.
+
+Space switcher dropdown follows the same no-current/no-check/no-icon menu
+language, adds its own `Search spaces` input, lists only destination spaces and
+keeps a plain pinned `Add space` action. `Search collections`, `Search spaces`
+and Sidebar channel search use the same input-owned keyboard model:
+`ArrowUp`/`ArrowDown` change `aria-activedescendant`, pointer hover may update
+the active row, but focus remains in the search input.
 
 Sidebar search is client-side because taxonomy/channel rows are already a small
 App-owned read model. Matching is centralized in `src/lib/channelSearch.ts`:

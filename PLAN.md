@@ -1128,7 +1128,7 @@ Specification: [SPEC_SEARCH.md](SPEC_SEARCH.md).
 | 27.3 | Main/Grid search UI | [x] | Main search mechanism remains App-owned and route-facing; visual search component temporarily removed, top chrome divider preserved |
 | 27.4 | Sidebar search UI | [x] | Top chrome now contains traffic-light spacer, space selector, and no-icon channel search; `Shift+Cmd+F` focuses search while Sidebar consumes the query and filters/ranks channel rows without changing Grid route; interactive top-chrome controls support threshold native window drag |
 | 27.5 | Card highlighting | [x] | Article title/body match rendering with design-system mark token and stable masonry measurement in search mode |
-| 27.6 | Right collection switcher | [x] | Right top chrome shows the current Grid route collection and opens a searchable destination dropdown ordered like Sidebar; the active collection is omitted rather than duplicated or check-marked; pinned create action creates a new channel and navigates to it; floating menu widths are documented as semantic roles (`command`, `selector`, `picker`) |
+| 27.6 | Right collection switcher | [x] | Right top chrome shows the current Grid route collection and opens a searchable destination dropdown ordered like Sidebar; active/current rows are omitted; fixed `Create channel` opens a separate dialog; space/collection/sidebar search inputs keep focus while arrows move `aria-activedescendant`; floating menu widths are documented as semantic roles (`command`, `selector`, `picker`) |
 | 27.7 | Tests + manual QA | [ ] | Automated backend/frontend coverage is in place; real-vault dark/light QA remains |
 
 ### Phase 28 — Hybrid Search

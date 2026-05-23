@@ -67,6 +67,8 @@ const GRID_TOP_INSET_PX = 64;
 const GRID_BOTTOM_INSET_PX = 32;
 const MARQUEE_DRAG_THRESHOLD_PX = 4;
 const SCROLL_ANCHOR_REFERENCE_OFFSET_PX = 32;
+const EMPTY_CHANNEL_PLACEHOLDER_TEXT =
+  "Cards connected to this channel will appear here.";
 
 type GridArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
 type FeedInteractionMode = "keyboard" | "pointer";
@@ -350,6 +352,23 @@ function rectsIntersect(first: LayoutRect, second: LayoutRect): boolean {
     first.left + first.width >= second.left &&
     first.top <= second.top + second.height &&
     first.top + first.height >= second.top
+  );
+}
+
+function EmptyChannelPlaceholder({ viewportHeight }: { viewportHeight: number }) {
+  return (
+    <div
+      className="grid place-items-center"
+      style={{ minHeight: Math.max(240, viewportHeight) }}
+      data-grid-empty-channel-placeholder=""
+    >
+      <p
+        className="max-w-xl text-center text-base leading-relaxed text-muted-foreground italic"
+        data-grid-empty-channel-placeholder-text=""
+      >
+        {EMPTY_CHANNEL_PLACEHOLDER_TEXT}
+      </p>
+    </div>
   );
 }
 
@@ -850,6 +869,11 @@ export function Grid({
     if (committedEndIndex < targetCommittedEndIndex) return "measuring";
     return "committed";
   }, [blocks.length, committedEndIndex, parentWidth, targetCommittedEndIndex]);
+  const showEmptyChannelPlaceholder = Boolean(
+    currentTag &&
+    blocks.length === 0 &&
+    searchQuery.trim().length === 0,
+  );
 
   useLayoutEffect(() => {
     const scrollElement = parentRef.current;
@@ -1604,6 +1628,9 @@ export function Grid({
               marqueeRect={marqueeRect}
               context={gridContext}
             />
+          )}
+          {parentWidth > 0 && showEmptyChannelPlaceholder && (
+            <EmptyChannelPlaceholder viewportHeight={viewportHeight} />
           )}
           {parentWidth > 0 && blocks.length > 0 && phase !== "committed" && measurementBatch.length > 0 && (
             <MeasurementPass

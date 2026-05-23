@@ -469,6 +469,12 @@ multi-image composite/gallery. Related Notes keeps its richer hover preview.
   переснапливались при opacity/focus transitions.
 - Карточки позиционируются абсолютно (`translate(x, y)`), контейнер имеет вычисленную `totalHeight`
 - Top inset ленты — `64px` через `marginTop` на `data-grid-layout`, не через padding scrollport.
+- Empty channel state: when a real channel route has no cards and Grid search
+  is inactive, Grid renders a centered italic text placeholder instead of an
+  empty masonry layout: `Cards connected to this channel will appear here.`
+  The placeholder is centered in the visible Grid viewport, uses a plain `p`,
+  and has no quote marker, border, card surface, icon, or CTA. It is not shown
+  for Everything or empty search results.
 - В DOM находятся только видимые карточки + direction-aware overscan: forward 2200px / backward 600px (зависит от направления scroll'а). Предзагружает больше карточек по направлению движения.
 - **Priority bounds**: зона ±1400px по направлению scroll'а. Карточки внутри зоны получают `priority=true` → `<img loading="eager">` для image/link/article карточек. Карточки вне зоны — `loading="lazy"`.
 - Порядок: по `saved_at` descending (новые вверху)
@@ -708,9 +714,9 @@ Image media expansion:
   collapsed segment. Hidden measurement/probe и вычисление ширины по visible
   `[data-vault-switcher]` запрещены. Короткие имена пространства не получают
   ellipsis; truncation допустим только для длинных имён, превышающих cap.
-- Space selector показывает текущую папку, открывает dropdown известных vaults
-  и заменяет старый bottom-bar vault switcher. `Cmd+Shift+O` продолжает
-  открывать native folder picker.
+- Space selector показывает текущую папку, открывает searchable dropdown
+  известных vaults и заменяет старый bottom-bar vault switcher.
+  `Cmd+Shift+O` продолжает открывать native folder picker.
 - Space selector подстраивается под имя текущей папки, но ограничен половиной
   доступной ширины после traffic-light зоны (`max-w-[50%]`). Имя папки режется
   end ellipsis. Root trigger остаётся прозрачным, использует `px-3` и не
@@ -726,10 +732,11 @@ Image media expansion:
   перешёл в window drag. В collapsed sidebar state selector использует
   `max-w-full`, потому что search input скрыт. Search input занимает остаток и полагается на native
   input scrolling, чтобы при вводе были видны последние символы.
-- Space dropdown renders only destination spaces. The current space is omitted
-  entirely, with no checkmark/selected/disabled duplicate row. `Add space` is a
-  plain pinned action without an icon. The dropdown uses floating width role
-  `selector`: `width: min(18rem, available-width)`.
+- Space dropdown renders a `Search spaces` input, only destination spaces and a
+  pinned `Add space` action. The current space is omitted entirely, with no
+  checkmark/selected/disabled duplicate row. `Add space` is plain and iconless.
+  The dropdown uses floating width role `selector`:
+  `width: min(18rem, available-width)`.
 - Sidebar search renders as a `data-sidebar-top-search-surface` wrapper with a
   transparent `Input ghost` and an optional clear action. Empty hover/focus
   changes only placeholder text from tertiary to muted; it does not add a
@@ -741,6 +748,10 @@ Image media expansion:
   search"`). Clicking it clears the query, restores the full channel list and
   returns focus to the input. `Escape` with a non-empty value clears the field;
   `Escape` with an empty value blurs the input.
+- While Sidebar channel search is focused, unmodified `ArrowUp`/`ArrowDown`
+  navigate visible Sidebar rows through `aria-activedescendant`; DOM focus
+  stays in the input, so typing can continue without re-focusing the field.
+  `Enter` activates the active row, including the create-channel row.
 - Right top chrome contains a current collection switcher. The trigger shows
   the active Grid route label (`Everything` or current channel name), uses the
   same transparent root + inner `bg-active` hover/open/keyboard-focus pill
@@ -754,9 +765,17 @@ Image media expansion:
   in the dropdown at all: no duplicated current label, no checkmark, no radio
   marker, no selected/current row. Selecting an item immediately navigates to
   `/` or `/channel/:tag`; the switcher derives current state only from route.
-  A pinned bottom action creates a new channel from the current search query
-  when the query is non-empty and does not exactly match an existing
-  destination. Creation refreshes snapshots and navigates to the new channel.
+  The search input remains the only focus owner while the dropdown is open:
+  pointer hover over destination rows must not blur or move focus out of the
+  input. Destination rows and the pinned create action are menu-styled buttons
+  with `role="menuitem"`, not roving-focus `DropdownMenuItem`. A fixed pinned
+  bottom `Create channel` action is always available and never appears as an
+  inline search result; it opens a separate create-channel dialog, which may
+  prefill from the search query, validates empty/duplicate names, refreshes
+  snapshots and navigates to the new channel after creation.
+  `Search collections` and `Search spaces` use the same input-owned keyboard
+  model as Sidebar search: `ArrowUp`/`ArrowDown` change
+  `aria-activedescendant`, while the input remains focused.
   The dropdown uses the same floating width role `selector` as Space dropdown:
   `width: min(18rem, available-width)`.
 - Top chrome controls must remain usable as window drag handles. The space

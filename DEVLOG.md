@@ -46,9 +46,20 @@
   deferred until click, and drag-threshold gestures suppress that click.
 - Aligned space and collection dropdown language: no current duplicate rows, no
   checkmarks/selected markers, no destination-row icons.
-- Added a pinned bottom create action to the collection switcher dropdown; it
-  creates a new channel from the search query, refreshes snapshots and
-  navigates to the new channel.
+- Added a fixed pinned `Create channel` action to the collection switcher
+  dropdown. It is not an inline search result: activation opens a separate
+  create-channel dialog, validates empty/duplicate names, refreshes snapshots
+  and navigates to the new channel.
+- Added `Search spaces` to the top-chrome space selector while preserving the
+  same no-current/no-check/no-icon selector language.
+- Added input-owned keyboard navigation for top-chrome search controls:
+  Sidebar channel search, `Search spaces` and `Search collections` keep DOM
+  focus in the input while `ArrowUp`/`ArrowDown` move `aria-activedescendant`.
+- Kept `Search collections` as the dropdown focus owner while pointer hover
+  moves across destination rows, avoiding Radix roving-focus blur from the input.
+- Added an empty-channel Grid state: empty real channels show centered italic
+  text in the visible Grid viewport, without a quote marker, border, card
+  surface, icon or CTA.
 - Documented semantic floating menu widths: `command` for compact overflow
   menus, `selector` for top-chrome navigation dropdowns and `picker` for
   searchable collection membership menus.

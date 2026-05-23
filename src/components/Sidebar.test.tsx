@@ -405,6 +405,35 @@ describe("Sidebar", () => {
     expect(betaRow).not.toHaveAttribute("data-sidebar-row-focused");
   });
 
+  it("keeps sidebar search keyboard focus persistent until App clears it", () => {
+    vi.useFakeTimers();
+    const props = { ...defaultProps, width: 600 };
+    const { container, rerender } = renderSidebar({
+      ...props,
+      keyboardNavigationFocus: { rowKey: "tag:alpha", sequence: 1 },
+      keyboardNavigationFocusPersistent: true,
+    }, ["/"]);
+
+    const nav = container.querySelector("[data-sidebar-scroll]")!;
+    const alphaRow = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+
+    expect(alphaRow).toHaveAttribute("id", "sidebar-row-tag%3Aalpha");
+    expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
+
+    act(() => vi.advanceTimersByTime(2000));
+    expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
+    expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
+
+    rerender(sidebarTree({
+      ...props,
+      keyboardNavigationFocus: null,
+      keyboardNavigationFocusPersistent: false,
+    }, ["/"]));
+
+    expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
+    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-focused");
+  });
+
   it("uses the normal row hover state for card drag-over targets", () => {
     dndContextState.over = { id: "tag:alpha" };
     const { container } = renderSidebar({ ...defaultProps, width: 600, isDropDragging: true });

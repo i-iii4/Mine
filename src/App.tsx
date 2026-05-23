@@ -39,6 +39,12 @@ import {
   isEditableKeyboardTarget,
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
+import {
+  SIDEBAR_CREATE_CHANNEL_ROW_KEY,
+  buildSidebarSearchNavigationRows,
+  sidebarRowDomId,
+  sidebarRowKeyToRoute,
+} from "@/lib/sidebarSearch";
 import { Input } from "@/components/ui/input";
 
 function baseRelatedNoteSlug(target: string): string {
@@ -341,6 +347,10 @@ export function AppWithVault({
   const [sidebarSearchFocusSequence, setSidebarSearchFocusSequence] = useState(0);
   const [scrollToTopSignal, setScrollToTopSignal] = useState(0);
   const [sidebarKeyboardNavigationFocus, setSidebarKeyboardNavigationFocus] = useState<{
+    rowKey: string;
+    sequence: number;
+  } | null>(null);
+  const [sidebarSearchKeyboardNavigationFocus, setSidebarSearchKeyboardNavigationFocus] = useState<{
     rowKey: string;
     sequence: number;
   } | null>(null);
@@ -1130,8 +1140,11 @@ export function AppWithVault({
   }, [closeMainSearch, designSystemOpen, focusMainSearch, mainSearchActive, renderedDetailBlock]);
 
   const focusSidebarSearch = useCallback(() => {
+    if (sidebarCollapsed) {
+      toggleCollapsed();
+    }
     setSidebarSearchFocusSequence((sequence) => sequence + 1);
-  }, []);
+  }, [sidebarCollapsed, toggleCollapsed]);
 
   useLayoutEffect(() => {
     if (sidebarCollapsed) return;
@@ -1145,22 +1158,14 @@ export function AppWithVault({
 
   const handleSidebarSearchChange = useCallback((query: string) => {
     setSidebarSearchQuery(query);
+    setSidebarSearchKeyboardNavigationFocus(null);
   }, []);
 
   const handleClearSidebarSearch = useCallback(() => {
     setSidebarSearchQuery("");
+    setSidebarSearchKeyboardNavigationFocus(null);
     sidebarSearchInputRef.current?.focus({ preventScroll: true });
   }, []);
-
-  const handleSidebarSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    if (sidebarSearchHasValue) {
-      handleClearSidebarSearch();
-      return;
-    }
-    sidebarSearchInputRef.current?.blur();
-  }, [handleClearSidebarSearch, sidebarSearchHasValue]);
 
   const handleSurfaceSearchShortcut = useCallback((target: SurfaceSearchShortcutTarget) => {
     if (isOverlayKeyboardTarget(document.activeElement)) return;
@@ -1522,6 +1527,90 @@ export function AppWithVault({
     setPendingCreateChannelDrop(null);
     setIsCreatingChannel(creating);
   }, []);
+
+  const sidebarSearchNavigationRows = useMemo(() => (
+    buildSidebarSearchNavigationRows(orderedTags, sidebarSearchQuery)
+  ), [orderedTags, sidebarSearchQuery]);
+
+  useEffect(() => {
+    if (
+      sidebarSearchKeyboardNavigationFocus
+      && !sidebarSearchNavigationRows.includes(sidebarSearchKeyboardNavigationFocus.rowKey)
+    ) {
+      setSidebarSearchKeyboardNavigationFocus(null);
+    }
+  }, [sidebarSearchKeyboardNavigationFocus, sidebarSearchNavigationRows]);
+
+  const setSidebarSearchNavigationRow = useCallback((rowKey: string | null) => {
+    if (!rowKey) {
+      setSidebarSearchKeyboardNavigationFocus(null);
+      return;
+    }
+    setSidebarSearchKeyboardNavigationFocus((current) => ({
+      rowKey,
+      sequence: (current?.sequence ?? 0) + 1,
+    }));
+  }, []);
+
+  const moveSidebarSearchNavigationRow = useCallback((direction: 1 | -1) => {
+    if (sidebarSearchNavigationRows.length === 0) return;
+    const currentIndex = sidebarSearchKeyboardNavigationFocus
+      ? sidebarSearchNavigationRows.indexOf(sidebarSearchKeyboardNavigationFocus.rowKey)
+      : -1;
+    const nextIndex = currentIndex === -1
+      ? direction > 0 ? 0 : sidebarSearchNavigationRows.length - 1
+      : Math.max(0, Math.min(sidebarSearchNavigationRows.length - 1, currentIndex + direction));
+    setSidebarSearchNavigationRow(sidebarSearchNavigationRows[nextIndex] ?? null);
+  }, [
+    setSidebarSearchNavigationRow,
+    sidebarSearchKeyboardNavigationFocus,
+    sidebarSearchNavigationRows,
+  ]);
+
+  const activateSidebarSearchNavigationRow = useCallback((rowKey: string | null) => {
+    if (!rowKey) return;
+    if (rowKey === SIDEBAR_CREATE_CHANNEL_ROW_KEY) {
+      handleSetCreatingChannel(true);
+      return;
+    }
+    const route = sidebarRowKeyToRoute(rowKey);
+    if (!route) return;
+    navigate(route);
+  }, [handleSetCreatingChannel, navigate]);
+
+  const handleSidebarSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (sidebarSearchHasValue) {
+        handleClearSidebarSearch();
+        return;
+      }
+      setSidebarSearchNavigationRow(null);
+      sidebarSearchInputRef.current?.blur();
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      moveSidebarSearchNavigationRow(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+
+    if (event.key !== "Enter") return;
+    const activeRowKey = sidebarSearchKeyboardNavigationFocus?.rowKey ?? null;
+    if (!activeRowKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    activateSidebarSearchNavigationRow(activeRowKey);
+  }, [
+    activateSidebarSearchNavigationRow,
+    handleClearSidebarSearch,
+    moveSidebarSearchNavigationRow,
+    setSidebarSearchNavigationRow,
+    sidebarSearchHasValue,
+    sidebarSearchKeyboardNavigationFocus,
+  ]);
 
   const beginCreateChannelFromDrop = useCallback((pendingDrop: PendingCreateChannelDrop) => {
     setPendingCreateChannelDrop(pendingDrop);
@@ -2151,6 +2240,11 @@ export function AppWithVault({
                   <Input
                     ref={sidebarSearchInputRef}
                     aria-label="Search channels"
+                    aria-activedescendant={
+                      sidebarSearchKeyboardNavigationFocus
+                        ? sidebarRowDomId(sidebarSearchKeyboardNavigationFocus.rowKey)
+                        : undefined
+                    }
                     placeholder="Search channels..."
                     variant="ghost"
                     value={sidebarSearchQuery}
@@ -2224,7 +2318,10 @@ export function AppWithVault({
         onRequestDelete={requestDeleteBlock}
         onNavClick={handleDetailClose}
         onScrollToTop={handleScrollToTop}
-        keyboardNavigationFocus={sidebarKeyboardNavigationFocus}
+        keyboardNavigationFocus={
+          sidebarSearchKeyboardNavigationFocus ?? sidebarKeyboardNavigationFocus
+        }
+        keyboardNavigationFocusPersistent={sidebarSearchKeyboardNavigationFocus !== null}
         searchQuery={sidebarSearchQuery}
         headerSlot={
           <>

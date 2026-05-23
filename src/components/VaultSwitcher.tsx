@@ -1,4 +1,12 @@
-import { useState, useEffect } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   DropdownMenu,
@@ -7,7 +15,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
+import { filterAndRankChannelSearch } from "@/lib/channelSearch";
 import { listKnownVaults, selectVault } from "@/lib/commands";
 import { cn } from "@/lib/utils";
 
@@ -33,41 +44,156 @@ export function VaultSwitcher({
 }: VaultSwitcherProps) {
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const actionIdPrefix = useId();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const triggerLabel = vaultName(currentPath);
+  const isTopChrome = surface === "topChrome";
 
   useEffect(() => {
     listKnownVaults().then(setKnownVaults).catch(() => {});
   }, []);
 
-  const handleSwitch = async (path: string) => {
+  const resetMenuSearch = useCallback(() => {
+    setQuery("");
+    setActiveIndex(null);
+  }, []);
+
+  const handleSwitch = useCallback(async (path: string) => {
     if (path === currentPath) return;
     setOpen(false);
+    resetMenuSearch();
     await selectVault(path);
     onVaultSelected(path);
-  };
+  }, [currentPath, onVaultSelected, resetMenuSearch]);
 
-  const handleAddSpace = async () => {
+  const handleAddSpace = useCallback(async () => {
     const selected = await openDialog({ directory: true, multiple: false });
     if (!selected) return;
     setOpen(false);
+    resetMenuSearch();
     await selectVault(selected);
     onVaultSelected(selected);
-  };
+  }, [onVaultSelected, resetMenuSearch]);
 
-  const sorted = Array.from(new Set(knownVaults))
-    .filter((path) => path !== currentPath)
-    .sort((a, b) => vaultName(a).localeCompare(vaultName(b)));
-  const triggerLabel = vaultName(currentPath);
-  const isTopChrome = surface === "topChrome";
+  const sorted = useMemo(() => (
+    Array.from(new Set(knownVaults))
+      .filter((path) => path !== currentPath)
+      .sort((a, b) => vaultName(a).localeCompare(vaultName(b)))
+  ), [currentPath, knownVaults]);
+
+  const visibleVaults = useMemo(() => (
+    isTopChrome
+      ? filterAndRankChannelSearch(
+          sorted.map((path) => ({
+            item: path,
+            texts: [vaultName(path), path],
+          })),
+          query,
+        )
+      : sorted
+  ), [isTopChrome, query, sorted]);
+
+  const actionCount = visibleVaults.length + 1;
+  const addSpaceActionIndex = visibleVaults.length;
+  const activeActionId = activeIndex === null
+    ? undefined
+    : `${actionIdPrefix}-space-action-${activeIndex}`;
+
   const topChromeTrigger = useTopChromeTriggerInteraction({
     dragDisabled: !isTopChrome,
     deferPointerOpen: isTopChrome,
     onPointerOpen: () => setOpen((current) => !current),
   });
 
+  useEffect(() => {
+    if (!isTopChrome) return;
+    if (!open) {
+      resetMenuSearch();
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus({ preventScroll: true });
+      searchInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isTopChrome, open, resetMenuSearch]);
+
+  useEffect(() => {
+    setActiveIndex((current) => {
+      if (current === null) return current;
+      if (current < actionCount) return current;
+      return actionCount > 0 ? actionCount - 1 : null;
+    });
+  }, [actionCount]);
+
+  const moveActiveIndex = useCallback((direction: 1 | -1) => {
+    if (actionCount <= 0) return;
+    setActiveIndex((current) => {
+      if (current === null) {
+        return direction > 0 ? 0 : actionCount - 1;
+      }
+      const nextIndex = current + direction;
+      if (nextIndex < 0) return 0;
+      if (nextIndex >= actionCount) return actionCount - 1;
+      return nextIndex;
+    });
+  }, [actionCount]);
+
+  const activateIndex = useCallback((index: number | null) => {
+    if (index === null) return;
+    const path = visibleVaults[index];
+    if (path) {
+      void handleSwitch(path);
+      return;
+    }
+    if (index === addSpaceActionIndex) {
+      void handleAddSpace();
+    }
+  }, [addSpaceActionIndex, handleAddSpace, handleSwitch, visibleVaults]);
+
+  const restoreSearchFocus = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus({ preventScroll: true });
+    });
+  }, []);
+
+  const handleSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (query) {
+        resetMenuSearch();
+      } else {
+        setOpen(false);
+      }
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      moveActiveIndex(event.key === "ArrowDown" ? 1 : -1);
+      restoreSearchFocus();
+      return;
+    }
+
+    if (event.key !== "Enter" || activeIndex === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    activateIndex(activeIndex);
+  }, [activateIndex, activeIndex, moveActiveIndex, query, resetMenuSearch, restoreSearchFocus]);
+
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    if (!isTopChrome) return;
+    setOpen(nextOpen);
+  }, [isTopChrome]);
+
   return (
     <DropdownMenu
       open={isTopChrome ? open : undefined}
-      onOpenChange={isTopChrome ? setOpen : undefined}
+      onOpenChange={isTopChrome ? handleOpenChange : undefined}
     >
       <DropdownMenuTrigger asChild>
         <button
@@ -104,7 +230,7 @@ export function VaultSwitcher({
                   {hotkey}
                 </span>
               )}
-              <span className="min-w-0 truncate text-foreground shrink-0 rounded-[2px] bg-component-fill-inner px-[1ch] py-[2px]">
+              <span className="min-w-0 shrink-0 truncate rounded-[2px] bg-component-fill-inner px-[1ch] py-[2px] text-foreground">
                 {triggerLabel}
               </span>
             </>
@@ -119,17 +245,54 @@ export function VaultSwitcher({
         onCloseAutoFocus={isTopChrome ? topChromeTrigger.handleCloseAutoFocus : undefined}
         className={isTopChrome ? "overflow-hidden p-0" : undefined}
       >
+        {isTopChrome && (
+          <div className="border-b border-border p-1">
+            <Input
+              ref={searchInputRef}
+              aria-label="Search spaces"
+              aria-activedescendant={activeActionId}
+              placeholder="Search spaces..."
+              variant="ghost"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setActiveIndex(null);
+              }}
+              onKeyDown={handleSearchKeyDown}
+              className="h-8 rounded-0 px-2 py-0 hover:placeholder:text-muted-foreground focus:placeholder:text-muted-foreground"
+              data-top-space-search=""
+            />
+          </div>
+        )}
         <div className={isTopChrome ? "max-h-72 overflow-y-auto p-1" : undefined}>
-          {sorted.length > 0 ? (
-            sorted.map((path) => (
-              <DropdownMenuItem
-                key={path}
-                onSelect={() => handleSwitch(path)}
-              >
-                <span className="min-w-0 truncate">
-                  {vaultName(path)}
-                </span>
-              </DropdownMenuItem>
+          {visibleVaults.length > 0 ? (
+            visibleVaults.map((path, index) => (
+              isTopChrome ? (
+                <SearchMenuAction
+                  id={`${actionIdPrefix}-space-action-${index}`}
+                  key={path}
+                  active={activeIndex === index}
+                  onActive={() => setActiveIndex(index)}
+                  onPress={() => {
+                    void handleSwitch(path);
+                  }}
+                >
+                  <span className="min-w-0 truncate">
+                    {vaultName(path)}
+                  </span>
+                </SearchMenuAction>
+              ) : (
+                <DropdownMenuItem
+                  key={path}
+                  onSelect={() => {
+                    void handleSwitch(path);
+                  }}
+                >
+                  <span className="min-w-0 truncate">
+                    {vaultName(path)}
+                  </span>
+                </DropdownMenuItem>
+              )
             ))
           ) : (
             <div className="px-2 py-1.5 text-base text-muted-foreground">
@@ -139,14 +302,25 @@ export function VaultSwitcher({
         </div>
         {isTopChrome ? (
           <div className="border-t border-border p-1">
-            <DropdownMenuItem onSelect={handleAddSpace}>
+            <SearchMenuAction
+              id={`${actionIdPrefix}-space-action-${addSpaceActionIndex}`}
+              active={activeIndex === addSpaceActionIndex}
+              onActive={() => setActiveIndex(addSpaceActionIndex)}
+              onPress={() => {
+                void handleAddSpace();
+              }}
+            >
               Add space
-            </DropdownMenuItem>
+            </SearchMenuAction>
           </div>
         ) : (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={handleAddSpace}>
+            <DropdownMenuItem
+              onSelect={() => {
+                void handleAddSpace();
+              }}
+            >
               Add space
             </DropdownMenuItem>
           </>

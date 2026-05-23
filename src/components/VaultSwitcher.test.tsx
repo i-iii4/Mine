@@ -4,7 +4,7 @@ import { VaultSwitcher } from "./VaultSwitcher";
 
 const commandMocks = vi.hoisted(() => ({
   listKnownVaults: vi.fn<() => Promise<string[]>>(),
-  selectVault: vi.fn<() => Promise<void>>(),
+  selectVault: vi.fn<(path: string) => Promise<void>>(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -93,9 +93,57 @@ describe("VaultSwitcher", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Switch space: Mine/ }));
 
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Search spaces" })).toHaveFocus();
+    });
     expect(screen.queryByRole("menuitem", { name: "Mine" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Тест" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Add space" })).toBeInTheDocument();
     expect(document.querySelector("[data-slot='dropdown-menu-content']")?.querySelector("svg")).toBeNull();
+  });
+
+  it("filters spaces and keeps input focus while arrow navigation changes the active row", async () => {
+    commandMocks.listKnownVaults.mockResolvedValue([
+      "/Users/i_iii/Library/Mobile Documents/com~apple~CloudDocs/Mine",
+      "/Users/i_iii/Desktop/Журнал",
+      "/Users/i_iii/Desktop/Фотоальбомы",
+    ]);
+    const onVaultSelected = vi.fn();
+
+    render(
+      <VaultSwitcher
+        currentPath="/Users/i_iii/Library/Mobile Documents/com~apple~CloudDocs/Mine"
+        onVaultSelected={onVaultSelected}
+        surface="topChrome"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(commandMocks.listKnownVaults).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Switch space: Mine/ }));
+    const search = await screen.findByRole("textbox", { name: "Search spaces" });
+    fireEvent.change(search, { target: { value: "фо" } });
+
+    expect(screen.queryByRole("menuitem", { name: "Журнал" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Фотоальбомы" })).toBeInTheDocument();
+
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    await waitFor(() => {
+      expect(search).toHaveFocus();
+    });
+    expect(search).toHaveAttribute("aria-activedescendant");
+    expect(screen.getByRole("menuitem", { name: "Фотоальбомы" })).toHaveAttribute(
+      "data-search-menu-action-active",
+      "true",
+    );
+
+    fireEvent.keyDown(search, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(commandMocks.selectVault).toHaveBeenCalledWith("/Users/i_iii/Desktop/Фотоальбомы");
+    });
+    expect(onVaultSelected).toHaveBeenCalledWith("/Users/i_iii/Desktop/Фотоальбомы");
   });
 });

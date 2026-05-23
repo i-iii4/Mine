@@ -386,6 +386,47 @@ const BASE_PROPS = {
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 describe("Grid — no collapse after add / revisit", () => {
+  it("renders a centered italic placeholder for an empty channel", async () => {
+    vi.useFakeTimers();
+    const placeholderText = "Cards connected to this channel will appear here.";
+
+    const { rerender } = render(
+      <Grid {...BASE_PROPS} blocks={[]} currentTag="empty-channel" />,
+    );
+    await flushAsync();
+
+    const placeholder = screen.getByText(placeholderText);
+    expect(placeholder.tagName).toBe("P");
+    expect(placeholder).toHaveClass("italic");
+    expect(placeholder).toHaveClass("text-center");
+    expect(placeholder).not.toHaveClass("border-l");
+    const placeholderContainer = placeholder.closest(
+      "[data-grid-empty-channel-placeholder]",
+    ) as HTMLElement | null;
+    expect(placeholderContainer).toBeTruthy();
+    expect(placeholderContainer).toHaveClass("grid");
+    expect(placeholderContainer).toHaveClass("place-items-center");
+
+    await act(async () => {
+      rerender(<Grid {...BASE_PROPS} blocks={[]} />);
+    });
+    await flushAsync();
+    expect(screen.queryByText(placeholderText)).not.toBeInTheDocument();
+
+    await act(async () => {
+      rerender(
+        <Grid
+          {...BASE_PROPS}
+          blocks={[]}
+          currentTag="empty-channel"
+          searchQuery="missing"
+        />,
+      );
+    });
+    await flushAsync();
+    expect(screen.queryByText(placeholderText)).not.toBeInTheDocument();
+  });
+
   it("renders initial blocks with non-colliding positions", async () => {
     vi.useFakeTimers();
 

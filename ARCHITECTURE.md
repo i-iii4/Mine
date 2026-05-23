@@ -1029,8 +1029,11 @@ searchable `DropdownMenu` of other collections ordered like Sidebar, and
 navigates immediately on item select. There are no checkmarks, radio markers,
 disabled current rows or highlighted "current" items because the active
 collection is not part of the destination list. Channel creation from this menu
-is the same App-level create-channel path used elsewhere: create the collection,
-refresh App snapshots, then navigate to the created route.
+is not an inline search result: the fixed bottom `Create channel` action opens a
+separate dialog and then returns through the same App-level create-channel path.
+The searchable dropdown keeps the input as the single focus owner; destination
+rows are menu-styled buttons instead of Radix roving-focus items, so pointer
+hover and arrow navigation cannot steal focus from the search field.
 
 ### 020: Floating menu width is semantic, not ad-hoc
 

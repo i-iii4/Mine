@@ -344,10 +344,11 @@ Pointer-drag не открывает dropdown: trigger defers Radix pointer-open
 появляется.
 
 Space dropdown не показывает текущий space повторно и не использует checkmark
-или другие selected markers. В списке остаются только destination spaces,
-обычные `DropdownMenuItem` rows и pinned `Add space` action без иконки. Ширина
-dropdown — floating width role `selector` (`18rem` с available-width cap), а не
-ширина trigger и не content-fit.
+или другие selected markers. Внутри есть `Search spaces` input, список только
+destination spaces и pinned `Add space` action без иконки. Rows ниже input —
+menu-styled buttons с `role="menuitem"`; hover может менять active row, но не
+забирает DOM focus из input. Ширина dropdown — floating width role `selector`
+(`18rem` с available-width cap), а не ширина trigger и не content-fit.
 
 Search input не использует иконку. Search surface — wrapper `h-8 min-w-0
 flex-1`, внутри прозрачный `Input ghost` (`rounded-0 px-3 py-0 border-none`)
@@ -367,6 +368,12 @@ Click очищает query, восстанавливает полный спис
 в input. `Escape` с непустым value очищает поле; `Escape` с пустым value
 снимает focus.
 
+Top-chrome search inputs use input-owned keyboard navigation. `ArrowUp` /
+`ArrowDown` change `aria-activedescendant` and the visual active row; DOM focus
+stays in the input so the user can keep typing. This applies to Sidebar channel
+search, `Search spaces` and `Search collections`. `Enter` activates the active
+row. Pointer hover can update the active row but must not blur the input.
+
 Right collection switcher живёт в правом top chrome segment и показывает
 текущую Grid route collection: `Everything` или имя текущего канала. Геометрия
 повторяет space selector: root slot `h-full min-w-0 max-w-[50%] flex-none
@@ -377,12 +384,16 @@ pill `h-6 rounded-1 px-2 bg-active` вокруг имени. При клике
 открывается обычный `DropdownMenu` со search field `Input ghost` и пунктами
 коллекций в том же порядке, что Sidebar. Текущая коллекция не дублируется в
 списке вообще: нет checkbox/radio/check icon, нет selected row, нет disabled
-current item. Внизу dropdown закреплён create action: пустой query показывает
-disabled `Create New Channel`, непустой query без exact match показывает
-`Create "{query}"`. Создание вызывает штатный channel create command,
-обновляет taxonomy/grid snapshots и переводит route в новый канал. Ширина
-dropdown — floating width role `selector` (`18rem`), такая же как у Space
-dropdown.
+current item. Search input остаётся единственным focus owner внутри dropdown:
+hover по destination rows не переводит фокус с input на строку. Строки ниже
+input — menu-styled action buttons с `role="menuitem"`, а не roving-focus
+`DropdownMenuItem`. Внизу всегда закреплена строка `Create channel`; она не
+является search result и не меняет текст на `Create "{query}"`. Нажатие
+закрывает dropdown и открывает отдельный create-channel dialog; dialog может
+prefill'иться текущим query, валидирует пустые/дублирующиеся имена, вызывает
+штатный channel create command, обновляет taxonomy/grid snapshots и переводит
+route в новый канал. Ширина dropdown — floating width role `selector` (`18rem`),
+такая же как у Space dropdown.
 
 Top chrome controls are dual-purpose. A short pointer gesture keeps the native
 control action: click opens the space selector, click/focus enters channel
@@ -940,6 +951,13 @@ Masonry с round-robin распределением по колонкам. Gap: 
 Top inset ленты: 64px (`--spacing-s7`) от верхнего меню до верхнего края masonry layout. Inset живёт на внутреннем virtual layout через `marginTop`, а не на scrollport.
 
 Паддинги сетки: 32px по бокам (при развёрнутом сайдбаре), 72px (при свёрнутом — компенсация ширины).
+
+Пустой канал показывает только текстовый placeholder, без card surface, quote
+marker, border, иконок или CTA-кнопок. Placeholder центрируется в видимом
+viewport Grid и оформляется как plain italic text: `p`, `text-center`,
+`text-base italic text-muted-foreground`. Текст: `Cards connected to this
+channel will appear here.` Для `Everything` и пустой search выдачи этот
+placeholder не показывается.
 
 Карточки: `border border-border`, без скругления (`rounded-0`). Обводка = +1 уровень к фону. Hover не меняет frame карточки: без смены цвета рамки, второй линии, тени, glow, inset overlay или transition. Hover-affordance карточки — только action controls. Keyboard/focused state принадлежит GridItem, не Card: focused item получает `data-feed-grid-item-focused="true"`, а существующий Card frame меняет border color на тот же token, что left sidebar row focus seam — `var(--border-accent)` — с тем же `180ms cubic-bezier(0.22, 1, 0.36, 1)` transition. Без card-frame overlay, extra line, ring/glow или `foreground` border; Card не получает focus props/classes.
 

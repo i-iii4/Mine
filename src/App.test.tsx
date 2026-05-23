@@ -674,6 +674,42 @@ describe("AppWithVault", () => {
     expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeSearch);
   });
 
+  it("navigates sidebar search results with arrows while keeping the search input focused", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.keyDown(window, { key: "F", code: "KeyF", metaKey: true, shiftKey: true });
+    const input = screen.getByRole("textbox", { name: "Search channels" });
+    await waitFor(() => {
+      expect(input).toHaveFocus();
+    });
+
+    fireEvent.change(input, { target: { value: "alp" } });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("alp");
+    expect(input).toHaveAttribute("aria-activedescendant", "sidebar-row-tag%3Aalpha");
+
+    fireEvent.change(input, { target: { value: "alph" } });
+    expect(input).toHaveFocus();
+    expect(input).not.toHaveAttribute("aria-activedescendant");
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
+    });
+  });
+
   it("shows a right top-chrome collection switcher without duplicating the current collection", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -693,11 +729,18 @@ describe("AppWithVault", () => {
       expect(screen.getByRole("textbox", { name: "Search collections" })).toHaveFocus();
     });
 
+    expect(screen.getByRole("menuitem", { name: "Create channel" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Everything" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "alpha" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "beta" })).toBeInTheDocument();
 
     const search = screen.getByRole("textbox", { name: "Search collections" });
+    fireEvent.pointerMove(screen.getByRole("menuitem", { name: "alpha" }));
+    expect(search).toHaveFocus();
+
+    fireEvent.change(search, { target: { value: "alpha" } });
+    expect(screen.getByRole("menuitem", { name: "Create channel" })).toBeInTheDocument();
+
     fireEvent.change(search, { target: { value: "bet" } });
     expect(screen.queryByRole("menuitem", { name: "alpha" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("menuitem", { name: "beta" }));
@@ -706,6 +749,42 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("beta:1");
     });
     expect(screen.getByRole("button", { name: "Switch collection: beta" })).not.toHaveFocus();
+  });
+
+  it("keeps collection search focused while arrow keys move the active descendant", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch collection: Everything" }));
+    const search = await screen.findByRole("textbox", { name: "Search collections" });
+
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    await waitFor(() => {
+      expect(search).toHaveFocus();
+    });
+    expect(search).toHaveAttribute("aria-activedescendant");
+    expect(screen.getByRole("menuitem", { name: "alpha" })).toHaveAttribute(
+      "data-search-menu-action-active",
+      "true",
+    );
+
+    fireEvent.change(search, { target: { value: "b" } });
+    expect(search).toHaveFocus();
+    expect(search).not.toHaveAttribute("aria-activedescendant");
+
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    fireEvent.keyDown(search, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("beta:1");
+    });
   });
 
   it("omits the active channel from the right top-chrome collection dropdown", async () => {
@@ -776,7 +855,10 @@ describe("AppWithVault", () => {
     fireEvent.click(screen.getByRole("button", { name: "Switch collection: Everything" }));
     const search = await screen.findByRole("textbox", { name: "Search collections" });
     fireEvent.change(search, { target: { value: "gamma" } });
-    fireEvent.click(screen.getByRole("menuitem", { name: 'Create "gamma"' }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Create channel" }));
+    const channelName = await screen.findByRole("textbox", { name: "Channel name" });
+    expect(channelName).toHaveValue("gamma");
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => {
       expect(commandMocks.createChannel).toHaveBeenCalledWith("gamma");
