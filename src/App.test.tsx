@@ -594,7 +594,7 @@ describe("AppWithVault", () => {
     });
 
     const topSidebarSegment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement | null;
-    expect(topSidebarSegment?.parentElement).toHaveClass("bg-chrome");
+    expect(topSidebarSegment?.parentElement).toHaveClass("bg-accent");
     expect(topSidebarSegment).toHaveStyle({ width: "var(--sidebar-width)" });
     expect(topSidebarSegment).toHaveClass("border-r", "border-sidebar-border");
     const spaceSwitcher = topSidebarSegment?.querySelector("[data-vault-switcher]") as HTMLElement | null;
@@ -624,7 +624,7 @@ describe("AppWithVault", () => {
     const contentSegment = document.querySelector(
       "[data-main-secondary-top-bar-content-segment]",
     ) as HTMLElement | null;
-    expect(secondaryBar).toHaveClass("h-8", "border-b", "border-border", "bg-background");
+    expect(secondaryBar).toHaveClass("h-8", "border-b", "border-border", "bg-chrome");
     expect(sidebarSegment).toHaveStyle({ width: "var(--sidebar-width)" });
     expect(sidebarSegment).toHaveClass("border-r", "border-sidebar-border");
     expect(contentSegment).toHaveClass("flex-1");
@@ -665,7 +665,7 @@ describe("AppWithVault", () => {
       "[data-secondary-detail-top-menu]",
     ) as HTMLElement | null;
     expect(screen.getByRole("dialog")).toHaveAttribute("data-detail-top-chrome-mode", "external");
-    expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-accent");
+    expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-chrome");
     expect(secondarySidebarBar).toBeInTheDocument();
     expect(secondaryDetailMenu).toBeInTheDocument();
     expect(secondarySidebarBar).toHaveTextContent("Channels:");
@@ -770,7 +770,7 @@ describe("AppWithVault", () => {
       expect(input).toHaveFocus();
     });
     const searchSurface = input.closest("[data-sidebar-top-search-surface]") as HTMLElement;
-    expect(searchSurface).not.toHaveClass("bg-accent");
+    expect(searchSurface).not.toHaveClass("bg-active");
     expect(input).toHaveClass("font-mono");
     expect(input).toHaveClass("text-sm");
     expect(input).toHaveClass("text-muted-foreground");
@@ -782,11 +782,11 @@ describe("AppWithVault", () => {
     expect(screen.queryByRole("button", { name: "Clear channel search" })).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "alp" } });
 
-    expect(searchSurface).toHaveClass("bg-accent");
+    expect(searchSurface).toHaveClass("bg-active");
     fireEvent.click(screen.getByRole("button", { name: "Clear channel search" }));
     expect(input).toHaveFocus();
     expect(input).toHaveValue("");
-    expect(searchSurface).not.toHaveClass("bg-accent");
+    expect(searchSurface).not.toHaveClass("bg-active");
     expect(screen.queryByRole("button", { name: "Clear channel search" })).not.toBeInTheDocument();
 
     fireEvent.change(input, { target: { value: "alp" } });
@@ -1092,8 +1092,8 @@ describe("AppWithVault", () => {
     const sidebarSearchSurface = document.querySelector("[data-sidebar-top-search-surface]") as HTMLElement;
     const topSidebarSegment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
     expect(compactMenu).toBeInTheDocument();
-    expect(topSidebarSegment.parentElement).toHaveClass("bg-chrome");
-    expect(topSidebarSegment.parentElement).not.toHaveClass("bg-accent");
+    expect(topSidebarSegment.parentElement).toHaveClass("bg-accent");
+    expect(topSidebarSegment.parentElement).not.toHaveClass("bg-chrome");
     expect(document.querySelector("[data-main-secondary-top-bar]")).not.toBeInTheDocument();
     expect(sidebarSearchSurface).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toHaveAttribute("data-detail-top-chrome-mode", "external");

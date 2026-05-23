@@ -101,8 +101,8 @@ typography must stay inside the 12/14/18px design-system scale.
 | Уровень | Токен | Светлая (L) | Тёмная (L) | Назначение |
 |---|---|---|---|---|
 | 0 | `--background` | 1.0 | 0.1567 | Фон страницы |
-| +0.5 | `--chrome` | 0.99 | 0.1691 | App/top chrome между фоном и action bar |
-| +1 | `--accent` | 0.98 | 0.1815 | Hover фон, action bar |
+| +0.5 | `--chrome` | 0.99 | 0.1691 | Второй chrome layer: secondary bar, Detail/card title chrome |
+| +1 | `--accent` | 0.98 | 0.1815 | Permanent top chrome, bottom action bar, hover фон |
 | +2 | `--sidebar-accent`, `--active` | 0.965 | 0.2063 | Legacy/sidebar surface, нажатие |
 | +3 | `--border` | 0.95 | 0.2311 | Границы, разделители |
 
@@ -110,8 +110,10 @@ typography must stay inside the 12/14/18px design-system scale.
 
 **Примечание:** `--chrome` — отдельная роль app shell, не sidebar state.
 Токены `--muted`, `--secondary` имеют то же значение, что и `--accent` (для
-совместимости с shadcn). Для нижней панели и активных search surfaces
-используем `bg-accent`, для верхнего chrome — `bg-chrome`.
+совместимости с shadcn). Для нижней панели и permanent top chrome используем
+`bg-accent`, чтобы верхний и нижний системные слои совпадали. Для второго
+chrome layer используем промежуточный `bg-chrome`. Active search surface на
+`bg-accent` chrome поднимается до существующего state-token `bg-active`.
 
 ### Заливки компонентов (component fills)
 
@@ -310,10 +312,10 @@ traffic-light spacer, separator `w-px bg-border`, space selector, separator
 `w-px bg-border`, search input, затем штатный `border-r border-sidebar-border`
 между Sidebar и Main.
 
-Permanent top chrome использует `bg-chrome`, промежуточный surface между
-`bg-background` и `bg-accent`. Это оставляет активному search surface следующий
-видимый уровень заливки: когда query непустой, search wrapper получает
-`bg-accent`, а остальной header остаётся `bg-chrome`.
+Permanent top chrome использует `bg-accent`, тот же surface, что нижняя action
+bar. Второй слой под ним использует промежуточный `bg-chrome`. Когда query
+непустой, search wrapper получает `bg-active`, существующий state-token выше
+`bg-accent`; новых цветов для search state не добавляется.
 
 Когда sidebar collapsed, top chrome не схлопывается до `0px` и не держит
 пустой слот под исчезнувший поиск. Левый segment сжимается до реального
@@ -375,9 +377,9 @@ text-muted-foreground`. Search занимает весь остаток шири
 видимым, поэтому пользователь видит последние вводимые символы. Пустое поле на
 hover/focus не получает фон: реагирует только placeholder,
 `text-tertiary-foreground` → `text-muted-foreground`. Когда trimmed query
-непустой, только search surface получает `bg-accent`, тот же surface token, что
-нижняя action bar; весь header, space selector и separator lines остаются на
-`bg-chrome`.
+непустой, только search surface получает `bg-active`, существующий state-token
+над `bg-accent`; весь header, space selector и separator lines остаются на
+permanent top chrome surface `bg-accent`.
 
 Clear action появляется только когда value непустой: `button h-6 w-6
 rounded-1`, иконка `X` из `lucide-react`, `aria-label="Clear channel search"`.
@@ -428,7 +430,7 @@ Compact Detail top menu — экспериментальная настройк�
 compact geometry: collection switcher использует `px-3` уже на главной
 странице, поэтому `Everything`/название текущего канала не меняет X-position
 при открытии и закрытии Detail. Permanent top chrome всегда остаётся
-`bg-chrome`; открытие Detail не меняет его surface. Внутренний Detail top bar и sidebar
+`bg-accent`; открытие Detail не меняет его surface. Внутренний Detail top bar и sidebar
 `Channels:` bar не рендерятся. Segmented control `All / Connected`
 принадлежит левому Sidebar/search segment: в expanded state он стоит внутри
 search surface справа от `Search channels...` и слева от вертикального sidebar
@@ -440,10 +442,10 @@ divider; в collapsed state search скрыт и `All / Connected` не ренд
 Геометрия Compact Detail top menu:
 
 - Height: `h-8`, как permanent top chrome.
-- Surface: всегда `bg-chrome`. Это жёсткий permanent app chrome surface; он не
-  переходит в `bg-accent` при открытии Detail. Активный search по-прежнему
-  получает `bg-accent`, поэтому остаётся следующим уровнем заливки над ordinary
-  chrome.
+- Surface: всегда `bg-accent`. Это жёсткий permanent app chrome surface и тот
+  же surface, что нижняя action bar. Он не меняется при открытии Detail.
+  Активный search получает `bg-active`, поэтому остаётся видимым state поверх
+  permanent chrome.
 - Spacing: только compact axis `px-3`; правые `px-6`, `px-8` и любые 32px
   content-axis insets запрещены во всём режиме настройки, включая main/Grid
   state до открытия Detail.
@@ -476,7 +478,7 @@ Motion: Detail-only элементы в compact top chrome входят и вы�
 `detail-top-bar-enter`, а separator line — через `detail-top-bar-line-enter`.
 Collection switcher, space selector, channel search и Sidebar divider не
 анимируются при открытии Detail и не меняют позицию. Цвет permanent top chrome
-никогда не анимируется и остаётся `bg-chrome`; Detail-only controls анимируются
+никогда не анимируется и остаётся `bg-accent`; Detail-only controls анимируются
 через `220ms cubic-bezier(0.22, 1, 0.36, 1)`. Exit state выставляется синхронно в
 close handler до очистки selected Detail state; выход должен идти тем же
 motion path, что появление, без промежуточного скачка в normal top chrome.
@@ -789,7 +791,7 @@ Trigger width не является шириной menu по умолчанию.
 
 ### Тулбар
 
-`<header>`: `h-8 border-b border-border bg-chrome`, `data-tauri-drag-region` для
+`<header>`: `h-8 border-b border-border bg-accent`, `data-tauri-drag-region` для
 пустых зон перетаскивания окна. Высота строго 32px. Интерактивные элементы
 внутри top chrome не выключают drag целиком: они используют общий threshold
 gesture (`4px`) — короткий жест остаётся click/focus, движение за порог
@@ -956,8 +958,8 @@ Sidebar/Detail в App shell запрещены: они создают трети
 
 | Surface | Geometry |
 |---|---|
-| Main secondary top bar | `h-8 border-b border-border bg-background`, split sidebar/content |
-| Detail/link-editor secondary bar | тот же second-level bar, `bg-accent`; sidebar segment `px-8 gap-2`, content segment `px-8 gap-3` |
+| Main secondary top bar | `h-8 border-b border-border bg-chrome`, split sidebar/content |
+| Detail/link-editor secondary bar | тот же second-level bar, `bg-chrome`; sidebar segment `px-8 gap-2`, content segment `px-8 gap-3` |
 
 В main/Grid state второй top-bar level — тихая информационная строка, а не
 навигация и не toolbar. Она показывает статистику текущего пространства и

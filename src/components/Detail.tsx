@@ -356,7 +356,7 @@ export function Detail({
       {topChromeMode === "classic" && (
         <header
           data-entered={chromeEntered ? "true" : "false"}
-          className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 bg-accent px-8"
+          className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 bg-chrome px-8"
           data-detail-top-menu="classic"
         >
           <div

@@ -383,13 +383,13 @@ versioned collection-index backfill до формирования стабиль
    при открытии карточки.
 
 Geometry не добавляет ad-hoc пустой header над списком. Основной shell имеет
-второй top-bar level: `h-8 border-b border-border bg-background`, split на
+второй top-bar level: `h-8 border-b border-border bg-chrome`, split на
 sidebar segment и main/content segment, с тем же sidebar width contract
 (`var(--sidebar-width)`) и `border-r border-sidebar-border`. Сам список sidebar
 держит только `pt-8` (`32px`) на `data-sidebar-scroll`; суммарный visual top
 offset expanded главной = второй bar `32px` + list inset `32px` = `64px`.
 Link-editor selector живёт в полноширинном
-`bg-accent` second-level shell row, а не как дополнительная flow-плашка или body
+`bg-chrome` second-level shell row, а не как дополнительная flow-плашка или body
 overlay. Открытие Detail не должно добавлять случайный flow-элемент над списком.
 
 Sidebar link-editor chrome использует тот же motion contract, что и Detail top
@@ -753,8 +753,8 @@ Image media expansion:
 - `Cmd+F` сейчас переключает App-owned main search state без rendered main
   search component. Route-facing механизм поиска не удалён: `searchQuery`
   остаётся входом для фильтрации Grid route: Everything или текущей коллекции.
-  Permanent top chrome uses `bg-chrome`, the app-shell surface midway between
-  `bg-background` and the bottom/action/search `bg-accent` surface.
+  Permanent top chrome uses `bg-accent`, the same surface as the bottom action
+  bar. The second-level top bar uses intermediate `bg-chrome`.
   Top chrome делится той же границей `--sidebar-width`, что и body: слева
   traffic-light spacer, space selector, sidebar channel search и
   `border-r border-sidebar-border`, справа current collection switcher и
@@ -819,8 +819,9 @@ Image media expansion:
   background. Search input text uses the same permanent top-chrome typography
   as Detail top bar: `font-mono text-sm text-muted-foreground`, regular
   weight. When the trimmed query is non-empty, only the search surface is filled
-  with `bg-accent`, matching the bottom action bar surface. The top header,
-  space selector and separator lines remain on `bg-chrome`.
+  with `bg-active`, the existing active-state token above the `bg-accent`
+  permanent top surface. The top header, space selector and separator lines
+  remain on `bg-accent`.
 - The clear action appears only when the input value is non-empty. It is an
   icon-only `X` button (`h-6 w-6 rounded-1`, `aria-label="Clear channel
   search"`). Clicking it clears the query, restores the full channel list and
@@ -881,7 +882,7 @@ Image media expansion:
   names keep the same horizontal position before, during and after Detail.
   Opening Detail must not remount or shift that collection switcher; Detail only
   adds animated sibling controls. When the flag is on and Detail is open, the
-  global top chrome still remains on `bg-chrome` and owns the Detail controls. The
+  global top chrome still remains on `bg-accent` and owns the Detail controls. The
   internal Detail top bar is not rendered, and the Sidebar `Channels:`
   link-editor top bar is not rendered.
 - In Compact Detail mode the `All / Connected` segmented control is part of
@@ -918,7 +919,7 @@ Image media expansion:
   Detail-only controls (`All / Connected`, card title, overflow, close and
   their collapsed-sidebar separator) enter and exit with `opacity + translateY`
   using `detail-top-bar-enter` / `detail-top-bar-line-enter`. The top chrome
-  background is not animated and remains `bg-chrome`; Detail-only controls use the
+  background is not animated and remains `bg-accent`; Detail-only controls use the
   same `cubic-bezier(0.22, 1, 0.36, 1)` motion. Route/collection labels that
   already existed on the main Grid screen must not animate, remount or move.
   Close starts the exit state synchronously in the close handler, before

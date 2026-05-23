@@ -808,7 +808,7 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
 
   return (
     <div
-      className="detail-top-bar-enter absolute inset-x-0 top-0 z-10 flex h-8 items-center gap-2 bg-accent px-8"
+      className="detail-top-bar-enter absolute inset-x-0 top-0 z-10 flex h-8 items-center gap-2 bg-chrome px-8"
       data-entered={entered ? "true" : "false"}
       data-sidebar-link-mode-bar
     >

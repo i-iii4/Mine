@@ -245,7 +245,7 @@ function MainSecondaryTopBar({
       data-main-secondary-top-bar=""
       className={cn(
         "flex h-8 shrink-0 items-center border-b border-border transition-colors duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-        detailBlock ? "bg-accent" : "bg-background",
+        "bg-chrome",
       )}
     >
       <div
@@ -2698,7 +2698,7 @@ export function AppWithVault({
       {/* Top toolbar */}
       <header
         data-tauri-drag-region
-        className="flex h-8 shrink-0 items-center border-b border-border bg-chrome"
+        className="flex h-8 shrink-0 items-center border-b border-border bg-accent"
       >
         <div
           data-tauri-drag-region
@@ -2743,7 +2743,7 @@ export function AppWithVault({
                   {...sidebarSearchChromeDragGesture}
                   className={[
                     "group/sidebar-search flex h-full min-w-0 flex-1 items-center",
-                    sidebarSearchHasActiveQuery ? "bg-accent" : "",
+                    sidebarSearchHasActiveQuery ? "bg-active" : "",
                   ].filter(Boolean).join(" ")}
                   data-sidebar-top-search-surface=""
                 >

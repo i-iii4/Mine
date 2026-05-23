@@ -144,7 +144,7 @@ describe("Detail", () => {
     const topMenu = container.querySelector('[data-detail-top-menu="classic"]');
     expect(topMenu).not.toBeNull();
     expect(topMenu).toHaveClass("detail-top-bar-enter");
-    expect(topMenu).toHaveClass("h-8", "bg-accent", "px-8");
+    expect(topMenu).toHaveClass("h-8", "bg-chrome", "px-8");
   });
 
   it("toggles the classic top overflow menu with Command-K", async () => {

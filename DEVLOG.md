@@ -1,5 +1,24 @@
 # Devlog
 
+## 23.05.2026 [change] — Swap top and second-level chrome surfaces
+
+### Context
+
+- The permanent top bar should use the same surface as the bottom action bar.
+- The second-level bar should use the intermediate chrome surface in both main
+  and open-card states.
+
+### Completed
+
+- Changed permanent top chrome from `bg-chrome` to `bg-accent`.
+- Changed the main secondary bar and non-compact Detail/link-editor bar to
+  `bg-chrome`.
+- Changed classic Detail and Sidebar fallback title bars to `bg-chrome`.
+- Moved active Sidebar search fill to existing `bg-active`, so it remains
+  visible on the `bg-accent` top chrome without introducing a new color.
+- Updated design-system/frontend docs and regression tests for the new surface
+  contract.
+
 ## 23.05.2026 [implementation] — Render main secondary statistics bar
 
 ### Context
