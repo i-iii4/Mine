@@ -73,6 +73,7 @@ export function TopCollectionSwitcher({
     deferPointerOpen: true,
     onPointerOpen: () => setOpen((current) => !current),
   });
+  const menuAlignOffset = compact ? 12 : 24;
   const currentKey = collectionKey(currentTag);
   const label = currentCollectionLabel(currentTag);
   const trimmedQuery = query.trim().replace(/\s+/g, " ");
@@ -265,11 +266,14 @@ export function TopCollectionSwitcher({
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="start"
+          alignOffset={menuAlignOffset}
           side="bottom"
           sideOffset={4}
           widthRole="selector"
           onCloseAutoFocus={topChromeTrigger.handleCloseAutoFocus}
           className="overflow-hidden p-0"
+          data-top-collection-menu=""
+          data-top-collection-menu-align-offset={menuAlignOffset}
         >
           <div className="border-b border-border p-1">
             <Input

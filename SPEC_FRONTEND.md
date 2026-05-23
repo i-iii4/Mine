@@ -736,7 +736,9 @@ Image media expansion:
   pinned `Add space` action. The current space is omitted entirely, with no
   checkmark/selected/disabled duplicate row. `Add space` is plain and iconless.
   The dropdown uses floating width role `selector`:
-  `width: min(18rem, available-width)`.
+  `width: min(18rem, available-width)`. The dropdown is anchored to the visible
+  inner selector pill, not to the invisible root layout slot: top-chrome space
+  selector uses Radix `align="start"` with `alignOffset=12`.
 - Sidebar search renders as a `data-sidebar-top-search-surface` wrapper with a
   transparent `Input ghost` and an optional clear action. Empty hover/focus
   changes only placeholder text from tertiary to muted; it does not add a
@@ -777,7 +779,9 @@ Image media expansion:
   model as Sidebar search: `ArrowUp`/`ArrowDown` change
   `aria-activedescendant`, while the input remains focused.
   The dropdown uses the same floating width role `selector` as Space dropdown:
-  `width: min(18rem, available-width)`.
+  `width: min(18rem, available-width)`. The dropdown is anchored to the visible
+  inner collection pill, not to the invisible root layout slot: expanded mode
+  uses Radix `alignOffset=24`, compact/collapsed mode uses `alignOffset=12`.
 - Top chrome controls must remain usable as window drag handles. The space
   selector and sidebar search input use `useChromeDragGesture()`: movement
   below `4px` is handled as normal click/focus/editing, movement at or above

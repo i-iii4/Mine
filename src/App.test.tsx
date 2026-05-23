@@ -729,6 +729,10 @@ describe("AppWithVault", () => {
       expect(screen.getByRole("textbox", { name: "Search collections" })).toHaveFocus();
     });
 
+    expect(document.querySelector("[data-top-collection-menu]")).toHaveAttribute(
+      "data-top-collection-menu-align-offset",
+      "24",
+    );
     expect(screen.getByRole("menuitem", { name: "Create channel" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Everything" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "alpha" })).toBeInTheDocument();

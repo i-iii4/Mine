@@ -349,6 +349,9 @@ destination spaces и pinned `Add space` action без иконки. Rows ниж
 menu-styled buttons с `role="menuitem"`; hover может менять active row, но не
 забирает DOM focus из input. Ширина dropdown — floating width role `selector`
 (`18rem` с available-width cap), а не ширина trigger и не content-fit.
+Позиционирование dropdown привязано к видимой внутренней пуле selector, а не к
+невидимому root slot: Radix `align="start"` использует `alignOffset=12`, равный
+root inset `px-3`.
 
 Search input не использует иконку. Search surface — wrapper `h-8 min-w-0
 flex-1`, внутри прозрачный `Input ghost` (`rounded-0 px-3 py-0 border-none`)
@@ -394,6 +397,10 @@ prefill'иться текущим query, валидирует пустые/ду�
 штатный channel create command, обновляет taxonomy/grid snapshots и переводит
 route в новый канал. Ширина dropdown — floating width role `selector` (`18rem`),
 такая же как у Space dropdown.
+Позиционирование dropdown привязано к видимой внутренней пуле collection
+trigger. В expanded mode Radix `alignOffset=24` компенсирует root `px-6`; в
+compact/collapsed mode `alignOffset=12` компенсирует root `px-3`. Dropdown не
+может выпадать от невидимого layout slot, даже если slot шире видимой пули.
 
 Top chrome controls are dual-purpose. A short pointer gesture keeps the native
 control action: click opens the space selector, click/focus enters channel

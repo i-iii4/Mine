@@ -99,6 +99,10 @@ describe("VaultSwitcher", () => {
     expect(screen.queryByRole("menuitem", { name: "Mine" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Тест" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Add space" })).toBeInTheDocument();
+    expect(document.querySelector("[data-vault-switcher-menu]")).toHaveAttribute(
+      "data-vault-switcher-menu-align-offset",
+      "12",
+    );
     expect(document.querySelector("[data-slot='dropdown-menu-content']")?.querySelector("svg")).toBeNull();
   });
 

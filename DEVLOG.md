@@ -1,5 +1,23 @@
 # Devlog
 
+## 22.05.2026 [fix] — Anchor top-chrome selector menus to visible pills
+
+### Context
+
+- Top-chrome collection and space triggers use a transparent root slot with an
+  inner active pill.
+- Radix dropdowns were aligned to the root slot, so a selector menu could look
+  horizontally detached from the visible `Everything`/space pill.
+
+### Completed
+
+- Kept Radix/Popper positioning and semantic `selector` width roles.
+- Added explicit `alignOffset` values that compensate top-chrome root padding:
+  `24px` for expanded collection selector and `12px` for compact collection /
+  space selectors.
+- Added regression coverage for collection and space selector menu anchor
+  offsets.
+
 ## 22.05.2026 [change] — Add right top-chrome collection switcher
 
 ### Context

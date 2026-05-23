@@ -50,6 +50,7 @@ export function VaultSwitcher({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const triggerLabel = vaultName(currentPath);
   const isTopChrome = surface === "topChrome";
+  const menuAlignOffset = isTopChrome ? 12 : 0;
 
   useEffect(() => {
     listKnownVaults().then(setKnownVaults).catch(() => {});
@@ -240,10 +241,13 @@ export function VaultSwitcher({
       <DropdownMenuContent
         side={isTopChrome ? "bottom" : "top"}
         align="start"
+        alignOffset={menuAlignOffset}
         sideOffset={isTopChrome ? 4 : 8}
         widthRole={isTopChrome ? "selector" : "command"}
         onCloseAutoFocus={isTopChrome ? topChromeTrigger.handleCloseAutoFocus : undefined}
         className={isTopChrome ? "overflow-hidden p-0" : undefined}
+        data-vault-switcher-menu={isTopChrome ? "" : undefined}
+        data-vault-switcher-menu-align-offset={isTopChrome ? menuAlignOffset : undefined}
       >
         {isTopChrome && (
           <div className="border-b border-border p-1">
