@@ -414,6 +414,62 @@ trigger. В expanded mode Radix `alignOffset=24` компенсирует root `
 compact/collapsed mode `alignOffset=12` компенсирует root `px-3`. Dropdown не
 может выпадать от невидимого layout slot, даже если slot шире видимой пули.
 
+Compact Detail top menu — экспериментальная настройка Settings
+`Compact Detail top menu`. Настройка заранее переводит right top chrome в
+compact geometry: collection switcher использует `px-3` уже на главной
+странице, поэтому `Everything`/название текущего канала не меняет X-position
+при открытии и закрытии Detail. Когда Detail открыт, весь permanent top chrome
+плавно получает `bg-accent`, а внутренний Detail top bar и sidebar
+`Channels:` bar не рендерятся. Segmented control `All / Connected`
+принадлежит левому Sidebar/search segment: в expanded state он стоит внутри
+search surface справа от `Search channels...` и слева от вертикального sidebar
+divider; в collapsed state search скрыт и `All / Connected` не рендерится,
+потому что в compact rail нет списка строк, который нужно фильтровать. Правая
+часть top chrome начинается с того же кликабельного collection switcher, затем
+показывает название карточки, overflow `…`, close `X`.
+
+Геометрия Compact Detail top menu:
+
+- Height: `h-8`, как permanent top chrome.
+- Surface: `bg-background` в main/Grid state; при открытом Detail плавно
+  переходит в `bg-accent`, тот же surface token, что bottom app bar.
+- Spacing: только compact axis `px-3`; правые `px-6`, `px-8` и любые 32px
+  content-axis insets запрещены во всём режиме настройки, включая main/Grid
+  state до открытия Detail.
+- Segmented control: `h-6 p-[2px] rounded-1 font-mono text-sm`, segments
+  `h-5 px-[1ch] rounded-[2px]`; active segment
+  `bg-component-fill-inner text-foreground`, inactive
+  `text-muted-foreground`.
+- `Channels:` label в этом режиме запрещён.
+- Текущая коллекция: штатный `TopCollectionSwitcher` в compact geometry
+  (`px-3`, inner pill `h-6 px-2`). Это постоянный элемент right top chrome, а
+  не часть условного Detail-блока: trigger остаётся тем же DOM/layout control
+  до открытия Detail, во время Detail и после закрытия. Trigger остаётся
+  кликабельным и открывает тот же dropdown коллекций; plain text label здесь
+  запрещён.
+- Название карточки: `font-mono text-sm text-muted-foreground`,
+  `min-w-0 flex-1 truncate pl-0 pr-3`; это первый элемент, который отдаёт
+  ширину. Левый padding запрещён: зазор между видимой collection pill и title
+  задаёт только правый `px-3` slot самого `TopCollectionSwitcher`, иначе
+  получается двойной неартикулированный отступ.
+- Overflow и close: icon buttons `size-8 shrink-0`, всегда видимы. Правая
+  сторона получает compact inset `pr-3`, чтобы close не упирался в край окна.
+
+Responsive order: сначала режется название карточки, затем текущая коллекция,
+затем сжимается Sidebar search в своём существующем flex slot. Segmented
+control, overflow и close не сжимаются. В collapsed Sidebar state channel
+search скрыт как обычно, а `All / Connected` отсутствует.
+
+Motion: Detail-only элементы в compact top chrome входят и выходят тем же
+языком, что classic Detail chrome: `opacity + translateY` через
+`detail-top-bar-enter`, а separator line — через `detail-top-bar-line-enter`.
+Collection switcher, space selector, channel search и Sidebar divider не
+анимируются при открытии Detail и не меняют позицию. Цвет permanent top chrome
+анимируется между `bg-background` и `bg-accent` через `transition-colors`
+`220ms cubic-bezier(0.22, 1, 0.36, 1)`. Exit state выставляется синхронно в
+close handler до очистки selected Detail state; выход должен идти тем же
+motion path, что появление, без промежуточного скачка в normal top chrome.
+
 Top chrome controls are dual-purpose. A short pointer gesture keeps the native
 control action: click opens the space selector, click/focus enters channel
 search. Movement beyond `4px` starts native window drag through
@@ -421,6 +477,15 @@ search. Movement beyond `4px` starts native window drag through
 the following click. This keeps the Zed-like behavior where even filled chrome
 can be used to move the window without turning controls into dead drag-only
 areas.
+
+Dropdown triggers inside top chrome use `useTopChromeTriggerInteraction()`
+instead of raw Radix pointer-open. Short pointer click opens the dropdown;
+drag beyond `4px` starts native window drag and suppresses the trailing click,
+so the menu does not flash open after the drag. Pointer-close blurs the trigger
+to avoid sticky hover/focus fill, while keyboard-close restores focus for
+keyboard accessibility. Reusable controls such as `CardMoreMenu` must opt into
+this mode only when rendered inside top chrome; card-local menus keep their
+normal card interaction contract.
 
 Search match mark внутри карточек:
 
@@ -883,6 +948,10 @@ ActionButton geometry: outer `h-6 p-[2px] rounded-1`, segments `h-5
 px-[1ch] rounded-[2px] text-muted-foreground`. Hover заливает только outer
 control через стандартный `hover:bg-component-fill-hover`; активный segment
 использует `bg-component-fill-inner text-foreground`.
+
+Если включён Compact Detail top menu, эта link-editor surface не рендерится:
+тот же `All / Connected` state показывается внутри permanent top chrome
+Sidebar/search segment, без подписи `Channels:`.
 
 Detail article/metadata layout использует right-anchored fixed-rail contract:
 `grid w-full

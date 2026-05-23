@@ -125,6 +125,7 @@ interface DetailProps {
   vaultPath: string;
   thumbsRootPath?: string;
   isClosing?: boolean;
+  topChromeMode?: "classic" | "external";
   onClose: () => void;
   onNavigate: (direction: "prev" | "next" | "up" | "down") => void;
   tags: TagCount[];
@@ -209,6 +210,7 @@ export function Detail({
   vaultPath,
   thumbsRootPath,
   isClosing = false,
+  topChromeMode = "classic",
   onClose,
   tags,
   currentTag,
@@ -315,6 +317,7 @@ export function Detail({
   }, [onClose]);
 
   useEffect(() => {
+    if (topChromeMode === "external") return;
     const handler = (event: KeyboardEvent) => {
       if (!isDetailCommandK(event)) return;
       if (shouldIgnoreDetailCommandK(event) && !topMenuOpen) return;
@@ -324,7 +327,7 @@ export function Detail({
     };
     document.addEventListener("keydown", handler, true);
     return () => document.removeEventListener("keydown", handler, true);
-  }, [topMenuOpen]);
+  }, [topChromeMode, topMenuOpen]);
 
   // Auto-focus the panel so keyboard events work immediately
   useEffect(() => {
@@ -350,53 +353,55 @@ export function Detail({
       aria-label={filename}
       data-detail-root
     >
-      <header
-        data-entered={chromeEntered ? "true" : "false"}
-        className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 bg-accent px-8"
-        data-detail-top-menu="classic"
-      >
-        <div
-          ref={setDragHandleRef}
-          {...dragAttributes}
-          {...dragListeners}
-          className={cn(
-            "min-w-0 flex-1 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
-            isDragging && "opacity-30",
-          )}
-          data-detail-drag-handle
-          title={filename}
-        >
-          {filename}
-        </div>
-        <CardMoreMenu
-          block={displayBlock}
-          vaultPath={vaultPath}
-          tags={tags}
-          currentTag={currentTag}
-          onToggleTag={onToggleTag}
-          onCreateAndAssign={onCreateAndAssign}
-          onRequestRename={onRequestRename}
-          onRequestDelete={onRequestDelete}
-          triggerVariant="ghost"
-          className="shrink-0 text-muted-foreground hover:text-foreground"
-          openRequestSequence={topMenuRequestSequence}
-          onOpenChange={setTopMenuOpen}
-        />
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <X className="size-4" />
-          <span className="sr-only">Close</span>
-        </Button>
-        <span
-          aria-hidden="true"
+      {topChromeMode === "classic" && (
+        <header
           data-entered={chromeEntered ? "true" : "false"}
-          className="detail-top-bar-line-enter pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border"
-        />
-      </header>
+          className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 bg-accent px-8"
+          data-detail-top-menu="classic"
+        >
+          <div
+            ref={setDragHandleRef}
+            {...dragAttributes}
+            {...dragListeners}
+            className={cn(
+              "min-w-0 flex-1 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
+              isDragging && "opacity-30",
+            )}
+            data-detail-drag-handle
+            title={filename}
+          >
+            {filename}
+          </div>
+          <CardMoreMenu
+            block={displayBlock}
+            vaultPath={vaultPath}
+            tags={tags}
+            currentTag={currentTag}
+            onToggleTag={onToggleTag}
+            onCreateAndAssign={onCreateAndAssign}
+            onRequestRename={onRequestRename}
+            onRequestDelete={onRequestDelete}
+            triggerVariant="ghost"
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+            openRequestSequence={topMenuRequestSequence}
+            onOpenChange={setTopMenuOpen}
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <X className="size-4" />
+            <span className="sr-only">Close</span>
+          </Button>
+          <span
+            aria-hidden="true"
+            data-entered={chromeEntered ? "true" : "false"}
+            className="detail-top-bar-line-enter pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border"
+          />
+        </header>
+      )}
       <div
         ref={detailLayoutRef}
         className={cn(

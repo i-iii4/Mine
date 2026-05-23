@@ -1,5 +1,43 @@
 # Devlog
 
+## 23.05.2026 [change] — Add optional Compact Detail top menu
+
+### Context
+
+- Detail currently has its own internal top bar and Sidebar link-editor chrome.
+- We need an optional compact mode where Detail controls move into the
+  permanent app top chrome without changing the main Grid state.
+
+### Completed
+
+- Added a persisted Settings option: `Compact Detail top menu`.
+- When enabled, the right top chrome uses compact collection-switcher geometry
+  even before Detail opens, so `Everything` and channel labels keep a stable
+  horizontal position. Detail adds animated sibling controls instead of
+  remounting or shifting the collection switcher.
+- When Detail is open, the global top chrome transitions to `bg-accent`;
+  `All / Connected` is embedded into the Sidebar search segment left of the
+  Sidebar divider, while the right segment renders card title, overflow and
+  close next to the persistent clickable collection switcher.
+- Suppressed the internal Detail top bar and Sidebar `Channels:` chrome in that
+  mode, while keeping the same App-owned link filter state for Sidebar rows.
+- Kept compact spacing only: no 32px content-axis insets in the compact Detail
+  chrome, with a small right inset so the close button does not touch the
+  window edge.
+- Removed the extra title-side left padding after the collection switcher, so
+  the collection label and card title are separated by a single compact slot
+  instead of doubled padding.
+- Omitted `All / Connected` in collapsed Sidebar compact Detail state, where no
+  visible channel row list exists to filter.
+- Started compact Detail chrome exit synchronously in close handlers so close
+  uses the same animated `opacity + translateY` path as open.
+- Brought every compact top-chrome control into the shared native window-drag
+  contract: short clicks still activate controls, while pointer movement past
+  the threshold starts `startDragging()` and suppresses trailing clicks. The
+  reusable card overflow menu opts into that behavior only in top chrome.
+- Kept the normal main Grid/top chrome unchanged when the setting is disabled.
+- Added regression coverage for the compact Detail top menu contract.
+
 ## 23.05.2026 [change] — Align permanent top chrome typography with Detail
 
 ### Context

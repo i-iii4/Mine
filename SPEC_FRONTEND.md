@@ -796,12 +796,73 @@ Image media expansion:
   `width: min(18rem, available-width)`. The dropdown is anchored to the visible
   inner collection pill, not to the invisible root layout slot: expanded mode
   uses Radix `alignOffset=24`, compact/collapsed mode uses `alignOffset=12`.
-- Top chrome controls must remain usable as window drag handles. The space
-  selector and sidebar search input use `useChromeDragGesture()`: movement
-  below `4px` is handled as normal click/focus/editing, movement at or above
-  `4px` calls `getCurrentWindow().startDragging()` and suppresses the click
-  generated at the end of that drag gesture. Empty chrome regions still use
-  `data-tauri-drag-region`.
+- Top chrome controls must remain usable as window drag handles. Interactive
+  chrome controls use the shared `4px` pointer threshold: movement below the
+  threshold is handled as normal click/focus/editing, movement at or above it
+  calls `getCurrentWindow().startDragging()` and suppresses the click generated
+  at the end of that drag gesture. Empty chrome regions still use
+  `data-tauri-drag-region`. Plain clickable controls use
+  `useChromeDragGesture()`. Dropdown triggers use
+  `useTopChromeTriggerInteraction()` so pointer drag never opens the dropdown
+  and pointer-close does not leave a sticky focus-colored trigger.
+- Compact Detail top menu is an optional Settings flag, persisted in
+  `localStorage` as `mine.compactDetailTopMenu`. The setting changes top-chrome
+  geometry before Detail opens: the right collection switcher uses compact
+  geometry (`px-3`) even on the main Grid screen, so `Everything` and channel
+  names keep the same horizontal position before, during and after Detail.
+  Opening Detail must not remount or shift that collection switcher; Detail only
+  adds animated sibling controls. When the flag is on and Detail is open, the
+  global top chrome transitions to the same `bg-accent` surface as the bottom
+  app bar and owns the Detail controls. The internal Detail top bar is not
+  rendered, and the Sidebar `Channels:` link-editor top bar is not rendered.
+- In Compact Detail mode the `All / Connected` segmented control is part of
+  the left Sidebar/search segment, not the right Detail title segment. In
+  expanded Sidebar state it sits inside the same search surface as
+  `Search channels...`, to the right of the input and to the left of the
+  vertical Sidebar divider. In collapsed Sidebar state channel search remains
+  hidden and the segmented control is omitted; there is no useful row list to
+  filter in the collapsed rail, and adding the control creates unnecessary
+  chrome. The `Channels:` label is omitted. The segmented control is the same
+  App-owned `linkMode` state that filters Sidebar rows (`all` vs linked
+  channels), so there is no second filtering state.
+- Compact Detail right top chrome layout after the Sidebar/search divider:
+  persistent clickable `TopCollectionSwitcher`, opened-card title, card
+  overflow button, close button. The collection control must keep the normal
+  dropdown behavior and stable DOM/layout identity across Detail open/close;
+  plain text collection labels are forbidden.
+- Compact Detail controls inherit the same top-chrome drag contract. The
+  expanded `All / Connected` control is inside the Sidebar search surface and
+  delegates dragging to that parent surface. The collapsed `All / Connected`
+  surface, the close button and the compact card overflow trigger are directly
+  draggable via the shared threshold. `CardMoreMenu` uses this behavior only
+  when explicitly rendered with top-chrome interaction enabled; regular card
+  menus keep ordinary card/menu pointer behavior.
+- Compact Detail top chrome uses compact control spacing only: `px-3` root
+  slots and `h-6 p-[2px]` segmented controls/buttons. The right-side `32px`
+  content axis (`px-6` / `px-8`) is forbidden throughout this setting, including
+  the main Grid state before any Detail is open. The far right edge still keeps
+  compact inset (`pr-3`) so the close button never touches the window edge.
+- The gap between the visible collection pill and the card title is a single
+  compact slot. `TopCollectionSwitcher` owns the right-side `px-3`; the card
+  title starts with `pl-0` and does not add a second left padding layer.
+- Compact Detail motion uses the existing Detail chrome animation language.
+  Detail-only controls (`All / Connected`, card title, overflow, close and
+  their collapsed-sidebar separator) enter and exit with `opacity + translateY`
+  using `detail-top-bar-enter` / `detail-top-bar-line-enter`. The top chrome
+  background color transitions between `bg-background` and `bg-accent` with the
+  same `cubic-bezier(0.22, 1, 0.36, 1)` motion. Route/collection labels that
+  already existed on the main Grid screen must not animate, remount or move.
+  Close starts the exit state synchronously in the close handler, before
+  selected Detail state is cleared, so exit uses the same animated path as
+  enter and does not jump to the normal top chrome.
+- Responsive priority in Compact Detail top chrome: card title shrinks first
+  (`min-w-0 flex-1 truncate`), current collection switcher shrinks second
+  through its own compact trigger constraints, Sidebar search shrinks third
+  through its existing flex slot. `All / Connected`, overflow and close stay
+  non-shrinking and visible.
+- `Cmd+K` while Compact Detail top menu is active opens/toggles the compact
+  top overflow menu. `Cmd+L` keeps copying the opened card path. Closing Detail
+  returns the global top chrome to the normal main-page layout.
 - Desktop shortcut delivery идёт через native Tauri menu accelerators:
   `Cmd+F`/`Shift+Cmd+F` emit `surface-search-shortcut` (`main`/`sidebar`).
   DOM `keydown` остаётся browser/dev fallback и принимает physical
@@ -832,6 +893,9 @@ Image media expansion:
 - Верхнее меню detail имеет фиксированную высоту `h-8`
 - В верхнем меню показывается filename (`media_file`, иначе `${slug}.md`) в `font-mono text-sm text-muted-foreground`
 - Справа в верхнем меню находятся shared overflow menu (`CardMoreMenu`) и close button
+- Если Detail получает `topChromeMode="external"`, внутреннее верхнее меню не
+  рендерится, а `Cmd+K`/overflow/close принадлежат App-level Compact Detail top
+  menu.
 - Верхний chrome Detail входит и выходит через мягкий `opacity + translateY`
   transition; нижняя hairline живёт отдельным visual layer и анимируется
   отдельно от fill

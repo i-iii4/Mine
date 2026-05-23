@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from "react";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ActionButton } from "@/components/ActionButton";
@@ -30,8 +32,16 @@ export interface ThemeMenuHandle {
   toggle: () => void;
 }
 
-export const ThemeMenuButton = forwardRef<ThemeMenuHandle, object>(function ThemeMenuButton(
-  _props,
+interface ThemeMenuButtonProps {
+  compactDetailTopMenuEnabled?: boolean;
+  onCompactDetailTopMenuChange?: (enabled: boolean) => void;
+}
+
+export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>(function ThemeMenuButton(
+  {
+    compactDetailTopMenuEnabled = false,
+    onCompactDetailTopMenuChange,
+  },
   ref,
 ) {
   const [theme, setTheme] = useState<ThemeMode>(getStoredTheme);
@@ -73,6 +83,13 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle, object>(function Them
             {labels[mode]}
           </DropdownMenuItem>
         ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem
+          checked={compactDetailTopMenuEnabled}
+          onCheckedChange={(checked) => onCompactDetailTopMenuChange?.(checked === true)}
+        >
+          Compact Detail top menu
+        </DropdownMenuCheckboxItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

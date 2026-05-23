@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { forwardRef } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult } from "@/types";
 import { AppWithVault } from "./App";
@@ -161,14 +162,21 @@ vi.mock("@/components/Grid", () => ({
 vi.mock("@/components/Detail", () => ({
   Detail: ({
     block,
+    topChromeMode,
     onClose,
     onRequestDelete,
   }: {
     block: LightBlock | IndexedBlock;
+    topChromeMode?: "classic" | "external";
     onClose: () => void;
     onRequestDelete: (slug: string) => void;
   }) => (
-    <div role="dialog" aria-label={`${block.slug}.md`} data-detail-root>
+    <div
+      role="dialog"
+      aria-label={`${block.slug}.md`}
+      data-detail-root
+      data-detail-top-chrome-mode={topChromeMode ?? "classic"}
+    >
       <div data-testid="detail-title">{block.title ?? block.slug}</div>
       <button type="button" onClick={onClose}>
         Close detail
@@ -308,9 +316,35 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function dragPastChromeThreshold(element: HTMLElement, pointerId = 1) {
+  fireEvent.pointerDown(element, {
+    button: 0,
+    pointerId,
+    clientX: 10,
+    clientY: 10,
+  });
+  fireEvent.pointerMove(window, {
+    pointerId,
+    clientX: 18,
+    clientY: 10,
+  });
+  fireEvent.pointerUp(window, {
+    pointerId,
+    clientX: 18,
+    clientY: 10,
+  });
+  fireEvent.click(element);
+}
+
 describe("AppWithVault", () => {
+  const startDragging = vi.fn(async () => {});
+
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getCurrentWindow).mockReturnValue({
+      startDragging,
+    } as never);
+    localStorage.clear();
     sidebarResizeState.width = 300;
     sidebarResizeState.collapsed = false;
     sidebarResizeState.isResizing = false;
@@ -944,6 +978,143 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.getByTestId("grid-restore")).toHaveTextContent("alpha-block:1");
     });
+  });
+
+  it("uses the compact global top menu for Detail when the setting is enabled", async () => {
+    localStorage.setItem("mine.compactDetailTopMenu", "true");
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    const collectionSwitcherBeforeOpen = screen.getByRole("button", {
+      name: "Switch collection: Everything",
+    });
+    expect(collectionSwitcherBeforeOpen).toHaveClass("px-3");
+    expect(document.querySelector("[data-compact-detail-top-menu]")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    });
+
+    const compactMenu = document.querySelector("[data-compact-detail-top-menu]") as HTMLElement;
+    const sidebarSearchSurface = document.querySelector("[data-sidebar-top-search-surface]") as HTMLElement;
+    expect(compactMenu).toBeInTheDocument();
+    expect(sidebarSearchSurface).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveAttribute("data-detail-top-chrome-mode", "external");
+    expect(within(sidebarSearchSurface).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(sidebarSearchSurface).getByRole("button", { name: "Connected" })).toHaveAttribute("aria-pressed", "false");
+    expect(within(compactMenu).queryByRole("button", { name: "All" })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(compactMenu).toHaveAttribute("data-entered", "true");
+    });
+    const compactCollectionSwitcher = screen.getByRole("button", {
+      name: "Switch collection: Everything",
+    });
+    expect(compactCollectionSwitcher).toBe(collectionSwitcherBeforeOpen);
+    expect(compactCollectionSwitcher).toHaveClass("px-3");
+    const compactTitle = within(compactMenu).getByText("alpha-block");
+    expect(compactTitle).toHaveAttribute(
+      "data-compact-detail-card-title",
+      "",
+    );
+    expect(compactTitle).toHaveClass("pl-0");
+    fireEvent.click(compactCollectionSwitcher);
+    const collectionSearch = await screen.findByRole("textbox", { name: "Search collections" });
+    await waitFor(() => {
+      expect(collectionSearch).toHaveFocus();
+    });
+    fireEvent.keyDown(collectionSearch, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("textbox", { name: "Search collections" })).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(within(compactMenu).getByLabelText("Close detail"));
+    await waitFor(() => {
+      expect(compactMenu).toHaveAttribute("data-entered", "false");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("grid-restore")).toHaveTextContent("alpha-block:1");
+    });
+  });
+
+  it("keeps compact Detail top-chrome controls draggable without firing their click actions", async () => {
+    localStorage.setItem("mine.compactDetailTopMenu", "true");
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    });
+
+    const compactMenu = document.querySelector("[data-compact-detail-top-menu]") as HTMLElement;
+    const sidebarSearchSurface = document.querySelector("[data-sidebar-top-search-surface]") as HTMLElement;
+    const closeButton = within(compactMenu).getByLabelText("Close detail");
+    dragPastChromeThreshold(closeButton, 1);
+
+    expect(startDragging).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    expect(screen.getByTestId("grid-restore")).toHaveTextContent("none:0");
+
+    const connectedButton = within(sidebarSearchSurface).getByRole("button", { name: "Connected" });
+    dragPastChromeThreshold(connectedButton, 2);
+
+    expect(startDragging).toHaveBeenCalledTimes(2);
+    expect(connectedButton).toHaveAttribute("aria-pressed", "false");
+    expect(within(sidebarSearchSurface).getByRole("button", { name: "All" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    const overflowButton = within(compactMenu)
+      .getAllByRole("button")
+      .find((button) => (
+        button.getAttribute("aria-haspopup") === "menu"
+        && !button.hasAttribute("data-top-collection-switcher")
+      ));
+    expect(overflowButton).toBeTruthy();
+    dragPastChromeThreshold(overflowButton!, 3);
+
+    expect(startDragging).toHaveBeenCalledTimes(3);
+    expect(screen.queryByText("Rename…")).not.toBeInTheDocument();
+  });
+
+  it("omits the compact Detail link-mode control when the sidebar is collapsed", async () => {
+    localStorage.setItem("mine.compactDetailTopMenu", "true");
+    sidebarResizeState.width = 0;
+    sidebarResizeState.collapsed = true;
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    });
+
+    expect(document.querySelector("[data-sidebar-top-link-mode-surface]")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connected" })).not.toBeInTheDocument();
+    expect(startDragging).not.toHaveBeenCalled();
   });
 
   it("copies the open card markdown path with Command-L", async () => {

@@ -47,6 +47,17 @@ import {
 } from "@/lib/sidebarSearch";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { CardMoreMenu } from "@/components/CardHoverMenu";
+
+const COMPACT_DETAIL_TOP_MENU_STORAGE_KEY = "mine.compactDetailTopMenu";
+
+type DetailLinkMode = "all" | "linked";
+
+function getStoredCompactDetailTopMenu(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(COMPACT_DETAIL_TOP_MENU_STORAGE_KEY) === "true";
+}
 
 function baseRelatedNoteSlug(target: string): string {
   return target.split("#", 1)[0] ?? target;
@@ -188,6 +199,131 @@ const ComponentTestBench = lazy(async () => {
   return { default: mod.ComponentTestBench };
 });
 
+function CompactDetailLinkModeSwitch({
+  value,
+  onChange,
+  chromeDragEnabled = true,
+  entered,
+  className,
+}: {
+  value: DetailLinkMode;
+  onChange: (value: DetailLinkMode) => void;
+  chromeDragEnabled?: boolean;
+  entered?: boolean;
+  className?: string;
+}) {
+  const chromeGesture = useChromeDragGesture({ disabled: !chromeDragEnabled });
+
+  return (
+    <div
+      {...chromeGesture}
+      className={cn(
+        "action-button inline-flex h-6 shrink-0 items-center overflow-hidden rounded-1 bg-transparent p-[2px] font-mono text-sm outline-0 hover:bg-component-fill-hover",
+        className,
+      )}
+      role="group"
+      aria-label="Channel filter"
+      data-entered={entered === undefined ? undefined : entered ? "true" : "false"}
+      data-compact-detail-link-mode-control=""
+    >
+      <button
+        type="button"
+        aria-pressed={value === "all"}
+        onClick={() => onChange("all")}
+        className={cn(
+          "inline-flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] leading-none text-muted-foreground hover:text-foreground focus-visible:outline-none",
+          value === "all" && "bg-component-fill-inner text-foreground",
+        )}
+      >
+        All
+      </button>
+      <button
+        type="button"
+        aria-pressed={value === "linked"}
+        onClick={() => onChange("linked")}
+        className={cn(
+          "inline-flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] leading-none text-muted-foreground hover:text-foreground focus-visible:outline-none",
+          value === "linked" && "bg-component-fill-inner text-foreground",
+        )}
+      >
+        Connected
+      </button>
+    </div>
+  );
+}
+
+function CompactDetailTopMenu({
+  block,
+  cardTitle,
+  vaultPath,
+  tags,
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
+  onClose,
+  menuOpenRequestSequence,
+  entered,
+}: {
+  block: LightBlock | IndexedBlock;
+  cardTitle: string;
+  vaultPath: string;
+  tags: TagCount[];
+  currentTag?: string;
+  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestRename: (block: LightBlock | IndexedBlock) => void;
+  onRequestDelete: (slug: string) => void;
+  onClose: () => void;
+  menuOpenRequestSequence: number;
+  entered: boolean;
+}) {
+  const closeChromeGesture = useChromeDragGesture();
+
+  return (
+    <div
+      className="detail-top-bar-enter flex h-full min-w-0 flex-1 items-center pr-3"
+      data-entered={entered ? "true" : "false"}
+      data-compact-detail-top-menu=""
+    >
+      <div
+        data-tauri-drag-region
+        className="min-w-0 flex-1 truncate pl-0 pr-3 font-mono text-sm text-muted-foreground"
+        title={cardTitle}
+        data-compact-detail-card-title=""
+      >
+        {cardTitle}
+      </div>
+      <CardMoreMenu
+        block={block}
+        vaultPath={vaultPath}
+        tags={tags}
+        currentTag={currentTag}
+        onToggleTag={onToggleTag}
+        onCreateAndAssign={onCreateAndAssign}
+        onRequestRename={onRequestRename}
+        onRequestDelete={onRequestDelete}
+        triggerVariant="ghost"
+        className="shrink-0 text-muted-foreground hover:text-foreground"
+        openRequestSequence={menuOpenRequestSequence}
+        topChromeInteraction
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label="Close detail"
+        {...closeChromeGesture}
+        onClick={onClose}
+        className="shrink-0 text-muted-foreground hover:text-foreground"
+      >
+        <X className="size-4" />
+      </Button>
+    </div>
+  );
+}
+
 const GRID_PAGE_SIZE = 200;
 const DETAIL_CHROME_TRANSITION_MS = 360;
 
@@ -322,6 +458,9 @@ export function AppWithVault({
   const [channels, setChannels] = useState<ChannelDto[]>([]);
   const [designSystemOpen, setDesignSystemOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [compactDetailTopMenuEnabled, setCompactDetailTopMenuEnabled] = useState(
+    getStoredCompactDetailTopMenu,
+  );
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [pendingCreateChannelDrop, setPendingCreateChannelDrop] =
@@ -330,6 +469,7 @@ export function AppWithVault({
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlockAnchor, setSelectedBlockAnchor] = useState<string | null>(null);
   const [selectedBlockTags, setSelectedBlockTags] = useState<string[]>([]);
+  const [detailLinkMode, setDetailLinkMode] = useState<DetailLinkMode>("all");
   const [deleteTargetSlug, setDeleteTargetSlug] = useState<string | null>(null);
   const [deletePlan, setDeletePlan] = useState<DeleteBlockPlan | null>(null);
   const [deletePlanError, setDeletePlanError] = useState<string | null>(null);
@@ -364,6 +504,8 @@ export function AppWithVault({
   const lastSidebarSearchFocusSequenceRef = useRef(0);
   const sidebarSearchChromeDragGesture = useChromeDragGesture();
   const themeMenuRef = useRef<ThemeMenuHandle>(null);
+  const [compactDetailTopMenuRequestSequence, setCompactDetailTopMenuRequestSequence] = useState(0);
+  const [compactDetailChromeEntered, setCompactDetailChromeEntered] = useState(false);
   const gridColumnCountRef = useRef(1);
   const suppressRedirectRef = useRef(false);
   const vaultPathRef = useRef(vaultPath);
@@ -460,6 +602,10 @@ export function AppWithVault({
   const renderedLinkedTags = selectedBlock
     ? selectedBlockTags
     : (detailChromeClosing ? closingDetailTags : []);
+  const compactDetailTopMenuActive = compactDetailTopMenuEnabled && renderedDetailBlock !== null;
+  const compactDetailCardTitle = renderedDetailBlock
+    ? renderedDetailBlock.title ?? renderedDetailBlock.media_file ?? `${renderedDetailBlock.slug}.md`
+    : "";
   const gridKeyboardNavigationDisabled = Boolean(renderedDetailBlock)
     || designSystemOpen
     || importOpen
@@ -468,6 +614,25 @@ export function AppWithVault({
     || isCreatingChannel;
   const normalizedMainSearchQuery = normalizeSurfaceSearchQuery(mainSearchQuery);
   const mainSearchActive = mainSearchOpen || normalizedMainSearchQuery.length > 0;
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      COMPACT_DETAIL_TOP_MENU_STORAGE_KEY,
+      compactDetailTopMenuEnabled ? "true" : "false",
+    );
+  }, [compactDetailTopMenuEnabled]);
+
+  useEffect(() => {
+    if (!compactDetailTopMenuActive || detailChromeClosing) {
+      setCompactDetailChromeEntered(false);
+      return;
+    }
+    setCompactDetailChromeEntered(false);
+    const frame = window.requestAnimationFrame(() => {
+      setCompactDetailChromeEntered(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [compactDetailTopMenuActive, detailChromeClosing]);
 
   useEffect(() => {
     setImagePreview(null);
@@ -496,6 +661,8 @@ export function AppWithVault({
     endResize,
     toggleCollapsed,
   } = useSidebarResize();
+
+  const topCollectionSwitcherCompact = sidebarCollapsed || compactDetailTopMenuEnabled;
 
 
   // ── dnd-kit sensors ────────────────────────────────────────────────────
@@ -1220,6 +1387,20 @@ export function AppWithVault({
         && !e.shiftKey
         && !e.altKey
         && !e.ctrlKey
+        && e.key.toLowerCase() === "k"
+        && compactDetailTopMenuActive
+        && renderedDetailBlock
+      ) {
+        if (isDetailShortcutBlockedTarget(e.target)) return;
+        e.preventDefault();
+        setCompactDetailTopMenuRequestSequence((current) => current + 1);
+        return;
+      }
+      if (
+        e.metaKey
+        && !e.shiftKey
+        && !e.altKey
+        && !e.ctrlKey
         && e.key.toLowerCase() === "l"
         && selectedBlock
       ) {
@@ -1245,7 +1426,15 @@ export function AppWithVault({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleSurfaceSearchShortcut, handleSwitchVault, navigate, selectedBlock, vaultPath]);
+  }, [
+    compactDetailTopMenuActive,
+    handleSurfaceSearchShortcut,
+    handleSwitchVault,
+    navigate,
+    renderedDetailBlock,
+    selectedBlock,
+    vaultPath,
+  ]);
 
   // ── Block navigation ──────────────────────────────────────────────────────
 
@@ -1257,6 +1446,7 @@ export function AppWithVault({
     if (!selectedBlock || detailChromeClosing) return;
     requestGridFocusRestore(selectedBlock.slug);
     setSelectedBlockAnchor(null);
+    setCompactDetailChromeEntered(false);
     setClosingDetailBlock(selectedBlock);
     setClosingDetailTags(selectedBlockTags);
     setDetailChromeClosing(true);
@@ -1274,6 +1464,7 @@ export function AppWithVault({
     if (selectedBlock) {
       if (detailChromeClosing) return;
       setSelectedBlockAnchor(null);
+      setCompactDetailChromeEntered(false);
       setClosingDetailBlock(selectedBlock);
       setClosingDetailTags(selectedBlockTags);
       setDetailChromeClosing(true);
@@ -1376,6 +1567,17 @@ export function AppWithVault({
 
     return [...withPos, ...noPos];
   }, [tags, channels]);
+
+  const handleTopCollectionNavigate = useCallback((tag?: string) => {
+    navigate(tag ? `/channel/${encodeURIComponent(tag)}` : "/");
+  }, [navigate]);
+
+  const handleTopCollectionCreate = useCallback(async (tag: string) => {
+    const channel = await createChannel(tag);
+    pushRecentTag(channel.tag);
+    await reloadAllSnapshots();
+    navigate(`/channel/${encodeURIComponent(channel.tag)}`);
+  }, [navigate, reloadAllSnapshots]);
 
   // ── Opt+Cmd+Up/Down — switch channels ─────────────────────────────────
   useEffect(() => {
@@ -2189,7 +2391,10 @@ export function AppWithVault({
       {/* Top toolbar */}
       <header
         data-tauri-drag-region
-        className="flex h-8 shrink-0 items-center border-b border-border bg-background"
+        className={cn(
+          "flex h-8 shrink-0 items-center border-b border-border transition-colors duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+          compactDetailChromeEntered ? "bg-accent" : "bg-background",
+        )}
       >
         <div
           data-tauri-drag-region
@@ -2259,12 +2464,24 @@ export function AppWithVault({
                     <button
                       type="button"
                       aria-label="Clear channel search"
-                      className="mr-3 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-1 text-muted-foreground hover:bg-component-fill-hover hover:text-foreground focus-visible:bg-component-fill-hover focus-visible:text-foreground focus-visible:outline-none"
+                      className={cn(
+                        "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-1 text-muted-foreground hover:bg-component-fill-hover hover:text-foreground focus-visible:bg-component-fill-hover focus-visible:text-foreground focus-visible:outline-none",
+                        compactDetailTopMenuActive ? "mr-1" : "mr-3",
+                      )}
                       onClick={handleClearSidebarSearch}
                       data-sidebar-top-search-clear=""
                     >
                       <X aria-hidden="true" className="size-3" />
                     </button>
+                  )}
+                  {compactDetailTopMenuActive && renderedDetailBlock && (
+                    <CompactDetailLinkModeSwitch
+                      value={detailLinkMode}
+                      onChange={setDetailLinkMode}
+                      chromeDragEnabled={false}
+                      className="detail-top-bar-enter mr-2"
+                      entered={compactDetailChromeEntered}
+                    />
                   )}
                 </div>
               </>
@@ -2275,18 +2492,28 @@ export function AppWithVault({
           <TopCollectionSwitcher
             currentTag={currentTag}
             orderedTags={orderedTags}
-            compact={sidebarCollapsed}
-            onNavigate={(tag) => {
-              navigate(tag ? `/channel/${encodeURIComponent(tag)}` : "/");
-            }}
-            onCreateCollection={async (tag) => {
-              const channel = await createChannel(tag);
-              pushRecentTag(channel.tag);
-              await reloadAllSnapshots();
-              navigate(`/channel/${encodeURIComponent(channel.tag)}`);
-            }}
+            compact={topCollectionSwitcherCompact}
+            onNavigate={handleTopCollectionNavigate}
+            onCreateCollection={handleTopCollectionCreate}
           />
-          <div data-tauri-drag-region className="h-full min-w-0 flex-1" />
+          {compactDetailTopMenuActive && renderedDetailBlock ? (
+            <CompactDetailTopMenu
+              block={renderedDetailBlock}
+              cardTitle={compactDetailCardTitle}
+              vaultPath={vaultPath}
+              tags={tags}
+              currentTag={currentTag}
+              onToggleTag={handleToggleTag}
+              onCreateAndAssign={handleCreateTagFromMenu}
+              onRequestRename={setRenamingBlock}
+              onRequestDelete={requestDeleteBlock}
+              onClose={handleDetailClose}
+              menuOpenRequestSequence={compactDetailTopMenuRequestSequence}
+              entered={compactDetailChromeEntered}
+            />
+          ) : (
+            <div data-tauri-drag-region className="h-full min-w-0 flex-1" />
+          )}
         </div>
       </header>
 
@@ -2337,6 +2564,9 @@ export function AppWithVault({
         linkedBlockSlug={renderedLinkedBlockSlug}
         linkedTags={renderedLinkedTags}
         onToggleLinkedTag={handleToggleTag}
+        linkMode={detailLinkMode}
+        onLinkModeChange={setDetailLinkMode}
+        showLinkModeChrome={!compactDetailTopMenuActive}
         detailChromeClosing={detailChromeClosing}
       />
 
@@ -2433,6 +2663,7 @@ export function AppWithVault({
               vaultPath={vaultPath}
               thumbsRootPath={thumbsRootPath ?? undefined}
               isClosing={detailChromeClosing}
+              topChromeMode={compactDetailTopMenuActive ? "external" : "classic"}
               onClose={handleDetailClose}
               onNavigate={handleDetailNavigate}
               tags={tags}
@@ -2508,6 +2739,8 @@ export function AppWithVault({
         </ActionButton>
         <ThemeMenuButton
           ref={themeMenuRef}
+          compactDetailTopMenuEnabled={compactDetailTopMenuEnabled}
+          onCompactDetailTopMenuChange={setCompactDetailTopMenuEnabled}
         />
         <ActionButton
           onClick={() => setDesignSystemOpen((v) => !v)}

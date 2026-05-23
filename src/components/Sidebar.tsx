@@ -118,6 +118,8 @@ type SidebarKeyboardNavigationFocus = {
   sequence: number;
 };
 
+type SidebarLinkMode = "all" | "linked";
+
 interface SidebarProps {
   width: number;
   collapsed: boolean;
@@ -150,6 +152,9 @@ interface SidebarProps {
   linkedBlockSlug?: string | null;
   linkedTags?: string[];
   onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
+  linkMode?: SidebarLinkMode;
+  onLinkModeChange?: (mode: SidebarLinkMode) => void;
+  showLinkModeChrome?: boolean;
   detailChromeClosing?: boolean;
 }
 
@@ -192,10 +197,14 @@ export function Sidebar({
   linkedBlockSlug,
   linkedTags = [],
   onToggleLinkedTag,
+  linkMode,
+  onLinkModeChange,
+  showLinkModeChrome = true,
   detailChromeClosing = false,
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
-  const [linkMode, setLinkMode] = useState<"all" | "linked">("all");
+  const [uncontrolledLinkMode, setUncontrolledLinkMode] = useState<SidebarLinkMode>("all");
+  const effectiveLinkMode = linkMode ?? uncontrolledLinkMode;
   const navRef = useRef<HTMLElement>(null);
   const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
   const previewRef = useRef<HTMLDivElement | null>(null);
@@ -239,10 +248,10 @@ export function Sidebar({
   const isLinkEditorActive = isLinkingBlock && !detailChromeClosing;
   const linkedTagSet = useMemo(() => new Set(linkedTags), [linkedTags]);
   const baseVisibleTags = useMemo(() => (
-    isLinkEditorActive && linkMode === "linked"
+    isLinkEditorActive && effectiveLinkMode === "linked"
       ? orderedTags.filter((tc) => linkedTagSet.has(tc.tag))
       : orderedTags
-  ), [isLinkEditorActive, linkMode, linkedTagSet, orderedTags]);
+  ), [effectiveLinkMode, isLinkEditorActive, linkedTagSet, orderedTags]);
   const visibleTags = useMemo(() => (
     filterSidebarTags(baseVisibleTags, searchQuery)
   ), [baseVisibleTags, searchQuery]);
@@ -543,11 +552,14 @@ export function Sidebar({
         transition: isResizing ? "none" : "width 200ms ease",
       }}
     >
-      {isLinkingBlock && (
+      {isLinkingBlock && showLinkModeChrome && (
         <SidebarLinkModeSwitch
-          value={linkMode}
+          value={effectiveLinkMode}
           entered={linkChromeEntered}
-          onChange={setLinkMode}
+          onChange={(mode) => {
+            setUncontrolledLinkMode(mode);
+            onLinkModeChange?.(mode);
+          }}
         />
       )}
       {/* Navigation */}

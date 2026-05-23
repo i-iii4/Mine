@@ -1014,6 +1014,10 @@ The same hook defers Radix pointer-open until click. If pointer movement crosses
 the window-drag threshold, the trailing click is suppressed and no dropdown is
 opened. This keeps top chrome controls usable as both controls and drag handles
 without relying on overlapping transparent drag regions.
+Reusable dropdown triggers opt into this contract only at their top-chrome call
+site. For example, `CardMoreMenu` keeps normal card-surface behavior by default,
+but Compact Detail enables top-chrome interaction for the same trigger because
+it sits in the native titlebar replacement.
 
 ### 019: Current collection switcher is route-derived top chrome navigation
 
@@ -1034,6 +1038,11 @@ separate dialog and then returns through the same App-level create-channel path.
 The searchable dropdown keeps the input as the single focus owner; destination
 rows are menu-styled buttons instead of Radix roving-focus items, so pointer
 hover and arrow navigation cannot steal focus from the search field.
+Compact Detail does not replace this switcher with a Detail-local copy. The
+same App-level `TopCollectionSwitcher` stays mounted before, during and after
+Detail; the compact setting only changes its stable geometry to `px-3`, while
+Detail title/actions are animated siblings. This prevents route labels such as
+`Everything` from shifting when Detail opens.
 
 ### 020: Floating menu width is semantic, not ad-hoc
 

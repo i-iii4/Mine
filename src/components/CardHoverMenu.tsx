@@ -11,6 +11,7 @@ import type { ComponentProps } from "react";
 import { MoreHorizontal, Plus, ExternalLink } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
+import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,6 +43,7 @@ interface CardMoreMenuProps<TBlock extends LightBlock | IndexedBlock> extends Ca
   className?: string;
   onOpenChange?: (open: boolean) => void;
   openRequestSequence?: number;
+  topChromeInteraction?: boolean;
   triggerVariant?: ComponentProps<typeof Button>["variant"];
 }
 
@@ -92,6 +94,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
   className,
   onOpenChange,
   openRequestSequence = 0,
+  topChromeInteraction = false,
   triggerVariant = "default",
 }: CardMoreMenuProps<TBlock>) {
   const hasUrl = !!block.url;
@@ -111,6 +114,12 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
     }
     onOpenChange?.(open);
   }, [onOpenChange]);
+
+  const topChromeTrigger = useTopChromeTriggerInteraction({
+    dragDisabled: !topChromeInteraction,
+    deferPointerOpen: topChromeInteraction,
+    onPointerOpen: () => updateMenuOpen(!menuOpenRef.current),
+  });
 
   const handleMenuKeyDownCapture = useCallback((event: ReactKeyboardEvent) => {
     if (!isCommandK(event)) return;
@@ -145,11 +154,20 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
       modal={false}
     >
       <DropdownMenuTrigger asChild>
-        <Button variant={triggerVariant} size="icon" className={className}>
+        <Button
+          variant={triggerVariant}
+          size="icon"
+          className={className}
+          {...(topChromeInteraction ? topChromeTrigger.triggerProps : {})}
+        >
           <MoreHorizontal className="size-4" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" onKeyDownCapture={handleMenuKeyDownCapture}>
+      <DropdownMenuContent
+        align="end"
+        onCloseAutoFocus={topChromeInteraction ? topChromeTrigger.handleCloseAutoFocus : undefined}
+        onKeyDownCapture={handleMenuKeyDownCapture}
+      >
         <DropdownMenuSub open={connectSubmenuOpen} onOpenChange={setConnectSubmenuOpen}>
           <DropdownMenuSubTrigger ref={connectTriggerRef}>
             <MenuIconSlot>

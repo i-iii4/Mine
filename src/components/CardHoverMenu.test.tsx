@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CardHoverMenu, CardMoreMenu } from "./CardHoverMenu";
 import { getBlock } from "@/lib/commands";
@@ -36,7 +37,37 @@ function makeBlock(): LightBlock {
   };
 }
 
+function dragPastChromeThreshold(element: HTMLElement) {
+  fireEvent.pointerDown(element, {
+    button: 0,
+    pointerId: 1,
+    clientX: 10,
+    clientY: 10,
+  });
+  fireEvent.pointerMove(window, {
+    pointerId: 1,
+    clientX: 18,
+    clientY: 10,
+  });
+  fireEvent.pointerUp(window, {
+    pointerId: 1,
+    clientX: 18,
+    clientY: 10,
+  });
+  fireEvent.click(element);
+}
+
 describe("CardHoverMenu", () => {
+  const startDragging = vi.fn(async () => {});
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getCurrentWindow).mockReturnValue({
+      startDragging,
+    } as never);
+    vi.mocked(getBlock).mockResolvedValue({ tags: [] } as Awaited<ReturnType<typeof getBlock>>);
+  });
+
   it("opens the overflow menu from a keyboard action request", async () => {
     const { container, rerender } = render(
       <CardHoverMenu
@@ -158,6 +189,42 @@ describe("CardHoverMenu", () => {
     await waitFor(() => {
       expect(screen.queryByText("Rename…")).not.toBeInTheDocument();
     });
+  });
+
+  it("opts CardMoreMenu trigger into top-chrome drag without opening the menu", async () => {
+    render(
+      <CardMoreMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        topChromeInteraction
+      />,
+    );
+
+    const trigger = screen.getByRole("button");
+    dragPastChromeThreshold(trigger);
+
+    expect(startDragging).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Rename…")).not.toBeInTheDocument();
+
+    fireEvent.pointerDown(trigger, {
+      button: 0,
+      pointerId: 2,
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.pointerUp(window, {
+      pointerId: 2,
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.click(trigger);
+
+    expect(await screen.findByText("Rename…")).toBeInTheDocument();
   });
 
   it("can disable CSS hover affordances while keeping programmatic menu requests", async () => {
