@@ -17,7 +17,8 @@
 - `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
 - `SPEC_SEARCH.md` — спецификация Surface Search и целевой Hybrid Search: `Cmd+F` Grid filter, `Shift+Cmd+F` Sidebar filter, lexical/alias/semantic retrieval, fusion ranking, excerpts/highlights
 - `SPEC_GROUP_SELECTION.md` — спецификация Grid group selection и batch card actions
-- `SPEC_FEED_SCROLL_PERFORMANCE.md` — planned контракт бесконечного canvas-feel для ленты: render window, media preload/decode window, лимиты, диагностика
+- `SPEC_FEED_SCROLL_PERFORMANCE.md` — C7-контракт бесконечного canvas-feel для ленты: render window, media preload/decode window, лимиты, диагностика
+- `SPEC_GRID_LAYOUT_READINESS.md` — C8-контракт viewport-first measurement: live measured islands, layout diagnostics, deep fast-scroll acceptance
 - `SPEC_THUMBNAILS.md` — полная спецификация preview/thumbnail pipeline
 - `SPEC_FEED_VIDEO.md` — спецификация desktop feed video contract: surfaces, `feed_playback`, autoplay gating
 - `SPEC_ARTICLE_AUDIO.md` — спецификация manual article audio renditions: speech prep, derived audio state, desktop/iOS controls
@@ -62,6 +63,7 @@
 | Defuddle | Извлечение статей + Markdown-конвертация + YouTube-транскрипты (content script) |
 | @virtuoso.dev/masonry | Виртуализированная masonry-сетка (Chrome/Firefox fallback) |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
+| Playwright + pngjs | Browser-level acceptance для feed scroll: DOM diagnostics + screenshot blankness/performance checks |
 | AVFoundation + native Swift helper | Генерация article audio renditions на desktop |
 | SwiftUI | iOS UI-фреймворк (нативный, без WebView) |
 | UniFFI (Mozilla) | FFI-генератор: Rust → Swift bindings |
@@ -136,7 +138,10 @@ local-arena/
 │   │   └── useSidebarResize.ts # Хук ресайза сайдбара (pointer events + persist)
 │   ├── types/                  # TypeScript-типы (ручные, без specta)
 │   ├── lib/                    # commands.ts (IPC), articleAudioGateway.tsx (UI transport contract), articleAudioDesktopGateway.ts (desktop adapter), domSelectors.ts, assets.ts, utils.ts (cn()), recentTags.ts
+│   ├── dev/                    # Dev-only routes/harnesses, например FeedScrollAuditRoute
 │   └── styles/                 # Глобальные стили
+├── scripts/
+│   └── feed-scroll-audit.mjs    # Playwright acceptance for Grid scroll blank/performance regressions
 ├── extension/                  # Chrome/Safari веб-клиппер
 │   ├── background.js           # Service worker: контекстное меню, native messaging
 │   ├── content.js              # Content script: метаданные, Defuddle, Twitter/Instagram парсеры
@@ -238,6 +243,7 @@ cargo tauri dev                # Запуск в режиме разработк
 cargo tauri build              # Сборка .dmg/.app
 bun run lint                   # Линтинг фронтенда
 bun run test                   # Полная проверка: Vitest + Rust workspace tests
+bun run test:feed-scroll       # Browser-level Grid scroll blank/performance acceptance (requires running dev server)
 bun run verify                 # Линтинг + полный test contract
 cargo clippy                   # Линтинг Rust
 ```

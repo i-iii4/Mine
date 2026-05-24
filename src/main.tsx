@@ -47,11 +47,58 @@ if (!rootElement) {
   throw new Error("Root element not found. Check index.html for div#root.");
 }
 
+const feedScrollAuditRoute =
+  import.meta.env.DEV && window.location.pathname === "/__feed-scroll-audit";
+
+type FeedScrollAuditTauriWindow = Window & {
+  __TAURI_INTERNALS__?: {
+    convertFileSrc?: (filePath: string, protocol?: string) => string;
+  };
+};
+
+function installFeedScrollAuditTauriMocks() {
+  const tauriWindow = window as FeedScrollAuditTauriWindow;
+  tauriWindow.__TAURI_INTERNALS__ = tauriWindow.__TAURI_INTERNALS__ ?? {};
+  tauriWindow.__TAURI_INTERNALS__.convertFileSrc = (filePath, protocol = "asset") => {
+    const normalizedPath = filePath.startsWith("//") ? filePath.slice(1) : filePath;
+    if (normalizedPath.startsWith("/feed-scroll-audit/")) {
+      return normalizedPath;
+    }
+    return `${protocol}://localhost/${encodeURIComponent(normalizedPath)}`;
+  };
+}
+
+function Root() {
+  const [FeedScrollAuditRoute, setFeedScrollAuditRoute] =
+    React.useState<React.ComponentType | null>(null);
+
+  React.useEffect(() => {
+    if (!feedScrollAuditRoute) return;
+    let cancelled = false;
+    void (async () => {
+      installFeedScrollAuditTauriMocks();
+      const module = await import("./dev/FeedScrollAuditRoute");
+      if (!cancelled) {
+        setFeedScrollAuditRoute(() => module.FeedScrollAuditRoute);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (feedScrollAuditRoute) {
+    return FeedScrollAuditRoute ? <FeedScrollAuditRoute /> : null;
+  }
+
+  return <App />;
+}
+
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <ErrorBoundary>
       <TooltipProvider>
-        <App />
+        <Root />
       </TooltipProvider>
     </ErrorBoundary>
   </React.StrictMode>,

@@ -14,6 +14,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, act, fireEvent, screen, within } from "@testing-library/react";
 import { Grid } from "./Grid";
 import { computeMasonryLayout } from "@/lib/masonryLayout";
+import { buildLayoutGenerationKey } from "@/lib/layoutGeneration";
+import { bucketize, setCachedHeight } from "@/lib/heightCache";
 import type { LightBlock } from "@/types";
 
 // These constants must match the ones in Grid.tsx. If Grid.tsx changes
@@ -78,6 +80,34 @@ function makeVideoBlock(id: number, overrides: Partial<LightBlock> = {}): LightB
       height: 720,
       container: "mp4",
       profile: "standard",
+    }),
+    ...overrides,
+  });
+}
+
+function makeImageBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
+  return makeBlock(id, {
+    block_type: "image",
+    card_kind: "media",
+    media_file: `image-${id}.jpg`,
+    width: 1000,
+    height: 1000,
+    preview_manifest: JSON.stringify({
+      kind: "image",
+      primary_preview_path: `image-${id}.jpg`,
+      width: 1000,
+      height: 1000,
+      tiles: [
+        {
+          source_path: `image-${id}.jpg`,
+          preview_path: `image-${id}.jpg`,
+          width: 1000,
+          height: 1000,
+          is_video: false,
+          is_video_poster: false,
+        },
+      ],
+      overflow_count: 0,
     }),
     ...overrides,
   });
@@ -343,8 +373,8 @@ function gridItemForSlug(slug: string): HTMLElement | null {
 
 /**
  * Wait for all pending microtasks, timers, and RAF callbacks to drain.
- * Drives the measurement pass (which awaits fonts and images) and any
- * follow-up React rerenders to completion.
+ * Drives the measurement pass (which awaits fonts) and any follow-up React
+ * rerenders to completion.
  */
 async function flushAsync(): Promise<void> {
   // Run any microtasks (warmFromIndexedDb resolves here).
@@ -353,7 +383,6 @@ async function flushAsync(): Promise<void> {
     await Promise.resolve();
     await Promise.resolve();
   });
-  // MeasurementPass's 2s per-image timeout guard — advance all timers.
   await act(async () => {
     vi.runAllTimers();
     await Promise.resolve();
@@ -361,6 +390,14 @@ async function flushAsync(): Promise<void> {
   });
   // Let any follow-up effects (scroll-tick, visibility index) settle.
   await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -500,10 +537,72 @@ describe("Grid — no collapse after add / revisit", () => {
 
     expect(debug).toBeTruthy();
     expect(debug?.mountedGridItems).toBe(mountedItems);
+    expect(debug?.viewport?.mountedDomItemCount).toBe(mountedItems);
+    expect(debug?.viewport?.blankViewportRisk).toBe(false);
     expect(debug?.preloadWindowPx.forward).toBeGreaterThan(
       debug?.renderWindowPx.forward ?? 0,
     );
     expect(mountedItems).toBeLessThan(blocks.length);
+  });
+
+  it("renders a measured deep-viewport card through the layout-readiness live gate", async () => {
+    vi.useFakeTimers();
+    const imageCompleteSpy = vi
+      .spyOn(HTMLImageElement.prototype, "complete", "get")
+      .mockReturnValue(false);
+
+    try {
+      const parentWidth = 280;
+      const routeKey = "layout-readiness";
+      const targetIndex = 80;
+      const blocks = Array.from({ length: 120 }, (_, index) => {
+        const id = 9900 + index;
+        setBlockHeight(id, 280);
+        return makeImageBlock(id);
+      });
+      const target = blocks[targetIndex]!;
+      const generationKey = buildLayoutGenerationKey({
+        blocks,
+        routeKey,
+        heightBucket: bucketize(testColumnWidth(parentWidth)),
+        parentWidth,
+      });
+      setCachedHeight(generationKey, blocks[0]!.id, 280);
+      setCachedHeight(generationKey, target.id, 280);
+
+      render(<Grid {...BASE_PROPS} blocks={blocks} currentTag={routeKey} />);
+
+      act(() => {
+        triggerResize(parentWidth, 400);
+      });
+      await flushMicrotasks();
+
+      const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
+      expect(scrollEl).toBeTruthy();
+
+      act(() => {
+        if (!scrollEl) return;
+        scrollEl.scrollTop = targetIndex * (280 + TEST_GAP);
+        scrollEl.dispatchEvent(new Event("scroll"));
+        vi.advanceTimersByTime(20);
+      });
+      await flushMicrotasks();
+
+      const liveCard = document.querySelector(`[data-block-slug="${target.slug}"]`);
+      const debug = window.__MINE_FEED_SCROLL_DEBUG__;
+
+      expect(debug?.layout?.totalBlockCount).toBe(blocks.length);
+      expect(debug?.layout?.maxVisibleIndex ?? -1).toBeGreaterThan(0);
+      expect(debug?.viewport?.blankViewportRisk).toBe(false);
+      expect(debug?.viewport?.domViewportItemCount ?? 0).toBeGreaterThan(0);
+      expect(liveCard).toBeTruthy();
+      expect(gridItemForSlug(target.slug)).toHaveAttribute(
+        "data-feed-grid-item-slug",
+        target.slug,
+      );
+    } finally {
+      imageCompleteSpy.mockRestore();
+    }
   });
 
   it("keeps the top feed inset inside the scroll content, not on the scrollport", async () => {
@@ -2101,7 +2200,7 @@ describe("Grid — no collapse after add / revisit", () => {
     assertPositionsMatchFreshLayout(updated, positions, 1200);
   });
 
-  it("switches to skeleton-only while a new resize generation is measuring", async () => {
+  it("uses the new resize generation without reusing stale wide positions", async () => {
     vi.useFakeTimers();
 
     const blocks = [
@@ -2138,11 +2237,10 @@ describe("Grid — no collapse after add / revisit", () => {
       triggerResize(narrowParentWidth);
     });
 
-    expect(readRenderedPositions()).toHaveLength(0);
-
     await flushAsync();
 
     const narrowPositions = readRenderedPositions();
+    expect(narrowPositions).not.toEqual(widePositions);
     assertPositionsMatchExplicitLayout(
       blocks,
       narrowPositions,

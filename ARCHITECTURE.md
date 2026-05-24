@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
 
 ## Context
 
@@ -481,16 +481,25 @@ iOS UI contract:
 - Layout generation теперь keyed by `layoutGenerationKey = route + width bucket + ordered block layout fingerprint`. Fingerprint включает layout-relevant content блока, в том числе `preview_manifest`, поэтому same-id content/preview changes не могут reuse stale heights/layout.
 - `heightCache` и `layoutCache` generation-aware: exact heights и exact layouts кэшируются только для текущего generation key, а не просто по `slug` или набору ids.
 - Layout вычисляется чистой функцией (`src/lib/masonryLayout.ts`): `containerWidth + current-generation heights -> columnCount + positions + totalHeight`. `columnWidth` и horizontal positions снапятся к целым CSS-пикселям; measurement pass и visible render используют один `getMasonryColumnWidth`, чтобы transformed card controls не получали subpixel jitter. Exact heights текущего generation используются там, где они уже есть; для остальных блоков provisional path использует heuristic only for skeleton geometry.
-- Visible contract двуслойный:
-  - `committed` prefix — contiguous range `0..committedEndIndex`, для которой exact heights уже получены и разрешён live `Card`;
-  - provisional remainder — только skeleton cards в heuristic envelope текущего generation.
+- Visible contract двуслойный, но live-gate больше не равен только contiguous
+  prefix:
+  - `liveBlockIds` — non-contiguous set карточек с exact height текущего
+    `layoutGenerationKey`; такие карточки могут рендериться live даже если
+    предыдущие index gaps ещё provisional;
+  - `committedEndIndex` — contiguous prefix только для diagnostics/background
+    catch-up;
+  - provisional remainder — skeleton cards в heuristic envelope текущего
+    generation.
 - Старый `stableLayoutSnapshot` больше не участвует в visible live render path. Это устраняет системные bottom clip / white-tail баги, которые возникали, когда live card попадала внутрь stale height envelope.
 - **Direction-aware overscan**: при скролле вниз forward-overscan 2200px, backward 600px. При скролле вверх — зеркально. Это предзагружает больше карточек по направлению scroll'а, уменьшая «пустые зоны» при быстром скролле.
 - **Priority bounds**: зона ±1400px по направлению scroll'а, внутри которой карточки получают `priority=true`. ImageCard/LinkCard/ArticleCard используют `loading="eager"` вместо `"lazy"` — картинки начинают fetch до того как пользователь до них доскроллит.
-- Planned feed scroll readiness splits this into adaptive budgets instead of
-  solving canvas feel by DOM inflation: a bounded render window, a near image
-  priority window and a wider preview-only media preload/decode window driven by
-  viewport height and scroll velocity. Full contract:
+- Feed scroll readiness splits this into adaptive budgets instead of solving
+  canvas feel by DOM inflation: a velocity-aware bounded render runway, a near
+  image priority window and a wider preview-only media preload/decode window
+  driven by viewport height and scroll velocity. `useGridScroll` keeps normal
+  scroll RAF-coalesced, but has a bounded anti-blank sync commit when a native
+  flick/jump would otherwise leave the real viewport with zero mounted items.
+  Full contract:
   [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md).
 - **CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`, картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки картинки — нет layout shift.
 - `computeCardHeight()` остаётся heuristic для scheduling / placeholder geometry, но не имеет права клампить live content. Hard clamp `height + overflow hidden` валиден только внутри exact committed prefix текущего generation.
@@ -1080,15 +1089,47 @@ instead of hardcoding raw Tailwind width utilities.
 Rationale: the user-facing defect is not just low FPS; it is the mismatch
 between smooth scroll physics and late media readiness. Grid already owns
 virtualized layout and visible windows, so the next performance layer should
-prepare media independently from DOM mounting. The planned implementation keeps
-render overscan bounded, computes render/priority/preload windows from viewport
-height and scroll velocity, and adds a preview-only `Image.decode()` preloader
+prepare media independently from DOM mounting. The implementation keeps the
+render window viewport-near, computes separate render/priority/preload windows
+from viewport height and scroll velocity, and adds a preview-only `Image.decode()` preloader
 with concurrency, queue, LRU and generation-reset limits. Original source media
 is excluded from the preload hot path. The spec also defines a readiness state
 machine, non-negotiable invariants and a tuning protocol so performance work is
 evidence-based instead of a sequence of magic constants. This gives the feed the
 intended infinite-canvas feel without turning virtualization back into "render
 more cards". Full contract: [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md).
+
+### 022: Grid layout readiness uses viewport-first measured islands
+
+| Approach | Problem |
+|---|---|
+| Keep strict contiguous `committedEndIndex` as the only live-render gate | Deep fast-scroll can land in an unmeasured area and wait for hundreds of earlier cards to measure before current viewport cards become live |
+| Increase media preload or render overscan again | Media readiness cannot help if Grid still renders the current viewport as skeleton-only; DOM inflation also breaks the bounded renderer contract |
+| Viewport-first measurement + non-contiguous `liveBlockIds` + anti-blank scroll commit (chosen) | More explicit state model: prefix is diagnostics/background catch-up, exact measured viewport islands can render live immediately, and native scroll cannot paint a fully empty viewport while waiting for RAF |
+
+Rationale: Phase C7 proved that canvas feel has two separate readiness layers.
+The preview decode queue can prepare media ahead of the viewport, but Grid must
+also make the current viewport measurable and renderable ahead of skipped
+history. `src/lib/gridLayoutReadiness.ts` keeps the scheduling pure and
+testable: real viewport items are measured first, near overscan second, missing
+prefix third. `committedEndIndex` remains visible in developer diagnostics, but
+keyboard focus, marquee selection, autoplay and actual `GridItem` live rendering
+now use generation-safe `liveBlockIds`. `useGridScroll` keeps the cheap RAF path
+for ordinary scrolling and performs a synchronous visible-window commit only
+when the current viewport would otherwise have no mounted item. The anti-blank
+check uses the scroll element's `clientHeight` when available and Grid's
+ResizeObserver-measured `viewportHeight` as fallback, so a transient zero
+client height cannot disable the invariant. Grid also publishes paint-layer
+diagnostics at `window.__MINE_FEED_SCROLL_DEBUG__.viewport`, comparing
+`layout.positions` to mounted `[data-feed-grid-item]` wrappers so remaining
+blank reports can be classified before another scroll fix is attempted. The
+dev-only `/__feed-scroll-audit` route plus `bun run test:feed-scroll` provides a
+browser-level acceptance gate for blank viewport, skeleton-only viewport,
+near-blank screenshots, DOM-window inflation, slow settle, frame gaps and long
+tasks without requiring manual reproduction. The route uses a synthetic mixed
+feed with deterministic local preview assets, so it also catches broken Card
+paint/asset mapping in the browser harness. Full contract:
+[SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md).
 
 ## Dependencies
 

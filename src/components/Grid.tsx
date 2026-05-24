@@ -54,6 +54,12 @@ import {
   type FeedScrollSignalSample,
 } from "@/lib/feedScrollReadiness";
 import {
+  collectViewportFirstMeasurementBatch,
+  computeCommittedEndIndex,
+  createGridLayoutReadinessDiagnostics,
+} from "@/lib/gridLayoutReadiness";
+import { createGridViewportPaintDiagnostics } from "@/lib/gridViewportDiagnostics";
+import {
   isEditableKeyboardTarget,
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
@@ -62,7 +68,7 @@ import {
 
 const COLUMN_MIN_WIDTH = 220;
 const GAP = 32;
-const MEASUREMENT_BATCH_SIZE = 48;
+const MEASUREMENT_BATCH_SIZE = 24;
 const INITIAL_COMMIT_BLOCKS = 48;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
@@ -167,7 +173,7 @@ function findLayoutNeighborSlug(
   blocks: readonly LightBlock[],
   currentSlug: string,
   direction: GridArrowKey,
-  committedEndIndex: number,
+  liveBlockIds: ReadonlySet<number>,
 ): string | null {
   const current = findPositionForSlug(positions, blocks, currentSlug);
   if (!current) return null;
@@ -178,9 +184,10 @@ function findLayoutNeighborSlug(
   let bestScore = Infinity;
 
   for (const candidate of positions) {
-    if (candidate.index === current.index || candidate.index > committedEndIndex) continue;
+    if (candidate.index === current.index) continue;
     const block = blocks[candidate.index];
     if (!block) continue;
+    if (!liveBlockIds.has(block.id)) continue;
 
     const candidateCenter = positionCenter(candidate);
     const dx = candidateCenter.x - currentCenter.x;
@@ -210,14 +217,15 @@ function firstVisibleSlug(
   blocks: readonly LightBlock[],
   scrollTop: number,
   viewportHeight: number,
-  committedEndIndex: number,
+  liveBlockIds: ReadonlySet<number>,
 ): string | null {
   const viewportTop = scrollTop;
   const viewportBottom = scrollTop + viewportHeight;
   let best: MasonryPosition | null = null;
 
   for (const item of positions) {
-    if (item.index > committedEndIndex) continue;
+    const block = blocks[item.index];
+    if (!block || !liveBlockIds.has(block.id)) continue;
     const itemTop = GRID_TOP_INSET_PX + item.top;
     const itemBottom = GRID_TOP_INSET_PX + item.bottom;
     if (itemBottom < viewportTop || itemTop > viewportBottom) continue;
@@ -392,14 +400,14 @@ function findMarqueeSelectionSlugs(
   positions: readonly MasonryPosition[],
   blocks: readonly LightBlock[],
   rect: LayoutRect,
-  committedEndIndex: number,
+  liveBlockIds: ReadonlySet<number>,
 ): string[] {
   const selected: string[] = [];
 
   for (const candidate of positions) {
-    if (candidate.index > committedEndIndex) continue;
     const block = blocks[candidate.index];
     if (!block) continue;
+    if (!liveBlockIds.has(block.id)) continue;
     if (rectsIntersect(rect, {
       left: candidate.left,
       top: candidate.top,
@@ -470,14 +478,15 @@ function isPassiveGridKeyboardTarget(
   );
 }
 
-function isCommittedSlug(
+function isLiveSlug(
   positions: readonly MasonryPosition[],
   blocks: readonly LightBlock[],
   slug: string,
-  committedEndIndex: number,
+  liveBlockIds: ReadonlySet<number>,
 ): boolean {
   const position = findPositionForSlug(positions, blocks, slug);
-  return Boolean(position && position.index <= committedEndIndex);
+  const block = position ? blocks[position.index] : null;
+  return Boolean(block && liveBlockIds.has(block.id));
 }
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -642,6 +651,7 @@ export function Grid({
   const scrollAnchorSnapshotRef = useRef<ScrollAnchorSnapshot | null>(null);
   const pendingScrollAnchorRef = useRef<PendingScrollAnchor | null>(null);
   const suppressFocusedScrollOnceRef = useRef(false);
+  const lastViewportBlankWarningRef = useRef<string | null>(null);
 
   // Grid has exactly three pieces of genuine state:
   //
@@ -656,7 +666,7 @@ export function Grid({
   //
   //   3. parentWidth / viewportHeight — set by ResizeObserver below.
   //
-  // heightsMap, committedEndIndex, phase, and measurementBatch are all
+  // heightsMap, prefix diagnostics, live readiness and measurementBatch are
   // derived synchronously from the current generation key. No stale
   // cross-generation layout state is kept in React state.
   const [warmedUp, setWarmedUp] = useState(false);
@@ -807,15 +817,20 @@ export function Grid({
     return map;
   }, [blocks, generationKey, warmedUp, measurementTick]);
 
-  const committedEndIndex = useMemo(() => {
-    if (!warmedUp) return -1;
-    for (let index = 0; index < blocks.length; index += 1) {
-      if (!heightsMap.has(blocks[index]!.id)) {
-        return index - 1;
+  const liveBlockIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const block of blocks) {
+      if (heightsMap.has(block.id)) {
+        ids.add(block.id);
       }
     }
-    return blocks.length - 1;
-  }, [blocks, heightsMap, warmedUp]);
+    return ids;
+  }, [blocks, heightsMap]);
+
+  const committedEndIndex = useMemo(
+    () => computeCommittedEndIndex(blocks, liveBlockIds, warmedUp),
+    [blocks, liveBlockIds, warmedUp],
+  );
 
   const allCurrentGenerationExact =
     warmedUp &&
@@ -910,6 +925,7 @@ export function Grid({
   const visibleItems = useGridScroll(parentRef, {
     getVisibleItems,
     resetKey: generationKey,
+    viewportHeight,
   });
 
   const maxVisibleIndex = useMemo(
@@ -940,6 +956,32 @@ export function Grid({
     if (committedEndIndex < targetCommittedEndIndex) return "measuring";
     return "committed";
   }, [blocks.length, committedEndIndex, parentWidth, targetCommittedEndIndex]);
+
+  const measurementBatch = useMemo(() => {
+    if (!warmedUp) return [];
+    if (targetCommittedEndIndex < 0) return [];
+
+    return collectViewportFirstMeasurementBatch({
+      blocks,
+      positions: layout.positions,
+      visibleItems,
+      measuredBlockIds: liveBlockIds,
+      scrollTop,
+      viewportHeight,
+      targetEndIndex: targetCommittedEndIndex,
+      batchSize: MEASUREMENT_BATCH_SIZE,
+    });
+  }, [
+    blocks,
+    layout.positions,
+    liveBlockIds,
+    scrollTop,
+    targetCommittedEndIndex,
+    viewportHeight,
+    visibleItems,
+    warmedUp,
+  ]);
+
   const showEmptyChannelPlaceholder = Boolean(
     currentTag &&
     blocks.length === 0 &&
@@ -981,7 +1023,7 @@ export function Grid({
         const nextPosition = findPositionForSlug(layout.positions, blocks, pending.anchor.slug);
         if (!nextPosition) {
           pendingScrollAnchorRef.current = null;
-        } else if (nextPosition.index <= committedEndIndex) {
+        } else if (liveBlockIds.has(blocks[nextPosition.index]?.id ?? -1)) {
           const nextScrollTop = clampedScrollTopForAnchor(
             layout,
             scrollElement.clientHeight || viewportHeight,
@@ -1006,7 +1048,7 @@ export function Grid({
       blocks,
       positions: layout.positions,
     };
-  }, [blocks, committedEndIndex, currentTag, layout, parentWidth, viewportHeight]);
+  }, [blocks, currentTag, layout, liveBlockIds, parentWidth, viewportHeight]);
 
   const autoplayEligibleBySlug = useMemo(() => {
     const eligible = new Map<string, ReturnType<typeof normalizeFeedPlayback>>();
@@ -1040,12 +1082,110 @@ export function Grid({
     viewportHeight,
     scrollDirection: feedScrollSignal.scrollDirection,
     scrollVelocityPxMs: feedScrollSignal.scrollVelocityPxMs,
+    isFastScrolling: feedScrollSignal.isFastScrolling,
     generationKey,
     thumbsRootPath: resolvedThumbsRootPath,
     mountedGridItems: visibleItems.length,
     windows: scrollReadinessWindows,
   });
   void feedMediaPreloadStats;
+
+  const layoutReadinessDiagnostics = useMemo(
+    () => createGridLayoutReadinessDiagnostics({
+      layoutGenerationKey: generationKey,
+      blocks,
+      visibleItems,
+      measuredBlockIds: liveBlockIds,
+      committedEndIndex,
+      targetCommittedEndIndex,
+      maxVisibleIndex,
+      scrollTop,
+      viewportHeight,
+      measurementBatchSize: measurementBatch.length,
+    }),
+    [
+      blocks,
+      committedEndIndex,
+      generationKey,
+      liveBlockIds,
+      maxVisibleIndex,
+      measurementBatch.length,
+      scrollTop,
+      targetCommittedEndIndex,
+      viewportHeight,
+      visibleItems,
+    ],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const debug = window.__MINE_FEED_SCROLL_DEBUG__;
+    if (debug) {
+      debug.layout = layoutReadinessDiagnostics;
+    }
+  }, [layoutReadinessDiagnostics]);
+
+  const publishViewportPaintDiagnostics = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const scrollElement = parentRef.current;
+    if (!scrollElement) return;
+
+    const diagnostics = createGridViewportPaintDiagnostics({
+      layoutGenerationKey: generationKey,
+      positions: layout.positions,
+      visibleItemCount: visibleItems.length,
+      scrollTop: scrollElement.scrollTop,
+      viewportHeight: scrollElement.clientHeight || viewportHeight,
+      layoutTotalHeight: layout.totalHeight,
+      scrollElement,
+    });
+
+    const debug = window.__MINE_FEED_SCROLL_DEBUG__;
+    if (debug) {
+      debug.viewport = diagnostics;
+    }
+
+    if (!diagnostics.blankViewportRisk) {
+      if (diagnostics.reason === "ok") {
+        lastViewportBlankWarningRef.current = null;
+      }
+      return;
+    }
+
+    const signature = [
+      diagnostics.layoutGenerationKey,
+      Math.round(diagnostics.scrollTop),
+      diagnostics.viewportHeight,
+      diagnostics.layoutViewportPositionCount,
+      diagnostics.visibleItemCount,
+      diagnostics.mountedDomItemCount,
+    ].join(":");
+    if (lastViewportBlankWarningRef.current === signature) return;
+    lastViewportBlankWarningRef.current = signature;
+
+    if (import.meta.env.DEV) {
+      console.warn("[Mine/Grid] blank viewport risk", diagnostics);
+    }
+  }, [
+    generationKey,
+    layout.positions,
+    layout.totalHeight,
+    viewportHeight,
+    visibleItems.length,
+  ]);
+
+  useLayoutEffect(() => {
+    publishViewportPaintDiagnostics();
+  }, [publishViewportPaintDiagnostics]);
+
+  useEffect(() => {
+    const scrollElement = parentRef.current;
+    if (!scrollElement) return;
+    scrollElement.addEventListener("scroll", publishViewportPaintDiagnostics, { passive: true });
+    return () => {
+      scrollElement.removeEventListener("scroll", publishViewportPaintDiagnostics);
+    };
+  }, [publishViewportPaintDiagnostics]);
 
   const blocksBySlug = useMemo(
     () => new Map(blocks.map((block) => [block.slug, block])),
@@ -1211,10 +1351,10 @@ export function Grid({
         layout.positions,
         blocks,
         rect,
-        committedEndIndex,
+        liveBlockIds,
       ),
     ));
-  }, [blocks, committedEndIndex, layout.positions]);
+  }, [blocks, layout.positions, liveBlockIds]);
 
   const handleGridPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (
@@ -1291,15 +1431,17 @@ export function Grid({
       if (commandK) {
         if (event.defaultPrevented) return;
         if (feedInteractionMode !== "keyboard") return;
-        if (!focusedSlug || committedEndIndex < 0) return;
+        if (!focusedSlug) return;
         const focusedPosition = findPositionForSlug(
           layout.positions,
           blocks,
           focusedSlug,
         );
+        const focusedBlock = focusedPosition ? blocks[focusedPosition.index] : null;
         if (
           !focusedPosition ||
-          focusedPosition.index > committedEndIndex ||
+          !focusedBlock ||
+          !liveBlockIds.has(focusedBlock.id) ||
           !isPositionVisibleInViewport(
             focusedPosition,
             currentScrollTop,
@@ -1366,11 +1508,11 @@ export function Grid({
           const selectionSlug = keyboardSlug ?? pointerSlug;
           if (
             !selectionSlug ||
-            !isCommittedSlug(
+            !isLiveSlug(
               layout.positions,
               blocks,
               selectionSlug,
-              committedEndIndex,
+              liveBlockIds,
             )
           ) {
             return;
@@ -1398,7 +1540,7 @@ export function Grid({
       event.preventDefault();
       blockedPointerPositionRef.current = lastPointerPositionRef.current;
       setFeedInteractionMode("keyboard");
-      if (committedEndIndex < 0) return;
+      if (liveBlockIds.size === 0) return;
 
       if (!focusedSlug) {
         const firstSlug = firstVisibleSlug(
@@ -1406,7 +1548,7 @@ export function Grid({
           blocks,
           currentScrollTop,
           currentViewportHeight,
-          committedEndIndex,
+          liveBlockIds,
         );
         if (firstSlug) {
           setFocusedSlug(firstSlug);
@@ -1419,8 +1561,11 @@ export function Grid({
         blocks,
         focusedSlug,
       );
+      const focusedBlock = focusedPosition ? blocks[focusedPosition.index] : null;
       if (
         !focusedPosition ||
+        !focusedBlock ||
+        !liveBlockIds.has(focusedBlock.id) ||
         !isPositionVisibleInViewport(
           focusedPosition,
           currentScrollTop,
@@ -1432,7 +1577,7 @@ export function Grid({
           blocks,
           currentScrollTop,
           currentViewportHeight,
-          committedEndIndex,
+          liveBlockIds,
         );
         if (firstSlug) {
           setFocusedSlug(firstSlug);
@@ -1445,7 +1590,7 @@ export function Grid({
         blocks,
         focusedSlug,
         event.key,
-        committedEndIndex,
+        liveBlockIds,
       );
       if (nextSlug) {
         setFocusedSlug(nextSlug);
@@ -1458,35 +1603,20 @@ export function Grid({
     blocks,
     blocksBySlug,
     clearSelection,
-    committedEndIndex,
     feedInteractionMode,
     focusedSlug,
     handleBlockClick,
     keyboardNavigationDisabled,
     layout.positions,
+    liveBlockIds,
     selectedSlugs.size,
     scrollTop,
     toggleSelectedSlug,
     viewportHeight,
   ]);
 
-  const measurementBatch = useMemo(() => {
-    if (!warmedUp) return [];
-    if (targetCommittedEndIndex < 0) return [];
-
-    const missingPrefixBlocks: LightBlock[] = [];
-    for (let index = 0; index <= targetCommittedEndIndex; index += 1) {
-      const block = blocks[index];
-      if (!block || heightsMap.has(block.id)) continue;
-      missingPrefixBlocks.push(block);
-      if (missingPrefixBlocks.length >= MEASUREMENT_BATCH_SIZE) break;
-    }
-
-    return missingPrefixBlocks;
-  }, [blocks, heightsMap, targetCommittedEndIndex, warmedUp]);
-
   const activePlaybackSlugs = useMemo(() => {
-    if (phase === "provisional" || viewportHeight <= 0) {
+    if (liveBlockIds.size === 0 || viewportHeight <= 0) {
       return new Set<string>();
     }
 
@@ -1511,9 +1641,9 @@ export function Grid({
       | null = null;
 
     for (const item of visibleItems) {
-      if (item.index > committedEndIndex) continue;
       const block = blocks[item.index];
       if (!block) continue;
+      if (!liveBlockIds.has(block.id)) continue;
       const playback = autoplayEligibleBySlug.get(block.slug);
       if (!playback) continue;
 
@@ -1585,8 +1715,7 @@ export function Grid({
   }, [
     autoplayEligibleBySlug,
     blocks,
-    committedEndIndex,
-    phase,
+    liveBlockIds,
     scrollTop,
     viewportHeight,
     visibleItems,
@@ -1714,7 +1843,7 @@ export function Grid({
               visibleItems={visibleItems}
               totalHeight={layout.totalHeight}
               priorityBounds={priorityBounds}
-              committedEndIndex={committedEndIndex}
+              liveBlockIds={liveBlockIds}
               activePlaybackSlugs={activePlaybackSlugs}
               marqueeRect={marqueeRect}
               context={gridContext}
@@ -1771,7 +1900,7 @@ function VirtualMasonryLayout({
   visibleItems,
   totalHeight,
   priorityBounds,
-  committedEndIndex,
+  liveBlockIds,
   activePlaybackSlugs,
   marqueeRect,
   context,
@@ -1780,7 +1909,7 @@ function VirtualMasonryLayout({
   visibleItems: MasonryPosition[];
   totalHeight: number;
   priorityBounds: { start: number; end: number };
-  committedEndIndex: number;
+  liveBlockIds: ReadonlySet<number>;
   activePlaybackSlugs: Set<string>;
   marqueeRect: LayoutRect | null;
   context: GridContext;
@@ -1794,6 +1923,7 @@ function VirtualMasonryLayout({
       {visibleItems.map((item) => {
         const block = blocks[item.index];
         if (!block) return null;
+        const isLive = liveBlockIds.has(block.id);
         return (
           <GridItem
             key={block.id}
@@ -1802,7 +1932,7 @@ function VirtualMasonryLayout({
             priority={
               item.top <= priorityBounds.end && item.bottom >= priorityBounds.start
             }
-            isCommitted={item.index <= committedEndIndex}
+            isCommitted={isLive}
             allowPlayback={activePlaybackSlugs.has(block.slug)}
             isFocused={
               block.slug === context.focusedSlug ||
@@ -1875,6 +2005,10 @@ const GridItem = memo(function GridItem({
         transform: `translate3d(${item.left}px, ${item.top}px, 0)`,
       }}
       data-feed-grid-item=""
+      data-feed-grid-item-index={item.index}
+      data-feed-grid-item-top={item.top}
+      data-feed-grid-item-bottom={item.bottom}
+      data-feed-grid-item-live={isCommitted ? "true" : "false"}
       data-feed-grid-item-focused={isCommitted && isFocused ? "true" : undefined}
       data-feed-grid-item-selected={isCommitted && isSelected ? "true" : undefined}
       data-feed-grid-item-slug={block.slug}
@@ -1970,14 +2104,10 @@ const GridItem = memo(function GridItem({
 // (left: -99999px) so the browser still computes layout but the cards
 // are never visible to the user.
 //
-// This runs during the "Computing layout…" phase, before the visible grid
-// renders. After measurement completes, the parent stores heights in
-// memoryCache + IndexedDB and flips heightsReady=true, triggering the
-// normal visible render with pixel-perfect positions.
-//
-// useLayoutEffect fires after React commit but before browser paint, so
-// by the time the parent re-renders with the new heights, nothing has
-// flickered on screen.
+// Measurement waits for fonts only. It must not wait for images: feed card
+// media slots reserve deterministic aspect-ratio boxes and hidden image loads
+// can take seconds or fail. Waiting for image load would turn layout readiness
+// into media readiness and recreate the fast-scroll blank-viewport problem.
 
 interface MeasurementPassProps {
   blocks: LightBlock[];
@@ -2014,41 +2144,9 @@ function MeasurementPass({
       }
       if (cancelled) return;
 
-      // 2. Wait for all <img> elements inside the hidden container to
-      //    finish loading (success or failure). Every card template uses
-      //    explicit aspect-ratio wrappers so layout is deterministic even
-      //    without this, but waiting eliminates the last 1% of timing
-      //    races. A per-image 2-second timeout protects against images
-      //    that never fire any event (network dead, broken asset://).
-      const IMAGE_TIMEOUT_MS = 2000;
-      const imgs = Array.from(container.querySelectorAll("img"));
-      await Promise.all(
-        imgs.map((img) => {
-          // img.complete is true once loading has finished — whether
-          // successfully (naturalWidth > 0) or with error. Either way
-          // the layout size won't change any further, so we can skip
-          // the wait.
-          if (img.complete) return Promise.resolve();
-          return new Promise<void>((resolve) => {
-            let done = false;
-            const finish = () => {
-              if (done) return;
-              done = true;
-              img.removeEventListener("load", finish);
-              img.removeEventListener("error", finish);
-              resolve();
-            };
-            img.addEventListener("load", finish, { once: true });
-            img.addEventListener("error", finish, { once: true });
-            setTimeout(finish, IMAGE_TIMEOUT_MS);
-          });
-        }),
-      );
-      if (cancelled) return;
-
-      // 3. Force a synchronous layout read. By now fonts are loaded and
-      //    images have finalized their intrinsic dimensions — the heights
-      //    we read here match what the real visible Cards will render.
+      // 2. Force a synchronous layout read. By now fonts are loaded and media
+      //    boxes have deterministic aspect-ratio envelopes, so the heights we
+      //    read here match what the real visible Cards will render.
       const results: Array<{ id: number; height: number }> = [];
       const children = container.children;
       for (let i = 0; i < children.length; i += 1) {

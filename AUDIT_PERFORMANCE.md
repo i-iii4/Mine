@@ -13,9 +13,63 @@
 | 7 | Стартовый grid payload слишком тяжёлый (`body`, tags, media metadata на весь corpus) | PARTIALLY FIXED (route-scoped `list_grid_blocks`, no per-block tags) |
 | 8 | `list_pending_thumb_upgrades()` делал file peek'и из IPC на UI thread | FIXED (SQLite planner + `spawn_blocking`) |
 | 9 | Watcher и background `full_scan()` одновременно переиндексировали vault и ловили SQLite lock storm | FIXED (watcher suppressed while sync is active) |
-| 10 | Fast scroll выглядит грязно: smooth scroll догоняется late media decode / blank preview states | PLANNED ([SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md)) |
+| 10 | Fast scroll выглядит грязно: smooth scroll догоняется late media decode / blank preview states | FIXED FOR CURRENT ARCHITECTURE ([SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md), [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md)) |
 
 ## Latest wins
+
+### 24.05.2026 — C8 grid layout readiness baseline
+
+- C7 media readiness reduced late preview decode, but real fast-scroll testing
+  showed remaining blank/white states from layout readiness: current viewport
+  cards could be blocked by the old strict contiguous `committedEndIndex`
+  prefix.
+- Added `src/lib/gridLayoutReadiness.ts` as the pure owner of viewport-first
+  measurement scheduling and layout diagnostics.
+- Grid now derives non-contiguous `liveBlockIds` from current-generation exact
+  heights. `committedEndIndex` remains diagnostics/background catch-up, but live
+  `Card` render, keyboard focus, marquee selection and autoplay use
+  `liveBlockIds`.
+- Hidden measurement priority is now: real viewport, nearest mounted overscan,
+  missing prefix up to target, then remaining positions if the bounded batch has
+  room.
+- `window.__MINE_FEED_SCROLL_DEBUG__` now combines C7 media stats with C8
+  layout stats: layout generation, viewport/visible unmeasured backlog,
+  committed/target indices and measurement batch size.
+- Follow-up after real UI feedback: render runway was first made
+  velocity-aware, then tightened into a viewport-near DOM window
+  (`max(720, vh * 0.75 + v * 80)`, capped at `1800px`). Priority loading and
+  media preload keep the wider forward runway without mounting extra cards.
+  Hidden layout measurement waits for fonts only, never image load/error events.
+- Follow-up after real UI feedback that complete white screens still appeared:
+  `useGridScroll` now has an anti-blank sync path. Ordinary scroll remains
+  RAF-coalesced, but a deep/flick jump that leaves the real viewport with zero
+  mounted items immediately commits the new bounded visible window before the
+  blank frame can paint.
+- Added paint-layer diagnostics for the unresolved white-screen report:
+  `window.__MINE_FEED_SCROLL_DEBUG__.viewport` now compares current
+  `layout.positions` with mounted `[data-feed-grid-item]` wrappers and reports
+  `blankViewportRisk`, `reason`, live/skeleton DOM counts and layout viewport
+  counts. The next scroll fix must start from this snapshot, not from another
+  overscan/preload guess.
+- Converted the captured blank-risk warning into a hard regression: the
+  deep-scroll Grid test now fails unless the final viewport has mounted DOM
+  items and `blankViewportRisk === false`. Root cause for that reproduced gap
+  was that `useGridScroll` used `scrollElement.clientHeight` as the only
+  anti-blank viewport height; when it was `0`, blank detection was effectively
+  disabled. The hook now falls back to Grid's measured ResizeObserver
+  `viewportHeight`.
+- Added browser-level scroll acceptance: `/__feed-scroll-audit` renders the real
+  Grid with a large synthetic mixed feed, including media-heavy cards backed by
+  deterministic local preview assets, and `bun run test:feed-scroll` drives it
+  through Playwright on desktop and narrow viewports. The gate fails on blank
+  viewport diagnostics, skeleton-only viewport, missing mounted DOM items,
+  browser asset errors, near-blank screenshots, DOM-window inflation, slow
+  viewport settle, large frame gaps and long tasks.
+- Real-vault acceptance on `Everything` passed at the product level after the
+  C8.16 retune: aggressive manual scroll showed a significant improvement, and
+  white/blank viewport states were no longer practically reproducible in normal
+  use. Phase 11 remains the strategic path only if the product later needs to
+  remove DOM measurement from the feed architecture entirely.
 
 ### 08.05.2026 — sidebar micro-preview regression audit
 
@@ -143,6 +197,15 @@ Rust IPC returns new array reference every time → `setBlocks(new_array)` alway
   concurrency, queue, LRU, timeout and generation-reset limits. Original source
   media must stay outside the preload hot path. Retuning requires diagnostics
   evidence, not changing overscan constants by taste.
+
+**H7. Grid layout readiness: strict prefix blocks deep viewport**
+- Symptom: after C7, fast/random scroll can still expose a blank or skeleton
+  viewport even when preview media is ready.
+- Root cause: old live-render gate equalled contiguous `committedEndIndex`; a
+  deep viewport could not render live cards until all earlier gaps were measured.
+- Fix: implement [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md):
+  viewport-first measurement, non-contiguous `liveBlockIds`, prefix as
+  diagnostics/background catch-up, and combined C7/C8 diagnostics.
 
 ### MEDIUM — SQL and IPC
 

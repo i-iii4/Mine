@@ -1,5 +1,77 @@
 # Devlog
 
+## 24.05.2026 [change] — Implement grid layout readiness baseline
+
+### Context
+
+- C7 feed scroll readiness prepared preview media ahead of the viewport, but
+  did not fully remove white/blank states under aggressive fast scroll.
+- The remaining dominant failure mode was layout readiness: strict contiguous
+  `committedEndIndex` kept deep viewport cards skeleton-only until earlier
+  skipped cards were measured.
+
+### Completed
+
+- Added [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md).
+- Added `src/lib/gridLayoutReadiness.ts` with pure helpers for contiguous prefix
+  diagnostics, viewport-first measurement batching and layout readiness
+  diagnostics.
+- Reworked Grid live rendering from strict prefix gating to generation-safe
+  `liveBlockIds`: exact-measured viewport islands can render live while earlier
+  gaps remain provisional.
+- Changed hidden measurement scheduling to prioritize real viewport items, then
+  nearest mounted overscan, then prefix/background catch-up.
+- After real UI feedback that C8 alone produced no visible difference, split
+  the budgets more aggressively: mounted DOM now stays in a viewport-near render
+  window capped at `1800px`, while priority/preload keep the wider media
+  preparation runway.
+- Kept hidden layout measurement independent from image load/error timing:
+  measurement waits for fonts only because feed media slots already reserve
+  deterministic aspect-ratio boxes.
+- After real UI feedback that complete white screens could still appear,
+  hardened `useGridScroll`: normal scroll still uses the RAF diff path, but a
+  native scroll jump that would leave the viewport with zero mounted items now
+  performs a bounded synchronous visible-window commit before paint.
+- Updated keyboard focus, marquee selection, Detail restore and feed video
+  autoplay to target live cards only.
+- Extended `window.__MINE_FEED_SCROLL_DEBUG__` with layout generation,
+  scroll-velocity context and viewport/visible unmeasured backlog.
+- After repeated real UI feedback that white screens could still be produced,
+  added paint-layer viewport diagnostics:
+  `window.__MINE_FEED_SCROLL_DEBUG__.viewport` compares current
+  `layout.positions` against mounted `[data-feed-grid-item]` wrappers and
+  reports whether the blank is a virtual-window gap, skeleton/layout-readiness
+  gap, layout-range gap, or media/Card paint gap.
+- Converted the captured `[Mine/Grid] blank viewport risk` warning into a
+  failing regression. The deep-scroll test now asserts that the final viewport
+  diagnostic has `blankViewportRisk === false` and at least one mounted DOM item
+  in the real viewport.
+- Fixed the reproduced anti-blank gap in `useGridScroll`: blank detection no
+  longer depends only on `scrollElement.clientHeight`. It falls back to Grid's
+  ResizeObserver-measured `viewportHeight`, so a transient zero client height
+  cannot disable the synchronous visible-window commit.
+- Added a browser-level acceptance harness:
+  - `/__feed-scroll-audit` is a dev-only route that renders the real `Grid`
+    with a large synthetic mixed feed, deterministic local preview assets and
+    Tauri asset URL mocks;
+  - `scripts/feed-scroll-audit.mjs` drives the route through Playwright on
+    desktop and narrow viewports;
+  - `bun run test:feed-scroll` fails on blank viewport diagnostics,
+    skeleton-only viewport, missing mounted DOM items, browser asset errors,
+    near-blank screenshots, DOM-window inflation, slow viewport settle, large
+    frame gaps or long tasks.
+- Added unit tests for layout readiness helpers, the anti-blank scroll jump path
+  paint diagnostics, a Grid regression test for a measured deep-viewport live
+  card, and the browser scroll audit.
+- Real-vault product acceptance on `Everything` passed after C8.16: aggressive
+  manual scroll showed a significant improvement, and white/blank viewport
+  states were no longer practically reproducible in normal use.
+
+### Follow-up
+
+- Phase 11 remains the final zero-jank architecture that removes DOM
+  measurement from the hot path entirely.
+
 ## 24.05.2026 [change] — Implement feed scroll readiness layer
 
 ### Context
@@ -29,8 +101,8 @@
 
 ### Follow-up
 
-- Manual acceptance on a real `Everything` vault is still required because the
-  final defect is perceptual.
+- Completed in C8.16: real `Everything` acceptance confirmed the current
+  product-level scroll contract.
 
 ## 24.05.2026 [spec] — Define feed scroll readiness contract
 

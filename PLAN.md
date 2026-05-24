@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Goal
 
@@ -116,7 +116,8 @@ Goal: устранить две подтверждённые архитекту�
 | C4 | Residual Risks / Follow-up | [ ] | filesystem-first route catch-up, watcher hardening beyond current catch-up, remaining frontend boot optimization, optional async/custom asset path for Detail/original flows, remaining windowing bugs |
 | C5 | Feed Video Phase | [~] | explicit `feed_playback` contract, tiered `standard/heavy` autoplay policy, poster-first `FeedVideoSurface`, single-active autoplay, preview-only galleries |
 | C6 | Identity Assets | [x] | Redaction 100 Italic `m`, platform-specific app icons, toolbar circle icon, Instagram overlay glyph/button contract |
-| C7 | Feed Scroll Readiness | [ ] | adaptive render/priority/preload windows, preview-only decode scheduler, bounded concurrency/LRU, development diagnostics |
+| C7 | Feed Scroll Readiness | [~] | adaptive render/priority/preload windows, preview-only decode scheduler, bounded concurrency/LRU, development diagnostics; implemented but insufficient for perfect fast scroll |
+| C8 | Grid Layout Readiness / Viewport-first Measurement | [x] | viewport-first measurement scheduler, non-contiguous live measured islands, layout diagnostics, automated browser scroll audit; real Everything acceptance passed |
 
 ### Current progress snapshot
 
@@ -167,9 +168,18 @@ Goal: устранить две подтверждённые архитекту�
   - render window, image priority window и media preload/decode window имеют разные адаптивные бюджеты;
   - media preload hot path использует только derived preview/poster/thumbnail assets, не оригинальные source media;
   - Grid подключает bounded `Image.decode()` queue без дополнительных preload-only `GridItem`;
-  - diagnostics доступны через `window.__MINE_FEED_SCROLL_DEBUG__`.
+  - diagnostics доступны через `window.__MINE_FEED_SCROLL_DEBUG__`;
+  - manual acceptance на реальном fast scroll показал, что C7 решает только media-readiness слой и не устраняет белые/пустые состояния полностью.
+- `C8` реализован как baseline:
+  - current-viewport measurement имеет приоритет над prefix catch-up;
+  - live-render больше не зависит только от strict contiguous `committedEndIndex`;
+  - `useGridScroll` имеет anti-blank sync commit для native scroll jumps;
+  - `window.__MINE_FEED_SCROLL_DEBUG__.viewport` классифицирует paint-layer blank risk;
+  - `bun run test:feed-scroll` добавлен как browser-level gate для blank viewport, skeleton-only viewport, near-blank screenshot, DOM-window inflation, slow settle, frame gaps и long tasks;
+  - manual acceptance на реальном `Everything` после C8.16 показал значимое улучшение: белый viewport практически не воспроизводится в обычном aggressive scroll;
+  - оставшийся strategic scope — Phase 11 zero-jank architecture, если понадобится убрать DOM measurement class полностью.
 
-### Phase C7 — Feed Scroll Readiness [IMPLEMENTED, MANUAL ACCEPTANCE PENDING]
+### Phase C7 — Feed Scroll Readiness [IMPLEMENTED, INSUFFICIENT]
 
 Goal: сделать быстрый, но архитектурно правильный слой подготовки ленты, чтобы
 при быстром scroll медиа не догоняли viewport рывками.
@@ -183,7 +193,55 @@ Goal: сделать быстрый, но архитектурно правил�
 | C7.5 | Integrate `useFeedMediaPreloader` into Grid without adding preload-only GridItems or scroll-pixel React state | [x] |
 | C7.6 | Retune render/priority windows according to the adaptive formulas, not fixed magic constants | [x] |
 | C7.7 | Add development diagnostics and tuning protocol evidence: mounted count, window sizes, queue length, active decodes, decoded/failed/skipped counters | [x] |
-| C7.8 | Validate fast scroll on real `Everything`: fewer blank/late media states, preview-only hot path, no whole-route DOM inflation | [ ] |
+| C7.8 | Validate fast scroll on real `Everything`: C7 reduces one media-readiness layer but does not satisfy the “infinite canvas” contract under aggressive scroll | [x] |
+| C7.9 | Stop treating this as an overscan/preload tuning problem; promote layout readiness to C8 | [x] |
+
+### Phase C8 — Grid Layout Readiness / Viewport-first Measurement [IMPLEMENTED]
+
+Goal: устранить белые/пустые состояния и рывки при fast/random-access scroll,
+которые остаются после C7, за счёт архитектуры готовности layout, а не за счёт
+ещё более широкого media preload.
+
+Root cause hypothesis:
+
+- C7 готовит preview media ahead-of-viewport, но не может сделать карточку
+  видимой, если Grid ещё не разрешил её live-render.
+- Текущий `committedEndIndex` — это strict contiguous prefix: карточка с index
+  `N` не считается committed, пока все карточки `0...N-1` не получили exact
+  height.
+- `measurementBatch` набирает missing blocks из prefix до
+  `targetCommittedEndIndex`, поэтому при резком прыжке вниз viewport может
+  ждать измерение большого числа карточек выше себя.
+- Значит, remaining defect находится в layout readiness / measurement
+  scheduling, а не в яркости placeholder, preload window или image decode
+  concurrency.
+
+Non-goals:
+
+- Не увеличивать DOM до whole-route render.
+- Не возвращать scroll anchoring как универсальный фикс; предыдущий masonry
+  anchoring уже был reverted из-за feedback loop.
+- Не загружать source media в feed path.
+- Не добавлять visible debug/service text в UI.
+
+| # | Task | Status |
+|---|------|--------|
+| C8.1 | SPEC: formalize viewport-first layout readiness, exact viewport islands, telemetry, acceptance criteria and relation to Phase 11 Zero-Jank Masonry | [x] |
+| C8.2 | Dev-only diagnostics: expose `committedEndIndex`, `targetCommittedEndIndex`, `maxVisibleIndex`, viewport/visible unmeasured counts, `measurementBatch.length`, layout generation, scroll velocity and media preload stats | [x] |
+| C8.3 | Regression harness: simulate deep fast-scroll / scroll jump into an initially unmeasured area and assert the viewport is prioritized before prefix catch-up | [x] |
+| C8.4 | Measurement scheduler: prioritize missing visible items, then near-forward window, then backward/prefix background, with bounded batch size and no scroll-pixel React fan-out | [x] |
+| C8.5 | Live-render gate rewrite: decouple “has exact measured height” from strict contiguous prefix so exact-measured viewport items can render as live cards even when earlier gaps remain provisional | [x] |
+| C8.6 | Layout stability contract: keep provisional positions deterministic and apply any exact-height corrections without visible scroll feedback loops during active scroll | [~] |
+| C8.7 | Height-readiness hardening: reduce hidden DOM dependency by deriving deterministic preview/text heights where possible and persisting reusable measurements by generation bucket | [~] |
+| C8.8 | Integrate with C7: media preloader remains preview-only and bounded, with shared diagnostics so layout backlog is not masked as media backlog | [x] |
+| C8.9 | Acceptance on real `Everything`: aggressive trackpad scroll down/up and deep jump cannot produce a blank/white viewport; no whole-route DOM inflation; diagnostics confirm viewport-first measurement | [x] |
+| C8.10 | Documentation + verification: update SPEC/ARCHITECTURE/AUDIT/DEVLOG/PLAN and run focused Grid/readiness tests plus full frontend suite | [x] |
+| C8.11 | Follow-up after real UI feedback: make render runway velocity-aware and keep hidden layout measurement independent from image load/error timing | [x] |
+| C8.12 | Follow-up after complete white-screen feedback: add `useGridScroll` anti-blank sync commit for native scroll jumps that outrun the RAF visible-window update | [x] |
+| C8.13 | Diagnostic follow-up after repeated white-screen feedback: add paint-layer viewport diagnostics that compare `layout.positions` to mounted `GridItem` DOM and classify blank risk before the next scroll fix | [x] |
+| C8.14 | Convert blank-risk warning into a failing deep-scroll regression and fix `useGridScroll` so anti-blank detection falls back to measured ResizeObserver viewport height when `clientHeight` is unavailable | [x] |
+| C8.15 | Browser acceptance harness: dev-only `/__feed-scroll-audit` route plus `bun run test:feed-scroll` Playwright gate for blank viewport, skeleton-only viewport and near-blank screenshot samples | [x] |
+| C8.16 | Performance hardening: extend browser scroll gate with DOM/settle/frame/long-task budgets and retune Grid to a viewport-near render window while keeping wider media preload | [x] |
 
 ### Phase 24 — Filesystem-first visibility [PLANNED]
 

@@ -1,8 +1,10 @@
 # SPEC: Feed Scroll Performance
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [AUDIT_PERFORMANCE.md](AUDIT_PERFORMANCE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [AUDIT_PERFORMANCE.md](AUDIT_PERFORMANCE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 
-Status: planned.
+Status: implemented as Phase C7; insufficient alone for the final canvas-feel
+target. Phase C8 continues the layout-readiness layer in
+[SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md).
 
 ## Goal
 
@@ -44,6 +46,11 @@ can still break down during fast scroll:
 The defect is not only "not enough rendered cards"; it is the mismatch between
 scroll physics and media readiness.
 
+Phase C7 covers media readiness. If fast-scroll diagnostics show media work is
+healthy but the viewport still contains unmeasured skeletons or blank geometry,
+the defect belongs to the layout-readiness layer specified in
+[SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md).
+
 ## Core Principle
 
 **DOM readiness and media readiness must be independent.**
@@ -58,6 +65,7 @@ Feed scroll readiness is a pipeline, not a single component-level tweak:
 
 ```text
 scroll container
+  -> scroll visibility runtime
   -> RAF scroll signal sampler
   -> adaptive window calculator
   -> layout-position range query
@@ -71,6 +79,7 @@ Each stage has one owner:
 
 | Stage | Owner | Contract |
 |---|---|---|
+| Scroll visibility runtime | `useGridScroll` | Keep mounted `GridItem`s aligned with the real scrollport; use RAF for normal changes and a bounded sync commit only when the current viewport would otherwise be empty |
 | Scroll sampling | Grid hook | Read `scrollTop`, direction and velocity at animation-frame cadence |
 | Window calculation | Pure helper | Convert viewport + velocity into render, priority and preload windows |
 | Layout range query | Grid | Use existing `layout.positions`; do not query DOM rectangles |
@@ -85,6 +94,9 @@ candidate resolver owns media URL policy, and the queue owns backpressure.
 
 - No scroll handler may perform synchronous filesystem, IPC, database, image
   probing or React state fan-out.
+- A scroll handler may perform a bounded synchronous React commit only for the
+  anti-blank invariant: when the real viewport no longer intersects any
+  currently mounted item. Ordinary scroll remains RAF-coalesced.
 - No implementation may make the whole route visible in DOM to make scrolling
   feel smoother.
 - No implementation may preload original source media as part of the fast scroll
@@ -128,8 +140,8 @@ The render window decides which `GridItem`s are mounted in DOM.
 Target formula:
 
 ```ts
-renderForwardPx = clamp(Math.max(3600, vh * 2.5), 3200, 5200)
-renderBackwardPx = clamp(Math.max(1000, vh * 0.9), 800, 1800)
+renderForwardPx = clamp(Math.max(720, vh * 0.75 + v * 80), 640, 1800)
+renderBackwardPx = clamp(Math.max(360, vh * 0.35), 320, 800)
 ```
 
 `renderForwardPx` and `renderBackwardPx` are mirrored when scrolling backward.
@@ -141,8 +153,34 @@ contiguous committed prefix:
 commitLookaheadBlocks = Math.max(48, visibleItemCount * 2)
 ```
 
-Rationale: render overscan is deliberately moderate. It reduces visible blank
-geometry without turning virtualization into a large static DOM.
+Rationale: render overscan is deliberately small. Grid mounts only the current
+viewport plus a short runway, because deep jumps otherwise create large React
+mount bursts and long tasks. The wider forward preparation belongs to priority
+loading and media preload, not to mounted `GridItem` DOM. Blank geometry is
+handled by the anti-blank commit below, not by keeping several screens of cards
+mounted.
+
+### Anti-blank Scroll Commit
+
+Velocity-aware runway is not sufficient by itself because native scroll can move
+the scrollport before React's next RAF commit. `useGridScroll` therefore owns a
+separate anti-blank invariant:
+
+```ts
+if (!currentMountedItemsIntersect(realScrollTop, viewportHeight)) {
+  flushSync(commitVisibleItemsFor(realScrollTop))
+}
+```
+
+This path is allowed only when the current viewport would have zero mounted
+items. Normal scroll still uses the cheap RAF diff and does not set React state
+on every scroll pixel. The sync commit is bounded by the current render window;
+it must never expand into whole-route DOM mounting.
+
+`viewportHeight` comes from the real scroll element when available, but the
+hook must fall back to Grid's ResizeObserver-measured viewport height. A
+transient or test-environment `clientHeight === 0` must not disable the
+anti-blank invariant.
 
 ### 2. Image Priority Window
 
@@ -395,11 +433,34 @@ window.__MINE_FEED_SCROLL_DEBUG__ = {
   renderWindowPx: { forward: number; backward: number };
   priorityWindowPx: { forward: number; backward: number };
   preloadWindowPx: { forward: number; backward: number };
+  layout?: GridLayoutReadinessDiagnostics;
+  viewport?: GridViewportPaintDiagnostics;
 };
 ```
 
-Diagnostics may also log a compact `console.info` line when debug is enabled.
-They must never render visible service text in the app.
+`layout` belongs to C8 layout readiness. `viewport` belongs to the paint-layer
+blank detector and compares layout positions with mounted `[data-feed-grid-item]`
+DOM wrappers in the active scrollport. If `viewport.blankViewportRisk` is true,
+the defect is a virtual-window/commit gap, not a media-preload miss.
+
+Diagnostics may also log compact console lines in development builds. They must
+never render visible service text in the app.
+
+The layout/paint layer has an automated browser gate:
+
+```bash
+bun run test:feed-scroll
+```
+
+It opens the dev-only `/__feed-scroll-audit` route, performs deterministic deep
+scroll jumps in Playwright and fails on blank viewport, skeleton-only viewport,
+browser asset errors, near-blank screenshot samples, DOM-window inflation,
+slow viewport settle, large frame gaps or long tasks. The route includes
+text-only and media-heavy synthetic cards with deterministic local preview
+assets. This command verifies the Grid virtual-window/readiness layer and the
+Card preview paint path. Real-vault product acceptance remains a separate
+human-facing check because the synthetic route intentionally avoids source media
+and Tauri IPC; the C8.16 `Everything` check passed at the current product level.
 
 ## Acceptance Criteria
 
@@ -454,8 +515,8 @@ Manual:
 - Focused Grid tests where practical:
   - preloader receives wider window than visible render;
   - no extra GridItems are mounted for preload-only items.
-- Manual acceptance on the real vault remains required because the defect is
-  perceptual.
+- Product acceptance on the real `Everything` vault is required because the
+  defect is perceptual; it passed after the C8.16 layout-readiness retune.
 
 ## Implementation Phases
 

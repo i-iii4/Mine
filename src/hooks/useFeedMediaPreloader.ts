@@ -17,14 +17,22 @@ import {
   type FeedMediaPreloadStats,
 } from "@/lib/feedMediaPreloadQueue";
 import type { LayoutGenerationKey } from "@/lib/layoutGeneration";
+import type { GridLayoutReadinessDiagnostics } from "@/lib/gridLayoutReadiness";
+import type { GridViewportPaintDiagnostics } from "@/lib/gridViewportDiagnostics";
 
 interface FeedMediaPreloaderDebug {
   enabled: boolean;
+  layoutGenerationKey: string;
+  scrollDirection: FeedScrollDirection;
+  scrollVelocityPxMs: number;
+  isFastScrolling: boolean;
   stats: FeedMediaPreloadStats;
   mountedGridItems: number;
   renderWindowPx: { forward: number; backward: number };
   priorityWindowPx: { forward: number; backward: number };
   preloadWindowPx: { forward: number; backward: number };
+  layout?: GridLayoutReadinessDiagnostics;
+  viewport?: GridViewportPaintDiagnostics;
 }
 
 declare global {
@@ -92,6 +100,7 @@ export function useFeedMediaPreloader({
   viewportHeight,
   scrollDirection,
   scrollVelocityPxMs,
+  isFastScrolling,
   generationKey,
   thumbsRootPath,
   mountedGridItems,
@@ -105,6 +114,7 @@ export function useFeedMediaPreloader({
   viewportHeight: number;
   scrollDirection: FeedScrollDirection;
   scrollVelocityPxMs: number;
+  isFastScrolling: boolean;
   generationKey: LayoutGenerationKey;
   thumbsRootPath: string | null;
   mountedGridItems: number;
@@ -223,6 +233,10 @@ export function useFeedMediaPreloader({
     if (typeof window === "undefined") return;
     window.__MINE_FEED_SCROLL_DEBUG__ = {
       enabled,
+      layoutGenerationKey: generationKey,
+      scrollDirection,
+      scrollVelocityPxMs,
+      isFastScrolling,
       stats,
       mountedGridItems,
       renderWindowPx: orientedWindowDebug(
@@ -240,8 +254,19 @@ export function useFeedMediaPreloader({
         resolvedWindows.preloadBeforePx,
         resolvedWindows.preloadAfterPx,
       ),
+      layout: window.__MINE_FEED_SCROLL_DEBUG__?.layout,
+      viewport: window.__MINE_FEED_SCROLL_DEBUG__?.viewport,
     };
-  }, [enabled, mountedGridItems, resolvedWindows, scrollDirection, stats]);
+  }, [
+    enabled,
+    generationKey,
+    isFastScrolling,
+    mountedGridItems,
+    resolvedWindows,
+    scrollDirection,
+    scrollVelocityPxMs,
+    stats,
+  ]);
 
   return stats;
 }

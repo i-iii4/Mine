@@ -14,8 +14,8 @@ describe("computeFeedScrollReadinessWindows", () => {
     });
 
     expect(windows).toMatchObject({
-      renderBeforePx: 1000,
-      renderAfterPx: 3600,
+      renderBeforePx: 360,
+      renderAfterPx: 720,
       priorityBeforePx: 990,
       priorityAfterPx: 3200,
       preloadBeforePx: 1600,
@@ -24,7 +24,7 @@ describe("computeFeedScrollReadinessWindows", () => {
     });
   });
 
-  it("expands priority and preload windows with scroll velocity", () => {
+  it("expands render, priority and preload windows with scroll velocity", () => {
     const windows = computeFeedScrollReadinessWindows({
       viewportHeight: 1200,
       scrollVelocityPxMs: 5,
@@ -32,6 +32,7 @@ describe("computeFeedScrollReadinessWindows", () => {
       visibleItemCount: 40,
     });
 
+    expect(windows.renderAfterPx).toBe(1300);
     expect(windows.priorityAfterPx).toBe(5350);
     expect(windows.preloadAfterPx).toBe(7800);
     expect(windows.commitLookaheadBlocks).toBe(80);
@@ -58,7 +59,7 @@ describe("computeFeedScrollReadinessWindows", () => {
       visibleItemCount: 10,
     });
 
-    expect(windows.renderAfterPx).toBe(5200);
+    expect(windows.renderAfterPx).toBe(1800);
     expect(windows.priorityAfterPx).toBe(8000);
     expect(windows.preloadAfterPx).toBe(14000);
     expect(windows.preloadBeforePx).toBe(3600);

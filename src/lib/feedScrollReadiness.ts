@@ -27,6 +27,8 @@ export interface FeedScrollReadinessWindows {
 export const FEED_FAST_SCROLL_ENTER_VELOCITY_PX_MS = 2.4;
 export const FEED_FAST_SCROLL_EXIT_VELOCITY_PX_MS = 1.2;
 export const FEED_SCROLL_VELOCITY_ALPHA = 0.3;
+export const FEED_RENDER_RUNWAY_MIN_FORWARD_PX = 720;
+export const FEED_RENDER_RUNWAY_MAX_FORWARD_PX = 1800;
 
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -65,8 +67,12 @@ export function computeFeedScrollReadinessWindows({
   const vh = safeViewportHeight(viewportHeight);
   const velocity = safeVelocity(scrollVelocityPxMs);
 
-  const renderForwardPx = clamp(Math.max(3600, vh * 2.5), 3200, 5200);
-  const renderBackwardPx = clamp(Math.max(1000, vh * 0.9), 800, 1800);
+  const renderForwardPx = clamp(
+    Math.max(FEED_RENDER_RUNWAY_MIN_FORWARD_PX, vh * 0.75 + velocity * 80),
+    640,
+    FEED_RENDER_RUNWAY_MAX_FORWARD_PX,
+  );
+  const renderBackwardPx = clamp(Math.max(360, vh * 0.35), 320, 800);
   const priorityForwardPx = clamp(vh * 3 + velocity * 350, 3200, 8000);
   const priorityBackwardPx = clamp(vh * 1.1, 800, 2400);
   const preloadForwardPx = clamp(vh * 4 + velocity * 600, 4800, 14000);

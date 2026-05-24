@@ -1,7 +1,7 @@
 // Grid scroll state hook.
 //
 // Returns the currently-visible masonry items for a scroll container, with
-// two performance properties:
+// three performance properties:
 //
 //  1. Layout changes are reflected SYNCHRONOUSLY during render. When the
 //     caller-provided `getVisibleItems` callback changes identity (e.g.
@@ -17,8 +17,15 @@
 //     reference comparison, and only bumps a tick state when it has. Within
 //     the overscan window, scrolling is completely free of React work.
 //
+//  3. Fast native scroll jumps must not paint an empty viewport while React
+//     waits for the next RAF. If the real viewport no longer intersects any
+//     currently mounted item, the hook performs a bounded synchronous commit
+//     for the new window. This is the anti-blank path; it is not used during
+//     ordinary within-window scrolling.
+//
 // See SPEC_GRID.md §002 for the design rationale.
 
+import { flushSync } from "react-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MasonryPosition } from "@/lib/masonryLayout";
 
@@ -27,6 +34,14 @@ export interface UseGridScrollOptions {
   getVisibleItems: (scrollTop: number) => MasonryPosition[];
   /** Reset the scroll visibility snapshot when route/layout scope changes. */
   resetKey?: string;
+  /**
+   * Measured scrollport height from the caller's layout observer. Browsers
+   * usually expose the same value through `clientHeight`, but tests and early
+   * mount/resize frames can report `0` there while ResizeObserver already
+   * knows the real viewport. The anti-blank path must use the measured height
+   * rather than silently disabling itself.
+   */
+  viewportHeight?: number;
 }
 
 /** Element-wise reference equality for two arrays of positions. */
@@ -42,6 +57,21 @@ function samePositions(
   return true;
 }
 
+function viewportHasRenderedItem(
+  items: readonly MasonryPosition[],
+  scrollTop: number,
+  viewportHeight: number,
+): boolean {
+  if (viewportHeight <= 0) return true;
+  const viewportBottom = scrollTop + viewportHeight;
+  return items.some((item) => item.bottom >= scrollTop && item.top <= viewportBottom);
+}
+
+function resolveViewportHeight(element: HTMLElement, measuredViewportHeight?: number): number {
+  if (element.clientHeight > 0) return element.clientHeight;
+  return measuredViewportHeight && measuredViewportHeight > 0 ? measuredViewportHeight : 0;
+}
+
 /**
  * Attach to a scrollable element and return the currently-visible items.
  *
@@ -50,10 +80,13 @@ function samePositions(
  *    are recomputed during the same render. No stale paint.
  *  - When the scroll position changes within the overscan window, no
  *    re-render — the RAF loop detects the no-op and does not bump state.
+ *  - When a native scroll jump would leave the viewport with no currently
+ *    rendered item, the hook updates synchronously before the blank frame can
+ *    paint.
  */
 export function useGridScroll(
   scrollElementRef: React.RefObject<HTMLElement | null>,
-  { getVisibleItems, resetKey }: UseGridScrollOptions,
+  { getVisibleItems, resetKey, viewportHeight }: UseGridScrollOptions,
 ): MasonryPosition[] {
   const scrollTopRef = useRef(0);
   // Opaque tick state: bumped by the scroll handler when the visible set
@@ -67,10 +100,15 @@ export function useGridScroll(
   // so the scroll handler always sees the latest version without needing
   // to re-bind the native event listener.
   const getVisibleItemsRef = useRef(getVisibleItems);
+  const viewportHeightRef = useRef(viewportHeight);
 
   useEffect(() => {
     getVisibleItemsRef.current = getVisibleItems;
   }, [getVisibleItems]);
+
+  useEffect(() => {
+    viewportHeightRef.current = viewportHeight;
+  }, [viewportHeight]);
 
   useEffect(() => {
     const el = scrollElementRef.current;
@@ -97,10 +135,12 @@ export function useGridScroll(
     return items;
   }, [getVisibleItems, scrollTick]);
 
-  // Scroll listener: updates scrollTop ref on every scroll event, then
-  // schedules a RAF check. The check compares the new visible set with
-  // the last one; if they differ by element-wise reference, bumps
-  // scrollTick to force a re-render.
+  // Scroll listener: updates scrollTop ref on every scroll event, then uses
+  // one of two paths:
+  //
+  //   - normal path: RAF diff + state bump only if the visible set changed;
+  //   - anti-blank path: synchronous state bump when native scroll jumped to
+  //     a viewport that has no currently mounted item.
   useEffect(() => {
     const el = scrollElementRef.current;
     if (!el) return;
@@ -109,6 +149,21 @@ export function useGridScroll(
 
     const handleScroll = (): void => {
       scrollTopRef.current = el.scrollTop;
+      const currentViewportHeight = resolveViewportHeight(el, viewportHeightRef.current);
+      if (!viewportHasRenderedItem(lastVisibleRef.current, scrollTopRef.current, currentViewportHeight)) {
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        const next = getVisibleItemsRef.current(scrollTopRef.current);
+        if (!samePositions(next, lastVisibleRef.current)) {
+          flushSync(() => {
+            setScrollTick((t) => t + 1);
+          });
+        }
+        return;
+      }
+
       if (rafId !== null) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
