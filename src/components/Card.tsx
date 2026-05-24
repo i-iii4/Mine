@@ -36,6 +36,15 @@ const usePriority = () => useContext(PriorityContext);
 const contentCardPreviewTextStyle = {
   lineHeight: `${CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX}px`,
 } as const;
+const contentCardSingleLineTextStyle = {
+  lineHeight: "16px",
+} as const;
+const cardFrameRenderStyle = {
+  minHeight: CARD_HOVER_ACTION_MIN_HEIGHT,
+  contain: "layout paint style",
+  transform: "translateZ(0)",
+  backfaceVisibility: "hidden",
+} as const;
 
 function renderSearchHighlightedText(text: string, match: LightBlock["search_match"] | null | undefined): ReactNode {
   if (!match || match.ranges.length === 0 || match.excerpt !== text) {
@@ -117,8 +126,9 @@ const CardFrame = forwardRef<HTMLDivElement, CardFrameProps>(function CardFrame(
   return (
     <div
       ref={ref}
+      data-feed-card-frame=""
       className={cn(CARD_FRAME_CLASS, className)}
-      style={{ minHeight: CARD_HOVER_ACTION_MIN_HEIGHT, ...style }}
+      style={{ ...cardFrameRenderStyle, ...style }}
       {...props}
     >
       {children}
@@ -297,6 +307,7 @@ export function ReadOnlyCardPreview({
                   block.thumb_format === "png" && "dark:invert",
                 )}
                 loading="eager"
+                decoding="async"
                 draggable={false}
               />
             </GraphicSurface>
@@ -306,7 +317,7 @@ export function ReadOnlyCardPreview({
               {title && (
                 <p
                   className="line-clamp-2 text-sm font-semibold text-foreground"
-                  style={{ lineHeight: "16px" }}
+                  style={contentCardSingleLineTextStyle}
                 >
                   {title}
                 </p>
@@ -320,7 +331,10 @@ export function ReadOnlyCardPreview({
                 </p>
               )}
               {block.author && (
-                <p className={cn("text-sm text-muted-foreground", (title || previewText) && "mt-2")}>
+                <p
+                  className={cn("text-sm text-muted-foreground", (title || previewText) && "mt-2")}
+                  style={contentCardSingleLineTextStyle}
+                >
                   by {block.author}
                 </p>
               )}
@@ -678,6 +692,7 @@ function GalleryTileImage({
       alt=""
       className="absolute inset-0 h-full w-full object-cover"
       loading={loading}
+      decoding="async"
       draggable={false}
       onError={() => {
         if (sourceSrc && src !== sourceSrc) {
@@ -878,6 +893,7 @@ const ImageCard = memo(function ImageCard({
           alt={navigationLabel}
           className="absolute inset-0 h-full w-full object-cover"
           loading={imgLoading}
+          decoding="async"
           draggable={false}
           onError={() => setSourceIndex((i) => i + 1)}
         />
@@ -943,11 +959,11 @@ const LinkCard = memo(function LinkCard({
   if (thumbError) {
     return (
       <div className="p-3">
-        <p className="truncate text-sm font-semibold text-foreground">
+        <p className="truncate text-sm font-semibold text-foreground" style={contentCardSingleLineTextStyle}>
           {navigationLabel}
         </p>
         {domain && (
-          <p className="mt-0.5 truncate text-sm text-muted-foreground">{domain}</p>
+          <p className="mt-0.5 truncate text-sm text-muted-foreground" style={contentCardSingleLineTextStyle}>{domain}</p>
         )}
       </div>
     );
@@ -977,6 +993,7 @@ const LinkCard = memo(function LinkCard({
               thumbLoaded ? "opacity-100" : "opacity-0",
             )}
             loading={imgLoading}
+            decoding="async"
             draggable={false}
             onLoad={() => setThumbLoaded(true)}
             onError={() => {
@@ -987,11 +1004,11 @@ const LinkCard = memo(function LinkCard({
         )}
       </GraphicSurface>
       <div className="p-3">
-        <p className="truncate text-sm font-semibold text-foreground">
+        <p className="truncate text-sm font-semibold text-foreground" style={contentCardSingleLineTextStyle}>
           {navigationLabel}
         </p>
         {domain && (
-          <p className="mt-0.5 truncate text-sm text-muted-foreground">{domain}</p>
+          <p className="mt-0.5 truncate text-sm text-muted-foreground" style={contentCardSingleLineTextStyle}>{domain}</p>
         )}
       </div>
     </div>
@@ -1115,7 +1132,10 @@ const SocialCard = memo(function SocialCard({
           )}
 
           {hasBottomMeta && (
-            <p className={cn("text-sm text-muted-foreground", hasPreviewText && "mt-2")}>
+            <p
+              className={cn("text-sm text-muted-foreground", hasPreviewText && "mt-2")}
+              style={contentCardSingleLineTextStyle}
+            >
               by {block.author}
             </p>
           )}
@@ -1214,6 +1234,7 @@ const ArticleCard = memo(function ArticleCard({
               alt=""
               className="absolute inset-0 h-full w-full object-cover"
               loading={imgLoading}
+              decoding="async"
               draggable={false}
             />
           )}
@@ -1224,7 +1245,7 @@ const ArticleCard = memo(function ArticleCard({
         <div className={cn(hasPreview && "mt-3")}>
           <p
             className="line-clamp-2 text-sm font-semibold text-foreground"
-            style={{ lineHeight: "16px" }}
+            style={contentCardSingleLineTextStyle}
           >
             {displayTitle ? renderSearchHighlightedText(displayTitle, titleSearchMatch) : null}
           </p>
@@ -1246,7 +1267,7 @@ const ArticleCard = memo(function ArticleCard({
                 "text-sm text-muted-foreground",
                 (previewText.length > 0 || (displayTitle ?? "").length > 0) && "mt-2",
               )}
-              style={{ lineHeight: "16px" }}
+              style={contentCardSingleLineTextStyle}
             >
               {block.author}
             </p>
@@ -1325,11 +1346,11 @@ const FileCard = memo(function FileCard({ block }: { block: LightBlock }) {
         {ext ?? "FILE"}
       </div>
       <div className="min-w-0">
-        <p className="truncate text-sm font-semibold text-foreground">
+        <p className="truncate text-sm font-semibold text-foreground" style={contentCardSingleLineTextStyle}>
           {navigationLabel}
         </p>
         {block.media_file && (
-          <p className="truncate text-sm text-muted-foreground">
+          <p className="truncate text-sm text-muted-foreground" style={contentCardSingleLineTextStyle}>
             {block.media_file}
           </p>
         )}

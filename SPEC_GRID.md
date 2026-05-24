@@ -25,8 +25,8 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PRINCIPLES.md](PRINCIPL
 
 ## Текущий статус rollout
 
-Phase 11 внедряется как доказуемая миграция, а не как одномоментная замена
-`Grid.tsx`. Часть инфраструктуры уже существует в production-коде:
+Phase 11 закрыта как доказуемая миграция, а не как одномоментная замена
+`Grid.tsx`. Production-код содержит весь целевой deterministic stack:
 
 - `src/workers/fontMetrics.worker.ts` и `src/lib/fontMetrics.ts`;
 - `src/lib/wordWrap.ts` и `src/lib/cardHeight.ts`;
@@ -34,12 +34,13 @@ Phase 11 внедряется как доказуемая миграция, а �
 - generation-aware `src/lib/layoutCache.ts`;
 - `src/hooks/useGridScroll.ts` с RAF path и bounded anti-blank sync commit.
 
-Production Grid пока остаётся на generation-safe measured islands из
-`SPEC_GRID_LAYOUT_READINESS.md`. Полная отмена DOM measurement допустима только
-после shadow-validation: deterministic `computeCardHeight()` должен быть
-сравнён с фактической высотой `MeasureCard` на реальных карточках, а drift
-должен оказаться внутри явно заданного бюджета. Это защищает быстрый scroll,
-startup и channel switch от регресса из-за неточного height model.
+Production Grid больше не использует DOM-measured heights как источник layout.
+`computeCardHeight()` является source of truth для masonry geometry; media
+dimensions дают точные media envelopes, word metrics дают deterministic text
+envelopes, а отсутствие worker metrics деградирует в conservative fallback
+после завершения попытки загрузки metrics. DOM measurement сохранён только как
+explicit dev-аудит height drift через `window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__()`
+и не участвует в user-facing scroll/render path.
 
 ---
 
@@ -107,7 +108,8 @@ src/
 
 Большая часть supporting-файлов уже создана. Текущий workstream не удаляет
 старый Grid path; он сначала укрепляет cache identity и добавляет proof gates.
-Удаляемые файлы отсутствуют до финального production switch.
+Старый generation-aware `heightCache` удалён. Единственный bucket helper живёт
+в `src/lib/heightBucket.ts`; `layoutCache` кэширует уже deterministic layouts.
 
 ---
 
@@ -219,10 +221,10 @@ export function computeCardHeight(
 
 Если `wordWidths === null` для article/social card (кэш ещё не готов),
 функция возвращает conservative reservation: худшую clamped-геометрию текущего
-template. Это overlap-safe envelope для loading state, а не точная финальная
-высота. Production switch на fully deterministic layout запрещён, пока
-shadow-validation не докажет, что exact path совпадает с реальным рендером
-достаточно близко.
+template. Это overlap-safe envelope для loading state и fallback для среды,
+где worker metrics недоступны. Production switch уже выполнен после
+shadow-validation; дальнейшие изменения шаблонов Card обязаны заново проходить
+height-drift audit.
 
 ### `src/lib/masonryLayout.ts` — расширение
 
@@ -530,9 +532,7 @@ path, когда native scroll jump иначе показал бы полнос�
 
 ## Rollout plan from current state
 
-Phase 11 больше не стартует с нуля. Первый merged слой уже дал
-generation-aware measured islands и anti-blank acceptance gate. Дальше rollout
-идёт только через доказуемые вертикальные срезы:
+Phase 11 закрыта через доказуемые вертикальные срезы:
 
 ### Шаг 1: Cache correctness hardening
 
@@ -560,31 +560,32 @@ generation-aware measured islands и anti-blank acceptance gate. Дальше ro
 - Production switch запрещён, пока drift не укладывается в budget и не покрыт
   тестами на media, article, social и channel cards.
 
-### Шаг 3: Scheduling-only integration
+### Шаг 3: Scheduling-only integration — done
 
 - Использовать deterministic heights только там, где drift доказан: priority,
   prefetch, placeholder/skeleton envelope.
-- Если block уже имеет exact cached height или может быть безопасно отрендерен
-  из deterministic height (`media` или text metrics готовы), GridItem может
-  рендерить live `Card` сразу. DOM measurement остаётся фоновым exact/cache
-  authority и drift proof, но больше не блокирует текущий viewport.
-- Automatic exact measurement is idle-delayed after a batch change. Browser
-  audit route disables automatic measurement and uses the explicit drift
-  request, so hidden diagnostic work cannot race the scroll sample.
-- Не удалять DOM measurement path, пока exact live envelope не доказан на
-  реальном vault и synthetic browser gate.
+- Если block может быть безопасно отрендерен из deterministic height (`media`,
+  готовые text metrics или conservative fallback после завершения metrics
+  attempt), GridItem рендерит live `Card` сразу.
+- Browser audit route использует explicit drift request после scroll sample, so
+  hidden diagnostic work cannot race the scroll sample.
+- Real-vault product acceptance and synthetic browser gate completed before the
+  production switch.
 
-### Шаг 4: Production Grid switch
+### Шаг 4: Production Grid switch — done
 
-- Переключить live layout на fully deterministic path behind a kill switch.
-- Удалить measurement infrastructure только после browser acceptance:
-  `bun run test:feed-scroll`, отсутствие blank viewport, отсутствие clip/white
-  tail, startup/channel switch без регресса.
+- Live layout переключён на fully deterministic path.
+- Production measurement infrastructure removed: no `heightCache`, no
+  production `MeasurementPass`, no cached measured height authority.
+- `MeasureCard` remains only for explicit height-drift audit.
+- Browser acceptance: `bun run test:feed-scroll` passes with no blank viewport,
+  no skeleton-only viewport and `p95/max heightDrift = 0`.
 
-### Шаг 5: Cleanup
+### Шаг 5: Cleanup — done
 
-- Удалить obsolete measured-island code.
-- Зафиксировать benchmark numbers в DEVLOG и обновить ARCHITECTURE.md.
+- Obsolete measured-island cache code removed.
+- Benchmark / acceptance numbers are recorded in DEVLOG and
+  [AUDIT_PERFORMANCE.md](AUDIT_PERFORMANCE.md).
 
 ---
 
@@ -717,19 +718,34 @@ audit, low-priority and bounded to hidden measurement batches. Report
 aggregation is scheduled outside the scroll performance sample so diagnostics
 cannot add latency to the scroll-readiness path.
 
-### 008: Deterministic-ready live render, exact measurement as background authority
+### 008: Deterministic-ready live render
 
 | Approach | Problem |
 |---|---|
 | Keep live render blocked on DOM measurement | Fast/deep scroll can still show skeleton chunks while the viewport waits for hidden measurement, even when deterministic height is already proven |
 | Remove measurement immediately | Too risky until the proof gate covers real-vault drift and more card variants |
-| **Render deterministic-ready GridItems live while measuring exact heights in background** (chosen) | Current viewport becomes real content immediately; exact cache and drift proof remain intact |
+| **Render deterministic-ready GridItems live** (chosen) | Current viewport becomes real content immediately; drift proof remains available through an explicit dev audit |
 
 Rationale: once word metrics are ready, article/social/channel card envelopes are
 deterministic enough to render the visible Card. Media cards do not need word
-metrics. Hidden `MeasurementPass` continues to update exact generation-aware
-height cache and drift diagnostics, but it is idle-delayed and no longer allowed
-to block the current viewport or contaminate scroll performance timings.
+metrics. After the final production switch, hidden measurement no longer writes
+an exact height cache and no longer participates in layout. `MeasureCard` exists
+only as a requested dev audit for validating `computeCardHeight()` drift.
+
+### 009: Production Grid uses deterministic layout only
+
+| Approach | Problem |
+|---|---|
+| Keep exact measured heights as a background authority | Still preserves a second geometry source and can reintroduce stale/cache races |
+| Increase overscan/preload to hide white states | Does not remove the root cause and inflates DOM work |
+| **Use deterministic `computeCardHeight()` as the only production geometry source** (chosen) | One source of truth; scroll, resize, channel switch and layout cache all read the same pure geometry |
+
+Rationale: Phase 11 drift audit showed `p95/max heightDrift = 0` on the
+synthetic browser gate. Keeping measured heights after that point would be
+architecture debt: two height authorities, IndexedDB invalidation rules and
+background measurement scheduling. Production Grid now calculates layout from
+`block + columnWidth + wordMetrics`, caches only full deterministic layouts and
+uses DOM measurement only when a developer explicitly requests drift validation.
 
 ---
 

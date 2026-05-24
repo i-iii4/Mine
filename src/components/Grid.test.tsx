@@ -14,8 +14,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, act, fireEvent, screen, within } from "@testing-library/react";
 import { Grid } from "./Grid";
 import { computeMasonryLayout } from "@/lib/masonryLayout";
-import { buildLayoutGenerationKey } from "@/lib/layoutGeneration";
-import { bucketize, setCachedHeight } from "@/lib/heightCache";
+import { computeCardHeight } from "@/lib/cardHeight";
 import type { LightBlock } from "@/types";
 
 // These constants must match the ones in Grid.tsx. If Grid.tsx changes
@@ -198,17 +197,6 @@ function testColumnWidth(parentWidth: number): number {
   );
 }
 
-function setBlockHeightAtParentWidth(
-  id: number,
-  parentWidth: number,
-  height: number,
-): void {
-  BLOCK_HEIGHTS_BY_COLUMN_WIDTH.set(
-    `${id}:${Math.round(testColumnWidth(parentWidth))}`,
-    height,
-  );
-}
-
 // ─── Environment mocks ─────────────────────────────────────────────────────
 
 // Mock ResizeObserver so Grid's useEffect reports a non-zero parentWidth.
@@ -355,7 +343,7 @@ function readRenderedPositions(): RenderedPosition[] {
     // can reason about collision-free packing.
     const idMatch = slug.match(/^block-(\d+)$/);
     const id = idMatch ? Number(idMatch[1]) : -1;
-    const height = resolveBlockHeight(id);
+    const height = parseFloat(wrapper.style.height || "0") || resolveBlockHeight(id);
     return {
       slug,
       left: match ? parseFloat(match[1]!) : NaN,
@@ -377,7 +365,7 @@ function gridItemForSlug(slug: string): HTMLElement | null {
  * rerenders to completion.
  */
 async function flushAsync(): Promise<void> {
-  // Run any microtasks (warmFromIndexedDb resolves here).
+  // Run any microtasks scheduled by React effects.
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
@@ -545,7 +533,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(mountedItems).toBeLessThan(blocks.length);
   });
 
-  it("renders a measured deep-viewport card through the layout-readiness live gate", async () => {
+  it("renders a deterministic-ready deep-viewport card through the layout-readiness live gate", async () => {
     vi.useFakeTimers();
     const imageCompleteSpy = vi
       .spyOn(HTMLImageElement.prototype, "complete", "get")
@@ -561,14 +549,6 @@ describe("Grid — no collapse after add / revisit", () => {
         return makeImageBlock(id);
       });
       const target = blocks[targetIndex]!;
-      const generationKey = buildLayoutGenerationKey({
-        blocks,
-        routeKey,
-        heightBucket: bucketize(testColumnWidth(parentWidth)),
-        parentWidth,
-      });
-      setCachedHeight(generationKey, blocks[0]!.id, 280);
-      setCachedHeight(generationKey, target.id, 280);
 
       render(<Grid {...BASE_PROPS} blocks={blocks} currentTag={routeKey} />);
 
@@ -650,7 +630,9 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(focused).toBeTruthy();
     expect(focused).not.toHaveAttribute("data-feed-card-focused");
     expect(focused).not.toHaveClass("ring-2");
-    expect(focusedWrapper?.style.height).toBe("220px");
+    expect(focusedWrapper?.style.height).toBe(
+      `${computeCardHeight(blocks[1]!, testColumnWidth(1200), null)}px`,
+    );
     expect(scroll).toHaveAttribute("data-feed-grid-focus-mode", "true");
     expect(focusedWrapper).toHaveAttribute("data-feed-grid-item-focused", "true");
     expect(focusedWrapper?.querySelector("[data-feed-grid-focus-frame]")).toBeNull();
@@ -933,7 +915,7 @@ describe("Grid — no collapse after add / revisit", () => {
 
     act(() => {
       if (scrollEl) {
-        scrollEl.scrollTop = 528;
+        scrollEl.scrollTop = 560;
         scrollEl.dispatchEvent(new Event("scroll"));
       }
     });
@@ -1004,7 +986,7 @@ describe("Grid — no collapse after add / revisit", () => {
     );
     await flushAsync();
 
-    expect(scrollEl?.scrollTop).toBe(296);
+    expect(scrollEl?.scrollTop).toBe(264);
     expect(gridItemForSlug("block-9603")).toBeTruthy();
   });
 
@@ -1063,7 +1045,7 @@ describe("Grid — no collapse after add / revisit", () => {
     );
     await flushAsync();
 
-    expect(scrollEl?.scrollTop).toBe(528);
+    expect(scrollEl?.scrollTop).toBe(496);
     expect(scrollToMock).not.toHaveBeenCalled();
   });
 
@@ -2210,26 +2192,11 @@ describe("Grid — no collapse after add / revisit", () => {
     const wideParentWidth = 1200;
     const narrowParentWidth = 720;
 
-    setBlockHeightAtParentWidth(400, wideParentWidth, 180);
-    setBlockHeightAtParentWidth(401, wideParentWidth, 260);
-    setBlockHeightAtParentWidth(402, wideParentWidth, 220);
-    setBlockHeightAtParentWidth(403, wideParentWidth, 300);
-
-    setBlockHeightAtParentWidth(400, narrowParentWidth, 260);
-    setBlockHeightAtParentWidth(401, narrowParentWidth, 360);
-    setBlockHeightAtParentWidth(402, narrowParentWidth, 280);
-    setBlockHeightAtParentWidth(403, narrowParentWidth, 410);
-
     render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="alpha" />);
     await flushAsync();
 
     const widePositions = readRenderedPositions();
-    assertPositionsMatchExplicitLayout(
-      blocks,
-      widePositions,
-      wideParentWidth,
-      [180, 260, 220, 300],
-    );
+    assertPositionsMatchFreshLayout(blocks, widePositions, wideParentWidth);
 
     act(() => {
       triggerResize(narrowParentWidth);
@@ -2239,12 +2206,7 @@ describe("Grid — no collapse after add / revisit", () => {
 
     const narrowPositions = readRenderedPositions();
     expect(narrowPositions).not.toEqual(widePositions);
-    assertPositionsMatchExplicitLayout(
-      blocks,
-      narrowPositions,
-      narrowParentWidth,
-      [260, 360, 280, 410],
-    );
+    assertPositionsMatchFreshLayout(blocks, narrowPositions, narrowParentWidth);
   });
 
   it("autoplays all sufficiently visible standard feed videos", async () => {
@@ -2296,10 +2258,15 @@ describe("Grid — no collapse after add / revisit", () => {
     vi.useFakeTimers();
 
     const blocks = [
-      makeBlock(1400),
+      makeBlock(1400, {
+        block_type: "image",
+        card_kind: "media",
+        media_file: "tall-prewarm-spacer.jpg",
+        width: 100,
+        height: 136,
+      }),
       makeVideoBlock(1401),
     ];
-    setBlockHeight(1400, 420);
     setBlockHeight(1401, 300);
 
     render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="video-prewarm" />);
@@ -2526,7 +2493,8 @@ function assertPositionsMatchFreshLayout(
   rendered: RenderedPosition[],
   parentWidth: number,
 ): void {
-  const heights = blocks.map((b) => BLOCK_HEIGHTS.get(b.id) ?? 200);
+  const columnWidth = testColumnWidth(parentWidth);
+  const heights = blocks.map((block) => computeCardHeight(block, columnWidth, null));
   assertPositionsMatchExplicitLayout(blocks, rendered, parentWidth, heights);
 }
 

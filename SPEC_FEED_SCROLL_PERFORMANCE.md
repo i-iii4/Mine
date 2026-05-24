@@ -146,8 +146,8 @@ renderBackwardPx = clamp(Math.max(360, vh * 0.35), 320, 800)
 
 `renderForwardPx` and `renderBackwardPx` are mirrored when scrolling backward.
 
-Commit lookahead is block-based because exact measurement is still tied to the
-contiguous committed prefix:
+Commit lookahead is block-based because it is a diagnostics/readiness frontier,
+not a live-render gate:
 
 ```ts
 commitLookaheadBlocks = Math.max(48, visibleItemCount * 2)

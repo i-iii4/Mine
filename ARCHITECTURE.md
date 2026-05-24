@@ -483,19 +483,24 @@ iOS UI contract:
   `cacheKey = version + fontHash + blockId + measured textHash`, а не только
   `blockId`. Поэтому редактирование текста карточки при прежнем id не может
   вернуть stale Canvas `measureText` metrics и сломать deterministic height.
-- `heightCache` и `layoutCache` generation-aware: exact heights и exact layouts кэшируются только для текущего generation key, а не просто по `slug` или набору ids.
-- Layout вычисляется чистой функцией (`src/lib/masonryLayout.ts`): `containerWidth + current-generation heights -> columnCount + positions + totalHeight`. `columnWidth` и horizontal positions снапятся к целым CSS-пикселям; measurement pass и visible render используют один `getMasonryColumnWidth`, чтобы transformed card controls не получали subpixel jitter. Exact heights текущего generation используются там, где они уже есть; для остальных блоков provisional path использует heuristic only for skeleton geometry.
+- `layoutCache` generation-aware: deterministic layouts кэшируются только для
+  текущего generation key, а не просто по `slug` или набору ids. Старый
+  production `heightCache` удалён; bucket helper вынесен в
+  `src/lib/heightBucket.ts`.
+- Layout вычисляется чистой функцией (`src/lib/masonryLayout.ts`):
+  `containerWidth + deterministic heights -> columnCount + positions +
+  totalHeight`. `columnWidth` и horizontal positions снапятся к целым
+  CSS-пикселям; `GridItem` wrapper получает deterministic `height`, поэтому
+  transformed card controls не получают subpixel jitter.
 - Visible contract двуслойный, но live-gate больше не равен только contiguous
   prefix:
-  - `measuredBlockIds` — non-contiguous set карточек с exact height текущего
-    `layoutGenerationKey`;
-  - `renderReadyBlockIds` — карточки, которые можно показывать как real `Card`:
-    exact measured height уже есть, либо deterministic height безопасна
-    (`media` или text word metrics готовы);
-  - `committedEndIndex` — contiguous measured prefix только для
-    diagnostics/background catch-up;
+  - `renderReadyBlockIds` — карточки, которые можно показывать как real `Card`
+    из deterministic geometry (`media`, text word metrics готовы или metrics
+    attempt settled with conservative fallback);
+  - `committedEndIndex` — contiguous render-ready prefix только для
+    diagnostics;
   - provisional remainder — skeleton cards в conservative deterministic
-    envelope текущего generation.
+    envelope текущего generation до завершения metrics attempt.
 - Старый `stableLayoutSnapshot` больше не участвует в visible live render path. Это устраняет системные bottom clip / white-tail баги, которые возникали, когда live card попадала внутрь stale height envelope.
 - **Direction-aware overscan**: при скролле вниз forward-overscan 2200px, backward 600px. При скролле вверх — зеркально. Это предзагружает больше карточек по направлению scroll'а, уменьшая «пустые зоны» при быстром скролле.
 - **Priority bounds**: зона ±1400px по направлению scroll'а, внутри которой карточки получают `priority=true`. ImageCard/LinkCard/ArticleCard используют `loading="eager"` вместо `"lazy"` — картинки начинают fetch до того как пользователь до них доскроллит.
@@ -516,11 +521,9 @@ iOS UI contract:
   counts and grouping by card kind / block type. Browser acceptance requests
   this audit explicitly via `window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__()` only
   after the scroll performance sample has been recorded, so diagnostic DOM work
-  cannot inflate `settleMs`. Measured heights remain the exact cache authority,
-  but deterministic-ready visible GridItems may render live before their exact
-  background measurement finishes. Automatic exact measurement is idle-delayed
-  after batch changes so it does not compete with the first paint of the active
-  viewport.
+  cannot inflate `settleMs`. Measured heights are no longer a production cache
+  authority; `MeasureCard` is only an explicit dev audit path. Visible
+  GridItems render from deterministic geometry.
 - Gallery fallback contract: если у multi-image карточки нет подтверждённого tile preview asset, feed больше не размножает один block-level thumb на все tiles. Gallery tile падает в свой `source_path`, а block-level `slug.jpg` остаётся только single-preview fallback.
 - Tile-level `preview_path` должен означать реально существующий derived asset
   в thumbs cache. Synthetic paths вида `<source-stem>.jpg` запрещены: если
@@ -1117,22 +1120,21 @@ evidence-based instead of a sequence of magic constants. This gives the feed the
 intended infinite-canvas feel without turning virtualization back into "render
 more cards". Full contract: [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md).
 
-### 022: Grid layout readiness uses viewport-first measured islands
+### 022: Grid layout readiness uses deterministic live geometry
 
 | Approach | Problem |
 |---|---|
 | Keep strict contiguous `committedEndIndex` as the only live-render gate | Deep fast-scroll can land in an unmeasured area and wait for hundreds of earlier cards to measure before current viewport cards become live |
 | Increase media preload or render overscan again | Media readiness cannot help if Grid still renders the current viewport as skeleton-only; DOM inflation also breaks the bounded renderer contract |
-| Viewport-first measurement + non-contiguous `liveBlockIds` + anti-blank scroll commit (chosen) | More explicit state model: prefix is diagnostics/background catch-up, exact measured viewport islands can render live immediately, and native scroll cannot paint a fully empty viewport while waiting for RAF |
+| Deterministic `renderReadyBlockIds` + anti-blank scroll commit (chosen) | More explicit state model: prefix is diagnostics, deterministic viewport cards render live immediately, and native scroll cannot paint a fully empty viewport while waiting for RAF |
 
 Rationale: Phase C7 proved that canvas feel has two separate readiness layers.
 The preview decode queue can prepare media ahead of the viewport, but Grid must
-also make the current viewport measurable and renderable ahead of skipped
-history. `src/lib/gridLayoutReadiness.ts` keeps the scheduling pure and
-testable: real viewport items are measured first, near overscan second, missing
-prefix third. `committedEndIndex` remains visible in developer diagnostics, but
+also make the current viewport renderable ahead of skipped history.
+`src/lib/gridLayoutReadiness.ts` keeps the diagnostic frontier pure and
+testable. `committedEndIndex` remains visible in developer diagnostics, but
 keyboard focus, marquee selection, autoplay and actual `GridItem` live rendering
-now use generation-safe `liveBlockIds`. `useGridScroll` keeps the cheap RAF path
+now use generation-safe `renderReadyBlockIds`. `useGridScroll` keeps the cheap RAF path
 for ordinary scrolling and performs a synchronous visible-window commit only
 when the current viewport would otherwise have no mounted item. The anti-blank
 check uses the scroll element's `clientHeight` when available and Grid's

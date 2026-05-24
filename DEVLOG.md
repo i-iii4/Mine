@@ -1,5 +1,41 @@
 # Devlog
 
+## 24.05.2026 [change] — Complete Phase 11 deterministic Grid layout
+
+### Context
+
+- The previous Phase 11 slice removed the visible wait on hidden measurement,
+  but production Grid still carried measured-height cache infrastructure as a
+  second geometry authority.
+- That was no longer architecturally justified after the browser drift gate
+  proved deterministic heights with `p95/max = 0`.
+
+### Completed
+
+- Switched `Grid.tsx` production layout to deterministic geometry only:
+  `computeCardHeight()` + media dimensions + word metrics.
+- Removed the old `heightCache` module and replaced the remaining width-bucket
+  helper with `src/lib/heightBucket.ts`.
+- Kept `MeasureCard` only for explicit dev height-drift audit; there is no
+  production background exact-height cache authority.
+- Hardened delete scroll anchoring against stale keyboard-focus autoscroll:
+  after viewport preservation, the current focused slug cannot scroll the feed
+  back out of the preserved viewport until focus actually changes.
+- Hardened `Card.tsx` paint path with fixed single-line text metrics, async
+  image decode and contained/promoted card frames.
+- Updated `SPEC_GRID.md`, `SPEC_GRID_LAYOUT_READINESS.md`,
+  `SPEC_FEED_SCROLL_PERFORMANCE.md`, `AUDIT_PERFORMANCE.md`,
+  `ARCHITECTURE.md` and `PLAN.md`.
+
+### Verification
+
+- `bun run test:frontend -- src/components/Grid.test.tsx src/lib/cardHeight.test.ts src/lib/cardHeightDrift.test.ts src/lib/fontMetrics.test.ts` — 75 passed.
+- `bun run lint` — passed.
+- `bun run build` — passed.
+- `bun run test:frontend` — 44 files, 416 tests passed.
+- `bun run test:feed-scroll` — desktop and narrow profiles passed; no blank or
+  skeleton-only viewport samples; `p95/max heightDrift = 0`.
+
 ## 24.05.2026 [change] — Render deterministic-ready Grid cards live
 
 ### Context

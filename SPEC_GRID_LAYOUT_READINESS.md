@@ -2,9 +2,9 @@
 
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [AUDIT_PERFORMANCE.md](AUDIT_PERFORMANCE.md)
 
-Status: implemented as Phase C8 and extended by Phase 11 proof-gated
-deterministic live rendering; synthetic browser acceptance is automated and
-real-vault product acceptance on `Everything` passed after the C8.16 retune.
+Status: implemented as Phase C8 and superseded in production by Phase 11
+deterministic layout. This document remains as the historical readiness layer
+and as the acceptance/diagnostic contract for preventing blank viewports.
 
 ## Goal
 
@@ -13,15 +13,15 @@ deep scroll jumps just because Grid is still measuring skipped cards above the
 current viewport.
 
 C7 solved media readiness: previews can be fetched and decoded ahead of DOM.
-C8 solves the adjacent layout-readiness layer: cards in the current viewport
-must be measured before prefix catch-up work, and exact-measured viewport cards
-must be allowed to render live even when earlier prefix gaps still exist.
-Phase 11 adds a stronger gate: if a card already has a proven deterministic
-height envelope (`media` or text metrics ready), it may render live while exact
-measurement catches up in the background.
+C8 solved the adjacent layout-readiness layer: cards in the current viewport
+were prioritized before prefix catch-up work. Phase 11 completed the migration:
+current production cards render from deterministic height envelopes, and exact
+DOM measurement no longer catches up in the background.
 
-This is a bridge toward Phase 11 zero-jank masonry. It does not replace the
-masonry renderer and does not remove measurement infrastructure in this phase.
+This document should not be read as the current production geometry source.
+Current production geometry is deterministic; this readiness contract explains
+why the live gate is non-contiguous and why the browser acceptance harness
+checks for blank or skeleton-only viewports.
 
 ## Problem
 
@@ -64,9 +64,9 @@ card.
 | Term | Meaning |
 |---|---|
 | `layoutGenerationKey` | Route + width bucket + ordered layout fingerprint. Exact heights are valid only inside the current generation. |
-| `measuredBlockIds` | Non-contiguous set of block ids with exact height in the current generation. |
-| `renderReadyBlockIds` | Frontend render gate: exact measured cards plus deterministic-ready cards (`media` or text metrics ready). |
-| `committedEndIndex` | Largest contiguous measured prefix. Diagnostic/background frontier, not the sole live gate. |
+| `measuredBlockIds` | Historical C8 term for non-contiguous exact measured ids. In Phase 11 production diagnostics this slot is populated with deterministic render-ready ids. |
+| `renderReadyBlockIds` | Frontend render gate: cards with deterministic production geometry (`media`, ready word metrics, or fallback after metrics attempt settles). |
+| `committedEndIndex` | Largest contiguous render-ready prefix. Diagnostic frontier, not the sole live gate. |
 | `targetCommittedEndIndex` | Background catch-up target derived from visible max index and adaptive lookahead. |
 | viewport backlog | Mounted positions that intersect the real viewport and do not yet have exact height. |
 | overscan backlog | Mounted positions outside the real viewport but inside the render window and not yet measured. |
@@ -100,19 +100,15 @@ export function createGridLayoutReadinessDiagnostics(input: ...):
 
 Grid remains the owner of runtime geometry:
 
-1. Build `heightsMap` from generation-aware `heightCache`.
-2. Derive `measuredBlockIds` from `heightsMap`.
-3. Derive `renderReadyBlockIds` from `measuredBlockIds` plus deterministic-ready
-   cards.
-4. Compute `committedEndIndex` from `measuredBlockIds` only for diagnostics and
-   background catch-up.
-5. Build `layout.positions` from current-generation exact heights where known
-   and deterministic provisional heights elsewhere.
+1. Build deterministic card heights from `computeCardHeight(block, columnWidth,
+   wordWidths)`.
+2. Derive `renderReadyBlockIds` from deterministic readiness.
+3. Compute `committedEndIndex` from `renderReadyBlockIds` only for diagnostics.
+4. Build `layout.positions` from deterministic heights only.
 6. Compute `visibleItems` through the existing visibility index and adaptive C7
    render window.
-7. Build a hidden measurement batch through viewport-first scheduling. Automatic
-   exact measurement is idle-delayed after batch changes; dev browser audit uses
-   explicit drift requests instead of automatic measurement.
+7. Build a hidden measurement batch only when the dev height-drift audit is
+   explicitly requested.
 8. Render each `GridItem` as live when `renderReadyBlockIds.has(block.id)`;
    otherwise render the existing skeleton/provisional surface.
 
@@ -323,7 +319,8 @@ Real-vault acceptance:
 
 ## Non-goals
 
-- Do not remove all DOM measurement in this phase. That belongs to Phase 11.
+- Do not reintroduce production DOM measurement. Phase 11 removed it from the
+  user-facing layout path.
 - Do not reintroduce scroll anchoring; previous masonry anchoring created a
   feedback loop.
 - Do not solve unrelated IPC payload or mutation cascade problems here.

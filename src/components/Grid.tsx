@@ -31,13 +31,7 @@ import { computeCardHeight } from "@/lib/cardHeight";
 import { computeFeedPlaybackSurfaceEnvelope } from "@/lib/cardHeight";
 import { LayoutCache } from "@/lib/layoutCache";
 import { fetchWordWidths } from "@/lib/fontMetrics";
-import {
-  bucketize,
-  getCachedHeight,
-  setCachedHeight,
-  persistHeights,
-  warmFromIndexedDb,
-} from "@/lib/heightCache";
+import { bucketize } from "@/lib/heightBucket";
 import { useGridScroll } from "@/hooks/useGridScroll";
 import { useFeedMediaPreloader } from "@/hooks/useFeedMediaPreloader";
 import type { WordWidths } from "@/types/fontMetrics";
@@ -80,7 +74,6 @@ declare global {
 const COLUMN_MIN_WIDTH = 220;
 const GAP = 32;
 const MEASUREMENT_BATCH_SIZE = 24;
-const MEASUREMENT_IDLE_DELAY_MS = 220;
 const INITIAL_COMMIT_BLOCKS = 48;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
@@ -364,11 +357,19 @@ function scrollPositionIntoView(
   }
 }
 
-function blockCanRenderFromDeterministicHeight(
+function blockHasExactDeterministicHeight(
   block: LightBlock,
   wordWidthsMap: ReadonlyMap<number, WordWidths>,
 ): boolean {
   return block.card_kind === "media" || wordWidthsMap.has(block.id);
+}
+
+function blockCanRenderFromDeterministicHeight(
+  block: LightBlock,
+  wordWidthsMap: ReadonlyMap<number, WordWidths>,
+  wordMetricsSettled: boolean,
+): boolean {
+  return blockHasExactDeterministicHeight(block, wordWidthsMap) || wordMetricsSettled;
 }
 
 function rectFromPoints(first: LayoutPoint, second: LayoutPoint): LayoutRect {
@@ -568,20 +569,9 @@ interface GridContext {
   onRequestDelete: (slug: string) => void;
 }
 
-type GridPhase = "provisional" | "measuring" | "committed";
-
 // ─── Layout cache (module-level, persists across channel switches) ─────────
 
 const layoutCache = new LayoutCache(10);
-
-/** One-time promise for warming in-memory cache from IndexedDB on first mount. */
-let warmedUp: Promise<void> | null = null;
-function ensureWarmed(): Promise<void> {
-  if (!warmedUp) {
-    warmedUp = warmFromIndexedDb();
-  }
-  return warmedUp;
-}
 
 // ─── Deterministic layout computation ──────────────────────────────────────
 
@@ -609,14 +599,11 @@ function cancelIdleTask(handle: number): void {
 function buildLayout(
   blocks: LightBlock[],
   parentWidth: number,
-  heightsMap: Map<number, number>,
   wordWidthsMap: Map<number, WordWidths>,
 ): MasonryLayout {
   const columnWidth = deriveColumnWidth(parentWidth);
 
   const heights = blocks.map((block) => {
-    const measured = heightsMap.get(block.id);
-    if (measured !== undefined) return measured;
     return computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null);
   });
 
@@ -688,7 +675,7 @@ export function Grid({
   const scrollSignalSampleRef = useRef<FeedScrollSignalSample | null>(null);
   const scrollAnchorSnapshotRef = useRef<ScrollAnchorSnapshot | null>(null);
   const pendingScrollAnchorRef = useRef<PendingScrollAnchor | null>(null);
-  const suppressFocusedScrollOnceRef = useRef(false);
+  const suppressedFocusedScrollSlugRef = useRef<string | null>(null);
   const lastViewportBlankWarningRef = useRef<string | null>(null);
   const heightDriftReportRef = useRef<CardHeightDriftReport | null>(null);
   const heightDriftIdleTaskRef = useRef<number | null>(null);
@@ -702,27 +689,13 @@ export function Grid({
     targetEndIndex: number;
   } | null>(null);
 
-  // Grid has exactly three pieces of genuine state:
-  //
-  //   1. warmedUp — flips true after the IndexedDB warm completes. Gates
-  //      all reads from memoryCache, since memoryCache is empty before
-  //      warm finishes.
-  //
-  //   2. measurementTick — bumped by handleMeasured every time new
-  //      measurements land in memoryCache. memoryCache is a mutable
-  //      singleton outside React's view; the tick is how we signal the
-  //      derived `heightsMap` useMemo to recompute.
-  //
-  //   3. parentWidth / viewportHeight — set by ResizeObserver below.
-  //
-  // heightsMap, prefix diagnostics, live readiness and measurementBatch are
-  // derived synchronously from the current generation key. No stale
-  // cross-generation layout state is kept in React state.
-  const [warmedUp, setWarmedUp] = useState(false);
-  const [measurementTick, setMeasurementTick] = useState(0);
+  // Grid production geometry is deterministic: layout is derived from block
+  // data, the current column width and precomputed word metrics. DOM
+  // measurement is no longer a production source of card height; it exists
+  // only as an explicit drift-audit probe in development.
   const [wordWidthsMap, setWordWidthsMap] = useState<Map<number, WordWidths>>(new Map());
+  const [wordMetricsSettled, setWordMetricsSettled] = useState(blocks.length === 0);
   const [heightDriftAuditBatch, setHeightDriftAuditBatch] = useState<LightBlock[]>([]);
-  const [measurementIdleReady, setMeasurementIdleReady] = useState(false);
 
   // Scroll to top on explicit signal or channel change.
   useEffect(() => {
@@ -806,26 +779,21 @@ export function Grid({
     };
   }, []);
 
-  // Warm the in-memory height cache from IndexedDB on first mount.
-  // After this resolves we can trust the memoryCache in subsequent renders.
-  useEffect(() => {
-    let cancelled = false;
-    void ensureWarmed().then(() => {
-      if (!cancelled) setWarmedUp(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   useEffect(() => {
     let cancelled = false;
     setWordWidthsMap(new Map());
-    void fetchWordWidths(blocks).then((map) => {
-      if (!cancelled) {
-        setWordWidthsMap(map);
-      }
-    });
+    setWordMetricsSettled(blocks.length === 0);
+    void fetchWordWidths(blocks)
+      .then((map) => {
+        if (!cancelled) {
+          setWordWidthsMap(map);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setWordMetricsSettled(true);
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -881,54 +849,25 @@ export function Grid({
     [thumbsRootPath, vaultPath],
   );
 
-  // Measured pixel heights for the current generation. Purely derived
-  // from the module-level memoryCache — no setState, no reconciliation
-  // effect, no stale-state window.
-  //
-  // `measurementTick` appears in the dep list and is `void`'d in the body
-  // purely as a re-run trigger: memoryCache is a mutable singleton that
-  // React cannot observe on its own, so after handleMeasured writes new
-  // entries we bump the tick to force this useMemo to recompute.
-  const heightsMap = useMemo(() => {
-    void measurementTick;
-    const map = new Map<number, number>();
-    if (!warmedUp) return map;
-    for (const b of blocks) {
-      const h = getCachedHeight(generationKey, b.id);
-      if (h !== undefined) map.set(b.id, h);
-    }
-    return map;
-  }, [blocks, generationKey, warmedUp, measurementTick]);
-
-  const liveBlockIds = useMemo(() => {
-    const ids = new Set<number>();
-    for (const block of blocks) {
-      if (heightsMap.has(block.id)) {
-        ids.add(block.id);
-      }
-    }
-    return ids;
-  }, [blocks, heightsMap]);
-
   const renderReadyBlockIds = useMemo(() => {
-    const ids = new Set(liveBlockIds);
-    if (!warmedUp || parentWidth <= 0) return ids;
+    const ids = new Set<number>();
+    if (parentWidth <= 0) return ids;
     for (const block of blocks) {
-      if (ids.has(block.id)) continue;
-      if (blockCanRenderFromDeterministicHeight(block, wordWidthsMap)) {
+      if (blockCanRenderFromDeterministicHeight(block, wordWidthsMap, wordMetricsSettled)) {
         ids.add(block.id);
       }
     }
     return ids;
-  }, [blocks, liveBlockIds, parentWidth, warmedUp, wordWidthsMap]);
+  }, [blocks, parentWidth, wordMetricsSettled, wordWidthsMap]);
 
   const committedEndIndex = useMemo(
-    () => computeCommittedEndIndex(blocks, liveBlockIds, warmedUp),
-    [blocks, liveBlockIds, warmedUp],
+    () => computeCommittedEndIndex(blocks, renderReadyBlockIds, parentWidth > 0),
+    [blocks, parentWidth, renderReadyBlockIds],
   );
 
-  const allCurrentGenerationExact =
-    warmedUp &&
+  const allCurrentGenerationDeterministic =
+    wordMetricsSettled &&
+    parentWidth > 0 &&
     blocks.length > 0 &&
     committedEndIndex === blocks.length - 1;
 
@@ -981,26 +920,10 @@ export function Grid({
     [generationKey],
   );
 
-  const handleMeasured = useCallback(
-    (results: Array<{ id: number; height: number }>) => {
-      const newEntries: Array<{ generationKey: LayoutGenerationKey; blockId: number; height: number }> = [];
-      for (const r of results) {
-        setCachedHeight(generationKey, r.id, r.height);
-        newEntries.push({ generationKey, blockId: r.id, height: r.height });
-      }
-      publishHeightDriftReport(results);
-      persistHeights(newEntries);
-      // Force the derived heightsMap useMemo to recompute by observing
-      // the new entries just written into memoryCache.
-      setMeasurementTick((t) => t + 1);
-    },
-    [generationKey, publishHeightDriftReport],
-  );
-
-  // The visible layout always belongs to the current generation. Exact
-  // heights are used where they exist for the current generation; remaining
-  // items stay provisional and render as skeletons until their contiguous
-  // prefix has been committed.
+  // The visible layout always belongs to the current generation. Production
+  // heights come from deterministic card geometry only; measured DOM heights
+  // are never fed back into layout because that feedback loop is what caused
+  // scroll jumps and blank/skeleton windows during fast scroll.
   const layout = useMemo((): MasonryLayout => {
     if (parentWidth <= 0 || blocks.length === 0) {
       return {
@@ -1011,17 +934,17 @@ export function Grid({
       };
     }
 
-    if (!allCurrentGenerationExact) {
-      return buildLayout(blocks, parentWidth, heightsMap, wordWidthsMap);
+    if (!allCurrentGenerationDeterministic) {
+      return buildLayout(blocks, parentWidth, wordWidthsMap);
     }
 
     const cached = layoutCache.get(generationKey);
     if (cached) return cached;
 
-    const fresh = buildLayout(blocks, parentWidth, heightsMap, wordWidthsMap);
+    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap);
     layoutCache.set(generationKey, fresh);
     return fresh;
-  }, [allCurrentGenerationExact, blocks, generationKey, heightsMap, parentWidth, wordWidthsMap]);
+  }, [allCurrentGenerationDeterministic, blocks, generationKey, parentWidth, wordWidthsMap]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);
@@ -1095,65 +1018,12 @@ export function Grid({
     visibleItems.length,
   ]);
 
-  const phase: GridPhase = useMemo(() => {
-    if (blocks.length === 0 || parentWidth <= 0) return "committed";
-    if (committedEndIndex < 0) return "provisional";
-    if (committedEndIndex < targetCommittedEndIndex) return "measuring";
-    return "committed";
-  }, [blocks.length, committedEndIndex, parentWidth, targetCommittedEndIndex]);
-
-  const measurementBatch = useMemo(() => {
-    if (!warmedUp) return [];
-    if (targetCommittedEndIndex < 0) return [];
-
-    return collectViewportFirstMeasurementBatch({
-      blocks,
-      positions: layout.positions,
-      visibleItems,
-      measuredBlockIds: liveBlockIds,
-      scrollTop,
-      viewportHeight,
-      targetEndIndex: targetCommittedEndIndex,
-      batchSize: MEASUREMENT_BATCH_SIZE,
-    });
-  }, [
-    blocks,
-    layout.positions,
-    liveBlockIds,
-    scrollTop,
-    targetCommittedEndIndex,
-    viewportHeight,
-    visibleItems,
-    warmedUp,
-  ]);
-  const measurementBatchKey = useMemo(
-    () => measurementBatch.map((block) => block.id).join(":"),
-    [measurementBatch],
-  );
-  useEffect(() => {
-    if (phase === "committed" || measurementBatch.length === 0) {
-      setMeasurementIdleReady(false);
-      return;
-    }
-    setMeasurementIdleReady(false);
-    const timeout = window.setTimeout(() => {
-      setMeasurementIdleReady(true);
-    }, MEASUREMENT_IDLE_DELAY_MS);
-    return () => window.clearTimeout(timeout);
-  }, [measurementBatch.length, measurementBatchKey, phase]);
-  const productionMeasurementActive =
-    !heightDriftAuditMode &&
-    measurementIdleReady &&
-    phase !== "committed" &&
-    measurementBatch.length > 0;
-
   heightDriftAuditInputRef.current = {
     canMeasure:
       heightDriftAuditMode &&
-      warmedUp &&
+      wordMetricsSettled &&
       targetCommittedEndIndex >= 0 &&
-      wordWidthsMap.size > 0 &&
-      !productionMeasurementActive,
+      renderReadyBlockIds.size > 0,
     blocks,
     positions: layout.positions,
     visibleItems,
@@ -1190,9 +1060,9 @@ export function Grid({
     };
   }, [
     heightDriftAuditMode,
-    productionMeasurementActive,
+    renderReadyBlockIds.size,
     targetCommittedEndIndex,
-    warmedUp,
+    wordMetricsSettled,
     wordWidthsMap.size,
   ]);
 
@@ -1237,7 +1107,7 @@ export function Grid({
         const nextPosition = findPositionForSlug(layout.positions, blocks, pending.anchor.slug);
         if (!nextPosition) {
           pendingScrollAnchorRef.current = null;
-        } else if (liveBlockIds.has(blocks[nextPosition.index]?.id ?? -1)) {
+        } else if (renderReadyBlockIds.has(blocks[nextPosition.index]?.id ?? -1)) {
           const nextScrollTop = clampedScrollTopForAnchor(
             layout,
             scrollElement.clientHeight || viewportHeight,
@@ -1245,12 +1115,12 @@ export function Grid({
             pending.anchor,
           );
           pendingScrollAnchorRef.current = null;
+          suppressedFocusedScrollSlugRef.current = focusedSlug;
           if (Math.abs(scrollElement.scrollTop - nextScrollTop) > 0.5) {
             scrollElement.scrollTop = nextScrollTop;
             latestScrollTopRef.current = nextScrollTop;
             setScrollTop(nextScrollTop);
             scrollElement.dispatchEvent(new Event("scroll"));
-            suppressFocusedScrollOnceRef.current = true;
           }
         }
       }
@@ -1262,7 +1132,15 @@ export function Grid({
       blocks,
       positions: layout.positions,
     };
-  }, [blocks, currentTag, layout, liveBlockIds, parentWidth, viewportHeight]);
+  }, [
+    blocks,
+    currentTag,
+    focusedSlug,
+    layout,
+    parentWidth,
+    renderReadyBlockIds,
+    viewportHeight,
+  ]);
 
   const autoplayEligibleBySlug = useMemo(() => {
     const eligible = new Map<string, ReturnType<typeof normalizeFeedPlayback>>();
@@ -1317,21 +1195,21 @@ export function Grid({
       layoutGenerationKey: generationKey,
       blocks,
       visibleItems,
-      measuredBlockIds: liveBlockIds,
+      measuredBlockIds: renderReadyBlockIds,
       committedEndIndex,
       targetCommittedEndIndex,
       maxVisibleIndex,
       scrollTop,
       viewportHeight,
-      measurementBatchSize: measurementBatch.length,
+      measurementBatchSize: heightDriftAuditBatch.length,
     }),
     [
       blocks,
       committedEndIndex,
       generationKey,
-      liveBlockIds,
+      heightDriftAuditBatch.length,
       maxVisibleIndex,
-      measurementBatch.length,
+      renderReadyBlockIds,
       scrollTop,
       targetCommittedEndIndex,
       viewportHeight,
@@ -1415,6 +1293,7 @@ export function Grid({
   );
 
   useEffect(() => {
+    suppressedFocusedScrollSlugRef.current = null;
     setFocusedSlug(null);
     setFeedInteractionMode("pointer");
     setPinnedActionMenuSlug(null);
@@ -1424,6 +1303,7 @@ export function Grid({
 
   useEffect(() => {
     if (focusedSlug && !blocksBySlug.has(focusedSlug)) {
+      suppressedFocusedScrollSlugRef.current = null;
       setFocusedSlug(null);
     }
     if (pinnedActionMenuSlug && !blocksBySlug.has(pinnedActionMenuSlug)) {
@@ -1458,17 +1338,25 @@ export function Grid({
     if (feedInteractionMode !== "keyboard") return;
     if (!focusedSlug) return;
     if (pendingScrollAnchorRef.current) return;
-    if (suppressFocusedScrollOnceRef.current) {
-      suppressFocusedScrollOnceRef.current = false;
-      return;
+    if (suppressedFocusedScrollSlugRef.current) {
+      if (suppressedFocusedScrollSlugRef.current === focusedSlug) return;
+      suppressedFocusedScrollSlugRef.current = null;
     }
     const scrollElement = parentRef.current;
     if (!scrollElement) return;
     const position = findPositionForSlug(layout.positions, blocks, focusedSlug);
     if (!position) return;
-    requestAnimationFrame(() => {
+    const scheduledScrollTop = scrollElement.scrollTop;
+    const rafId = requestAnimationFrame(() => {
+      if (pendingScrollAnchorRef.current) return;
+      if (Math.abs(scrollElement.scrollTop - scheduledScrollTop) > 0.5) return;
+      if (suppressedFocusedScrollSlugRef.current) {
+        if (suppressedFocusedScrollSlugRef.current === focusedSlug) return;
+        suppressedFocusedScrollSlugRef.current = null;
+      }
       scrollPositionIntoView(scrollElement, position);
     });
+    return () => cancelAnimationFrame(rafId);
   }, [blocks, feedInteractionMode, focusedSlug, layout.positions]);
 
   const handleGridItemPointerMove = useCallback((
@@ -2073,15 +1961,6 @@ export function Grid({
           )}
           {parentWidth > 0 && showEmptyChannelPlaceholder && (
             <EmptyChannelPlaceholder viewportHeight={viewportHeight} />
-          )}
-          {parentWidth > 0 && blocks.length > 0 && productionMeasurementActive && (
-            <MeasurementPass
-              blocks={measurementBatch}
-              columnWidth={deriveColumnWidth(parentWidth)}
-              vaultPath={vaultPath}
-              thumbsRootPath={resolvedThumbsRootPath}
-              onMeasured={handleMeasured}
-            />
           )}
           {parentWidth > 0 && heightDriftAuditBatch.length > 0 && (
             <MeasurementPass

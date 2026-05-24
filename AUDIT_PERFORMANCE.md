@@ -65,18 +65,18 @@
   viewport diagnostics, skeleton-only viewport, missing mounted DOM items,
   browser asset errors, near-blank screenshots, DOM-window inflation, slow
   viewport settle, large frame gaps and long tasks.
-- Phase 11 follow-up converted the next blocker from "wait for hidden DOM
-  measurement" to deterministic-ready live render: media cards and text cards
-  with ready word metrics can render as real cards immediately, while hidden
-  `MeasureCard` continues to update exact generation-aware heights and
-  `heightDrift` proof in the background. The browser gate now also checks
+- Phase 11 final switch removed production DOM measurement from Grid layout.
+  Media cards and text cards render from deterministic `computeCardHeight()`
+  geometry; text cards fall back conservatively only after the word-metrics
+  attempt settles. `MeasureCard` now exists only for explicit dev height-drift
+  audit, not as a background exact-height authority. The browser gate checks
   height drift after the scroll performance sample, so audit measurement does
   not inflate `settleMs`.
 - Real-vault acceptance on `Everything` passed at the product level after the
-  C8.16 retune: aggressive manual scroll showed a significant improvement, and
-  white/blank viewport states were no longer practically reproducible in normal
-  use. Phase 11 remains the strategic path only if the product later needs to
-  remove DOM measurement from the feed architecture entirely.
+  C8.16 retune, and Phase 11 now removes the DOM-measurement class from the
+  feed architecture. Current automated acceptance: `bun run test:feed-scroll`
+  passes on desktop and narrow profiles with zero skeleton viewport samples and
+  `p95/max heightDrift = 0`.
 
 ### 08.05.2026 — sidebar micro-preview regression audit
 
@@ -128,7 +128,7 @@
 
 ### 18.04.2026 — generation-safe masonry height correctness rewrite
 
-- `src/lib/layoutGeneration.ts` + `src/lib/heightCache.ts` + `src/lib/layoutCache.ts`: введён `layoutGenerationKey`, который учитывает route, width bucket и layout-relevant fingerprint блока, включая `preview_manifest`. Exact heights и exact layouts теперь кэшируются generation-aware, а не по слабому `(slug, bucket)` identity.
+- `src/lib/layoutGeneration.ts` + `src/lib/heightBucket.ts` + `src/lib/layoutCache.ts`: введён `layoutGenerationKey`, который учитывает route, width bucket и layout-relevant fingerprint блока, включая `preview_manifest`. Production кэширует deterministic layouts; старый exact height cache удалён из Grid hot path.
 - `src/components/Grid.tsx`: visible render path больше не использует stale generation. Layout всегда строится только для current generation. Изначально live cards были разрешены только внутри contiguous `committed` prefix; C8/Phase 11 заменили это на generation-safe render-ready gate.
 - Measurement scheduling теперь идёт по contiguous prefix `0..targetCommittedEndIndex`, а не по разрозненным видимым блокам. Это устраняет смешивание stale envelope и current live card — корневую причину системной bottom clipping / white-tail underflow.
 - Практический эффект на реальном `Mine`: пользователь подтвердил, что высота карточек отображается корректно; системная обрезка низа и пустые хвосты больше не воспроизводятся.
