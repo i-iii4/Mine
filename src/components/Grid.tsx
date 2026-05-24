@@ -60,15 +60,27 @@ import {
 } from "@/lib/gridLayoutReadiness";
 import { createGridViewportPaintDiagnostics } from "@/lib/gridViewportDiagnostics";
 import {
+  createCardHeightDriftReport,
+  type CardHeightDriftObservation,
+  type CardHeightDriftReport,
+} from "@/lib/cardHeightDrift";
+import {
   isEditableKeyboardTarget,
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
+
+declare global {
+  interface Window {
+    __MINE_REQUEST_HEIGHT_DRIFT_AUDIT__?: () => void;
+  }
+}
 
 // ─── Layout constants ───────────────────────────────────────────────────────
 
 const COLUMN_MIN_WIDTH = 220;
 const GAP = 32;
 const MEASUREMENT_BATCH_SIZE = 24;
+const MEASUREMENT_IDLE_DELAY_MS = 220;
 const INITIAL_COMMIT_BLOCKS = 48;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
@@ -352,6 +364,13 @@ function scrollPositionIntoView(
   }
 }
 
+function blockCanRenderFromDeterministicHeight(
+  block: LightBlock,
+  wordWidthsMap: ReadonlyMap<number, WordWidths>,
+): boolean {
+  return block.card_kind === "media" || wordWidthsMap.has(block.id);
+}
+
 function rectFromPoints(first: LayoutPoint, second: LayoutPoint): LayoutRect {
   const left = Math.min(first.x, second.x);
   const top = Math.min(first.y, second.y);
@@ -516,6 +535,7 @@ interface GridProps {
   onRequestRename: (block: LightBlock) => void;
   onRequestDelete: (slug: string) => void;
   onColumnCountChange?: (count: number) => void;
+  heightDriftAuditMode?: boolean;
   hasMoreBlocks?: boolean;
   loadingMoreBlocks?: boolean;
   onLoadMoreBlocks?: () => void;
@@ -569,6 +589,23 @@ function deriveColumnWidth(parentWidth: number): number {
   return getMasonryColumnWidth(parentWidth, COLUMN_MIN_WIDTH, GAP);
 }
 
+function scheduleIdleTask(callback: () => void): number {
+  if (typeof window === "undefined") return -1;
+  if (typeof window.requestIdleCallback === "function") {
+    return window.requestIdleCallback(callback, { timeout: 1000 });
+  }
+  return window.setTimeout(callback, 0);
+}
+
+function cancelIdleTask(handle: number): void {
+  if (handle < 0 || typeof window === "undefined") return;
+  if (typeof window.cancelIdleCallback === "function") {
+    window.cancelIdleCallback(handle);
+    return;
+  }
+  window.clearTimeout(handle);
+}
+
 function buildLayout(
   blocks: LightBlock[],
   parentWidth: number,
@@ -618,6 +655,7 @@ export function Grid({
   onRequestRename,
   onRequestDelete,
   onColumnCountChange,
+  heightDriftAuditMode = false,
   hasMoreBlocks = false,
   loadingMoreBlocks = false,
   onLoadMoreBlocks,
@@ -652,6 +690,17 @@ export function Grid({
   const pendingScrollAnchorRef = useRef<PendingScrollAnchor | null>(null);
   const suppressFocusedScrollOnceRef = useRef(false);
   const lastViewportBlankWarningRef = useRef<string | null>(null);
+  const heightDriftReportRef = useRef<CardHeightDriftReport | null>(null);
+  const heightDriftIdleTaskRef = useRef<number | null>(null);
+  const heightDriftAuditInputRef = useRef<{
+    canMeasure: boolean;
+    blocks: readonly LightBlock[];
+    positions: readonly MasonryPosition[];
+    visibleItems: readonly MasonryPosition[];
+    scrollTop: number;
+    viewportHeight: number;
+    targetEndIndex: number;
+  } | null>(null);
 
   // Grid has exactly three pieces of genuine state:
   //
@@ -672,6 +721,8 @@ export function Grid({
   const [warmedUp, setWarmedUp] = useState(false);
   const [measurementTick, setMeasurementTick] = useState(0);
   const [wordWidthsMap, setWordWidthsMap] = useState<Map<number, WordWidths>>(new Map());
+  const [heightDriftAuditBatch, setHeightDriftAuditBatch] = useState<LightBlock[]>([]);
+  const [measurementIdleReady, setMeasurementIdleReady] = useState(false);
 
   // Scroll to top on explicit signal or channel change.
   useEffect(() => {
@@ -793,6 +844,38 @@ export function Grid({
     }),
     [blocks, bucket, currentTag, parentWidth],
   );
+  const heightDriftBlocksById = useMemo(() => {
+    const map = new Map<number, LightBlock>();
+    for (const block of blocks) {
+      map.set(block.id, block);
+    }
+    return map;
+  }, [blocks]);
+  const heightDriftContextRef = useRef<{
+    blocksById: ReadonlyMap<number, LightBlock>;
+    generationKey: LayoutGenerationKey;
+    parentWidth: number;
+    wordWidthsMap: Map<number, WordWidths>;
+  }>({
+    blocksById: heightDriftBlocksById,
+    generationKey,
+    parentWidth,
+    wordWidthsMap,
+  });
+  heightDriftContextRef.current = {
+    blocksById: heightDriftBlocksById,
+    generationKey,
+    parentWidth,
+    wordWidthsMap,
+  };
+  useEffect(() => {
+    return () => {
+      if (heightDriftIdleTaskRef.current !== null) {
+        cancelIdleTask(heightDriftIdleTaskRef.current);
+        heightDriftIdleTaskRef.current = null;
+      }
+    };
+  }, []);
   const resolvedThumbsRootPath = useMemo(
     () => thumbsRootPath ?? legacyThumbsRoot(vaultPath),
     [thumbsRootPath, vaultPath],
@@ -827,6 +910,18 @@ export function Grid({
     return ids;
   }, [blocks, heightsMap]);
 
+  const renderReadyBlockIds = useMemo(() => {
+    const ids = new Set(liveBlockIds);
+    if (!warmedUp || parentWidth <= 0) return ids;
+    for (const block of blocks) {
+      if (ids.has(block.id)) continue;
+      if (blockCanRenderFromDeterministicHeight(block, wordWidthsMap)) {
+        ids.add(block.id);
+      }
+    }
+    return ids;
+  }, [blocks, liveBlockIds, parentWidth, warmedUp, wordWidthsMap]);
+
   const committedEndIndex = useMemo(
     () => computeCommittedEndIndex(blocks, liveBlockIds, warmedUp),
     [blocks, liveBlockIds, warmedUp],
@@ -837,6 +932,55 @@ export function Grid({
     blocks.length > 0 &&
     committedEndIndex === blocks.length - 1;
 
+  const publishHeightDriftReport = useCallback(
+    (results: Array<{ id: number; height: number }>) => {
+      const driftContext = heightDriftContextRef.current;
+      if (
+        driftContext.generationKey === generationKey &&
+        driftContext.parentWidth > 0 &&
+        results.length > 0 &&
+        typeof window !== "undefined"
+      ) {
+        if (heightDriftIdleTaskRef.current !== null) {
+          cancelIdleTask(heightDriftIdleTaskRef.current);
+        }
+        const measuredResults = results.slice();
+        heightDriftIdleTaskRef.current = scheduleIdleTask(() => {
+          heightDriftIdleTaskRef.current = null;
+          const debug = window.__MINE_FEED_SCROLL_DEBUG__;
+          if (!debug || debug.layoutGenerationKey !== generationKey) return;
+
+          const columnWidth = deriveColumnWidth(driftContext.parentWidth);
+          const observations: CardHeightDriftObservation[] = [];
+          for (const result of measuredResults) {
+            const block = driftContext.blocksById.get(result.id);
+            if (!block) continue;
+            const wordWidths = driftContext.wordWidthsMap.get(result.id) ?? null;
+            const wordMetricsRequired = block.card_kind !== "media";
+            observations.push({
+              block,
+              measuredHeight: result.height,
+              deterministicHeight: Math.ceil(
+                computeCardHeight(block, columnWidth, wordWidths),
+              ),
+              wordMetricsReady: !wordMetricsRequired || wordWidths !== null,
+            });
+          }
+          if (observations.length === 0) return;
+
+          const report = createCardHeightDriftReport({
+            layoutGenerationKey: generationKey,
+            columnWidth,
+            observations,
+          });
+          heightDriftReportRef.current = report;
+          debug.heightDrift = report;
+        });
+      }
+    },
+    [generationKey],
+  );
+
   const handleMeasured = useCallback(
     (results: Array<{ id: number; height: number }>) => {
       const newEntries: Array<{ generationKey: LayoutGenerationKey; blockId: number; height: number }> = [];
@@ -844,12 +988,13 @@ export function Grid({
         setCachedHeight(generationKey, r.id, r.height);
         newEntries.push({ generationKey, blockId: r.id, height: r.height });
       }
+      publishHeightDriftReport(results);
       persistHeights(newEntries);
       // Force the derived heightsMap useMemo to recompute by observing
       // the new entries just written into memoryCache.
       setMeasurementTick((t) => t + 1);
     },
-    [generationKey],
+    [generationKey, publishHeightDriftReport],
   );
 
   // The visible layout always belongs to the current generation. Exact
@@ -981,6 +1126,75 @@ export function Grid({
     visibleItems,
     warmedUp,
   ]);
+  const measurementBatchKey = useMemo(
+    () => measurementBatch.map((block) => block.id).join(":"),
+    [measurementBatch],
+  );
+  useEffect(() => {
+    if (phase === "committed" || measurementBatch.length === 0) {
+      setMeasurementIdleReady(false);
+      return;
+    }
+    setMeasurementIdleReady(false);
+    const timeout = window.setTimeout(() => {
+      setMeasurementIdleReady(true);
+    }, MEASUREMENT_IDLE_DELAY_MS);
+    return () => window.clearTimeout(timeout);
+  }, [measurementBatch.length, measurementBatchKey, phase]);
+  const productionMeasurementActive =
+    !heightDriftAuditMode &&
+    measurementIdleReady &&
+    phase !== "committed" &&
+    measurementBatch.length > 0;
+
+  heightDriftAuditInputRef.current = {
+    canMeasure:
+      heightDriftAuditMode &&
+      warmedUp &&
+      targetCommittedEndIndex >= 0 &&
+      wordWidthsMap.size > 0 &&
+      !productionMeasurementActive,
+    blocks,
+    positions: layout.positions,
+    visibleItems,
+    scrollTop,
+    viewportHeight,
+    targetEndIndex: targetCommittedEndIndex,
+  };
+  useEffect(() => {
+    const canMeasure = heightDriftAuditInputRef.current?.canMeasure ?? false;
+    if (!heightDriftAuditMode || typeof window === "undefined" || !canMeasure) {
+      if (typeof window !== "undefined") {
+        delete window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__;
+      }
+      return;
+    }
+    window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__ = () => {
+      const input = heightDriftAuditInputRef.current;
+      if (!input?.canMeasure) return;
+      setHeightDriftAuditBatch(
+        collectViewportFirstMeasurementBatch({
+          blocks: input.blocks,
+          positions: input.positions,
+          visibleItems: input.visibleItems,
+          measuredBlockIds: new Set<number>(),
+          scrollTop: input.scrollTop,
+          viewportHeight: input.viewportHeight,
+          targetEndIndex: input.targetEndIndex,
+          batchSize: MEASUREMENT_BATCH_SIZE,
+        }),
+      );
+    };
+    return () => {
+      delete window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__;
+    };
+  }, [
+    heightDriftAuditMode,
+    productionMeasurementActive,
+    targetCommittedEndIndex,
+    warmedUp,
+    wordWidthsMap.size,
+  ]);
 
   const showEmptyChannelPlaceholder = Boolean(
     currentTag &&
@@ -1089,6 +1303,14 @@ export function Grid({
     windows: scrollReadinessWindows,
   });
   void feedMediaPreloadStats;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const debug = window.__MINE_FEED_SCROLL_DEBUG__;
+    if (debug && heightDriftReportRef.current) {
+      debug.heightDrift = heightDriftReportRef.current;
+    }
+  }, [feedMediaPreloadStats, generationKey]);
 
   const layoutReadinessDiagnostics = useMemo(
     () => createGridLayoutReadinessDiagnostics({
@@ -1351,10 +1573,10 @@ export function Grid({
         layout.positions,
         blocks,
         rect,
-        liveBlockIds,
+        renderReadyBlockIds,
       ),
     ));
-  }, [blocks, layout.positions, liveBlockIds]);
+  }, [blocks, layout.positions, renderReadyBlockIds]);
 
   const handleGridPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (
@@ -1441,7 +1663,7 @@ export function Grid({
         if (
           !focusedPosition ||
           !focusedBlock ||
-          !liveBlockIds.has(focusedBlock.id) ||
+          !renderReadyBlockIds.has(focusedBlock.id) ||
           !isPositionVisibleInViewport(
             focusedPosition,
             currentScrollTop,
@@ -1512,7 +1734,7 @@ export function Grid({
               layout.positions,
               blocks,
               selectionSlug,
-              liveBlockIds,
+              renderReadyBlockIds,
             )
           ) {
             return;
@@ -1540,7 +1762,7 @@ export function Grid({
       event.preventDefault();
       blockedPointerPositionRef.current = lastPointerPositionRef.current;
       setFeedInteractionMode("keyboard");
-      if (liveBlockIds.size === 0) return;
+      if (renderReadyBlockIds.size === 0) return;
 
       if (!focusedSlug) {
         const firstSlug = firstVisibleSlug(
@@ -1548,7 +1770,7 @@ export function Grid({
           blocks,
           currentScrollTop,
           currentViewportHeight,
-          liveBlockIds,
+          renderReadyBlockIds,
         );
         if (firstSlug) {
           setFocusedSlug(firstSlug);
@@ -1565,7 +1787,7 @@ export function Grid({
       if (
         !focusedPosition ||
         !focusedBlock ||
-        !liveBlockIds.has(focusedBlock.id) ||
+        !renderReadyBlockIds.has(focusedBlock.id) ||
         !isPositionVisibleInViewport(
           focusedPosition,
           currentScrollTop,
@@ -1577,7 +1799,7 @@ export function Grid({
           blocks,
           currentScrollTop,
           currentViewportHeight,
-          liveBlockIds,
+          renderReadyBlockIds,
         );
         if (firstSlug) {
           setFocusedSlug(firstSlug);
@@ -1590,7 +1812,7 @@ export function Grid({
         blocks,
         focusedSlug,
         event.key,
-        liveBlockIds,
+        renderReadyBlockIds,
       );
       if (nextSlug) {
         setFocusedSlug(nextSlug);
@@ -1608,7 +1830,7 @@ export function Grid({
     handleBlockClick,
     keyboardNavigationDisabled,
     layout.positions,
-    liveBlockIds,
+    renderReadyBlockIds,
     selectedSlugs.size,
     scrollTop,
     toggleSelectedSlug,
@@ -1616,7 +1838,7 @@ export function Grid({
   ]);
 
   const activePlaybackSlugs = useMemo(() => {
-    if (liveBlockIds.size === 0 || viewportHeight <= 0) {
+    if (renderReadyBlockIds.size === 0 || viewportHeight <= 0) {
       return new Set<string>();
     }
 
@@ -1643,7 +1865,7 @@ export function Grid({
     for (const item of visibleItems) {
       const block = blocks[item.index];
       if (!block) continue;
-      if (!liveBlockIds.has(block.id)) continue;
+      if (!renderReadyBlockIds.has(block.id)) continue;
       const playback = autoplayEligibleBySlug.get(block.slug);
       if (!playback) continue;
 
@@ -1715,7 +1937,7 @@ export function Grid({
   }, [
     autoplayEligibleBySlug,
     blocks,
-    liveBlockIds,
+    renderReadyBlockIds,
     scrollTop,
     viewportHeight,
     visibleItems,
@@ -1843,7 +2065,7 @@ export function Grid({
               visibleItems={visibleItems}
               totalHeight={layout.totalHeight}
               priorityBounds={priorityBounds}
-              liveBlockIds={liveBlockIds}
+              liveBlockIds={renderReadyBlockIds}
               activePlaybackSlugs={activePlaybackSlugs}
               marqueeRect={marqueeRect}
               context={gridContext}
@@ -1852,13 +2074,22 @@ export function Grid({
           {parentWidth > 0 && showEmptyChannelPlaceholder && (
             <EmptyChannelPlaceholder viewportHeight={viewportHeight} />
           )}
-          {parentWidth > 0 && blocks.length > 0 && phase !== "committed" && measurementBatch.length > 0 && (
+          {parentWidth > 0 && blocks.length > 0 && productionMeasurementActive && (
             <MeasurementPass
               blocks={measurementBatch}
               columnWidth={deriveColumnWidth(parentWidth)}
               vaultPath={vaultPath}
               thumbsRootPath={resolvedThumbsRootPath}
               onMeasured={handleMeasured}
+            />
+          )}
+          {parentWidth > 0 && heightDriftAuditBatch.length > 0 && (
+            <MeasurementPass
+              blocks={heightDriftAuditBatch}
+              columnWidth={deriveColumnWidth(parentWidth)}
+              vaultPath={vaultPath}
+              thumbsRootPath={resolvedThumbsRootPath}
+              onMeasured={publishHeightDriftReport}
             />
           )}
         </div>

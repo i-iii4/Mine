@@ -14,6 +14,7 @@ const MAX_VIEWPORT_SETTLE_MS = 250;
 const MAX_FRAME_GAP_MS = 120;
 const MAX_LONG_TASK_MS = 120;
 const MAX_MOUNTED_DOM_ITEMS = 240;
+const HEIGHT_DRIFT_TIMEOUT_MS = 2500;
 
 async function assertDevServerReady(url) {
   try {
@@ -60,6 +61,25 @@ async function waitForViewportPaint(page) {
       !viewport.blankViewportRisk,
     );
   }, null, { timeout: SETTLE_TIMEOUT_MS });
+}
+
+async function markHeightDriftAuditStart(page) {
+  return page.evaluate(() => {
+    const startedAtMs = performance.now();
+    window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__?.();
+    return startedAtMs;
+  });
+}
+
+async function waitForHeightDriftReport(page, startedAtMs) {
+  await page.waitForFunction((minCheckedAtMs) => {
+    const report = window.__MINE_FEED_SCROLL_DEBUG__?.heightDrift;
+    return Boolean(
+      report &&
+      report.checkedAtMs >= minCheckedAtMs &&
+      report.count > 0,
+    );
+  }, startedAtMs, { timeout: HEIGHT_DRIFT_TIMEOUT_MS });
 }
 
 async function installPerformanceProbe(page) {
@@ -188,6 +208,25 @@ async function readViewportMetrics(page) {
   });
 }
 
+async function readHeightDriftMetrics(page) {
+  return page.evaluate(() => {
+    const report = window.__MINE_FEED_SCROLL_DEBUG__?.heightDrift;
+    if (!report) return null;
+    return {
+      status: report.status,
+      count: report.count,
+      exactSampleCount: report.exactSampleCount,
+      fallbackSampleCount: report.fallbackSampleCount,
+      p95AbsDeltaPx: report.p95AbsDeltaPx,
+      maxAbsDeltaPx: report.maxAbsDeltaPx,
+      softBudgetPx: report.softBudgetPx,
+      hardBudgetPx: report.hardBudgetPx,
+      softBudgetExceededCount: report.softBudgetExceededCount,
+      hardBudgetExceededCount: report.hardBudgetExceededCount,
+    };
+  });
+}
+
 function pixelAt(png, x, y) {
   const index = (png.width * y + x) << 2;
   return [
@@ -268,6 +307,9 @@ async function runViewportAudit(browser, viewport) {
   await page.goto(AUDIT_URL, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("[data-feed-scroll-audit-route]");
   await page.waitForSelector("[data-grid-scroll]");
+  await page.waitForFunction(
+    () => typeof window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__ === "function",
+  );
   await installPerformanceProbe(page);
   await waitForViewportPaint(page);
 
@@ -289,9 +331,15 @@ async function runViewportAudit(browser, viewport) {
     await waitForViewportPaint(page);
     await waitForAnimationFrames(page, 2);
 
-    const metrics = await readViewportMetrics(page);
     const performanceSample = await readPerformanceProbe(page);
+    const metrics = await readViewportMetrics(page);
     const pixels = await screenshotViewport(page);
+    await page.waitForFunction(
+      () => typeof window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__ === "function",
+    );
+    const heightDriftStartedAtMs = await markHeightDriftAuditStart(page);
+    await waitForHeightDriftReport(page, heightDriftStartedAtMs);
+    const heightDrift = await readHeightDriftMetrics(page);
     samples.push({
       requestedTop: top,
       scrollTop: Math.round(metrics.scrollTop),
@@ -306,6 +354,7 @@ async function runViewportAudit(browser, viewport) {
       longTaskSupported: performanceSample.longTaskSupported,
       longTaskCount: performanceSample.longTaskCount,
       maxLongTaskMs: Number(performanceSample.maxLongTaskMs.toFixed(1)),
+      heightDrift,
       reason: metrics.debugViewport?.reason ?? "missing-debug",
     });
 
@@ -341,6 +390,22 @@ async function runViewportAudit(browser, viewport) {
     if (performanceSample.maxLongTaskMs > MAX_LONG_TASK_MS) {
       failures.push(
         `long task exceeded budget at ${top}: maxLongTaskMs=${performanceSample.maxLongTaskMs.toFixed(1)}, max=${MAX_LONG_TASK_MS}`,
+      );
+    }
+    if (!heightDrift) {
+      failures.push(`missing height drift report at ${top}`);
+    } else if (heightDrift.status !== "ok") {
+      failures.push(
+        [
+          `height drift over budget at ${top}: status=${heightDrift.status}`,
+          `count=${heightDrift.count}`,
+          `exact=${heightDrift.exactSampleCount}`,
+          `fallback=${heightDrift.fallbackSampleCount}`,
+          `p95=${heightDrift.p95AbsDeltaPx}px`,
+          `max=${heightDrift.maxAbsDeltaPx}px`,
+          `soft=${heightDrift.softBudgetPx}px`,
+          `hard=${heightDrift.hardBudgetPx}px`,
+        ].join(", "),
       );
     }
   }

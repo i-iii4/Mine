@@ -455,12 +455,15 @@ bun run test:feed-scroll
 It opens the dev-only `/__feed-scroll-audit` route, performs deterministic deep
 scroll jumps in Playwright and fails on blank viewport, skeleton-only viewport,
 browser asset errors, near-blank screenshot samples, DOM-window inflation,
-slow viewport settle, large frame gaps or long tasks. The route includes
-text-only and media-heavy synthetic cards with deterministic local preview
-assets. This command verifies the Grid virtual-window/readiness layer and the
-Card preview paint path. Real-vault product acceptance remains a separate
-human-facing check because the synthetic route intentionally avoids source media
-and Tauri IPC; the C8.16 `Everything` check passed at the current product level.
+slow viewport settle, large frame gaps, long tasks or Phase 11 height-drift
+budget failures. The route includes text-only and media-heavy synthetic cards
+with deterministic local preview assets. It requests the height-drift audit only
+after the scroll performance sample is recorded, so diagnostic measurement is
+not counted as scroll settle time. This command verifies the Grid
+virtual-window/readiness layer and the Card preview paint path. Real-vault
+product acceptance remains a separate human-facing check because the synthetic
+route intentionally avoids source media and Tauri IPC; the C8.16 `Everything`
+check passed at the current product level.
 
 ## Acceptance Criteria
 

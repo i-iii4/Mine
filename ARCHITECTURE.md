@@ -479,17 +479,23 @@ iOS UI contract:
 - Геометрия карточки больше не должна выводиться из независимых эвристик в `Card.tsx` и `cardHeight.ts`. Введён общий descriptor-driven слой (`src/lib/cardLayout.ts`): variant карточки, preview text и media geometry вычисляются один раз и затем используются и для рендера, и для расчёта высоты.
 - Контентные карточки больше не кодируют spacing через variant-specific `mt-*` ветки. Введён slot-based contract: frame карточки задаёт общий inset, media идёт первой, а текстовые слоты живут единым text-stack ниже (`media -> display title/preview -> author`). Внутренние gap'ы появляются только между реально существующими соседними слотами. Это устраняет phantom top gap и сохраняет системный отступ под media.
 - Layout generation теперь keyed by `layoutGenerationKey = route + width bucket + ordered block layout fingerprint`. Fingerprint включает layout-relevant content блока, в том числе `preview_manifest`, поэтому same-id content/preview changes не могут reuse stale heights/layout.
+- Font metrics cache использует тот же принцип: IndexedDB word widths keyed by
+  `cacheKey = version + fontHash + blockId + measured textHash`, а не только
+  `blockId`. Поэтому редактирование текста карточки при прежнем id не может
+  вернуть stale Canvas `measureText` metrics и сломать deterministic height.
 - `heightCache` и `layoutCache` generation-aware: exact heights и exact layouts кэшируются только для текущего generation key, а не просто по `slug` или набору ids.
 - Layout вычисляется чистой функцией (`src/lib/masonryLayout.ts`): `containerWidth + current-generation heights -> columnCount + positions + totalHeight`. `columnWidth` и horizontal positions снапятся к целым CSS-пикселям; measurement pass и visible render используют один `getMasonryColumnWidth`, чтобы transformed card controls не получали subpixel jitter. Exact heights текущего generation используются там, где они уже есть; для остальных блоков provisional path использует heuristic only for skeleton geometry.
 - Visible contract двуслойный, но live-gate больше не равен только contiguous
   prefix:
-  - `liveBlockIds` — non-contiguous set карточек с exact height текущего
-    `layoutGenerationKey`; такие карточки могут рендериться live даже если
-    предыдущие index gaps ещё provisional;
-  - `committedEndIndex` — contiguous prefix только для diagnostics/background
-    catch-up;
-  - provisional remainder — skeleton cards в heuristic envelope текущего
-    generation.
+  - `measuredBlockIds` — non-contiguous set карточек с exact height текущего
+    `layoutGenerationKey`;
+  - `renderReadyBlockIds` — карточки, которые можно показывать как real `Card`:
+    exact measured height уже есть, либо deterministic height безопасна
+    (`media` или text word metrics готовы);
+  - `committedEndIndex` — contiguous measured prefix только для
+    diagnostics/background catch-up;
+  - provisional remainder — skeleton cards в conservative deterministic
+    envelope текущего generation.
 - Старый `stableLayoutSnapshot` больше не участвует в visible live render path. Это устраняет системные bottom clip / white-tail баги, которые возникали, когда live card попадала внутрь stale height envelope.
 - **Direction-aware overscan**: при скролле вниз forward-overscan 2200px, backward 600px. При скролле вверх — зеркально. Это предзагружает больше карточек по направлению scroll'а, уменьшая «пустые зоны» при быстром скролле.
 - **Priority bounds**: зона ±1400px по направлению scroll'а, внутри которой карточки получают `priority=true`. ImageCard/LinkCard/ArticleCard используют `loading="eager"` вместо `"lazy"` — картинки начинают fetch до того как пользователь до них доскроллит.
@@ -503,6 +509,18 @@ iOS UI contract:
   [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md).
 - **CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`, картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки картинки — нет layout shift.
 - `computeCardHeight()` остаётся heuristic для scheduling / placeholder geometry, но не имеет права клампить live content. Hard clamp `height + overflow hidden` валиден только внутри exact committed prefix текущего generation.
+- Phase 11 shadow-validation publishes
+  `window.__MINE_FEED_SCROLL_DEBUG__.heightDrift`: a batch-local comparison of
+  actual `MeasureCard` heights and deterministic `computeCardHeight()`
+  estimates. It reports soft/hard budget exceedances, exact-vs-fallback sample
+  counts and grouping by card kind / block type. Browser acceptance requests
+  this audit explicitly via `window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__()` only
+  after the scroll performance sample has been recorded, so diagnostic DOM work
+  cannot inflate `settleMs`. Measured heights remain the exact cache authority,
+  but deterministic-ready visible GridItems may render live before their exact
+  background measurement finishes. Automatic exact measurement is idle-delayed
+  after batch changes so it does not compete with the first paint of the active
+  viewport.
 - Gallery fallback contract: если у multi-image карточки нет подтверждённого tile preview asset, feed больше не размножает один block-level thumb на все tiles. Gallery tile падает в свой `source_path`, а block-level `slug.jpg` остаётся только single-preview fallback.
 - Tile-level `preview_path` должен означать реально существующий derived asset
   в thumbs cache. Synthetic paths вида `<source-stem>.jpg` запрещены: если

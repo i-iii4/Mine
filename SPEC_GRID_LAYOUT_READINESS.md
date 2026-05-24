@@ -2,7 +2,8 @@
 
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [AUDIT_PERFORMANCE.md](AUDIT_PERFORMANCE.md)
 
-Status: implemented as Phase C8; synthetic browser acceptance is automated and
+Status: implemented as Phase C8 and extended by Phase 11 proof-gated
+deterministic live rendering; synthetic browser acceptance is automated and
 real-vault product acceptance on `Everything` passed after the C8.16 retune.
 
 ## Goal
@@ -15,6 +16,9 @@ C7 solved media readiness: previews can be fetched and decoded ahead of DOM.
 C8 solves the adjacent layout-readiness layer: cards in the current viewport
 must be measured before prefix catch-up work, and exact-measured viewport cards
 must be allowed to render live even when earlier prefix gaps still exist.
+Phase 11 adds a stronger gate: if a card already has a proven deterministic
+height envelope (`media` or text metrics ready), it may render live while exact
+measurement catches up in the background.
 
 This is a bridge toward Phase 11 zero-jank masonry. It does not replace the
 masonry renderer and does not remove measurement infrastructure in this phase.
@@ -40,7 +44,8 @@ card.
 - Fast scroll and deep jumps prioritize the current viewport before historical
   prefix catch-up.
 - A card can render live when it has an exact height for the current
-  `layoutGenerationKey`, even if earlier cards are still provisional.
+  `layoutGenerationKey`, or when its deterministic envelope is ready and inside
+  the drift proof contract, even if earlier cards are still provisional.
 - The contiguous `committedEndIndex` remains useful diagnostics, but it is no
   longer the only live-render gate.
 - Grid must still keep bounded DOM. The solution must not mount the whole route
@@ -60,7 +65,7 @@ card.
 |---|---|
 | `layoutGenerationKey` | Route + width bucket + ordered layout fingerprint. Exact heights are valid only inside the current generation. |
 | `measuredBlockIds` | Non-contiguous set of block ids with exact height in the current generation. |
-| `liveBlockIds` | Frontend render gate derived from `measuredBlockIds`; live `Card` is allowed only for these ids. |
+| `renderReadyBlockIds` | Frontend render gate: exact measured cards plus deterministic-ready cards (`media` or text metrics ready). |
 | `committedEndIndex` | Largest contiguous measured prefix. Diagnostic/background frontier, not the sole live gate. |
 | `targetCommittedEndIndex` | Background catch-up target derived from visible max index and adaptive lookahead. |
 | viewport backlog | Mounted positions that intersect the real viewport and do not yet have exact height. |
@@ -96,16 +101,20 @@ export function createGridLayoutReadinessDiagnostics(input: ...):
 Grid remains the owner of runtime geometry:
 
 1. Build `heightsMap` from generation-aware `heightCache`.
-2. Derive `liveBlockIds` from `heightsMap`.
-3. Compute `committedEndIndex` from `liveBlockIds` only for diagnostics and
+2. Derive `measuredBlockIds` from `heightsMap`.
+3. Derive `renderReadyBlockIds` from `measuredBlockIds` plus deterministic-ready
+   cards.
+4. Compute `committedEndIndex` from `measuredBlockIds` only for diagnostics and
    background catch-up.
-4. Build `layout.positions` from current-generation exact heights where known
+5. Build `layout.positions` from current-generation exact heights where known
    and deterministic provisional heights elsewhere.
-5. Compute `visibleItems` through the existing visibility index and adaptive C7
+6. Compute `visibleItems` through the existing visibility index and adaptive C7
    render window.
-6. Build a hidden measurement batch through viewport-first scheduling.
-7. Render each `GridItem` as live when `liveBlockIds.has(block.id)`; otherwise
-   render the existing skeleton/provisional surface.
+7. Build a hidden measurement batch through viewport-first scheduling. Automatic
+   exact measurement is idle-delayed after batch changes; dev browser audit uses
+   explicit drift requests instead of automatic measurement.
+8. Render each `GridItem` as live when `renderReadyBlockIds.has(block.id)`;
+   otherwise render the existing skeleton/provisional surface.
 
 The `visibleItems` runtime has two update paths:
 
@@ -154,12 +163,12 @@ layout readiness even when media preload stats look healthy.
 
 ## Interaction Contracts
 
-- Arrow-key focus starts from the first visible live card.
+- Arrow-key focus starts from the first visible render-ready card.
 - If manual scroll leaves previous keyboard focus outside the viewport, the next
-  arrow press resyncs to the first visible live card.
-- `Enter` in selection mode and marquee selection target live cards only.
-- Feed video autoplay targets live cards only.
-- Detail-close focus restore waits until the restored block is live for the
+  arrow press resyncs to the first visible render-ready card.
+- `Enter` in selection mode and marquee selection target render-ready cards only.
+- Feed video autoplay targets render-ready cards only.
+- Detail-close focus restore waits until the restored block is render-ready for the
   current generation.
 - Unmeasured skeletons remain inert for selection, focus and autoplay.
 
@@ -252,8 +261,11 @@ This route renders the real `Grid` component with a large synthetic mixed feed:
 text cards plus media-heavy article cards backed by deterministic local preview
 assets. It uses Tauri asset URL mocks and does not call vault IPC. Its purpose
 is narrower and stricter than real-vault QA: prove that the virtual masonry
-window, viewport-first measurement, Card paint path and paint diagnostics do not
-allow an empty or skeleton-only viewport during aggressive scroll jumps.
+window, deterministic-ready render gate, Card paint path and paint diagnostics
+do not allow an empty or skeleton-only viewport during aggressive scroll jumps.
+It also requests Phase 11 height-drift validation after recording the scroll
+performance sample, so diagnostic measurement cannot be counted as scroll
+settle time.
 
 The command is:
 
@@ -289,11 +301,12 @@ Automated:
 - The deep-scroll Grid regression must assert that the final viewport diagnostic
   has `blankViewportRisk === false` and `domViewportItemCount > 0`; a console
   warning without a failing assertion is not an accepted regression harness.
-- Grid can render a deep-viewport live card when that card has exact height in
-  the current generation, even while earlier positions remain provisional.
+- Grid can render a deep-viewport live card when that card has exact height or
+  deterministic-ready height in the current generation, even while earlier
+  positions remain provisional.
 - `bun run test:feed-scroll` must pass against a running Vite/Tauri dev server;
   it is the browser-level acceptance gate for blank viewport, skeleton-only
-  viewport and visually blank screenshot failures.
+  viewport, visually blank screenshot failures and height-drift budget failures.
 
 Real-vault acceptance:
 

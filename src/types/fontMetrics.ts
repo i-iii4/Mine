@@ -9,6 +9,13 @@
 export type FontHash = string;
 
 /**
+ * Maximum preview text slice measured by the font-metrics worker.
+ * Must stay shared with the main-thread cache identity: changes outside this
+ * prefix do not affect word widths and must not invalidate the metrics cache.
+ */
+export const FONT_METRICS_PREVIEW_MAX_CHARS = 480;
+
+/**
  * Per-block word widths, in pixels, computed via Canvas measureText.
  * These are pure font metrics — they don't depend on columnWidth.
  * Word-wrap at any columnWidth is a pure function of these widths.
@@ -30,12 +37,29 @@ export interface WordWidths {
 
 /**
  * IndexedDB record: word widths for one block at a specific font hash.
- * Stored keyed by blockId; fontHash is checked on read to detect stale entries.
+ * Stored by a generation-aware cache key. The key includes block id, font hash
+ * and the measured text fingerprint so same-id text edits cannot reuse stale
+ * metrics.
  */
 export interface CachedWordWidths {
+  cacheKey: string;
   blockId: number;
   fontHash: FontHash;
+  textHash: string;
   widths: WordWidths;
+}
+
+/**
+ * Main-thread cache identity for one block. The worker still correlates results
+ * by block id; IndexedDB persistence uses cacheKey.
+ */
+export interface FontMetricsCacheIdentity {
+  blockId: number;
+  fontHash: FontHash;
+  textHash: string;
+  cacheKey: string;
+  title: string;
+  preview: string;
 }
 
 /** Input data the worker needs for each block — only text fields. */

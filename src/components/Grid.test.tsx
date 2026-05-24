@@ -1580,9 +1580,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(gridItemForSlug("block-9552")).toHaveAttribute("data-feed-grid-item-selected", "true");
 
     rerender(<Grid {...BASE_PROPS} blocks={blocks} currentTag="next-channel" onBlockClick={onBlockClick} />);
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await flushAsync();
     expect(gridItemForSlug("block-9551")).not.toHaveAttribute("data-feed-grid-item-selected");
     expect(gridItemForSlug("block-9552")).not.toHaveAttribute("data-feed-grid-item-selected");
   });

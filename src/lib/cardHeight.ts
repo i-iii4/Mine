@@ -414,11 +414,9 @@ export function computeFeedPlaybackSurfaceEnvelope(
  * @param block       Block metadata from LightBlock.
  * @param columnWidth Column width in pixels (derived from layout engine).
  * @param wordWidths  Pre-computed word widths for this block, or null if
- *                    not yet computed. When null, uses a conservative
- *                    lower-bound fallback; real height (once word widths
- *                    arrive) is guaranteed to be >= fallback, so later
- *                    corrections only grow totalHeight — never shrink it,
- *                    never cause scroll jumps.
+ *                    not yet computed. When null, reserves the worst clamped
+ *                    geometry for the template so the card envelope remains
+ *                    overlap-safe while exact metrics are still loading.
  * @returns Integer pixel height, always positive.
  */
 export function computeCardHeight(

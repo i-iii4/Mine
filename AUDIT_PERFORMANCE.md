@@ -65,6 +65,13 @@
   viewport diagnostics, skeleton-only viewport, missing mounted DOM items,
   browser asset errors, near-blank screenshots, DOM-window inflation, slow
   viewport settle, large frame gaps and long tasks.
+- Phase 11 follow-up converted the next blocker from "wait for hidden DOM
+  measurement" to deterministic-ready live render: media cards and text cards
+  with ready word metrics can render as real cards immediately, while hidden
+  `MeasureCard` continues to update exact generation-aware heights and
+  `heightDrift` proof in the background. The browser gate now also checks
+  height drift after the scroll performance sample, so audit measurement does
+  not inflate `settleMs`.
 - Real-vault acceptance on `Everything` passed at the product level after the
   C8.16 retune: aggressive manual scroll showed a significant improvement, and
   white/blank viewport states were no longer practically reproducible in normal
@@ -122,7 +129,7 @@
 ### 18.04.2026 — generation-safe masonry height correctness rewrite
 
 - `src/lib/layoutGeneration.ts` + `src/lib/heightCache.ts` + `src/lib/layoutCache.ts`: введён `layoutGenerationKey`, который учитывает route, width bucket и layout-relevant fingerprint блока, включая `preview_manifest`. Exact heights и exact layouts теперь кэшируются generation-aware, а не по слабому `(slug, bucket)` identity.
-- `src/components/Grid.tsx`: visible render path больше не использует stale generation. Layout всегда строится только для current generation, live cards разрешены только внутри contiguous `committed` prefix, а остальная лента остаётся skeleton-only до exact measurement.
+- `src/components/Grid.tsx`: visible render path больше не использует stale generation. Layout всегда строится только для current generation. Изначально live cards были разрешены только внутри contiguous `committed` prefix; C8/Phase 11 заменили это на generation-safe render-ready gate.
 - Measurement scheduling теперь идёт по contiguous prefix `0..targetCommittedEndIndex`, а не по разрозненным видимым блокам. Это устраняет смешивание stale envelope и current live card — корневую причину системной bottom clipping / white-tail underflow.
 - Практический эффект на реальном `Mine`: пользователь подтвердил, что высота карточек отображается корректно; системная обрезка низа и пустые хвосты больше не воспроизводятся.
 
@@ -204,8 +211,9 @@ Rust IPC returns new array reference every time → `setBlocks(new_array)` alway
 - Root cause: old live-render gate equalled contiguous `committedEndIndex`; a
   deep viewport could not render live cards until all earlier gaps were measured.
 - Fix: implement [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md):
-  viewport-first measurement, non-contiguous `liveBlockIds`, prefix as
-  diagnostics/background catch-up, and combined C7/C8 diagnostics.
+  viewport-first measurement, non-contiguous render-ready live gate, prefix as
+  diagnostics/background catch-up, combined C7/C8 diagnostics, and Phase 11
+  drift-gated deterministic live rendering.
 
 ### MEDIUM — SQL and IPC
 

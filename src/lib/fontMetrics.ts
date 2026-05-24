@@ -11,11 +11,13 @@ import type {
   FontHash,
   WordWidths,
   CachedWordWidths,
+  FontMetricsCacheIdentity,
   WorkerInMessage,
   WorkerOutMessage,
   WorkerBlockInput,
   WorkerBlockResult,
 } from "@/types/fontMetrics";
+import { FONT_METRICS_PREVIEW_MAX_CHARS } from "@/types/fontMetrics";
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -39,11 +41,12 @@ const PREVIEW_FONT_SPEC = "400 12px 'Geist', system-ui, sans-serif";
  * changes in a way that affects measureText output. All cached entries
  * with a different hash are treated as stale and re-computed.
  */
-const FONT_HASH: FontHash = "descriptor-preview-v1";
+const FONT_HASH: FontHash = "descriptor-preview-v2";
 
 const DB_NAME = "arena-font-metrics";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = "wordWidths";
+const CACHE_KEY_VERSION = "v2";
 
 // ─── Worker lifecycle ───────────────────────────────────────────────────────
 
@@ -194,14 +197,80 @@ async function ensureFontLoaded(): Promise<void> {
 
 // ─── IndexedDB cache ────────────────────────────────────────────────────────
 
+function hashString(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/**
+ * Build the cache identity for one block's font metrics.
+ *
+ * The old cache contract keyed entries only by block id and font hash. That is
+ * not enough: card text can change without changing id, and then stale word
+ * widths corrupt deterministic height calculation. The identity therefore
+ * hashes exactly the text slice the worker measures.
+ */
+export function createFontMetricsCacheIdentity(
+  block: LightBlock,
+): FontMetricsCacheIdentity {
+  const descriptor = deriveCardLayoutDescriptor(block);
+  const title = descriptor.titleText;
+  const preview = descriptor.previewText.length > FONT_METRICS_PREVIEW_MAX_CHARS
+    ? descriptor.previewText.slice(0, FONT_METRICS_PREVIEW_MAX_CHARS)
+    : descriptor.previewText;
+  const textHash = hashString(`${title}\u0000${preview}`);
+  return {
+    blockId: block.id,
+    fontHash: FONT_HASH,
+    textHash,
+    cacheKey: `${CACHE_KEY_VERSION}:${FONT_HASH}:${block.id}:${textHash}`,
+    title,
+    preview,
+  };
+}
+
+function isWordWidths(value: unknown): value is WordWidths {
+  if (typeof value !== "object" || value === null) return false;
+  // IndexedDB stores structured clones; validate each field before reuse.
+  const candidate = value as Partial<WordWidths>;
+  return (
+    Array.isArray(candidate.title) &&
+    Array.isArray(candidate.preview) &&
+    typeof candidate.titleSpace === "number" &&
+    typeof candidate.previewSpace === "number"
+  );
+}
+
+function isCachedWordWidths(value: unknown): value is CachedWordWidths {
+  if (typeof value !== "object" || value === null) return false;
+  // IndexedDB returns an untyped clone; validate the shape before trusting it.
+  const candidate = value as Partial<CachedWordWidths>;
+  return (
+    typeof candidate.cacheKey === "string" &&
+    typeof candidate.blockId === "number" &&
+    typeof candidate.fontHash === "string" &&
+    typeof candidate.textHash === "string" &&
+    isWordWidths(candidate.widths)
+  );
+}
+
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("IndexedDB not available"));
+      return;
+    }
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: "blockId" });
+      if (db.objectStoreNames.contains(STORE_NAME)) {
+        db.deleteObjectStore(STORE_NAME);
       }
+      db.createObjectStore(STORE_NAME, { keyPath: "cacheKey" });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("IndexedDB open failed"));
@@ -209,10 +278,9 @@ function openDb(): Promise<IDBDatabase> {
 }
 
 async function readFromCache(
-  blockIds: number[],
-  fontHash: FontHash,
+  identities: FontMetricsCacheIdentity[],
 ): Promise<Map<number, WordWidths>> {
-  if (blockIds.length === 0) return new Map();
+  if (identities.length === 0) return new Map();
 
   let db: IDBDatabase;
   try {
@@ -225,7 +293,7 @@ async function readFromCache(
     const tx = db.transaction(STORE_NAME, "readonly");
     const store = tx.objectStore(STORE_NAME);
     const result = new Map<number, WordWidths>();
-    let pendingCount = blockIds.length;
+    let pendingCount = identities.length;
 
     if (pendingCount === 0) {
       db.close();
@@ -233,12 +301,17 @@ async function readFromCache(
       return;
     }
 
-    for (const id of blockIds) {
-      const req = store.get(id);
+    for (const identity of identities) {
+      const req = store.get(identity.cacheKey);
       req.onsuccess = () => {
-        const record = req.result as CachedWordWidths | undefined;
-        if (record && record.fontHash === fontHash) {
-          result.set(id, record.widths);
+        const record: unknown = req.result;
+        if (
+          isCachedWordWidths(record) &&
+          record.blockId === identity.blockId &&
+          record.fontHash === identity.fontHash &&
+          record.textHash === identity.textHash
+        ) {
+          result.set(identity.blockId, record.widths);
         }
         pendingCount -= 1;
         if (pendingCount === 0) {
@@ -259,7 +332,7 @@ async function readFromCache(
 
 async function writeToCache(
   entries: WorkerBlockResult[],
-  fontHash: FontHash,
+  identitiesByBlockId: ReadonlyMap<number, FontMetricsCacheIdentity>,
 ): Promise<void> {
   if (entries.length === 0) return;
 
@@ -274,9 +347,13 @@ async function writeToCache(
     const tx = db.transaction(STORE_NAME, "readwrite");
     const store = tx.objectStore(STORE_NAME);
     for (const entry of entries) {
+      const identity = identitiesByBlockId.get(entry.id);
+      if (!identity) continue;
       const record: CachedWordWidths = {
+        cacheKey: identity.cacheKey,
         blockId: entry.id,
-        fontHash,
+        fontHash: identity.fontHash,
+        textHash: identity.textHash,
         widths: entry.widths,
       };
       store.put(record);
@@ -315,8 +392,12 @@ export async function fetchWordWidths(
 
   await ensureFontLoaded();
 
-  const blockIds = blocks.map((b) => b.id);
-  const cached = await readFromCache(blockIds, FONT_HASH);
+  const identities = blocks.map(createFontMetricsCacheIdentity);
+  const identitiesByBlockId = new Map<number, FontMetricsCacheIdentity>();
+  for (const identity of identities) {
+    identitiesByBlockId.set(identity.blockId, identity);
+  }
+  const cached = await readFromCache(identities);
 
   const missing = blocks.filter((b) => !cached.has(b.id));
   if (missing.length === 0) return cached;
@@ -329,11 +410,11 @@ export async function fetchWordWidths(
   }
 
   const workerInputs: WorkerBlockInput[] = missing.map((b) => {
-    const descriptor = deriveCardLayoutDescriptor(b);
+    const identity = identitiesByBlockId.get(b.id);
     return {
       id: b.id,
-      title: descriptor.titleText,
-      body: descriptor.previewText,
+      title: identity?.title ?? "",
+      body: identity?.preview ?? "",
     };
   });
 
@@ -346,7 +427,7 @@ export async function fetchWordWidths(
   }
 
   // Fire-and-forget cache write — don't block on it
-  void writeToCache(computed, FONT_HASH);
+  void writeToCache(computed, identitiesByBlockId);
 
   const result = new Map<number, WordWidths>(cached);
   for (const entry of computed) {

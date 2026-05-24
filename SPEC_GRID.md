@@ -23,6 +23,24 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PRINCIPLES.md](PRINCIPL
 
 Предыдущая архитектура (estimate → render → measure → correct) фундаментально порождала прыжки: корректировки меняли `totalHeight`, браузер клампил `scrollTop`, пользователь видел перестройку. Новая архитектура устраняет этот цикл целиком, убирая причину существования прыжков.
 
+## Текущий статус rollout
+
+Phase 11 внедряется как доказуемая миграция, а не как одномоментная замена
+`Grid.tsx`. Часть инфраструктуры уже существует в production-коде:
+
+- `src/workers/fontMetrics.worker.ts` и `src/lib/fontMetrics.ts`;
+- `src/lib/wordWrap.ts` и `src/lib/cardHeight.ts`;
+- bucket visibility index в `src/lib/masonryLayout.ts`;
+- generation-aware `src/lib/layoutCache.ts`;
+- `src/hooks/useGridScroll.ts` с RAF path и bounded anti-blank sync commit.
+
+Production Grid пока остаётся на generation-safe measured islands из
+`SPEC_GRID_LAYOUT_READINESS.md`. Полная отмена DOM measurement допустима только
+после shadow-validation: deterministic `computeCardHeight()` должен быть
+сравнён с фактической высотой `MeasureCard` на реальных карточках, а drift
+должен оказаться внутри явно заданного бюджета. Это защищает быстрый scroll,
+startup и channel switch от регресса из-за неточного height model.
+
 ---
 
 ## Dual-path стратегия
@@ -60,7 +78,7 @@ const supportsGridLanes = typeof CSS !== "undefined"
 Используется когда `supportsGridLanes === false`. Pure-JS virtualized masonry с тремя ключевыми свойствами:
 
 1. **Детерминистические высоты** — никакого DOM measurement. Высота каждой карточки — чистая функция от `(block, columnWidth, wordWidthsCache)`.
-2. **Scroll не триггерит React render** — scroll state управляется через ref + `useSyncExternalStore`, видимые items пересчитываются в RAF loop, React ре-рендерится только при изменении набора видимых карточек (не на каждый pixel scroll'а).
+2. **Scroll не триггерит React render на каждый pixel** — scroll state живёт в ref, видимые items пересчитываются в RAF loop, React ре-рендерится только при изменении набора видимых карточек. Native jump/fast scroll имеет bounded anti-blank sync commit.
 3. **Web Worker pre-computation** — `OffscreenCanvas.measureText` вычисляет word widths в воркере, результат кэшируется в IndexedDB. Main thread не блокируется.
 
 ---
@@ -75,10 +93,11 @@ src/
 │   ├── fontMetrics.ts              # Worker client: postMessage protocol, IndexedDB cache
 │   ├── wordWrap.ts                 # Чистая функция word-wrap: (widths, maxWidth) → lineCount
 │   ├── cardHeight.ts               # computeCardHeight(block, columnWidth, metrics) → height
+│   ├── cardHeightDrift.ts          # Shadow-validation measured vs deterministic height report
 │   ├── masonryLayout.ts            # Extended: + bucket visibility index
 │   └── layoutCache.ts              # LRU cache для layout'ов каналов
 ├── hooks/
-│   └── useGridScroll.ts            # useSyncExternalStore для scroll state без re-renders
+│   └── useGridScroll.ts            # RAF-coalesced scroll state + anti-blank sync commit
 ├── components/
 │   ├── Grid.tsx                    # Переписан: dual-path, без measurement
 │   └── Card.tsx                    # Минорные правки: will-change, фикс line-heights
@@ -86,7 +105,9 @@ src/
     └── fontMetrics.ts              # WordWidths, FontHash, WorkerMessage protocol
 ```
 
-Новые файлы: 8. Изменяемые: `Grid.tsx`, `Card.tsx`, `masonryLayout.ts`. Удаляемые: пока никакие (старый код остаётся до полной замены).
+Большая часть supporting-файлов уже создана. Текущий workstream не удаляет
+старый Grid path; он сначала укрепляет cache identity и добавляет proof gates.
+Удаляемые файлы отсутствуют до финального production switch.
 
 ---
 
@@ -98,27 +119,44 @@ src/
 /** Font identity — hash шрифтов + размеров + стилей, влияющих на metrics */
 export type FontHash = string;
 
+/** Maximum preview prefix measured by the worker and hashed by the cache key */
+export const FONT_METRICS_PREVIEW_MAX_CHARS = 480;
+
 /** Ширина отдельных слов в тексте, в пикселях */
 export interface WordWidths {
-  /** Ширины слов display title */
-  displayTitle: number[];
-  /** Ширины слов preview (обрезанного body до 400 символов) */
+  /** Ширины слов title/display title */
+  title: number[];
+  /** Ширины слов preview (обрезанного до FONT_METRICS_PREVIEW_MAX_CHARS) */
   preview: number[];
-  /** Ширина пробела — для word-wrap calculation */
-  space: number;
+  /** Ширина пробела title font */
+  titleSpace: number;
+  /** Ширина пробела preview font */
+  previewSpace: number;
 }
 
-/** Кэшированные word widths для блока при данной версии шрифта */
+/** Кэшированные word widths для блока, версии шрифта и measured text fingerprint */
 export interface CachedWordWidths {
+  cacheKey: string;
   blockId: number;
   fontHash: FontHash;
+  textHash: string;
   widths: WordWidths;
+}
+
+/** Main-thread cache identity; IndexedDB keyed by cacheKey, worker keyed by id */
+export interface FontMetricsCacheIdentity {
+  blockId: number;
+  fontHash: FontHash;
+  textHash: string;
+  cacheKey: string;
+  title: string;
+  preview: string;
 }
 
 /** Protocol сообщений с worker'ом */
 export type WorkerMessage =
-  | { type: "compute"; blocks: Array<{ id: number; displayTitle: string; body: string }>; fontHash: FontHash }
-  | { type: "result"; widths: Array<{ id: number; widths: WordWidths }>; fontHash: FontHash }
+  | { type: "compute"; blocks: Array<{ id: number; title: string; body: string }>; fontHash: FontHash }
+  | { type: "result"; results: Array<{ id: number; widths: WordWidths }>; fontHash: FontHash }
   | { type: "progress"; done: number; total: number }
   | { type: "ready" };
 ```
@@ -173,13 +211,18 @@ export function computeCardHeight(
   - link: `columnWidth * 9 / 16 + 76` (16:9 thumbnail + 76px text)
   - file: fixed compact height
 - **article** — используется `wordWidths`:
-  - `displayTitleLines = min(2, countLines(wordWidths.displayTitle, wordWidths.space, columnWidth - 32))`
-  - `previewLines = min(block.first_image ? 3 : 8, countLines(wordWidths.preview, wordWidths.space, columnWidth - 32))`
+  - `titleLines = min(2, countLines(wordWidths.title, wordWidths.titleSpace, contentWidth))`
+  - `previewLines = min(block.first_image ? 3 : 8, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth))`
   - `imageH = block.first_image ? columnWidth * 0.5 : 0`
   - `authorH = block.author ? 24 : 0`
   - `height = 32 + titleLines * 20 + 6 + previewLines * 18 + imageH + authorH + 28`
 
-Если `wordWidths === null` для article (кэш ещё не готов), функция возвращает **conservative lower bound** — высоту при минимально возможном количестве строк (`titleLines=1, previewLines=3`). Это гарантирует что при последующем обновлении `wordWidths` реальная высота будет **не меньше** fallback'а → `totalHeight` может только расти → прыжков нет (scroll position остаётся валидным при росте контента).
+Если `wordWidths === null` для article/social card (кэш ещё не готов),
+функция возвращает conservative reservation: худшую clamped-геометрию текущего
+template. Это overlap-safe envelope для loading state, а не точная финальная
+высота. Production switch на fully deterministic layout запрещён, пока
+shadow-validation не докажет, что exact path совпадает с реальным рендером
+достаточно близко.
 
 ### `src/lib/masonryLayout.ts` — расширение
 
@@ -232,7 +275,7 @@ export async function fetchWordWidths(
 ): Promise<Map<number, WordWidths>>;
 
 /** Текущий хэш шрифтов (Geist Sans file hash + font-size + line-height) */
-export async function getFontHash(): Promise<FontHash>;
+export function getFontHash(): FontHash;
 
 /** Инвалидация кэша при смене font version */
 export async function invalidateFontCache(): Promise<void>;
@@ -243,14 +286,19 @@ export async function invalidateFontCache(): Promise<void>;
 1. Проверить `document.fonts.ready` (если первый вызов)
 2. Вычислить `fontHash` (кэширован после первого вычисления)
 3. Открыть IndexedDB database `arena-font-metrics`, object store `wordWidths`
-4. Для каждого блока проверить наличие в кэше по ключу `(blockId, fontHash)`
-5. Собрать список `missing` блоков
-6. Если `missing.length === 0` → вернуть Map из кэша
-7. Иначе — отправить `missing` в worker через `postMessage`
-8. Worker возвращает `WorkerResult`, записать в IndexedDB, добавить в Map
-9. Вернуть объединённый Map
+4. Для каждого блока построить `FontMetricsCacheIdentity`: `(blockId, fontHash, textHash, cacheKey)`
+5. Проверить наличие в кэше по `cacheKey`, дополнительно сверяя `blockId`, `fontHash` и `textHash`
+6. Собрать список `missing` блоков
+7. Если `missing.length === 0` → вернуть Map из кэша
+8. Иначе — отправить `missing` в worker через `postMessage`
+9. Worker возвращает `WorkerResult`, записать в IndexedDB, добавить в Map
+10. Вернуть объединённый Map
 
-Worker вычисляет в chunks по 500 блоков, отправляет `progress` сообщения для UI.
+`textHash` считается по тому же title и preview prefix, который реально
+измеряет worker. Same-id content edit не может reuse stale metrics; изменения
+за пределами `FONT_METRICS_PREVIEW_MAX_CHARS` не инвалидируют кэш, потому что
+они не меняют measured widths. Worker вычисляет в chunks по 500 блоков,
+отправляет `progress` сообщения для UI.
 
 ### `src/workers/fontMetrics.worker.ts`
 
@@ -258,18 +306,24 @@ Worker вычисляет в chunks по 500 блоков, отправляет 
 // OffscreenCanvas context init
 const canvas = new OffscreenCanvas(1, 1);
 const ctx = canvas.getContext("2d");
-ctx.font = "14px 'Geist', system-ui, sans-serif";
 
 function measureWord(word: string): number {
   return ctx.measureText(word).width;
 }
 
-function computeWordWidths(displayTitle: string, body: string): WordWidths {
-  const preview = body.slice(0, 400);
+function computeWordWidths(title: string, body: string): WordWidths {
+  const preview = body.slice(0, FONT_METRICS_PREVIEW_MAX_CHARS);
+  ctx.font = titleFontSpec;
+  const titleWords = splitWords(title).map(measureWord);
+  const titleSpace = ctx.measureText(" ").width;
+  ctx.font = previewFontSpec;
+  const previewWords = splitWords(preview).map(measureWord);
+  const previewSpace = ctx.measureText(" ").width;
   return {
-    displayTitle: splitWords(displayTitle).map(measureWord),
-    preview: splitWords(preview).map(measureWord),
-    space: ctx.measureText(" ").width,
+    title: titleWords,
+    preview: previewWords,
+    titleSpace,
+    previewSpace,
   };
 }
 
@@ -277,9 +331,9 @@ self.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
   if (event.data.type === "compute") {
     const results = event.data.blocks.map((b) => ({
       id: b.id,
-      widths: computeWordWidths(b.displayTitle ?? "", b.body ?? ""),
+      widths: computeWordWidths(b.title ?? "", b.body ?? ""),
     }));
-    self.postMessage({ type: "result", widths: results, fontHash: event.data.fontHash });
+    self.postMessage({ type: "result", results, fontHash: event.data.fontHash });
   }
 });
 ```
@@ -290,33 +344,35 @@ self.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
 
 ```ts
 /**
- * LRU cache для layout каналов. Ключ — пара (blocks reference, parentWidth).
- * Инвалидация при изменении parentWidth или font version.
+ * LRU cache для committed exact layouts. Caller передаёт generation-aware key,
+ * который уже включает route, width bucket и ordered layout fingerprint.
  */
 export class LayoutCache {
   private map = new Map<string, MasonryLayout>();
   private maxSize = 10;
 
-  key(blocks: LightBlock[], parentWidth: number): string;
-  get(blocks: LightBlock[], parentWidth: number): MasonryLayout | null;
-  set(blocks: LightBlock[], parentWidth: number, layout: MasonryLayout): void;
+  get(generationKey: LayoutGenerationKey): MasonryLayout | null;
+  set(generationKey: LayoutGenerationKey, layout: MasonryLayout): void;
   clear(): void;
 }
 ```
 
-Ключ — `${blocks_identity_hash}:${parentWidth_rounded}`. `blocks_identity_hash` = hash from first and last block ids + length (быстрый identity check вместо полного content hash). `parentWidth_rounded` — до 10px бакета, чтобы мелкие resize не создавали новые записи.
+Ключ строится не внутри `LayoutCache`, а в `layoutGenerationKey`: route, width
+bucket и ordered layout fingerprint. Fingerprint включает layout-relevant
+content (`preview_manifest`, display title, preview text и media geometry), так
+что same-id content changes не могут reuse stale layout.
 
 ### `src/hooks/useGridScroll.ts`
 
 ```ts
 /**
- * Scroll state hook основанный на useSyncExternalStore.
- * Избегает React re-renders при каждом scroll event — компонент
- * ре-рендерится только когда меняется набор видимых items (не на каждый пиксель).
+ * Scroll state hook: scrollTop живёт в ref, обычный путь coalesced через RAF,
+ * React обновляется только когда меняется visible set. Если native scroll jump
+ * оставил текущий viewport без mounted item, hook делает bounded sync commit.
  */
 export function useGridScroll(
   scrollElementRef: RefObject<HTMLDivElement>,
-  getVisibleItems: (scrollTop: number) => MasonryPosition[],
+  options: UseGridScrollOptions,
 ): MasonryPosition[];
 ```
 
@@ -325,8 +381,10 @@ export function useGridScroll(
 - В handler'е обновляет `scrollTopRef.current` и планирует RAF
 - В RAF callback вычисляет `newVisible = getVisibleItems(scrollTopRef.current)`
 - Сравнивает с предыдущим snapshot (reference equality ok если используем мемоизацию)
-- Если отличается — вызывает `onStoreChange` → `useSyncExternalStore` триггерит re-render
+- Если отличается — bump'ит opaque tick state, `useMemo` пересчитывает visible set
 - Если одинаковый — ничего не делает, React спит
+- Если реальный viewport больше не пересекается с mounted items — применяется
+  bounded `flushSync`, чтобы браузер не успел нарисовать blank frame.
 
 ### `src/components/Grid.tsx` — обновления
 
@@ -434,7 +492,10 @@ export function Grid({ blocks, parentWidth, ... }: GridProps) {
 
 2. **Pure functions для layout computation.** `computeCardHeight`, `computeMasonryLayout`, `createVisibilityIndex`, `getVisibleItemsFromIndex` — все pure, без side effects, без DOM зависимостей. Тестируемы без jsdom.
 
-3. **Scroll не триггерит React state change.** `scrollTop` живёт в ref, обновления проходят через `useSyncExternalStore` с memoized snapshots.
+3. **Scroll не триггерит React state change на каждый pixel.** `scrollTop`
+живёт в ref; ordinary scroll coalesced через RAF и обновляет React только при
+смене visible set. Anti-blank sync commit разрешён только как bounded safety
+path, когда native scroll jump иначе показал бы полностью пустой viewport.
 
 4. **Font loaded before first measureText.** Worker проверяет `document.fonts.ready` (через `self.fonts` в worker context если доступно, иначе через main thread signal).
 
@@ -467,56 +528,63 @@ export function Grid({ blocks, parentWidth, ... }: GridProps) {
 
 ---
 
-## Migration plan
+## Rollout plan from current state
 
-Реализация в 7 последовательных шагов. Каждый шаг — отдельный коммит, тестируется изолированно. Старый код остаётся рабочим до финального cleanup'а.
+Phase 11 больше не стартует с нуля. Первый merged слой уже дал
+generation-aware measured islands и anti-blank acceptance gate. Дальше rollout
+идёт только через доказуемые вертикальные срезы:
 
-### Шаг 1: Инфраструктура font metrics
+### Шаг 1: Cache correctness hardening
 
-- Создать `src/workers/fontMetrics.worker.ts`
-- Создать `src/lib/fontMetrics.ts` (client API)
-- Создать `src/types/fontMetrics.ts`
-- Юнит-тесты на `fontMetrics` client (с mock IndexedDB)
-- Проверка: `fetchWordWidths([mockBlock])` возвращает `WordWidths` за ≤ 100ms на холодном кэше
+- `fontMetrics` cache key включает `blockId`, `fontHash` и measured text
+  fingerprint.
+- IndexedDB store мигрирует на `cacheKey`; старый `blockId`-only кэш
+  пересоздаётся, потому что это derived artifact.
+- Unit tests доказывают: same-id text edit меняет cache key; изменения вне
+  measured preview prefix не инвалидируют кэш.
 
-### Шаг 2: Pure libs
+### Шаг 2: Deterministic geometry proof gate
 
-- Создать `src/lib/wordWrap.ts` с `countLines`
-- Создать `src/lib/cardHeight.ts` с `computeCardHeight`
-- Юнит-тесты на оба (без DOM, чистые функции)
-- Snapshot тесты для каждого типа блока с эталонными данными
+- Добавить shadow-validation между `computeCardHeight()` и фактической высотой
+  `MeasureCard` для текущего generation.
+- Собирать drift по типам карточек: max, p95, mean, count.
+- Публиковать отчёт в `window.__MINE_FEED_SCROLL_DEBUG__.heightDrift`:
+  `status`, `softBudgetPx`, `hardBudgetPx`, `exactSampleCount`,
+  `fallbackSampleCount`, grouped summaries by `card_kind` и `block_type`.
+- Browser audit запрашивает drift явно через dev-only
+  `window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__()`. Request происходит после
+  scroll performance sample, поэтому hidden measurement и drift aggregation не
+  загрязняют `settleMs`, frame-gap и long-task budgets.
+- Budget: soft `2px`, hard `8px`. Production switch невозможен, если есть
+  fallback samples, hard exceedances или p95 выше soft budget.
+- Production switch запрещён, пока drift не укладывается в budget и не покрыт
+  тестами на media, article, social и channel cards.
 
-### Шаг 3: Visibility index
+### Шаг 3: Scheduling-only integration
 
-- Добавить `createVisibilityIndex` и `getVisibleItemsFromIndex` в `src/lib/masonryLayout.ts`
-- Юнит-тесты на корректность (сравнение с brute-force filter)
-- Перф-тест: 10000 items → index lookup ≤ 0.2ms
+- Использовать deterministic heights только там, где drift доказан: priority,
+  prefetch, placeholder/skeleton envelope.
+- Если block уже имеет exact cached height или может быть безопасно отрендерен
+  из deterministic height (`media` или text metrics готовы), GridItem может
+  рендерить live `Card` сразу. DOM measurement остаётся фоновым exact/cache
+  authority и drift proof, но больше не блокирует текущий viewport.
+- Automatic exact measurement is idle-delayed after a batch change. Browser
+  audit route disables automatic measurement and uses the explicit drift
+  request, so hidden diagnostic work cannot race the scroll sample.
+- Не удалять DOM measurement path, пока exact live envelope не доказан на
+  реальном vault и synthetic browser gate.
 
-### Шаг 4: Layout cache
+### Шаг 4: Production Grid switch
 
-- Создать `src/lib/layoutCache.ts`
-- LRU с max size 10
-- Юнит-тесты на eviction policy, keying
+- Переключить live layout на fully deterministic path behind a kill switch.
+- Удалить measurement infrastructure только после browser acceptance:
+  `bun run test:feed-scroll`, отсутствие blank viewport, отсутствие clip/white
+  tail, startup/channel switch без регресса.
 
-### Шаг 5: Scroll hook
+### Шаг 5: Cleanup
 
-- Создать `src/hooks/useGridScroll.ts`
-- Юнит-тест на отсутствие ре-рендеров при scroll внутри текущего visible set
-
-### Шаг 6: Rewrite Grid.tsx
-
-- Интегрировать все новые модули
-- Удалить старую measurement infrastructure (`measuredHeights`, `pendingHeightsRef`, `MeasuredGridItem`, `handleMeasure`, `flushPendingHeights`, `isScrolling` state, `SCROLL_IDLE_MS`, scroll anchoring logic — **всё целиком**)
-- Добавить Path A (native grid-lanes) и Path B (virtualized JS) с feature detect
-- Интеграционные тесты на react-testing-library
-
-### Шаг 7: Card.tsx polish
-
-- Добавить `will-change: transform`, `translate3d`
-- Фиксация font-size, line-height в соответствии с `cardHeight.ts`
-- Visual regression test (скриншоты эталонных карточек)
-
-После шага 7 — **визуальная проверка пользователем на реальном vault'е** с замерами FPS через DevTools Performance Monitor.
+- Удалить obsolete measured-island code.
+- Зафиксировать benchmark numbers в DEVLOG и обновить ARCHITECTURE.md.
 
 ---
 
@@ -528,7 +596,10 @@ export function Grid({ blocks, parentWidth, ... }: GridProps) {
 
 3. **Emoji в тексте** — `Intl.Segmenter` корректно обрабатывает ZWJ sequences. `measureText` возвращает корректную ширину для font'ов с emoji support.
 
-4. **CJK текст без пробелов** — `splitWords` в `Intl.Segmenter("zh", { granularity: "word" })` mode возвращает грамматические слова для китайского. Для корректной работы в любой локали Worker использует granularity `"grapheme"` и fallback `"word"`.
+4. **CJK текст без пробелов** — worker сначала сохраняет whitespace-delimited
+   tokens для языков с пробелами, включая punctuation attached to words. Для
+   текста без пробелов используется `Intl.Segmenter` и non-whitespace segments,
+   чтобы CJK/emoji не схлопывались и не теряли width.
 
 5. **Font loading failure** — если Geist Sans не загружается, browser fallback на system UI font. `measureText` вернёт widths для fallback font, что даст корректное computation но не идеальное соответствие когда Geist наконец загрузится. Mitigation: перед первым `fetchWordWidths` ожидать `document.fonts.ready`, проверять что Geist Sans в `document.fonts.check("14px Geist")`.
 
@@ -538,9 +609,9 @@ export function Grid({ blocks, parentWidth, ... }: GridProps) {
 
 8. **Блок удалён, но есть в кэше** — при invalidation channel cache, stale entries в IndexedDB остаются. Периодический cleanup (раз в запуск) проходит по IndexedDB и удаляет entries, которых больше нет в `listBlocks()`.
 
-9. **Resize во время initial load** — layout пересчитывается с текущим частичным `wordWidthsMap`. Блоки без ещё-не-вычисленных widths используют conservative fallback. Когда Worker возвращает результаты, layout пересчитывается ещё раз.
+9. **Resize во время initial load** — layout пересчитывается с текущим частичным `wordWidthsMap`. Блоки без ещё-не-вычисленных widths используют conservative reservation. Когда Worker возвращает результаты, layout пересчитывается ещё раз.
 
-10. **Scroll position преодолевает конец ленты во время initial load** — если пользователь доскроллил до места где блоки ещё без точных wordWidths, layout использует conservative heights → position корректен (нет clamp'а). Когда widths приходят, heights могут только увеличиться (conservative = underestimate), `totalHeight` растёт → scroll position остаётся валидным.
+10. **Scroll position преодолевает конец ленты во время initial load** — если пользователь доскроллил до места где блоки ещё без точных wordWidths, current production Grid использует measured-island safety path. Fully deterministic path может заменить его только после drift gate; conservative reservation сам по себе не является доказательством отсутствия jump.
 
 ---
 
@@ -550,8 +621,9 @@ export function Grid({ blocks, parentWidth, ... }: GridProps) {
 
 - `wordWrap.test.ts` — countLines для разных входов
 - `cardHeight.test.ts` — computeCardHeight для каждого block_type, edge cases
+- `cardHeightDrift.test.ts` — drift aggregation, p95/max, fallback gating
 - `masonryLayout.test.ts` — уже существует, добавить тесты для visibility index
-- `fontMetrics.test.ts` — моки IndexedDB + Worker через MSW/vi.fn
+- `fontMetrics.test.ts` — cache identity и, отдельно, IndexedDB/Worker client mocks
 - `layoutCache.test.ts` — LRU eviction, key hashing
 
 ### Integration tests
@@ -577,14 +649,16 @@ export function Grid({ blocks, parentWidth, ... }: GridProps) {
 
 Rationale: приоритет на cross-platform корректность и future-proof web порт. Rust вариант давал бы small latency advantage на desktop но стоил сложности и потенциального layout mismatch между desktop и web.
 
-### 002: `useSyncExternalStore` вместо scroll state в `useState`
+### 002: External scroll ref + RAF diff вместо scroll state в `useState`
 
 | Approach | Problem |
 |---|---|
 | `useState(scrollTop)` + setState в handler | Каждый scroll event триггерит React render, даже если видимые items те же. Лишняя работа, frame drops |
-| **`useSyncExternalStore`** (chosen) | React ре-рендерится только когда snapshot меняется. Между changes React спит |
+| **External scroll ref + RAF visible-set diff** (chosen) | React ре-рендерится только когда меняется visible set. Между changes React спит, а fast native jump имеет bounded anti-blank sync commit |
 
-Rationale: `useSyncExternalStore` — канонический React 18+ API для subscribe to external store с проверкой изменений. Даёт нужную оптимизацию без хаков.
+Rationale: текущий production hook уже держит `scrollTop` вне React state и
+обновляет React только при смене visible set. Это сохраняет плавный ordinary
+scroll и добавляет явную защиту от blank viewport при больших scroll jumps.
 
 ### 003: Bucket-based visibility index вместо Array.filter
 
@@ -595,14 +669,17 @@ Rationale: `useSyncExternalStore` — канонический React 18+ API д�
 
 Rationale: небольшой текущий gain, но архитектурная готовность к vault'ам размером >10k блоков. Реализация простая — одна функция.
 
-### 004: LayoutCache LRU, ключ `(blocks identity hash, parentWidth bucket)`
+### 004: LayoutCache LRU, ключ `layoutGenerationKey`
 
 | Approach | Problem |
 |---|---|
 | `WeakMap<blocks, layout>` | WeakMap автоматически собирается GC, нет LRU semantics, нет control над size |
-| **LRU Map** (chosen) | Явный size limit, предсказуемая eviction, hit rate можно логгировать |
+| LRU по `blocks.length + first/last id + width` | Same-id content/preview changes могут reuse stale layout |
+| **LRU Map по generation-aware key** (chosen) | Явный size limit, предсказуемая eviction, key включает route, width bucket и layout-relevant fingerprint |
 
-Rationale: channel switching — user-facing performance requirement. Нужна явная guarantee что последние 10 каналов доступны мгновенно.
+Rationale: channel switching — user-facing performance requirement, но
+мгновенность не должна покупать stale layout. `LayoutCache` остаётся простым LRU,
+а корректность ключа принадлежит `layoutGenerationKey`.
 
 ### 005: Native grid-lanes path via feature detect, не polyfill
 
@@ -613,15 +690,46 @@ Rationale: channel switching — user-facing performance requirement. Нужна
 
 Rationale: `display: grid-lanes` уже существует в Safari 26.4+. Chrome/Firefox скоро. К тому времени когда большинство пользователей обновятся, JS path станет dead code который можно удалить. Polyfill не даст этот upgrade path.
 
-### 006: Conservative lower-bound fallback для unresolved heights
+### 006: Conservative reservation + shadow-validation for unresolved heights
 
 | Approach | Problem |
 |---|---|
 | Ждать полного wordWidths load перед первым рендером | Пустой экран на 500-2000ms, плохой UX |
-| Оптимистический fallback с завышенными оценками | `totalHeight` сжимается при коррекции → прыжок |
-| **Conservative lower bound** (chosen) | `totalHeight` только растёт при коррекции → scroll position всегда валиден → прыжков нет |
+| Сразу заменить live Grid на deterministic fallback | Неверная height model даёт clip, overlap или jump; пользователь снова тестирует архитектурный риск руками |
+| **Conservative reservation + measured-island production gate** (chosen) | Fallback безопасен как envelope для loading/scheduling, а production switch разрешён только после drift proof |
 
-Rationale: соблюдает корневой принцип (никаких scroll jumps) даже в переходный период пока worker ещё работает. Пользователь видит первый рендер сразу, далее layout уточняется без видимых скачков.
+Rationale: после C8 мы знаем, что «больше DOM» и «быстрее измерять» не дают
+идеального скролла сами по себе. Следующий слой должен доказать точность
+геометрии до удаления measurement path. Это сохраняет текущие gains и не
+перекладывает проверку drift на пользователя.
+
+### 007: Drift diagnostics are observational until the production switch
+
+| Approach | Problem |
+|---|---|
+| Use deterministic height immediately after adding `cardHeight.ts` | Any mismatch becomes a visual product regression: clip, overlap, white tail or scroll jump |
+| **Publish `heightDrift` diagnostics while keeping measured cache authority** (chosen) | Adds a proof layer without changing the exact-height source of truth |
+
+Rationale: `MeasureCard` remains the source of truth for exact cached heights
+while `computeCardHeight()` is being proven. The drift report is a gate, not a
+second unbounded layout engine. It must be cheap, request-based in browser
+audit, low-priority and bounded to hidden measurement batches. Report
+aggregation is scheduled outside the scroll performance sample so diagnostics
+cannot add latency to the scroll-readiness path.
+
+### 008: Deterministic-ready live render, exact measurement as background authority
+
+| Approach | Problem |
+|---|---|
+| Keep live render blocked on DOM measurement | Fast/deep scroll can still show skeleton chunks while the viewport waits for hidden measurement, even when deterministic height is already proven |
+| Remove measurement immediately | Too risky until the proof gate covers real-vault drift and more card variants |
+| **Render deterministic-ready GridItems live while measuring exact heights in background** (chosen) | Current viewport becomes real content immediately; exact cache and drift proof remain intact |
+
+Rationale: once word metrics are ready, article/social/channel card envelopes are
+deterministic enough to render the visible Card. Media cards do not need word
+metrics. Hidden `MeasurementPass` continues to update exact generation-aware
+height cache and drift diagnostics, but it is idle-delayed and no longer allowed
+to block the current viewport or contaminate scroll performance timings.
 
 ---
 
@@ -641,9 +749,9 @@ Rationale: соблюдает корневой принцип (никаких sc
 
 Реализация считается завершённой когда:
 
-1. Все 7 шагов migration plan'а реализованы и merged в main
-2. Старая measurement infrastructure полностью удалена из Grid.tsx
-3. Все unit-тесты проходят, performance targets выполняются
+1. Все шаги rollout plan'а реализованы и merged в main
+2. Старая measurement infrastructure полностью удалена из Grid.tsx только после successful shadow-validation и browser acceptance
+3. Все unit-тесты, `bun run test:feed-scroll` и performance targets выполняются
 4. Визуальная проверка пользователем на реальном vault'е подтверждает:
    - Scroll плавный без прыжков
    - Resize сайдбара / окна — instant

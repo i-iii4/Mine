@@ -128,6 +128,7 @@ export function FeedScrollAuditRoute() {
         scrollToTop={0}
         sidebarCollapsed={false}
         keyboardNavigationDisabled
+        heightDriftAuditMode
         searchQuery=""
         onBlockClick={noop}
         onToggleTag={noop}

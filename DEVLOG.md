@@ -1,5 +1,125 @@
 # Devlog
 
+## 24.05.2026 [change] — Render deterministic-ready Grid cards live
+
+### Context
+
+- Phase 11 drift diagnostics proved the synthetic audit route can match
+  measured `MeasureCard` heights with `p95=0`, but visible feed cards still
+  waited for hidden DOM measurement before switching from skeleton to live.
+- The browser audit was also counting its own DOM metric read inside `settleMs`,
+  which made the acceptance budget noisier than the user-facing scroll path.
+
+### Completed
+
+- Grid now separates exact measured ids from render-ready ids.
+- `renderReadyBlockIds` includes exact measured cards plus deterministic-ready
+  cards: `media` cards and text cards whose word metrics are loaded.
+- Visible `GridItem` rendering, arrow-key focus, marquee selection and feed
+  autoplay now use the render-ready gate, so current-viewport cards can appear
+  as real content before their background exact measurement finishes.
+- Hidden `MeasureCard` remains the exact height cache authority and still
+  publishes drift validation; automatic exact measurement is idle-delayed and no
+  longer blocks deterministic-ready visible render.
+- `bun run test:feed-scroll` now requests height-drift validation explicitly
+  after recording the scroll performance sample, and reads performance before
+  the audit's DOM-rect scan.
+- Fixed worker tokenization so whitespace-delimited languages keep punctuation
+  attached to words, while no-whitespace text uses `Intl.Segmenter` non-space
+  segments.
+- Increased `FONT_METRICS_PREVIEW_MAX_CHARS` to `480`, matching the longest
+  clamped text previews in the feed.
+- Updated `SPEC_GRID.md`, `SPEC_GRID_LAYOUT_READINESS.md`,
+  `SPEC_FEED_SCROLL_PERFORMANCE.md`, `AUDIT_PERFORMANCE.md`,
+  `ARCHITECTURE.md` and `PLAN.md`.
+
+### Checks
+
+- `bun run test:feed-scroll`
+- `bun run test:frontend -- src/lib/cardHeightDrift.test.ts src/lib/fontMetrics.test.ts src/components/Grid.test.tsx`
+- `bun run lint`
+- `bun run build`
+- `bun run test:frontend`
+- `git diff --check`
+
+## 24.05.2026 [change] — Add Phase 11 height drift shadow diagnostics
+
+### Context
+
+- After hardening the font metrics cache identity, the next Phase 11 gate is
+  proving deterministic card heights before removing Grid's measured layout
+  path.
+- The current production Grid should remain visually unchanged until
+  `computeCardHeight()` is proven against real `MeasureCard` output.
+
+### Completed
+
+- Added `src/lib/cardHeightDrift.ts` with soft/hard drift budgets, exact vs
+  fallback sample counts, p95/max/mean aggregation and grouped summaries by
+  card kind and block type.
+- Added `src/lib/cardHeightDrift.test.ts`.
+- Integrated shadow-validation into `Grid.tsx` at the existing hidden
+  measurement pass. Each measured batch now compares the actual hidden DOM
+  height with `computeCardHeight()` at the same column width and current word
+  metrics.
+- Published the report through
+  `window.__MINE_FEED_SCROLL_DEBUG__.heightDrift` without changing production
+  layout authority. Measured heights still drive live layout.
+- Moved report aggregation out of the synchronous measurement callback into
+  low-priority idle work, so the diagnostic path does not add scroll-readiness
+  latency.
+- Updated `SPEC_GRID.md`, `ARCHITECTURE.md` and `PLAN.md` for the new proof
+  gate.
+
+### Checks
+
+- `bun run test:frontend -- src/lib/cardHeightDrift.test.ts src/lib/fontMetrics.test.ts src/components/Grid.test.tsx`
+- `bun run lint`
+- `bun run build`
+- `bun run test:frontend`
+- `bun run test:feed-scroll`
+- `git diff --check`
+
+## 24.05.2026 [change] — Harden Phase 11 font metrics cache contract
+
+### Context
+
+- Phase 11 Zero-Jank Masonry had partial infrastructure already merged, but
+  `SPEC_GRID.md` still described the original full rewrite plan as if it had
+  not started.
+- The font metrics IndexedDB cache was keyed by `blockId` plus `fontHash`.
+  That was not sufficient for deterministic layout: a card can keep the same
+  id while its title or preview text changes.
+
+### Completed
+
+- Updated [SPEC_GRID.md](SPEC_GRID.md) to reflect the staged rollout: current
+  Grid stays on generation-safe measured islands until deterministic heights
+  pass a shadow-validation drift gate.
+- Updated [PLAN.md](PLAN.md) Phase 11 statuses and added explicit tasks for
+  cache identity hardening and deterministic geometry validation.
+- Documented the font metrics invariant in [ARCHITECTURE.md](ARCHITECTURE.md):
+  word widths are cached by `version + fontHash + blockId + measured textHash`.
+- Added `FONT_METRICS_PREVIEW_MAX_CHARS` and
+  `FontMetricsCacheIdentity` to `src/types/fontMetrics.ts`.
+- Migrated `src/lib/fontMetrics.ts` IndexedDB cache to version 2 with
+  `cacheKey` keyPath. The old `blockId`-only store is discarded because font
+  metrics are a derived cache.
+- Added `createFontMetricsCacheIdentity()` and unit tests proving same-id text
+  edits invalidate metrics while changes outside the measured preview prefix do
+  not.
+- Corrected the `computeCardHeight()` public contract: null word widths reserve
+  conservative template geometry; they are not a lower-bound proof for removing
+  measurement.
+
+### Checks
+
+- `bun run test:frontend -- src/lib/fontMetrics.test.ts src/lib/cardHeight.test.ts`
+- `bun run lint`
+- `bun run build`
+- `bun run test:frontend`
+- `bun run test:feed-scroll`
+
 ## 24.05.2026 [change] — Implement grid layout readiness baseline
 
 ### Context

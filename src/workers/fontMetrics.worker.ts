@@ -14,11 +14,11 @@ import type {
   WorkerBlockResult,
   WordWidths,
 } from "../types/fontMetrics";
+import { FONT_METRICS_PREVIEW_MAX_CHARS } from "../types/fontMetrics";
 
 declare const self: DedicatedWorkerGlobalScope;
 
 const PROGRESS_CHUNK = 500;
-const PREVIEW_MAX_CHARS = 220;
 
 let canvas: OffscreenCanvas | null = null;
 let ctx: OffscreenCanvasRenderingContext2D | null = null;
@@ -66,6 +66,10 @@ function splitWords(text: string): string[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
 
+  if (/\s/u.test(trimmed)) {
+    return trimmed.split(/\s+/u).filter((w) => w.length > 0);
+  }
+
   const intlObj = (globalThis as unknown as { Intl?: { Segmenter?: SegmenterConstructor } }).Intl;
   const SegmenterCtor = intlObj?.Segmenter;
 
@@ -74,7 +78,7 @@ function splitWords(text: string): string[] {
       const segmenter = new SegmenterCtor(undefined, { granularity: "word" });
       const words: string[] = [];
       for (const segment of segmenter.segment(trimmed)) {
-        if (segment.isWordLike) {
+        if (segment.segment.trim().length > 0) {
           words.push(segment.segment);
         }
       }
@@ -102,8 +106,8 @@ function computeWordWidthsForBlock(
   previewFontSpec: string,
 ): WordWidths {
   const titleWords = splitWords(block.title);
-  const previewText = block.body.length > PREVIEW_MAX_CHARS
-    ? block.body.slice(0, PREVIEW_MAX_CHARS)
+  const previewText = block.body.length > FONT_METRICS_PREVIEW_MAX_CHARS
+    ? block.body.slice(0, FONT_METRICS_PREVIEW_MAX_CHARS)
     : block.body;
   const previewWords = splitWords(previewText);
 

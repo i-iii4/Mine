@@ -19,6 +19,7 @@ import {
 import type { LayoutGenerationKey } from "@/lib/layoutGeneration";
 import type { GridLayoutReadinessDiagnostics } from "@/lib/gridLayoutReadiness";
 import type { GridViewportPaintDiagnostics } from "@/lib/gridViewportDiagnostics";
+import type { CardHeightDriftReport } from "@/lib/cardHeightDrift";
 
 interface FeedMediaPreloaderDebug {
   enabled: boolean;
@@ -33,6 +34,7 @@ interface FeedMediaPreloaderDebug {
   preloadWindowPx: { forward: number; backward: number };
   layout?: GridLayoutReadinessDiagnostics;
   viewport?: GridViewportPaintDiagnostics;
+  heightDrift?: CardHeightDriftReport;
 }
 
 declare global {
@@ -256,6 +258,7 @@ export function useFeedMediaPreloader({
       ),
       layout: window.__MINE_FEED_SCROLL_DEBUG__?.layout,
       viewport: window.__MINE_FEED_SCROLL_DEBUG__?.viewport,
+      heightDrift: window.__MINE_FEED_SCROLL_DEBUG__?.heightDrift,
     };
   }, [
     enabled,
