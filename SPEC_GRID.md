@@ -42,6 +42,17 @@ envelopes, а отсутствие worker metrics деградирует в cons
 explicit dev-аудит height drift через `window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__()`
 и не участвует в user-facing scroll/render path.
 
+Route switching is snapshot-driven. `App.tsx` owns route/query identity for the
+latest applied `GridSnapshot` and passes an explicit readiness bit to Grid.
+Grid may show the empty-channel placeholder only when that snapshot identity
+matches the current route and search query. A pending uncached route with
+`blocks.length === 0` is not an empty channel.
+
+Grid layout width is measured from the scrollport content box. Initial mount
+and `ResizeObserver` updates must use the same width source; horizontal padding
+is chrome spacing and must not participate in `columnWidth` or masonry position
+calculation.
+
 ---
 
 ## Dual-path стратегия
@@ -460,8 +471,8 @@ export function Grid({ blocks, parentWidth, ... }: GridProps) {
 ### На resize parentWidth
 
 ```
-1. ResizeObserver fires на Grid container
-2. Grid.tsx: parentWidth state updated
+1. ResizeObserver fires на Grid scrollport
+2. Grid.tsx reads the scrollport content-box width and updates `parentWidth`
 3. useMemoizedLayout: LayoutCache miss (новый parentWidth bucket)
 4. Пересчёт heights (pure JS, wordWidths из cache) — O(N) ~10ms для 10000
 5. Пересчёт layout — O(N) ~3ms
@@ -490,7 +501,7 @@ export function Grid({ blocks, parentWidth, ... }: GridProps) {
 
 Инварианты, которые **обязательно** должны соблюдаться в любой реализации:
 
-1. **Никакого DOM measurement на hot path.** `getBoundingClientRect`, `clientHeight`, `offsetHeight` запрещены в Grid.tsx и всех его descendant'ах после mount'а. Исключение — один раз в `ResizeObserver` на parentRef для измерения width/height контейнера.
+1. **Никакого DOM measurement на hot path.** `getBoundingClientRect`, `clientHeight`, `offsetHeight` запрещены в Grid.tsx и всех его descendant'ах после mount'а. Исключение — `ResizeObserver` на parentRef для измерения width/height scrollport.
 
 2. **Pure functions для layout computation.** `computeCardHeight`, `computeMasonryLayout`, `createVisibilityIndex`, `getVisibleItemsFromIndex` — все pure, без side effects, без DOM зависимостей. Тестируемы без jsdom.
 
@@ -506,6 +517,17 @@ path, когда native scroll jump иначе показал бы полнос�
 6. **LayoutCache invalidated on font change.** Если font hash меняется (обновление Geist Sans), весь `LayoutCache` + IndexedDB word widths инвалидируются.
 
 7. **Grid-lanes path и JS path взаимозаменяемы.** Оба пути принимают одни и те же данные `(blocks, layout)` и производят визуально эквивалентный рендер. Пользователь не должен замечать переключения между ними.
+
+8. **Empty state follows route snapshot identity, not raw array length.** `[]`
+может означать pending route, pending search, настоящую пустую коллекцию или
+пустой результат поиска. Placeholder разрешён только для подтверждённого
+пустого snapshot текущего channel route.
+
+9. **`parentWidth` is content-box only.** Initial mount, `ResizeObserver`,
+layout cache keys, visible render and hidden audit must agree on one width
+source. Mixing `clientWidth` padding-box and `ResizeObserver.contentRect`
+content-box is forbidden because it produces column-width shrink on route
+remounts.
 
 ---
 

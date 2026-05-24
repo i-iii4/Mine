@@ -123,6 +123,7 @@ vi.mock("@/components/Grid", () => ({
   Grid: ({
     blocks,
     currentTag,
+    routeSnapshotReady,
     detailOpen,
     keyboardNavigationDisabled,
     restoreFocusSlug,
@@ -132,6 +133,7 @@ vi.mock("@/components/Grid", () => ({
   }: {
     blocks: LightBlock[];
     currentTag?: string;
+    routeSnapshotReady?: boolean;
     detailOpen?: boolean;
     keyboardNavigationDisabled?: boolean;
     restoreFocusSlug?: string | null;
@@ -141,6 +143,7 @@ vi.mock("@/components/Grid", () => ({
   }) => (
     <div>
       <div data-testid="grid">{`${currentTag ?? "__all__"}:${blocks.length}`}</div>
+      <div data-testid="grid-route-ready">{String(Boolean(routeSnapshotReady))}</div>
       <div data-testid="grid-detail-open">{String(Boolean(detailOpen))}</div>
       <div data-testid="grid-keyboard-disabled">{String(Boolean(keyboardNavigationDisabled))}</div>
       <div data-testid="grid-restore">{`${restoreFocusSlug ?? "none"}:${restoreFocusSequence ?? 0}`}</div>
@@ -540,6 +543,51 @@ describe("AppWithVault", () => {
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
     expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(4, undefined, 0, 200);
+  });
+
+  it("does not treat a pending uncached route as an authoritative empty grid", async () => {
+    const alphaDeferred = deferred<GridSnapshot>();
+    commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
+      expect(offset).toBe(0);
+      expect(limit).toBe(200);
+      expect(query).toBeUndefined();
+      if ((tag ?? "__all__") === "__all__") {
+        return { blocks: [], total_blocks: 0, has_more: false };
+      }
+      if (tag === "alpha") {
+        return alphaDeferred.promise;
+      }
+      return { blocks: [], total_blocks: 0, has_more: false };
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:0");
+    });
+    expect(screen.getByTestId("grid-route-ready")).toHaveTextContent("true");
+
+    fireEvent.click(await screen.findByRole("link", { name: "alpha" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("alpha:0");
+    });
+    expect(screen.getByTestId("grid-route-ready")).toHaveTextContent("false");
+
+    alphaDeferred.resolve({
+      blocks: [block(1, "alpha-block")],
+      total_blocks: 1,
+      has_more: false,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
+    });
+    expect(screen.getByTestId("grid-route-ready")).toHaveTextContent("true");
   });
 
   it("loads the current route when navigation happens before the initial grid resolves", async () => {

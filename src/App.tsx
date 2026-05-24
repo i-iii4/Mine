@@ -746,6 +746,10 @@ export function AppWithVault({
 
   const [blocks, setBlocks] = useState<LightBlock[]>([]);
   const [totalBlocks, setTotalBlocks] = useState(0);
+  const [gridSnapshotIdentity, setGridSnapshotIdentity] = useState<{
+    routeKey: string;
+    query: string;
+  } | null>(null);
   const [vaultStats, setVaultStats] = useState<VaultStats | null>(null);
   const [hasMoreBlocks, setHasMoreBlocks] = useState(false);
   const [loadingMoreBlocks, setLoadingMoreBlocks] = useState(false);
@@ -874,10 +878,12 @@ export function AppWithVault({
   }, [cancelPendingDetailClose]);
 
   const applyGridSnapshot = useCallback((tag: string | undefined, grid: GridSnapshot, query = "") => {
+    const routeKey = routeKeyFor(tag);
     if (!query) {
-      routeSnapshotCacheRef.current.set(routeKeyFor(tag), grid);
+      routeSnapshotCacheRef.current.set(routeKey, grid);
     }
     setBlocks(grid.blocks);
+    setGridSnapshotIdentity({ routeKey, query });
     setTotalBlocks(grid.total_blocks);
     setHasMoreBlocks(grid.has_more);
     setLoadingMoreBlocks(false);
@@ -898,7 +904,11 @@ export function AppWithVault({
     }
   }, [currentTag, tags, channels, navigate]);
 
+  const normalizedMainSearchQuery = normalizeSurfaceSearchQuery(mainSearchQuery);
   const activeBlocks = blocks;
+  const gridRouteSnapshotReady =
+    gridSnapshotIdentity?.routeKey === routeKeyFor(currentTag) &&
+    gridSnapshotIdentity.query === normalizedMainSearchQuery;
   const renderedDetailBlock = selectedBlock ?? closingDetailBlock;
   const renderedLinkedBlockSlug = selectedBlock?.slug
     ?? (detailChromeClosing ? closingDetailBlock?.slug ?? null : null);
@@ -927,7 +937,6 @@ export function AppWithVault({
     || renamingBlock !== null
     || deleteTargetSlug !== null
     || isCreatingChannel;
-  const normalizedMainSearchQuery = normalizeSurfaceSearchQuery(mainSearchQuery);
   const mainSearchActive = mainSearchOpen || normalizedMainSearchQuery.length > 0;
 
   useEffect(() => {
@@ -3070,6 +3079,7 @@ export function AppWithVault({
                 thumbsRootPath={thumbsRootPath ?? undefined}
                 tags={tags}
                 currentTag={currentTag}
+                routeSnapshotReady={gridRouteSnapshotReady}
                 scrollToTop={scrollToTopSignal}
                 sidebarCollapsed={sidebarCollapsed}
                 blockDragActive={activeDragBlocks.length > 0}
@@ -3290,6 +3300,7 @@ interface RouteContext {
   thumbsRootPath?: string;
   tags: TagCount[];
   currentTag?: string;
+  routeSnapshotReady: boolean;
   scrollToTop: number;
   sidebarCollapsed: boolean;
   blockDragActive: boolean;

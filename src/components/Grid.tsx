@@ -517,6 +517,7 @@ interface GridProps {
   thumbsRootPath?: string;
   tags: TagCount[];
   currentTag?: string;
+  routeSnapshotReady?: boolean;
   scrollToTop: number;
   sidebarCollapsed?: boolean;
   blockDragActive?: boolean;
@@ -623,6 +624,7 @@ export function Grid({
   thumbsRootPath,
   tags,
   currentTag,
+  routeSnapshotReady = true,
   scrollToTop,
   sidebarCollapsed = false,
   blockDragActive = false,
@@ -697,6 +699,25 @@ export function Grid({
   const [wordMetricsSettled, setWordMetricsSettled] = useState(blocks.length === 0);
   const [heightDriftAuditBatch, setHeightDriftAuditBatch] = useState<LightBlock[]>([]);
 
+  const readGridScrollMetrics = useCallback((
+    element: HTMLElement,
+    fallbackContentRect?: DOMRectReadOnly,
+  ) => {
+    const style = window.getComputedStyle(element);
+    const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+    const paddingRight = Number.parseFloat(style.paddingRight) || 0;
+    const layoutWidth = element.clientWidth > 0
+      ? Math.max(0, element.clientWidth - paddingLeft - paddingRight)
+      : Math.max(0, fallbackContentRect?.width ?? 0);
+    const measuredViewportHeight = element.clientHeight > 0
+      ? element.clientHeight
+      : Math.max(0, fallbackContentRect?.height ?? 0);
+    return {
+      layoutWidth,
+      viewportHeight: measuredViewportHeight,
+    };
+  }, []);
+
   // Scroll to top on explicit signal or channel change.
   useEffect(() => {
     parentRef.current?.scrollTo(0, 0);
@@ -710,12 +731,14 @@ export function Grid({
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
-      if (entry.contentRect.width > 0) setParentWidth(entry.contentRect.width);
-      if (entry.contentRect.height > 0) setViewportHeight(entry.contentRect.height);
+      const metrics = readGridScrollMetrics(el, entry.contentRect);
+      if (metrics.layoutWidth > 0) setParentWidth(metrics.layoutWidth);
+      if (metrics.viewportHeight > 0) setViewportHeight(metrics.viewportHeight);
     });
 
-    setParentWidth(el.clientWidth);
-    setViewportHeight(el.clientHeight);
+    const metrics = readGridScrollMetrics(el);
+    setParentWidth(metrics.layoutWidth);
+    setViewportHeight(metrics.viewportHeight);
     setScrollTop(el.scrollTop);
     latestScrollTopRef.current = el.scrollTop;
     scrollSignalSampleRef.current = {
@@ -730,7 +753,7 @@ export function Grid({
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [readGridScrollMetrics]);
 
   useEffect(() => {
     const el = parentRef.current;
@@ -1068,6 +1091,7 @@ export function Grid({
 
   const showEmptyChannelPlaceholder = Boolean(
     currentTag &&
+    routeSnapshotReady &&
     blocks.length === 0 &&
     searchQuery.trim().length === 0,
   );

@@ -1,5 +1,43 @@
 # Devlog
 
+## 24.05.2026 [fix] — Make Grid route switches snapshot-authoritative
+
+### Context
+
+- Fast channel switching could briefly show the empty-channel placeholder in a
+  route that was still loading.
+- Fast route remounts could also show a one-frame column-width shrink.
+
+### Root Cause
+
+- Grid used `blocks.length === 0` as enough evidence for the empty-channel
+  placeholder. During an uncached route switch, an empty previous snapshot and a
+  pending next snapshot were indistinguishable.
+- Grid measured initial layout width from `clientWidth` but later accepted
+  `ResizeObserver.contentRect.width`. With horizontal scrollport padding those
+  are different boxes, so the same route could lay out once with padding-box
+  width and then shrink to content-box width.
+
+### Completed
+
+- Added route/query identity for the applied `GridSnapshot` in `App.tsx`.
+- Passed `routeSnapshotReady` to Grid and gated empty-channel placeholder on an
+  authoritative snapshot for the current route/search state.
+- Normalized Grid width measurement so mount and ResizeObserver updates both
+  feed content-box width into masonry layout.
+- Added regressions for pending uncached routes and content-box width
+  stability.
+
+### Verification
+
+- `bun run lint`
+- `bun run test:frontend -- src/components/Grid.test.tsx src/App.test.tsx`
+- `bun run test:frontend` — 44 files, 418 tests passed.
+- `bun run build`
+- `git diff --check`
+- `bun run test:feed-scroll` — passed on rerun; desktop and narrow profiles had
+  no blank viewport, no skeleton-only viewport and `p95/max heightDrift = 0`.
+
 ## 24.05.2026 [change] — Complete Phase 11 deterministic Grid layout
 
 ### Context

@@ -475,6 +475,11 @@ iOS UI contract:
 - Открытие vault двухфазное: `select_vault` / `get_vault_path` поднимают SQLite, watcher и последний индексированный snapshot сразу, а `full_scan()` уходит в фоновый поток. Фронтенд слушает `vault-sync-started` / `vault-sync-finished` и обновляет snapshot после завершения синхронизации, не блокируя первый usable paint.
 - Переключение vault не делает `window.location.reload()`. `App.tsx` remount'ит `AppWithVault` по `key={vaultPath}`, сбрасывает локальное состояние и игнорирует stale async-ответы через `vaultPathRef + requestId`.
 - `App.tsx` держит per-route snapshot cache (`tag -> GridSnapshot`). Повторный переход в уже посещённый канал сначала применяет локальный snapshot синхронно, а taxonomy (`list_tags` / `list_channels`) не перезапрашивается на чистом route switch. Это убирает лишний IPC round-trip и второй `list_grid_blocks` на старте после `setTags/setChannels`.
+- `App.tsx` также держит route/query identity последнего применённого
+  `GridSnapshot`. Empty channel UI в Grid разрешён только когда эта identity
+  совпадает с текущим route/search state. `blocks.length === 0` сам по себе не
+  является доказательством пустого канала: во время быстрого uncached route
+  switch это может быть pending state предыдущего snapshot.
 - `Grid.tsx` использует собственный windowed masonry renderer: карточки позиционируются абсолютно, контейнер получает вычисленную `totalHeight`, в DOM остаются только видимые элементы плюс overscan.
 - Геометрия карточки больше не должна выводиться из независимых эвристик в `Card.tsx` и `cardHeight.ts`. Введён общий descriptor-driven слой (`src/lib/cardLayout.ts`): variant карточки, preview text и media geometry вычисляются один раз и затем используются и для рендера, и для расчёта высоты.
 - Контентные карточки больше не кодируют spacing через variant-specific `mt-*` ветки. Введён slot-based contract: frame карточки задаёт общий inset, media идёт первой, а текстовые слоты живут единым text-stack ниже (`media -> display title/preview -> author`). Внутренние gap'ы появляются только между реально существующими соседними слотами. Это устраняет phantom top gap и сохраняет системный отступ под media.
@@ -492,6 +497,10 @@ iOS UI contract:
   totalHeight`. `columnWidth` и horizontal positions снапятся к целым
   CSS-пикселям; `GridItem` wrapper получает deterministic `height`, поэтому
   transformed card controls не получают subpixel jitter.
+- `parentWidth` — content-box ширина Grid scrollport. Initial mount и
+  `ResizeObserver` updates обязаны использовать один источник ширины; padding
+  scrollport относится к chrome spacing и не входит в masonry columns. Это
+  предотвращает двухкадровую смену ширины колонок при remount/route switch.
 - Visible contract двуслойный, но live-gate больше не равен только contiguous
   prefix:
   - `renderReadyBlockIds` — карточки, которые можно показывать как real `Card`

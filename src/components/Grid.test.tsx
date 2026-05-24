@@ -450,6 +450,19 @@ describe("Grid — no collapse after add / revisit", () => {
     });
     await flushAsync();
     expect(screen.queryByText(placeholderText)).not.toBeInTheDocument();
+
+    await act(async () => {
+      rerender(
+        <Grid
+          {...BASE_PROPS}
+          blocks={[]}
+          currentTag="empty-channel"
+          routeSnapshotReady={false}
+        />,
+      );
+    });
+    await flushAsync();
+    expect(screen.queryByText(placeholderText)).not.toBeInTheDocument();
   });
 
   it("renders initial blocks with non-colliding positions", async () => {
@@ -636,6 +649,64 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(scroll).toHaveAttribute("data-feed-grid-focus-mode", "true");
     expect(focusedWrapper).toHaveAttribute("data-feed-grid-item-focused", "true");
     expect(focusedWrapper?.querySelector("[data-feed-grid-focus-frame]")).toBeNull();
+  });
+
+  it("uses the same content-box width source on mount and ResizeObserver updates", async () => {
+    vi.useFakeTimers();
+
+    const clientWidthDescriptor = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "clientWidth",
+    );
+    const clientHeightDescriptor = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "clientHeight",
+    );
+
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).hasAttribute("data-grid-scroll") ? 1064 : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).hasAttribute("data-grid-scroll") ? 800 : 0;
+      },
+    });
+
+    try {
+      const blocks = [
+        makeImageBlock(9701),
+        makeImageBlock(9702),
+        makeImageBlock(9703),
+      ];
+
+      render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="content-width" />);
+      await flushAsync();
+
+      const firstWrapper = gridItemForSlug("block-9701");
+      expect(firstWrapper?.style.width).toBe(`${testColumnWidth(1000)}px`);
+
+      act(() => {
+        triggerResize(1000, 800);
+      });
+      await flushAsync();
+
+      expect(firstWrapper?.style.width).toBe(`${testColumnWidth(1000)}px`);
+    } finally {
+      if (clientWidthDescriptor) {
+        Object.defineProperty(HTMLElement.prototype, "clientWidth", clientWidthDescriptor);
+      } else {
+        delete (HTMLElement.prototype as { clientWidth?: unknown }).clientWidth;
+      }
+      if (clientHeightDescriptor) {
+        Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeightDescriptor);
+      } else {
+        delete (HTMLElement.prototype as { clientHeight?: unknown }).clientHeight;
+      }
+    }
   });
 
   it("owns arrow-key navigation in Grid and uses layout positions instead of DOM rectangles", async () => {

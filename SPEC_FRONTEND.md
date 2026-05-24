@@ -537,7 +537,9 @@ rendered; its segment remains an inert drag region.
 
 Сетка карточек с собственным virtualized masonry renderer:
 - Источник данных: `LightBlock[]`
-- Количество столбцов: адаптивное, на основе ширины контейнера (`ResizeObserver`, минимум 240px на столбец)
+- Количество столбцов: адаптивное, на основе content-box ширины scrollport
+  Grid. Initial mount и последующие `ResizeObserver` updates должны читать один
+  и тот же width source; padding scrollport не входит в masonry layout width.
 - Layout считается чистой функцией: `containerWidth + estimatedHeights -> positions[]`
 - `columnWidth` и `left` позиций снапятся к целым CSS-пикселям. Скрытая
   measurement pass использует тот же pixel-snapped width, что и visible render,
@@ -545,12 +547,13 @@ rendered; its segment remains an inert drag region.
   переснапливались при opacity/focus transitions.
 - Карточки позиционируются абсолютно (`translate(x, y)`), контейнер имеет вычисленную `totalHeight`
 - Top inset ленты — `32px` через `marginTop` на `data-grid-layout`, не через padding scrollport.
-- Empty channel state: when a real channel route has no cards and Grid search
-  is inactive, Grid renders a centered italic text placeholder instead of an
-  empty masonry layout: `Cards connected to this channel will appear here.`
-  The placeholder is centered in the visible Grid viewport, uses a plain `p`,
-  and has no quote marker, border, card surface, icon, or CTA. It is not shown
-  for Everything or empty search results.
+- Empty channel state: when a real channel route has an authoritative loaded
+  route snapshot with zero cards and Grid search is inactive, Grid renders a
+  centered italic text placeholder instead of an empty masonry layout:
+  `Cards connected to this channel will appear here.` The placeholder is
+  centered in the visible Grid viewport, uses a plain `p`, and has no quote
+  marker, border, card surface, icon, or CTA. It is not shown for Everything,
+  empty search results, or while a route switch/search request is still pending.
 - В DOM находятся только видимые карточки + direction-aware overscan: forward 2200px / backward 600px (зависит от направления scroll'а). Предзагружает больше карточек по направлению движения.
 - **Priority bounds**: зона ±1400px по направлению scroll'а. Карточки внутри зоны получают `priority=true` → `<img loading="eager">` для image/link/article карточек. Карточки вне зоны — `loading="lazy"`.
 - Planned feed scroll readiness is specified separately in
