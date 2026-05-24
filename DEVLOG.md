@@ -1,5 +1,37 @@
 # Devlog
 
+## 24.05.2026 [change] — Implement feed scroll readiness layer
+
+### Context
+
+- The feed already had virtualized masonry, but smooth scroll could still show
+  late media pop-in because decoded preview readiness was coupled to mounted DOM.
+- The target contract in `SPEC_FEED_SCROLL_PERFORMANCE.md` requires bounded DOM,
+  adaptive windows and a preview-only media decode queue.
+
+### Completed
+
+- Added `feedMediaCandidatesForBlock` as the shared preview-only candidate
+  resolver for poster, primary preview, tile preview and block thumbnail URLs.
+- Added `feedScrollReadiness` helpers for RAF-sampled scroll velocity,
+  hysteresis, adaptive render/priority/preload windows and commit lookahead.
+- Added `FeedMediaPreloadQueue` with concurrency `4`, queue cap `160`, LRU
+  `400`, decode timeout `3000ms`, failed URL suppression and generation reset.
+- Added `useFeedMediaPreloader` and integrated it into `Grid` through
+  `layout.positions` / `VisibilityIndex`; preload work no longer mounts extra
+  `GridItem`s.
+- Replaced fixed Grid overscan/priority bounds with adaptive windows and made
+  image priority relative to the current viewport.
+- Exposed development diagnostics through `window.__MINE_FEED_SCROLL_DEBUG__`.
+- Added unit tests for candidate extraction, adaptive windows and preload queue,
+  plus a Grid integration test that verifies the preload window is wider than
+  mounted DOM.
+
+### Follow-up
+
+- Manual acceptance on a real `Everything` vault is still required because the
+  final defect is perceptual.
+
 ## 24.05.2026 [spec] — Define feed scroll readiness contract
 
 ### Context

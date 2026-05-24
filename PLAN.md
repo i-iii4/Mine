@@ -162,14 +162,14 @@ Goal: устранить две подтверждённые архитекту�
   - macOS/Tauri app icon использует transparent canvas + inset white rounded tile, чтобы Dock не показывал oversized квадрат;
   - extension toolbar icon — белый круг с чёрной `m`;
   - Instagram overlay отделён от toolbar icon: content script рисует круглую белую кнопку и вставляет glyph-only `clipper-overlay-32.png`.
-- `C7` запланирован:
+- `C7` реализован:
   - целевой контракт описан в [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md);
-  - быстрый безопасный шаг не должен сводиться к DOM inflation;
-  - render window, image priority window и media preload/decode window должны иметь разные адаптивные бюджеты;
+  - render window, image priority window и media preload/decode window имеют разные адаптивные бюджеты;
   - media preload hot path использует только derived preview/poster/thumbnail assets, не оригинальные source media;
-  - основная цель — убрать late media pop-in при быстром scroll `Everything` и приблизить feed к ощущению бесконечного canvas.
+  - Grid подключает bounded `Image.decode()` queue без дополнительных preload-only `GridItem`;
+  - diagnostics доступны через `window.__MINE_FEED_SCROLL_DEBUG__`.
 
-### Phase C7 — Feed Scroll Readiness [PLANNED]
+### Phase C7 — Feed Scroll Readiness [IMPLEMENTED, MANUAL ACCEPTANCE PENDING]
 
 Goal: сделать быстрый, но архитектурно правильный слой подготовки ленты, чтобы
 при быстром scroll медиа не догоняли viewport рывками.
@@ -177,12 +177,12 @@ Goal: сделать быстрый, но архитектурно правил�
 | # | Task | Status |
 |---|------|--------|
 | C7.1 | SPEC + docs: зафиксировать canvas-feel как adaptive media readiness architecture, а не overscan tweak | [x] |
-| C7.2 | Extract shared `feedMediaCandidatesForBlock`: one derived-preview URL chain for Card/preloader, source media excluded from preload | [ ] |
-| C7.3 | Add `feedScrollReadiness` pure helpers: RAF-sampled velocity model, adaptive render/priority/preload windows, hysteresis, clamps and tests | [ ] |
-| C7.4 | Add bounded `FeedMediaPreloadQueue`: max concurrency `4`, queue `160`, LRU `400`, decode timeout `3000ms`, failed URL suppression | [ ] |
-| C7.5 | Integrate `useFeedMediaPreloader` into Grid without adding preload-only GridItems or scroll-pixel React state | [ ] |
-| C7.6 | Retune render/priority windows according to the adaptive formulas, not fixed magic constants | [ ] |
-| C7.7 | Add development diagnostics and tuning protocol evidence: mounted count, window sizes, queue length, active decodes, decoded/failed/skipped counters | [ ] |
+| C7.2 | Extract shared `feedMediaCandidatesForBlock`: one derived-preview URL chain for Card/preloader, source media excluded from preload | [x] |
+| C7.3 | Add `feedScrollReadiness` pure helpers: RAF-sampled velocity model, adaptive render/priority/preload windows, hysteresis, clamps and tests | [x] |
+| C7.4 | Add bounded `FeedMediaPreloadQueue`: max concurrency `4`, queue `160`, LRU `400`, decode timeout `3000ms`, failed URL suppression | [x] |
+| C7.5 | Integrate `useFeedMediaPreloader` into Grid without adding preload-only GridItems or scroll-pixel React state | [x] |
+| C7.6 | Retune render/priority windows according to the adaptive formulas, not fixed magic constants | [x] |
+| C7.7 | Add development diagnostics and tuning protocol evidence: mounted count, window sizes, queue length, active decodes, decoded/failed/skipped counters | [x] |
 | C7.8 | Validate fast scroll on real `Everything`: fewer blank/late media states, preview-only hot path, no whole-route DOM inflation | [ ] |
 
 ### Phase 24 — Filesystem-first visibility [PLANNED]

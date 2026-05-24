@@ -39,12 +39,20 @@ import {
   warmFromIndexedDb,
 } from "@/lib/heightCache";
 import { useGridScroll } from "@/hooks/useGridScroll";
+import { useFeedMediaPreloader } from "@/hooks/useFeedMediaPreloader";
 import type { WordWidths } from "@/types/fontMetrics";
 import {
   buildLayoutGenerationKey,
   type LayoutGenerationKey,
 } from "@/lib/layoutGeneration";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
+import { legacyThumbsRoot } from "@/lib/assets";
+import {
+  computeFeedScrollReadinessWindows,
+  sampleFeedScrollSignal,
+  type FeedScrollSignal,
+  type FeedScrollSignalSample,
+} from "@/lib/feedScrollReadiness";
 import {
   isEditableKeyboardTarget,
   isOverlayKeyboardTarget,
@@ -54,13 +62,8 @@ import {
 
 const COLUMN_MIN_WIDTH = 220;
 const GAP = 32;
-const OVERSCAN_BACKWARD_PX = 600;
-const OVERSCAN_FORWARD_PX = 2200;
-const PRIORITY_BACKWARD_PX = 200;
-const PRIORITY_FORWARD_PX = 1400;
 const MEASUREMENT_BATCH_SIZE = 48;
-const INITIAL_COMMIT_BLOCKS = 24;
-const COMMIT_LOOKAHEAD_BLOCKS = 24;
+const INITIAL_COMMIT_BLOCKS = 48;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
 const GRID_TOP_INSET_PX = 32;
@@ -69,6 +72,12 @@ const MARQUEE_DRAG_THRESHOLD_PX = 4;
 const SCROLL_ANCHOR_REFERENCE_OFFSET_PX = 32;
 const EMPTY_CHANNEL_PLACEHOLDER_TEXT =
   "Cards connected to this channel will appear here.";
+const INITIAL_FEED_SCROLL_SIGNAL: FeedScrollSignal = {
+  scrollTop: 0,
+  scrollDirection: "idle",
+  scrollVelocityPxMs: 0,
+  isFastScrolling: false,
+};
 
 type GridArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
 type FeedInteractionMode = "keyboard" | "pointer";
@@ -608,6 +617,9 @@ export function Grid({
   const [parentWidth, setParentWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
+  const [feedScrollSignal, setFeedScrollSignal] = useState<FeedScrollSignal>(
+    INITIAL_FEED_SCROLL_SIGNAL,
+  );
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
   const [focusedSlug, setFocusedSlug] = useState<string | null>(null);
   const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(() => new Set());
@@ -626,6 +638,7 @@ export function Grid({
   const lastPointerPositionRef = useRef<FeedPointerPosition | null>(null);
   const blockedPointerPositionRef = useRef<FeedPointerPosition | null>(null);
   const latestScrollTopRef = useRef(0);
+  const scrollSignalSampleRef = useRef<FeedScrollSignalSample | null>(null);
   const scrollAnchorSnapshotRef = useRef<ScrollAnchorSnapshot | null>(null);
   const pendingScrollAnchorRef = useRef<PendingScrollAnchor | null>(null);
   const suppressFocusedScrollOnceRef = useRef(false);
@@ -671,6 +684,16 @@ export function Grid({
     setViewportHeight(el.clientHeight);
     setScrollTop(el.scrollTop);
     latestScrollTopRef.current = el.scrollTop;
+    scrollSignalSampleRef.current = {
+      scrollTop: el.scrollTop,
+      timeMs: performance.now(),
+      scrollVelocityPxMs: 0,
+      isFastScrolling: false,
+    };
+    setFeedScrollSignal({
+      ...INITIAL_FEED_SCROLL_SIGNAL,
+      scrollTop: el.scrollTop,
+    });
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
@@ -683,9 +706,16 @@ export function Grid({
 
     const updateScrollTop = () => {
       rafId = null;
+      const next = el.scrollTop;
+      latestScrollTopRef.current = next;
+      const sampled = sampleFeedScrollSignal({
+        previous: scrollSignalSampleRef.current,
+        scrollTop: next,
+        timeMs: performance.now(),
+      });
+      scrollSignalSampleRef.current = sampled.sample;
+      setFeedScrollSignal(sampled.signal);
       setScrollTop((current) => {
-        const next = el.scrollTop;
-        latestScrollTopRef.current = next;
         return current === next ? current : next;
       });
     };
@@ -698,6 +728,16 @@ export function Grid({
 
     setScrollTop(el.scrollTop);
     latestScrollTopRef.current = el.scrollTop;
+    scrollSignalSampleRef.current = {
+      scrollTop: el.scrollTop,
+      timeMs: performance.now(),
+      scrollVelocityPxMs: 0,
+      isFastScrolling: false,
+    };
+    setFeedScrollSignal({
+      ...INITIAL_FEED_SCROLL_SIGNAL,
+      scrollTop: el.scrollTop,
+    });
     el.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
       el.removeEventListener("scroll", handleScroll);
@@ -742,6 +782,10 @@ export function Grid({
       parentWidth,
     }),
     [blocks, bucket, currentTag, parentWidth],
+  );
+  const resolvedThumbsRootPath = useMemo(
+    () => thumbsRootPath ?? legacyThumbsRoot(vaultPath),
+    [thumbsRootPath, vaultPath],
   );
 
   // Measured pixel heights for the current generation. Purely derived
@@ -827,6 +871,19 @@ export function Grid({
     () => createVisibilityIndex(layout),
     [layout],
   );
+  const scrollReadinessWindows = useMemo(
+    () => computeFeedScrollReadinessWindows({
+      viewportHeight,
+      scrollVelocityPxMs: feedScrollSignal.scrollVelocityPxMs,
+      scrollDirection: feedScrollSignal.scrollDirection,
+      visibleItemCount: 0,
+    }),
+    [
+      feedScrollSignal.scrollDirection,
+      feedScrollSignal.scrollVelocityPxMs,
+      viewportHeight,
+    ],
+  );
 
   // Visible-items computation callback for useGridScroll. Closes over the
   // current visibility index. When layout changes, identity of the callback
@@ -838,11 +895,16 @@ export function Grid({
         visibilityIndex,
         scrollTop,
         viewportHeight,
-        OVERSCAN_BACKWARD_PX,
-        OVERSCAN_FORWARD_PX,
+        scrollReadinessWindows.renderBeforePx,
+        scrollReadinessWindows.renderAfterPx,
       );
     },
-    [visibilityIndex, viewportHeight],
+    [
+      scrollReadinessWindows.renderAfterPx,
+      scrollReadinessWindows.renderBeforePx,
+      visibilityIndex,
+      viewportHeight,
+    ],
   );
 
   const visibleItems = useGridScroll(parentRef, {
@@ -857,11 +919,20 @@ export function Grid({
 
   const targetCommittedEndIndex = useMemo(() => {
     if (blocks.length === 0) return -1;
+    const commitLookaheadBlocks = Math.max(
+      scrollReadinessWindows.commitLookaheadBlocks,
+      visibleItems.length * 2,
+    );
     const baseEnd = maxVisibleIndex >= 0
-      ? maxVisibleIndex + COMMIT_LOOKAHEAD_BLOCKS
+      ? maxVisibleIndex + commitLookaheadBlocks
       : INITIAL_COMMIT_BLOCKS - 1;
     return Math.min(blocks.length - 1, baseEnd);
-  }, [blocks.length, maxVisibleIndex]);
+  }, [
+    blocks.length,
+    maxVisibleIndex,
+    scrollReadinessWindows.commitLookaheadBlocks,
+    visibleItems.length,
+  ]);
 
   const phase: GridPhase = useMemo(() => {
     if (blocks.length === 0 || parentWidth <= 0) return "committed";
@@ -951,10 +1022,30 @@ export function Grid({
   // Priority zone — cards in this range get eager image loading.
   const priorityBounds = useMemo(() => {
     return {
-      start: PRIORITY_BACKWARD_PX,
-      end: PRIORITY_FORWARD_PX,
+      start: Math.max(0, scrollTop - scrollReadinessWindows.priorityBeforePx),
+      end: scrollTop + viewportHeight + scrollReadinessWindows.priorityAfterPx,
     };
-  }, []);
+  }, [
+    scrollReadinessWindows.priorityAfterPx,
+    scrollReadinessWindows.priorityBeforePx,
+    scrollTop,
+    viewportHeight,
+  ]);
+  const feedMediaPreloadStats = useFeedMediaPreloader({
+    enabled: blocks.length > 0 && parentWidth > 0,
+    blocks,
+    layout,
+    visibilityIndex,
+    scrollTop,
+    viewportHeight,
+    scrollDirection: feedScrollSignal.scrollDirection,
+    scrollVelocityPxMs: feedScrollSignal.scrollVelocityPxMs,
+    generationKey,
+    thumbsRootPath: resolvedThumbsRootPath,
+    mountedGridItems: visibleItems.length,
+    windows: scrollReadinessWindows,
+  });
+  void feedMediaPreloadStats;
 
   const blocksBySlug = useMemo(
     () => new Map(blocks.map((block) => [block.slug, block])),
@@ -1543,7 +1634,7 @@ export function Grid({
   const gridContext: GridContext = useMemo(
     () => ({
       vaultPath,
-      thumbsRootPath,
+      thumbsRootPath: resolvedThumbsRootPath,
       focusedSlug: keyboardFocusedSlug,
       pinnedActionMenuSlug,
       selectedSlugs,
@@ -1569,7 +1660,7 @@ export function Grid({
     }),
     [
       vaultPath,
-      thumbsRootPath,
+      resolvedThumbsRootPath,
       keyboardFocusedSlug,
       pinnedActionMenuSlug,
       selectedSlugs,
@@ -1637,7 +1728,7 @@ export function Grid({
               blocks={measurementBatch}
               columnWidth={deriveColumnWidth(parentWidth)}
               vaultPath={vaultPath}
-              thumbsRootPath={thumbsRootPath}
+              thumbsRootPath={resolvedThumbsRootPath}
               onMeasured={handleMeasured}
             />
           )}

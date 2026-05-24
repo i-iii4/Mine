@@ -456,6 +456,56 @@ describe("Grid — no collapse after add / revisit", () => {
     assertPositionsMatchFreshLayout(initialBlocks, positions, 1200);
   });
 
+  it("preloads media through a wider readiness window without mounting preload-only GridItems", async () => {
+    vi.useFakeTimers();
+
+    const blocks = Array.from({ length: 20 }, (_, index) => {
+      const id = 9800 + index;
+      setBlockHeight(id, 260);
+      return makeBlock(id, {
+        block_type: "image",
+        card_kind: "media",
+        media_file: `source-${id}.png`,
+        width: 1200,
+        height: 800,
+        preview_manifest: JSON.stringify({
+          kind: "image",
+          primary_preview_path: `preview-${id}.jpg`,
+          width: 1200,
+          height: 800,
+          tiles: [
+            {
+              source_path: `source-${id}.png`,
+              preview_path: `preview-${id}.jpg`,
+              width: 1200,
+              height: 800,
+              is_video: false,
+              is_video_poster: false,
+            },
+          ],
+          overflow_count: 0,
+        }),
+      });
+    });
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="scroll-readiness" />);
+
+    act(() => {
+      triggerResize(280, 400);
+    });
+    await flushAsync();
+
+    const mountedItems = document.querySelectorAll("[data-feed-grid-item]").length;
+    const debug = window.__MINE_FEED_SCROLL_DEBUG__;
+
+    expect(debug).toBeTruthy();
+    expect(debug?.mountedGridItems).toBe(mountedItems);
+    expect(debug?.preloadWindowPx.forward).toBeGreaterThan(
+      debug?.renderWindowPx.forward ?? 0,
+    );
+    expect(mountedItems).toBeLessThan(blocks.length);
+  });
+
   it("keeps the top feed inset inside the scroll content, not on the scrollport", async () => {
     vi.useFakeTimers();
 
