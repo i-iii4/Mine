@@ -34,8 +34,11 @@ pub async fn get_vault_stats(
         &app,
         "get_vault_stats",
         &format!(
-            "done md={} media={} cards={}",
-            stats.markdown_file_count, stats.media_file_count, stats.current_collection_card_count
+            "done files={} md={} media={} cards={}",
+            stats.total_file_count,
+            stats.markdown_file_count,
+            stats.media_file_count,
+            stats.current_collection_card_count
         ),
     );
     Ok(stats)

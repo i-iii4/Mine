@@ -47,6 +47,20 @@ import {
   sidebarRowKeyToRoute,
 } from "@/lib/sidebarSearch";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
+import {
+  getStoredChromeSurfaceVariant,
+  isChromeSurfaceVariant2,
+  CHROME_SURFACE_VARIANT_STORAGE_KEY,
+  type ChromeSurfaceVariant,
+} from "@/lib/chromeSurfaceVariant";
+import {
+  BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY,
+  getStoredBottomActionBarHidden,
+} from "@/lib/bottomActionBarVisibility";
+import {
+  useNativeWindowChromeSurface,
+  type NativeWindowChromeSurfaceToken,
+} from "@/lib/nativeWindowChromeSurface";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { CardMoreMenu } from "@/components/CardHoverMenu";
@@ -114,8 +128,25 @@ function formatCompactCount(count: number, label: string): string {
   return `${RU_INTEGER_FORMATTER.format(count)} ${label}`;
 }
 
-function formatCardCount(count: number): string {
-  return `${RU_INTEGER_FORMATTER.format(count)} ${count === 1 ? "card" : "cards"}`;
+function formatPluralCount(count: number, singular: string, plural: string): string {
+  return `${RU_INTEGER_FORMATTER.format(count)} ${count === 1 ? singular : plural}`;
+}
+
+function formatCardCount(count: number, inChannel: boolean): string {
+  const base = formatPluralCount(count, "card", "cards");
+  return inChannel ? `${base} in channel` : base;
+}
+
+function formatFileCount(count: number): string {
+  return formatPluralCount(count, "file", "files");
+}
+
+function formatMarkdownCount(count: number): string {
+  return formatCompactCount(count, ".md");
+}
+
+function formatMediaCount(count: number): string {
+  return formatCompactCount(count, "media");
 }
 
 function formatStorageBytes(bytes: number): string {
@@ -139,8 +170,9 @@ function MainSecondaryStatsLeft({
   stats: VaultStats | null;
   sidebarCollapsed: boolean;
 }) {
-  const markdownCount = stats ? formatCompactCount(stats.markdownFileCount, "md") : "";
-  const mediaCount = stats ? formatCompactCount(stats.mediaFileCount, "media") : "";
+  const totalFiles = stats ? formatFileCount(stats.totalFileCount) : "";
+  const markdownCount = stats ? formatMarkdownCount(stats.markdownFileCount) : "";
+  const mediaCount = stats ? formatMediaCount(stats.mediaFileCount) : "";
   const sourceSize = stats ? formatStorageBytes(stats.sourceBytes) : "";
 
   if (sidebarCollapsed) return null;
@@ -152,6 +184,9 @@ function MainSecondaryStatsLeft({
     >
       {stats && (
         <div className="flex min-w-0 items-center gap-5 overflow-hidden whitespace-nowrap">
+          <span data-main-secondary-stat-atom="files" className="shrink-0">
+            {totalFiles}
+          </span>
           <span data-main-secondary-stat-atom="markdown" className="shrink-0">
             {markdownCount}
           </span>
@@ -168,7 +203,8 @@ function MainSecondaryStatsLeft({
 }
 
 function MainSecondaryStatsRight({ stats }: { stats: VaultStats | null }) {
-  const cardCount = stats ? formatCardCount(stats.currentCollectionCardCount) : "";
+  const inChannel = Boolean(stats?.currentCollection);
+  const cardCount = stats ? formatCardCount(stats.currentCollectionCardCount, inChannel) : "";
 
   return (
     <div
@@ -187,6 +223,7 @@ function MainSecondaryStatsRight({ stats }: { stats: VaultStats | null }) {
 function MainSecondaryTopBar({
   sidebarCollapsed,
   sidebarResizing,
+  chromeSurfaceVariant,
   stats,
   detailBlock,
   detailTitle,
@@ -205,6 +242,7 @@ function MainSecondaryTopBar({
 }: {
   sidebarCollapsed: boolean;
   sidebarResizing: boolean;
+  chromeSurfaceVariant: ChromeSurfaceVariant;
   stats: VaultStats | null;
   detailBlock?: LightBlock | IndexedBlock | null;
   detailTitle?: string;
@@ -221,6 +259,9 @@ function MainSecondaryTopBar({
   onDetailClose: () => void;
   detailMenuOpenRequestSequence: number;
 }) {
+  const variant2 = isChromeSurfaceVariant2(chromeSurfaceVariant);
+  const detailLayerEntered = Boolean(detailBlock && detailEntered);
+  const mainLayerEntered = !detailLayerEntered;
   const closeChromeGesture = useChromeDragGesture({ disabled: !detailBlock });
   const {
     attributes: dragAttributes,
@@ -244,24 +285,31 @@ function MainSecondaryTopBar({
       data-tauri-drag-region
       data-main-secondary-top-bar=""
       className={cn(
-        "flex h-8 shrink-0 items-center border-b border-border transition-colors duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-        detailBlock ? "bg-accent" : "bg-background",
+        "flex h-8 shrink-0 items-center border-b border-border transition-colors duration-[170ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+        variant2 ? "bg-chrome" : detailLayerEntered ? "bg-accent" : "bg-background",
       )}
     >
       <div
         data-tauri-drag-region
         data-main-secondary-top-bar-sidebar-segment=""
         className={cn(
-          "flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
+          "relative flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
           sidebarCollapsed && "w-auto max-w-[240px]",
           !sidebarResizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
         )}
         style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
       >
+        <div
+          className="main-secondary-bar-layer absolute inset-0"
+          data-entered={mainLayerEntered ? "true" : "false"}
+          data-main-secondary-main-layer=""
+        >
+          <MainSecondaryStatsLeft stats={stats} sidebarCollapsed={sidebarCollapsed} />
+        </div>
         {detailBlock && !sidebarCollapsed && (
           <div
-            className="detail-top-bar-enter flex h-full min-w-0 items-center gap-2 px-8"
-            data-entered={detailEntered ? "true" : "false"}
+            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 items-center gap-2 px-8"
+            data-entered={detailLayerEntered ? "true" : "false"}
             data-secondary-sidebar-link-mode-bar=""
           >
             <span className="shrink-0 font-mono text-sm text-muted-foreground">
@@ -275,19 +323,23 @@ function MainSecondaryTopBar({
             />
           </div>
         )}
-        {!detailBlock && (
-          <MainSecondaryStatsLeft stats={stats} sidebarCollapsed={sidebarCollapsed} />
-        )}
       </div>
       <div
         data-tauri-drag-region
         data-main-secondary-top-bar-content-segment=""
-        className="flex h-full min-w-0 flex-1 items-center"
+        className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden"
       >
-        {detailBlock ? (
+        <div
+          className="main-secondary-bar-layer absolute inset-0"
+          data-entered={mainLayerEntered ? "true" : "false"}
+          data-main-secondary-main-layer=""
+        >
+          <MainSecondaryStatsRight stats={stats} />
+        </div>
+        {detailBlock && (
           <div
-            className="detail-top-bar-enter flex h-full min-w-0 flex-1 items-center gap-3 px-8"
-            data-entered={detailEntered ? "true" : "false"}
+            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 flex-1 items-center gap-3 px-8"
+            data-entered={detailLayerEntered ? "true" : "false"}
             data-secondary-detail-top-menu=""
           >
             <div
@@ -329,8 +381,6 @@ function MainSecondaryTopBar({
               <X className="size-4" />
             </Button>
           </div>
-        ) : (
-          <MainSecondaryStatsRight stats={stats} />
         )}
       </div>
     </div>
@@ -568,7 +618,8 @@ function CompactDetailTopMenu({
 }
 
 const GRID_PAGE_SIZE = 200;
-const DETAIL_CHROME_TRANSITION_MS = 360;
+const DETAIL_SECONDARY_CHROME_EXIT_MS = 190;
+const DETAIL_COMPACT_CHROME_EXIT_MS = 260;
 
 interface VaultChangedEvent {
   path: string;
@@ -704,6 +755,12 @@ export function AppWithVault({
   const [importOpen, setImportOpen] = useState(false);
   const [compactDetailTopMenuEnabled, setCompactDetailTopMenuEnabled] = useState(
     getStoredCompactDetailTopMenu,
+  );
+  const [chromeSurfaceVariant, setChromeSurfaceVariant] = useState(
+    getStoredChromeSurfaceVariant,
+  );
+  const [bottomActionBarHidden, setBottomActionBarHidden] = useState(
+    getStoredBottomActionBarHidden,
   );
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
@@ -850,6 +907,17 @@ export function AppWithVault({
     : (detailChromeClosing ? closingDetailTags : []);
   const compactDetailTopMenuActive = compactDetailTopMenuEnabled && renderedDetailBlock !== null;
   const mainSecondaryTopBarVisible = !compactDetailTopMenuActive;
+  const detailChromeCloseDuration = compactDetailTopMenuActive
+    ? DETAIL_COMPACT_CHROME_EXIT_MS
+    : DETAIL_SECONDARY_CHROME_EXIT_MS;
+  const chromeSurfaceVariant2 = isChromeSurfaceVariant2(chromeSurfaceVariant);
+  const topChromeSurfaceClass = chromeSurfaceVariant2 ? "bg-accent" : "bg-chrome";
+  const topChromeSurfaceToken: NativeWindowChromeSurfaceToken = chromeSurfaceVariant2
+    ? "--accent"
+    : "--chrome";
+  const sidebarSearchActiveSurfaceClass = sidebarSearchHasActiveQuery
+    ? chromeSurfaceVariant2 ? "bg-active" : "bg-accent"
+    : "";
   const compactDetailCardTitle = renderedDetailBlock
     ? renderedDetailBlock.title ?? renderedDetailBlock.media_file ?? `${renderedDetailBlock.slug}.md`
     : "";
@@ -868,6 +936,19 @@ export function AppWithVault({
       compactDetailTopMenuEnabled ? "true" : "false",
     );
   }, [compactDetailTopMenuEnabled]);
+
+  useEffect(() => {
+    window.localStorage.setItem(CHROME_SURFACE_VARIANT_STORAGE_KEY, chromeSurfaceVariant);
+  }, [chromeSurfaceVariant]);
+
+  useNativeWindowChromeSurface(topChromeSurfaceToken);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY,
+      bottomActionBarHidden ? "true" : "false",
+    );
+  }, [bottomActionBarHidden]);
 
   useEffect(() => {
     if (!renderedDetailBlock || detailChromeClosing) {
@@ -1764,8 +1845,15 @@ export function AppWithVault({
     detailCloseTimerRef.current = window.setTimeout(() => {
       detailCloseTimerRef.current = null;
       cancelPendingDetailClose();
-    }, DETAIL_CHROME_TRANSITION_MS);
-  }, [selectedBlock, selectedBlockTags, detailChromeClosing, cancelPendingDetailClose, requestGridFocusRestore]);
+    }, detailChromeCloseDuration);
+  }, [
+    selectedBlock,
+    selectedBlockTags,
+    detailChromeClosing,
+    cancelPendingDetailClose,
+    requestGridFocusRestore,
+    detailChromeCloseDuration,
+  ]);
 
   const handleScrollToTop = useCallback(() => {
     if (selectedBlock) {
@@ -1783,11 +1871,17 @@ export function AppWithVault({
       detailCloseTimerRef.current = window.setTimeout(() => {
         detailCloseTimerRef.current = null;
         cancelPendingDetailClose();
-      }, DETAIL_CHROME_TRANSITION_MS);
+      }, detailChromeCloseDuration);
       return;
     }
     setScrollToTopSignal((n) => n + 1);
-  }, [selectedBlock, selectedBlockTags, detailChromeClosing, cancelPendingDetailClose]);
+  }, [
+    selectedBlock,
+    selectedBlockTags,
+    detailChromeClosing,
+    cancelPendingDetailClose,
+    detailChromeCloseDuration,
+  ]);
 
   const handleDetailNavigate = useCallback(
     async (direction: "prev" | "next" | "up" | "down") => {
@@ -2665,9 +2759,16 @@ export function AppWithVault({
       <div className="flex h-screen w-screen flex-col bg-background text-foreground">
         <header
           data-tauri-drag-region
-          className="flex h-8 shrink-0 items-center border-b border-border"
+          className={cn(
+            "flex h-8 shrink-0 items-center border-b border-border",
+            topChromeSurfaceClass,
+          )}
         >
-          <div data-tauri-drag-region className="w-20 shrink-0" />
+          <div
+            data-tauri-drag-region
+            data-traffic-light-reserve=""
+            className={cn("w-20 shrink-0", topChromeSurfaceClass)}
+          />
           <div data-tauri-drag-region className="flex flex-1 items-center px-3" />
         </header>
         <div className="flex min-h-0 flex-1 items-center justify-center">
@@ -2698,7 +2799,10 @@ export function AppWithVault({
       {/* Top toolbar */}
       <header
         data-tauri-drag-region
-        className="flex h-8 shrink-0 items-center border-b border-border bg-chrome"
+        className={cn(
+          "flex h-8 shrink-0 items-center border-b border-border",
+          topChromeSurfaceClass,
+        )}
       >
         <div
           data-tauri-drag-region
@@ -2710,7 +2814,11 @@ export function AppWithVault({
           )}
           style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
         >
-          <div data-tauri-drag-region className="w-20 max-w-full shrink-0" />
+          <div
+            data-tauri-drag-region
+            data-traffic-light-reserve=""
+            className={cn("w-20 max-w-full shrink-0", topChromeSurfaceClass)}
+          />
           <div
             aria-hidden="true"
             className="h-full w-px shrink-0 bg-border"
@@ -2743,7 +2851,7 @@ export function AppWithVault({
                   {...sidebarSearchChromeDragGesture}
                   className={[
                     "group/sidebar-search flex h-full min-w-0 flex-1 items-center",
-                    sidebarSearchHasActiveQuery ? "bg-accent" : "",
+                    sidebarSearchActiveSurfaceClass,
                   ].filter(Boolean).join(" ")}
                   data-sidebar-top-search-surface=""
                 >
@@ -2800,6 +2908,23 @@ export function AppWithVault({
             onNavigate={handleTopCollectionNavigate}
             onCreateCollection={handleTopCollectionCreate}
           />
+          {bottomActionBarHidden && (
+            <div
+              className="mr-2 shrink-0"
+              data-top-chrome-settings-fallback=""
+            >
+              <ThemeMenuButton
+                ref={themeMenuRef}
+                compactDetailTopMenuEnabled={compactDetailTopMenuEnabled}
+                onCompactDetailTopMenuChange={setCompactDetailTopMenuEnabled}
+                chromeSurfaceVariant={chromeSurfaceVariant}
+                onChromeSurfaceVariantChange={setChromeSurfaceVariant}
+                bottomActionBarHidden={bottomActionBarHidden}
+                onBottomActionBarHiddenChange={setBottomActionBarHidden}
+                menuSide="bottom"
+              />
+            </div>
+          )}
           {compactDetailTopMenuActive && renderedDetailBlock ? (
             <CompactDetailTopMenu
               block={renderedDetailBlock}
@@ -2825,6 +2950,7 @@ export function AppWithVault({
         <MainSecondaryTopBar
           sidebarCollapsed={sidebarCollapsed}
           sidebarResizing={sidebarResizing}
+          chromeSurfaceVariant={chromeSurfaceVariant}
           stats={vaultStats}
           detailBlock={renderedDetailBlock}
           detailTitle={compactDetailCardTitle}
@@ -2894,6 +3020,7 @@ export function AppWithVault({
         onLinkModeChange={setDetailLinkMode}
         showLinkModeChrome={false}
         detailChromeClosing={detailChromeClosing}
+        chromeSurfaceVariant={chromeSurfaceVariant}
       />
 
       <SidebarResizeHandle
@@ -2990,6 +3117,7 @@ export function AppWithVault({
               thumbsRootPath={thumbsRootPath ?? undefined}
               isClosing={detailChromeClosing}
               topChromeMode="external"
+              chromeSurfaceVariant={chromeSurfaceVariant}
               onClose={handleDetailClose}
               onNavigate={handleDetailNavigate}
               tags={tags}
@@ -3058,33 +3186,41 @@ export function AppWithVault({
       />
     </div>{/* end body */}
 
-      {/* Bottom action bar */}
-      <div className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-8">
-        <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>
-          New Channel
-        </ActionButton>
-        <ThemeMenuButton
-          ref={themeMenuRef}
-          compactDetailTopMenuEnabled={compactDetailTopMenuEnabled}
-          onCompactDetailTopMenuChange={setCompactDetailTopMenuEnabled}
-        />
-        <ActionButton
-          onClick={() => setDesignSystemOpen((v) => !v)}
-          isSelected={designSystemOpen}
+      {!bottomActionBarHidden && (
+        <div
+          className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-8"
+          data-bottom-action-bar=""
         >
-          Design
-        </ActionButton>
-        <div className="flex-1" />
-        {isSyncing && (
-          <span className="text-sm text-muted-foreground">Syncing…</span>
-        )}
-        <ActionButton
-          hotkey="⌘F"
-          onClick={toggleMainSearch}
-        >
-          Search cards
-        </ActionButton>
-      </div>
+          <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>
+            New Channel
+          </ActionButton>
+          <ThemeMenuButton
+            ref={themeMenuRef}
+            compactDetailTopMenuEnabled={compactDetailTopMenuEnabled}
+            onCompactDetailTopMenuChange={setCompactDetailTopMenuEnabled}
+            chromeSurfaceVariant={chromeSurfaceVariant}
+            onChromeSurfaceVariantChange={setChromeSurfaceVariant}
+            bottomActionBarHidden={bottomActionBarHidden}
+            onBottomActionBarHiddenChange={setBottomActionBarHidden}
+          />
+          <ActionButton
+            onClick={() => setDesignSystemOpen((v) => !v)}
+            isSelected={designSystemOpen}
+          >
+            Design
+          </ActionButton>
+          <div className="flex-1" />
+          {isSyncing && (
+            <span className="text-sm text-muted-foreground">Syncing…</span>
+          )}
+          <ActionButton
+            hotkey="⌘F"
+            onClick={toggleMainSearch}
+          >
+            Search cards
+          </ActionButton>
+        </div>
+      )}
 
       <Suspense fallback={null}>
         <DropZone

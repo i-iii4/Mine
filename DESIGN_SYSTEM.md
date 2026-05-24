@@ -305,6 +305,13 @@ Bottom app bar справа содержит `ActionButton` `Search cards` с `h
 При входе в Grid group selection пустой search state перестаёт быть active,
 непустой query/filter остаётся активным.
 
+Settings содержит persisted переключатель `Hide bottom menu`
+(`localStorage` key `mine.bottomActionBarHidden`). Он скрывает весь bottom app
+bar без placeholder-строки и без изменения высоты top chrome/body. Чтобы не
+создавать тупик в UI, Settings в этом состоянии переезжает в permanent top
+chrome и открывает меню вниз; shortcut `Cmd+,` продолжает открывать тот же
+контрол.
+
 Sidebar search (`Shift+Cmd+F`) живёт в левом сегменте top chrome. Порядок:
 traffic-light spacer, separator `w-px bg-border`, space selector, separator
 `w-px bg-border`, search input, затем штатный `border-r border-sidebar-border`
@@ -314,6 +321,35 @@ Permanent top chrome использует `bg-chrome`, промежуточны�
 `bg-background` и `bg-accent`. Это оставляет активному search surface следующий
 видимый уровень заливки: когда query непустой, search wrapper получает
 `bg-accent`, а остальной header остаётся `bg-chrome`.
+Traffic-light reserve (`80px`) не остаётся прозрачным spacer'ом: он получает
+тот же surface class, что и permanent top chrome (`bg-chrome` или, в variant
+2, `bg-accent`). Дополнительно App синхронизирует native window background
+через `getCurrentWindow().setBackgroundColor()` с тем же surface, чтобы
+AppKit titlebar area не просвечивала чужим цветом поверх overlay titlebar.
+Сами native traffic lights не стилизуются CSS, не перекрашиваются через webview
+и не получают custom alpha/state machine из Rust. На macOS desktop это всегда
+настоящие AppKit standard window buttons, а inactive gray, hover color,
+обводка, disabled/active state и click behavior полностью остаются системными.
+Frontend только резервирует `80px` зоны и синхронизирует фон native titlebar
+area с top chrome, чтобы системные кнопки лежали на корректной поверхности.
+Fake traffic lights, outline/обводка кружков, ручная отрисовка кнопок и
+programmatic hide/show настоящих кнопок запрещены.
+
+Theme selector обязан синхронизировать не только web theme (`data-theme` +
+`color-scheme`), но и native AppKit appearance через Tauri `setTheme()`:
+`Light` → `setTheme("light")`, `Dark` → `setTheme("dark")`, `System` →
+`setTheme(null)`. Это не перекрашивает traffic lights вручную, а переводит
+системные кнопки, меню и native chrome в ту же light/dark appearance, что и
+приложение. Произвольный цвет traffic lights по-прежнему запрещён.
+
+Settings содержит persisted переключатель `Chrome surfaces variant 2`
+(`localStorage` key `mine.chromeSurfaceVariant`). По умолчанию используется
+variant 1, описанный выше. Variant 2 меняет только surface mapping:
+permanent top chrome становится `bg-accent` как нижняя action bar, второй
+top-bar layer становится `bg-chrome` и в main/Grid state, и в Detail/link-editor
+state, classic Detail/Sidebar title bars также становятся `bg-chrome`, а
+непустой Sidebar search получает `bg-active`, чтобы оставаться видимым на
+`bg-accent` top chrome. Геометрия, typography, spacing и motion не меняются.
 
 Когда sidebar collapsed, top chrome не схлопывается до `0px` и не держит
 пустой слот под исчезнувший поиск. Левый segment сжимается до реального
@@ -377,7 +413,8 @@ hover/focus не получает фон: реагирует только placeh
 `text-tertiary-foreground` → `text-muted-foreground`. Когда trimmed query
 непустой, только search surface получает `bg-accent`, тот же surface token, что
 нижняя action bar; весь header, space selector и separator lines остаются на
-`bg-chrome`.
+`bg-chrome`. В `Chrome surfaces variant 2` этот filled state становится
+`bg-active`, потому что сам permanent top chrome уже использует `bg-accent`.
 
 Clear action появляется только когда value непустой: `button h-6 w-6
 rounded-1`, иконка `X` из `lucide-react`, `aria-label="Clear channel search"`.
@@ -677,6 +714,15 @@ CollectionPicker membership rows:
   `text-destructive` при той же серой заливке и той же hover/focus outline.
 - Клик по action button не должен всплывать в parent row/menu surface.
 
+### Feed Card Surfaces
+
+Ordinary feed cards use `bg-card`, not direct `bg-background`. In light theme
+`--card = --chrome = oklch(0.99 0 0)`: a half-step surface that matches the top
+chrome level and separates cards from the white page quietly. In dark theme
+`--card` remains the page background (`oklch(0.1567 0 0)`), so existing dark
+card contrast does not change. Do not hardcode one-off card background classes;
+change the semantic token if the surface level changes.
+
 ### Hover Preview Surfaces
 
 Всплывающие preview-карточки используют ту же визуальную модель, что feed card
@@ -794,6 +840,10 @@ Trigger width не является шириной menu по умолчанию.
 внутри top chrome не выключают drag целиком: они используют общий threshold
 gesture (`4px`) — короткий жест остаётся click/focus, движение за порог
 запускает native window drag и гасит последующий click.
+Traffic-light reserve размечается как `data-traffic-light-reserve`, имеет
+ширину `80px`, наследует тот же surface, что и top chrome, и не содержит
+интерактивных DOM-кнопок. Видимость inactive native traffic lights управляется
+только AppKit-слоем, не CSS.
 
 ### Нижняя панель действий (Action Bar)
 
@@ -829,7 +879,7 @@ gesture (`4px`) — короткий жест остаётся click/focus, дв
 |---|---|---|---|
 | ⌘⇧O | Space selector | Выбор папки через нативный диалог | top chrome |
 | ⌘⇧N | New Channel | Инлайн-инпут в сайдбаре | слева |
-| ⌘, | Settings | DropdownMenu переключения темы и article menu mode | слева |
+| ⌘, | Settings | DropdownMenu переключения темы, compact Detail, chrome surface variant и bottom menu visibility | слева |
 | ⌘[ / ⌘] | History | Назад / вперёд по истории страниц | глобально |
 
 ### Сайдбар
@@ -959,10 +1009,36 @@ Sidebar/Detail в App shell запрещены: они создают трети
 | Main secondary top bar | `h-8 border-b border-border bg-background`, split sidebar/content |
 | Detail/link-editor secondary bar | тот же second-level bar, `bg-accent`; sidebar segment `px-8 gap-2`, content segment `px-8 gap-3` |
 
+Если включён `Chrome surfaces variant 2`, эта таблица меняется только по
+surface: permanent top chrome остаётся `bg-accent`, а оба second-level bar
+состояния используют `bg-chrome`.
+
+Non-compact Detail close не должен распадаться на несколько визуальных шагов.
+Второй top-bar level держит два абсолютных слоя внутри тех же sidebar/content
+segments: main statistics layer (`data-main-secondary-main-layer`) и
+Detail/link-editor layer (`data-secondary-sidebar-link-mode-bar`,
+`data-secondary-detail-top-menu`). Surface bar привязан к entered-state
+Detail-layer, а не к наличию closing snapshot: как только close начинается,
+bar сразу переходит в main surface, Detail controls уходят через
+`opacity + translateY(-8px)`, а statistics layer возвращается через
+`opacity + translateY(6px)`. Snapshot открытой карточки остаётся только для
+анимации текста/кнопок; он не удерживает `bg-accent` после начала закрытия.
+Обычный non-compact close использует короткий shell-exit budget около `190ms`;
+compact Detail top chrome сохраняет отдельный `260ms` budget, потому что там
+анимируются элементы permanent top chrome.
+
 В main/Grid state второй top-bar level — тихая информационная строка, а не
 навигация и не toolbar. Она показывает статистику текущего пространства и
 текущего канала без кнопок, иконок, плашек, hover-состояний и внутренних
 вертикальных разделителей.
+
+Левая часть использует компактный англоязычный metadata contract:
+`1 466 files    260 .md    1 204 media    4,8 GB`. `files` — полный
+физический счётчик файлов в source vault, включая Markdown, media, остальные
+файлы, скрытые и служебные файлы. Точка не рисуется отдельным separator:
+она является частью label `.md`, как расширение файла; промежутки задаются
+layout gap. Правая часть пишет `cards` только для `Everything`; в конкретном
+канале строка получает уточнение `cards in channel`.
 
 Art direction: это ambient metadata, а не dashboard. Строка должна считываться
 как часть системного chrome: ровная, низкоконтрастная, без KPI-акцента и без
@@ -974,14 +1050,14 @@ colored deltas, cards, pills, uppercase labels и отдельные hover/focus
 `items-center`, `overflow-hidden`. Текстовый режим:
 `font-mono text-sm text-tertiary-foreground leading-none`, regular weight.
 Строка собирается как spacing-only inline cluster:
-`260 md    1 204 media    4,8 GB`. Между показателями нет пунктуации,
+`260 .md    1 204 media    4,8 GB`. Между показателями нет отдельной пунктуации,
 иконок или вертикальных разделителей; группы разделяет только стабильный
 `gap-5`. Названия показателей не выделяются жирным; числа и слова находятся в
 самом слабом текстовом уровне, потому что это secondary metadata, а не KPI.
 
 Текстовый контракт левого segment:
 
-- Markdown files: compact label `md`, пример `260 md`
+- Markdown files: compact label `.md`, пример `260 .md`
 - Media files: compact label `media`, пример `1 204 media`
 - storage size без дополнительного слова `used`: `4,8 GB`, не `used 4,8 GB`
 

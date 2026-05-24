@@ -285,6 +285,7 @@ export interface TaxonomySnapshot {
 }
 
 export interface VaultStats {
+  totalFileCount: number;
   markdownFileCount: number;
   mediaFileCount: number;
   sourceBytes: number;

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { forwardRef } from "react";
+import { forwardRef, useImperativeHandle } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
@@ -224,8 +224,38 @@ vi.mock("@/components/ActionButton", () => ({
 }));
 
 vi.mock("@/components/ThemeMenuButton", () => ({
-  ThemeMenuButton: forwardRef(function ThemeMenuButton() {
-    return null;
+  ThemeMenuButton: forwardRef(function ThemeMenuButton({
+    chromeSurfaceVariant = "variant1",
+    onChromeSurfaceVariantChange,
+    bottomActionBarHidden = false,
+    onBottomActionBarHiddenChange,
+  }: {
+    chromeSurfaceVariant?: "variant1" | "variant2";
+    onChromeSurfaceVariantChange?: (value: "variant1" | "variant2") => void;
+    bottomActionBarHidden?: boolean;
+    onBottomActionBarHiddenChange?: (hidden: boolean) => void;
+  }, ref) {
+    useImperativeHandle(ref, () => ({ toggle: vi.fn() }), []);
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => {
+            onChromeSurfaceVariantChange?.(
+              chromeSurfaceVariant === "variant2" ? "variant1" : "variant2",
+            );
+          }}
+        >
+          Settings
+        </button>
+        <button
+          type="button"
+          onClick={() => onBottomActionBarHiddenChange?.(!bottomActionBarHidden)}
+        >
+          Hide bottom menu
+        </button>
+      </>
+    );
   }),
 }));
 
@@ -342,11 +372,13 @@ function dragPastChromeThreshold(element: HTMLElement, pointerId = 1) {
 
 describe("AppWithVault", () => {
   const startDragging = vi.fn(async () => {});
+  const setBackgroundColor = vi.fn(async (_color: string) => {});
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getCurrentWindow).mockReturnValue({
       startDragging,
+      setBackgroundColor,
     } as never);
     localStorage.clear();
     sidebarResizeState.width = 300;
@@ -424,6 +456,7 @@ describe("AppWithVault", () => {
       total_blocks: 2,
     });
     commandMocks.getVaultStats.mockImplementation(async (currentCollection = null) => ({
+      totalFileCount: 1466,
       markdownFileCount: 260,
       mediaFileCount: 1204,
       sourceBytes: 4_800_000_000,
@@ -476,6 +509,11 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
     });
+    await waitFor(() => {
+      expect(document.querySelector("[data-main-secondary-stats-right]")).toHaveTextContent(
+        "1 card in channel",
+      );
+    });
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
     expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(2, "alpha", 0, 200);
@@ -493,6 +531,11 @@ describe("AppWithVault", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    await waitFor(() => {
+      expect(document.querySelector("[data-main-secondary-stats-right]")).toHaveTextContent(
+        "2 cards",
+      );
     });
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
@@ -628,10 +671,16 @@ describe("AppWithVault", () => {
     expect(sidebarSegment).toHaveStyle({ width: "var(--sidebar-width)" });
     expect(sidebarSegment).toHaveClass("border-r", "border-sidebar-border");
     expect(contentSegment).toHaveClass("flex-1");
-    expect(sidebarSegment).toHaveTextContent("260 md1 204 media4,8 GB");
+    expect(sidebarSegment).toHaveTextContent("1 466 files260 .md1 204 media4,8 GB");
     expect(contentSegment).toHaveTextContent("2 cards");
     expect(sidebarSegment?.querySelector("[data-main-secondary-stats-left] > div")).toHaveClass(
       "gap-5",
+    );
+    expect(sidebarSegment?.querySelector("[data-main-secondary-stat-atom='files']")).toHaveTextContent(
+      "1 466 files",
+    );
+    expect(sidebarSegment?.querySelector("[data-main-secondary-stat-atom='markdown']")).toHaveTextContent(
+      "260 .md",
     );
     expect(sidebarSegment?.querySelector("[data-main-secondary-stats-left]")).toHaveClass(
       "text-tertiary-foreground",
@@ -640,6 +689,81 @@ describe("AppWithVault", () => {
       "justify-start",
       "text-tertiary-foreground",
     );
+  });
+
+  it("switches chrome surfaces to variant 2 from Settings", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const topSidebarSegment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
+    const secondaryBar = document.querySelector("[data-main-secondary-top-bar]") as HTMLElement;
+    const trafficLightReserve = document.querySelector("[data-traffic-light-reserve]") as HTMLElement;
+    expect(topSidebarSegment.parentElement).toHaveClass("bg-chrome");
+    expect(trafficLightReserve).toHaveClass("bg-chrome");
+    expect(secondaryBar).toHaveClass("bg-background");
+    await waitFor(() => {
+      expect(setBackgroundColor).toHaveBeenCalledWith("#fcfcfc");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    await waitFor(() => {
+      expect(topSidebarSegment.parentElement).toHaveClass("bg-accent");
+      expect(trafficLightReserve).toHaveClass("bg-accent");
+      expect(secondaryBar).toHaveClass("bg-chrome");
+      expect(setBackgroundColor).toHaveBeenCalledWith("#f8f8f8");
+    });
+    expect(localStorage.getItem("mine.chromeSurfaceVariant")).toBe("variant2");
+
+    fireEvent.keyDown(window, { key: "А", code: "KeyF", metaKey: true, shiftKey: true });
+    const input = screen.getByRole("textbox", { name: "Search channels" });
+    fireEvent.change(input, { target: { value: "alp" } });
+    expect(input.closest("[data-sidebar-top-search-surface]")).toHaveClass("bg-active");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    });
+    expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-chrome");
+  });
+
+  it("hides the bottom action bar without losing Settings access", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    expect(document.querySelector("[data-bottom-action-bar]")).toBeInTheDocument();
+    expect(document.querySelector("[data-top-chrome-settings-fallback]")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide bottom menu" }));
+
+    await waitFor(() => {
+      expect(document.querySelector("[data-bottom-action-bar]")).not.toBeInTheDocument();
+    });
+    expect(localStorage.getItem("mine.bottomActionBarHidden")).toBe("true");
+
+    const topSettingsFallback = document.querySelector(
+      "[data-top-chrome-settings-fallback]",
+    ) as HTMLElement | null;
+    expect(topSettingsFallback).toBeInTheDocument();
+    fireEvent.click(within(topSettingsFallback!).getByRole("button", { name: "Settings" }));
+
+    await waitFor(() => {
+      expect(localStorage.getItem("mine.chromeSurfaceVariant")).toBe("variant2");
+    });
   });
 
   it("uses the secondary top bar for non-compact Detail chrome instead of body overlays", async () => {
@@ -664,10 +788,18 @@ describe("AppWithVault", () => {
     const secondaryDetailMenu = document.querySelector(
       "[data-secondary-detail-top-menu]",
     ) as HTMLElement | null;
+    const secondaryContentSegment = document.querySelector(
+      "[data-main-secondary-top-bar-content-segment]",
+    ) as HTMLElement | null;
     expect(screen.getByRole("dialog")).toHaveAttribute("data-detail-top-chrome-mode", "external");
-    expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-accent");
     expect(secondarySidebarBar).toBeInTheDocument();
     expect(secondaryDetailMenu).toBeInTheDocument();
+    expect(secondaryContentSegment).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-accent");
+      expect(secondaryDetailMenu).toHaveAttribute("data-entered", "true");
+      expect(secondarySidebarBar).toHaveAttribute("data-entered", "true");
+    });
     expect(secondarySidebarBar).toHaveTextContent("Channels:");
     expect(within(secondarySidebarBar!).getByRole("button", { name: "All" })).toHaveAttribute(
       "aria-pressed",
@@ -676,6 +808,21 @@ describe("AppWithVault", () => {
     expect(within(secondaryDetailMenu!).getByText("alpha-block")).toBeInTheDocument();
     expect(document.querySelector("[data-sidebar-link-mode-bar]")).not.toBeInTheDocument();
     expect(document.querySelector('[data-detail-top-menu="classic"]')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
+
+    expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-background");
+    expect(secondaryDetailMenu).toHaveAttribute("data-entered", "false");
+    expect(secondarySidebarBar).toHaveAttribute("data-entered", "false");
+    expect(document.querySelectorAll("[data-main-secondary-main-layer]")[0]).toHaveAttribute(
+      "data-entered",
+      "true",
+    );
+    expect(document.querySelectorAll("[data-main-secondary-main-layer]")[1]).toHaveAttribute(
+      "data-entered",
+      "true",
+    );
+    expect(within(secondaryContentSegment!).getByText("2 cards")).toBeInTheDocument();
   });
 
   it("keeps space and collection controls while hiding channel search when the sidebar is collapsed", async () => {

@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { isChromeSurfaceVariant2, type ChromeSurfaceVariant } from "@/lib/chromeSurfaceVariant";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -126,6 +127,7 @@ interface DetailProps {
   thumbsRootPath?: string;
   isClosing?: boolean;
   topChromeMode?: "classic" | "external";
+  chromeSurfaceVariant?: ChromeSurfaceVariant;
   onClose: () => void;
   onNavigate: (direction: "prev" | "next" | "up" | "down") => void;
   tags: TagCount[];
@@ -211,6 +213,7 @@ export function Detail({
   thumbsRootPath,
   isClosing = false,
   topChromeMode = "classic",
+  chromeSurfaceVariant = "variant1",
   onClose,
   tags,
   currentTag,
@@ -356,7 +359,10 @@ export function Detail({
       {topChromeMode === "classic" && (
         <header
           data-entered={chromeEntered ? "true" : "false"}
-          className="detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 bg-accent px-8"
+          className={cn(
+            "detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 px-8",
+            isChromeSurfaceVariant2(chromeSurfaceVariant) ? "bg-chrome" : "bg-accent",
+          )}
           data-detail-top-menu="classic"
         >
           <div

@@ -100,7 +100,7 @@ interface CardProps {
 }
 
 const CARD_FRAME_CLASS =
-  "group relative overflow-hidden border border-border rounded-[var(--radius-card)] bg-background";
+  "group relative overflow-hidden border border-border rounded-[var(--radius-card)] bg-card";
 
 interface CardFrameProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;

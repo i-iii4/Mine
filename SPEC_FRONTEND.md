@@ -83,6 +83,7 @@ interface TagCount {
 
 ```typescript
 interface VaultStats {
+  totalFileCount: number;
   markdownFileCount: number;
   mediaFileCount: number;
   sourceBytes: number;
@@ -484,8 +485,10 @@ Sidebar и Detail body не должны рендерить свои допол�
 
 В main/Grid state этот второй bar рендерит `MainSecondaryStatsBar`, а не
 toolbar. Левый segment (`data-main-secondary-top-bar-sidebar-segment`) получает
-space-level stats из `VaultStats`: Markdown file count, media file count и
-source vault byte size. Правый segment
+space-level stats из `VaultStats`: total source file count, Markdown file count,
+media file count и source vault byte size. `totalFileCount` — полный физический
+счётчик файлов внутри source vault: он включает Markdown, media, остальные
+файлы, скрытые и служебные файлы, включая service dirs. Правый segment
 (`data-main-secondary-top-bar-content-segment`) получает
 `currentCollectionCardCount`: в `Everything` это все non-channel карточки, в
 канале — карточки, прикреплённые к этому каналу. Active Grid search не меняет
@@ -493,18 +496,23 @@ source vault byte size. Правый segment
 
 Форматирование принадлежит frontend helper layer, а не JSX inline logic:
 
-- `formatCompactCount(markdownFileCount, "md")`
-- `formatCompactCount(mediaFileCount, "media")`
-- `formatCardCount(currentCollectionCardCount)` returns `1 card`, otherwise
-  `cards`
+- `formatFileCount(totalFileCount)` returns `1 file`, otherwise `files`
+- `formatMarkdownCount(markdownFileCount)` returns compact `.md`
+- `formatMediaCount(mediaFileCount)` returns compact `media`
+- `formatCardCount(currentCollectionCardCount, inChannel)` returns `1 card` /
+  `cards` in `Everything`, and `1 card in channel` / `cards in channel` in
+  concrete channel routes
 - `formatStorageBytes(sourceBytes)` with decimal units `B`, `KB`, `MB`, `GB`,
   `TB`
 
 Числа форматируются через `Intl.NumberFormat("ru-RU")`; storage size показывает
 один десятичный знак только для значений меньше `10` в выбранной единице.
-Строка левого segment: `260 md    1 204 media    4,8 GB`, где разделение
-делается layout gap, а не символом-разделителем. Строка правого segment:
-`260 cards`, выровнена по левой оси content segment.
+Строка левого segment: `1 466 files    260 .md    1 204 media    4,8 GB`.
+Dot не является отдельным separator atom: она является частью label `.md`,
+как расширение файла. Разделение между группами делается layout gap, а не
+серией символов-разделителей. Строка правого segment: `260 cards` в
+`Everything` или `260 cards in channel` в канале, выровнена по левой оси
+content segment.
 
 Realtime behavior: `MainSecondaryStatsBar` resolves all data through
 `getVaultStats(currentCollection)`. It loads once after vault open, refreshes on
@@ -586,7 +594,11 @@ Thumbnail отображается через `convertFileSrc(vaultPath + "/.are
 
 Медиафайлы (для media-карточек без thumbnail): `convertFileSrc(vaultPath + "/" + media_file)`.
 
-Feed card frame is a persistent `border border-border bg-background` surface.
+Feed card frame is a persistent `border border-border bg-card` surface.
+In light theme `--card` uses the same half-step surface as top chrome
+(`--chrome`, `oklch(0.99 0 0)`), so cards sit slightly above the page without
+becoming a stronger component fill. In dark theme `--card` remains equal to the
+page background (`oklch(0.1567 0 0)`) to preserve the existing dark feed.
 Hover does not change the card frame: no border recolor, outline, inset border,
 shadow, glow, transition, or extra overlay. The feed hover affordance is the
 card action controls. Feed keyboard focus is not Card state: Grid owns
@@ -602,7 +614,7 @@ cards do not get a graphic surface state.
 Article feed cards additionally get `feed-article-card`;
 that class applies `background: var(--accent)` only in dark theme
 (`data-theme="dark"` or system dark unless `data-theme="light"`). Light theme
-article cards stay on the default card background.
+article cards stay on the default `bg-card` background.
 
 Article inline media renders from backend-derived paths. For bare Obsidian
 embeds such as `![[01.jpg]]`, Detail first asks `preview_manifest.tiles` for a
@@ -755,6 +767,35 @@ Image media expansion:
   остаётся входом для фильтрации Grid route: Everything или текущей коллекции.
   Permanent top chrome uses `bg-chrome`, the app-shell surface midway between
   `bg-background` and the bottom/action/search `bg-accent` surface.
+  Settings exposes `Chrome surfaces variant 2`, persisted in
+  `localStorage` as `mine.chromeSurfaceVariant`. Default `variant1` keeps the
+  mapping above. `variant2` maps permanent top chrome to `bg-accent`, maps
+  main and Detail/link-editor second-level bars to `bg-chrome`, maps classic
+  Detail/Sidebar title chrome to `bg-chrome`, and maps active Sidebar search
+  fill to `bg-active`.
+  Settings also exposes `Hide bottom menu`, persisted in `localStorage` as
+  `mine.bottomActionBarHidden`. When enabled, the bottom app bar is not
+  rendered at all, no placeholder row remains, and the same Settings control
+  is rendered in permanent top chrome with `side="bottom"` so the user can
+  restore the bar. `Cmd+,` targets whichever Settings control is mounted.
+  The `80px` traffic-light reserve is not a transparent spacer: it receives
+  the same surface class as permanent top chrome and is marked with
+  `data-traffic-light-reserve`. App also syncs the native Tauri window
+  background via `getCurrentWindow().setBackgroundColor()` to the same resolved
+  surface (`--chrome` in variant1, `--accent` in variant2), so the AppKit
+  titlebar area never shows a mismatched fill behind overlay controls. Native
+  macOS traffic lights remain AppKit controls, not DOM. Desktop Rust must not
+  hide, recolor, alpha-toggle, or install a custom tracking state machine over
+  the real `Close` / `Miniaturize` / `Zoom` standard window buttons. Inactive
+  gray circles, hover color, native outline, disabled/active states and click
+  behavior are owned by macOS. The frontend only reserves the `80px` zone and
+  syncs the native titlebar background to the same resolved top-chrome surface.
+  The frontend must not draw fake traffic lights or outline the native buttons.
+  Theme selection also syncs native appearance through Tauri `setTheme()`:
+  explicit `Light` calls `setTheme("light")`, explicit `Dark` calls
+  `setTheme("dark")`, and `System` calls `setTheme(null)` so AppKit follows the
+  OS. This is the only allowed way to align traffic-light light/dark rendering
+  with Mine's theme; arbitrary button colors remain unsupported and forbidden.
   Top chrome делится той же границей `--sidebar-width`, что и body: слева
   traffic-light spacer, space selector, sidebar channel search и
   `border-r border-sidebar-border`, справа current collection switcher и
@@ -820,7 +861,9 @@ Image media expansion:
   as Detail top bar: `font-mono text-sm text-muted-foreground`, regular
   weight. When the trimmed query is non-empty, only the search surface is filled
   with `bg-accent`, matching the bottom action bar surface. The top header,
-  space selector and separator lines remain on `bg-chrome`.
+  space selector and separator lines remain on `bg-chrome`. In `variant2`,
+  active search fill uses `bg-active` because permanent top chrome already uses
+  `bg-accent`.
 - The clear action appears only when the input value is non-empty. It is an
   icon-only `X` button (`h-6 w-6 rounded-1`, `aria-label="Clear channel
   search"`). Clicking it clears the query, restores the full channel list and
@@ -883,7 +926,9 @@ Image media expansion:
   adds animated sibling controls. When the flag is on and Detail is open, the
   global top chrome still remains on `bg-chrome` and owns the Detail controls. The
   internal Detail top bar is not rendered, and the Sidebar `Channels:`
-  link-editor top bar is not rendered.
+  link-editor top bar is not rendered. If `Chrome surfaces variant 2` is
+  enabled, the global top chrome remains on `bg-accent`; compact geometry and
+  motion stay unchanged.
 - In Compact Detail mode the `All / Connected` segmented control is part of
   the left Sidebar/search segment, not the right Detail title segment. In
   expanded Sidebar state it sits inside the same search surface as
@@ -967,6 +1012,16 @@ Image media expansion:
 - Внешний non-compact Detail chrome показывает filename/title в
   `font-mono text-sm text-muted-foreground`; справа находятся shared overflow
   menu (`CardMoreMenu`) и close button.
+- Внешний non-compact Detail chrome закрывается как единый top-bar transition,
+  а не как серия независимых переключений. `MainSecondaryTopBar` держит main
+  statistics layer и Detail/link-editor layer в одних и тех же sidebar/content
+  segments. При close `detailEntered` сразу становится `false`, surface второго
+  bar возвращается в main state, Detail controls получают
+  `data-entered="false"`, statistics layer получает `data-entered="true"`.
+  Closing snapshot может оставаться смонтированным до конца exit-анимации, но
+  он не имеет права удерживать `bg-accent` или откладывать возврат статистики.
+  Non-compact close budget — `190ms`; compact Detail top chrome использует
+  отдельный `260ms` budget.
 - Если Detail получает `topChromeMode="external"`, внутреннее верхнее меню не
   рендерится, а `Cmd+K`/overflow/close принадлежат App-level chrome.
 - Верхний chrome Detail входит и выходит через мягкий `opacity + translateY`

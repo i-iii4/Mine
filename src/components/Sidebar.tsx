@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
 import { getBlock } from "@/lib/commands";
+import { isChromeSurfaceVariant2, type ChromeSurfaceVariant } from "@/lib/chromeSurfaceVariant";
 import { collectionRefLabel } from "@/lib/collections";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import {
@@ -156,6 +157,7 @@ interface SidebarProps {
   onLinkModeChange?: (mode: SidebarLinkMode) => void;
   showLinkModeChrome?: boolean;
   detailChromeClosing?: boolean;
+  chromeSurfaceVariant?: ChromeSurfaceVariant;
 }
 
 function createSidebarSeamAccentSet(
@@ -201,6 +203,7 @@ export function Sidebar({
   onLinkModeChange,
   showLinkModeChrome = true,
   detailChromeClosing = false,
+  chromeSurfaceVariant = "variant1",
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [uncontrolledLinkMode, setUncontrolledLinkMode] = useState<SidebarLinkMode>("all");
@@ -556,6 +559,7 @@ export function Sidebar({
         <SidebarLinkModeSwitch
           value={effectiveLinkMode}
           entered={linkChromeEntered}
+          chromeSurfaceVariant={chromeSurfaceVariant}
           onChange={(mode) => {
             setUncontrolledLinkMode(mode);
             onLinkModeChange?.(mode);
@@ -762,10 +766,12 @@ function computeSidebarPreviewPosition(
 const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
   value,
   entered,
+  chromeSurfaceVariant,
   onChange,
 }: {
   value: "all" | "linked";
   entered: boolean;
+  chromeSurfaceVariant: ChromeSurfaceVariant;
   onChange: (value: "all" | "linked") => void;
 }) {
   const label = (
@@ -808,7 +814,10 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
 
   return (
     <div
-      className="detail-top-bar-enter absolute inset-x-0 top-0 z-10 flex h-8 items-center gap-2 bg-accent px-8"
+      className={cn(
+        "detail-top-bar-enter absolute inset-x-0 top-0 z-10 flex h-8 items-center gap-2 px-8",
+        isChromeSurfaceVariant2(chromeSurfaceVariant) ? "bg-chrome" : "bg-accent",
+      )}
       data-entered={entered ? "true" : "false"}
       data-sidebar-link-mode-bar
     >

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from "react";
+import { setTheme as setTauriTheme } from "@tauri-apps/api/app";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -8,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ActionButton } from "@/components/ActionButton";
+import type { ChromeSurfaceVariant } from "@/lib/chromeSurfaceVariant";
 
 type ThemeMode = "system" | "light" | "dark";
 
@@ -22,9 +24,11 @@ function applyTheme(mode: ThemeMode) {
   if (mode === "system") {
     root.removeAttribute("data-theme");
     root.style.colorScheme = "";
+    void setTauriTheme(null).catch(() => {});
   } else {
     root.setAttribute("data-theme", mode);
     root.style.colorScheme = mode;
+    void setTauriTheme(mode).catch(() => {});
   }
 }
 
@@ -35,16 +39,26 @@ export interface ThemeMenuHandle {
 interface ThemeMenuButtonProps {
   compactDetailTopMenuEnabled?: boolean;
   onCompactDetailTopMenuChange?: (enabled: boolean) => void;
+  chromeSurfaceVariant?: ChromeSurfaceVariant;
+  onChromeSurfaceVariantChange?: (value: ChromeSurfaceVariant) => void;
+  bottomActionBarHidden?: boolean;
+  onBottomActionBarHiddenChange?: (hidden: boolean) => void;
+  menuSide?: "top" | "bottom";
 }
 
 export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>(function ThemeMenuButton(
   {
     compactDetailTopMenuEnabled = false,
     onCompactDetailTopMenuChange,
+    chromeSurfaceVariant = "variant1",
+    onChromeSurfaceVariantChange,
+    bottomActionBarHidden = false,
+    onBottomActionBarHiddenChange,
+    menuSide = "top",
   },
   ref,
 ) {
-  const [theme, setTheme] = useState<ThemeMode>(getStoredTheme);
+  const [theme, setThemeMode] = useState<ThemeMode>(getStoredTheme);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -73,11 +87,11 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>
           </ActionButton>
         </div>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="top">
+      <DropdownMenuContent align="start" side={menuSide}>
         {(["system", "light", "dark"] as const).map((mode) => (
           <DropdownMenuItem
             key={mode}
-            onSelect={() => setTheme(mode)}
+            onSelect={() => setThemeMode(mode)}
             className={theme === mode ? "bg-accent" : ""}
           >
             {labels[mode]}
@@ -89,6 +103,20 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>
           onCheckedChange={(checked) => onCompactDetailTopMenuChange?.(checked === true)}
         >
           Compact Detail top menu
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={chromeSurfaceVariant === "variant2"}
+          onCheckedChange={(checked) => {
+            onChromeSurfaceVariantChange?.(checked === true ? "variant2" : "variant1");
+          }}
+        >
+          Chrome surfaces variant 2
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={bottomActionBarHidden}
+          onCheckedChange={(checked) => onBottomActionBarHiddenChange?.(checked === true)}
+        >
+          Hide bottom menu
         </DropdownMenuCheckboxItem>
       </DropdownMenuContent>
     </DropdownMenu>

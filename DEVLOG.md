@@ -1,5 +1,182 @@
 # Devlog
 
+## 24.05.2026 [fix] — Sync native AppKit appearance with Mine theme
+
+### Context
+
+- Native macOS traffic lights are AppKit controls and should stay system-owned.
+- When Mine used an explicit light/dark theme while AppKit still followed the
+  OS appearance, the traffic-light gray could mismatch the top chrome surface.
+
+### Completed
+
+- Extended `ThemeMenuButton` theme application to call Tauri `setTheme()`.
+- Added the required `core:app:allow-set-app-theme` capability so the native
+  theme sync is allowed at runtime.
+- `Light` now syncs AppKit to light appearance, `Dark` syncs to dark
+  appearance, and `System` passes `null` so AppKit follows macOS again.
+- Kept traffic lights fully native: no fake DOM buttons, alpha hooks, custom
+  hover tracking or arbitrary recoloring.
+- Added regression coverage for web theme + native appearance synchronization.
+
+## 23.05.2026 [change] — Refine main secondary stats copy
+
+### Context
+
+- The main secondary bar needed a clearer split between total source files,
+  file breakdown and route-scoped card count.
+- Channel routes should not look like the global Everything count.
+
+### Completed
+
+- Added `totalFileCount` to `VaultStats`; it counts every physical file under
+  the source vault, including hidden/service files and files inside service
+  directories.
+- Kept Markdown/media/source-size breakdown scoped to the source-vault files
+  already used by the bar.
+- Changed left stats copy to `files .md media size`; the dot belongs to the
+  `.md` extension label and is not a separate separator.
+- Changed right stats copy to `cards` in Everything and `cards in channel` in
+  concrete channel routes.
+
+## 23.05.2026 [fix] — Restore fully system-owned macOS traffic lights
+
+### Context
+
+- The previous traffic-light fix overcorrected the artifact by hiding/showing
+  the real AppKit buttons with a custom alpha/tracking state machine.
+- That was not the right contract: macOS already provides the correct inactive
+  gray circles, hover color, native outline and click behavior.
+
+### Completed
+
+- Removed the desktop `native_window_chrome` module and all focus/hover hooks
+  that mutated `Close`, `Miniaturize` and `Zoom` button alpha.
+- Removed the direct `objc2` / `objc2-app-kit` / `objc2-foundation`
+  dependencies that existed only for that custom traffic-light behavior.
+- Kept the webview traffic-light reserve and native titlebar background sync:
+  layout owns space and surface color, AppKit owns the controls.
+- Updated frontend and design-system docs to forbid fake traffic lights and
+  programmatic hide/show of native traffic-light buttons.
+
+## 23.05.2026 [change] — Give light-theme feed cards a chrome-level surface
+
+### Context
+
+- Light-theme feed cards used the page background directly, which made card
+  surfaces read flatter than the top chrome hierarchy.
+- Dark-theme card backgrounds should stay unchanged.
+
+### Completed
+
+- Switched the shared Card frame from `bg-background` to semantic `bg-card`.
+- Set light-theme `--card` to the top-chrome half-step surface
+  `oklch(0.99 0 0)`.
+- Kept dark-theme `--card` at the existing page background
+  `oklch(0.1567 0 0)`.
+- Updated frontend and design-system docs for the card surface contract.
+
+## 23.05.2026 [fix] — Make native traffic-light visibility hover-aware
+
+### Context
+
+- Filling the webview traffic-light reserve was not enough: macOS traffic
+  lights are drawn by AppKit above the webview.
+- The first native pass only keyed visibility off window focus, which removed
+  inactive white dots but also prevented the standard controls from appearing
+  when the user hovered the traffic-light area on an unfocused window.
+- The correct boundary is native window chrome state, not another DOM layer.
+
+### Completed
+
+- Added desktop `native_window_chrome` integration for macOS standard window
+  buttons.
+- Replaced the focus-only rule with
+  `trafficLightsVisible = windowFocused || pointerInsideTrafficLightZone`.
+- Installed an AppKit `NSTrackingArea` over the native traffic-light group so
+  hover works even when the window is unfocused.
+- On unfocused windows outside that zone, real AppKit `Close`, `Miniaturize`
+  and `Zoom` buttons get alpha `0`; on focus or native hover alpha is restored
+  to `1`.
+- Kept active traffic lights native and system-drawn; no fake DOM controls,
+  outlines or CSS-painted replacements.
+- Kept the existing top-chrome reserve/background sync so the titlebar area
+  still sits on the same surface as permanent top chrome.
+
+## 23.05.2026 [change] — Smooth non-compact Detail chrome close
+
+### Context
+
+- In ordinary, non-compact Detail mode, closing a card could look split into
+  two steps: title/actions animated out first, then the second-level bar surface
+  and statistics snapped back later.
+- The cause was architectural: the bar surface was keyed to the presence of the
+  closing Detail snapshot, not to the visible entered state of Detail chrome.
+
+### Completed
+
+- Split `MainSecondaryTopBar` into two absolute layers inside the same
+  sidebar/content segments: main statistics and Detail/link-editor controls.
+- Keyed the second-level bar surface to `detailEntered`, so close immediately
+  starts the main-surface return while Detail controls fade/slide out.
+- Crossfaded statistics back in during the same transition, avoiding the late
+  card-count jump.
+- Shortened ordinary non-compact Detail close to `190ms`; compact Detail top
+  chrome keeps its separate `260ms` timing.
+- Added App regression coverage for the entered-state layer contract.
+
+## 23.05.2026 [change] — Sync traffic-light reserve with top chrome
+
+### Context
+
+- Inactive macOS traffic lights could read as pale empty circles over the
+  top-left chrome.
+- The fix should follow the top chrome surface and theme, not fake native
+  window controls.
+
+### Completed
+
+- Marked the traffic-light reserve as an explicit `data-traffic-light-reserve`
+  surface and gave it the same fill class as permanent top chrome.
+- Synced the native Tauri window background to the resolved top chrome surface
+  (`--chrome` or `--accent`) so overlay titlebar controls sit on the same fill.
+- Added fallback OKLCH-neutral to hex resolution for light/dark themes and
+  App coverage for the surface switch.
+
+## 23.05.2026 [change] — Add bottom menu visibility setting
+
+### Context
+
+- The bottom app bar should be optionally hidden from Settings.
+- Hiding it must not remove the user's access path back to Settings.
+
+### Completed
+
+- Added persisted Settings checkbox `Hide bottom menu`
+  (`mine.bottomActionBarHidden`).
+- Hidden state removes the bottom app bar without leaving a placeholder row.
+- Settings moves to permanent top chrome while the bottom bar is hidden and
+  opens downward; `Cmd+,` continues to target the mounted Settings control.
+- Added App and Settings menu regression coverage for the visibility toggle.
+
+## 23.05.2026 [change] — Add UI toggle for chrome surface variant
+
+### Context
+
+- The alternate chrome color mapping should be switchable in the product UI,
+  not only preserved as a git branch.
+- Variant 1 remains the default; variant 2 is an experimental visual option.
+
+### Completed
+
+- Added persisted Settings checkbox `Chrome surfaces variant 2`
+  (`mine.chromeSurfaceVariant`).
+- Added runtime surface mapping for variant 2: top chrome `bg-accent`,
+  second-level and Detail title chrome `bg-chrome`, active Sidebar search
+  `bg-active`.
+- Kept geometry, spacing, motion and typography shared between both variants.
+- Added App and Settings menu regression coverage for the toggle.
+
 ## 23.05.2026 [implementation] — Render main secondary statistics bar
 
 ### Context

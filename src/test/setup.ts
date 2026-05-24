@@ -33,7 +33,12 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: vi.fn(() => ({
     startDragging: vi.fn(async () => {}),
+    setBackgroundColor: vi.fn(async () => {}),
   })),
+}));
+
+vi.mock("@tauri-apps/api/app", () => ({
+  setTheme: vi.fn(async () => {}),
 }));
 
 // Mock @tauri-apps/plugin-dialog
