@@ -1,5 +1,32 @@
 # Devlog
 
+## 24.05.2026 [spec] — Define feed scroll readiness contract
+
+### Context
+
+- Fast scroll could feel physically smooth while media content appeared late,
+  making the feed look dirty instead of canvas-like.
+- A brute-force overscan increase would be fast to implement but would conflate
+  DOM readiness, layout readiness and decoded media readiness.
+- Fixed pixel windows are not sufficient for a final architecture: a small slow
+  viewport and a fast flick-scroll need different budgets.
+
+### Completed
+
+- Added [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md).
+- Defined separate budgets for render window, image priority window and media
+  preload/decode window.
+- Upgraded the contract from fixed overscan constants to adaptive windows based
+  on viewport height and scroll velocity.
+- Made the media preload hot path preview-only: derived preview/poster/thumbnail
+  assets are eligible; original source media is explicitly excluded.
+- Specified shared candidate extraction, bounded queueing, decode timeout,
+  LRU/failed-URL suppression, generation reset and development diagnostics.
+- Added explicit scroll-readiness invariants, readiness state machine and tuning
+  protocol so future changes cannot degrade into magic overscan constants.
+- Updated architecture, frontend, design-system, performance-audit and plan docs
+  so implementation must not solve canvas feel by mounting the whole route.
+
 ## 24.05.2026 [fix] — Sync native AppKit appearance with Mine theme
 
 ### Context

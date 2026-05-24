@@ -17,6 +17,7 @@
 - `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
 - `SPEC_SEARCH.md` — спецификация Surface Search и целевой Hybrid Search: `Cmd+F` Grid filter, `Shift+Cmd+F` Sidebar filter, lexical/alias/semantic retrieval, fusion ranking, excerpts/highlights
 - `SPEC_GROUP_SELECTION.md` — спецификация Grid group selection и batch card actions
+- `SPEC_FEED_SCROLL_PERFORMANCE.md` — planned контракт бесконечного canvas-feel для ленты: render window, media preload/decode window, лимиты, диагностика
 - `SPEC_THUMBNAILS.md` — полная спецификация preview/thumbnail pipeline
 - `SPEC_FEED_VIDEO.md` — спецификация desktop feed video contract: surfaces, `feed_playback`, autoplay gating
 - `SPEC_ARTICLE_AUDIO.md` — спецификация manual article audio renditions: speech prep, derived audio state, desktop/iOS controls

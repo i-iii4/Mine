@@ -13,6 +13,7 @@
 | 7 | Стартовый grid payload слишком тяжёлый (`body`, tags, media metadata на весь corpus) | PARTIALLY FIXED (route-scoped `list_grid_blocks`, no per-block tags) |
 | 8 | `list_pending_thumb_upgrades()` делал file peek'и из IPC на UI thread | FIXED (SQLite planner + `spawn_blocking`) |
 | 9 | Watcher и background `full_scan()` одновременно переиндексировали vault и ловили SQLite lock storm | FIXED (watcher suppressed while sync is active) |
+| 10 | Fast scroll выглядит грязно: smooth scroll догоняется late media decode / blank preview states | PLANNED ([SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md)) |
 
 ## Latest wins
 
@@ -129,6 +130,19 @@ Rust IPC returns new array reference every time → `setBlocks(new_array)` alway
 - Но на маршруте `Everything` frontend всё ещё получает весь corpus одним IPC snapshot при cache miss
 - `first_image`, `media_urls`, `media_dimensions` всё ещё прилетают заранее для всех карточек
 - Fix: порционная догрузка grid snapshot по viewport / page window или ещё более лёгкий first-screen DTO
+
+**H6. Feed scroll readiness: media decode lags behind scroll**
+- Symptom: физика scroll остаётся плавной, но media surfaces появляются рывками
+  при быстром scroll `Everything`.
+- Root cause: render window, eager image priority and media decode readiness are
+  not independent budgets. Increasing only overscan would mount more DOM but
+  would not guarantee decoded previews.
+- Fix: implement [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md):
+  adaptive render/priority/preload windows from viewport + scroll velocity,
+  shared preview-only candidate extraction and a bounded decode queue with
+  concurrency, queue, LRU, timeout and generation-reset limits. Original source
+  media must stay outside the preload hot path. Retuning requires diagnostics
+  evidence, not changing overscan constants by taste.
 
 ### MEDIUM — SQL and IPC
 

@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Goal
 
@@ -116,6 +116,7 @@ Goal: устранить две подтверждённые архитекту�
 | C4 | Residual Risks / Follow-up | [ ] | filesystem-first route catch-up, watcher hardening beyond current catch-up, remaining frontend boot optimization, optional async/custom asset path for Detail/original flows, remaining windowing bugs |
 | C5 | Feed Video Phase | [~] | explicit `feed_playback` contract, tiered `standard/heavy` autoplay policy, poster-first `FeedVideoSurface`, single-active autoplay, preview-only galleries |
 | C6 | Identity Assets | [x] | Redaction 100 Italic `m`, platform-specific app icons, toolbar circle icon, Instagram overlay glyph/button contract |
+| C7 | Feed Scroll Readiness | [ ] | adaptive render/priority/preload windows, preview-only decode scheduler, bounded concurrency/LRU, development diagnostics |
 
 ### Current progress snapshot
 
@@ -161,6 +162,28 @@ Goal: устранить две подтверждённые архитекту�
   - macOS/Tauri app icon использует transparent canvas + inset white rounded tile, чтобы Dock не показывал oversized квадрат;
   - extension toolbar icon — белый круг с чёрной `m`;
   - Instagram overlay отделён от toolbar icon: content script рисует круглую белую кнопку и вставляет glyph-only `clipper-overlay-32.png`.
+- `C7` запланирован:
+  - целевой контракт описан в [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md);
+  - быстрый безопасный шаг не должен сводиться к DOM inflation;
+  - render window, image priority window и media preload/decode window должны иметь разные адаптивные бюджеты;
+  - media preload hot path использует только derived preview/poster/thumbnail assets, не оригинальные source media;
+  - основная цель — убрать late media pop-in при быстром scroll `Everything` и приблизить feed к ощущению бесконечного canvas.
+
+### Phase C7 — Feed Scroll Readiness [PLANNED]
+
+Goal: сделать быстрый, но архитектурно правильный слой подготовки ленты, чтобы
+при быстром scroll медиа не догоняли viewport рывками.
+
+| # | Task | Status |
+|---|------|--------|
+| C7.1 | SPEC + docs: зафиксировать canvas-feel как adaptive media readiness architecture, а не overscan tweak | [x] |
+| C7.2 | Extract shared `feedMediaCandidatesForBlock`: one derived-preview URL chain for Card/preloader, source media excluded from preload | [ ] |
+| C7.3 | Add `feedScrollReadiness` pure helpers: RAF-sampled velocity model, adaptive render/priority/preload windows, hysteresis, clamps and tests | [ ] |
+| C7.4 | Add bounded `FeedMediaPreloadQueue`: max concurrency `4`, queue `160`, LRU `400`, decode timeout `3000ms`, failed URL suppression | [ ] |
+| C7.5 | Integrate `useFeedMediaPreloader` into Grid without adding preload-only GridItems or scroll-pixel React state | [ ] |
+| C7.6 | Retune render/priority windows according to the adaptive formulas, not fixed magic constants | [ ] |
+| C7.7 | Add development diagnostics and tuning protocol evidence: mounted count, window sizes, queue length, active decodes, decoded/failed/skipped counters | [ ] |
+| C7.8 | Validate fast scroll on real `Everything`: fewer blank/late media states, preview-only hot path, no whole-route DOM inflation | [ ] |
 
 ### Phase 24 — Filesystem-first visibility [PLANNED]
 

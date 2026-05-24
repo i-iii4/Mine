@@ -1190,7 +1190,15 @@ row-action slot (`count/menu` ↔ `Connected/Connect/Disconnect`). Это уби
 
 ### Сетка
 
-Masonry с round-robin распределением по колонкам. Gap: 32px (`--spacing-s5`). Минимальная ширина карточки: 220px; максимальная ширина не фиксируется токеном и определяется алгоритмически перед переходом к следующему числу колонок. Ленивая подгрузка через IntersectionObserver.
+Masonry с round-robin распределением по колонкам. Gap: 32px (`--spacing-s5`). Минимальная ширина карточки: 220px; максимальная ширина не фиксируется токеном и определяется алгоритмически перед переходом к следующему числу колонок. Лента должна ощущаться как бесконечный canvas: scroll может быть быстрым, но медиа не должны появляться заметными рывками после входа карточки во viewport.
+
+Performance contract не сводится к увеличению DOM window. Grid использует
+отдельные адаптивные бюджеты для render window, image priority window и planned
+media preload/decode window. Целевой scroll-readiness контракт описан в
+[SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md): bounded
+DOM window, eager-зона для ближайших картинок и более широкий preview-only
+`Image.decode()` preloader без дополнительных mounted cards и без original
+source media в hot scroll path.
 
 Top inset ленты на главной: 64px от permanent top chrome до верхнего края
 masonry layout складываются из второго shell top-bar level `h-8` и внутреннего
