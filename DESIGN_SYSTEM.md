@@ -260,6 +260,7 @@ mode disables transition for that switch frame.
 |---|---|---|---|
 | `default` | `h-8` (32px) | `px-3` | `text-base` (14px) |
 | `clipper` | `h-10` (40px) | `px-3` | `text-base` (14px) |
+| `sm` | `h-7` (28px) | `px-2.5` | `text-base` (14px) |
 | `xs` | `h-6` (24px) | `px-2` | `text-sm` (12px) |
 | `icon` | `size-8` (32px) | — | — |
 | `icon-xs` | `size-6` (24px) | — | — |
@@ -830,20 +831,23 @@ primitives и те же состояния, что desktop UI:
   (`h-6 rounded-1 px-2`), so row padding plus pill padding places the `Mine`
   text at 16px. Chevron sits inside the pill immediately after the space name,
   starts as right-facing, and rotates down on open. The dropdown uses
-  `widthRole="selector"`, `align="start"`, and `bg-accent`;
+  `widthRole="selector"`, `align="start"`, and `bg-accent`. The same row owns
+  the top-right close action through shared `ChromeCloseButton`, the same
+  primitive used by expanded-card chrome;
 - clip type switcher: shared `SegmentedControl`; the app uses compact
   `All / Connected`, the clipper uses `size="clipper"` inside a 40px Type row
   (`Type:` on the left, switcher on the right). The row uses `bg-chrome`; the
   switcher uses `h-8`, inner `h-7`, `p-[2px]`, `text-base`, and
   shrink-to-content width, never stretched full-width;
 - lower body: after the two top rows, the clipper keeps the legacy simple body:
-  `p-3`, `gap-2`, local rounded preview cards, channel search/list and
-  save/status stack without a separator line above Save. Do not convert this
-  lower body into edge-to-edge bars unless the full clipper contract is
-  redesigned again;
+  `p-3` with a 16px major-section gap (`gap-4`) between preview,
+  channel picker and save/status stack. The top inset after Type row remains
+  12px (`p-3`), and screenshot-internal media-to-actions spacing remains 8px.
+  Do not convert this lower body into edge-to-edge bars unless the full
+  clipper contract is redesigned again;
 - screenshot preview: legacy local card, `rounded-1 border border-border
   bg-accent`, image `max-h-[220px] w-auto max-w-full rounded-1 object-contain`;
-- screenshot actions: legacy `Button size="xs"`, not `clipper`;
+- screenshot actions: `Button size="sm"` (28px), not `clipper`;
 - channel picker: no clipper-only checkbox/search implementation. The clipper
   renders the same desktop `CollectionPicker` default menu layout inside an
   inline picker surface with the same visual tokens as floating picker content:

@@ -1,5 +1,37 @@
 # Devlog
 
+## 25.05.2026 [change] — Refine Clipper spacing and close control
+
+### Context
+
+- Clipper lower body needed clearer zoning without changing the accepted top
+  inset after the two header rows.
+- Screenshot actions needed a slightly larger control than legacy `xs`, but
+  still smaller than the default 32px app button.
+- The new top-right close action must reuse the same close primitive as the
+  expanded-card chrome, not a one-off `Button + X` variant.
+
+### Completed
+
+- Added shared `Button size="sm"` (`h-7`, 28px) and moved Clipper
+  `Crop Area` / `Retake` actions to that size.
+- Kept the Clipper body top inset at `p-3` and changed major lower-body zones
+  to `gap-4`: preview, shared channel picker and save/status stack.
+- Preserved screenshot-internal media-to-actions spacing at `space-y-2` (8px).
+- Extracted `ChromeCloseButton` from the existing Detail chrome close control
+  and reused it in the non-compact Detail bar, compact Detail top menu and
+  Clipper space row.
+- Documented the updated Clipper spacing and shared close-control contract in
+  `SPEC_CLIPPER.md` and `DESIGN_SYSTEM.md`.
+
+### Verification
+
+- `bun run lint`
+- `bun run build:extension`
+- `bun run test:frontend -- App.test.tsx Detail.test.tsx CollectionPicker.test.tsx`
+- `bun run build`
+- `git diff --check`
+
 ## 25.05.2026 [change] — Bring Clipper controls to shared app primitives
 
 ### Context

@@ -27,11 +27,11 @@ export function ScreenshotPreview({
           hover) because the screenshot preview is the whole point of
           this clip type — the user must always be able to retake or
           crop without discovery. Standard Button variant="default"
-          size="xs" with built-in hover (outline inset). */}
+          size="sm" with built-in hover (outline inset). */}
       <div className="flex gap-2">
         <Button
           variant="default"
-          size="xs"
+          size="sm"
           className="flex-1"
           onClick={onCrop}
           disabled={!cropSupported}
@@ -41,7 +41,7 @@ export function ScreenshotPreview({
         </Button>
         <Button
           variant="default"
-          size="xs"
+          size="sm"
           className="flex-1"
           onClick={onRetake}
         >

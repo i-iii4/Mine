@@ -408,6 +408,10 @@ Space selector в клиппере живёт на отдельной строк
 вниз (`rotate-90`). Текст
 bright `text-foreground`; hover/open state пули использует `bg-active`.
 Шрифт клиппера остаётся обычным sans `text-base` до отдельного решения о mono.
+Справа в этой же строке находится close action через shared
+`ChromeCloseButton`, тот же primitive, который используется в chrome
+развернутой карточки. Нажатие закрывает текущий popup или in-page overlay тем
+же `closeClipper` path, что Escape.
 
 Space dropdown использует существующий `DropdownMenuContent widthRole="selector"`
 (`width: min(18rem, available-width)`), `align="start"`, `side="bottom"` и
@@ -425,14 +429,16 @@ text-foreground`. Это даёт ровный 2px inset по вертикали
 Сегменты shrink-to-content: ширина контрола определяется текстом, а не
 растягивается на всю ширину popup.
 
-Ниже Type row клиппер сохраняет прежний простой body: общий контейнер `p-3
-gap-2`, локальные rounded preview-card блоки, shared channel picker и
+Ниже Type row клиппер сохраняет простой body: общий контейнер `p-3 gap-4`.
+Верхний inset между двумя верхними строками и первой preview-карточкой остаётся
+12px (`p-3`). Major sections разделены 16px: preview → shared channel picker →
 save/status stack. Content preview — `max-h-[280px] overflow-y-auto rounded-1
 border border-border p-2`. Link/Image preview используют тот же локальный
 `rounded-1 border border-border` язык, а не edge-to-edge bars. Screenshot
 preview — локальная карточка `rounded-1 border border-border bg-accent`, image
-`max-h-[220px] w-auto max-w-full rounded-1 object-contain`, actions
-`Button size="xs"`.
+`max-h-[220px] w-auto max-w-full rounded-1 object-contain`; внутренний отступ
+между screenshot и action row остаётся 8px (`space-y-2`), actions используют
+`Button size="sm"` (28px).
 
 Channel picker не имеет собственной clipper-разметки. `ChannelList` является
 только adapter `ChannelInfo[] -> TagCount[]` и рендерит общий
@@ -453,10 +459,10 @@ body `14/20`, `h1 16/22 600`, `h2 15/21 600`, `h3-h4 14/20 600`.
 |---|---|---|---|
 | PopupApp | `PopupApp.tsx` | — | Корневой компонент, состояния (loading → error → main), Cmd+Enter / Esc |
 | PreviewCard | `components/PreviewCard.tsx` | `<Input>` | Thumbnail + editable body H1/display heading when the clip type has a real page/article heading; media-only and selection clips do not synthesize title |
-| VaultSelect | `components/VaultSelect.tsx` | `<MenuTextTrigger>`, `<DropdownMenu>`, `<Input>`, `<SearchMenuAction>` | Shadow-safe space selector; top-chrome inner pill state, clipper `h-10` row, chevron inside the pill, no current item in menu |
+| VaultSelect | `components/VaultSelect.tsx` | `<MenuTextTrigger>`, `<DropdownMenu>`, `<Input>`, `<SearchMenuAction>`, `<ChromeCloseButton>` | Shadow-safe space selector; top-chrome inner pill state, clipper `h-10` row, chevron inside the pill, no current item in menu, shared top-right close action |
 | TypeSwitcher | `components/TypeSwitcher.tsx` | `<SegmentedControl size="clipper">` | Content / Screenshot / Link in the 40px Type row without height jumps |
 | ChannelList | `components/ChannelList.tsx` | `<CollectionPicker>` adapter | Same picker surface and channel-selection component as desktop Connect menus |
-| ScreenshotPreview | `components/ScreenshotPreview.tsx` | `<Button size="xs">` | Legacy rounded screenshot card with always-visible Crop Area / Retake buttons |
+| ScreenshotPreview | `components/ScreenshotPreview.tsx` | `<Button size="sm">` | Legacy rounded screenshot card with always-visible 28px Crop Area / Retake buttons |
 | SaveButton | `components/SaveButton.tsx` | `<Button variant="default">` | Полная ширина, без kbd-подсказки (Cmd+Enter handler есть, но не всегда срабатывает из overlay — см. DEVLOG `24.04.2026 — Clipper: Tab-cycling`) |
 | StatusBar | `components/StatusBar.tsx` | — | Legacy visible status component below Save |
 

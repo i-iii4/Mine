@@ -62,8 +62,8 @@ import {
   type NativeWindowChromeSurfaceToken,
 } from "@/lib/nativeWindowChromeSurface";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { CardMoreMenu } from "@/components/CardHoverMenu";
+import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 
 const COMPACT_DETAIL_TOP_MENU_STORAGE_KEY = "mine.compactDetailTopMenu";
 
@@ -374,17 +374,10 @@ function MainSecondaryTopBar({
               openRequestSequence={detailMenuOpenRequestSequence}
               topChromeInteraction
             />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Close detail"
+            <ChromeCloseButton
               {...closeChromeGesture}
               onClick={onDetailClose}
-              className="shrink-0 text-muted-foreground hover:text-foreground"
-            >
-              <X className="size-4" />
-            </Button>
+            />
           </div>
         )}
       </div>
@@ -584,17 +577,10 @@ function CompactDetailTopMenu({
         openRequestSequence={menuOpenRequestSequence}
         topChromeInteraction
       />
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        aria-label="Close detail"
+      <ChromeCloseButton
         {...closeChromeGesture}
         onClick={onClose}
-        className="shrink-0 text-muted-foreground hover:text-foreground"
-      >
-        <X className="size-4" />
-      </Button>
+      />
     </div>
   );
 }

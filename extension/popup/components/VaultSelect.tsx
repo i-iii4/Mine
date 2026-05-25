@@ -12,6 +12,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 import { Input } from "@/components/ui/input";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
@@ -22,6 +23,7 @@ interface VaultSelectProps {
   value: string | null;
   options: string[];
   onChange: (value: string) => void;
+  onClose?: () => void;
 }
 
 function vaultName(path: string): string {
@@ -29,7 +31,7 @@ function vaultName(path: string): string {
   return trimmed.split("/").pop() || path;
 }
 
-export function VaultSelect({ value, options, onChange }: VaultSelectProps) {
+export function VaultSelect({ value, options, onChange, onClose }: VaultSelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -190,6 +192,13 @@ export function VaultSelect({ value, options, onChange }: VaultSelectProps) {
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
+      {onClose && (
+        <ChromeCloseButton
+          className="ml-auto"
+          label="Close clipper"
+          onClick={onClose}
+        />
+      )}
     </div>
   );
 }

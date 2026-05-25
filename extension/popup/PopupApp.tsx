@@ -198,6 +198,7 @@ export function PopupApp() {
           value={clipper.selectedVault}
           options={clipper.knownVaults}
           onChange={clipper.switchVault}
+          onClose={closeClipper}
         />
       )}
 
@@ -205,7 +206,7 @@ export function PopupApp() {
         <TypeRow current={clipper.currentType} onChange={clipper.setCurrentType} />
       )}
 
-      <div className="flex flex-col gap-2 p-3">
+      <div className="flex flex-col gap-4 p-3">
         <div className="space-y-2">
           {clipper.currentType === "link" && (
             <div className="space-y-1.5 rounded-1 border border-border p-2">

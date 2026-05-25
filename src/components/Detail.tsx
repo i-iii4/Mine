@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 import { isChromeSurfaceVariant2, type ChromeSurfaceVariant } from "@/lib/chromeSurfaceVariant";
 import {
   AlertDialog,
@@ -395,15 +396,7 @@ export function Detail({
             openRequestSequence={topMenuRequestSequence}
             onOpenChange={setTopMenuOpen}
           />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <X className="size-4" />
-            <span className="sr-only">Close</span>
-          </Button>
+          <ChromeCloseButton label="Close" onClick={onClose} />
           <span
             aria-hidden="true"
             data-entered={chromeEntered ? "true" : "false"}
