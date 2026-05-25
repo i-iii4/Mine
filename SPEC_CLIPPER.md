@@ -125,6 +125,35 @@ Popup и save() используют одну чистую функцию — `r
 
 Контракт этой функции зафиксирован unit-тестом `extension/popup/lib/resolveContentBody.test.ts` (7 кейсов). Любое изменение приоритетов обязано обновить тест в том же коммите.
 
+### 3b. Content extraction lifecycle
+
+`detectedType` — это только стартовая рекомендация для UI, а не доказательство,
+что Content недоступен. Popup хранит отдельное состояние article extraction:
+`idle | loading | ready | empty | failed`.
+
+Единый gateway `ensureArticleLoaded()` используется в трёх местах:
+
+1. после первого paint для страниц, которые сразу открылись в Content и требуют body;
+2. при ручном переключении пользователя в Content, даже если страница была
+   auto-detected как `link`;
+3. перед Save, если выбран Content и нет non-video selection.
+
+Selection остаётся мгновенным body source и не требует article extraction.
+Video игнорирует selection и всегда требует transcript/body extraction.
+
+Save-инварианты:
+
+- Content не может сохранить `article` / video-content с пустым body.
+- `idle` перед Save обязан перейти через `ensureArticleLoaded()`, а не
+  сохраняться как empty article.
+- `loading` не создаёт `.md`: Save ждёт текущий extraction promise.
+- `empty` / `failed` показывают inline error и оставляют popup открытым.
+- Native host дополнительно отказывает `block_type=article` с пустым body, чтобы
+  future frontend regression не мог записать media-looking article в vault.
+
+Контракт состояния зафиксирован unit-тестом
+`extension/popup/lib/articleExtractionState.test.ts`.
+
 ### 4. Image (изображение)
 
 Сохраняет конкретное изображение.
@@ -267,9 +296,16 @@ Popup/overlay init не ждёт тяжёлый article extraction. Старто
 4. выбор default tab + первый screenshot capture для default `Screenshot`
 5. `setState("main")`
 
-`extractArticleAsync` запускается только после первого paint и только для типов, которым нужен body: `selection`, `article`, `content`, `video`. Для обычных страниц, которые по эвристике становятся `link` → default `Screenshot`, Defuddle/readability extraction не запускается на старте. Это защищает overlay от долгого открытия на DOM-heavy сайтах.
+`extractArticleAsync` запускается только после первого paint и только для
+сценариев, которым реально нужен body. Для обычных страниц, которые по эвристике
+становятся `link` → default `Screenshot`, Defuddle/readability extraction не
+запускается на старте. Это защищает overlay от долгого открытия на DOM-heavy
+сайтах.
 
-Если пользователь переключился в Content и article body ещё грузится, Save не должен записывать пустую статью: UI возвращает inline error и остаётся открытым до завершения загрузки. Это правило распространяется и на `video`: YouTube/video clip не может быть сохранён как пустой content body, пока transcript/article extraction ещё находится в `articleLoading`.
+Если пользователь позже переключился в Content, popup обязан вызвать
+`ensureArticleLoaded()` и перейти в явный `loading/ready/empty/failed` state.
+Save не имеет права записывать пустую статью ни из `idle`, ни из `loading`, ни
+из `empty/failed`.
 
 ### Content video preview
 
@@ -298,6 +334,22 @@ Click-outside close для in-page overlay не должен зависеть т
 
 Исключение: если overlay временно скрыт через `hideClipperOverlay()` для screenshot capture или Crop Area, outside-close handler не должен закрывать / размонтировать React overlay. Crop drag происходит на странице и обязан вернуться в тот же live state, чтобы cropped `dataUrl` и новый `screenshotId` заменили прежний full-page screenshot перед Save.
 
+In-page overlay должен быть визуально одинаковым на всех сайтах при одинаковом
+browser zoom. Shadow DOM защищает от page CSS selectors, но не от `rem`-единиц:
+`rem` внутри shadow tree всё равно считается от `document.documentElement`
+страницы. Поэтому `overlay-entry.tsx` обязан переопределять Tailwind root tokens,
+которые попали в popup bundle в `rem` (`--spacing`, `--container-*`,
+`--text-xs/sm/base`) на px-значения внутри `:host`/`#root`. Иначе сайты с
+`html { font-size: ... }` меняют размер `p-*`, `gap-*`, `h-*`, `top-*` и
+типографику клиппера.
+
+Dropdown/Popup primitives inside in-page overlay must portal into the overlay's
+Shadow DOM, not into page `document.body`. `overlay-entry.tsx` creates a
+shadow-local floating root and `OverlayShell` provides it through
+`DropdownMenuPortalContainerProvider`. Any clipper dropdown that bypasses this
+provider is a regression: page body does not contain the clipper stylesheet,
+tokens or border fixes.
+
 ## Popup UI
 
 ### Сборка
@@ -318,42 +370,95 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 
 ```
 ┌──────────────────────────────────────┐
-│ ┌────────┐ ┌────────┐               │
-│ │Content │ │Screens.│ │ Link │       │ ← TypeSwitcher (клик)
-│ └────────┘ └────────┘               │
+│ Mine                              ˅  │ ← 40px bright text selector row
 ├──────────────────────────────────────┤
-│                                      │
+│ Type:       [Content|Screenshot|Link]│ ← 40px type row
+├──────────────────────────────────────┤
 │  ┌────────────────────────────────┐  │
-│  │ Preview area                   │  │
-│  │ (thumbnail + display heading)  │  │
+│  │ Content / screenshot preview   │  │ ← legacy local rounded card
 │  └────────────────────────────────┘  │
-│                                      │
-│  Channels: [search________________]  │
-│    ┌─────────────────────────────┐   │
-│    │ ☐ design                    │   │
-│    │ ☐ inspiration               │   │
-│    │ ☐ programming               │   │
-│    │ + Create "new-tag"          │   │
-│    └─────────────────────────────┘   │
-│                                      │
-│  [Save to Mine                    ]  │
-│                                      │
-│  ─ Status: Saving... / ✓ / Error ─  │
+│  ┌────────────────────────────────┐  │
+│  │ Search channels...             │  │
+│  ├────────────────────────────────┤  │ ← shared CollectionPicker surface
+│  │ design                 Connect │  │
+│  │ inspiration          Connected │  │
+│  └────────────────────────────────┘  │
+│  Save to Mine                         │ ← legacy save/status stack
 └──────────────────────────────────────┘
 ```
 
 ### Popup Components (React)
 
 Все компоненты используют shadcn/ui примитивы и семантические токены из `global.css`.
+Clipper не имеет собственной визуальной компонентной системы: UI обязан
+переиспользовать app primitives (`Button`, `Input`, `DropdownMenu`,
+`SearchMenuAction`, `CollectionPicker`, `MenuTextTrigger`,
+`SegmentedControl`) или тонкий adapter над ними. Компонент, который существует
+только в клиппере и визуально не имеет аналога в приложении, считается
+нарушением контракта.
+
+Space selector в клиппере живёт на отдельной строке первого уровня:
+`h-10 border-b border-border bg-accent px-2`. Это тот же surface, что нижнее
+меню основного приложения. Реальный Radix trigger — не вся строка, а
+`MenuTextTrigger surface="clipperHeader"` как compact pill `h-6 rounded-1 px-2`
+внутри строки. Суммарно `px-2` строки + `px-2` trigger дают 16px до текста
+`Mine`, как у `Type:` во втором уровне. Поэтому dropdown якорится к кнопке, из
+которой выпадает, а не к 360px row. Chevron находится внутри этой пули сразу
+после имени, стартует как right chevron и при `data-state=open` поворачивается
+вниз (`rotate-90`). Текст
+bright `text-foreground`; hover/open state пули использует `bg-active`.
+Шрифт клиппера остаётся обычным sans `text-base` до отдельного решения о mono.
+
+Space dropdown использует существующий `DropdownMenuContent widthRole="selector"`
+(`width: min(18rem, available-width)`), `align="start"`, `side="bottom"` и
+`sideOffset=4`. Surface dropdown — `bg-accent text-foreground`, то есть тот же
+первый уровень, что строка space selector.
+
+Type row — отдельная строка `h-10 border-b border-border bg-chrome px-4`. Это
+второй уровень клиппера и он использует тот же half-step surface, что верхний
+chrome основного приложения. Слева текст
+`Type:` (`text-base text-muted-foreground`), справа общий
+`SegmentedControl size="clipper"`. Он использует тот же state model, что
+`All/Connected`, но с клипперными значениями: outer shell `h-8 w-fit p-[2px]
+rounded-1`, selected inner segment `h-7 rounded-[2px] bg-component-fill-inner
+text-foreground`. Это даёт ровный 2px inset по вертикали и горизонтали.
+Сегменты shrink-to-content: ширина контрола определяется текстом, а не
+растягивается на всю ширину popup.
+
+Ниже Type row клиппер сохраняет прежний простой body: общий контейнер `p-3
+gap-2`, локальные rounded preview-card блоки, shared channel picker и
+save/status stack. Content preview — `max-h-[280px] overflow-y-auto rounded-1
+border border-border p-2`. Link/Image preview используют тот же локальный
+`rounded-1 border border-border` язык, а не edge-to-edge bars. Screenshot
+preview — локальная карточка `rounded-1 border border-border bg-accent`, image
+`max-h-[220px] w-auto max-w-full rounded-1 object-contain`, actions
+`Button size="xs"`.
+
+Channel picker не имеет собственной clipper-разметки. `ChannelList` является
+только adapter `ChannelInfo[] -> TagCount[]` и рендерит общий
+`CollectionPicker` с дефолтным menu layout, тем же search input, row/action
+slot, active state, create row и keyboard/pointer arbitration, что card
+Connect menus в основном приложении. Surface class живёт в `CollectionPicker`
+как `COLLECTION_PICKER_CONTENT_CLASS` для Radix floating content и
+`COLLECTION_PICKER_INLINE_SURFACE_CLASS` для inline clipper surface. Checkbox
+list в клиппере запрещён. Save/status stack остаётся отдельным блоком
+`space-y-2` без separator line; видимый `StatusBar` сохраняется.
+
+Article preview в popup рендерит полноценный Markdown через `ReactMarkdown` +
+`remark-gfm`, но использует отдельную compact preview scale. Это не обрезает
+функциональность Markdown-компонентов, а стабилизирует их размер в 360px popup:
+body `14/20`, `h1 16/22 600`, `h2 15/21 600`, `h3-h4 14/20 600`.
 
 | Component | File | shadcn/ui | Description |
 |---|---|---|---|
 | PopupApp | `PopupApp.tsx` | — | Корневой компонент, состояния (loading → error → main), Cmd+Enter / Esc |
 | PreviewCard | `components/PreviewCard.tsx` | `<Input>` | Thumbnail + editable body H1/display heading when the clip type has a real page/article heading; media-only and selection clips do not synthesize title |
-| TypeSwitcher | `components/TypeSwitcher.tsx` | `<Button variant="ghost" size="xs">` | Content / Link / Image / Video |
-| ChannelList | `components/ChannelList.tsx` | `<Input>`, `<ScrollArea>` | Поиск + список каналов с чекбоксами, создание нового |
+| VaultSelect | `components/VaultSelect.tsx` | `<MenuTextTrigger>`, `<DropdownMenu>`, `<Input>`, `<SearchMenuAction>` | Shadow-safe space selector; top-chrome inner pill state, clipper `h-10` row, chevron inside the pill, no current item in menu |
+| TypeSwitcher | `components/TypeSwitcher.tsx` | `<SegmentedControl size="clipper">` | Content / Screenshot / Link in the 40px Type row without height jumps |
+| ChannelList | `components/ChannelList.tsx` | `<CollectionPicker>` adapter | Same picker surface and channel-selection component as desktop Connect menus |
+| ScreenshotPreview | `components/ScreenshotPreview.tsx` | `<Button size="xs">` | Legacy rounded screenshot card with always-visible Crop Area / Retake buttons |
 | SaveButton | `components/SaveButton.tsx` | `<Button variant="default">` | Полная ширина, без kbd-подсказки (Cmd+Enter handler есть, но не всегда срабатывает из overlay — см. DEVLOG `24.04.2026 — Clipper: Tab-cycling`) |
-| StatusBar | `components/StatusBar.tsx` | — | Статус: success (зелёный) / error (красный) |
+| StatusBar | `components/StatusBar.tsx` | — | Legacy visible status component below Save |
 
 ### Хуки и адаптеры
 
@@ -579,6 +684,13 @@ desktop app.
 `thumbnail`. Если источник отсутствует или скачивание/финализация media не
 удались, native host возвращает `ok:false`, а `.md` не создаётся. Это защищает
 vault от битых media-карточек без `file:`.
+
+Инвариант для article creation mode: `block_type=article` не может быть записан
+с пустым body. Frontend обязан пройти через `ensureArticleLoaded()` и отправить
+только non-empty body; native host повторно валидирует это условие и возвращает
+`ok:false`, если body пустой. Link creation mode отдельно отправляет body H1 из
+реального page title, чтобы новая link-карточка не превращалась в runtime media
+только из-за пустого body.
 
 ##### Article inline-media pipeline
 

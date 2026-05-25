@@ -248,4 +248,24 @@ describe("CollectionPicker", () => {
 
     expect(screen.getByPlaceholderText("Search channels...")).toHaveValue("t");
   });
+
+  it("supports edge-to-edge clipper layout without changing row behavior", () => {
+    const { container } = render(
+      <CollectionPicker
+        blockSlug="alpha"
+        selectedTags={[]}
+        tags={[tag("tools", 1)]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        layout="edge"
+        className="h-full"
+      />,
+    );
+
+    const picker = container.querySelector("[data-collection-picker]") as HTMLElement;
+    const input = screen.getByPlaceholderText("Search channels...");
+    expect(picker).toHaveClass("h-full");
+    expect(input).toHaveClass("h-10", "rounded-0", "px-3", "py-0");
+    expect(input).not.toHaveClass("focus-visible:border-border-accent");
+  });
 });

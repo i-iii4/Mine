@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import {
@@ -243,27 +244,18 @@ export function TopCollectionSwitcher({
     <>
       <DropdownMenu open={open} onOpenChange={handleOpenChange}>
         <DropdownMenuTrigger asChild>
-          <button
-            type="button"
+          <MenuTextTrigger
             aria-label={`Switch collection: ${label}`}
+            label={label}
+            surface="topChrome"
+            keyboardFocus={topChromeTrigger.keyboardFocus}
             data-top-collection-switcher=""
             {...topChromeTrigger.triggerProps}
             className={cn(
-              "group inline-flex h-full min-w-0 max-w-[50%] flex-none cursor-pointer items-center overflow-hidden rounded-0 bg-transparent font-mono text-sm text-muted-foreground outline-0",
+              "max-w-[50%]",
               compact ? "px-3" : "px-6",
             )}
-          >
-            <span
-              className={cn(
-                "inline-flex h-6 min-w-0 max-w-full items-center rounded-1 px-2 text-muted-foreground group-hover:bg-active group-hover:text-foreground group-data-[state=open]:bg-active group-data-[state=open]:text-foreground",
-                topChromeTrigger.keyboardFocus && "bg-active text-foreground",
-              )}
-            >
-              <span className="min-w-0 truncate text-left">
-                {label}
-              </span>
-            </span>
-          </button>
+          />
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="start"

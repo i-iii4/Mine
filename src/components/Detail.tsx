@@ -93,7 +93,10 @@ import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
 import { CardMoreMenu } from "./CardHoverMenu";
 import { ReadOnlyCardPreview } from "./Card";
-import { CollectionPicker } from "./CollectionPicker";
+import {
+  COLLECTION_PICKER_CONTENT_CLASS,
+  CollectionPicker,
+} from "./CollectionPicker";
 import { MicroPreviewThumbnail, microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
 import type { ImagePreviewRequest } from "./ImagePreviewOverlay";
 
@@ -916,7 +919,7 @@ function DetailActionRow({
             <Plus className="size-3" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent widthRole="picker" className="flex max-h-80 flex-col overflow-hidden p-0" align="start">
+        <DropdownMenuContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS} align="start">
           <CollectionPicker
             blockSlug={block.slug}
             selectedTags={selectedTags}
@@ -1632,7 +1635,7 @@ function MediaAssetMoreMenu({
               <Plus className="size-3" />
               Create Card
             </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent widthRole="picker" className="flex max-h-80 flex-col overflow-hidden p-0">
+            <DropdownMenuSubContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
               <MediaAssetCollectionPicker
                 asset={asset}
                 tags={tags}

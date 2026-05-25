@@ -90,6 +90,19 @@ async function mount(): Promise<OverlayHandle> {
     :host {
       all: initial;
       display: block;
+      --spacing: 4px;
+      --container-xs: 320px;
+      --container-sm: 384px;
+      --container-md: 448px;
+      --container-lg: 512px;
+      --container-xl: 576px;
+      --container-2xl: 672px;
+      --text-xs: 12px;
+      --text-xs--line-height: 16px;
+      --text-sm: 12px;
+      --text-sm--line-height: 16px;
+      --text-base: 14px;
+      --text-base--line-height: 20px;
       font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       font-size: 14px;
       line-height: 20px;
@@ -105,6 +118,19 @@ async function mount(): Promise<OverlayHandle> {
       all: initial;
       display: block;
       min-height: 100vh;
+      --spacing: 4px;
+      --container-xs: 320px;
+      --container-sm: 384px;
+      --container-md: 448px;
+      --container-lg: 512px;
+      --container-xl: 576px;
+      --container-2xl: 672px;
+      --text-xs: 12px;
+      --text-xs--line-height: 16px;
+      --text-sm: 12px;
+      --text-sm--line-height: 16px;
+      --text-base: 14px;
+      --text-base--line-height: 20px;
       font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       font-size: 14px;
       line-height: 20px;
@@ -114,6 +140,15 @@ async function mount(): Promise<OverlayHandle> {
       -moz-osx-font-smoothing: grayscale;
       text-size-adjust: 100%;
       -webkit-text-size-adjust: 100%;
+    }
+
+    #app-root,
+    #floating-root {
+      display: block;
+    }
+
+    #floating-root {
+      pointer-events: auto;
     }
 
     #root *, #root *::before, #root *::after {
@@ -146,6 +181,11 @@ async function mount(): Promise<OverlayHandle> {
 
   const root = document.createElement("div");
   root.id = "root";
+  const appRoot = document.createElement("div");
+  appRoot.id = "app-root";
+  const floatingRoot = document.createElement("div");
+  floatingRoot.id = "floating-root";
+  root.append(appRoot, floatingRoot);
   shadow.appendChild(root);
 
   document.body.appendChild(host);
@@ -185,8 +225,8 @@ async function mount(): Promise<OverlayHandle> {
     window.addEventListener("mousedown", onOutsidePointer, { capture: true });
   }, 0);
 
-  const reactRoot = createRoot(root);
-  reactRoot.render(<OverlayShell />);
+  const reactRoot = createRoot(appRoot);
+  reactRoot.render(<OverlayShell portalContainer={floatingRoot} />);
 
   return { host, root: reactRoot, onOutsidePointer };
 }

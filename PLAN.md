@@ -296,7 +296,10 @@ web-clipper при закрытом desktop UI, iCloud sync или внешни�
     `vault_conflicts` pair;
   - incremental scan diverts iCloud-style conflict files like full scan.
 - Clipper/native-host security:
-  - video/content saves cannot persist empty body while extraction is loading;
+  - Content saves use explicit `idle/loading/ready/empty/failed` extraction state;
+  - manual switch to Content starts extraction even when auto-detected as `link`;
+  - article saves cannot persist empty body in popup or native host;
+  - Link saves write body H1 from real page title instead of empty runtime-media body;
   - save-link context menu path is registered;
   - background upload has `AbortController` timeout;
   - upload tokens use OS randomness, body size is capped at `25 MiB`;
@@ -797,10 +800,10 @@ Goal: расширение собирается через Vite, использ�
 | # | Task | Status |
 |---|------|--------|
 | 12.3.1 | `PreviewCard`: thumbnail + display heading/body H1 input where applicable + domain. Использует `<Input>` из shadcn | [x] |
-| 12.3.2 | `TypeSwitcher`: Content / Link. Стилизован как type-switcher, использует `<Button variant="ghost">` | [x] |
-| 12.3.3 | `ChannelList`: поиск + список каналов с чекбоксами. Использует `<Input>`, `<ScrollArea>` | [x] |
-| 12.3.4 | `SaveButton`: кнопка сохранения. `<Button variant="default">` полной ширины + `<kbd>` | [x] |
-| 12.3.5 | `StatusBar`: статус после сохранения (success/error) | [x] |
+| 12.3.2 | `TypeSwitcher`: Content / Screenshot / Link. Использует shared `<SegmentedControl size="clipper">` в отдельной 40px Type row, без локального дублирования visual state | [x] |
+| 12.3.3 | `ChannelList`: thin adapter over shared desktop `CollectionPicker` default menu layout; checkbox UI удалён, surface geometry берётся из exported picker constants | [x] |
+| 12.3.4 | `SaveButton`: кнопка сохранения. `<Button variant="default">` полной ширины, без видимого `<kbd>` | [x] |
+| 12.3.5 | `StatusBar`: legacy visible status component в нижнем `space-y-2` stack | [x] |
 | 12.3.6 | Состояние загрузки: спиннер (существующий CSS-паттерн) | [x] |
 | 12.3.7 | Состояние ошибки: иконка + сообщение | [x] |
 
@@ -812,6 +815,7 @@ Goal: расширение собирается через Vite, использ�
 | 12.4.2 | `extension/popup/popup-layout.css`: только popup-размеры (360x600), импортирует global.css | [x] |
 | 12.4.3 | Старый `popup.css` перемещён в `_legacy/` | [x] |
 | 12.4.4 | Проверка: все размеры текста строго 12/14/18px, веса 400/600, отступы из шкалы | [x] |
+| 12.4.5 | Clipper design-system parity: space selector через shared `MenuTextTrigger`, shadow-local DropdownMenu portal, Type row через shared `SegmentedControl`, channel picker через shared `CollectionPicker`; нижний body остаётся legacy stack | [x] |
 
 #### 12.5 — Safari extension
 

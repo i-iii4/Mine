@@ -8,6 +8,22 @@ import { cn } from "@/lib/utils"
 
 type FloatingMenuWidthRole = "command" | "selector" | "picker"
 
+const DropdownMenuPortalContainerContext = React.createContext<HTMLElement | null>(null)
+
+function DropdownMenuPortalContainerProvider({
+  container,
+  children,
+}: {
+  container: HTMLElement | null
+  children: React.ReactNode
+}) {
+  return (
+    <DropdownMenuPortalContainerContext.Provider value={container}>
+      {children}
+    </DropdownMenuPortalContainerContext.Provider>
+  )
+}
+
 function DropdownMenu({
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
@@ -15,10 +31,16 @@ function DropdownMenu({
 }
 
 function DropdownMenuPortal({
+  container,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Portal>) {
+  const contextContainer = React.useContext(DropdownMenuPortalContainerContext)
   return (
-    <DropdownMenuPrimitive.Portal data-slot="dropdown-menu-portal" {...props} />
+    <DropdownMenuPrimitive.Portal
+      data-slot="dropdown-menu-portal"
+      container={container ?? contextContainer ?? undefined}
+      {...props}
+    />
   )
 }
 
@@ -66,7 +88,7 @@ function DropdownMenuContent({
   widthRole?: FloatingMenuWidthRole
 }) {
   return (
-    <DropdownMenuPrimitive.Portal>
+    <DropdownMenuPortal>
       <DropdownMenuPrimitive.Content
         data-slot="dropdown-menu-content"
         data-floating-menu-width={widthRole}
@@ -77,7 +99,7 @@ function DropdownMenuContent({
         )}
         {...props}
       />
-    </DropdownMenuPrimitive.Portal>
+    </DropdownMenuPortal>
   )
 }
 
@@ -275,6 +297,7 @@ function DropdownMenuSubContent({
 export {
   DropdownMenu,
   DropdownMenuPortal,
+  DropdownMenuPortalContainerProvider,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuGroup,

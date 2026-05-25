@@ -254,16 +254,18 @@ mode disables transition for that switch frame.
 | `ghost` | `bg-transparent` | `text-hover-foreground` (текст ярчеет) | Невидимая до взаимодействия |
 | `link` | `bg-transparent` | `text-hover-foreground` (текст ярчеет) | `underline` |
 
-Размеры (`size`) — только два:
+Размеры (`size`):
 
 | Размер | Высота | Паддинги | Шрифт |
 |---|---|---|---|
 | `default` | `h-8` (32px) | `px-3` | `text-base` (14px) |
+| `clipper` | `h-10` (40px) | `px-3` | `text-base` (14px) |
 | `xs` | `h-6` (24px) | `px-2` | `text-sm` (12px) |
 | `icon` | `size-8` (32px) | — | — |
 | `icon-xs` | `size-6` (24px) | — | — |
 
-Input и Command — тоже 32px (`h-8`).
+Input и Command по умолчанию — 32px (`h-8`). Clipper использует
+`Input controlSize="clipper"` (`h-10`) только внутри popup/overlay строк.
 
 **Скругление всех элементов интерфейса — 3px (`rounded-1`).** Без исключений: Button, ActionButton (обе пули), Badge, DropdownMenu, Tooltip, Input.
 
@@ -282,6 +284,7 @@ Input и Command — тоже 32px (`h-8`).
 |---|---|
 | `default` | `h-8 rounded-1 border border-input bg-background px-3 text-base` |
 | `ghost` | `h-8 rounded-1 bg-transparent border-none px-3 text-base` — только текст и курсор |
+| `controlSize="clipper"` | `h-10` поверх `default`/`ghost`, только для Web Clipper 40px rows |
 
 Фокус (default): `border-foreground`. Плейсхолдер: `text-tertiary-foreground`.
 
@@ -795,6 +798,15 @@ Trigger width не является шириной menu по умолчанию.
 или combobox. Для `…`/icon triggers trigger width запрещён: маленькая кнопка не
 должна диктовать ширину command menu.
 
+### Shadow DOM portal contract
+
+`DropdownMenu` поддерживает `DropdownMenuPortalContainerProvider`. В обычном
+приложении content порталится в `document.body`; в browser clipper overlay
+provider обязан передавать shadow-local floating root. Это не отдельная
+реализация меню для клиппера, а тот же Radix/shadcn primitive с другим portal
+container. Запрещено писать shadow-local самодельные dropdown'ы ради
+избежания portal issue.
+
 ### Пункты (Item)
 
 `rounded-1 px-2 py-1.5 text-base`. `DropdownMenu` использует
@@ -805,6 +817,46 @@ Trigger width не является шириной menu по умолчанию.
 ### Деструктивные пункты
 
 Текст красный (`text-destructive`), фон при фокусе — стандартный DropdownMenu/ContextMenu focus surface (`focus:bg-active` для DropdownMenu, `focus:bg-accent` для ContextMenu). Без красного фона при наведении.
+
+## Web Clipper UI parity
+
+Web Clipper не имеет отдельной визуальной системы. Он использует те же app
+primitives и те же состояния, что desktop UI:
+
+- space selector: `MenuTextTrigger` with the top-chrome inner pill state —
+  bright plain text trigger, no root button-frame border/fill beyond the row
+  surface. In the clipper popup the row is `h-10 bg-accent px-2`; the actual
+  Radix trigger is the inner `MenuTextTrigger surface="clipperHeader"` pill
+  (`h-6 rounded-1 px-2`), so row padding plus pill padding places the `Mine`
+  text at 16px. Chevron sits inside the pill immediately after the space name,
+  starts as right-facing, and rotates down on open. The dropdown uses
+  `widthRole="selector"`, `align="start"`, and `bg-accent`;
+- clip type switcher: shared `SegmentedControl`; the app uses compact
+  `All / Connected`, the clipper uses `size="clipper"` inside a 40px Type row
+  (`Type:` on the left, switcher on the right). The row uses `bg-chrome`; the
+  switcher uses `h-8`, inner `h-7`, `p-[2px]`, `text-base`, and
+  shrink-to-content width, never stretched full-width;
+- lower body: after the two top rows, the clipper keeps the legacy simple body:
+  `p-3`, `gap-2`, local rounded preview cards, channel search/list and
+  save/status stack without a separator line above Save. Do not convert this
+  lower body into edge-to-edge bars unless the full clipper contract is
+  redesigned again;
+- screenshot preview: legacy local card, `rounded-1 border border-border
+  bg-accent`, image `max-h-[220px] w-auto max-w-full rounded-1 object-contain`;
+- screenshot actions: legacy `Button size="xs"`, not `clipper`;
+- channel picker: no clipper-only checkbox/search implementation. The clipper
+  renders the same desktop `CollectionPicker` default menu layout inside an
+  inline picker surface with the same visual tokens as floating picker content:
+  `bg-popover text-popover-foreground flex max-h-80 flex-col overflow-hidden
+  rounded-1 border p-0 shadow-md`. Use
+  `COLLECTION_PICKER_CONTENT_CLASS` / `COLLECTION_PICKER_INLINE_SURFACE_CLASS`
+  from `CollectionPicker`; do not restate picker geometry in clipper code.
+
+Any clipper-only component that duplicates an app primitive visually is design
+debt. The permitted form is a thin adapter over the app primitive when the
+desktop component itself depends on Tauri-only APIs. Current shared primitives
+that exist specifically to prevent drift: `MenuTextTrigger` and
+`SegmentedControl`.
 
 ## Состояния Drag-and-Drop
 

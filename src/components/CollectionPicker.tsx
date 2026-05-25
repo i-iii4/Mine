@@ -23,6 +23,9 @@ interface CollectionPickerProps {
   /** Prevent parent menu typeahead from capturing keystrokes */
   stopKeyPropagation?: boolean;
   onRequestClose?: () => void;
+  autoFocusSearch?: boolean;
+  layout?: "menu" | "edge";
+  className?: string;
 }
 
 interface BatchCollectionPickerProps {
@@ -35,6 +38,12 @@ interface BatchCollectionPickerProps {
 }
 
 type BatchMembershipState = "all" | "not-all";
+
+export const COLLECTION_PICKER_CONTENT_CLASS =
+  "flex max-h-80 flex-col overflow-hidden p-0";
+
+export const COLLECTION_PICKER_INLINE_SURFACE_CLASS =
+  "bg-popover text-popover-foreground flex max-h-80 flex-col overflow-hidden rounded-1 border p-0 shadow-md";
 
 function isPrintableKeyboardKey(event: ReactKeyboardEvent): boolean {
   return event.key.length === 1 && !event.metaKey && !event.altKey && !event.ctrlKey;
@@ -120,6 +129,9 @@ export function CollectionPicker({
   onCreateAndAssign,
   stopKeyPropagation = false,
   onRequestClose,
+  autoFocusSearch = true,
+  layout = "menu",
+  className,
 }: CollectionPickerProps) {
   const [search, setSearch] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -306,26 +318,37 @@ export function CollectionPicker({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col"
+      className={cn("flex min-h-0 flex-1 flex-col", className)}
       data-collection-picker=""
       onKeyDownCapture={handleKeyDown}
     >
       {/* Search */}
-      <div className="shrink-0 p-2 pb-1">
+      <div
+        className={cn(
+          "shrink-0",
+          layout === "edge" ? "border-b border-border p-0" : "p-2 pb-1",
+        )}
+      >
         <Input
           ref={inputRef}
           {...SEARCH_INPUT_SUPPRESSION_PROPS}
-          autoFocus
+          autoFocus={autoFocusSearch}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search channels..."
-          className="h-auto py-1.5 focus-visible:border-border-accent"
+          variant={layout === "edge" ? "ghost" : "default"}
+          controlSize={layout === "edge" ? "clipper" : "default"}
+          className={cn(
+            layout === "edge"
+              ? "rounded-0 px-3 py-0 focus-visible:border-transparent"
+              : "h-auto py-1.5 focus-visible:border-border-accent",
+          )}
         />
       </div>
 
       {/* Tag list */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="px-1 py-0.5">
+        <div className={cn(layout === "edge" ? "p-1" : "px-1 py-0.5")}>
           {filtered.map((tc, rowIndex) => {
             const hasTag = optimisticTags.includes(tc.tag);
             const isActive = rowIndex === boundedActiveIndex;
@@ -343,7 +366,9 @@ export function CollectionPicker({
                   }
                 }}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base",
+                  layout === "edge"
+                    ? "flex h-10 w-full items-center gap-2 rounded-1 px-2 text-base"
+                    : "flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base",
                   isActive && "bg-active",
                 )}
                 data-collection-picker-row=""
@@ -402,7 +427,11 @@ export function CollectionPicker({
                 event.stopPropagation();
                 createAndAssign();
               }}
-              className="flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base font-semibold text-foreground hover:bg-active"
+              className={cn(
+                layout === "edge"
+                  ? "flex h-10 w-full items-center gap-2 rounded-1 px-2 text-base font-semibold text-foreground hover:bg-active"
+                  : "flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base font-semibold text-foreground hover:bg-active",
+              )}
             >
               <Plus className="size-4 shrink-0" />
               <span>

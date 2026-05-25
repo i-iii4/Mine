@@ -34,7 +34,10 @@ import {
   scheduleAfterOptimisticUiUpdate,
   selectedCardCountLabel,
 } from "@/lib/groupSelection";
-import { BatchCollectionPicker } from "./CollectionPicker";
+import {
+  BatchCollectionPicker,
+  COLLECTION_PICKER_CONTENT_CLASS,
+} from "./CollectionPicker";
 
 interface GroupSelectionCardMenuProps {
   selectedBlocks: readonly LightBlock[];
@@ -204,7 +207,7 @@ export function GroupSelectionCardMenu({
               </MenuIconSlot>
               Connect
             </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent widthRole="picker" className="flex max-h-80 flex-col overflow-hidden p-0">
+            <DropdownMenuSubContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
               <BatchCollectionPicker
                 selectedSlugs={selectedSlugs}
                 tags={tags}

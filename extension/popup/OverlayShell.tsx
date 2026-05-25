@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { DropdownMenuPortalContainerProvider } from "@/components/ui/dropdown-menu";
 import { PopupApp } from "./PopupApp";
 
 /**
@@ -23,19 +24,21 @@ import { PopupApp } from "./PopupApp";
  * between Content/Screenshot/Link worked. `preventScroll: true` avoids
  * jumping the page viewport.
  */
-export function OverlayShell() {
+export function OverlayShell({ portalContainer }: { portalContainer: HTMLElement | null }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     ref.current?.focus({ preventScroll: true });
   }, []);
   return (
-    <div
-      ref={ref}
-      data-mine-clipper-panel
-      tabIndex={-1}
-      className="pointer-events-auto fixed right-4 top-4 w-[360px] rounded-1 border border-border bg-background shadow-[0_4px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.4)] outline-none"
-    >
-      <PopupApp />
-    </div>
+    <DropdownMenuPortalContainerProvider container={portalContainer}>
+      <div
+        ref={ref}
+        data-mine-clipper-panel
+        tabIndex={-1}
+        className="pointer-events-auto fixed right-4 top-4 w-[360px] rounded-1 border border-border bg-background shadow-[0_4px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.4)] outline-none"
+      >
+        <PopupApp />
+      </div>
+    </DropdownMenuPortalContainerProvider>
   );
 }

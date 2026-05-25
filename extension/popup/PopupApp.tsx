@@ -10,6 +10,7 @@ import { SaveButton } from "./components/SaveButton";
 import { ScreenshotPreview } from "./components/ScreenshotPreview";
 import { StatusBar } from "./components/StatusBar";
 import { VaultSelect } from "./components/VaultSelect";
+import { emptyContentMessage } from "./lib/articleExtractionState";
 import { buildEmbeddedVideoPreviewMap, isVideoUrl, videoPreviewKey } from "./lib/videoPreview";
 
 function VideoPosterPreview({
@@ -39,6 +40,21 @@ function VideoPosterPreview({
           <Play className="ml-0.5 size-4 fill-current" />
         </div>
       </div>
+    </div>
+  );
+}
+
+function TypeRow({
+  current,
+  onChange,
+}: {
+  current: Parameters<typeof TypeSwitcher>[0]["current"];
+  onChange: Parameters<typeof TypeSwitcher>[0]["onChange"];
+}) {
+  return (
+    <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-border bg-chrome px-4">
+      <span className="text-base text-muted-foreground">Type:</span>
+      <TypeSwitcher current={current} onChange={onChange} />
     </div>
   );
 }
@@ -176,136 +192,140 @@ export function PopupApp() {
   }
 
   return (
-    <div className="flex flex-col gap-2 p-3">
-      <div className="space-y-2">
-        {clipper.knownVaults.length > 1 && (
-          <VaultSelect
-            value={clipper.selectedVault}
-            options={clipper.knownVaults}
-            onChange={clipper.switchVault}
-          />
-        )}
-
-        {metadata?.detectedType !== "image" && (
-          <TypeSwitcher current={clipper.currentType} onChange={clipper.setCurrentType} />
-        )}
-
-        {clipper.currentType === "link" && (
-          <div className="space-y-1.5 rounded-1 border border-border p-2">
-            {ogImage && (
-              <div className="rounded-1 bg-accent">
-                <img
-                  src={ogImage}
-                  alt=""
-                  className="mx-auto block max-h-[120px] w-auto max-w-full rounded-1 object-contain"
-                />
-              </div>
-            )}
-            <p className="truncate text-sm font-semibold">{clipper.title}</p>
-            {metadata?.description && (
-              <p className="line-clamp-2 text-sm text-muted-foreground">{metadata.description}</p>
-            )}
-            <p className="truncate text-sm text-tertiary-foreground">{metadata?.url}</p>
-          </div>
-        )}
-
-        {clipper.currentType === "content" && (
-          <div className="max-h-[280px] overflow-y-auto rounded-1 border border-border p-2">
-            {metadata?.detectedType === "video" && embeddedVideoPreviews.length === 0 && ogImage && (
-              <VideoPosterPreview posterUrl={ogImage} title="Video preview" />
-            )}
-            {embeddedVideoPreviews.length > 0 && (
-              <div className="space-y-1.5">
-                {embeddedVideoPreviews.map((video, index) => (
-                  <VideoPosterPreview
-                    key={`${video.src ?? video.poster ?? "video"}-${index}`}
-                    posterUrl={video.poster ?? ogImage}
-                    title={video.title || "Video preview"}
-                  />
-                ))}
-              </div>
-            )}
-            <p className="mt-1.5 truncate text-sm font-semibold">{clipper.title}</p>
-            {resolvedBody.source === "selection" ? (
-              <div className="mt-1.5">
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                  Selected text · {resolvedBody.text.length} characters
-                </p>
-                <blockquote className="mt-1 border-l-2 border-border pl-2 text-sm italic text-foreground whitespace-pre-wrap">
-                  {resolvedBody.text}
-                </blockquote>
-              </div>
-            ) : clipper.articleLoading ? (
-              <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
-                <div className="size-3 animate-spin rounded-round border-[1.5px] border-border border-t-foreground" />
-                Loading transcript...
-              </div>
-            ) : resolvedBody.text ? (
-              <div className="prose prose-sm mt-1.5 max-w-none">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    img: ({ src, alt, ...props }) => {
-                      if (isVideoUrl(src)) {
-                        const video = embeddedVideoBySrc.get(videoPreviewKey(src) ?? "");
-                        if (video) return null;
-                        return (
-                          <VideoPosterPreview
-                            posterUrl={ogImage}
-                            title={alt ? `Video preview: ${alt}` : "Video preview"}
-                          />
-                        );
-                      }
-                      return <img src={src} alt={alt ?? ""} loading="lazy" {...props} />;
-                    },
-                  }}
-                >
-                  {resolvedBody.text}
-                </ReactMarkdown>
-              </div>
-            ) : (
-              <p className="mt-1.5 text-sm text-muted-foreground">
-                {metadata?.description || "No content extracted"}
-              </p>
-            )}
-          </div>
-        )}
-
-        {clipper.currentType === "image" && ogImage && (
-          <div className="rounded-1 border border-border bg-accent">
-            <img
-              src={ogImage}
-              alt=""
-              className="mx-auto block max-h-[220px] w-auto max-w-full rounded-1 object-contain"
-            />
-          </div>
-        )}
-
-        {clipper.currentType === "screenshot" && clipper.screenshotDataUrl && (
-          <ScreenshotPreview
-            dataUrl={clipper.screenshotDataUrl}
-            onRetake={clipper.retakeScreenshot}
-            onCrop={clipper.startCropMode}
-            cropSupported={clipper.cropSupported}
-          />
-        )}
-      </div>
-
-      <ChannelList
-        channels={clipper.channels}
-        selectedTags={clipper.selectedTags}
-        recentTags={clipper.recentTags}
-        onToggle={clipper.toggleTag}
-        onCreate={clipper.createChannel}
-      />
-
-      <div className="space-y-2 border-t border-border pt-2">
-        <SaveButton
-          count={clipper.selectedTags.length}
-          saving={clipper.saving}
-          onClick={handleSave}
+    <div className="flex flex-col">
+      {clipper.selectedVault && (
+        <VaultSelect
+          value={clipper.selectedVault}
+          options={clipper.knownVaults}
+          onChange={clipper.switchVault}
         />
-        {status && <StatusBar message={status.message} type={status.type} />}
+      )}
+
+      {metadata?.detectedType !== "image" && (
+        <TypeRow current={clipper.currentType} onChange={clipper.setCurrentType} />
+      )}
+
+      <div className="flex flex-col gap-2 p-3">
+        <div className="space-y-2">
+          {clipper.currentType === "link" && (
+            <div className="space-y-1.5 rounded-1 border border-border p-2">
+              {ogImage && (
+                <div className="rounded-1 bg-accent">
+                  <img
+                    src={ogImage}
+                    alt=""
+                    className="mx-auto block max-h-[120px] w-auto max-w-full rounded-1 object-contain"
+                  />
+                </div>
+              )}
+              <p className="truncate text-sm font-semibold">{clipper.title}</p>
+              {metadata?.description && (
+                <p className="line-clamp-2 text-sm text-muted-foreground">{metadata.description}</p>
+              )}
+              <p className="truncate text-sm text-tertiary-foreground">{metadata?.url}</p>
+            </div>
+          )}
+
+          {clipper.currentType === "content" && (
+            <div className="max-h-[280px] overflow-y-auto rounded-1 border border-border p-2">
+              {metadata?.detectedType === "video" && embeddedVideoPreviews.length === 0 && ogImage && (
+                <VideoPosterPreview posterUrl={ogImage} title="Video preview" />
+              )}
+              {embeddedVideoPreviews.length > 0 && (
+                <div className="space-y-1.5">
+                  {embeddedVideoPreviews.map((video, index) => (
+                    <VideoPosterPreview
+                      key={`${video.src ?? video.poster ?? "video"}-${index}`}
+                      posterUrl={video.poster ?? ogImage}
+                      title={video.title || "Video preview"}
+                    />
+                  ))}
+                </div>
+              )}
+              <p className="mt-1.5 truncate text-sm font-semibold">{clipper.title}</p>
+              {resolvedBody.source === "selection" ? (
+                <div className="mt-1.5">
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Selected text · {resolvedBody.text.length} characters
+                  </p>
+                  <blockquote className="mt-1 border-l-2 border-border pl-2 text-sm italic text-foreground whitespace-pre-wrap">
+                    {resolvedBody.text}
+                  </blockquote>
+                </div>
+              ) : clipper.articleExtractionState === "loading" ? (
+                <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
+                  <div className="size-3 animate-spin rounded-round border-[1.5px] border-border border-t-foreground" />
+                  {metadata?.detectedType === "video" ? "Loading transcript..." : "Extracting content..."}
+                </div>
+              ) : resolvedBody.text ? (
+                <div className="mine-clipper-article-preview prose prose-sm mt-1.5 max-w-none">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      img: ({ src, alt, ...props }) => {
+                        if (isVideoUrl(src)) {
+                          const video = embeddedVideoBySrc.get(videoPreviewKey(src) ?? "");
+                          if (video) return null;
+                          return (
+                            <VideoPosterPreview
+                              posterUrl={ogImage}
+                              title={alt ? `Video preview: ${alt}` : "Video preview"}
+                            />
+                          );
+                        }
+                        return <img src={src} alt={alt ?? ""} loading="lazy" {...props} />;
+                      },
+                    }}
+                  >
+                    {resolvedBody.text}
+                  </ReactMarkdown>
+                </div>
+              ) : (
+                <p className="mt-1.5 text-sm text-muted-foreground">
+                  {clipper.articleExtractionState === "empty" || clipper.articleExtractionState === "failed"
+                    ? emptyContentMessage(metadata, clipper.articleExtractionState)
+                    : metadata?.description || "No content extracted"}
+                </p>
+              )}
+            </div>
+          )}
+
+          {clipper.currentType === "image" && ogImage && (
+            <div className="rounded-1 border border-border bg-accent">
+              <img
+                src={ogImage}
+                alt=""
+                className="mx-auto block max-h-[220px] w-auto max-w-full rounded-1 object-contain"
+              />
+            </div>
+          )}
+
+          {clipper.currentType === "screenshot" && clipper.screenshotDataUrl && (
+            <ScreenshotPreview
+              dataUrl={clipper.screenshotDataUrl}
+              onRetake={clipper.retakeScreenshot}
+              onCrop={clipper.startCropMode}
+              cropSupported={clipper.cropSupported}
+            />
+          )}
+        </div>
+
+        <ChannelList
+          channels={clipper.channels}
+          selectedTags={clipper.selectedTags}
+          recentTags={clipper.recentTags}
+          onToggle={clipper.toggleTag}
+          onCreate={clipper.createChannel}
+        />
+
+        <div className="space-y-2">
+          <SaveButton
+            count={clipper.selectedTags.length}
+            saving={clipper.saving}
+            onClick={handleSave}
+          />
+          {status && <StatusBar message={status.message} type={status.type} />}
+        </div>
       </div>
     </div>
   );

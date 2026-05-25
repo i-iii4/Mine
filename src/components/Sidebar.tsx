@@ -47,6 +47,7 @@ import {
   sidebarRowDomId,
 } from "@/lib/sidebarSearch";
 import { cn } from "@/lib/utils";
+import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { ReadOnlyCardPreview } from "./Card";
 import { MicroPreviewThumbnail, microPreviewFromPreviewCard } from "./MicroPreviewThumbnail";
 
@@ -118,6 +119,11 @@ type SidebarKeyboardNavigationFocus = {
   rowKey: string;
   sequence: number;
 };
+
+const SIDEBAR_LINK_MODE_OPTIONS: SegmentedControlOption<"all" | "linked">[] = [
+  { value: "all", label: "All" },
+  { value: "linked", label: "Connected" },
+];
 
 type SidebarLinkMode = "all" | "linked";
 
@@ -780,36 +786,13 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
     </span>
   );
   const control = (
-    <div
-      className={cn(
-        "action-button inline-flex h-6 shrink-0 cursor-pointer items-center overflow-hidden rounded-1 bg-transparent p-[2px] font-mono text-sm outline-0",
-        "hover:bg-component-fill-hover",
-      )}
+    <SegmentedControl
+      value={value}
+      options={SIDEBAR_LINK_MODE_OPTIONS}
+      onChange={onChange}
+      aria-label="Channel filter"
       data-sidebar-link-mode-control
-    >
-      <button
-        type="button"
-        aria-pressed={value === "all"}
-        onClick={() => onChange("all")}
-        className={cn(
-          "flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] text-muted-foreground hover:text-foreground",
-          value === "all" && "bg-component-fill-inner text-foreground",
-        )}
-      >
-        All
-      </button>
-      <button
-        type="button"
-        aria-pressed={value === "linked"}
-        onClick={() => onChange("linked")}
-        className={cn(
-          "flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] text-muted-foreground hover:text-foreground",
-          value === "linked" && "bg-component-fill-inner text-foreground",
-        )}
-      >
-        Connected
-      </button>
-    </div>
+    />
   );
 
   return (

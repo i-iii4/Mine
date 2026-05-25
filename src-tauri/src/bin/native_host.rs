@@ -637,6 +637,11 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         body
     };
 
+    if bt == BlockType::Article && body.trim().is_empty() {
+        cleanup_resolved_media(vault, media_file.as_deref(), thumbnail_file.as_deref());
+        return send_error("article block requires non-empty extracted content");
+    }
+
     let now = now_iso8601();
     let saved_at = match DateTime::new(&now) {
         Ok(dt) => dt,
@@ -771,19 +776,25 @@ fn should_write_body_h1(block_type: BlockType, url: Option<&str>) -> bool {
     }
 }
 
-fn cleanup_new_block_media(vault: &VaultLayout, block: &Block) {
-    for name in [
-        block.frontmatter.file.as_deref(),
-        block.frontmatter.thumbnail.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    {
+fn cleanup_resolved_media(
+    vault: &VaultLayout,
+    media_file: Option<&str>,
+    thumbnail_file: Option<&str>,
+) {
+    for name in [media_file, thumbnail_file].into_iter().flatten() {
         let path = vault.root().join(name);
         if path.starts_with(vault.root()) {
             let _ = std::fs::remove_file(path);
         }
     }
+}
+
+fn cleanup_new_block_media(vault: &VaultLayout, block: &Block) {
+    cleanup_resolved_media(
+        vault,
+        block.frontmatter.file.as_deref(),
+        block.frontmatter.thumbnail.as_deref(),
+    );
 }
 
 fn is_social_status_url(url: &str) -> bool {
@@ -2368,6 +2379,27 @@ mod tests {
         assert_eq!(thumb_format, "png");
         assert!(thumb_mtime > 0);
         assert!(vault.thumb_path("Opal Camera").exists());
+    }
+
+    #[test]
+    fn save_block_rejects_empty_article_body() {
+        let tmp = TempDir::new().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"));
+        std::fs::create_dir_all(vault.root()).unwrap();
+
+        handle_save_block(
+            &vault,
+            serde_json::json!({
+                "block_type": "article",
+                "title": "Empty Article",
+                "url": "https://example.com/article",
+                "body": "   ",
+                "tags": []
+            }),
+        );
+
+        assert!(!vault.block_path("Empty Article").exists());
     }
 
     #[test]

@@ -12,7 +12,10 @@ import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { LightBlock, TagCount } from "@/types";
 import { getBlock } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
-import { CollectionPicker } from "./CollectionPicker";
+import {
+  COLLECTION_PICKER_CONTENT_CLASS,
+  CollectionPicker,
+} from "./CollectionPicker";
 
 interface CardTagMenuProps {
   block: LightBlock;
@@ -78,7 +81,7 @@ export function CardTagMenu({
           </MenuIconSlot>
           Connect
         </ContextMenuSubTrigger>
-        <ContextMenuSubContent widthRole="picker" className="flex max-h-80 flex-col overflow-hidden p-0">
+        <ContextMenuSubContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
           <CollectionPicker
             blockSlug={block.slug}
             selectedTags={selectedTags}

@@ -1,5 +1,88 @@
 # Devlog
 
+## 25.05.2026 [change] — Bring Clipper controls to shared app primitives
+
+### Context
+
+- Clipper still used private UI variants: bordered space select, checkbox
+  channel list and small tab buttons.
+- In-page overlay could not safely use shared Radix dropdowns because default
+  portals render into page `document.body`, outside the Shadow DOM stylesheet.
+- The final visual direction keeps the new two-level clipper header but leaves
+  the lower body in its legacy simple stack.
+
+### Completed
+
+- Added `DropdownMenuPortalContainerProvider` so shared `DropdownMenu` can
+  portal into a shadow-local floating root in the in-page clipper overlay.
+- Extracted shared `MenuTextTrigger` and reused it in desktop top chrome
+  selectors and the clipper space selector, so the visible inner-pill state is
+  no longer a clipper-local copy.
+- Extracted shared `SegmentedControl` and reused it in desktop `All/Connected`
+  controls and clipper Content/Screenshot/Link, so selected/hover geometry has
+  one source of truth.
+- Kept the clipper top area as two fixed 40px levels: space selector and Type
+  row.
+- Restored the lower body to the legacy `p-3 gap-2` stack: local rounded
+  preview cards, `xs` screenshot actions, Save and visible `StatusBar`.
+- Replaced the clipper checkbox channel list with a thin adapter over the
+  shared desktop `CollectionPicker` default menu layout.
+- Exported `COLLECTION_PICKER_CONTENT_CLASS` and
+  `COLLECTION_PICKER_INLINE_SURFACE_CLASS` from `CollectionPicker`, so desktop
+  Connect menus and clipper inline picker share the same surface contract
+  instead of restating picker geometry in multiple files.
+
+### Verification
+
+- `bun run lint`
+- `bun run test:frontend -- CollectionPicker.test.tsx CardHoverMenu.test.tsx`
+- `bun run build:extension`
+- `bun run build`
+- `git diff --check`
+
+## 24.05.2026 [fix] — Clipper content extraction state machine
+
+### Context
+
+- Extractable article pages without `<article>` / `og:type=article` were
+  auto-detected as `link` and opened as Screenshot by default.
+- Manual switch to Content did not start Defuddle extraction.
+- Save could persist `block_type=article` with empty body, which then derived
+  runtime `media` and rendered as a blank/garbage saved card.
+
+### Completed
+
+- Added explicit popup extraction state:
+  `idle | loading | ready | empty | failed`.
+- Added `ensureArticleLoaded()` as the single gateway used by initial Content,
+  manual Content switch and Save.
+- Content Save now waits for extraction when needed and refuses empty body with
+  inline errors.
+- Link Save now sends a body H1 from the real page title, matching the storage
+  contract for new link clips.
+- Native host rejects empty `block_type=article` as defence in depth.
+- Popup article preview keeps full Markdown rendering, but uses compact
+  clipper typography so extracted headings do not expand to article-page scale.
+- In-page overlay now pins rem-based Tailwind root tokens to px values inside
+  Shadow DOM, so host pages with custom `html font-size` cannot resize the
+  clipper.
+- Extension build no longer nests `Resources/dist/dist` on repeat builds and
+  filters test files from copied Safari resources.
+- Added frontend contract tests for extraction state decisions and a Rust
+  native-host regression test for empty article rejection.
+
+### Verification
+
+- `bun run test:frontend -- extension/popup/lib/articleExtractionState.test.ts extension/popup/lib/resolveContentBody.test.ts`
+- `cargo test -p mine --bin native-host save_block_rejects_empty_article_body --locked`
+- `bun run test:frontend`
+- `bun run test:rust`
+- `bun run lint`
+- `bun run build`
+- `bun run build:extension`
+- `bun run clipper:install-host`
+- `git diff --check`
+
 ## 24.05.2026 [fix] — Make Grid route switches snapshot-authoritative
 
 ### Context

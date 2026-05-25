@@ -65,6 +65,15 @@ import {
 const IS_CONTENT_SCRIPT_CONTEXT = typeof chrome.tabs === "undefined";
 
 import { resolveContentBody } from "../lib/resolveContentBody";
+import {
+  articleExtractionStateForResult,
+  articleHasPreviewMedia,
+  articleHasText,
+  buildLinkBody,
+  contentModeNeedsArticleExtraction,
+  emptyContentMessage,
+  type ArticleExtractionState,
+} from "../lib/articleExtractionState";
 
 export type ClipType = "content" | "link" | "image" | "video" | "screenshot";
 export type PopupState = "loading" | "error" | "main";
@@ -80,6 +89,7 @@ export interface ClipperState {
   currentType: ClipType;
   title: string;
   saving: boolean;
+  articleExtractionState: ArticleExtractionState;
   knownVaults: string[];
   selectedVault: string | null;
 }
@@ -95,7 +105,8 @@ export function useClipperState() {
   const [currentType, setCurrentType] = useState<ClipType>("link");
   const [title, setTitle] = useState("");
   const [saving, setSaving] = useState(false);
-  const [articleLoading, setArticleLoading] = useState(false);
+  const [articleExtractionState, setArticleExtractionState] =
+    useState<ArticleExtractionState>("idle");
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
   const [selectedVault, setSelectedVault] = useState<string | null>(null);
   const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
@@ -107,7 +118,26 @@ export function useClipperState() {
 
   const tabIdRef = useRef<number | null>(null);
   const vaultRef = useRef<string | null>(null);
+  const metadataRef = useRef<PageMetadata | null>(null);
+  const articleDataRef = useRef<ArticleData | null>(null);
+  const articleExtractionStateRef = useRef<ArticleExtractionState>("idle");
+  const articleExtractionPromiseRef = useRef<Promise<ArticleData | null> | null>(null);
   const deferredArticleRef = useRef<ArticleData | null>(null);
+
+  const setMetadataValue = useCallback((value: PageMetadata | null) => {
+    metadataRef.current = value;
+    setMetadata(value);
+  }, []);
+
+  const setArticleDataValue = useCallback((value: ArticleData | null) => {
+    articleDataRef.current = value;
+    setArticleData(value);
+  }, []);
+
+  const setArticleExtractionStateValue = useCallback((value: ArticleExtractionState) => {
+    articleExtractionStateRef.current = value;
+    setArticleExtractionState(value);
+  }, []);
 
   const captureScreenshot = useCallback(() => {
     // Hide the overlay before capture so the clipper UI doesn't appear
@@ -172,13 +202,6 @@ export function useClipperState() {
     );
   }, []);
 
-  const handleTypeChange = useCallback((type: ClipType) => {
-    setCurrentType(type);
-    if (type === "screenshot" && !screenshotDataUrl) {
-      captureScreenshot();
-    }
-  }, [screenshotDataUrl, captureScreenshot]);
-
   const retakeScreenshot = useCallback(() => {
     captureScreenshot();
   }, [captureScreenshot]);
@@ -186,6 +209,64 @@ export function useClipperState() {
   function cacheCapturedScreenshot(dataUrl: string) {
     void cacheScreenshotUpload(dataUrl).then((id) => setScreenshotUploadId(id));
   }
+
+  const ensureArticleLoaded = useCallback(async (): Promise<ArticleData | null> => {
+    const existing = articleDataRef.current;
+    if (articleHasText(existing)) {
+      setArticleExtractionStateValue("ready");
+      return existing;
+    }
+
+    if (articleExtractionPromiseRef.current) {
+      return articleExtractionPromiseRef.current;
+    }
+
+    const tabId = tabIdRef.current;
+    const meta = metadataRef.current;
+    if (tabId === null || !meta) {
+      setArticleExtractionStateValue("failed");
+      return null;
+    }
+
+    setArticleExtractionStateValue("loading");
+    const promise = extractArticleAsync(tabId)
+      .then(async (asyncArticle) => {
+        const hydrated = await hydrateTwitterVideoPreviews(meta, asyncArticle);
+        if (articleHasText(hydrated)) {
+          hydrated.content = deduplicateImages(hydrated.content);
+        }
+
+        if (articleHasText(hydrated) || articleHasPreviewMedia(hydrated)) {
+          setArticleDataValue(hydrated);
+          if (hydrated.title) {
+            setTitle(hydrated.title);
+          }
+        }
+
+        setArticleExtractionStateValue(articleExtractionStateForResult(hydrated));
+        return hydrated;
+      })
+      .catch(() => {
+        setArticleExtractionStateValue("failed");
+        return null;
+      })
+      .finally(() => {
+        articleExtractionPromiseRef.current = null;
+      });
+
+    articleExtractionPromiseRef.current = promise;
+    return promise;
+  }, [setArticleDataValue, setArticleExtractionStateValue]);
+
+  const handleTypeChange = useCallback((type: ClipType) => {
+    setCurrentType(type);
+    if (type === "screenshot" && !screenshotDataUrl) {
+      captureScreenshot();
+    }
+    if (type === "content" && contentModeNeedsArticleExtraction(metadataRef.current)) {
+      void ensureArticleLoaded();
+    }
+  }, [screenshotDataUrl, captureScreenshot, ensureArticleLoaded]);
 
   const refreshChannels = useCallback(async (vaultPath = vaultRef.current) => {
     const chResult = await sendToNative({
@@ -342,8 +423,9 @@ export function useClipperState() {
         const { metadata: preMeta, article: preArticle } = preloaded.preloadedClipData as { metadata: PageMetadata; article: ArticleData };
         chrome.storage.session.remove("preloadedClipData");
 
-        setMetadata(preMeta as PageMetadata);
-        setArticleData(preArticle as ArticleData);
+        setMetadataValue(preMeta as PageMetadata);
+        setArticleDataValue(preArticle as ArticleData);
+        setArticleExtractionStateValue(articleExtractionStateForResult(preArticle));
         setTitle(preMeta.title ?? "");
         setCurrentType("content");
         setState("main");
@@ -376,8 +458,13 @@ export function useClipperState() {
         tabIdRef.current = pending.tabId;
         vaultRef.current = pending.selectedVault;
         setSelectedVault(pending.selectedVault);
-        setMetadata(pending.metadata);
-        setArticleData(pending.articleData);
+        setMetadataValue(pending.metadata);
+        setArticleDataValue(pending.articleData);
+        setArticleExtractionStateValue(
+          pending.articleData
+            ? articleExtractionStateForResult(pending.articleData)
+            : "idle",
+        );
         setSelectedTags(pending.selectedTags);
         setRecentTags(pending.recentTags);
         setTitle(pending.title);
@@ -443,14 +530,15 @@ export function useClipperState() {
         await applyContextMenu(ctxData, meta, tabId);
       }
 
-      setMetadata(meta);
+      setMetadataValue(meta);
       // If save-link fetched tweet data via syndication API, use it
       if (deferredArticleRef.current) {
         article = deferredArticleRef.current;
         if (article.title) meta.title = article.title;
         deferredArticleRef.current = null;
       }
-      setArticleData(article);
+      setArticleDataValue(article);
+      setArticleExtractionStateValue(articleHasText(article) ? "ready" : "idle");
       setTitle(meta.title ?? "");
 
       // Map detected type. Precedence (see SPEC_CLIPPER.md § Auto-detection):
@@ -478,31 +566,8 @@ export function useClipperState() {
       // Background: content extraction can be expensive on DOM-heavy pages.
       // Never block initial popup paint on Defuddle; hydrate the preview/body
       // after the clipper is already usable.
-      const shouldLoadArticle =
-        meta.detectedType === "selection" ||
-        meta.detectedType === "article" ||
-        meta.detectedType === "content" ||
-        meta.detectedType === "video";
-      if (shouldLoadArticle && !deferredArticleRef.current) {
-        setArticleLoading(true);
-        extractArticleAsync(tabId).then(async (asyncArticle) => {
-          asyncArticle = await hydrateTwitterVideoPreviews(meta, asyncArticle);
-          const hasContent = asyncArticle.content.length > 0;
-          const hasEmbeddedVideos = (asyncArticle.embeddedVideos?.length ?? 0) > 0;
-          if (hasContent || hasEmbeddedVideos) {
-            if (hasContent) {
-              asyncArticle.content = deduplicateImages(asyncArticle.content);
-            }
-            setArticleData(asyncArticle);
-            // Update title from async data (Twitter/Instagram return better titles than og:title)
-            if (asyncArticle.title) {
-              setTitle(asyncArticle.title);
-            }
-          }
-          setArticleLoading(false);
-        }).catch(() => {
-          setArticleLoading(false);
-        });
+      if (detected === "content" && contentModeNeedsArticleExtraction(meta)) {
+        void ensureArticleLoaded();
       }
     } catch (e) {
       showError("Failed to initialize: " + (e instanceof Error ? e.message : String(e)));
@@ -626,35 +691,29 @@ export function useClipperState() {
   const save = useCallback(async () => {
     if (!metadata || saving) return;
 
-    if (
-      currentType === "content" &&
-      articleLoading &&
-      !metadata.selection?.length &&
-      !articleData?.content
-    ) {
-      return {
-        ok: false as const,
-        error: "Content is still loading. Try again in a moment.",
-      };
-    }
-
     setSaving(true);
+    let saveMetadata = metadata;
 
     // Re-query selection before saving
     if (currentType === "content" && metadata.selection?.length > 0 && tabIdRef.current) {
       try {
         const fresh = await extractMetadata(tabIdRef.current);
         if (fresh.selection?.length > 0) {
-          metadata.selection = fresh.selection;
+          saveMetadata = { ...metadata, selection: fresh.selection };
+          setMetadataValue(saveMetadata);
         }
       } catch {
         // Use existing selection
       }
     }
 
+    if (currentType === "content" && contentModeNeedsArticleExtraction(saveMetadata)) {
+      await ensureArticleLoaded();
+    }
+
     let blockType: string;
     if (currentType === "content") {
-      blockType = metadata.detectedType === "video" ? "video" : "article";
+      blockType = saveMetadata.detectedType === "video" ? "video" : "article";
     } else if (currentType === "image" || currentType === "screenshot") blockType = "image";
     else blockType = currentType;
 
@@ -664,21 +723,30 @@ export function useClipperState() {
       block_type: blockType,
       title: title || null,
       description: null,
-      url: metadata.url || null,
+      url: saveMetadata.url || null,
       body: "",
       tags: selectedTags.length > 0 ? selectedTags : null,
       image_url: null,
-      author: metadata.author || null,
+      author: saveMetadata.author || null,
       width: null,
       height: null,
     };
 
     if (currentType === "content") {
-      const resolved = resolveContentBody(metadata, articleData);
+      const resolved = resolveContentBody(saveMetadata, articleDataRef.current);
+      if (!resolved.text.trim()) {
+        setSaving(false);
+        return {
+          ok: false as const,
+          error: emptyContentMessage(saveMetadata, articleExtractionStateRef.current),
+        };
+      }
       payload.body = resolved.text;
       if (resolved.source === "article" && resolved.byline) {
         payload.author = resolved.byline;
       }
+    } else if (currentType === "link") {
+      payload.body = buildLinkBody(title);
     }
 
     if (currentType === "screenshot") {
@@ -767,7 +835,7 @@ export function useClipperState() {
       // shows, otherwise refuse the save to prevent a frontmatter
       // without `file:` / `image_url` — which previously created an
       // orphaned .md that never rendered in the feed.
-      const imageUrl = metadata.imageToSave ?? metadata.image ?? null;
+      const imageUrl = saveMetadata.imageToSave ?? saveMetadata.image ?? null;
       if (!imageUrl) {
         setSaving(false);
         return {
@@ -776,10 +844,10 @@ export function useClipperState() {
         };
       }
       payload.image_url = imageUrl;
-      payload.width = metadata.imageWidth ?? null;
-      payload.height = metadata.imageHeight ?? null;
-    } else if (metadata.image && (currentType === "link" || metadata.detectedType === "video")) {
-      payload.image_url = metadata.image;
+      payload.width = saveMetadata.imageWidth ?? null;
+      payload.height = saveMetadata.imageHeight ?? null;
+    } else if (saveMetadata.image && (currentType === "link" || saveMetadata.detectedType === "video")) {
+      payload.image_url = saveMetadata.image;
     }
 
     let result = await sendToNative(payload);
@@ -809,13 +877,13 @@ export function useClipperState() {
     return { ok: false as const, error: result.error ?? "Failed to save" };
   }, [
     metadata,
-    articleData,
     currentType,
     title,
     selectedTags,
     recentTags,
     saving,
-    articleLoading,
+    ensureArticleLoaded,
+    setMetadataValue,
     screenshotDataUrl,
     screenshotUploadId,
   ]);
@@ -845,7 +913,7 @@ export function useClipperState() {
     title,
     setTitle,
     saving,
-    articleLoading,
+    articleExtractionState,
     toggleTag,
     createChannel,
     save,

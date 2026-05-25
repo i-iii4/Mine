@@ -1,6 +1,22 @@
-import { useState, useRef, useEffect } from "react";
-import { ChevronDown, Check } from "lucide-react";
-import { cn } from "@/lib/utils";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { MenuTextTrigger } from "@/components/MenuTextTrigger";
+import { SearchMenuAction } from "@/components/SearchMenuAction";
+import { filterAndRankChannelSearch } from "@/lib/channelSearch";
+import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 
 interface VaultSelectProps {
   value: string | null;
@@ -8,87 +24,172 @@ interface VaultSelectProps {
   onChange: (value: string) => void;
 }
 
-/**
- * Shadow-DOM-friendly replacement for the native <select>. Built from
- * scratch on top of <button> + absolute-positioned menu, without Radix
- * Popper/Portal which would render the menu outside the shadow tree.
- *
- * Visual: matches Input dimensions (h-8, rounded-1, border-input), chevron
- * on the right, menu uses the popover shadow from DESIGN_SYSTEM.md.
- *
- * Close behaviour: click outside the trigger+menu, or Esc, or selection.
- */
+function vaultName(path: string): string {
+  const trimmed = path.replace(/\/+$/, "");
+  return trimmed.split("/").pop() || path;
+}
+
 export function VaultSelect({ value, options, onChange }: VaultSelectProps) {
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const actionIdPrefix = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const label = value ? vaultName(value) : "";
+
+  const destinationVaults = useMemo(() => (
+    Array.from(new Set(options))
+      .filter((path) => path !== value)
+      .sort((a, b) => vaultName(a).localeCompare(vaultName(b)))
+  ), [options, value]);
+
+  const visibleVaults = useMemo(() => (
+    filterAndRankChannelSearch(
+      destinationVaults.map((path) => ({
+        item: path,
+        texts: [vaultName(path), path],
+      })),
+      query,
+    )
+  ), [destinationVaults, query]);
+
+  const activeActionId = activeIndex === null
+    ? undefined
+    : `${actionIdPrefix}-clipper-space-action-${activeIndex}`;
 
   useEffect(() => {
-    if (!open) return;
-    function onDocClick(e: MouseEvent) {
-      const path = e.composedPath?.() ?? [];
-      if (containerRef.current && path.includes(containerRef.current)) return;
-      setOpen(false);
+    if (!open) {
+      setQuery("");
+      setActiveIndex(null);
+      return;
     }
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setOpen(false);
-      }
-    }
-    window.addEventListener("click", onDocClick, { capture: true });
-    window.addEventListener("keydown", onKeyDown, { capture: true });
-    return () => {
-      window.removeEventListener("click", onDocClick, { capture: true });
-      window.removeEventListener("keydown", onKeyDown, { capture: true });
-    };
+    const frame = window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus({ preventScroll: true });
+      searchInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [open]);
 
-  const label = value ? (value.split("/").pop() ?? value) : "";
+  useEffect(() => {
+    setActiveIndex((current) => {
+      if (current === null) return current;
+      if (current < visibleVaults.length) return current;
+      return visibleVaults.length > 0 ? visibleVaults.length - 1 : null;
+    });
+  }, [visibleVaults.length]);
+
+  const selectVault = useCallback((path: string) => {
+    setOpen(false);
+    setQuery("");
+    setActiveIndex(null);
+    onChange(path);
+  }, [onChange]);
+
+  const moveActiveIndex = useCallback((direction: 1 | -1) => {
+    if (visibleVaults.length <= 0) return;
+    setActiveIndex((current) => {
+      if (current === null) return direction > 0 ? 0 : visibleVaults.length - 1;
+      const nextIndex = current + direction;
+      if (nextIndex < 0) return 0;
+      if (nextIndex >= visibleVaults.length) return visibleVaults.length - 1;
+      return nextIndex;
+    });
+  }, [visibleVaults.length]);
+
+  const handleSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (query) {
+        setQuery("");
+      } else {
+        setOpen(false);
+      }
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      moveActiveIndex(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+
+    if (event.key !== "Enter" || activeIndex === null) return;
+    const path = visibleVaults[activeIndex];
+    if (!path) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectVault(path);
+  }, [activeIndex, moveActiveIndex, query, selectVault, visibleVaults]);
 
   return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className={cn(
-          "flex h-8 w-full cursor-pointer items-center justify-between gap-2 rounded-1 border border-input bg-background px-3 text-base text-foreground outline-none",
-          open && "border-foreground",
-        )}
-      >
-        <span className="truncate">{label}</span>
-        <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
-      </button>
-
-      {open && (
-        <div
-          className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-1 border border-border bg-popover p-1 text-popover-foreground shadow-[0_4px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
+    <div className="flex h-10 shrink-0 items-center border-b border-border bg-accent px-2" data-clipper-space-row="">
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenuTrigger asChild>
+          <MenuTextTrigger
+            ref={triggerRef}
+            aria-label={`Switch space: ${label}`}
+            label={label}
+            surface="clipperHeader"
+            showChevron
+            data-clipper-space-switcher=""
+          />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          side="bottom"
+          sideOffset={4}
+          widthRole="selector"
+          className="overflow-hidden bg-accent p-0 text-foreground"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            triggerRef.current?.blur();
+          }}
         >
-          {options.map((opt) => {
-            const isSelected = opt === value;
-            const optLabel = opt.split("/").pop() ?? opt;
-            return (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => {
-                  onChange(opt);
-                  setOpen(false);
-                }}
-                className={cn(
-                  "flex w-full cursor-pointer items-center gap-2 rounded-1 px-2 py-1.5 text-left text-base",
-                  "hover:bg-accent",
-                  isSelected && "font-semibold",
-                )}
-              >
-                <span className="flex size-4 shrink-0 items-center justify-center">
-                  {isSelected && <Check className="size-4" />}
-                </span>
-                <span className="min-w-0 flex-1 truncate">{optLabel}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+          <div className="border-b border-border p-1">
+            <Input
+              ref={searchInputRef}
+              {...SEARCH_INPUT_SUPPRESSION_PROPS}
+              aria-label="Search spaces"
+              aria-activedescendant={activeActionId}
+              placeholder="Search spaces..."
+              variant="ghost"
+              controlSize="clipper"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setActiveIndex(null);
+              }}
+              onKeyDown={handleSearchKeyDown}
+              className="rounded-0 px-2 py-0 hover:placeholder:text-muted-foreground focus:placeholder:text-muted-foreground"
+            />
+          </div>
+          <div className="max-h-72 overflow-y-auto p-1">
+            {visibleVaults.length > 0 ? (
+              visibleVaults.map((path, index) => (
+                <SearchMenuAction
+                  id={`${actionIdPrefix}-clipper-space-action-${index}`}
+                  key={path}
+                  active={activeIndex === index}
+                  className="h-10"
+                  onActive={() => setActiveIndex(index)}
+                  onPress={() => selectVault(path)}
+                >
+                  <span className="min-w-0 truncate">
+                    {vaultName(path)}
+                  </span>
+                </SearchMenuAction>
+              ))
+            ) : (
+              <div className="flex h-10 items-center px-2 text-base text-muted-foreground">
+                No other spaces
+              </div>
+            )}
+          </div>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

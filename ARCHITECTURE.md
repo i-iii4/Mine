@@ -977,6 +977,28 @@ now avoid overwriting existing `.md` or media files, roll back copied media when
 the final block write fails, and validate remote fetch hosts through parsed
 HTTP(S) URLs plus DNS/IP checks before `ureq` runs.
 
+Article creation is guarded as a content invariant, not a UI hint. The clipper
+popup owns an explicit article extraction state (`idle/loading/ready/empty/failed`)
+and uses one `ensureArticleLoaded()` gateway for initial Content, manual Content
+switches and Save. `detectedType=link` may still default to Screenshot for fast
+startup, but switching to Content must run Defuddle before Save. The native host
+also rejects `block_type=article` with empty body, so a future frontend
+regression cannot persist a blank article that later derives runtime `media`.
+
+Clipper UI uses the same design-system primitives as the desktop app. In-page
+overlay lives in Shadow DOM, so shared `DropdownMenu` does not portal to page
+`document.body`; `overlay-entry.tsx` creates a shadow-local floating root and
+`OverlayShell` provides it through `DropdownMenuPortalContainerProvider`.
+Space selector uses shared `MenuTextTrigger`, clip type uses shared
+`SegmentedControl`, screenshot actions use shared `Button`, and channel picker
+is a thin adapter over the same `CollectionPicker` default menu layout used by
+desktop Connect menus. The final popup chrome keeps the new two-level header
+(space selector + Type row) and the legacy lower body stack (local rounded
+preview cards, Save and visible StatusBar). Picker surface geometry is exported
+from `CollectionPicker` so clipper inline picker and desktop floating menus
+share one contract; clipper-specific components may adapt data and state, but
+must not duplicate app visual primitives.
+
 Large clipper uploads use a two-phase commit. The HTTP `/upload` endpoint writes
 binary payloads into the local derived store under `pending_uploads/<upload_id>`
 and returns `pending_uploads_v1` capability data through `get_status`. Only

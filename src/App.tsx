@@ -69,6 +69,11 @@ const COMPACT_DETAIL_TOP_MENU_STORAGE_KEY = "mine.compactDetailTopMenu";
 
 type DetailLinkMode = "all" | "linked";
 
+const DETAIL_LINK_MODE_OPTIONS: SegmentedControlOption<DetailLinkMode>[] = [
+  { value: "all", label: "All" },
+  { value: "linked", label: "Connected" },
+];
+
 function getStoredCompactDetailTopMenu(): boolean {
   if (typeof window === "undefined") return false;
   return window.localStorage.getItem(COMPACT_DETAIL_TOP_MENU_STORAGE_KEY) === "true";
@@ -464,6 +469,7 @@ import { VaultConflictsBanner } from "@/components/VaultConflictsBanner";
 import { Grid } from "@/components/Grid";
 import { DragCardStackPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
+import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 import { DeleteBlockDialog } from "@/components/DeleteBlockDialog";
@@ -508,40 +514,16 @@ function CompactDetailLinkModeSwitch({
   const chromeGesture = useChromeDragGesture({ disabled: !chromeDragEnabled });
 
   return (
-    <div
+    <SegmentedControl
       {...chromeGesture}
-      className={cn(
-        "action-button inline-flex h-6 shrink-0 items-center overflow-hidden rounded-1 bg-transparent p-[2px] font-mono text-sm outline-0 hover:bg-component-fill-hover",
-        className,
-      )}
-      role="group"
+      value={value}
+      options={DETAIL_LINK_MODE_OPTIONS}
+      onChange={onChange}
       aria-label="Channel filter"
       data-entered={entered === undefined ? undefined : entered ? "true" : "false"}
       data-compact-detail-link-mode-control=""
-    >
-      <button
-        type="button"
-        aria-pressed={value === "all"}
-        onClick={() => onChange("all")}
-        className={cn(
-          "inline-flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] leading-none text-muted-foreground hover:text-foreground focus-visible:outline-none",
-          value === "all" && "bg-component-fill-inner text-foreground",
-        )}
-      >
-        All
-      </button>
-      <button
-        type="button"
-        aria-pressed={value === "linked"}
-        onClick={() => onChange("linked")}
-        className={cn(
-          "inline-flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] leading-none text-muted-foreground hover:text-foreground focus-visible:outline-none",
-          value === "linked" && "bg-component-fill-inner text-foreground",
-        )}
-      >
-        Connected
-      </button>
-    </div>
+      className={className}
+    />
   );
 }
 

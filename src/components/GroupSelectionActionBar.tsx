@@ -22,7 +22,10 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { BatchCollectionPicker } from "./CollectionPicker";
+import {
+  BatchCollectionPicker,
+  COLLECTION_PICKER_CONTENT_CLASS,
+} from "./CollectionPicker";
 import type { LightBlock, TagCount } from "@/types";
 import {
   patchTagLookup,
@@ -154,7 +157,7 @@ export function GroupSelectionActionBar({
                 Connect
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent widthRole="picker" className="flex max-h-80 flex-col overflow-hidden p-0" align="center">
+            <DropdownMenuContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS} align="center">
               <BatchCollectionPicker
                 selectedSlugs={selectedSlugs}
                 tags={tags}

@@ -16,6 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import { filterAndRankChannelSearch } from "@/lib/channelSearch";
@@ -198,46 +199,24 @@ export function VaultSwitcher({
       onOpenChange={isTopChrome ? handleOpenChange : undefined}
     >
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
+        <MenuTextTrigger
           aria-label={`Switch space: ${triggerLabel}`}
+          label={triggerLabel}
+          hotkey={hotkey}
+          surface={isTopChrome ? "topChrome" : "actionBar"}
+          keyboardFocus={topChromeTrigger.keyboardFocus}
           data-vault-switcher=""
           data-vault-switcher-surface={surface}
           {...(isTopChrome ? topChromeTrigger.triggerProps : {})}
           className={cn(
-            "group inline-flex shrink-0 cursor-pointer items-center select-none overflow-hidden bg-transparent outline-0",
             isTopChrome
               ? cn(
-                  "h-full min-w-0 flex-none justify-start rounded-0 px-3 font-mono text-sm text-muted-foreground focus-visible:outline-none",
+                  "justify-start px-3",
                   topChromeCollapsed ? "max-w-[159px]" : "max-w-[50%]",
                 )
-              : "action-button h-6 rounded-1 p-[2px] font-mono text-sm hover:bg-component-fill-hover",
+              : undefined,
           )}
-        >
-          {isTopChrome ? (
-            <span
-              className={cn(
-                "inline-flex h-6 min-w-0 max-w-full items-center rounded-1 px-2 text-muted-foreground group-hover:bg-active group-hover:text-foreground group-data-[state=open]:bg-active group-data-[state=open]:text-foreground",
-                topChromeTrigger.keyboardFocus && "bg-active text-foreground",
-              )}
-            >
-              <span className="min-w-0 truncate text-left">
-                {triggerLabel}
-              </span>
-            </span>
-          ) : (
-            <>
-              {hotkey && (
-                <span className="shrink-0 px-[1ch] py-[2px] text-foreground">
-                  {hotkey}
-                </span>
-              )}
-              <span className="min-w-0 shrink-0 truncate rounded-[2px] bg-component-fill-inner px-[1ch] py-[2px] text-foreground">
-                {triggerLabel}
-              </span>
-            </>
-          )}
-        </button>
+        />
       </DropdownMenuTrigger>
       <DropdownMenuContent
         side={isTopChrome ? "bottom" : "top"}

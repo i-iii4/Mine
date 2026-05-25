@@ -26,7 +26,10 @@ import { cn } from "@/lib/utils";
 import type { IndexedBlock, LightBlock, TagCount } from "@/types";
 import { getBlock } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
-import { CollectionPicker } from "./CollectionPicker";
+import {
+  COLLECTION_PICKER_CONTENT_CLASS,
+  CollectionPicker,
+} from "./CollectionPicker";
 
 interface CardMenuActionsProps<TBlock extends LightBlock | IndexedBlock> {
   block: TBlock;
@@ -177,7 +180,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent
             widthRole="picker"
-            className="flex max-h-80 flex-col overflow-hidden p-0"
+            className={COLLECTION_PICKER_CONTENT_CLASS}
             onKeyDownCapture={handleMenuKeyDownCapture}
           >
             <CollectionPicker
@@ -393,7 +396,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
               <Plus className="size-3" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent widthRole="picker" className="flex max-h-80 flex-col overflow-hidden p-0" align="end">
+          <DropdownMenuContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS} align="end">
             <CollectionPicker
               blockSlug={block.slug}
               selectedTags={selectedTags}
