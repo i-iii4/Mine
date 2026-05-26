@@ -1,5 +1,40 @@
 # Devlog
 
+## 25.05.2026 [fix] — Normalize picker search and Clipper spacing tokens
+
+### Context
+
+- Connect picker search needed the same flat menu-header contract as space and
+  collection dropdown search.
+- Keyboard/pointer arbitration regressed around `Create channel` and hover
+  auto-scroll.
+- Clipper lower body spacing needed one shared setting: 16px only after Type
+  row, then 8px between lower sections.
+
+### Completed
+
+- Added shared `SearchMenuInput` and reused it in space, collection, Connect
+  and Clipper channel search surfaces.
+- Made `Create channel` a navigable picker item for ArrowUp/ArrowDown/Enter in
+  single-card and batch Connect pickers.
+- Stopped pointer hover from calling `scrollIntoView`; auto-scroll now belongs
+  only to keyboard-owned active rows.
+- Capped floating picker height by available viewport height to avoid clipping
+  the last visible row.
+- Moved Clipper lower-body spacing into `popup-layout.css` tokens:
+  `--mine-clipper-after-type-gap: 16px` and
+  `--mine-clipper-section-gap: 8px`.
+- Documented the shared search, picker navigation and Clipper spacing contracts
+  in `SPEC_FRONTEND.md`, `SPEC_CLIPPER.md` and `DESIGN_SYSTEM.md`.
+
+### Verification
+
+- `bun run test:frontend -- CollectionPicker.test.tsx`
+- `bun run lint`
+- `bun run build`
+- `bun run build:extension`
+- `git diff --check`
+
 ## 25.05.2026 [change] — Refine Clipper spacing and close control
 
 ### Context

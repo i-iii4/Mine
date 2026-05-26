@@ -23,13 +23,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
+import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import {
   filterAndRankChannelSearch,
   normalizeChannelSearchText,
 } from "@/lib/channelSearch";
 import { collectionRefLabel } from "@/lib/collections";
-import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { cn } from "@/lib/utils";
 import type { TagCount } from "@/types";
 
@@ -268,24 +268,19 @@ export function TopCollectionSwitcher({
           data-top-collection-menu=""
           data-top-collection-menu-align-offset={menuAlignOffset}
         >
-          <div className="border-b border-border p-1">
-            <Input
-              ref={searchInputRef}
-              {...SEARCH_INPUT_SUPPRESSION_PROPS}
-              aria-label="Search collections"
-              aria-activedescendant={activeActionId}
-              placeholder="Search collections..."
-              variant="ghost"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setActiveIndex(null);
-              }}
-              onKeyDown={handleSearchKeyDown}
-              className="h-8 rounded-0 px-2 py-0 hover:placeholder:text-muted-foreground focus:placeholder:text-muted-foreground"
-              data-top-collection-search=""
-            />
-          </div>
+          <SearchMenuInput
+            ref={searchInputRef}
+            aria-label="Search collections"
+            aria-activedescendant={activeActionId}
+            placeholder="Search collections..."
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setActiveIndex(null);
+            }}
+            onKeyDown={handleSearchKeyDown}
+            data-top-collection-search=""
+          />
           <div className="max-h-72 overflow-y-auto p-1" data-top-collection-list="">
             {visibleItems.length > 0 ? (
               visibleItems.map((item, index) => (

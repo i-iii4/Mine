@@ -182,6 +182,7 @@ export function PopupApp() {
   const embeddedVideoBySrc = useMemo(() => {
     return buildEmbeddedVideoPreviewMap(embeddedVideoPreviews);
   }, [embeddedVideoPreviews]);
+  const hasTypeRow = metadata?.detectedType !== "image";
 
   if (clipper.state === "loading") {
     return <LoadingState />;
@@ -202,12 +203,12 @@ export function PopupApp() {
         />
       )}
 
-      {metadata?.detectedType !== "image" && (
+      {hasTypeRow && (
         <TypeRow current={clipper.currentType} onChange={clipper.setCurrentType} />
       )}
 
-      <div className="flex flex-col gap-4 p-3">
-        <div className="space-y-2">
+      <div className="mine-clipper-body" data-after-type={hasTypeRow ? "true" : "false"}>
+        <div className="mine-clipper-section-stack">
           {clipper.currentType === "link" && (
             <div className="space-y-1.5 rounded-1 border border-border p-2">
               {ogImage && (
@@ -319,7 +320,7 @@ export function PopupApp() {
           onCreate={clipper.createChannel}
         />
 
-        <div className="space-y-2">
+        <div className="mine-clipper-section-stack">
           <SaveButton
             count={clipper.selectedTags.length}
             saving={clipper.saving}

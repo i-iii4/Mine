@@ -429,26 +429,34 @@ text-foreground`. Это даёт ровный 2px inset по вертикали
 Сегменты shrink-to-content: ширина контрола определяется текстом, а не
 растягивается на всю ширину popup.
 
-Ниже Type row клиппер сохраняет простой body: общий контейнер `p-3 gap-4`.
-Верхний inset между двумя верхними строками и первой preview-карточкой остаётся
-12px (`p-3`). Major sections разделены 16px: preview → shared channel picker →
-save/status stack. Content preview — `max-h-[280px] overflow-y-auto rounded-1
-border border-border p-2`. Link/Image preview используют тот же локальный
+Ниже Type row клиппер сохраняет простой body через единый spacing contract в
+`popup-layout.css`: `.mine-clipper-body` задаёт
+`--mine-clipper-after-type-gap: 16px` и `--mine-clipper-section-gap: 8px`.
+После Type row до первой preview-карточки остаётся 16px; все дальнейшие
+разрывы между preview, shared channel picker и save/status stack идут по 8px.
+Если Type row скрыт для image-only clip, верхний body inset также равен 8px.
+Content preview — `max-h-[280px] overflow-y-auto rounded-1 border border-border
+p-2`. Link/Image preview используют тот же локальный
 `rounded-1 border border-border` язык, а не edge-to-edge bars. Screenshot
 preview — локальная карточка `rounded-1 border border-border bg-accent`, image
 `max-h-[220px] w-auto max-w-full rounded-1 object-contain`; внутренний отступ
-между screenshot и action row остаётся 8px (`space-y-2`), actions используют
-`Button size="sm"` (28px).
+между screenshot и action row также использует `.mine-clipper-section-stack`
+и общий `--mine-clipper-section-gap: 8px`; actions используют `Button size="sm"`
+(28px).
 
 Channel picker не имеет собственной clipper-разметки. `ChannelList` является
 только adapter `ChannelInfo[] -> TagCount[]` и рендерит общий
-`CollectionPicker` с дефолтным menu layout, тем же search input, row/action
-slot, active state, create row и keyboard/pointer arbitration, что card
-Connect menus в основном приложении. Surface class живёт в `CollectionPicker`
+`CollectionPicker` с дефолтным menu layout, тем же `SearchMenuInput`
+menu-header search row, row/action slot, active state, conditional create row
+и keyboard/pointer arbitration, что card Connect menus в основном приложении:
+printable keys stay routed to search, `ArrowDown`/`ArrowUp` can reach the
+conditional create row, and pointer hover does not auto-scroll the list.
+Surface class живёт в `CollectionPicker`
 как `COLLECTION_PICKER_CONTENT_CLASS` для Radix floating content и
 `COLLECTION_PICKER_INLINE_SURFACE_CLASS` для inline clipper surface. Checkbox
 list в клиппере запрещён. Save/status stack остаётся отдельным блоком
-`space-y-2` без separator line; видимый `StatusBar` сохраняется.
+`.mine-clipper-section-stack` без separator line; видимый `StatusBar`
+сохраняется.
 
 Article preview в popup рендерит полноценный Markdown через `ReactMarkdown` +
 `remark-gfm`, но использует отдельную compact preview scale. Это не обрезает

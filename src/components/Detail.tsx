@@ -79,7 +79,6 @@ import { cn } from "@/lib/utils";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
-import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import {
   findPreviewTileForSource,
@@ -98,6 +97,7 @@ import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
 } from "./CollectionPicker";
+import { SearchMenuInput } from "./SearchMenuInput";
 import { MicroPreviewThumbnail, microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
 import type { ImagePreviewRequest } from "./ImagePreviewOverlay";
 
@@ -1768,19 +1768,13 @@ function MediaAssetCollectionPicker({
 
   return (
     <>
-      <div
-        className="shrink-0 p-2 pb-1"
+      <SearchMenuInput
+        autoFocus
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="Search channels..."
         onKeyDown={(event) => event.stopPropagation()}
-      >
-        <Input
-          {...SEARCH_INPUT_SUPPRESSION_PROPS}
-          autoFocus
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search channels..."
-          className="h-auto py-1.5"
-        />
-      </div>
+      />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-1 py-0.5">
           {filtered.map((item) => {

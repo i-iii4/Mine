@@ -708,25 +708,33 @@ Image media expansion:
 - Host dropdown/submenu content uses floating width role `picker`:
   `width: min(20rem, available-width)`. The width is intentionally wider than a
   command menu because rows contain a search field, collection label and fixed
-  `10ch` action slot.
+  `10ch` action slot. Height is capped by
+  `min(20rem, --radix-dropdown-menu-content-available-height)`, so the menu
+  fits the available viewport instead of clipping the last visible row.
 - Порядок каналов всегда равен порядку `tags`, полученному из taxonomy/sidebar.
   `selectedTags`, recent tags, current route и optimistic membership changes не
   пересортировывают список; connected-канал после действия не прыгает наверх.
-- Search input использует стандартный `Input` с focus border
-  `focus-visible:border-border-accent`, тем же state-token, что sidebar/feed
-  focus seam.
+- Search uses the shared `SearchMenuInput` menu-header contract: a flat
+  `Input variant="ghost"` row behind the menu's top divider, without its own
+  rounded input frame/pill. This must match `Search spaces` and
+  `Search collections`; Connect menus do not get a separate form-field surface.
 - Printable key из любого места внутри picker фокусирует search input и
   добавляет символ в search query; parent DropdownMenu typeahead не перехватывает
   эти клавиши.
-- `ArrowUp` / `ArrowDown` перемещают active row внутри отфильтрованного списка.
-  Active row использует `bg-active`, показывает правую action button и скрывает
-  count. Pointer hover и keyboard navigation не являются двумя независимыми
-  visual states: pointer move и ArrowUp/ArrowDown обновляют один общий
+- `ArrowUp` / `ArrowDown` перемещают active item внутри отфильтрованного списка
+  и условной строки `Create channel`, когда она показана. Active row/action
+  использует `bg-active`, показывает правую action button и скрывает count.
+  Pointer hover и keyboard navigation не являются двумя независимыми visual
+  states: pointer move и ArrowUp/ArrowDown обновляют один общий
   `activeIndex`. Pointer enter не меняет active row: keyboard-triggered scroll
   не должен отдавать выделение неподвижному курсору, а первый post-keyboard
   pointermove с теми же координатами игнорируется.
+- Автоподскролл active row разрешён только для keyboard ownership. Pointer
+  hover по частично видимому row не вызывает `scrollIntoView`, чтобы menu не
+  дёргался под курсором.
 - `Enter` на active row выполняет `Connect`/`Disconnect`, оставляя меню
-  пригодным для дальнейшей навигации.
+  пригодным для дальнейшей навигации. `Enter` на active `Create channel`
+  создаёт канал и присоединяет текущую карточку.
 - `Escape` внутри submenu закрывает только Connect submenu и возвращает фокус
   на parent `Connect` item в overflow menu. В standalone DropdownMenu content
   `Escape` отдаётся родительскому меню.

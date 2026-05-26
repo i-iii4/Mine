@@ -75,7 +75,7 @@ describe("CollectionPicker", () => {
     expect(screen.getByRole("button", { name: "Disconnect tools" })).toBeInTheDocument();
   });
 
-  it("uses border-accent focus styling and supports keyboard navigation", () => {
+  it("uses flat menu-header search styling and supports keyboard navigation", () => {
     const onToggleTag = vi.fn();
     const onRequestClose = vi.fn();
     const { container } = render(
@@ -92,7 +92,9 @@ describe("CollectionPicker", () => {
     const picker = container.querySelector("[data-collection-picker]") as HTMLElement;
     const input = screen.getByPlaceholderText("Search channels...");
 
-    expect(input).toHaveClass("focus-visible:border-border-accent");
+    expect(input.parentElement).toHaveClass("border-b", "border-border", "p-1");
+    expect(input).toHaveClass("border-none", "bg-transparent", "rounded-0", "px-2", "py-0");
+    expect(input).not.toHaveClass("focus-visible:border-border-accent");
     expect(input).toHaveAttribute("autocomplete", "off");
     expect(input).toHaveAttribute("autocorrect", "off");
     expect(input).toHaveAttribute("autocapitalize", "none");
@@ -247,6 +249,51 @@ describe("CollectionPicker", () => {
     fireEvent.keyDown(picker, { key: "t" });
 
     expect(screen.getByPlaceholderText("Search channels...")).toHaveValue("t");
+  });
+
+  it("keeps printable typing routed to search from a hovered row", () => {
+    const { container } = render(
+      <CollectionPicker
+        blockSlug="alpha"
+        selectedTags={[]}
+        tags={[tag("tools", 1), tag("typography", 2)]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        stopKeyPropagation
+      />,
+    );
+    const row = container.querySelectorAll("[data-collection-picker-row]")[1] as HTMLElement;
+
+    fireEvent.pointerMove(row);
+    fireEvent.keyDown(row, { key: "p" });
+
+    expect(screen.getByPlaceholderText("Search channels...")).toHaveValue("p");
+  });
+
+  it("lets ArrowDown reach the create-channel action from search", () => {
+    const onCreateAndAssign = vi.fn();
+    const { container } = render(
+      <CollectionPicker
+        blockSlug="alpha"
+        selectedTags={[]}
+        tags={[tag("tools", 1)]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={onCreateAndAssign}
+        stopKeyPropagation
+      />,
+    );
+    const picker = container.querySelector("[data-collection-picker]") as HTMLElement;
+    const input = screen.getByPlaceholderText("Search channels...");
+
+    fireEvent.change(input, { target: { value: "new-channel" } });
+    fireEvent.keyDown(picker, { key: "ArrowDown" });
+
+    const createAction = screen.getByRole("button", { name: /Create/ });
+    expect(createAction).toHaveAttribute("data-collection-picker-create-active", "true");
+
+    fireEvent.keyDown(picker, { key: "Enter" });
+
+    expect(onCreateAndAssign).toHaveBeenCalledWith("new-channel", "alpha");
   });
 
   it("supports edge-to-edge clipper layout without changing row behavior", () => {

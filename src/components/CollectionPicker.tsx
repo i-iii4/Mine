@@ -7,10 +7,9 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Plus } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { SearchMenuInput } from "@/components/SearchMenuInput";
 import type { TagCount } from "@/types";
 import { collectionRefLabel } from "@/lib/collections";
-import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { cn } from "@/lib/utils";
 
 interface CollectionPickerProps {
@@ -40,7 +39,7 @@ interface BatchCollectionPickerProps {
 type BatchMembershipState = "all" | "not-all";
 
 export const COLLECTION_PICKER_CONTENT_CLASS =
-  "flex max-h-80 flex-col overflow-hidden p-0";
+  "flex max-h-[min(20rem,var(--radix-dropdown-menu-content-available-height))] flex-col overflow-hidden p-0";
 
 export const COLLECTION_PICKER_INLINE_SURFACE_CLASS =
   "bg-popover text-popover-foreground flex max-h-80 flex-col overflow-hidden rounded-1 border p-0 shadow-md";
@@ -181,27 +180,33 @@ export function CollectionPicker({
 
   const trimmed = search.trim();
   const canCreate = trimmed.length > 0 && filtered.length === 0;
+  const createActionIndex = filtered.length;
+  const actionCount = filtered.length + (canCreate ? 1 : 0);
   const boundedActiveIndex =
-    filtered.length > 0 ? Math.min(activeIndex, filtered.length - 1) : -1;
+    actionCount > 0 ? Math.min(activeIndex, actionCount - 1) : -1;
+  const activeTag = boundedActiveIndex >= 0 && boundedActiveIndex < filtered.length
+    ? filtered[boundedActiveIndex]
+    : null;
+  const createActive = canCreate && boundedActiveIndex === createActionIndex;
 
   useEffect(() => {
     setActiveIndex(0);
   }, [search]);
 
   useEffect(() => {
-    if (filtered.length === 0 && activeIndex !== 0) {
+    if (actionCount === 0 && activeIndex !== 0) {
       setActiveIndex(0);
-    } else if (filtered.length > 0 && activeIndex > filtered.length - 1) {
-      setActiveIndex(filtered.length - 1);
+    } else if (actionCount > 0 && activeIndex > actionCount - 1) {
+      setActiveIndex(actionCount - 1);
     }
-  }, [activeIndex, filtered.length]);
+  }, [activeIndex, actionCount]);
 
   useEffect(() => {
-    if (boundedActiveIndex < 0) return;
-    const tag = filtered[boundedActiveIndex]?.tag;
+    if (interactionMode !== "keyboard" || boundedActiveIndex < 0) return;
+    const tag = activeTag?.tag;
     if (!tag) return;
     rowRefs.current.get(tag)?.scrollIntoView?.({ block: "nearest" });
-  }, [boundedActiveIndex, filtered]);
+  }, [activeTag, boundedActiveIndex, interactionMode]);
 
   const toggleTag = (tag: string, hasTag: boolean) => {
     const nextConnected = !hasTag;
@@ -251,17 +256,17 @@ export function CollectionPicker({
     }
 
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      if (filtered.length > 0) {
+      if (actionCount > 0) {
         event.preventDefault();
         event.stopPropagation();
         blockedPointerPositionRef.current = lastPointerPositionRef.current;
         setInteractionMode("keyboard");
         setActiveIndex((current) => {
-          const start = filtered.length > 0 ? Math.min(current, filtered.length - 1) : 0;
+          const start = Math.min(current, actionCount - 1);
           if (event.key === "ArrowDown") {
-            return (start + 1) % filtered.length;
+            return (start + 1) % actionCount;
           }
-          return (start - 1 + filtered.length) % filtered.length;
+          return (start - 1 + actionCount) % actionCount;
         });
       } else if (stopKeyPropagation) {
         event.stopPropagation();
@@ -270,12 +275,11 @@ export function CollectionPicker({
     }
 
     if (event.key === "Enter") {
-      const activeTag = boundedActiveIndex >= 0 ? filtered[boundedActiveIndex] : null;
       if (activeTag) {
         event.preventDefault();
         event.stopPropagation();
         toggleTag(activeTag.tag, optimisticTags.includes(activeTag.tag));
-      } else if (canCreate) {
+      } else if (createActive) {
         event.preventDefault();
         event.stopPropagation();
         createAndAssign();
@@ -316,35 +320,37 @@ export function CollectionPicker({
     setActiveIndex(rowIndex);
   };
 
+  const handleCreatePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!canCreate) return;
+    const nextPointerPosition = pointerPosition(event);
+    const blockedPointerPosition = blockedPointerPositionRef.current;
+    lastPointerPositionRef.current = nextPointerPosition;
+
+    if (isSamePointerPosition(blockedPointerPosition, nextPointerPosition)) {
+      return;
+    }
+
+    blockedPointerPositionRef.current = null;
+    if (createActive && interactionMode === "pointer") return;
+    setInteractionMode("pointer");
+    setActiveIndex(createActionIndex);
+  };
+
   return (
     <div
       className={cn("flex min-h-0 flex-1 flex-col", className)}
       data-collection-picker=""
       onKeyDownCapture={handleKeyDown}
     >
-      {/* Search */}
-      <div
-        className={cn(
-          "shrink-0",
-          layout === "edge" ? "border-b border-border p-0" : "p-2 pb-1",
-        )}
-      >
-        <Input
-          ref={inputRef}
-          {...SEARCH_INPUT_SUPPRESSION_PROPS}
-          autoFocus={autoFocusSearch}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search channels..."
-          variant={layout === "edge" ? "ghost" : "default"}
-          controlSize={layout === "edge" ? "clipper" : "default"}
-          className={cn(
-            layout === "edge"
-              ? "rounded-0 px-3 py-0 focus-visible:border-transparent"
-              : "h-auto py-1.5 focus-visible:border-border-accent",
-          )}
-        />
-      </div>
+      <SearchMenuInput
+        ref={inputRef}
+        autoFocus={autoFocusSearch}
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search channels..."
+        controlSize={layout === "edge" ? "clipper" : "default"}
+        inputClassName={layout === "edge" ? "px-3" : undefined}
+      />
 
       {/* Tag list */}
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -418,10 +424,12 @@ export function CollectionPicker({
 
           {canCreate && (
             <button
+              type="button"
               onPointerDown={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
               }}
+              onPointerMove={handleCreatePointerMove}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -431,7 +439,10 @@ export function CollectionPicker({
                 layout === "edge"
                   ? "flex h-10 w-full items-center gap-2 rounded-1 px-2 text-base font-semibold text-foreground hover:bg-active"
                   : "flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base font-semibold text-foreground hover:bg-active",
+                createActive && "bg-active",
               )}
+              data-collection-picker-create=""
+              data-collection-picker-create-active={createActive ? "true" : undefined}
             >
               <Plus className="size-4 shrink-0" />
               <span>
@@ -474,27 +485,33 @@ export function BatchCollectionPicker({
     : tags;
   const trimmed = search.trim();
   const canCreate = trimmed.length > 0 && filtered.length === 0;
+  const createActionIndex = filtered.length;
+  const actionCount = filtered.length + (canCreate ? 1 : 0);
   const boundedActiveIndex =
-    filtered.length > 0 ? Math.min(activeIndex, filtered.length - 1) : -1;
+    actionCount > 0 ? Math.min(activeIndex, actionCount - 1) : -1;
+  const activeTag = boundedActiveIndex >= 0 && boundedActiveIndex < filtered.length
+    ? filtered[boundedActiveIndex]
+    : null;
+  const createActive = canCreate && boundedActiveIndex === createActionIndex;
 
   useEffect(() => {
     setActiveIndex(0);
   }, [search]);
 
   useEffect(() => {
-    if (filtered.length === 0 && activeIndex !== 0) {
+    if (actionCount === 0 && activeIndex !== 0) {
       setActiveIndex(0);
-    } else if (filtered.length > 0 && activeIndex > filtered.length - 1) {
-      setActiveIndex(filtered.length - 1);
+    } else if (actionCount > 0 && activeIndex > actionCount - 1) {
+      setActiveIndex(actionCount - 1);
     }
-  }, [activeIndex, filtered.length]);
+  }, [activeIndex, actionCount]);
 
   useEffect(() => {
-    if (boundedActiveIndex < 0) return;
-    const tag = filtered[boundedActiveIndex]?.tag;
+    if (interactionMode !== "keyboard" || boundedActiveIndex < 0) return;
+    const tag = activeTag?.tag;
     if (!tag) return;
     rowRefs.current.get(tag)?.scrollIntoView?.({ block: "nearest" });
-  }, [boundedActiveIndex, filtered]);
+  }, [activeTag, boundedActiveIndex, interactionMode]);
 
   const toggleTag = (tag: string) => {
     const membership = batchMembershipState(selectedSlugs, tagLookup, pendingStates, tag);
@@ -529,27 +546,26 @@ export function BatchCollectionPicker({
     }
 
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      if (filtered.length > 0) {
+      if (actionCount > 0) {
         event.preventDefault();
         event.stopPropagation();
         blockedPointerPositionRef.current = lastPointerPositionRef.current;
         setInteractionMode("keyboard");
         setActiveIndex((current) => {
-          const start = Math.min(current, filtered.length - 1);
-          if (event.key === "ArrowDown") return (start + 1) % filtered.length;
-          return (start - 1 + filtered.length) % filtered.length;
+          const start = Math.min(current, actionCount - 1);
+          if (event.key === "ArrowDown") return (start + 1) % actionCount;
+          return (start - 1 + actionCount) % actionCount;
         });
       }
       return;
     }
 
     if (event.key === "Enter") {
-      const activeTag = boundedActiveIndex >= 0 ? filtered[boundedActiveIndex] : null;
       if (activeTag) {
         event.preventDefault();
         event.stopPropagation();
         toggleTag(activeTag.tag);
-      } else if (canCreate) {
+      } else if (createActive) {
         event.preventDefault();
         event.stopPropagation();
         createAndAssign();
@@ -586,6 +602,22 @@ export function BatchCollectionPicker({
     setActiveIndex(rowIndex);
   };
 
+  const handleCreatePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!canCreate) return;
+    const nextPointerPosition = pointerPosition(event);
+    const blockedPointerPosition = blockedPointerPositionRef.current;
+    lastPointerPositionRef.current = nextPointerPosition;
+
+    if (isSamePointerPosition(blockedPointerPosition, nextPointerPosition)) {
+      return;
+    }
+
+    blockedPointerPositionRef.current = null;
+    if (createActive && interactionMode === "pointer") return;
+    setInteractionMode("pointer");
+    setActiveIndex(createActionIndex);
+  };
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col"
@@ -593,17 +625,13 @@ export function BatchCollectionPicker({
       data-collection-picker=""
       onKeyDownCapture={handleKeyDown}
     >
-      <div className="shrink-0 p-2 pb-1">
-        <Input
-          ref={inputRef}
-          {...SEARCH_INPUT_SUPPRESSION_PROPS}
-          autoFocus
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search channels..."
-          className="h-auto py-1.5 focus-visible:border-border-accent"
-        />
-      </div>
+      <SearchMenuInput
+        ref={inputRef}
+        autoFocus
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="Search channels..."
+      />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-1 py-0.5">
@@ -682,12 +710,18 @@ export function BatchCollectionPicker({
                 event.preventDefault();
                 event.stopPropagation();
               }}
+              onPointerMove={handleCreatePointerMove}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 createAndAssign();
               }}
-              className="flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base font-semibold text-foreground hover:bg-active"
+              className={cn(
+                "flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base font-semibold text-foreground hover:bg-active",
+                createActive && "bg-active",
+              )}
+              data-collection-picker-create=""
+              data-collection-picker-create-active={createActive ? "true" : undefined}
             >
               <Plus className="size-4 shrink-0" />
               <span>

@@ -15,13 +15,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
+import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import { filterAndRankChannelSearch } from "@/lib/channelSearch";
 import { listKnownVaults, selectVault } from "@/lib/commands";
-import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { cn } from "@/lib/utils";
 
 interface VaultSwitcherProps {
@@ -230,24 +229,19 @@ export function VaultSwitcher({
         data-vault-switcher-menu-align-offset={isTopChrome ? menuAlignOffset : undefined}
       >
         {isTopChrome && (
-          <div className="border-b border-border p-1">
-            <Input
-              ref={searchInputRef}
-              {...SEARCH_INPUT_SUPPRESSION_PROPS}
-              aria-label="Search spaces"
-              aria-activedescendant={activeActionId}
-              placeholder="Search spaces..."
-              variant="ghost"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setActiveIndex(null);
-              }}
-              onKeyDown={handleSearchKeyDown}
-              className="h-8 rounded-0 px-2 py-0 hover:placeholder:text-muted-foreground focus:placeholder:text-muted-foreground"
-              data-top-space-search=""
-            />
-          </div>
+          <SearchMenuInput
+            ref={searchInputRef}
+            aria-label="Search spaces"
+            aria-activedescendant={activeActionId}
+            placeholder="Search spaces..."
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setActiveIndex(null);
+            }}
+            onKeyDown={handleSearchKeyDown}
+            data-top-space-search=""
+          />
         )}
         <div className={isTopChrome ? "max-h-72 overflow-y-auto p-1" : undefined}>
           {visibleVaults.length > 0 ? (

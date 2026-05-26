@@ -43,6 +43,29 @@ body {
   animation: mine-indeterminate-progress 1.4s ease-in-out infinite;
 }
 
+.mine-clipper-body {
+  --mine-clipper-body-inset: 12px;
+  --mine-clipper-section-gap: 8px;
+  --mine-clipper-after-type-gap: 16px;
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--mine-clipper-section-gap);
+  padding-inline: var(--mine-clipper-body-inset);
+  padding-bottom: var(--mine-clipper-body-inset);
+  padding-top: var(--mine-clipper-after-type-gap);
+}
+
+.mine-clipper-body[data-after-type="false"] {
+  padding-top: var(--mine-clipper-section-gap);
+}
+
+.mine-clipper-section-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mine-clipper-section-gap);
+}
+
 .mine-clipper-article-preview {
   font-size: 14px;
   line-height: 20px;

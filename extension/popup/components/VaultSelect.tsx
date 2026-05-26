@@ -13,11 +13,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
-import { Input } from "@/components/ui/input";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
+import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { filterAndRankChannelSearch } from "@/lib/channelSearch";
-import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 
 interface VaultSelectProps {
   value: string | null;
@@ -150,24 +149,19 @@ export function VaultSelect({ value, options, onChange, onClose }: VaultSelectPr
             triggerRef.current?.blur();
           }}
         >
-          <div className="border-b border-border p-1">
-            <Input
-              ref={searchInputRef}
-              {...SEARCH_INPUT_SUPPRESSION_PROPS}
-              aria-label="Search spaces"
-              aria-activedescendant={activeActionId}
-              placeholder="Search spaces..."
-              variant="ghost"
-              controlSize="clipper"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setActiveIndex(null);
-              }}
-              onKeyDown={handleSearchKeyDown}
-              className="rounded-0 px-2 py-0 hover:placeholder:text-muted-foreground focus:placeholder:text-muted-foreground"
-            />
-          </div>
+          <SearchMenuInput
+            ref={searchInputRef}
+            aria-label="Search spaces"
+            aria-activedescendant={activeActionId}
+            placeholder="Search spaces..."
+            controlSize="clipper"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setActiveIndex(null);
+            }}
+            onKeyDown={handleSearchKeyDown}
+          />
           <div className="max-h-72 overflow-y-auto p-1">
             {visibleVaults.length > 0 ? (
               visibleVaults.map((path, index) => (

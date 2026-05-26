@@ -15,7 +15,7 @@ export function ScreenshotPreview({
   cropSupported,
 }: ScreenshotPreviewProps) {
   return (
-    <div className="space-y-2">
+    <div className="mine-clipper-section-stack">
       <div className="rounded-1 border border-border bg-accent">
         <img
           src={dataUrl}

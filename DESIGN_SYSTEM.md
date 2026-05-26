@@ -696,6 +696,10 @@ card-level `Source`, card rename, card delete или collection `Disconnect`.
 overlay, чтобы не блокировать native video controls.
 
 CollectionPicker membership rows:
+- Search uses the shared `SearchMenuInput` contract: `border-b border-border
+  p-1` wrapper plus `Input variant="ghost"` with `rounded-0 px-2 py-0`.
+  It is a menu header, not a standalone input pill. This matches
+  `Search spaces` and `Search collections`.
 - Checkbox не используется.
 - Название канала слева остаётся обычным UI-шрифтом.
 - Правый slot имеет `w-[10ch]`; connected row всегда показывает кнопку
@@ -705,6 +709,9 @@ CollectionPicker membership rows:
 - Active row имеет один source of truth: общий `activeIndex`, который обновляют
   pointer move и ArrowUp/ArrowDown. CSS `:hover` не должен создавать
   второй независимый selected state.
+- `Create channel`, когда он показан в Connect picker, считается таким же
+  navigable item: `ArrowDown`/`ArrowUp` могут поставить на него active state, а
+  `Enter` запускает create-and-assign.
 - Pointer enter не меняет `activeIndex`: после keyboard navigation список может
   прокручиваться под неподвижной мышью, и такой synthetic hover не должен
   отбирать выделение у стрелок. Pointer ownership включается только после
@@ -840,9 +847,12 @@ primitives и те же состояния, что desktop UI:
   switcher uses `h-8`, inner `h-7`, `p-[2px]`, `text-base`, and
   shrink-to-content width, never stretched full-width;
 - lower body: after the two top rows, the clipper keeps the legacy simple body:
-  `p-3` with a 16px major-section gap (`gap-4`) between preview,
-  channel picker and save/status stack. The top inset after Type row remains
-  12px (`p-3`), and screenshot-internal media-to-actions spacing remains 8px.
+  `.mine-clipper-body` owns the spacing tokens in `popup-layout.css`.
+  `--mine-clipper-after-type-gap` is 16px only between Type row and the first
+  preview card; `--mine-clipper-section-gap` is 8px for every lower separation:
+  preview -> channel picker -> save/status stack and screenshot media ->
+  screenshot actions. If Type row is hidden, the top body inset also falls back
+  to the 8px section gap.
   Do not convert this lower body into edge-to-edge bars unless the full
   clipper contract is redesigned again;
 - screenshot preview: legacy local card, `rounded-1 border border-border
@@ -1213,27 +1223,32 @@ rounded-1 bg-component-fill px-[1ch] font-semibold`, hover/focus outline
 
 CollectionPicker inside card/Detail menus follows the same row action visual
 model but keeps sidebar taxonomy order exactly as provided. Connected/recent
-state never reorders rows while the menu is open. Search input is a standard
-`Input` with `focus-visible:border-border-accent`; active keyboard row uses
-`bg-active`, hides the count, and reveals the right action button. `ArrowUp` /
-`ArrowDown` move the active row, `Enter` runs the visible
-`Connect`/`Disconnect` action, and `Escape` from a submenu returns to the
-parent `Connect` item instead of closing the whole overflow menu.
+state never reorders rows while the menu is open. Search uses shared
+`SearchMenuInput`: a flat ghost menu-header row behind `border-b`, without a
+separate rounded input frame. Active keyboard item uses `bg-active`, hides the
+row count, and reveals the right action button. `ArrowUp` /
+`ArrowDown` move across rows and the conditional create action, `Enter` runs
+the visible `Connect`/`Disconnect` or create action, and `Escape` from a
+submenu returns to the parent `Connect` item instead of closing the whole
+overflow menu.
 Pointer and keyboard navigation share the same `activeIndex`: moving the mouse
 selects that row, pressing arrows transfers ownership back to keyboard, and
 there is never a simultaneous pointer hover and keyboard hover. Right-slot
 visibility changes are immediate, without opacity transition.
 CollectionPicker menu content uses floating width role `picker` (`20rem` with
-available-width cap). `20rem` is required because the right action slot is fixed
-at `10ch`; narrower menus leave too little scan width for Russian collection
-names. The ordinary Card overflow menu around it remains role `command`.
+available-width cap) and height
+`min(20rem, --radix-dropdown-menu-content-available-height)`. `20rem` is
+required because the right action slot is fixed at `10ch`; narrower menus leave
+too little scan width for Russian collection names. The ordinary Card overflow
+menu around it remains role `command`.
 Keyboard-triggered scroll cannot transfer ownership to a stationary pointer:
 rows ignore `pointerenter` and ignore the first post-keyboard `pointermove` if
-its coordinates match the last known pointer position.
+its coordinates match the last known pointer position. Pointer hover never
+calls `scrollIntoView`; only keyboard-owned active row may auto-scroll.
 Slot сохраняет `h-8` vertical centering. Count не должен прыгать при появлении
 action button.
 
-Batch Connect must reuse the same CollectionPicker row/input/action language
+Batch Connect must reuse the same CollectionPicker row/search/action language
 through `BatchCollectionPicker`, not a separate hand-styled list. Batch changes
 only membership semantics: all selected cards connected -> `Disconnect`;
 otherwise -> `Connect`; no partial selected-card counters like `1/3`.
