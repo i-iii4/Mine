@@ -1,5 +1,33 @@
 # Devlog
 
+## 26.05.2026 [fix] — Keep Clipper UI out of article extraction
+
+### Context
+
+- In overlay mode, Clipper mounts its React UI into the page before background
+  article extraction completes.
+- Defuddle was running against the live `document`, so extracted Markdown could
+  include Clipper UI text such as `Type:`, `Extracting content...`, channel
+  names and channel counts.
+
+### Completed
+
+- Added a sanitized extraction document in `extension/content.js`.
+- Defuddle now receives a cloned document with Mine-owned nodes removed:
+  `[data-mine-clipper-overlay]` and `[data-la-clip]`.
+- The same sanitized document is used for body-text article heuristics.
+- Added a `<base href=document.baseURI>` to the sanitized clone when needed, so
+  relative links keep resolving correctly.
+- Rebuilt extension resources, including the Safari extension `content.js`
+  copy.
+- Documented the extraction-isolation contract in `SPEC_CLIPPER.md`.
+
+### Verification
+
+- `bun run build:extension`
+- `bun run lint`
+- `git diff --check`
+
 ## 25.05.2026 [fix] — Normalize picker search and Clipper spacing tokens
 
 ### Context

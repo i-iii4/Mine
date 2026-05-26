@@ -50,6 +50,36 @@
     }
   }
 
+  const MINE_OWNED_NODE_SELECTOR = "[data-mine-clipper-overlay], [data-la-clip]";
+
+  function removeMineOwnedNodes(root) {
+    if (!root?.querySelectorAll) return;
+    for (const node of root.querySelectorAll(MINE_OWNED_NODE_SELECTOR)) {
+      node.remove();
+    }
+  }
+
+  function createExtractionDocument() {
+    const clonedDocument = document.cloneNode(true);
+    removeMineOwnedNodes(clonedDocument);
+
+    const head = clonedDocument.querySelector?.("head");
+    if (head && !clonedDocument.querySelector("base[href]")) {
+      const base = clonedDocument.createElement("base");
+      base.setAttribute("href", document.baseURI);
+      head.prepend(base);
+    }
+
+    return clonedDocument;
+  }
+
+  function extractionBodyText() {
+    const extractionDocument = createExtractionDocument();
+    const body = extractionDocument.body;
+    if (!body) return "";
+    return body.innerText || body.textContent || "";
+  }
+
   function youtubeIdFromUrl(url) {
     if (!url) return null;
     try {
@@ -284,7 +314,7 @@
       ogType: getMeta("og:type") || null,
       favicon: getFavicon(),
       selection: selectionText,
-      bodyText: (document.body ? document.body.innerText : "").slice(0, 2000),
+      bodyText: extractionBodyText().slice(0, 2000),
     };
   }
 
@@ -303,7 +333,7 @@
     let signals = 0;
     if (document.querySelector("article")) signals++;
     if (meta.ogType === "article") signals++;
-    const bodyText = document.body ? document.body.innerText : "";
+    const bodyText = extractionBodyText();
     if (bodyText.length > 2000) signals++;
     return signals >= 2;
   }
@@ -871,7 +901,7 @@
       return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
     try {
-      const result = new Defuddle(document, {
+      const result = new Defuddle(createExtractionDocument(), {
         separateMarkdown: true,
       }).parse();
 
@@ -931,7 +961,7 @@
       return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
     try {
-      const result = await new Defuddle(document, {
+      const result = await new Defuddle(createExtractionDocument(), {
         separateMarkdown: true,
       }).parseAsync();
 

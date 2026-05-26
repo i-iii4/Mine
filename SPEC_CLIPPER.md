@@ -463,6 +463,13 @@ Article preview в popup рендерит полноценный Markdown чер
 функциональность Markdown-компонентов, а стабилизирует их размер в 360px popup:
 body `14/20`, `h1 16/22 600`, `h2 15/21 600`, `h3-h4 14/20 600`.
 
+Content extraction never runs on the live DOM with Mine UI attached. Before
+Defuddle receives the page, `content.js` creates a sanitized document clone,
+removes Mine-owned nodes (`[data-mine-clipper-overlay]`, `[data-la-clip]`) and
+adds a `<base href=document.baseURI>` if needed. This clone is also used for
+body-text heuristics. The overlay, channel list, Type row, crop UI and injected
+Instagram save buttons are never valid article input.
+
 | Component | File | shadcn/ui | Description |
 |---|---|---|---|
 | PopupApp | `PopupApp.tsx` | — | Корневой компонент, состояния (loading → error → main), Cmd+Enter / Esc |
