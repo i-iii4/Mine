@@ -393,9 +393,9 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 Clipper не имеет собственной визуальной компонентной системы: UI обязан
 переиспользовать app primitives (`Button`, `Input`, `DropdownMenu`,
 `SearchMenuAction`, `CollectionPicker`, `MenuTextTrigger`,
-`SegmentedControl`) или тонкий adapter над ними. Компонент, который существует
-только в клиппере и визуально не имеет аналога в приложении, считается
-нарушением контракта.
+`SegmentedControl`, `QuantizedMenuScrollArea`) или тонкий adapter над ними.
+Компонент, который существует только в клиппере и визуально не имеет аналога в
+приложении, считается нарушением контракта.
 
 Space selector в клиппере живёт на отдельной строке первого уровня:
 `h-10 border-b border-border bg-accent px-2`. Это тот же surface, что нижнее
@@ -416,7 +416,10 @@ bright `text-foreground`; hover/open state пули использует `bg-act
 Space dropdown использует существующий `DropdownMenuContent widthRole="selector"`
 (`width: min(18rem, available-width)`), `align="start"`, `side="bottom"` и
 `sideOffset=4`. Surface dropdown — `bg-accent text-foreground`, то есть тот же
-первый уровень, что строка space selector.
+первый уровень, что строка space selector. Список destination spaces внутри
+dropdown рендерится через `QuantizedMenuScrollArea` с clipper row token 40px:
+высота scroll-зоны всегда равна `padding + N × 40px`, поэтому нижний элемент не
+может обрезаться половиной строки.
 
 Type row — отдельная строка `h-10 border-b border-border bg-chrome px-4`. Это
 второй уровень клиппера и он использует тот же half-step surface, что верхний
@@ -451,6 +454,8 @@ menu-header search row, row/action slot, active state, conditional create row
 и keyboard/pointer arbitration, что card Connect menus в основном приложении:
 printable keys stay routed to search, `ArrowDown`/`ArrowUp` can reach the
 conditional create row, and pointer hover does not auto-scroll the list.
+Внутренний список наследует общий `QuantizedMenuScrollArea`, поэтому inline
+clipper surface и floating app picker используют один scroll-height contract.
 Surface class живёт в `CollectionPicker`
 как `COLLECTION_PICKER_CONTENT_CLASS` для Radix floating content и
 `COLLECTION_PICKER_INLINE_SURFACE_CLASS` для inline clipper surface. Checkbox
@@ -474,9 +479,9 @@ Instagram save buttons are never valid article input.
 |---|---|---|---|
 | PopupApp | `PopupApp.tsx` | — | Корневой компонент, состояния (loading → error → main), Cmd+Enter / Esc |
 | PreviewCard | `components/PreviewCard.tsx` | `<Input>` | Thumbnail + editable body H1/display heading when the clip type has a real page/article heading; media-only and selection clips do not synthesize title |
-| VaultSelect | `components/VaultSelect.tsx` | `<MenuTextTrigger>`, `<DropdownMenu>`, `<Input>`, `<SearchMenuAction>`, `<ChromeCloseButton>` | Shadow-safe space selector; top-chrome inner pill state, clipper `h-10` row, chevron inside the pill, no current item in menu, shared top-right close action |
+| VaultSelect | `components/VaultSelect.tsx` | `<MenuTextTrigger>`, `<DropdownMenu>`, `<Input>`, `<SearchMenuAction>`, `<QuantizedMenuScrollArea>`, `<ChromeCloseButton>` | Shadow-safe space selector; top-chrome inner pill state, clipper `h-10` row, chevron inside the pill, no current item in menu, row-quantized dropdown height, shared top-right close action |
 | TypeSwitcher | `components/TypeSwitcher.tsx` | `<SegmentedControl size="clipper">` | Content / Screenshot / Link in the 40px Type row without height jumps |
-| ChannelList | `components/ChannelList.tsx` | `<CollectionPicker>` adapter | Same picker surface and channel-selection component as desktop Connect menus |
+| ChannelList | `components/ChannelList.tsx` | `<CollectionPicker>` adapter | Same picker surface and channel-selection component as desktop Connect menus, including quantized scroll list height |
 | ScreenshotPreview | `components/ScreenshotPreview.tsx` | `<Button size="sm">` | Legacy rounded screenshot card with always-visible 28px Crop Area / Retake buttons |
 | SaveButton | `components/SaveButton.tsx` | `<Button variant="default">` | Полная ширина, без kbd-подсказки (Cmd+Enter handler есть, но не всегда срабатывает из overlay — см. DEVLOG `24.04.2026 — Clipper: Tab-cycling`) |
 | StatusBar | `components/StatusBar.tsx` | — | Legacy visible status component below Save |

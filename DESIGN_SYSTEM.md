@@ -689,11 +689,29 @@ media asset.
 in Finder`, `Copy Path`, `Copy Media`, `Rename Media...`, `Remove from Card`,
 `Delete`.
 
+Icon economy mirrors card menus: only `Create Card` shows a real icon (`Plus`).
+Every other media command keeps the same leading slot empty. Do not render
+folder/copy/pencil/trash icons in this menu.
+
+`Create Card` открывает searchable submenu для `Everything` и каналов. Этот
+submenu не имеет собственного ограничения высоты: список обязан использовать
+общий `QuantizedMenuScrollArea` с `default` row token, как обычный Connect
+picker.
+
 **Граница ответственности:** все команды target'ят media file. В этом меню нет
 card-level `Source`, card rename, card delete или collection `Disconnect`.
 
 **Видео:** кнопка занимает только top-right corner и не создаёт full-surface
 overlay, чтобы не блокировать native video controls.
+
+Article media-only paragraphs:
+- A paragraph whose meaningful children are only image/video embeds renders as
+  `data-article-media-stack`.
+- Stack children are direct `data-detail-media-action-frame` blocks with
+  `display: flex`, `width: fit-content` and `1rem` vertical spacing except the
+  last item.
+- This prevents several Obsidian embeds on one physical markdown line from
+  behaving as inline media and wrapping into accidental rows.
 
 CollectionPicker membership rows:
 - Search uses the shared `SearchMenuInput` contract: `border-b border-border
@@ -724,6 +742,34 @@ CollectionPicker membership rows:
 - Видимое состояние `Disconnect` использует destructive button semantics:
   `text-destructive` при той же серой заливке и той же hover/focus outline.
 - Клик по action button не должен всплывать в parent row/menu surface.
+
+### Text Selection Action Bar
+
+Detail article prose is the only non-editable surface that supports native text
+selection. A valid selection shows one compact horizontal floating action bar
+near the first selected rendered Markdown block.
+
+- Left grip: `GripVertical`, 32px hit area, `Button variant="ghost" size="icon"`
+  like the close button: no own border, no own fill, muted icon by default,
+  foreground only on hover/active. It carries the `dnd-kit` draggable payload
+  `type: "text_selection"`. The native highlighted text itself is never a Mine
+  drag source.
+- `Create Card`: standard `Button size="xs"` with `Plus size-3` inside the bar;
+  opens the same searchable channel picker contract as media asset `Create Card`
+  (`Everything`, channels, shared `SearchMenuInput`, `QuantizedMenuScrollArea`,
+  optional create channel).
+- `Delete Text`: destructive `Button size="xs"` with `Trash2 size-3`; removes
+  the selected text fragment from the source article, not the source card.
+- `Clear text selection`: ghost icon button with `X`, same close affordance
+  family as the main grid group-selection bar.
+- The bar uses `h-8 rounded-1 border border-border bg-popover px-1 shadow-sm`.
+  It is rendered as a `document.body` portal and measured with its real DOM
+  size; fixed width constants are fallback only, never the source of truth.
+  Its position is centered over the first valid selection rect. If the centered
+  position would leave the article safe area, it is clamped by that safe area;
+  if there is not enough top room, it flips below the selection.
+  It must not appear as a left gutter tab, a vertical rail, or a native
+  selection-toolbar clone.
 
 ### Feed Card Surfaces
 
@@ -798,8 +844,36 @@ searchable picker решают разные задачи и должны ост�
 `available-width` берётся из Radix collision variables
 (`--radix-dropdown-menu-content-available-width` /
 `--radix-context-menu-content-available-width`) с viewport fallback
-`calc(100vw - 1rem)`. Height по-прежнему ограничивается Radix
-`--radix-*-content-available-height`.
+`calc(100vw - 1rem)`. `available-height` берётся из тех же Radix collision
+variables и пробрасывается как `--floating-menu-available-height`.
+
+### Высота Scrollable Menu
+
+Scrollable dropdown/search lists не используют произвольный `max-height`
+вроде `max-h-72`, `max-h-80` или `20rem`. Высота scroll-зоны должна быть
+квантована по строкам:
+
+```
+fixed header/footer + list padding + N × rowHeight
+```
+
+Скролл живёт внутри списка, а не на всём menu content: search header, pinned
+footer/create action и save action остаются fixed siblings. Список рендерится
+через `QuantizedMenuScrollArea`, который читает
+`--floating-menu-available-height`, вычитает fixed siblings и выставляет
+`max-height` как целое число строк. Это запрещает полувидимые/обрезанные rows
+в `CollectionPicker`, top-chrome space/collection dropdowns и Clipper menus.
+
+Row tokens:
+
+| Token | Value | Surface |
+|---|---:|---|
+| `default` | 32px | app dropdown/search rows, `SearchMenuAction`, `CollectionPicker` menu layout |
+| `clipper` | 40px | Clipper header/list rows and clipper-sized menu actions |
+
+Визуальная строка и расчёт высоты обязаны брать один и тот же token. При смене
+row-height токена нельзя менять только CSS-класс строки или только расчёт
+scroll area.
 
 Trigger width не является шириной menu по умолчанию. Его можно использовать
 только для select-like surfaces, где popup является прямым продолжением input
@@ -1236,11 +1310,13 @@ selects that row, pressing arrows transfers ownership back to keyboard, and
 there is never a simultaneous pointer hover and keyboard hover. Right-slot
 visibility changes are immediate, without opacity transition.
 CollectionPicker menu content uses floating width role `picker` (`20rem` with
-available-width cap) and height
-`min(20rem, --radix-dropdown-menu-content-available-height)`. `20rem` is
-required because the right action slot is fixed at `10ch`; narrower menus leave
-too little scan width for Russian collection names. The ordinary Card overflow
-menu around it remains role `command`.
+available-width cap). Its scrollable list is not capped by a raw rem value:
+`QuantizedMenuScrollArea` computes the visible list height as whole `default`
+rows after subtracting the search header and any fixed footer from the Radix
+available height. The `20rem` role width is required because the right action
+slot is fixed at `10ch`; narrower menus leave too little scan width for Russian
+collection names. The ordinary Card overflow menu around it remains role
+`command`.
 Keyboard-triggered scroll cannot transfer ownership to a stationary pointer:
 rows ignore `pointerenter` and ignore the first post-keyboard `pointermove` if
 its coordinates match the last known pointer position. Pointer hover never

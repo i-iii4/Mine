@@ -252,6 +252,14 @@ export interface ExtractTextSelectionParams {
   source_body_hash: string;
 }
 
+export interface DeleteTextSelectionParams {
+  source_slug: string;
+  selected_text: string;
+  first_block_start: number;
+  first_block_end: number;
+  source_body_hash: string;
+}
+
 export type TextSelectionExtractError =
   | { kind: "no_vault" }
   | { kind: "source_not_found"; source_slug: string }

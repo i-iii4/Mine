@@ -1,5 +1,95 @@
 # Devlog
 
+## 26.05.2026 [feature] — Text selection action bar and delete command
+
+### Context
+
+- Article text selection still used a left-side drag-only proxy handle.
+- The requested contract is a compact horizontal menu for selected text:
+  drag grip, `Create Card`, `Delete Text`, and close.
+- Media asset overflow menu still rendered decorative icons for several
+  commands, while the main card menu icon contract allows icons only for
+  primary connect/source actions.
+
+### Completed
+
+- Replaced the text-selection proxy handle UI with `TextSelectionActionBar`.
+- Added `Create Card` for selected text through the same searchable channel
+  picker contract as media asset `Create Card`, including `Everything` and
+  create-channel flow. The action uses the same `Plus` icon convention as the
+  main group-selection action bar.
+- Added a close affordance for the transient selected-text menu and changed the
+  destructive action to `Delete Text` with `Trash2`.
+- Moved selected-text action-bar placement into a tested helper: the bar is
+  centered over the selection rect, flips below when top room is unavailable
+  and clamps to viewport edges.
+- Rendered the selected-text action bar through a `document.body` portal and
+  switched placement from fixed-width constants to measured DOM size plus the
+  article safe area, so short selections near the left/right edge do not clip
+  actions.
+- Matched the drag grip visual contract to the close button: ghost icon button,
+  no independent border or fill.
+- Added backend `delete_text_selection`: validates source hash/range, patches
+  the source article `.md`, re-indexes the source block and emits
+  `thumb:updated`.
+- Allowed text-selection extraction with an empty target collection so
+  `Everything` behaves like media asset materialization.
+- Normalized selected-text whitespace span resolution so rendered multiline
+  selections can be patched safely.
+- Applied the card-menu icon economy to media asset menus: only `Create Card`
+  renders `Plus`; Reveal/Copy/Rename/Remove/Delete keep empty icon slots.
+- Added vertical rendering for media-only article paragraphs so several
+  Obsidian embeds on one markdown line stack as block media instead of wrapping
+  as inline images.
+- Updated frontend/Rust tests and documentation for the new action bar,
+  deletion command and media menu icon contract.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml text_selection -- --nocapture`
+- `bun run test:frontend -- Detail.test.tsx App.test.tsx`
+- `bun run test:frontend -- Detail.test.tsx textSelectionActionBarPlacement.test.ts`
+- `bun run test:frontend`
+- `bun run lint`
+- `bun run build`
+- `bun run build:extension`
+- `git diff --check`
+
+## 26.05.2026 [fix] — Quantize scrollable menu heights by row token
+
+### Context
+
+- Channel pickers and top-chrome searchable dropdowns used raw max-height
+  values such as `max-h-72`, `max-h-80` and `20rem`.
+- Those values did not guarantee an integer number of visible rows, so the
+  bottom row could be clipped in the app and Web Clipper.
+
+### Completed
+
+- Added shared `QuantizedMenuScrollArea`.
+- Moved searchable menu list height to the formula
+  `list padding + N × rowHeight`.
+- Added shared row tokens: 32px `default` rows and 40px `clipper` rows.
+- Updated `SearchMenuAction`, `CollectionPicker`, `BatchCollectionPicker`,
+  top-chrome space/collection dropdowns and Clipper `VaultSelect` to use the
+  quantized scroll area.
+- Moved media asset `Create Card` submenu to the same quantized list contract,
+  so creating a card from an image cannot keep a separate scroll-height cap.
+- Exposed `--floating-menu-available-height` from Radix collision variables.
+- Documented the menu-height contract in `DESIGN_SYSTEM.md`,
+  `SPEC_FRONTEND.md`, `SPEC_MEDIA_ASSET_ACTIONS.md`, `SPEC_CLIPPER.md` and
+  `ARCHITECTURE.md`.
+
+### Verification
+
+- `bun run test:frontend -- QuantizedMenuScrollArea.test.tsx CollectionPicker.test.tsx VaultSwitcher.test.tsx`
+- `bun run test:frontend -- Detail.test.tsx QuantizedMenuScrollArea.test.tsx`
+- `bun run test:frontend`
+- `bun run lint`
+- `bun run build`
+- `bun run build:extension`
+- `git diff --check`
+
 ## 26.05.2026 [fix] — Keep Clipper UI out of article extraction
 
 ### Context

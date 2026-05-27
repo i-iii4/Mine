@@ -197,7 +197,7 @@ Incremental scan обязан обрабатывать iCloud-style conflict fil
 открытой статье. Новая карточка хранит snapshot выделения; постоянной
 синхронизации с исходным параграфом нет.
 
-1. Проверить vault state, `source_slug`, `target_tag`, non-empty
+1. Проверить vault state, `source_slug`, optional `target_tag`, non-empty
    `selected_text`, body hash and selected source block range.
 2. Перечитать source `.md` с диска; если `source_body_hash` устарел, вернуть
    typed stale-selection error без записи.
@@ -207,11 +207,32 @@ Incremental scan обязан обрабатывать iCloud-style conflict fil
 5. Если patch source unsafe (code fence, table, raw HTML, ambiguous range),
    вернуть recoverable error без создания новой карточки.
 6. Создать новый `article` block с body snapshot, `Mine Collections` целевой
-   коллекции и `Mine Related Notes: [[Source#^block-id]]`.
+   коллекции и `Mine Related Notes: [[Source#^block-id]]`. Empty `target_tag`
+   means Everything and writes no collection membership.
 7. Persist/index через reference-block path: media copy не выполняется.
 8. Re-index source block после patch, чтобы body hash и wikilinks были свежими.
 9. Эмитить `block:added` и `thumb:updated` для нового блока; source Detail
    остаётся открытым.
+
+### Поведение delete_text_selection
+
+`delete_text_selection` удаляет выделенный текст из source article без создания
+нового блока.
+
+1. Проверить vault state, `source_slug`, non-empty `selected_text`, body hash
+   and selected source block range.
+2. Перечитать source `.md` с диска; если `source_body_hash` устарел, вернуть
+   typed stale-selection error без записи.
+3. Найти selected text exact match; если rendered selection collapsed whitespace,
+   использовать whitespace-normalized search с сохранением source byte span.
+4. Проверить, что начало найденного span принадлежит первому selected Markdown
+   block range. Это защищает повторяющиеся фрагменты от удаления не из того
+   параграфа.
+5. Patch source body range in place, сохранить остальные байты файла, re-index
+   source block и вернуть обновлённый `IndexedBlock`.
+6. Если patch/reindex unsafe или падает, восстановить original source content и
+   вернуть typed error.
+7. Эмитить `thumb:updated` для source block; `block:added` не эмитится.
 
 In-app rename must preserve block-reference anchors when rewriting source
 targets:

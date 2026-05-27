@@ -22,6 +22,7 @@ const commandMocks = vi.hoisted(() => ({
   getBlock: vi.fn(),
   extractInlineMedia: vi.fn(),
   extractTextSelection: vi.fn(),
+  deleteTextSelection: vi.fn(),
 }));
 
 const sidebarResizeState = vi.hoisted(() => ({
@@ -53,6 +54,7 @@ vi.mock("@/lib/commands", () => ({
   getBlock: commandMocks.getBlock,
   extractInlineMedia: commandMocks.extractInlineMedia,
   extractTextSelection: commandMocks.extractTextSelection,
+  deleteTextSelection: commandMocks.deleteTextSelection,
 }));
 
 vi.mock("@/lib/articleAudioDesktopGateway", () => ({

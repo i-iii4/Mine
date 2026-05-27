@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
+import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { filterAndRankChannelSearch } from "@/lib/channelSearch";
@@ -162,14 +163,19 @@ export function VaultSelect({ value, options, onChange, onClose }: VaultSelectPr
             }}
             onKeyDown={handleSearchKeyDown}
           />
-          <div className="max-h-72 overflow-y-auto p-1">
+          <QuantizedMenuScrollArea
+            rowCount={Math.max(visibleVaults.length, 1)}
+            rowSize="clipper"
+            maxRows={7}
+            innerClassName="p-1"
+          >
             {visibleVaults.length > 0 ? (
               visibleVaults.map((path, index) => (
                 <SearchMenuAction
                   id={`${actionIdPrefix}-clipper-space-action-${index}`}
                   key={path}
                   active={activeIndex === index}
-                  className="h-10"
+                  rowSize="clipper"
                   onActive={() => setActiveIndex(index)}
                   onPress={() => selectVault(path)}
                 >
@@ -179,11 +185,11 @@ export function VaultSelect({ value, options, onChange, onClose }: VaultSelectPr
                 </SearchMenuAction>
               ))
             ) : (
-              <div className="flex h-10 items-center px-2 text-base text-muted-foreground">
+              <div className="flex h-[var(--menu-row-height)] items-center px-2 text-base text-muted-foreground">
                 No other spaces
               </div>
             )}
-          </div>
+          </QuantizedMenuScrollArea>
         </DropdownMenuContent>
       </DropdownMenu>
       {onClose && (

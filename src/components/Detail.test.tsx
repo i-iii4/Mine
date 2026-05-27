@@ -1,8 +1,14 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { Detail } from "./Detail";
-import type { IndexedBlock } from "@/types";
+import { Detail, MediaAssetCollectionPicker } from "./Detail";
+import type { IndexedBlock, MediaAssetRef } from "@/types";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import { COLLECTION_PICKER_CONTENT_CLASS } from "./CollectionPicker";
 import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
@@ -823,8 +829,9 @@ describe("Detail", () => {
     selection?.removeAllRanges();
   });
 
-  it("shows a separate drag handle for selected text without hijacking article pointer input", async () => {
+  it("shows selected text actions without hijacking article pointer input", async () => {
     const onTextSelectionDrop = vi.fn();
+    const onTextSelectionDelete = vi.fn();
     const { container } = render(
       <Detail
         block={block({
@@ -842,6 +849,7 @@ describe("Detail", () => {
         onRequestRename={vi.fn()}
         onRequestDelete={vi.fn()}
         onTextSelectionDrop={onTextSelectionDrop}
+        onTextSelectionDelete={onTextSelectionDelete}
       />,
     );
 
@@ -876,6 +884,15 @@ describe("Detail", () => {
       name: "Drag selected text to a collection",
     });
     expect(handle).toBeInTheDocument();
+    const actionBar = document.querySelector("[data-text-selection-action-bar]") as HTMLElement;
+    expect(actionBar).toBeTruthy();
+    expect(actionBar.parentElement).toBe(document.body);
+    const createButton = within(actionBar).getByRole("button", { name: "Create Card" });
+    const deleteButton = within(actionBar).getByRole("button", { name: "Delete Text" });
+    const clearButton = within(actionBar).getByRole("button", { name: "Clear text selection" });
+    expect(createButton.querySelector("svg")).toBeTruthy();
+    expect(deleteButton.querySelector("svg")).toBeTruthy();
+    expect(clearButton.querySelector("svg")).toBeTruthy();
 
     fireEvent.pointerDown(paragraph, {
       button: 0,
@@ -898,6 +915,14 @@ describe("Detail", () => {
     });
 
     expect(onTextSelectionDrop).not.toHaveBeenCalled();
+
+    fireEvent.click(within(actionBar).getByRole("button", { name: "Delete Text" }));
+    expect(onTextSelectionDelete).toHaveBeenCalledWith(expect.objectContaining({
+      type: "text_selection",
+      sourceSlug: "test-block",
+      selectedText: "beta",
+      sourceBodyHash: "body-hash-1",
+    }));
     Object.defineProperty(document, "elementFromPoint", {
       configurable: true,
       value: originalElementFromPoint,
@@ -994,6 +1019,36 @@ describe("Detail", () => {
     expect(dragSurface!.dispatchEvent(
       new Event("dragstart", { bubbles: true, cancelable: true }),
     )).toBe(false);
+  });
+
+  it("stacks media-only paragraphs with multiple embeds instead of laying them out inline", () => {
+    const b = block({
+      body: "![[One.jpg]] ![[Two.jpg]]",
+    });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    const stack = container.querySelector<HTMLElement>("[data-article-media-stack]");
+    expect(stack).not.toBeNull();
+    expect(stack).toHaveClass("not-prose", "leading-none");
+    const frames = Array.from(stack!.children).filter((child) => (
+      child instanceof HTMLElement && child.hasAttribute("data-detail-media-action-frame")
+    ));
+    expect(frames).toHaveLength(2);
   });
 
   it("uses resolved backend tile path for bare Obsidian attachment embeds", () => {
@@ -1158,6 +1213,22 @@ describe("Detail", () => {
     expect(renameItem).toBeInTheDocument();
     expect(within(dropdownMenu).getByText("Remove from Card")).toBeInTheDocument();
     expect(within(dropdownMenu).getByText("Delete")).toBeInTheDocument();
+    const menuItemFor = (label: string) => (
+      within(dropdownMenu).getByText(label).closest("[role='menuitem']") as HTMLElement
+    );
+    expect(menuItemFor("Create Card").querySelector("[data-card-menu-icon-slot] svg")).toBeTruthy();
+    for (const label of [
+      "Reveal in Finder",
+      "Copy Path",
+      "Copy Media",
+      "Rename Media...",
+      "Remove from Card",
+      "Delete",
+    ]) {
+      const iconSlot = menuItemFor(label).querySelector("[data-card-menu-icon-slot]");
+      expect(iconSlot).toBeTruthy();
+      expect(iconSlot?.querySelector("svg")).toBeNull();
+    }
 
     fireEvent.click(renameItem);
     const dialog = await screen.findByRole("dialog", { name: "Rename media" });
@@ -1226,6 +1297,43 @@ describe("Detail", () => {
     expect(within(dropdownMenu).getByText("Create Card")).toBeInTheDocument();
     expect(within(dropdownMenu).getByText("Rename Media...")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Image preview" })).not.toBeInTheDocument();
+  });
+
+  it("uses the shared quantized list height for Create Card from image", () => {
+    const asset: MediaAssetRef = {
+      media_ref: "photo.jpg",
+      media_kind: "image",
+      source_slug: "test-block",
+      reference_kind: "frontmatter_file",
+    };
+    render(
+      <DropdownMenu open modal={false}>
+        <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+        <DropdownMenuContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
+          <MediaAssetCollectionPicker
+            asset={asset}
+            tags={Array.from({ length: 12 }, (_, index) => ({
+              tag: `channel-${index}`,
+              count: index,
+            }))}
+            onConnect={vi.fn()}
+            onCreateAndConnect={vi.fn()}
+          />
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+
+    const scrollArea = document.querySelector("[data-quantized-menu-scroll-area]") as HTMLElement;
+    const rows = Array.from(document.querySelectorAll("[data-slot='dropdown-menu-item']"));
+
+    expect(scrollArea).toBeTruthy();
+    expect(scrollArea).toHaveAttribute("data-menu-row-size", "default");
+    expect(scrollArea).toHaveStyle({ maxHeight: "260px" });
+    expect(scrollArea.style.getPropertyValue("--menu-row-height")).toBe("32px");
+    expect(rows).toHaveLength(13);
+    for (const row of rows) {
+      expect(row).toHaveClass("h-[var(--menu-row-height)]", "py-0");
+    }
   });
 
   it("shows delete media preview, affected cards, and deletes the media asset", async () => {

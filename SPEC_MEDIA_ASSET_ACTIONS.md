@@ -163,6 +163,15 @@ Menu items:
 The menu must not include card-level actions such as `Source`, `Remove from
 collection`, card rename, or card delete.
 
+Icon policy matches the main card overflow menu: only `Create Card` renders an
+icon (`Plus`). `Reveal in Finder`, `Copy Path`, `Copy Media`, `Rename Media...`,
+`Remove from Card` and `Delete` keep the same leading icon slot empty so labels
+align without adding decorative per-command icons.
+
+`Create Card` submenu height follows the global searchable floating-menu
+contract: fixed search header, shared `QuantizedMenuScrollArea` for the channel
+rows, `default` 32px row token, and no local `max-height` value.
+
 Video controls remain usable. The media-asset trigger occupies only the top
 right corner and does not place a full-surface overlay over the video.
 
@@ -515,6 +524,7 @@ Drop routing:
 | Video | shows menu, no drag payload |
 | Drag | image drag creates `media_asset`, sidebar drop calls media command |
 | Menu | contains Create Card, Reveal in Finder, Copy Path, Copy Media, Rename Media, Remove from Card, Delete only |
+| Icon economy | only Create Card renders an icon; remaining command rows keep empty icon slots |
 | Regression | card hover menu remains card-level and still uses card actions |
 
 ### Manual QA
@@ -541,8 +551,12 @@ Drop routing:
 - [ ] The hover trigger is the standard icon-only default Button under an
       ellipsis menu.
 - [ ] Menu actions target only the media file.
+- [ ] Only `Create Card` renders an icon in the media menu; other rows reserve
+      an empty leading slot.
 - [ ] Create Card always creates a new standalone media card and optionally
       connects that card.
+- [ ] Create Card submenu uses the shared quantized menu list height and never
+      clips a partial channel row.
 - [ ] Image drag to sidebar uses the same media materialization path.
 - [ ] Video has actions but no drag.
 - [ ] Rename media does not rename any card.

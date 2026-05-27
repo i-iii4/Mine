@@ -73,7 +73,7 @@ function isCommandK(event: ReactKeyboardEvent): boolean {
   );
 }
 
-function MenuIconSlot({ children }: { children?: ReactNode }) {
+export function MenuIconSlot({ children }: { children?: ReactNode }) {
   return (
     <span
       aria-hidden="true"

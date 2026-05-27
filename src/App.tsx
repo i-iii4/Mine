@@ -431,6 +431,7 @@ import {
   deleteMediaAsset,
   removeMediaAssetFromCard,
   extractTextSelection,
+  deleteTextSelection,
   sweepVaultThumbnails,
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
@@ -2363,6 +2364,43 @@ export function AppWithVault({
     [invalidateRoutesForTags, scheduleRefresh],
   );
 
+  const handleTextSelectionCreateChannelAndCard = useCallback(
+    async (payload: MineTextSelectionDragPayload, tag: string) => {
+      const channel = await createChannel(tag);
+      pushRecentTag(channel.tag);
+      await handleTextSelectionDrop(payload, channel.tag);
+    },
+    [handleTextSelectionDrop],
+  );
+
+  const handleTextSelectionDelete = useCallback(
+    async (payload: MineTextSelectionDragPayload) => {
+      try {
+        const block = await deleteTextSelection({
+          source_slug: payload.sourceSlug,
+          selected_text: payload.selectedText,
+          first_block_start: payload.firstBlockStart,
+          first_block_end: payload.firstBlockEnd,
+          source_body_hash: payload.sourceBodyHash,
+        });
+        invalidateRouteSnapshots();
+        setSelectedBlock((current) => (
+          current?.slug === block.slug ? block : current
+        ));
+        setSelectedBlockTags(block.tags);
+        scheduleRefresh({
+          grid: true,
+          taxonomy: true,
+          previews: true,
+        }, 0, { force: true });
+        window.dispatchEvent(new Event("vault-refreshed"));
+      } catch (err) {
+        console.error("Failed to delete text selection:", err);
+      }
+    },
+    [invalidateRouteSnapshots, scheduleRefresh],
+  );
+
   const handleDndStart = useCallback(
     (event: DragStartEvent) => {
       const id = String(event.active.id);
@@ -3112,6 +3150,8 @@ export function AppWithVault({
               onOpenImagePreview={setImagePreview}
               onOpenRelatedNote={handleOpenRelatedNote}
               onTextSelectionDrop={handleTextSelectionDrop}
+              onCreateChannelAndTextSelectionCard={handleTextSelectionCreateChannelAndCard}
+              onTextSelectionDelete={handleTextSelectionDelete}
               onTagsChanged={() => {
                 void reloadAllSnapshots();
               }}

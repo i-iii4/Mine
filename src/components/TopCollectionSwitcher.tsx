@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
+import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
@@ -281,7 +282,11 @@ export function TopCollectionSwitcher({
             onKeyDown={handleSearchKeyDown}
             data-top-collection-search=""
           />
-          <div className="max-h-72 overflow-y-auto p-1" data-top-collection-list="">
+          <QuantizedMenuScrollArea
+            rowCount={Math.max(visibleItems.length, 1)}
+            maxRows={8}
+            innerClassName="p-1"
+          >
             {visibleItems.length > 0 ? (
               visibleItems.map((item, index) => (
                 <SearchMenuAction
@@ -297,11 +302,11 @@ export function TopCollectionSwitcher({
                 </SearchMenuAction>
               ))
             ) : (
-              <div className="px-2 py-1.5 text-base text-muted-foreground">
+              <div className="flex h-[var(--menu-row-height)] items-center px-2 text-base text-muted-foreground">
                 No collections
               </div>
             )}
-          </div>
+          </QuantizedMenuScrollArea>
           <div className="border-t border-border p-1" data-top-collection-create="">
             <SearchMenuAction
               id={`${actionIdPrefix}-collection-action-${createActionIndex}`}

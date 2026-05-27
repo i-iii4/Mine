@@ -72,6 +72,16 @@ select,
   user-select: none;
 }
 
+[data-article-media-stack] > [data-detail-media-action-frame] {
+  display: flex;
+  width: fit-content;
+  margin-block-end: 1rem;
+}
+
+[data-article-media-stack] > [data-detail-media-action-frame]:last-child {
+  margin-block-end: 0;
+}
+
 [data-sidebar-row-text] {
   transition: color 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -181,6 +191,10 @@ body.sidebar-resizing ::selection {
   --floating-menu-available-width: var(
     --radix-dropdown-menu-content-available-width,
     var(--radix-context-menu-content-available-width, calc(100vw - 1rem))
+  );
+  --floating-menu-available-height: var(
+    --radix-dropdown-menu-content-available-height,
+    var(--radix-context-menu-content-available-height, calc(100vh - 1rem))
   );
 }
 

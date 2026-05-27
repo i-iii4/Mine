@@ -644,6 +644,27 @@ Frontend: MediaAssetActionFrame builds MediaAssetRef
             └── resolve and act on the media file path, never source .md
 ```
 
+### Действия над выделенным текстом
+
+```
+User selects text inside Detail article prose
+    │
+    ▼
+Frontend: TextSelectionActionBar builds MineTextSelectionDragPayload
+    │
+    ├──► Drag grip to channel: extract_text_selection(source, selection, collection)
+    │       └── create a new article snapshot and optionally connect it
+    │
+    ├──► Create Card menu: same channel picker as media asset Create Card
+    │       └── Everything means no Mine Collections membership
+    │
+    └──► Delete: delete_text_selection(source, selection)
+            └── validate body hash/range, patch source .md, re-index source block
+```
+
+Native selected-text drag remains outside Mine: only the explicit bar grip is a
+Mine drag source.
+
 This path is intentionally separate from card-level commands. A body-embedded
 image and a `frontmatter.file` image are the same `MediaAsset` target; the
 visible source card is only context.
@@ -1181,6 +1202,23 @@ tasks without requiring manual reproduction. The route uses a synthetic mixed
 feed with deterministic local preview assets, so it also catches broken Card
 paint/asset mapping in the browser harness. Full contract:
 [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md).
+
+### 023: Scrollable floating menus quantize height by row token
+
+| Approach | Problem |
+|---|---|
+| Raw `max-h-72` / `max-h-80` / `20rem` on every list | The available height rarely equals an integer number of rows, so the last visible item can be clipped; token changes silently reintroduce the bug |
+| Let the whole Radix content scroll | Search headers, pinned create/save actions and rows scroll as one surface, which breaks menu hierarchy and creates partial fixed controls |
+| Shared `QuantizedMenuScrollArea` (chosen) | Radix still owns collision/placement, while Mine owns product list geometry: fixed siblings stay fixed and only the list scrolls at `padding + N × rowHeight` |
+
+Rationale: searchable menus are not arbitrary scroll containers. They are
+structured surfaces with a fixed search header, optional fixed footer and a
+repeated row list. `QuantizedMenuScrollArea` reads Radix available-height
+variables through `--floating-menu-available-height`, subtracts fixed siblings
+and caps the scroll zone to a whole number of shared row tokens (`default`
+32px, `clipper` 40px). This keeps desktop top-chrome dropdowns, card Connect
+pickers, batch Connect, media asset `Create Card` and Web Clipper menus
+visually aligned when row tokens change.
 
 ## Dependencies
 

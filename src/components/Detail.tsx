@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useMemo,
@@ -14,13 +15,10 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import {
-  Copy,
   Expand,
   ExternalLink,
-  FolderOpen,
   GripVertical,
   MoreHorizontal,
-  Pencil,
   Plus,
   Trash2,
   X,
@@ -89,14 +87,22 @@ import {
   setActiveMineTextSelectionDragPayload,
   type MineTextSelectionDragPayload,
 } from "@/lib/textSelectionDrag";
+import {
+  placeTextSelectionActionBar,
+  TEXT_SELECTION_ACTION_BAR_HEIGHT_PX,
+  TEXT_SELECTION_ACTION_BAR_VIEWPORT_MARGIN_PX,
+  type TextSelectionAnchorRect,
+  type TextSelectionSafeBounds,
+} from "@/lib/textSelectionActionBarPlacement";
 import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
-import { CardMoreMenu } from "./CardHoverMenu";
+import { CardMoreMenu, MenuIconSlot } from "./CardHoverMenu";
 import { ReadOnlyCardPreview } from "./Card";
 import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
 } from "./CollectionPicker";
+import { QuantizedMenuScrollArea } from "./QuantizedMenuScrollArea";
 import { SearchMenuInput } from "./SearchMenuInput";
 import { MicroPreviewThumbnail, microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
 import type { ImagePreviewRequest } from "./ImagePreviewOverlay";
@@ -121,6 +127,7 @@ const HOVER_CARD_WIDTH = 240;
 const HOVER_CARD_FALLBACK_HEIGHT = 320;
 const HOVER_CARD_GAP = 8;
 const HOVER_CARD_VIEWPORT_MARGIN = 16;
+const TEXT_SELECTION_ACTION_BAR_FALLBACK_WIDTH_PX = 296;
 const ARTICLE_H1_CLASSES = "mt-0 mb-4 text-lg leading-6 font-semibold";
 const ARTICLE_SECTION_HEADING_CLASSES = "mt-6 mb-2 text-base leading-5 font-semibold";
 
@@ -149,6 +156,11 @@ interface DetailProps {
   onOpenImagePreview?: (preview: ImagePreviewRequest) => void;
   onOpenRelatedNote: (slug: string) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
+  onCreateChannelAndTextSelectionCard?: (
+    payload: MineTextSelectionDragPayload,
+    tag: string,
+  ) => Promise<void>;
+  onTextSelectionDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
 }
 
 function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock {
@@ -168,6 +180,7 @@ type HoveredRelatedNote = {
 const noopMediaAssetConnect = async (_asset: MediaAssetRef, _tag: string) => {};
 const noopMediaAssetRename = async (_asset: MediaAssetRef, _newStem: string) => {};
 const noopMediaAssetDelete = async (_asset: MediaAssetRef) => {};
+const noopTextSelectionCreate = async (_payload: MineTextSelectionDragPayload, _tag: string) => {};
 const noopOpenImagePreview = (_preview: ImagePreviewRequest) => {};
 
 function getElementLayoutWidth(node: HTMLElement): number {
@@ -233,6 +246,8 @@ export function Detail({
   onOpenImagePreview = noopOpenImagePreview,
   onOpenRelatedNote,
   onTextSelectionDrop,
+  onCreateChannelAndTextSelectionCard = noopTextSelectionCreate,
+  onTextSelectionDelete,
 }: DetailProps) {
   const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
     isIndexedBlock(block) ? block : null,
@@ -440,6 +455,8 @@ export function Detail({
                 onOpenImagePreview={onOpenImagePreview}
                 onOpenRelatedNote={onOpenRelatedNote}
                 onTextSelectionDrop={onTextSelectionDrop}
+                onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
+                onTextSelectionDelete={onTextSelectionDelete}
               />
             </div>
             {isStackedLayout ? (
@@ -1130,6 +1147,8 @@ function BlockContent({
   onOpenImagePreview,
   onOpenRelatedNote,
   onTextSelectionDrop,
+  onCreateChannelAndTextSelectionCard,
+  onTextSelectionDelete,
 }: {
   block: LightBlock | IndexedBlock;
   fullBlock: IndexedBlock | null;
@@ -1146,6 +1165,11 @@ function BlockContent({
   onOpenImagePreview: (preview: ImagePreviewRequest) => void;
   onOpenRelatedNote: (slug: string) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
+  onCreateChannelAndTextSelectionCard: (
+    payload: MineTextSelectionDragPayload,
+    tag: string,
+  ) => Promise<void>;
+  onTextSelectionDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
   const previewManifest = useMemo(
@@ -1197,6 +1221,8 @@ function BlockContent({
             onOpenImagePreview={onOpenImagePreview}
             onOpenRelatedNote={onOpenRelatedNote}
             onTextSelectionDrop={onTextSelectionDrop}
+            onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
+            onTextSelectionDelete={onTextSelectionDelete}
           />
         </div>
       );
@@ -1224,6 +1250,8 @@ function BlockContent({
               onOpenImagePreview={onOpenImagePreview}
               onOpenRelatedNote={onOpenRelatedNote}
               onTextSelectionDrop={onTextSelectionDrop}
+              onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
+              onTextSelectionDelete={onTextSelectionDelete}
             />
           </div>
         );
@@ -1373,6 +1401,7 @@ function BlockContent({
                   thumbsRootPath={resolvedThumbsRoot}
                   previewManifest={previewManifest}
                   sourceSlug={block.slug}
+                  sourceBodyHash={fullBlock?.body_hash ?? (isIndexedBlock(block) ? block.body_hash : null)}
                   tags={tags}
                   currentTag={currentTag}
                   onCreateMediaAssetCard={onCreateMediaAssetCard}
@@ -1382,6 +1411,9 @@ function BlockContent({
                   onDeleteMediaAsset={onDeleteMediaAsset}
                   onOpenImagePreview={onOpenImagePreview}
                   onOpenRelatedNote={onOpenRelatedNote}
+                  onTextSelectionDrop={onTextSelectionDrop}
+                  onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
+                  onTextSelectionDelete={onTextSelectionDelete}
                 />
               </div>
             )}
@@ -1473,6 +1505,7 @@ function MediaAssetActionFrame({
           "not-prose relative inline-flex max-h-[85vh] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
           className,
         )}
+        data-detail-media-action-frame
       >
         {children}
       </div>
@@ -1625,7 +1658,9 @@ function MediaAssetMoreMenu({
         <DropdownMenuContent align="end">
           <DropdownMenuSub open={connectSubmenuOpen} onOpenChange={setConnectSubmenuOpen}>
             <DropdownMenuSubTrigger>
-              <Plus className="size-3" />
+              <MenuIconSlot>
+                <Plus className="size-3" />
+              </MenuIconSlot>
               Create Card
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
@@ -1642,11 +1677,11 @@ function MediaAssetMoreMenu({
           <DropdownMenuSeparator />
 
           <DropdownMenuItem onSelect={() => revealItemInDir(mediaPath)}>
-            <FolderOpen className="size-3" />
+            <MenuIconSlot />
             Reveal in Finder
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => navigator.clipboard.writeText(mediaPath)}>
-            <Copy className="size-3" />
+            <MenuIconSlot />
             Copy Path
           </DropdownMenuItem>
           <DropdownMenuItem
@@ -1657,7 +1692,7 @@ function MediaAssetMoreMenu({
                 .catch((error) => setActionError(mediaAssetErrorMessage(error)));
             }}
           >
-            <Copy className="size-3" />
+            <MenuIconSlot />
             Copy Media
           </DropdownMenuItem>
 
@@ -1670,18 +1705,18 @@ function MediaAssetMoreMenu({
           <DropdownMenuSeparator />
 
           <DropdownMenuItem onSelect={() => setRenameOpen(true)}>
-            <Pencil className="size-3" />
+            <MenuIconSlot />
             Rename Media...
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setRemoveOpen(true)}>
-            <X className="size-3" />
+            <MenuIconSlot />
             Remove from Card
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
             onSelect={() => setDeleteOpen(true)}
           >
-            <Trash2 className="size-3" />
+            <MenuIconSlot />
             Delete
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -1715,7 +1750,7 @@ function MediaAssetMoreMenu({
   );
 }
 
-function MediaAssetCollectionPicker({
+export function MediaAssetCollectionPicker({
   asset,
   tags,
   currentTag,
@@ -1727,6 +1762,54 @@ function MediaAssetCollectionPicker({
   currentTag?: string;
   onConnect: (asset: MediaAssetRef, tag: string) => Promise<void>;
   onCreateAndConnect: (asset: MediaAssetRef, tag: string) => Promise<void>;
+}) {
+  return (
+    <CreateCardCollectionPicker
+      payload={asset}
+      tags={tags}
+      currentTag={currentTag}
+      onConnect={onConnect}
+      onCreateAndConnect={onCreateAndConnect}
+    />
+  );
+}
+
+function TextSelectionCollectionPicker({
+  payload,
+  tags,
+  currentTag,
+  onConnect,
+  onCreateAndConnect,
+}: {
+  payload: MineTextSelectionDragPayload;
+  tags: TagCount[];
+  currentTag?: string;
+  onConnect: (payload: MineTextSelectionDragPayload, tag: string) => void | Promise<void>;
+  onCreateAndConnect: (payload: MineTextSelectionDragPayload, tag: string) => Promise<void>;
+}) {
+  return (
+    <CreateCardCollectionPicker
+      payload={payload}
+      tags={tags}
+      currentTag={currentTag}
+      onConnect={onConnect}
+      onCreateAndConnect={onCreateAndConnect}
+    />
+  );
+}
+
+function CreateCardCollectionPicker<TPayload>({
+  payload,
+  tags,
+  currentTag,
+  onConnect,
+  onCreateAndConnect,
+}: {
+  payload: TPayload;
+  tags: TagCount[];
+  currentTag?: string;
+  onConnect: (payload: TPayload, tag: string) => void | Promise<void>;
+  onCreateAndConnect: (payload: TPayload, tag: string) => void | Promise<void>;
 }) {
   const [search, setSearch] = useState("");
   const [pendingTag, setPendingTag] = useState<string | null>(null);
@@ -1751,14 +1834,15 @@ function MediaAssetCollectionPicker({
     : [everythingItem, ...channelItems];
   const trimmed = search.trim();
   const canCreate = trimmed.length > 0 && filtered.length === 0;
+  const listRowCount = Math.max(filtered.length + (canCreate ? 1 : 0), 1);
 
   const connect = async (tag: string, create: boolean) => {
     setPendingTag(tag);
     try {
       if (create) {
-        await onCreateAndConnect(asset, tag);
+        await onCreateAndConnect(payload, tag);
       } else {
-        await onConnect(asset, tag);
+        await onConnect(payload, tag);
       }
       setSearch("");
     } finally {
@@ -1775,42 +1859,48 @@ function MediaAssetCollectionPicker({
         placeholder="Search channels..."
         onKeyDown={(event) => event.stopPropagation()}
       />
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="px-1 py-0.5">
-          {filtered.map((item) => {
-            const pending = pendingTag === item.tag;
-            return (
-              <DropdownMenuItem
-                key={item.tag || "__everything__"}
-                disabled={pendingTag !== null}
-                onSelect={() => {
-                  void connect(item.tag, false);
-                }}
-              >
-                <span className="truncate">{pending ? "Creating..." : item.title}</span>
-              </DropdownMenuItem>
-            );
-          })}
-
-          {canCreate && (
+      <QuantizedMenuScrollArea
+        rowCount={listRowCount}
+        rowSize="default"
+        paddingY="compact"
+        className="min-h-0 flex-1"
+        innerClassName="px-1 py-0.5"
+      >
+        {filtered.map((item) => {
+          const pending = pendingTag === item.tag;
+          return (
             <DropdownMenuItem
+              key={item.tag || "__everything__"}
+              className="h-[var(--menu-row-height)] py-0"
               disabled={pendingTag !== null}
               onSelect={() => {
-                void connect(trimmed, true);
+                void connect(item.tag, false);
               }}
             >
-              <Plus className="size-4 shrink-0" />
-              <span>Create &ldquo;{trimmed}&rdquo;</span>
+              <span className="truncate">{pending ? "Creating..." : item.title}</span>
             </DropdownMenuItem>
-          )}
+          );
+        })}
 
-          {filtered.length === 0 && !canCreate && (
-            <p className="px-2 py-3 text-center text-sm text-muted-foreground">
-              No channels
-            </p>
-          )}
-        </div>
-      </div>
+        {canCreate && (
+          <DropdownMenuItem
+            className="h-[var(--menu-row-height)] py-0"
+            disabled={pendingTag !== null}
+            onSelect={() => {
+              void connect(trimmed, true);
+            }}
+          >
+            <Plus className="size-4 shrink-0" />
+            <span>Create &ldquo;{trimmed}&rdquo;</span>
+          </DropdownMenuItem>
+        )}
+
+        {filtered.length === 0 && !canCreate && (
+          <p className="flex h-[var(--menu-row-height)] items-center justify-center px-2 text-center text-sm text-muted-foreground">
+            No channels
+          </p>
+        )}
+      </QuantizedMenuScrollArea>
     </>
   );
 }
@@ -2313,6 +2403,8 @@ function ArticleBody({
   onOpenImagePreview,
   onOpenRelatedNote,
   onTextSelectionDrop,
+  onCreateChannelAndTextSelectionCard,
+  onTextSelectionDelete,
 }: {
   body: string;
   vaultPath: string;
@@ -2331,11 +2423,17 @@ function ArticleBody({
   onOpenImagePreview: (preview: ImagePreviewRequest) => void;
   onOpenRelatedNote: (slug: string) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
+  onCreateChannelAndTextSelectionCard: (
+    payload: MineTextSelectionDragPayload,
+    tag: string,
+  ) => Promise<void>;
+  onTextSelectionDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
 }) {
   const articleRef = useRef<HTMLDivElement | null>(null);
   const selectionFrameRef = useRef<number | null>(null);
   const selectionHandleLockedRef = useRef(false);
   const [selectionHandle, setSelectionHandle] = useState<TextSelectionHandleState | null>(null);
+  const hasTextSelectionActions = Boolean(onTextSelectionDrop || onTextSelectionDelete);
 
   const buildTextSelectionDragPayload = useCallback((dragTarget: Node | null): MineTextSelectionDragPayload | null => {
     if (!sourceSlug || !sourceBodyHash || !articleRef.current) {
@@ -2372,7 +2470,7 @@ function ArticleBody({
     if (selectionHandleLockedRef.current) {
       return;
     }
-    if (!onTextSelectionDrop || !articleRef.current) {
+    if (!hasTextSelectionActions || !articleRef.current) {
       setSelectionHandle(null);
       return;
     }
@@ -2389,13 +2487,12 @@ function ArticleBody({
       setSelectionHandle(null);
       return;
     }
-    const rootRect = root.getBoundingClientRect();
     setSelectionHandle({
       payload,
-      left: Math.max(8, Math.min(rect.left - 34, rootRect.left - 34)),
-      top: Math.max(36, rect.top + Math.min(rect.height / 2, 18) - 14),
+      anchorRect: textSelectionAnchorRect(rect),
+      safeBounds: textSelectionSafeBounds(root),
     });
-  }, [buildTextSelectionDragPayload, onTextSelectionDrop]);
+  }, [buildTextSelectionDragPayload, hasTextSelectionActions]);
 
   const scheduleTextSelectionHandleUpdate = useCallback(() => {
     if (selectionFrameRef.current != null) {
@@ -2420,8 +2517,22 @@ function ArticleBody({
     window.addEventListener("pointercancel", unlockTextSelectionHandle, true);
   }, [unlockTextSelectionHandle]);
 
+  const handleTextSelectionDelete = useCallback((payload: MineTextSelectionDragPayload) => {
+    setSelectionHandle(null);
+    window.getSelection()?.removeAllRanges();
+    return onTextSelectionDelete?.(payload);
+  }, [onTextSelectionDelete]);
+
+  const dismissTextSelectionHandle = useCallback(() => {
+    selectionHandleLockedRef.current = false;
+    window.removeEventListener("pointerup", unlockTextSelectionHandle, true);
+    window.removeEventListener("pointercancel", unlockTextSelectionHandle, true);
+    setSelectionHandle(null);
+    window.getSelection()?.removeAllRanges();
+  }, [unlockTextSelectionHandle]);
+
   useEffect(() => {
-    if (!onTextSelectionDrop) {
+    if (!hasTextSelectionActions) {
       setSelectionHandle(null);
       return undefined;
     }
@@ -2437,7 +2548,7 @@ function ArticleBody({
         selectionFrameRef.current = null;
       }
     };
-  }, [onTextSelectionDrop, scheduleTextSelectionHandleUpdate]);
+  }, [hasTextSelectionActions, scheduleTextSelectionHandleUpdate]);
 
   // Phase 18.H.2: rewrite Obsidian wikilinks into standard markdown
   // before passing to react-markdown. The raw `.md` file stays in
@@ -2462,17 +2573,29 @@ function ArticleBody({
 
   const components: Components = useMemo(
     () => ({
-      p: ({ node, ...props }) => (
-        paragraphContainsBlockMedia(node) ? (
-          <div
-            {...markdownBlockPositionProps(node)}
-            {...props}
-            className={cn("my-5 leading-5", props.className)}
-          />
-        ) : (
-          <p {...markdownBlockPositionProps(node)} {...props} />
-        )
-      ),
+      p: ({ node, ...props }) => {
+        const mediaLayout = paragraphMediaLayout(node);
+        if (mediaLayout === "media-only") {
+          return (
+            <div
+              {...markdownBlockPositionProps(node)}
+              {...props}
+              className={cn("not-prose my-5 leading-none", props.className)}
+              data-article-media-stack=""
+            />
+          );
+        }
+        if (mediaLayout === "mixed-media") {
+          return (
+            <div
+              {...markdownBlockPositionProps(node)}
+              {...props}
+              className={cn("my-5 leading-5", props.className)}
+            />
+          );
+        }
+        return <p {...markdownBlockPositionProps(node)} {...props} />;
+      },
       li: ({ node, ...props }) => (
         <li {...markdownBlockPositionProps(node)} {...props} />
       ),
@@ -2629,9 +2752,15 @@ function ArticleBody({
         {processedBody}
       </ReactMarkdown>
       {selectionHandle && (
-        <TextSelectionDragHandle
+        <TextSelectionActionBar
           state={selectionHandle}
+          tags={tags}
+          currentTag={currentTag}
+          onCreateCard={onTextSelectionDrop}
+          onCreateChannelAndCard={onCreateChannelAndTextSelectionCard}
+          onDelete={onTextSelectionDelete ? handleTextSelectionDelete : undefined}
           onInteractionStart={lockTextSelectionHandle}
+          onDismiss={dismissTextSelectionHandle}
         />
       )}
     </div>
@@ -2640,16 +2769,54 @@ function ArticleBody({
 
 type TextSelectionHandleState = {
   payload: MineTextSelectionDragPayload;
-  left: number;
-  top: number;
+  anchorRect: TextSelectionAnchorRect;
+  safeBounds: TextSelectionSafeBounds;
 };
 
-function TextSelectionDragHandle({
+function textSelectionAnchorRect(rect: DOMRect | ClientRect): TextSelectionAnchorRect {
+  return {
+    left: rect.left,
+    right: rect.right,
+    top: rect.top,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function textSelectionSafeBounds(root: HTMLElement): TextSelectionSafeBounds {
+  const margin = TEXT_SELECTION_ACTION_BAR_VIEWPORT_MARGIN_PX;
+  const rootRect = root.getBoundingClientRect();
+  const hasHorizontalBounds = rootRect.width > 0;
+  return {
+    left: hasHorizontalBounds ? Math.max(margin, rootRect.left) : margin,
+    right: hasHorizontalBounds ? Math.min(window.innerWidth - margin, rootRect.right) : window.innerWidth - margin,
+    top: margin,
+    bottom: window.innerHeight - margin,
+  };
+}
+
+function TextSelectionActionBar({
   state,
+  tags,
+  currentTag,
+  onCreateCard,
+  onCreateChannelAndCard,
+  onDelete,
   onInteractionStart,
+  onDismiss,
 }: {
   state: TextSelectionHandleState;
+  tags: TagCount[];
+  currentTag?: string;
+  onCreateCard?: (payload: MineTextSelectionDragPayload, tag: string) => void;
+  onCreateChannelAndCard: (
+    payload: MineTextSelectionDragPayload,
+    tag: string,
+  ) => Promise<void>;
+  onDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
   onInteractionStart: () => void;
+  onDismiss: () => void;
 }) {
   const {
     attributes,
@@ -2664,41 +2831,155 @@ function TextSelectionDragHandle({
   const pointerListener = (listeners as {
     onPointerDown?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   } | undefined)?.onPointerDown;
+  const [connectOpen, setConnectOpen] = useState(false);
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const [barSize, setBarSize] = useState({
+    width: TEXT_SELECTION_ACTION_BAR_FALLBACK_WIDTH_PX,
+    height: TEXT_SELECTION_ACTION_BAR_HEIGHT_PX,
+  });
 
+  useLayoutEffect(() => {
+    const element = barRef.current;
+    if (!element) return undefined;
+    const updateSize = () => {
+      const rect = element.getBoundingClientRect();
+      const width = rect.width > 0 ? rect.width : TEXT_SELECTION_ACTION_BAR_FALLBACK_WIDTH_PX;
+      const height = rect.height > 0 ? rect.height : TEXT_SELECTION_ACTION_BAR_HEIGHT_PX;
+      setBarSize((current) => (
+        current.width === width && current.height === height
+          ? current
+          : { width, height }
+      ));
+    };
+    updateSize();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const placement = placeTextSelectionActionBar({
+    anchorRect: state.anchorRect,
+    toolbarWidth: barSize.width,
+    toolbarHeight: barSize.height,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+    safeBounds: state.safeBounds,
+  });
   const style: CSSProperties = {
-    left: state.left,
-    top: state.top,
+    left: placement.left,
+    top: placement.top,
     transform: transform
       ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
       : undefined,
   };
 
-  return (
-    <button
-      ref={setNodeRef}
-      type="button"
-      {...attributes}
-      {...listeners}
-      onPointerDown={(event) => {
-        setActiveMineTextSelectionDragPayload(state.payload);
-        onInteractionStart();
-        pointerListener?.(event);
-      }}
-      onMouseDown={(event) => {
-        event.preventDefault();
-      }}
+  const actionBar = (
+    <div
+      ref={barRef}
       className={cn(
-        "fixed z-50 flex size-7 items-center justify-center rounded-1 border border-border bg-background text-muted-foreground shadow-sm",
-        "cursor-grab active:cursor-grabbing hover:bg-accent hover:text-foreground",
+        "fixed z-50 flex h-8 items-center gap-1 rounded-1 border border-border bg-popover px-1 text-popover-foreground shadow-sm",
         isDragging && "opacity-0",
       )}
       style={style}
-      aria-label="Drag selected text to a collection"
-      title="Drag selected text to a collection"
+      data-text-selection-action-bar=""
+      onMouseDown={(event) => {
+        event.preventDefault();
+      }}
     >
-      <GripVertical className="size-4" aria-hidden="true" />
-    </button>
+      <Button
+        ref={setNodeRef}
+        type="button"
+        variant="ghost"
+        size="icon"
+        {...attributes}
+        {...listeners}
+        onPointerDown={(event) => {
+          setActiveMineTextSelectionDragPayload(state.payload);
+          onInteractionStart();
+          pointerListener?.(event);
+        }}
+        onMouseDown={(event) => {
+          event.preventDefault();
+        }}
+        className="size-8 cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
+        aria-label="Drag selected text to a collection"
+        title="Drag selected text to a collection"
+      >
+        <GripVertical className="size-4" aria-hidden="true" />
+      </Button>
+
+      {onCreateCard && (
+        <DropdownMenu open={connectOpen} onOpenChange={setConnectOpen} modal={false}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="default"
+              size="xs"
+              onMouseDown={(event) => {
+                event.preventDefault();
+              }}
+            >
+              <Plus className="size-3" aria-hidden="true" />
+              Create Card
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            widthRole="picker"
+            className={COLLECTION_PICKER_CONTENT_CLASS}
+            align="start"
+          >
+            <TextSelectionCollectionPicker
+              payload={state.payload}
+              tags={tags}
+              currentTag={currentTag}
+              onConnect={(payload, tag) => {
+                onCreateCard(payload, tag);
+                setConnectOpen(false);
+              }}
+              onCreateAndConnect={async (payload, tag) => {
+                await onCreateChannelAndCard(payload, tag);
+                setConnectOpen(false);
+              }}
+            />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
+      {onDelete && (
+        <Button
+          type="button"
+          variant="destructive"
+          size="xs"
+          onMouseDown={(event) => {
+            event.preventDefault();
+          }}
+          onClick={() => {
+            void onDelete(state.payload);
+          }}
+        >
+          <Trash2 className="size-3" aria-hidden="true" />
+          Delete Text
+        </Button>
+      )}
+
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label="Clear text selection"
+        className="size-8 text-muted-foreground hover:text-foreground"
+        onMouseDown={(event) => {
+          event.preventDefault();
+        }}
+        onClick={onDismiss}
+      >
+        <X className="size-4" aria-hidden="true" />
+      </Button>
+    </div>
   );
+
+  return createPortal(actionBar, document.body);
 }
 
 function DetailImage({
@@ -2971,15 +3252,29 @@ type MarkdownPositionedNode = {
 type MarkdownElementNode = {
   type?: string;
   tagName?: string;
+  value?: string;
   children?: MarkdownElementNode[];
 };
 
-function paragraphContainsBlockMedia(node: unknown): boolean {
+function paragraphMediaLayout(node: unknown): "none" | "media-only" | "mixed-media" {
   const element = node as MarkdownElementNode | undefined;
-  return (element?.children ?? []).some((child) => {
-    if (child.type !== "element") return false;
-    return child.tagName === "img" || child.tagName === "video";
-  });
+  let hasMedia = false;
+  let hasNonWhitespaceContent = false;
+  for (const child of element?.children ?? []) {
+    const isMedia = child.type === "element" && (
+      child.tagName === "img" || child.tagName === "video"
+    );
+    if (isMedia) {
+      hasMedia = true;
+      continue;
+    }
+    if (child.type === "text" && !/\S/.test(child.value ?? "")) {
+      continue;
+    }
+    hasNonWhitespaceContent = true;
+  }
+  if (!hasMedia) return "none";
+  return hasNonWhitespaceContent ? "mixed-media" : "media-only";
 }
 
 function markdownBlockPositionProps(

@@ -7,6 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Plus } from "lucide-react";
+import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import type { TagCount } from "@/types";
 import { collectionRefLabel } from "@/lib/collections";
@@ -39,10 +40,10 @@ interface BatchCollectionPickerProps {
 type BatchMembershipState = "all" | "not-all";
 
 export const COLLECTION_PICKER_CONTENT_CLASS =
-  "flex max-h-[min(20rem,var(--radix-dropdown-menu-content-available-height))] flex-col overflow-hidden p-0";
+  "flex flex-col overflow-hidden p-0";
 
 export const COLLECTION_PICKER_INLINE_SURFACE_CLASS =
-  "bg-popover text-popover-foreground flex max-h-80 flex-col overflow-hidden rounded-1 border p-0 shadow-md";
+  "bg-popover text-popover-foreground flex flex-col overflow-hidden rounded-1 border p-0 shadow-md";
 
 function isPrintableKeyboardKey(event: ReactKeyboardEvent): boolean {
   return event.key.length === 1 && !event.metaKey && !event.altKey && !event.ctrlKey;
@@ -188,6 +189,9 @@ export function CollectionPicker({
     ? filtered[boundedActiveIndex]
     : null;
   const createActive = canCreate && boundedActiveIndex === createActionIndex;
+  const rowSize = layout === "edge" ? "clipper" : "default";
+  const listPadding = layout === "edge" ? "default" : "compact";
+  const listRowCount = Math.max(actionCount, 1);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -353,111 +357,111 @@ export function CollectionPicker({
       />
 
       {/* Tag list */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className={cn(layout === "edge" ? "p-1" : "px-1 py-0.5")}>
-          {filtered.map((tc, rowIndex) => {
-            const hasTag = optimisticTags.includes(tc.tag);
-            const isActive = rowIndex === boundedActiveIndex;
-            const actionLabel = hasTag ? "Disconnect" : "Connect";
-            const buttonVisible = hasTag || isActive;
-            const title = collectionRefLabel(tc.tag);
-            return (
-              <div
-                key={tc.tag}
-                ref={(node) => {
-                  if (node) {
-                    rowRefs.current.set(tc.tag, node);
-                  } else {
-                    rowRefs.current.delete(tc.tag);
-                  }
-                }}
-                className={cn(
-                  layout === "edge"
-                    ? "flex h-10 w-full items-center gap-2 rounded-1 px-2 text-base"
-                    : "flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base",
-                  isActive && "bg-active",
-                )}
-                data-collection-picker-row=""
-                data-collection-picker-row-active={isActive ? "true" : undefined}
-                data-collection-picker-interaction-mode={isActive ? interactionMode : undefined}
-                onPointerMove={(event) => handleRowPointerMove(event, rowIndex)}
-              >
-                <span className="flex-1 truncate text-left text-foreground">
-                  {title}
-                </span>
-                <div className="relative flex h-6 w-[10ch] shrink-0 items-center justify-end">
-                  <span
-                    className={cn(
-                      "absolute right-0 text-sm text-muted-foreground",
-                      buttonVisible ? "opacity-0" : "opacity-100",
-                    )}
-                  >
-                    {tc.count}
-                  </span>
-                  <button
-                    type="button"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      toggleTag(tc.tag, hasTag);
-                    }}
-                    onKeyDown={(event) => {
-                      event.stopPropagation();
-                    }}
-                    className={cn(
-                      "absolute right-0 inline-flex h-6 w-[10ch] cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
-                      buttonVisible ? "opacity-100" : "pointer-events-none opacity-0",
-                      hasTag && isActive && "text-destructive",
-                    )}
-                    aria-label={`${actionLabel} ${title}`}
-                  >
-                    {hasTag ? (isActive ? "Disconnect" : "Connected") : "Connect"}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-
-          {canCreate && (
-            <button
-              type="button"
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              onPointerMove={handleCreatePointerMove}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                createAndAssign();
+      <QuantizedMenuScrollArea
+        rowCount={listRowCount}
+        rowSize={rowSize}
+        paddingY={listPadding}
+        className="min-h-0 flex-1"
+        innerClassName={cn(layout === "edge" ? "p-1" : "px-1 py-0.5")}
+      >
+        {filtered.map((tc, rowIndex) => {
+          const hasTag = optimisticTags.includes(tc.tag);
+          const isActive = rowIndex === boundedActiveIndex;
+          const actionLabel = hasTag ? "Disconnect" : "Connect";
+          const buttonVisible = hasTag || isActive;
+          const title = collectionRefLabel(tc.tag);
+          return (
+            <div
+              key={tc.tag}
+              ref={(node) => {
+                if (node) {
+                  rowRefs.current.set(tc.tag, node);
+                } else {
+                  rowRefs.current.delete(tc.tag);
+                }
               }}
               className={cn(
-                layout === "edge"
-                  ? "flex h-10 w-full items-center gap-2 rounded-1 px-2 text-base font-semibold text-foreground hover:bg-active"
-                  : "flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base font-semibold text-foreground hover:bg-active",
-                createActive && "bg-active",
+                "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 px-2 text-base",
+                isActive && "bg-active",
               )}
-              data-collection-picker-create=""
-              data-collection-picker-create-active={createActive ? "true" : undefined}
+              data-collection-picker-row=""
+              data-collection-picker-row-active={isActive ? "true" : undefined}
+              data-collection-picker-interaction-mode={isActive ? interactionMode : undefined}
+              onPointerMove={(event) => handleRowPointerMove(event, rowIndex)}
             >
-              <Plus className="size-4 shrink-0" />
-              <span>
-                Create &ldquo;{trimmed}&rdquo;
+              <span className="flex-1 truncate text-left text-foreground">
+                {title}
               </span>
-            </button>
-          )}
+              <div className="relative flex h-6 w-[10ch] shrink-0 items-center justify-end">
+                <span
+                  className={cn(
+                    "absolute right-0 text-sm text-muted-foreground",
+                    buttonVisible ? "opacity-0" : "opacity-100",
+                  )}
+                >
+                  {tc.count}
+                </span>
+                <button
+                  type="button"
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    toggleTag(tc.tag, hasTag);
+                  }}
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                  }}
+                  className={cn(
+                    "absolute right-0 inline-flex h-6 w-[10ch] cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+                    buttonVisible ? "opacity-100" : "pointer-events-none opacity-0",
+                    hasTag && isActive && "text-destructive",
+                  )}
+                  aria-label={`${actionLabel} ${title}`}
+                >
+                  {hasTag ? (isActive ? "Disconnect" : "Connected") : "Connect"}
+                </button>
+              </div>
+            </div>
+          );
+        })}
 
-          {filtered.length === 0 && !canCreate && (
-            <p className="px-2 py-3 text-center text-sm text-muted-foreground">
-              No channels
-            </p>
-          )}
-        </div>
-      </div>
+        {canCreate && (
+          <button
+            type="button"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onPointerMove={handleCreatePointerMove}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              createAndAssign();
+            }}
+            className={cn(
+              "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 px-2 text-base font-semibold text-foreground hover:bg-active",
+              createActive && "bg-active",
+            )}
+            data-collection-picker-create=""
+            data-collection-picker-create-active={createActive ? "true" : undefined}
+          >
+            <Plus className="size-4 shrink-0" />
+            <span>
+              Create &ldquo;{trimmed}&rdquo;
+            </span>
+          </button>
+        )}
+
+        {filtered.length === 0 && !canCreate && (
+          <p className="flex h-[var(--menu-row-height)] items-center justify-center px-2 text-sm text-muted-foreground">
+            No channels
+          </p>
+        )}
+      </QuantizedMenuScrollArea>
     </div>
   );
 }
@@ -493,6 +497,7 @@ export function BatchCollectionPicker({
     ? filtered[boundedActiveIndex]
     : null;
   const createActive = canCreate && boundedActiveIndex === createActionIndex;
+  const listRowCount = Math.max(actionCount, 1);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -633,110 +638,113 @@ export function BatchCollectionPicker({
         placeholder="Search channels..."
       />
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="px-1 py-0.5">
-          {filtered.map((tc, rowIndex) => {
-            const membership = batchMembershipState(selectedSlugs, tagLookup, pendingStates, tc.tag);
-            const isActive = rowIndex === boundedActiveIndex;
-            const actionLabel = membership === "all" ? "Disconnect" : "Connect";
-            const buttonVisible = membership === "all" || isActive;
-            const title = collectionRefLabel(tc.tag);
+      <QuantizedMenuScrollArea
+        rowCount={listRowCount}
+        paddingY="compact"
+        className="min-h-0 flex-1"
+        innerClassName="px-1 py-0.5"
+      >
+        {filtered.map((tc, rowIndex) => {
+          const membership = batchMembershipState(selectedSlugs, tagLookup, pendingStates, tc.tag);
+          const isActive = rowIndex === boundedActiveIndex;
+          const actionLabel = membership === "all" ? "Disconnect" : "Connect";
+          const buttonVisible = membership === "all" || isActive;
+          const title = collectionRefLabel(tc.tag);
 
-            return (
-              <div
-                key={tc.tag}
-                ref={(node) => {
-                  if (node) {
-                    rowRefs.current.set(tc.tag, node);
-                  } else {
-                    rowRefs.current.delete(tc.tag);
-                  }
-                }}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base",
-                  isActive && "bg-active",
-                )}
-                data-batch-collection-row=""
-                data-batch-collection-row-state={membership}
-                data-collection-picker-row=""
-                data-collection-picker-row-active={isActive ? "true" : undefined}
-                data-collection-picker-interaction-mode={isActive ? interactionMode : undefined}
-                onPointerMove={(event) => handleRowPointerMove(event, rowIndex)}
-              >
-                <span className="flex-1 truncate text-left text-foreground">
-                  {title}
-                </span>
-                <div className="relative flex h-6 w-[10ch] shrink-0 items-center justify-end">
-                  <span
-                    className={cn(
-                      "absolute right-0 text-sm text-muted-foreground",
-                      buttonVisible ? "opacity-0" : "opacity-100",
-                    )}
-                  >
-                    {tc.count}
-                  </span>
-                  <button
-                    type="button"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      toggleTag(tc.tag);
-                    }}
-                    onKeyDown={(event) => {
-                      event.stopPropagation();
-                    }}
-                    className={cn(
-                      "absolute right-0 inline-flex h-6 w-[10ch] cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
-                      buttonVisible ? "opacity-100" : "pointer-events-none opacity-0",
-                      membership === "all" && isActive && "text-destructive",
-                    )}
-                    aria-label={`${actionLabel} ${title}`}
-                  >
-                    {membership === "all" ? (isActive ? "Disconnect" : "Connected") : "Connect"}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-
-          {canCreate && (
-            <button
-              type="button"
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              onPointerMove={handleCreatePointerMove}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                createAndAssign();
+          return (
+            <div
+              key={tc.tag}
+              ref={(node) => {
+                if (node) {
+                  rowRefs.current.set(tc.tag, node);
+                } else {
+                  rowRefs.current.delete(tc.tag);
+                }
               }}
               className={cn(
-                "flex w-full items-center gap-2 rounded-1 px-2 py-1.5 text-base font-semibold text-foreground hover:bg-active",
-                createActive && "bg-active",
+                "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 px-2 text-base",
+                isActive && "bg-active",
               )}
-              data-collection-picker-create=""
-              data-collection-picker-create-active={createActive ? "true" : undefined}
+              data-batch-collection-row=""
+              data-batch-collection-row-state={membership}
+              data-collection-picker-row=""
+              data-collection-picker-row-active={isActive ? "true" : undefined}
+              data-collection-picker-interaction-mode={isActive ? interactionMode : undefined}
+              onPointerMove={(event) => handleRowPointerMove(event, rowIndex)}
             >
-              <Plus className="size-4 shrink-0" />
-              <span>
-                Create &ldquo;{trimmed}&rdquo;
+              <span className="flex-1 truncate text-left text-foreground">
+                {title}
               </span>
-            </button>
-          )}
+              <div className="relative flex h-6 w-[10ch] shrink-0 items-center justify-end">
+                <span
+                  className={cn(
+                    "absolute right-0 text-sm text-muted-foreground",
+                    buttonVisible ? "opacity-0" : "opacity-100",
+                  )}
+                >
+                  {tc.count}
+                </span>
+                <button
+                  type="button"
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    toggleTag(tc.tag);
+                  }}
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                  }}
+                  className={cn(
+                    "absolute right-0 inline-flex h-6 w-[10ch] cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+                    buttonVisible ? "opacity-100" : "pointer-events-none opacity-0",
+                    membership === "all" && isActive && "text-destructive",
+                  )}
+                  aria-label={`${actionLabel} ${title}`}
+                >
+                  {membership === "all" ? (isActive ? "Disconnect" : "Connected") : "Connect"}
+                </button>
+              </div>
+            </div>
+          );
+        })}
 
-          {filtered.length === 0 && !canCreate && (
-            <p className="px-2 py-3 text-center text-sm text-muted-foreground">
-              No channels
-            </p>
-          )}
-        </div>
-      </div>
+        {canCreate && (
+          <button
+            type="button"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onPointerMove={handleCreatePointerMove}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              createAndAssign();
+            }}
+            className={cn(
+              "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 px-2 text-base font-semibold text-foreground hover:bg-active",
+              createActive && "bg-active",
+            )}
+            data-collection-picker-create=""
+            data-collection-picker-create-active={createActive ? "true" : undefined}
+          >
+            <Plus className="size-4 shrink-0" />
+            <span>
+              Create &ldquo;{trimmed}&rdquo;
+            </span>
+          </button>
+        )}
+
+        {filtered.length === 0 && !canCreate && (
+          <p className="flex h-[var(--menu-row-height)] items-center justify-center px-2 text-sm text-muted-foreground">
+            No channels
+          </p>
+        )}
+      </QuantizedMenuScrollArea>
     </div>
   );
 }

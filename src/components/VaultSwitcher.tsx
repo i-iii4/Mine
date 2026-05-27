@@ -16,6 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
+import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
@@ -243,10 +244,14 @@ export function VaultSwitcher({
             data-top-space-search=""
           />
         )}
-        <div className={isTopChrome ? "max-h-72 overflow-y-auto p-1" : undefined}>
-          {visibleVaults.length > 0 ? (
-            visibleVaults.map((path, index) => (
-              isTopChrome ? (
+        {isTopChrome ? (
+          <QuantizedMenuScrollArea
+            rowCount={Math.max(visibleVaults.length, 1)}
+            maxRows={8}
+            innerClassName="p-1"
+          >
+            {visibleVaults.length > 0 ? (
+              visibleVaults.map((path, index) => (
                 <SearchMenuAction
                   id={`${actionIdPrefix}-space-action-${index}`}
                   key={path}
@@ -260,7 +265,17 @@ export function VaultSwitcher({
                     {vaultName(path)}
                   </span>
                 </SearchMenuAction>
-              ) : (
+              ))
+            ) : (
+              <div className="flex h-[var(--menu-row-height)] items-center px-2 text-base text-muted-foreground">
+                No other spaces
+              </div>
+            )}
+          </QuantizedMenuScrollArea>
+        ) : (
+          <div>
+            {visibleVaults.length > 0 ? (
+              visibleVaults.map((path) => (
                 <DropdownMenuItem
                   key={path}
                   onSelect={() => {
@@ -271,14 +286,14 @@ export function VaultSwitcher({
                     {vaultName(path)}
                   </span>
                 </DropdownMenuItem>
-              )
-            ))
-          ) : (
-            <div className="px-2 py-1.5 text-base text-muted-foreground">
-              No other spaces
-            </div>
-          )}
-        </div>
+              ))
+            ) : (
+              <div className="px-2 py-1.5 text-base text-muted-foreground">
+                No other spaces
+              </div>
+            )}
+          </div>
+        )}
         {isTopChrome ? (
           <div className="border-t border-border p-1">
             <SearchMenuAction

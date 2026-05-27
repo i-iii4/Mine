@@ -201,13 +201,36 @@ surface. Normal selection creation, double-click word selection, triple-click
 paragraph selection, system highlighting, `Cmd+C`, and the browser/WebView
 context menu remain native.
 
-The primary runtime path is a selection proxy handle. After a valid selection
-inside the article body, Detail shows a small drag handle near the first
-selected rendered Markdown block. The user drags that handle, not the text
-range itself. The handle is a `dnd-kit` draggable with payload
-`type: "text_selection"`, so it uses the same Pointer Events drag stack as
-card, tag, and inline-media drags and does not depend on WebKit HTML5 selected
-text drag behavior.
+The primary runtime path is a compact selection action bar. After a valid
+selection inside the article body, Detail shows one horizontal floating menu
+near the first selected rendered Markdown block:
+
+- left: drag grip. The user drags this grip, not the native highlighted text.
+  It is a `dnd-kit` draggable with payload `type: "text_selection"`, so it uses
+  the same Pointer Events drag stack as card, tag, and inline-media drags and
+  does not depend on WebKit HTML5 selected text drag behavior. Visually it uses
+  the same ghost icon button contract as close: no independent border or fill.
+- right: `Create Card`, `Delete Text`, and close.
+
+`Create Card` opens the same searchable channel picker contract as media asset
+`Create Card`: `Everything` plus channels, shared `SearchMenuInput`, shared
+`QuantizedMenuScrollArea`, and optional channel creation when the filtered list
+is empty. It uses the same `Plus` icon convention as the main grid group-action
+bar. Selecting `Everything` creates the text card without collection membership.
+
+`Delete Text` removes the selected text from the source article. It uses the
+`Trash2` icon and patches only the selected text range; it does not delete the
+source card and does not create a new card. Close clears the transient native
+selection/action bar without creating, deleting, or modifying content.
+
+Placement is calculated by the shared text-selection action-bar placement
+helper. The action bar is rendered through a `document.body` portal and is
+measured from its real DOM size; width constants are only first-frame fallback.
+It is horizontally centered over the first valid `selection.getClientRects()`
+rect, then clamped to the visible article safe area. It prefers the area above
+the selected range; when there is not enough top room it flips below the
+selected range. Top-right and top-left selections therefore stay visible by
+applying flip first and horizontal clamp second.
 
 Native selected-text drag is not a Mine command. If WebKit/OS allows the user
 to drag the highlighted text range itself, Mine does not write Mine metadata to
@@ -225,9 +248,9 @@ multiple Markdown lines. Frontend block offsets are only a fallback hint when
 the selected text cannot be located directly. This prevents duplicate text from
 anchoring to the wrong paragraph without rejecting valid rendered selections.
 
-The drop creates a new article card through `extractTextSelection`; it does not
-connect the source card itself and does not enter the inline-media extraction
-path.
+Drag/drop or `Create Card` creates a new article card through
+`extractTextSelection`; it does not connect the source card itself and does not
+enter the inline-media extraction path.
 
 The new card body is a creation-time snapshot of the selected text. It is not a
 live embed and must not auto-update when the source paragraph changes.
@@ -258,10 +281,10 @@ type TextSelectionDragPayload = {
 };
 ```
 
-The selection handle stores the active payload in same-WebView memory at
-pointerdown so the payload survives selection changes or handle remounts during
-the dnd-kit activation threshold. This store is internal to the handle path; it
-is not exposed through native `DataTransfer`.
+The action bar grip stores the active payload in same-WebView memory at
+pointerdown so the payload survives selection changes or action-bar remounts
+during the dnd-kit activation threshold. This store is internal to the Mine
+selection-action path; it is not exposed through native `DataTransfer`.
 Existing `dnd-kit` paths remain responsible for card/tag drag and inline-media
 extraction.
 
@@ -273,6 +296,15 @@ After successful extraction:
    successful drop.
 3. Metadata renders the related note as provenance/source context, not as a
    synced body.
+
+After successful deletion:
+
+1. Detail remains open on the source article.
+2. Backend validates source hash and selected source block range before writing.
+3. Backend patches the source `.md`, re-indexes that same source block and emits
+   `thumb:updated` for it.
+4. App refreshes grid/taxonomy/previews immediately and updates the open Detail
+   block if it is the patched source.
 4. Clicking a related note that includes `#^block-id` opens the source article
    by base slug and scrolls the Detail body to the visible block-id marker when
    the marker is still present.
@@ -632,6 +664,13 @@ resolved `source_path` and then loads `convertFileSrc(vaultPath + "/" +
 source_path)`. The frontend must not reimplement vault-wide attachment search;
 that belongs to `storage::media_refs`.
 
+Markdown paragraphs that contain only embedded media and whitespace are rendered
+as a vertical media stack (`data-article-media-stack`), even if the source file
+stores several embeds on one physical line. This preserves Obsidian-readable
+markdown while preventing inline image wrapping/overlap in Detail. Mixed
+text+media paragraphs remain block `<div>` wrappers to avoid invalid
+`<p><div /></p>` markup.
+
 ### CardHoverMenu
 
 - Hover overlay содержит `Source` и `Connect`; `Connect` открывает
@@ -672,6 +711,13 @@ Frontend rules:
   media's top-right corner;
 - menu items are `Create Card`, `Reveal in Finder`, `Copy Path`, `Copy Media`,
   `Rename Media...`, `Remove from Card`, `Delete`;
+- media action menu icon policy matches card menus: only `Create Card` renders
+  the `Plus` icon; all other media commands reserve the leading icon slot but
+  render it empty so text aligns without decorative per-command icons;
+- the `Create Card` submenu is part of the same searchable floating-menu
+  contract as `CollectionPicker`: search stays fixed, the channel list scrolls
+  through `QuantizedMenuScrollArea`, rows use the shared `default` 32px token,
+  and no raw `max-h-*`/ad hoc scroll cap is allowed;
 - `Delete` opens a media-level confirmation that shows the exact media preview
   and all cards/notes returned by `prepare_delete_media_asset`;
 - the media-level delete confirmation must not grow or overflow horizontally:
@@ -708,9 +754,12 @@ Image media expansion:
 - Host dropdown/submenu content uses floating width role `picker`:
   `width: min(20rem, available-width)`. The width is intentionally wider than a
   command menu because rows contain a search field, collection label and fixed
-  `10ch` action slot. Height is capped by
-  `min(20rem, --radix-dropdown-menu-content-available-height)`, so the menu
-  fits the available viewport instead of clipping the last visible row.
+  `10ch` action slot. The scrollable list height is owned by
+  `QuantizedMenuScrollArea`, not by raw `max-h-*` classes: visible height is
+  `list padding + N × rowHeight` after subtracting the fixed search header and
+  footer/create action from `--floating-menu-available-height`. This is the
+  invariant that prevents partial clipped channel rows in dropdown, context
+  submenu and Clipper surfaces.
 - Порядок каналов всегда равен порядку `tags`, полученному из taxonomy/sidebar.
   `selectedTags`, recent tags, current route и optimistic membership changes не
   пересортировывают список; connected-канал после действия не прыгает наверх.
@@ -718,6 +767,9 @@ Image media expansion:
   `Input variant="ghost"` row behind the menu's top divider, without its own
   rounded input frame/pill. This must match `Search spaces` and
   `Search collections`; Connect menus do not get a separate form-field surface.
+- Rows use shared menu row tokens: `default` = 32px for app dropdown/search
+  rows, `clipper` = 40px for clipper-sized rows. Any future token change must
+  update the row renderer and the quantized scroll calculation together.
 - Printable key из любого места внутри picker фокусирует search input и
   добавляет символ в search query; parent DropdownMenu typeahead не перехватывает
   эти клавиши.

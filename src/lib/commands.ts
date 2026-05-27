@@ -29,6 +29,7 @@ import type {
   MediaAssetMutationResult,
   RenameMediaAssetParams,
   RemoveMediaAssetFromCardParams,
+  DeleteTextSelectionParams,
   ExtractTextSelectionParams,
   TextSelectionExtractError,
 } from "@/types";
@@ -197,6 +198,14 @@ function normalizeTextSelectionExtractError(error: unknown): TextSelectionExtrac
 export const extractTextSelection = async (params: ExtractTextSelectionParams) => {
   try {
     return await invoke<IndexedBlock>("extract_text_selection", { ...params });
+  } catch (error) {
+    throw normalizeTextSelectionExtractError(error);
+  }
+};
+
+export const deleteTextSelection = async (params: DeleteTextSelectionParams) => {
+  try {
+    return await invoke<IndexedBlock>("delete_text_selection", { ...params });
   } catch (error) {
     throw normalizeTextSelectionExtractError(error);
   }
