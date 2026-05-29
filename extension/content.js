@@ -122,6 +122,34 @@
     });
   }
 
+  let defuddleLoadPromise = null;
+
+  async function ensureDefuddleLoaded() {
+    if (typeof Defuddle !== "undefined") return true;
+    if (defuddleLoadPromise) return defuddleLoadPromise;
+
+    defuddleLoadPromise = new Promise((resolve) => {
+      if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
+        resolve(false);
+        return;
+      }
+      chrome.runtime.sendMessage(
+        { target: "background", action: "ensureDefuddle" },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            resolve(false);
+            return;
+          }
+          resolve(Boolean(response?.ok) && typeof Defuddle !== "undefined");
+        },
+      );
+    });
+
+    const loaded = await defuddleLoadPromise;
+    if (!loaded) defuddleLoadPromise = null;
+    return loaded;
+  }
+
   function extractEmbeddedVideoPreviews() {
     const root = document.querySelector("article") || document.body;
     if (!root) return [];
@@ -363,72 +391,50 @@
     );
   }
 
-  /**
-   * Walk a tweet's DOM tree and produce Markdown.
-   * Twitter uses non-semantic HTML (<span> + CSS) instead of <br>/<p>,
-   * so we traverse manually.
-   */
-  function tweetTextToMarkdown(el) {
-    let result = "";
-    for (const node of el.childNodes) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        result += node.textContent;
-      } else if (node.nodeName === "BR") {
-        result += "\n";
-      } else if (node.nodeName === "A") {
-        const href = node.getAttribute("href") || "";
-        const text = node.textContent || "";
-        // Hashtags and mentions — keep as plain text
-        if (href.startsWith("/hashtag/") || href.startsWith("/")) {
-          result += text;
-        } else {
-          result += `[${text}](${href})`;
-        }
-      } else if (node.nodeName === "IMG") {
-        // Emoji images — use alt text
-        result += node.getAttribute("alt") || "";
-      } else if (node.childNodes.length > 0) {
-        // Nested spans — recurse
-        result += tweetTextToMarkdown(node);
-      } else {
-        result += node.textContent || "";
-      }
-    }
-    return result;
+  function extractTweetContentParts(article) {
+    return window.MineTwitterTweetContent?.extractTweetContentParts?.(article) || {
+      mainText: "",
+      media: [],
+      quotes: [],
+    };
   }
 
-  /**
-   * Extract a single tweet's text and media from DOM.
-   * Used for thread tweets (not the main tweet, which uses syndication API).
-   */
-  function extractTweetContent(article) {
-    const tweetTextEl = article.querySelector('div[data-testid="tweetText"]');
-    let text = "";
-    if (tweetTextEl) {
-      text = tweetTextToMarkdown(tweetTextEl);
+  function composeTweetText(mainText, quotes) {
+    return window.MineTwitterTweetContent?.composeTweetText?.(mainText, quotes) || String(mainText || "").trim();
+  }
+
+  function cleanSyndicationText(text, mediaDetails) {
+    let cleaned = String(text || "");
+    for (const media of mediaDetails || []) {
+      if (media.shortUrl) cleaned = cleaned.replace(media.shortUrl, "");
     }
+    return cleaned.trim();
+  }
 
-    const media = [];
-
-    // Static images
-    for (const img of article.querySelectorAll('div[data-testid="tweetPhoto"] img')) {
-      let src = img.src || "";
-      if (src.includes("pbs.twimg.com/media")) {
-        const base = src.split("?")[0];
-        src = base + "?format=jpg&name=large";
-        media.push(src);
+  function syndicationMediaEntry(media) {
+    if (media.type === "photo" && media.media_url_https) {
+      return {
+        kind: "image",
+        url: media.media_url_https + "?name=large",
+        poster: media.media_url_https,
+        shortUrl: media.url || null,
+      };
+    }
+    if (media.type === "video" || media.type === "animated_gif") {
+      const variants = (media.video_info?.variants || [])
+        .filter((variant) => variant.content_type === "video/mp4" && variant.bitrate != null)
+        .sort((a, b) => b.bitrate - a.bitrate);
+      if (variants.length > 0) {
+        return {
+          kind: "video",
+          url: variants[0].url,
+          poster: media.media_url_https || null,
+          mediaType: media.type,
+          shortUrl: media.url || null,
+        };
       }
     }
-
-    // GIFs — direct MP4 URLs
-    for (const video of article.querySelectorAll("video")) {
-      const src = video.src || video.querySelector("source")?.src || "";
-      if (src && !src.startsWith("blob:") && src.includes("video.twimg.com/")) {
-        media.push(src);
-      }
-    }
-
-    return { text, media };
+    return null;
   }
 
   /**
@@ -436,38 +442,39 @@
    * Returns array of direct URLs (photos, GIFs as MP4, videos as MP4 highest bitrate).
    * More reliable than DOM parsing — doesn't depend on lazy-loaded elements.
    */
-  async function fetchTweetMediaDetails(tweetId) {
+  async function fetchTweetDetails(tweetId) {
     try {
       const resp = await fetch(
         `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&token=0`
       );
-      if (!resp.ok) return [];
+      if (!resp.ok) return { mediaDetails: [], quotedTweet: null };
       const data = await resp.json();
       const media = [];
       for (const m of (data.mediaDetails || [])) {
-        if (m.type === "photo" && m.media_url_https) {
-          media.push({
-            kind: "image",
-            url: m.media_url_https + "?name=large",
-            poster: m.media_url_https,
-          });
-        } else if (m.type === "video" || m.type === "animated_gif") {
-          const variants = (m.video_info?.variants || [])
-            .filter(v => v.content_type === "video/mp4" && v.bitrate != null)
-            .sort((a, b) => b.bitrate - a.bitrate);
-          if (variants.length > 0) {
-            media.push({
-              kind: "video",
-              url: variants[0].url,
-              poster: m.media_url_https || null,
-              mediaType: m.type,
-            });
-          }
+        const entry = syndicationMediaEntry(m);
+        if (entry) media.push(entry);
+      }
+
+      let quotedTweet = null;
+      if (data.quoted_tweet) {
+        const quoteMedia = [];
+        for (const m of (data.quoted_tweet.mediaDetails || [])) {
+          const entry = syndicationMediaEntry(m);
+          if (entry) quoteMedia.push(entry);
+        }
+        const quoteText = cleanSyndicationText(data.quoted_tweet.text || "", quoteMedia);
+        if (quoteText || quoteMedia.length > 0) {
+          quotedTweet = {
+            text: quoteText,
+            media: quoteMedia.map((entry) => entry.url),
+            mediaDetails: quoteMedia,
+          };
         }
       }
-      return media;
+
+      return { mediaDetails: media, quotedTweet };
     } catch {
-      return [];
+      return { mediaDetails: [], quotedTweet: null };
     }
   }
 
@@ -491,21 +498,27 @@
       return threadSelection?.getTweetIdentity?.(article)?.tweetId === tweetId;
     }) || articles[0];
 
-    // Fetch media from syndication API (includes videos that DOM can't capture)
+    // Fetch media from syndication API (includes videos that DOM can't capture).
+    // Quote tweets stay inside the parent tweet body; they are not thread items.
     let apiMediaDetails = [];
+    let apiQuotedTweet = null;
     if (tweetId) {
-      apiMediaDetails = await fetchTweetMediaDetails(tweetId);
+      const tweetDetails = await fetchTweetDetails(tweetId);
+      apiMediaDetails = tweetDetails.mediaDetails;
+      apiQuotedTweet = tweetDetails.quotedTweet;
     }
     const apiMedia = apiMediaDetails.map((m) => m.url);
 
     const tweets = [];
     for (const article of articles) {
-      const { text, media } = extractTweetContent(article);
+      const contentParts = extractTweetContentParts(article);
       // Target tweet: prefer API media (complete — photos + GIFs + videos).
       // Fallback to DOM media if API returned nothing.
       const isTargetTweet =
         threadSelection?.getTweetIdentity?.(article)?.tweetId === tweetId;
-      const finalMedia = isTargetTweet && apiMedia.length > 0 ? apiMedia : media;
+      const finalMedia = isTargetTweet && apiMedia.length > 0 ? apiMedia : contentParts.media;
+      const quotes = isTargetTweet && apiQuotedTweet ? [apiQuotedTweet] : contentParts.quotes;
+      const text = composeTweetText(contentParts.mainText, quotes);
       if (text || finalMedia.length > 0) {
         tweets.push({ text, media: finalMedia });
       }
@@ -555,6 +568,11 @@
         pushVideoUrlPreview(embeddedVideos, src, null, "Tweet video preview");
       }
     }
+    for (const media of apiQuotedTweet?.mediaDetails || []) {
+      if (media.kind === "video") {
+        pushVideoUrlPreview(embeddedVideos, media.url, media.poster, "Tweet video preview");
+      }
+    }
     // Twitter/X pages keep extra player <video> nodes in the DOM, often as
     // blob URLs with generic page posters. If the social/API path already
     // produced a direct mp4 + tweet_video_thumb poster, generic DOM fallback
@@ -572,6 +590,19 @@
       excerpt: firstText.slice(0, 200),
       embeddedVideos,
     };
+  }
+
+  function extractXLongformArticle() {
+    const extractor = window.MineXLongformArticleExtraction;
+    if (!extractor?.extractXLongformArticle) return null;
+    const urlMatch = window.location.href.match(/(?:twitter\.com|x\.com)\/([^/]+)\/status\/(\d+)/i);
+    const fallbackByline = urlMatch ? `@${urlMatch[1]}` : null;
+    return extractor.extractXLongformArticle({
+      document,
+      locationHref: window.location.href,
+      fallbackTitle: getMeta("og:title") || getMeta("twitter:title") || document.title || "",
+      fallbackByline,
+    });
   }
 
   // ── Instagram post extraction ──────────────────────────────────────────
@@ -875,8 +906,13 @@
   // ── Article extraction (Defuddle) ─────────────────────────────────────
 
   function extractArticle() {
-    // Twitter/X: async only (extractTwitterThread uses syndication API)
+    // Twitter/X: long-form article can be extracted synchronously; tweet/thread
+    // fallback is async because it can use the syndication API.
     if (isTwitterUrl(window.location.href)) {
+      const longform = extractXLongformArticle();
+      if (longform?.status === "article" || longform?.status === "empty") {
+        return longform.article;
+      }
       return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
 
@@ -925,6 +961,10 @@
   // Async version — custom YouTube fetcher, Defuddle for everything else
   async function extractArticleAsync() {
     if (isTwitterUrl(window.location.href)) {
+      const longform = extractXLongformArticle();
+      if (longform?.status === "article" || longform?.status === "empty") {
+        return longform.article;
+      }
       return (await extractTwitterThread()) ||
         { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
@@ -938,7 +978,7 @@
     // YouTube: Defuddle parseAsync extracts transcript via InnerTube API (needs browser cookies).
     // Key: read result.variables.transcript (not contentMarkdown, which is an iframe embed).
     if (isVideoUrl(window.location.href)) {
-      if (typeof Defuddle === "undefined") {
+      if (!(await ensureDefuddleLoaded())) {
         return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
       }
       try {
@@ -957,7 +997,7 @@
     }
 
     // Other pages: use Defuddle
-    if (typeof Defuddle === "undefined") {
+    if (!(await ensureDefuddleLoaded())) {
       return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
     try {

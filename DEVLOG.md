@@ -1,5 +1,41 @@
 # Devlog
 
+## 29.05.2026 [fix] — Preserve X quote tweets and lazy-load Defuddle
+
+### Context
+
+- X quote tweets can render inside the target tweet article without a nested
+  `article` node.
+- The previous tweet extractor read only the first `tweetText`, while media
+  selection read every `tweetPhoto` inside the same article.
+- As a result, quoted media could be saved without quoted text.
+- Defuddle was also loaded as a global content script on every page, which let
+  vendor Temml quirks-mode warnings surface even before Mine started extraction.
+
+### Completed
+
+- Added `MineTwitterTweetContent` as a typed, tested per-tweet extractor.
+- Kept thread selection separate from tweet content parsing: thread selection
+  still picks only top-level contiguous target-thread cells, while quote tweets
+  stay inside their parent tweet body.
+- Quote tweet text and quote media now render as Markdown blockquotes; target
+  tweet syndication `quoted_tweet` data is used when available so DOM-truncated
+  quote previews do not lose text.
+- Top-level tweet media remains top-level media; quote media no longer becomes
+  orphan media without quote text.
+- Moved Defuddle to on-demand background injection through `ensureDefuddle`.
+- Suppressed only the known Temml quirks-mode vendor warning during Defuddle
+  bundle evaluation; other warnings/errors remain visible.
+- Updated the Chrome/Safari extension bundles and clipper documentation.
+
+### Verification
+
+- `bun run test:frontend -- extension/lib/twitterTweetContent.test.ts extension/lib/twitterThreadSelection.test.ts extension/lib/xLongformArticleExtraction.test.ts extension/popup/lib/resolveContentBody.test.ts extension/popup/lib/articleExtractionState.test.ts`
+- Live Playwright sanity check on `https://x.com/a16z/status/2060036559173501349`: top-level media stays at 2, quote text is present, quote media is present, replies/comments are not included.
+- `bun run lint`
+- `bun run build:extension`
+- `git diff --check`
+
 ## 26.05.2026 [feature] — Text selection action bar and delete command
 
 ### Context

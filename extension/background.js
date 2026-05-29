@@ -381,6 +381,54 @@ async function broadcastChannelsChanged(tag) {
   } catch {}
 }
 
+async function ensureDefuddleInjected(sender) {
+  const tabId = sender.tab?.id;
+  if (!tabId) {
+    return { ok: false, error: "No sender tab" };
+  }
+
+  const target = { tabId };
+  if (Number.isInteger(sender.frameId)) {
+    target.frameIds = [sender.frameId];
+  }
+
+  // Defuddle bundles Temml, which warns at module-load time on quirks-mode
+  // pages. The warning is noisy extension UI, not a Mine user-facing problem.
+  // Suppress only that known vendor warning while loading the vendor bundle.
+  await chrome.scripting.executeScript({
+    target,
+    func: () => {
+      if (globalThis.__mineRestoreDefuddleConsole) return;
+      const originalWarn = console.warn.bind(console);
+      globalThis.__mineRestoreDefuddleConsole = () => {
+        console.warn = originalWarn;
+        delete globalThis.__mineRestoreDefuddleConsole;
+      };
+      console.warn = (...args) => {
+        const message = String(args[0] ?? "");
+        if (message.includes("Temml doesn't work in quirks mode")) return;
+        originalWarn(...args);
+      };
+    },
+  });
+
+  try {
+    await chrome.scripting.executeScript({
+      target,
+      files: ["lib/defuddle.js"],
+    });
+  } finally {
+    await chrome.scripting.executeScript({
+      target,
+      func: () => {
+        globalThis.__mineRestoreDefuddleConsole?.();
+      },
+    });
+  }
+
+  return { ok: true };
+}
+
 async function uploadFileToNativeHost({ port, token, filename, screenshotId, vaultPath }) {
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     return { ok: false, error: "Invalid upload port" };
@@ -458,6 +506,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === "cacheScreenshotUpload") {
     sendResponse(cacheScreenshotUpload(msg.dataUrl));
+    return true;
+  }
+
+  if (msg.action === "ensureDefuddle") {
+    ensureDefuddleInjected(sender).then(
+      (response) => sendResponse(response),
+      (error) => sendResponse({ ok: false, error: String(error) }),
+    );
     return true;
   }
 

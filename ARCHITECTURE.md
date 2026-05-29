@@ -1220,6 +1220,48 @@ and caps the scroll zone to a whole number of shared row tokens (`default`
 pickers, batch Connect, media asset `Create Card` and Web Clipper menus
 visually aligned when row tokens change.
 
+### 024: X status extraction uses typed source extractors
+
+| Approach | Problem |
+|---|---|
+| Treat every `x.com/.../status/...` page as tweet/thread | X long-form articles share status URLs with tweets; the old branch can return only cover/media and miss the article body |
+| Run generic Defuddle on X timeline DOM | X pages mix the target post, replies, recommendations, sidebars and localized UI; readability without target scoping can extract the wrong document |
+| Add a separate UI mode for X articles | Creates two Content concepts and splits preview/save semantics |
+| Typed extractor chain inside existing `ArticleData` flow (chosen) | Keeps one Content UI and one Save contract while letting X long-form articles be detected before the tweet/thread fallback |
+
+Rationale: X status URLs are source-ambiguous. The architecture must decide
+which source-specific extractor owns the page before Markdown is produced.
+`extractXLongformArticle()` performs strict positive detection anchored to the
+target status and returns normal `ArticleData` only when a real article body is
+present. If no long-form surface exists, `extractTwitterThread()` handles the
+existing tweet/thread/media cases. Its thread selection and tweet content
+parsing are separate typed extractors: thread selection chooses only top-level
+contiguous target-thread cells, while tweet content parsing keeps quote tweets
+inside the parent tweet body as blockquotes. Quote media is not allowed to
+become orphan top-level media without quote text. If a long-form shell exists
+but body extraction fails, the result is explicit `empty/failed`, not a
+cover-only article. This preserves the current clipper lifecycle: first paint is
+fast, `ensureArticleLoaded()` owns heavy extraction, `resolveContentBody()`
+remains the single preview/save source of truth, and the native host still
+rejects empty articles.
+
+### 025: Defuddle is loaded on demand by the content-script adapter
+
+| Approach | Problem |
+|---|---|
+| Static `lib/defuddle.js` content script on `<all_urls>` | Vendor code runs on every page at `document_idle`; Temml emits quirks-mode warnings even when Mine is not extracting anything |
+| Remove Defuddle and rely on generic metadata | Regresses article and YouTube transcript extraction |
+| Lazy background injection through `ensureDefuddle` (chosen) | Keeps Defuddle as Article extractor but loads it only for real Content extraction in the sender frame |
+
+Rationale: Defuddle is a heavy source extractor, not metadata infrastructure.
+The always-on content script must stay small: URL/title/selection detection,
+source-specific social extractors and overlay plumbing. Generic Article/YouTube
+extraction asks background to inject `lib/defuddle.js` with `chrome.scripting`
+only when `ensureArticleLoaded()` reaches a Defuddle path. The loader suppresses
+only the known Temml quirks-mode vendor warning while the bundle is evaluated;
+all extraction failures still return normal `empty/failed` ArticleData and do
+not leak page-level UI into the popup.
+
 ## Dependencies
 
 | Package | Version | Purpose | License |

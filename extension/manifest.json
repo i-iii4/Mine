@@ -30,7 +30,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["lib/defuddle.js", "lib/twitterThreadSelection.js", "content.js"],
+      "js": ["lib/twitterThreadSelection.js", "lib/twitterTweetContent.js", "lib/xLongformArticleExtraction.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

@@ -26,7 +26,7 @@ contract: non-empty body → `article`, empty body → `media`, `type: channel` 
 │  │  Popup UI  │  │  Content Script    │  │
 │  │            │  │                    │  │
 │  │ Type picker│  │ Meta extraction    │  │
-│  │ Channels   │  │ Defuddle           │  │
+│  │ Channels   │  │ Defuddle (lazy)    │  │
 │  │ Preview    │  │ Selection capture  │  │
 │  │ Save btn   │  │ Image src capture  │  │
 │  └─────┬──────┘  └────────┬───────────┘  │
@@ -153,6 +153,103 @@ Save-инварианты:
 
 Контракт состояния зафиксирован unit-тестом
 `extension/popup/lib/articleExtractionState.test.ts`.
+
+### 3c. Source-specific content extractor chain
+
+`ArticleData` остаётся единственным контрактом результата для Content preview и
+Save path: `title`, `byline/author`, `content`, `excerpt`,
+`embeddedVideos`. Preview и сохранение не имеют права использовать разные body
+sources. `resolveContentBody()` сохраняет текущий приоритет: video body →
+selection → `articleData.content` → empty. Новые source-specific extractors
+добавляются только до формирования `ArticleData`, а не отдельным UI-путём.
+
+Для `x.com` / `twitter.com` status URL используется typed chain, а не единая
+ветка "Twitter":
+
+1. `extractXLongformArticle()` — строгий extractor длинной статьи X.
+2. `extractTwitterThread()` — fallback для обычного tweet/thread/media tweet.
+
+Generic Defuddle не запускается на полной X timeline DOM без target scoping:
+страница X содержит рекомендации, ответы, сайдбар и чужие tweets, поэтому
+readability без якоря может собрать неправильный документ.
+
+#### X tweet/thread and quote tweet extraction
+
+`extractTwitterThread()` состоит из двух независимых шагов:
+
+1. `MineTwitterThreadSelection.selectTwitterThreadArticles()` выбирает только
+   top-level timeline cells вокруг target tweet: contiguous tweets того же
+   автора. Nested/quoted tweets не становятся thread items. Replies,
+   recommendations и чужие tweets остаются за пределами selected window.
+2. `MineTwitterTweetContent.extractTweetContentParts()` разбирает каждый
+   выбранный tweet article на `mainText`, top-level `media` и `quotes`.
+
+Quote tweet является частью родительского tweet body, а не отдельным элементом
+треда. Контракт сохранения:
+
+- основной `tweetText` сохраняется как обычный Markdown;
+- media основного post остаётся в top-level media списка;
+- quote text/media добавляются в body как Markdown blockquote;
+- если syndication API для target tweet возвращает `quoted_tweet`, он
+  авторитетнее DOM-preview для quote body, потому что DOM X может обрезать
+  quote text;
+- media short URL (`t.co`) от quoted media удаляется из quote text, если это
+  же media сохраняется как Markdown image/video;
+- при fallback на DOM quote определяется структурно: nested tweet article или
+  quote card clickable shell с permalink на другой status id внутри target
+  tweet article.
+
+Запрещено исправлять quote extraction расширением selector'ов на весь
+`document`: комментарии ниже, recommendations и sidebar остаются отдельными
+timeline articles и не должны попадать в body.
+
+#### X long-form article extractor
+
+Extractor применяется только к status URL и обязан якориться на target status:
+`tweetId` из URL, видимый article/modal/page root, автор/перmalink целевого
+поста. Он не читает recommendations, replies, profile bio, action labels или
+sidebars как body.
+
+Положительная детекция должна быть явной:
+
+- найден видимый long-form article surface, связанный с target status;
+- есть текстовый body, а не только cover/preview image;
+- body содержит осмысленную prose-структуру: минимум два paragraph-like блока
+  или нормализованный body text достаточной длины для long-form content;
+- title/cover/media разрешены только как дополнение к body, не как замена body.
+
+Если long-form surface не найден, extractor возвращает `null`, и управление
+переходит в обычный tweet/thread extractor. Если long-form surface найден, но
+body не извлечён, результатом является `empty/failed` extraction state; клиппер
+не имеет права сохранять cover-only / image-only карточку как статью. Это не
+запрещает обычные media-only tweets: они остаются валидным fallback только
+когда long-form article surface не был обнаружен.
+
+Markdown output:
+
+- сохраняет порядок media/body по DOM-позиции внутри article surface: cover,
+  который находится над текстом, остаётся над текстом; inline media ниже body
+  остаётся ниже body;
+- сохраняет ссылки как Markdown-ссылки;
+- не синтезирует `title:` frontmatter;
+- не добавляет текст UI X (`Follow`, `Subscribe`, `Show more`, counters,
+  actions);
+- использует тот же `ArticleData` для preview и Save.
+
+Startup performance invariant сохраняется: long-form extraction запускается
+через `ensureArticleLoaded()` после первого usable paint или перед Save, но не
+блокирует открытие popup.
+
+Минимальный тестовый контракт:
+
+- X long-form article fixture возвращает полный body и не превращается в
+  image-only Content;
+- X long-form article + user selection сохраняет selection как body source;
+- обычный tweet остаётся в `extractTwitterThread()` path;
+- thread сохраняет только contiguous target thread;
+- media-only tweet без long-form surface остаётся валидным media tweet;
+- detected long-form shell без body даёт `empty/failed`, а не cover-only save;
+- preview body и saved body совпадают через `resolveContentBody()`.
 
 ### 4. Image (изображение)
 
@@ -467,6 +564,9 @@ Article preview в popup рендерит полноценный Markdown чер
 `remark-gfm`, но использует отдельную compact preview scale. Это не обрезает
 функциональность Markdown-компонентов, а стабилизирует их размер в 360px popup:
 body `14/20`, `h1 16/22 600`, `h2 15/21 600`, `h3-h4 14/20 600`.
+Content preview не рисует отдельную строку `title` / filename над body: для
+коротких tweets и selection это дублирует первый абзац. `title` остаётся только
+внутренним save/filename seed и не становится отдельным preview element.
 
 Content extraction never runs on the live DOM with Mine UI attached. Before
 Defuddle receives the page, `content.js` creates a sanitized document clone,
@@ -546,7 +646,15 @@ Content script извлекает метаданные из DOM текущей �
 ### Defuddle
 
 Используется для Article/Content extraction. Библиотека включена в расширение
-(bundled, не CDN).
+(bundled, не CDN), но не грузится как global content script на `<all_urls>`.
+Content script запрашивает `ensureDefuddle` у background только перед реальным
+Article/YouTube extraction. Это сохраняет быстрый старт popup и не создаёт
+vendor warning/error noise на страницах, где пользователь клипер не открывал.
+
+`background.js` инжектит `lib/defuddle.js` через `chrome.scripting` в frame,
+из которого пришёл запрос. На время загрузки suppress'ится только известный
+vendor warning Temml про quirks mode; остальные warnings/errors не
+подавляются. Это loader/adapter concern, а не изменение Defuddle output.
 
 Извлекает:
 - `title` — заголовок статьи; Mine writes it as first body H1, not as `title:` frontmatter
@@ -962,7 +1070,7 @@ Native host читает путь к vault из файла конфигурац�
 extension/
 ├── manifest.json           # Manifest V3
 ├── background.js           # Service worker: context menus, native messaging
-├── content.js              # Content script: metadata extraction, Defuddle
+├── content.js              # Content script: metadata extraction, lazy Defuddle request
 ├── popup/                  # React popup (исходники, собирается Vite)
 │   ├── index.html          # HTML entry point для Vite
 │   ├── main.tsx            # React entry point
@@ -983,7 +1091,10 @@ extension/
 │   ├── assets/             # JS + CSS бандлы
 │   └── fonts/              # Geist, Geist Mono (WOFF2)
 ├── lib/
-│   └── defuddle.js         # Bundled Defuddle article extractor
+│   ├── defuddle.js         # Bundled Defuddle article extractor, injected on demand
+│   ├── twitterThreadSelection.js
+│   ├── twitterTweetContent.js
+│   └── xLongformArticleExtraction.js
 └── icons/
     ├── icon-16.png
     ├── icon-24.png

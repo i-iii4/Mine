@@ -244,7 +244,6 @@ export function PopupApp() {
                   ))}
                 </div>
               )}
-              <p className="mt-1.5 truncate text-sm font-semibold">{clipper.title}</p>
               {resolvedBody.source === "selection" ? (
                 <div className="mt-1.5">
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">

@@ -661,6 +661,8 @@ Goal: довести проект до продакшен-качества по 
 | 9.8.9 | SSRF: валидация схемы (https only) + запрет приватных IP в download_file | HIGH-21 | [ ] |
 | 9.8.10 | Валидация тега в native host create_channel | MED-35 | [ ] |
 | 9.8.11 | `<all_urls>` → `chrome.scripting.executeScript()` по требованию | MED-34 | [ ] |
+| 9.8.12 | X long-form article extraction: typed `extractXLongformArticle()` before tweet/thread fallback, strict no image-only article save, fixtures for article/tweet/thread/media/selection paths | — | [x] |
+| 9.8.13 | X quote tweet extraction: separate top-level thread selection from per-tweet content parsing, keep quoted text/media inside parent tweet body, add lazy Defuddle injection to avoid always-on Temml warnings | — | [x] |
 
 #### 9.9 — Обработка ошибок (оставшиеся) [PENDING]
 
