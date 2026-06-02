@@ -97,6 +97,42 @@ describe("resolveContentBody — save-equivalence contract", () => {
     expect(result).toEqual({ text: "", source: "empty", byline: null });
   });
 
+  it("X media-only status: uses embedded media as article body", () => {
+    const result = resolveContentBody(
+      meta({
+        url: "https://x.com/AwkSilenceGames/status/2061150566542156267",
+        detectedType: "article",
+        selection: "",
+        author: "@AwkSilenceGames",
+      }),
+      article({
+        content: "",
+        byline: "@AwkSilenceGames",
+        embeddedVideos: [
+          { src: "https://video.twimg.com/amplify_video/test.mp4?tag=14", poster: null, title: "Preview" },
+        ],
+      }),
+    );
+    expect(result).toEqual({
+      text: "![](https://video.twimg.com/amplify_video/test.mp4?tag=14)",
+      source: "article",
+      byline: "@AwkSilenceGames",
+    });
+  });
+
+  it("non-X media-only article: stays empty instead of saving generic preview media", () => {
+    const result = resolveContentBody(
+      meta({ url: "https://example.com/video-card", detectedType: "article", selection: "" }),
+      article({
+        content: "",
+        embeddedVideos: [
+          { src: "https://cdn.example.com/video.mp4", poster: null, title: "Preview" },
+        ],
+      }),
+    );
+    expect(result).toEqual({ text: "", source: "empty", byline: null });
+  });
+
   it("null metadata: returns empty", () => {
     const result = resolveContentBody(null, article({ content: "x" }));
     expect(result).toEqual({ text: "", source: "empty", byline: null });

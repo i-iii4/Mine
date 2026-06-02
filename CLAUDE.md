@@ -22,6 +22,7 @@
 - `SPEC_DISPLAY_MODES.md` — спецификация display modes: архитектура переключения между masonry/grid/table/columns, принцип изоляции (display mode = только рендеринг), единый интерфейс `DisplayModeProps`
 - `SPEC_MEDIA_ASSET_ACTIONS.md` — media-level hover/drag/actions для конкретного local media asset, независимо от frontmatter/body source
 - `SPEC_INLINE_MEDIA_EXTRACTION.md` — спецификация перетаскивания inline-изображений из статьи в отдельный блок с односторонней связью на исходную заметку
+- `SPEC_CARD_MERGE.md` — batch Merge для выбранных карточек: reorder dialog, Markdown composition, media reuse, relationship preservation
 - `SPEC_IDENTITY_ROBUSTNESS.md` — спецификация укрепления filename-based identity: rename detection через content hash, iCloud conflict UX, NFC normalization, semantic filename collision suffix — без служебных id во frontmatter
 - `SPEC_OBSIDIAN_WIKILINKS.md` — inline media в body как Obsidian wikilink `![[name|alt]]`; один canonical syntax на write, оба syntax на read, render preprocessor в frontend, опциональная migration CLI для legacy блоков
 - `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md` — совместимость с обычными Obsidian `.md` без Mine frontmatter: implicit article read-model, optional metadata overlay, no rewrite on read

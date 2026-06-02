@@ -60,6 +60,13 @@ pub struct DeleteBlockPlan {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct MergeBlocksResult {
+    pub block: IndexedBlock,
+    pub merged_slug: String,
+    pub removed_slugs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct MediaAssetMutationResult {
     pub media_ref: String,
     pub new_media_ref: Option<String>,
@@ -199,11 +206,45 @@ pub enum TextSelectionExtractError {
     Internal { message: String },
 }
 
+#[derive(Debug, Error, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MergeBlocksError {
+    #[error("no vault selected")]
+    NoVault,
+
+    #[error("at least two cards are required")]
+    TooFewCards,
+
+    #[error("duplicate card '{slug}'")]
+    DuplicateSlug { slug: String },
+
+    #[error("card '{slug}' not found")]
+    BlockNotFound { slug: String },
+
+    #[error("card '{slug}' cannot be merged")]
+    BlockNotMergeable { slug: String, block_type: String },
+
+    #[error("invalid card slug '{slug}': {reason}")]
+    InvalidSlug { slug: String, reason: String },
+
+    #[error("failed to rewrite '{path}': {message}")]
+    ReferenceRewriteFailed { path: String, message: String },
+
+    #[error("{message}")]
+    Internal { message: String },
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct BlockAddedPayload {
     slug: String,
     tags: Vec<String>,
     is_text: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BlockRemovedPayload {
+    slug: String,
+    tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -231,6 +272,26 @@ struct MediaAssetBlockWrite {
 struct FileRename {
     from: PathBuf,
     to: PathBuf,
+}
+
+#[derive(Debug)]
+struct MergeSourceBlock {
+    path: PathBuf,
+    block: Block,
+    content: String,
+}
+
+#[derive(Debug)]
+struct MergeReferenceWrite {
+    path: PathBuf,
+    block: Block,
+    content: String,
+}
+
+#[derive(Debug)]
+struct MergeBlocksMutation {
+    result: MergeBlocksResult,
+    removed_events: Vec<BlockRemovedPayload>,
 }
 
 const IN_APP_RENAME_WATCHER_SUPPRESSION_MS: u64 = 1500;
@@ -1322,12 +1383,10 @@ fn delete_text_selection_inner(
     std::fs::write(&source_path, &updated).map_err(internal_text_selection_error)?;
 
     let reindex_result = (|| -> Result<IndexedBlock, TextSelectionExtractError> {
-        let reparsed =
-            parse_markdown_document(&read_slug, &updated, file_saved_at(&source_path)).map_err(
-                |e| TextSelectionExtractError::Internal {
-                    message: format!("failed to parse patched source block: {e}"),
-                },
-            )?;
+        let reparsed = parse_markdown_document(&read_slug, &updated, file_saved_at(&source_path))
+            .map_err(|e| TextSelectionExtractError::Internal {
+            message: format!("failed to parse patched source block: {e}"),
+        })?;
         index::upsert_block_with_diagnostics(
             conn,
             &reparsed.block,
@@ -1339,7 +1398,10 @@ fn delete_text_selection_inner(
         index::get_block(conn, &reparsed.block.slug)
             .map_err(internal_text_selection_error)?
             .ok_or_else(|| TextSelectionExtractError::Internal {
-                message: format!("source block '{}' missing after deletion", reparsed.block.slug),
+                message: format!(
+                    "source block '{}' missing after deletion",
+                    reparsed.block.slug
+                ),
             })
     })();
 
@@ -1451,6 +1513,57 @@ pub fn delete_block(
     Ok(removed)
 }
 
+/// Merge selected cards into one new article card while preserving media files
+/// and rewriting external card-to-card references to the new card.
+#[tauri::command(rename_all = "snake_case")]
+pub fn merge_blocks(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ordered_slugs: Vec<String>,
+) -> Result<MergeBlocksResult, MergeBlocksError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| MergeBlocksError::Internal {
+            message: "vault state mutex poisoned".into(),
+        })?;
+    let vs = vault_state.as_ref().ok_or(MergeBlocksError::NoVault)?;
+
+    let mutation = merge_blocks_inner(&state, &vs.conn, &vs.vault, ordered_slugs)?;
+    let result = mutation.result;
+
+    app.emit(
+        "block:added",
+        BlockAddedPayload {
+            slug: result.merged_slug.clone(),
+            tags: result.block.tags.clone(),
+            is_text: true,
+        },
+    )
+    .map_err(internal_merge_error)?;
+    app.emit(
+        "thumb:updated",
+        ThumbUpdatedPayload {
+            slug: result.merged_slug.clone(),
+            is_text: true,
+        },
+    )
+    .map_err(internal_merge_error)?;
+    for event in mutation.removed_events {
+        app.emit("block:removed", event)
+            .map_err(internal_merge_error)?;
+    }
+    app.emit(
+        "vault-changed",
+        VaultChangedPayload {
+            path: vs.vault.root().to_string_lossy().to_string(),
+        },
+    )
+    .map_err(internal_merge_error)?;
+
+    Ok(result)
+}
+
 fn build_delete_block_plan(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
@@ -1493,6 +1606,497 @@ fn build_delete_block_plan(
         unused_media,
         shared_media,
     })
+}
+
+fn merge_blocks_inner(
+    state: &AppState,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    ordered_slugs: Vec<String>,
+) -> Result<MergeBlocksMutation, MergeBlocksError> {
+    let ordered_slugs = validate_merge_slugs(ordered_slugs)?;
+    let selected_slugs: BTreeSet<String> = ordered_slugs.iter().cloned().collect();
+    let sources = load_merge_source_blocks(vault, &ordered_slugs)?;
+    let removed_events = sources
+        .iter()
+        .map(|source| BlockRemovedPayload {
+            slug: source.block.slug.clone(),
+            tags: source.block.frontmatter.tags.clone(),
+        })
+        .collect();
+    let mut merged_block = build_merged_block(conn, vault, &sources, &selected_slugs)?;
+    merged_block.body =
+        rewrite_body_selected_wikilinks(&merged_block.body, &selected_slugs, &merged_block.slug);
+    let reference_writes =
+        build_merge_reference_writes(vault, &selected_slugs, &merged_block.slug)?;
+
+    let merged_path = vault.block_path(&merged_block.slug);
+    let mut suppressed_paths = vec![merged_path.clone(), vault.thumb_path(&merged_block.slug)];
+    suppressed_paths.extend(
+        sources
+            .iter()
+            .flat_map(|source| [source.path.clone(), vault.thumb_path(&source.block.slug)]),
+    );
+    suppressed_paths.extend(
+        reference_writes
+            .iter()
+            .flat_map(|write| [write.path.clone(), vault.thumb_path(&write.block.slug)]),
+    );
+    state
+        .suppress_paths(
+            suppressed_paths,
+            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+        )
+        .map_err(internal_merge_error)?;
+
+    let indexed = match apply_merge_blocks(conn, vault, &merged_block, &sources, &reference_writes)
+    {
+        Ok(indexed) => indexed,
+        Err(error) => {
+            rollback_merge_blocks(conn, vault, &merged_block, &sources, &reference_writes);
+            return Err(error);
+        }
+    };
+    let merged_slug = indexed.slug.clone();
+
+    Ok(MergeBlocksMutation {
+        result: MergeBlocksResult {
+            block: indexed,
+            merged_slug,
+            removed_slugs: ordered_slugs,
+        },
+        removed_events,
+    })
+}
+
+fn apply_merge_blocks(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    merged_block: &Block,
+    sources: &[MergeSourceBlock],
+    reference_writes: &[MergeReferenceWrite],
+) -> Result<IndexedBlock, MergeBlocksError> {
+    files::write_new_block_file(vault, merged_block).map_err(internal_merge_error)?;
+    index::upsert_block(conn, merged_block, Some(vault.root())).map_err(internal_merge_error)?;
+
+    let thumb_path = vault.thumb_path(&merged_block.slug);
+    let thumb_source = thumbnails::generate_for_block(merged_block, vault);
+    if matches!(thumb_source, thumbnails::ThumbSource::None) && thumb_path.exists() {
+        let _ = std::fs::remove_file(&thumb_path);
+    }
+    let _ = index::sync_thumb_metadata(conn, &merged_block.slug, &thumb_path, Some(vault.root()));
+
+    for write in reference_writes {
+        let serialized = crate::domain::block::serialize_block(&write.block);
+        std::fs::write(&write.path, serialized).map_err(internal_merge_error)?;
+        index::upsert_block(conn, &write.block, Some(vault.root()))
+            .map_err(internal_merge_error)?;
+    }
+
+    for source in sources {
+        files::delete_user_file(&source.path).map_err(internal_merge_error)?;
+        let source_thumb_path = vault.thumb_path(&source.block.slug);
+        if source_thumb_path.exists() {
+            let _ = std::fs::remove_file(source_thumb_path);
+        }
+        index::remove_block(conn, &source.block.slug).map_err(internal_merge_error)?;
+    }
+
+    let indexed = index::get_block(conn, &merged_block.slug)
+        .map_err(internal_merge_error)?
+        .ok_or_else(|| MergeBlocksError::Internal {
+            message: format!("merged block '{}' missing from index", merged_block.slug),
+        })?;
+
+    for source in sources {
+        if let Err(e) = article_audio::delete_all_artifacts(vault, &source.block.slug) {
+            log::warn!(
+                "failed to delete article audio for merged source {}: {e:#}",
+                source.block.slug
+            );
+        }
+    }
+
+    Ok(indexed)
+}
+
+fn rollback_merge_blocks(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    merged_block: &Block,
+    sources: &[MergeSourceBlock],
+    reference_writes: &[MergeReferenceWrite],
+) {
+    let merged_path = vault.block_path(&merged_block.slug);
+    if merged_path.exists() {
+        if let Err(error) = std::fs::remove_file(&merged_path) {
+            log::warn!(
+                "failed to roll back merged block file {}: {error:#}",
+                merged_path.display()
+            );
+        }
+    }
+    let merged_thumb_path = vault.thumb_path(&merged_block.slug);
+    if merged_thumb_path.exists() {
+        let _ = std::fs::remove_file(&merged_thumb_path);
+    }
+    if let Err(error) = index::remove_block(conn, &merged_block.slug) {
+        log::warn!(
+            "failed to roll back merged block index {}: {error:#}",
+            merged_block.slug
+        );
+    }
+
+    for write in reference_writes {
+        if let Err(error) = std::fs::write(&write.path, &write.content) {
+            log::warn!(
+                "failed to restore merge reference file {}: {error:#}",
+                write.path.display()
+            );
+            continue;
+        }
+        let parsed = parse_markdown_document(
+            &write.block.slug,
+            &write.content,
+            file_saved_at(&write.path),
+        );
+        match parsed {
+            Ok(parsed) => {
+                if let Err(error) = index::upsert_block(conn, &parsed.block, Some(vault.root())) {
+                    log::warn!(
+                        "failed to restore merge reference index {}: {error:#}",
+                        parsed.block.slug
+                    );
+                }
+            }
+            Err(error) => {
+                log::warn!(
+                    "failed to parse restored merge reference {}: {error}",
+                    write.path.display()
+                );
+            }
+        }
+    }
+
+    for source in sources {
+        if let Err(error) = std::fs::write(&source.path, &source.content) {
+            log::warn!(
+                "failed to restore merged source file {}: {error:#}",
+                source.path.display()
+            );
+            continue;
+        }
+        if let Err(error) = index::upsert_block(conn, &source.block, Some(vault.root())) {
+            log::warn!(
+                "failed to restore merged source index {}: {error:#}",
+                source.block.slug
+            );
+        }
+        let source_thumb_path = vault.thumb_path(&source.block.slug);
+        let thumb_source = thumbnails::generate_for_block(&source.block, vault);
+        if matches!(thumb_source, thumbnails::ThumbSource::None) && source_thumb_path.exists() {
+            let _ = std::fs::remove_file(&source_thumb_path);
+        }
+        let _ = index::sync_thumb_metadata(
+            conn,
+            &source.block.slug,
+            &source_thumb_path,
+            Some(vault.root()),
+        );
+    }
+}
+
+fn validate_merge_slugs(ordered_slugs: Vec<String>) -> Result<Vec<String>, MergeBlocksError> {
+    if ordered_slugs.len() < 2 {
+        return Err(MergeBlocksError::TooFewCards);
+    }
+    let mut seen = BTreeSet::new();
+    for slug in &ordered_slugs {
+        validate_slug(slug).map_err(|e| MergeBlocksError::InvalidSlug {
+            slug: slug.clone(),
+            reason: e.to_string(),
+        })?;
+        if !seen.insert(slug.clone()) {
+            return Err(MergeBlocksError::DuplicateSlug { slug: slug.clone() });
+        }
+    }
+    Ok(ordered_slugs)
+}
+
+fn load_merge_source_blocks(
+    vault: &VaultLayout,
+    ordered_slugs: &[String],
+) -> Result<Vec<MergeSourceBlock>, MergeBlocksError> {
+    let mut sources = Vec::with_capacity(ordered_slugs.len());
+    for slug in ordered_slugs {
+        let path = vault.block_path(slug);
+        if !path.exists() {
+            return Err(MergeBlocksError::BlockNotFound { slug: slug.clone() });
+        }
+        let (read_slug, content) =
+            files::read_block_file(vault, &path).map_err(internal_merge_error)?;
+        let parsed =
+            parse_markdown_document(&read_slug, &content, file_saved_at(&path)).map_err(|e| {
+                MergeBlocksError::Internal {
+                    message: format!("failed to parse source card '{}': {e}", path.display()),
+                }
+            })?;
+        if derive_card_kind(&parsed.block) == CardKind::Channel {
+            return Err(MergeBlocksError::BlockNotMergeable {
+                slug: parsed.block.slug,
+                block_type: "channel".to_string(),
+            });
+        }
+        sources.push(MergeSourceBlock {
+            path,
+            block: parsed.block,
+            content,
+        });
+    }
+    Ok(sources)
+}
+
+fn build_merged_block(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    sources: &[MergeSourceBlock],
+    selected_slugs: &BTreeSet<String>,
+) -> Result<Block, MergeBlocksError> {
+    let first = sources.first().ok_or(MergeBlocksError::TooFewCards)?;
+    let title_fields = derive_title_fields(
+        &first.block.slug,
+        first.block.frontmatter.title.as_deref(),
+        &first.block.body,
+    );
+    let slug_seed = format!(
+        "{} — merged",
+        title_fields
+            .display_title
+            .as_deref()
+            .unwrap_or(&title_fields.fallback_label)
+    );
+    let raw_slug = suggest_slug(Some(&slug_seed), None);
+    let slug =
+        resolve_unique_block_slug(conn, vault, &raw_slug, None).map_err(internal_merge_error)?;
+    let now = crate::commands::state::now_iso8601();
+    let saved_at = DateTime::new(&now).map_err(internal_merge_error)?;
+
+    let mut tags = Vec::new();
+    let mut related_notes = Vec::new();
+    for source in sources {
+        for tag in &source.block.frontmatter.tags {
+            push_unique(&mut tags, tag.clone());
+        }
+        for note in &source.block.frontmatter.related_notes {
+            if selected_slugs.contains(related_note_base(note)) {
+                continue;
+            }
+            push_unique(&mut related_notes, note.clone());
+        }
+    }
+
+    let body = sources
+        .iter()
+        .map(|source| merged_section_body(&source.block))
+        .filter(|section| !section.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n");
+
+    Ok(Block {
+        slug,
+        frontmatter: Frontmatter {
+            block_type: BlockType::Article,
+            title: None,
+            description: first_non_empty_frontmatter(sources, |frontmatter| {
+                frontmatter.description.as_ref()
+            }),
+            url: first_safe_url_frontmatter(sources),
+            file: None,
+            thumbnail: None,
+            tags,
+            related_notes,
+            source_media: None,
+            saved_at,
+            source: Some("card-merge".to_string()),
+            width: None,
+            height: None,
+            author: first_non_empty_frontmatter(sources, |frontmatter| frontmatter.author.as_ref()),
+            position: None,
+            color: None,
+            icon: None,
+        },
+        body,
+    })
+}
+
+fn build_merge_reference_writes(
+    vault: &VaultLayout,
+    selected_slugs: &BTreeSet<String>,
+    merged_slug: &str,
+) -> Result<Vec<MergeReferenceWrite>, MergeBlocksError> {
+    let mut writes = Vec::new();
+    for path in files::scan_md_files(vault).map_err(internal_merge_error)? {
+        let Some(slug) = vault.slug_for_path(&path).ok() else {
+            continue;
+        };
+        if selected_slugs.contains(&slug) {
+            continue;
+        }
+        let (_, content) = files::read_block_file(vault, &path).map_err(internal_merge_error)?;
+        if !selected_slugs
+            .iter()
+            .any(|selected| content.contains(selected))
+        {
+            continue;
+        }
+        let parsed =
+            parse_markdown_document(&slug, &content, file_saved_at(&path)).map_err(|e| {
+                MergeBlocksError::ReferenceRewriteFailed {
+                    path: path.to_string_lossy().to_string(),
+                    message: e.to_string(),
+                }
+            })?;
+        let rewritten = rewrite_merge_references(&parsed.block, selected_slugs, merged_slug);
+        if rewritten.frontmatter != parsed.block.frontmatter || rewritten.body != parsed.block.body
+        {
+            writes.push(MergeReferenceWrite {
+                path,
+                block: rewritten,
+                content,
+            });
+        }
+    }
+    Ok(writes)
+}
+
+fn rewrite_merge_references(
+    block: &Block,
+    selected_slugs: &BTreeSet<String>,
+    merged_slug: &str,
+) -> Block {
+    let mut rewritten = block.clone();
+    for note in &mut rewritten.frontmatter.related_notes {
+        if let Some(selected_slug) = selected_slugs
+            .iter()
+            .find(|selected| related_note_base(note) == selected.as_str())
+        {
+            if let Some(updated) = rewrite_related_note_target(note, selected_slug, merged_slug) {
+                *note = updated;
+            }
+        }
+    }
+    dedupe_strings(&mut rewritten.frontmatter.related_notes);
+    rewritten.body = rewrite_body_selected_wikilinks(&rewritten.body, selected_slugs, merged_slug);
+    rewritten
+}
+
+fn rewrite_body_selected_wikilinks(
+    body: &str,
+    selected_slugs: &BTreeSet<String>,
+    merged_slug: &str,
+) -> String {
+    selected_slugs
+        .iter()
+        .fold(body.to_string(), |current, slug| {
+            rename_wikilink_targets(&current, slug, merged_slug)
+        })
+}
+
+fn merged_section_body(block: &Block) -> String {
+    let mut parts = Vec::new();
+    let body = block.body.trim();
+    if let Some(file) = trimmed_option(block.frontmatter.file.as_deref()) {
+        if body.is_empty() || !body.contains(file) {
+            parts.push(format!("![[{file}]]"));
+        }
+    }
+    if !body.is_empty() {
+        parts.push(body.to_string());
+    }
+    if parts.is_empty() {
+        if let Some(url) = safe_source_url(block.frontmatter.url.as_deref()) {
+            parts.push(markdown_link(&merge_block_label(block), url));
+        } else {
+            parts.push(merge_block_label(block));
+        }
+    }
+    if let Some(url) = safe_source_url(block.frontmatter.url.as_deref()) {
+        parts.push(format!(
+            "Source: {}",
+            markdown_link(&source_markdown_label(url), url)
+        ));
+    }
+    if let Some(author) = trimmed_option(block.frontmatter.author.as_deref()) {
+        parts.push(format!("Author: {author}"));
+    }
+    parts.join("\n\n")
+}
+
+fn merge_block_label(block: &Block) -> String {
+    let title_fields =
+        derive_title_fields(&block.slug, block.frontmatter.title.as_deref(), &block.body);
+    title_fields
+        .display_title
+        .unwrap_or(title_fields.fallback_label)
+}
+
+fn first_non_empty_frontmatter(
+    sources: &[MergeSourceBlock],
+    pick: impl for<'a> Fn(&'a Frontmatter) -> Option<&'a String>,
+) -> Option<String> {
+    sources.iter().find_map(|source| {
+        pick(&source.block.frontmatter)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn first_safe_url_frontmatter(sources: &[MergeSourceBlock]) -> Option<String> {
+    sources.iter().find_map(|source| {
+        safe_source_url(source.block.frontmatter.url.as_deref()).map(ToOwned::to_owned)
+    })
+}
+
+fn safe_source_url(value: Option<&str>) -> Option<&str> {
+    let value = trimmed_option(value)?;
+    let parsed = url::Url::parse(value).ok()?;
+    matches!(parsed.scheme(), "http" | "https").then_some(value)
+}
+
+fn source_markdown_label(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(ToOwned::to_owned))
+        .map(|host| host.strip_prefix("www.").unwrap_or(&host).to_string())
+        .filter(|host| !host.trim().is_empty())
+        .unwrap_or_else(|| "Source".to_string())
+}
+
+fn markdown_link(label: &str, url: &str) -> String {
+    let safe_label = label.replace('[', "\\[").replace(']', "\\]");
+    let safe_url = url.trim().replace('>', "%3E");
+    format!("[{safe_label}](<{safe_url}>)")
+}
+
+fn trimmed_option(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn related_note_base(note: &str) -> &str {
+    note.split_once('#').map_or(note, |(base, _)| base)
+}
+
+fn push_unique(values: &mut Vec<String>, value: String) {
+    if !values.contains(&value) {
+        values.push(value);
+    }
+}
+
+fn dedupe_strings(values: &mut Vec<String>) {
+    let mut seen = BTreeSet::new();
+    values.retain(|value| seen.insert(value.clone()));
 }
 
 fn collect_delete_media_for_block(
@@ -2891,6 +3495,12 @@ fn internal_text_selection_error(error: impl std::fmt::Display) -> TextSelection
     }
 }
 
+fn internal_merge_error(error: impl std::fmt::Display) -> MergeBlocksError {
+    MergeBlocksError::Internal {
+        message: error.to_string(),
+    }
+}
+
 fn internal_rename_error(error: impl std::fmt::Display) -> RenameBlockError {
     RenameBlockError::Internal {
         message: error.to_string(),
@@ -3173,6 +3783,208 @@ mod tests {
     fn persist_block(conn: &rusqlite::Connection, vault: &VaultLayout, block: &Block) {
         files::write_block_file(vault, block).unwrap();
         index::upsert_block(conn, block, Some(vault.root())).unwrap();
+    }
+
+    #[test]
+    fn merge_blocks_inner_creates_ordered_article_and_preserves_media_files() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let mut first = article("First Card", "Alpha body");
+        first.frontmatter.author = Some("Alice".to_string());
+        let mut second = image("Second Image", "second.png");
+        second.frontmatter.tags = vec!["visual".to_string()];
+        second.frontmatter.url = Some("https://assets.example/image".to_string());
+        second.frontmatter.related_notes = vec!["External Note".to_string()];
+        let external = article(
+            "External Note",
+            "See [[First Card#^alpha]] and [[Second Image|image card]].",
+        );
+        persist_block(&conn, &vault, &first);
+        persist_block(&conn, &vault, &second);
+        persist_block(&conn, &vault, &external);
+        std::fs::write(vault.root().join("second.png"), b"image-bytes").unwrap();
+
+        let mutation = merge_blocks_inner(
+            &state,
+            &conn,
+            &vault,
+            vec!["First Card".to_string(), "Second Image".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(mutation.result.merged_slug, "First Card — merged");
+        assert_eq!(
+            mutation.result.removed_slugs,
+            vec!["First Card".to_string(), "Second Image".to_string()]
+        );
+        assert_eq!(mutation.result.block.block_type, BlockType::Article);
+        assert_eq!(mutation.result.block.source.as_deref(), Some("card-merge"));
+        assert_eq!(
+            mutation.result.block.url.as_deref(),
+            Some("https://example.com/article")
+        );
+        assert_eq!(mutation.result.block.tags, vec!["notes", "visual"]);
+        assert_eq!(
+            mutation.result.block.related_notes,
+            vec!["External Note".to_string()]
+        );
+        assert!(mutation.result.block.body.contains("Alpha body"));
+        assert!(mutation
+            .result
+            .block
+            .body
+            .contains("\n\n---\n\n![[second.png]]"));
+        assert!(mutation.result.block.body.contains("Author: Alice"));
+        assert!(mutation
+            .result
+            .block
+            .body
+            .contains("Source: [example.com](<https://example.com/article>)"));
+
+        assert!(!vault.block_path("First Card").exists());
+        assert!(!vault.block_path("Second Image").exists());
+        assert!(vault.block_path("First Card — merged").exists());
+        assert_eq!(
+            std::fs::read(vault.root().join("second.png")).unwrap(),
+            b"image-bytes"
+        );
+        assert!(index::get_block(&conn, "First Card").unwrap().is_none());
+        assert!(index::get_block(&conn, "Second Image").unwrap().is_none());
+        assert!(index::get_block(&conn, "First Card — merged")
+            .unwrap()
+            .is_some());
+        let merged_content =
+            std::fs::read_to_string(vault.block_path("First Card — merged")).unwrap();
+        assert!(merged_content.contains("Mine Collections:\n  - \"[[notes]]\"\n  - \"[[visual]]\""));
+        assert!(merged_content.contains("url: https://example.com/article"));
+        assert!(merged_content.contains("author: Alice"));
+
+        let (_, external_content) =
+            files::read_block_file(&vault, &vault.block_path("External Note")).unwrap();
+        assert!(external_content.contains("[[First Card — merged#^alpha]]"));
+        assert!(external_content.contains("[[First Card — merged|image card]]"));
+        assert!(!external_content.contains("[[First Card#^alpha]]"));
+        assert!(!external_content.contains("[[Second Image|image card]]"));
+    }
+
+    #[test]
+    fn merge_blocks_uses_first_safe_source_url_and_author_in_merge_order() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let mut first = article("First Card", "Alpha body");
+        first.frontmatter.url = Some("/".to_string());
+        first.frontmatter.author = None;
+        let mut second = article("Second Card", "Beta body");
+        second.frontmatter.url = Some("https://example.com/second".to_string());
+        second.frontmatter.author = Some("Bob".to_string());
+        persist_block(&conn, &vault, &first);
+        persist_block(&conn, &vault, &second);
+
+        let mutation = merge_blocks_inner(
+            &state,
+            &conn,
+            &vault,
+            vec!["First Card".to_string(), "Second Card".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            mutation.result.block.url.as_deref(),
+            Some("https://example.com/second")
+        );
+        assert_eq!(mutation.result.block.author.as_deref(), Some("Bob"));
+        assert!(!mutation.result.block.body.contains("Source: [Source](</>)"));
+        assert!(mutation
+            .result
+            .block
+            .body
+            .contains("Source: [example.com](<https://example.com/second>)"));
+        assert!(mutation.result.block.body.contains("Author: Bob"));
+    }
+
+    #[test]
+    fn merge_blocks_apply_failure_rolls_back_rewritten_references_and_new_card() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let first = article("First Card", "Alpha body");
+        let second = article("Second Card", "Beta body");
+        let external = article("External Note", "See [[First Card]] and [[Second Card]].");
+        persist_block(&conn, &vault, &first);
+        persist_block(&conn, &vault, &second);
+        persist_block(&conn, &vault, &external);
+        let external_path = vault.block_path("External Note");
+        let original_external_content = std::fs::read_to_string(&external_path).unwrap();
+
+        let ordered_slugs = vec!["First Card".to_string(), "Second Card".to_string()];
+        let selected_slugs: BTreeSet<String> = ordered_slugs.iter().cloned().collect();
+        let sources = load_merge_source_blocks(&vault, &ordered_slugs).unwrap();
+        let mut merged_block =
+            build_merged_block(&conn, &vault, &sources, &selected_slugs).unwrap();
+        merged_block.body = rewrite_body_selected_wikilinks(
+            &merged_block.body,
+            &selected_slugs,
+            &merged_block.slug,
+        );
+        let mut reference_writes =
+            build_merge_reference_writes(&vault, &selected_slugs, &merged_block.slug).unwrap();
+        reference_writes.push(MergeReferenceWrite {
+            path: vault.root().join("missing-parent").join("Broken.md"),
+            block: article("Broken", "Broken body"),
+            content: "Broken body".to_string(),
+        });
+
+        let error = apply_merge_blocks(&conn, &vault, &merged_block, &sources, &reference_writes)
+            .unwrap_err();
+        assert!(matches!(error, MergeBlocksError::Internal { .. }));
+
+        rollback_merge_blocks(&conn, &vault, &merged_block, &sources, &reference_writes);
+
+        assert!(!vault.block_path("First Card — merged").exists());
+        assert!(vault.block_path("First Card").exists());
+        assert!(vault.block_path("Second Card").exists());
+        assert_eq!(
+            std::fs::read_to_string(external_path).unwrap(),
+            original_external_content
+        );
+        assert!(index::get_block(&conn, "First Card").unwrap().is_some());
+        assert!(index::get_block(&conn, "Second Card").unwrap().is_some());
+        assert!(index::get_block(&conn, "First Card — merged")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn merge_blocks_inner_rejects_channels_and_duplicate_slugs() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let first = article("First Card", "Alpha body");
+        let mut channel = article("Channel Card", "");
+        channel.frontmatter.block_type = BlockType::Channel;
+        persist_block(&conn, &vault, &first);
+        persist_block(&conn, &vault, &channel);
+
+        let duplicate_error = merge_blocks_inner(
+            &state,
+            &conn,
+            &vault,
+            vec!["First Card".to_string(), "First Card".to_string()],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            duplicate_error,
+            MergeBlocksError::DuplicateSlug { .. }
+        ));
+
+        let channel_error = merge_blocks_inner(
+            &state,
+            &conn,
+            &vault,
+            vec!["First Card".to_string(), "Channel Card".to_string()],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            channel_error,
+            MergeBlocksError::BlockNotMergeable { .. }
+        ));
     }
 
     #[test]
@@ -3797,10 +4609,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            indexed.body,
-            "First paragraph with .\n\nSecond paragraph."
-        );
+        assert_eq!(indexed.body, "First paragraph with .\n\nSecond paragraph.");
         assert_ne!(indexed.body_hash.as_deref(), Some(body_hash.as_str()));
 
         let (_, source_content) =

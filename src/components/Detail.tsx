@@ -97,6 +97,12 @@ import {
 import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
 import { CardMoreMenu, MenuIconSlot } from "./CardHoverMenu";
+import {
+  CARD_REFERENCE_ROW_ESTIMATED_HEIGHT_PX,
+  CARD_REFERENCE_ROW_GAP_PX,
+  CardReferenceButton,
+  CardReferenceRow,
+} from "./CardReferenceRow";
 import { ReadOnlyCardPreview } from "./Card";
 import {
   COLLECTION_PICKER_CONTENT_CLASS,
@@ -104,7 +110,7 @@ import {
 } from "./CollectionPicker";
 import { QuantizedMenuScrollArea } from "./QuantizedMenuScrollArea";
 import { SearchMenuInput } from "./SearchMenuInput";
-import { MicroPreviewThumbnail, microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
+import { microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
 import type { ImagePreviewRequest } from "./ImagePreviewOverlay";
 
 // Layout constants shared by scroll content and fixed metadata. The rail is
@@ -766,15 +772,10 @@ function MetadataPanel({
 
 const METADATA_LABEL_CLASSES = "whitespace-nowrap font-mono text-sm leading-4 text-muted-foreground";
 const METADATA_VALUE_BASE_CLASSES = "block min-w-0 font-sans text-sm leading-4 text-foreground";
-const RELATED_NOTE_ROW_SHELL_CLASSES =
-  "w-full min-w-0 overflow-hidden rounded-1 border border-border bg-component-fill p-[3px] font-sans text-base";
-const RELATED_NOTE_ROW_CONTENT_CLASSES = "flex h-8 w-full min-w-0 items-center gap-2 overflow-hidden";
-const RELATED_NOTE_ROW_ESTIMATED_HEIGHT_PX = 40;
-const RELATED_NOTE_ROW_GAP_PX = 4;
 const DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT = 5;
 const DELETE_MEDIA_CONNECTED_CARDS_MAX_HEIGHT_PX =
-  DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT * RELATED_NOTE_ROW_ESTIMATED_HEIGHT_PX
-  + (DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT - 1) * RELATED_NOTE_ROW_GAP_PX;
+  DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT * CARD_REFERENCE_ROW_ESTIMATED_HEIGHT_PX
+  + (DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT - 1) * CARD_REFERENCE_ROW_GAP_PX;
 
 type MetadataValueMode = "truncate" | "wrap";
 
@@ -980,23 +981,21 @@ function RelatedNotesSection({
 
           if (!relatedBlock) {
             return (
-              <div
+              <CardReferenceRow
                 key={slug}
-                className={cn(RELATED_NOTE_ROW_SHELL_CLASSES, "text-muted-foreground")}
+                label={rowLabel}
+                preview={null}
+                className="text-muted-foreground"
                 data-related-note-item="placeholder"
-              >
-                <div className={RELATED_NOTE_ROW_CONTENT_CLASSES}>
-                  <div aria-hidden="true" className="size-8 shrink-0 overflow-hidden bg-component-fill" />
-                  <span className="min-w-0 flex-1 truncate text-left leading-5">{rowLabel}</span>
-                </div>
-              </div>
+              />
             );
           }
 
           return (
-            <button
+            <CardReferenceButton
               key={rowKey}
-              type="button"
+              label={rowLabel}
+              preview={microPreviewFromIndexedBlock(relatedBlock, resolvedThumbsRoot)}
               onPointerDown={(event) => {
                 event.stopPropagation();
               }}
@@ -1005,10 +1004,7 @@ function RelatedNotesSection({
                 event.stopPropagation();
                 onOpenRelatedNote(baseSlug);
               }}
-              className={cn(
-                RELATED_NOTE_ROW_SHELL_CLASSES,
-                "cursor-pointer text-left text-muted-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
-              )}
+              className="text-muted-foreground"
               ref={(node) => {
                 if (node) {
                   relatedNoteButtonRefs.current.set(rowKey, node);
@@ -1019,21 +1015,7 @@ function RelatedNotesSection({
               onMouseEnter={() => onRelatedNotePreviewEnter({ rowKey, slug: baseSlug })}
               onMouseLeave={onRelatedNotePreviewLeave}
               data-related-note-item="button"
-            >
-              <div className={RELATED_NOTE_ROW_CONTENT_CLASSES}>
-                <div aria-hidden="true" className="size-8 shrink-0 overflow-hidden bg-component-fill">
-                  <MicroPreviewThumbnail
-                    preview={microPreviewFromIndexedBlock(relatedBlock, resolvedThumbsRoot)}
-                    loading="lazy"
-                    draggable={false}
-                    onError={(event) => {
-                      event.currentTarget.style.display = "none";
-                    }}
-                  />
-                </div>
-                <span className="min-w-0 flex-1 truncate text-left leading-5">{rowLabel}</span>
-              </div>
-            </button>
+            />
           );
         })}
       </div>

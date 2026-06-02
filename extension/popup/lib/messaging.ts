@@ -76,6 +76,8 @@ export interface ContextMenuData {
   srcUrl?: string;
   selectionText?: string;
   linkUrl?: string;
+  pageUrl?: string;
+  frameUrl?: string;
 }
 
 export interface PageMetadata {

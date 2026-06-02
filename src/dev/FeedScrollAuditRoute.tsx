@@ -137,6 +137,7 @@ export function FeedScrollAuditRoute() {
         onBatchSetTag={noop}
         onCreateAndAssignBatch={noop}
         onDeleteSelectedBlocks={noop}
+        onMergeSelectedBlocks={noop}
         onRequestRename={noop}
         onRequestDelete={noop}
       />

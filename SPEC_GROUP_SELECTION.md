@@ -1,6 +1,6 @@
 # SPEC_GROUP_SELECTION
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 Status: implemented.
 
@@ -26,7 +26,7 @@ In scope:
   channel.
 - A bottom floating action island appears when one or more cards are selected.
 - Batch actions: close selection, `Connect`, collection-scoped `Disconnect`,
-  `Delete`.
+  `Merge`, `Delete`.
 
 Out of scope for the first implementation:
 
@@ -165,11 +165,13 @@ count header (`1 карточка`, `2 карточки`, `5 карточек`) 
 - `Connect` opens the existing `BatchCollectionPicker`;
 - `Disconnect` appears only when `currentTag` exists and removes all selected
   cards from that current collection;
+- `Merge` appears only when at least two cards are selected and opens the
+  reorder-first merge dialog from [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md);
 - `Delete` opens the existing batch delete confirmation.
 
-Only `Connect` has a visible icon in the focused-card batch menu. `Disconnect`
-and `Delete` are text commands with an empty leading icon slot, so labels align
-with `Connect` without adding visual noise.
+Only `Connect` has a visible icon in the focused-card batch menu.
+`Disconnect`, `Merge` and `Delete` are text commands with an empty leading icon
+slot, so labels align with `Connect` without adding visual noise.
 
 `Source`, `Rename`, `Reveal`, `Copy Path`, single-card collection actions and
 other single-card actions are not present in this focused-card batch menu. This
@@ -383,7 +385,7 @@ Layout order:
   selection.
 
 Direct action buttons on the island use standard design-system `Button`
-variants. `Connect` and `Disconnect` use `variant="default"`;
+variants. `Connect`, `Disconnect` and `Merge` use `variant="default"`;
 `Delete` uses `variant="destructive"` (`bg-component-fill text-destructive`
 with the standard component hover outline).
 
@@ -394,9 +396,10 @@ the first implementation:
 |---|---|---|
 | `Connect` | always enabled when at least one card is selected | Opens batch collection picker for selected cards. |
 | `Disconnect` | visible only when `currentTag` is present | Text-only action; removes all selected cards from the current collection. |
+| `Merge` | visible only when at least two cards are selected | Text-only action; opens the merge reorder dialog, then one backend merge command creates one new card and removes the selected source cards. |
 | `Delete` | always enabled when at least one card is selected | Text-only red action; opens batch destructive confirmation before deleting selected cards. |
 
-`Delete` and collection-scoped `Disconnect` can live directly on the island; an
+`Merge`, `Delete` and collection-scoped `Disconnect` can live directly on the island; an
 ellipsis overflow menu is not required unless the island becomes too crowded in
 future work.
 
@@ -537,6 +540,10 @@ Frontend tests must cover:
 - Russian pluralization for `1`, `2`, `5`, `21`, `25`;
 - `Disconnect` only appears when `currentTag` exists and is absent in
   Everything;
+- `Merge` appears in the bottom island and focused-card batch menu only when
+  two or more cards are selected;
+- `Merge` opens the reorder-first merge dialog from
+  [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md);
 - `Delete` opens batch confirmation;
 - deleting cards preserves the viewport anchor after masonry reflow, including
   when removed cards are scattered above and below the current viewport;

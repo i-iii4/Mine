@@ -325,7 +325,11 @@ export function PopupApp() {
             saving={clipper.saving}
             onClick={handleSave}
           />
-          {status && <StatusBar message={status.message} type={status.type} />}
+          {status ? (
+            <StatusBar message={status.message} type={status.type} />
+          ) : clipper.nativeStatusError ? (
+            <StatusBar message={clipper.nativeStatusError} type="error" />
+          ) : null}
         </div>
       </div>
     </div>

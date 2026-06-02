@@ -19,6 +19,7 @@ import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
 import { GroupSelectionActionBar } from "./GroupSelectionActionBar";
 import { GroupSelectionCardMenu } from "./GroupSelectionCardMenu";
+import { MergeCardsDialog } from "./MergeCardsDialog";
 import {
   computeMasonryLayout,
   createVisibilityIndex,
@@ -533,6 +534,7 @@ interface GridProps {
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
   onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
+  onMergeSelectedBlocks: (orderedSlugs: string[]) => void | Promise<void>;
   onGroupSelectionStart?: () => void;
   onRequestRename: (block: LightBlock) => void;
   onRequestDelete: (slug: string) => void;
@@ -566,6 +568,7 @@ interface GridContext {
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
   onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
+  onMergeSelectedBlocks: () => void;
   onRequestRename: (block: LightBlock) => void;
   onRequestDelete: (slug: string) => void;
 }
@@ -640,6 +643,7 @@ export function Grid({
   onBatchSetTag,
   onCreateAndAssignBatch,
   onDeleteSelectedBlocks,
+  onMergeSelectedBlocks,
   onGroupSelectionStart,
   onRequestRename,
   onRequestDelete,
@@ -659,6 +663,7 @@ export function Grid({
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
   const [focusedSlug, setFocusedSlug] = useState<string | null>(null);
   const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(() => new Set());
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelection | null>(null);
   const [feedInteractionMode, setFeedInteractionMode] = useState<FeedInteractionMode>("pointer");
   const [actionMenuRequest, setActionMenuRequest] = useState<{
@@ -1891,6 +1896,19 @@ export function Grid({
     [blocks, selectedSlugs],
   );
 
+  const openMergeDialog = useCallback(() => {
+    if (selectedSlugs.size < 2) return;
+    setMergeDialogOpen(true);
+  }, [selectedSlugs.size]);
+
+  const handleConfirmMerge = useCallback(
+    async (orderedSlugs: string[]) => {
+      await onMergeSelectedBlocks(orderedSlugs);
+      clearSelection();
+    },
+    [clearSelection, onMergeSelectedBlocks],
+  );
+
   const keyboardFocusedSlug = feedInteractionMode === "keyboard" ? focusedSlug : null;
   const visualFocusActive = keyboardFocusedSlug !== null || pinnedActionMenuSlug !== null;
 
@@ -1918,6 +1936,7 @@ export function Grid({
       onBatchSetTag,
       onCreateAndAssignBatch,
       onDeleteSelectedBlocks,
+      onMergeSelectedBlocks: openMergeDialog,
       onRequestRename,
       onRequestDelete: handleRequestDelete,
     }),
@@ -1944,6 +1963,7 @@ export function Grid({
       onBatchSetTag,
       onCreateAndAssignBatch,
       onDeleteSelectedBlocks,
+      openMergeDialog,
       onRequestRename,
       handleRequestDelete,
     ],
@@ -2007,9 +2027,18 @@ export function Grid({
           onBatchSetTag={onBatchSetTag}
           onCreateAndAssignBatch={onCreateAndAssignBatch}
           onDeleteSelectedBlocks={onDeleteSelectedBlocks}
+          onMergeSelectedBlocks={openMergeDialog}
           onClearSelection={clearSelection}
         />
       )}
+
+      <MergeCardsDialog
+        open={mergeDialogOpen}
+        selectedBlocks={selectedBlocks}
+        thumbsRootPath={resolvedThumbsRootPath}
+        onOpenChange={setMergeDialogOpen}
+        onConfirm={handleConfirmMerge}
+      />
 
       {menuBlock && (
         <CardTagMenu
@@ -2216,6 +2245,7 @@ const GridItem = memo(function GridItem({
             onBatchSetTag={context.onBatchSetTag}
             onCreateAndAssignBatch={context.onCreateAndAssignBatch}
             onDeleteSelectedBlocks={context.onDeleteSelectedBlocks}
+            onMergeSelectedBlocks={context.onMergeSelectedBlocks}
             onClearSelection={context.onClearSelection}
           />
         )}

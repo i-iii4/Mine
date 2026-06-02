@@ -48,6 +48,7 @@ interface GroupSelectionCardMenuProps {
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
   onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
+  onMergeSelectedBlocks: () => void;
   onClearSelection: () => void;
 }
 
@@ -72,6 +73,7 @@ export function GroupSelectionCardMenu({
   onBatchSetTag,
   onCreateAndAssignBatch,
   onDeleteSelectedBlocks,
+  onMergeSelectedBlocks,
   onClearSelection,
 }: GroupSelectionCardMenuProps) {
   const selectedSlugs = useMemo(
@@ -169,6 +171,11 @@ export function GroupSelectionCardMenu({
     }
   };
 
+  const handleMerge = () => {
+    updateMenuOpen(false);
+    onMergeSelectedBlocks();
+  };
+
   if (selectedBlocks.length === 0) return null;
 
   return (
@@ -225,6 +232,12 @@ export function GroupSelectionCardMenu({
             <DropdownMenuItem onSelect={handleDisconnectFromCollection}>
               <MenuIconSlot />
               Disconnect
+            </DropdownMenuItem>
+          )}
+          {selectedBlocks.length >= 2 && (
+            <DropdownMenuItem onSelect={handleMerge}>
+              <MenuIconSlot />
+              Merge
             </DropdownMenuItem>
           )}
           <DropdownMenuItem

@@ -62,6 +62,7 @@
   function createExtractionDocument() {
     const clonedDocument = document.cloneNode(true);
     removeMineOwnedNodes(clonedDocument);
+    rootSanitizeExtractionDocument(clonedDocument);
 
     const head = clonedDocument.querySelector?.("head");
     if (head && !clonedDocument.querySelector("base[href]")) {
@@ -71,6 +72,12 @@
     }
 
     return clonedDocument;
+  }
+
+  function rootSanitizeExtractionDocument(extractionDocument) {
+    const sanitizer = globalThis.MineExtractionDocumentSanitizer;
+    if (!sanitizer?.sanitizeExtractionDocument) return;
+    sanitizer.sanitizeExtractionDocument(extractionDocument);
   }
 
   function extractionBodyText() {
@@ -727,7 +734,7 @@
     if (!window.location.hostname.includes("instagram.com")) return;
 
     const BUTTON_ATTR = "data-la-clip";
-    const BUTTON_VERSION = "2";
+    const BUTTON_VERSION = "3";
 
     function findShortcode(article) {
       for (const a of article.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]')) {
@@ -853,12 +860,13 @@
         // Write preloaded data to session storage, then show the overlay.
         // useClipperState will pick this up in init() via preloadedClipData.
         await chrome.storage.session.set({ preloadedClipData: preloadData });
-        // Ask background to inject the overlay bundle and show it.
-        // Background will call executeScript({files: ["dist/overlay.js"]})
-        // which defines window.__mineOverlay, then we receive the show message.
+        // Ask background to show the in-page overlay. Instagram preloads
+        // overlay.js as a static content script because this page-injected
+        // button does not grant activeTab permission for executeScript.
         await chrome.runtime.sendMessage({
           target: "background",
           action: "showOverlayInThisTab",
+          pageUrl: window.location.href,
         });
 
         btn.style.opacity = "1";

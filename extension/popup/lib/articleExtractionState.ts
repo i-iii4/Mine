@@ -1,4 +1,5 @@
 import type { ArticleData, PageMetadata } from "./messaging";
+import { articleHasTwitterMediaBody } from "./socialContent";
 
 export type ArticleExtractionState = "idle" | "loading" | "ready" | "empty" | "failed";
 
@@ -10,8 +11,18 @@ export function articleHasPreviewMedia(article: ArticleData | null): boolean {
   return (article?.embeddedVideos?.length ?? 0) > 0;
 }
 
-export function articleExtractionStateForResult(article: ArticleData): ArticleExtractionState {
-  return articleHasText(article) ? "ready" : "empty";
+export function articleHasSaveableContent(
+  metadata: PageMetadata | null,
+  article: ArticleData | null,
+): boolean {
+  return articleHasText(article) || articleHasTwitterMediaBody(metadata, article);
+}
+
+export function articleExtractionStateForResult(
+  article: ArticleData,
+  metadata: PageMetadata | null = null,
+): ArticleExtractionState {
+  return articleHasSaveableContent(metadata, article) ? "ready" : "empty";
 }
 
 export function contentModeNeedsArticleExtraction(metadata: PageMetadata | null): boolean {

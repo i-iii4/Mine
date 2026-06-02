@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Goal
 
@@ -1185,7 +1185,8 @@ Specification: [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md).
 Goal: enable spatial multi-selection in the masonry feed and batch actions from
 a bottom floating action island.
 
-Specification: [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
+Specification: [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md). Batch merge
+contract: [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md).
 
 | # | Slice | Status | Scope |
 |---|---|---|---|
@@ -1201,7 +1202,11 @@ Specification: [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
 | 26.6.3 | Batch delete dialog parity | [ ] | Replace v1 copy with single-delete-equivalent dialog: card count, optional unused-media previews, `Keep media` and `Delete media` actions, shared media kept |
 | 26.6.4 | Batch delete tests | [ ] | Rust and frontend coverage for media shared only inside selection, media shared with unselected cards, stale plan validation, viewport preservation and selection clear |
 | 26.7 | Group drag-to-channel | [x] | Dragging a selected card drags the selected slug set, renders a capped macOS-style flocking stack of real frozen card previews, and connects all dragged cards on channel/create-channel drop |
-| 26.8 | Tests + manual QA | [ ] | Automated modifier selection, range geometry, action-bar, group drag payload and stack preview coverage is in place; real-vault manual QA for dark/light frame and batch actions remains |
+| 26.8 | Batch Merge SPEC | [x] | `SPEC_CARD_MERGE.md` defines the reorder dialog, shared card-reference rows, one backend `merge_blocks` command, Markdown section composition, media reuse and many-to-one relationship preservation |
+| 26.9 | Batch Merge UI | [x] | Added `Merge` to the bottom action island and focused-card batch menu, extracted shared `CardReferenceRow` from Detail related notes, and built the reorder-first merge dialog |
+| 26.10 | Batch Merge backend | [x] | Added `merge_blocks(ordered_slugs)` as one filesystem transaction-like command: compose new article `.md`, rewrite external refs to the merged slug, delete source `.md` files, preserve media binaries, refresh index/thumbs and rollback partial apply failures |
+| 26.11 | Batch Merge tests | [x] | Rust/frontend coverage for ordering, mixed card kinds, collection/related-note union, incoming relation rewrite, media reuse, failure rollback, viewport preservation and dialog state |
+| 26.12 | Tests + manual QA | [ ] | Automated modifier selection, range geometry, action-bar, group drag payload and stack preview coverage is in place; real-vault manual QA for dark/light frame and batch actions remains |
 
 ### Phase 27 — Surface Search
 

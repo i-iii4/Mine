@@ -41,6 +41,7 @@ interface GroupSelectionActionBarProps {
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
   onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
+  onMergeSelectedBlocks: () => void;
   onClearSelection: () => void;
 }
 
@@ -52,6 +53,7 @@ export function GroupSelectionActionBar({
   onBatchSetTag,
   onCreateAndAssignBatch,
   onDeleteSelectedBlocks,
+  onMergeSelectedBlocks,
   onClearSelection,
 }: GroupSelectionActionBarProps) {
   const selectedSlugs = useMemo(
@@ -179,6 +181,18 @@ export function GroupSelectionActionBar({
               }}
             >
               Disconnect
+            </Button>
+          )}
+
+          {selectedBlocks.length >= 2 && (
+            <Button
+              type="button"
+              variant="default"
+              size="xs"
+              className="shrink-0"
+              onClick={onMergeSelectedBlocks}
+            >
+              Merge
             </Button>
           )}
 

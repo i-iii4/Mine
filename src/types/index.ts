@@ -161,6 +161,22 @@ export interface DeleteBlockPlan {
   shared_media: DeleteBlockMedia[];
 }
 
+export interface MergeBlocksResult {
+  block: IndexedBlock;
+  merged_slug: string;
+  removed_slugs: string[];
+}
+
+export type MergeBlocksError =
+  | { kind: "no_vault" }
+  | { kind: "too_few_cards" }
+  | { kind: "duplicate_slug"; slug: string }
+  | { kind: "block_not_found"; slug: string }
+  | { kind: "block_not_mergeable"; slug: string; block_type: string }
+  | { kind: "invalid_slug"; slug: string; reason: string }
+  | { kind: "reference_rewrite_failed"; path: string; message: string }
+  | { kind: "internal"; message: string };
+
 export type RenameBlockError =
   | { kind: "no_vault" }
   | { kind: "block_not_found"; slug: string }

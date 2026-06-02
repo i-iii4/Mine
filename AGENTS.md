@@ -17,6 +17,7 @@
 - `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
 - `SPEC_SEARCH.md` — спецификация Surface Search и целевой Hybrid Search: `Cmd+F` Grid filter, `Shift+Cmd+F` Sidebar filter, lexical/alias/semantic retrieval, fusion ranking, excerpts/highlights
 - `SPEC_GROUP_SELECTION.md` — спецификация Grid group selection и batch card actions
+- `SPEC_CARD_MERGE.md` — спецификация batch Merge: reorder dialog, one backend command, Markdown section composition, media reuse, many-to-one relationship preservation
 - `SPEC_FEED_SCROLL_PERFORMANCE.md` — C7-контракт бесконечного canvas-feel для ленты: render window, media preload/decode window, лимиты, диагностика
 - `SPEC_GRID_LAYOUT_READINESS.md` — C8-контракт viewport-first measurement: live measured islands, layout diagnostics, deep fast-scroll acceptance
 - `SPEC_THUMBNAILS.md` — полная спецификация preview/thumbnail pipeline

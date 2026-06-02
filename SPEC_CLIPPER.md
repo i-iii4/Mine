@@ -160,8 +160,9 @@ Save-инварианты:
 Save path: `title`, `byline/author`, `content`, `excerpt`,
 `embeddedVideos`. Preview и сохранение не имеют права использовать разные body
 sources. `resolveContentBody()` сохраняет текущий приоритет: video body →
-selection → `articleData.content` → empty. Новые source-specific extractors
-добавляются только до формирования `ArticleData`, а не отдельным UI-путём.
+selection → `articleData.content` → Twitter/X media-only markdown fallback →
+empty. Новые source-specific extractors добавляются только до формирования
+`ArticleData`, а не отдельным UI-путём.
 
 Для `x.com` / `twitter.com` status URL используется typed chain, а не единая
 ветка "Twitter":
@@ -247,7 +248,9 @@ Startup performance invariant сохраняется: long-form extraction за�
 - X long-form article + user selection сохраняет selection как body source;
 - обычный tweet остаётся в `extractTwitterThread()` path;
 - thread сохраняет только contiguous target thread;
-- media-only tweet без long-form surface остаётся валидным media tweet;
+- media-only tweet без long-form surface остаётся валидным media tweet:
+  `embeddedVideos` превращаются в markdown body через `resolveContentBody()`,
+  а не в отдельный UI-only preview;
 - detected long-form shell без body даёт `empty/failed`, а не cover-only save;
 - preview body и saved body совпадают через `resolveContentBody()`.
 
@@ -303,6 +306,16 @@ generated `title:` frontmatter.
 Перед каждым реальным `chrome.tabs.captureVisibleTab(...)` background отправляет content script сообщение `prepareViewportCapture`. Content script скрывает все Mine-owned UI layers (`__mineOverlay`, crop overlay, crop toast) и отвечает только после clean-paint handshake (`requestAnimationFrame` ×2 + timeout fallback). Это обязательный инвариант: ни обычный Screenshot, ни Crop Area не должны вызывать `captureVisibleTab` сразу после `display:none` / DOM removal, потому что браузер может вернуть предыдущий compositor frame с видимым клиппером.
 
 Повторный клик по extension icon при уже открытом overlay не должен заново инжектить `overlay.js`. Background сначала отправляет `showClipperOverlay` существующему listener'у и ждёт `{ok:true}`; новая инъекция разрешена только если listener не отвечает. Иначе в одной вкладке появляются два независимых module scope, и старый overlay host может остаться видимым во время capture.
+
+Instagram feed button is an extension-owned control already running inside an
+Instagram content script. It must open the in-page overlay only; detached-window
+fallback is not a valid successful outcome for this path. Because clicking that
+page-injected button does not grant Chrome/Safari `activeTab` permission,
+`dist/overlay.js` is registered as a static content script for
+`https://www.instagram.com/*`. The button writes `preloadedClipData` and asks
+background for `showOverlayInThisTab`; background must first use the existing
+overlay listener and must return failure rather than opening `windows.create`
+when overlay is unavailable.
 
 В overlay-context кнопка `Crop Area` запускает page-level crop overlay напрямую через `window.__mineCrop.start()`, который экспортируется из `content.js` в той же isolated world. Background `startCropMode` остаётся fallback для detached/window path. Основной overlay не должен зависеть от того, какой из нескольких `chrome.runtime.onMessage` listeners в вкладке первым обработает `startCropOverlay`.
 
@@ -655,6 +668,18 @@ vendor warning/error noise на страницах, где пользовате�
 из которого пришёл запрос. На время загрузки suppress'ится только известный
 vendor warning Temml про quirks mode; остальные warnings/errors не
 подавляются. Это loader/adapter concern, а не изменение Defuddle output.
+
+Перед передачей DOM в Defuddle `content.js` создаёт cloned extraction document
+и прогоняет его через `MineExtractionDocumentSanitizer`. Sanitizer работает
+только с clone, не меняет живую страницу, screenshot/crop/image save и не
+использует широкие blacklist-правила вроде "удалить все icon/pixel/logo".
+Удаляются только high-confidence non-content images вне protected content
+zones (`article`, `main`, `figure`, `picture`, article/content containers):
+tracking/beacon/pixel/spacer assets, явно hidden/presentation images и
+app-shell assets вроде `template-app-icon.png` без alt/title/caption/link
+semantics. Изображения внутри content-zone сохраняются даже при пустом `alt`,
+чтобы статьи про иконки, логотипы, pixel art и реальные иллюстрации не
+терялись.
 
 Извлекает:
 - `title` — заголовок статьи; Mine writes it as first body H1, not as `title:` frontmatter
@@ -1120,6 +1145,10 @@ Instagram-кнопка версионируется через `data-la-clip-ver
 content script уже вставил кнопку без текущей версии, новый scan обязан удалить
 её и создать заново, иначе Safari/Chrome оставят устаревший визуальный asset до
 перезагрузки страницы.
+
+Клик по Instagram-кнопке не открывает detached popup window. Это overlay-only
+surface: данные поста предзагружаются в `chrome.storage.session`, после чего
+страница показывает тот же Shadow DOM overlay, что и toolbar/context-menu path.
 
 ## Manifest V3
 

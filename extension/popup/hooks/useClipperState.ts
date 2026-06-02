@@ -68,12 +68,14 @@ import { resolveContentBody } from "../lib/resolveContentBody";
 import {
   articleExtractionStateForResult,
   articleHasPreviewMedia,
+  articleHasSaveableContent,
   articleHasText,
   buildLinkBody,
   contentModeNeedsArticleExtraction,
   emptyContentMessage,
   type ArticleExtractionState,
 } from "../lib/articleExtractionState";
+import { applySaveImageContextMenu } from "../lib/contextMenuMetadata";
 
 export type ClipType = "content" | "link" | "image" | "video" | "screenshot";
 export type PopupState = "loading" | "error" | "main";
@@ -90,6 +92,7 @@ export interface ClipperState {
   title: string;
   saving: boolean;
   articleExtractionState: ArticleExtractionState;
+  nativeStatusError: string | null;
   knownVaults: string[];
   selectedVault: string | null;
 }
@@ -112,9 +115,13 @@ export function useClipperState() {
   const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
   const [screenshotUploadId, setScreenshotUploadId] = useState<string | null>(null);
   const [cropSupported, setCropSupported] = useState<boolean>(false);
+  const [nativeStatusError, setNativeStatusError] = useState<string | null>(null);
   const uploadPortRef = useRef<number | null>(null);
   const uploadTokenRef = useRef<string | null>(null);
   const supportsPendingUploadsRef = useRef(false);
+  const nativeReadyRef = useRef(false);
+  const nativeStatusErrorRef = useRef<string | null>(null);
+  const nativeStatusPromiseRef = useRef<Promise<boolean> | null>(null);
 
   const tabIdRef = useRef<number | null>(null);
   const vaultRef = useRef<string | null>(null);
@@ -212,7 +219,7 @@ export function useClipperState() {
 
   const ensureArticleLoaded = useCallback(async (): Promise<ArticleData | null> => {
     const existing = articleDataRef.current;
-    if (articleHasText(existing)) {
+    if (articleHasSaveableContent(metadataRef.current, existing)) {
       setArticleExtractionStateValue("ready");
       return existing;
     }
@@ -243,7 +250,7 @@ export function useClipperState() {
           }
         }
 
-        setArticleExtractionStateValue(articleExtractionStateForResult(hydrated));
+        setArticleExtractionStateValue(articleExtractionStateForResult(hydrated, meta));
         return hydrated;
       })
       .catch(() => {
@@ -277,6 +284,51 @@ export function useClipperState() {
       setChannels(chResult.channels);
     }
   }, []);
+
+  const ensureNativeStatus = useCallback(async (): Promise<boolean> => {
+    if (nativeReadyRef.current) return true;
+    if (nativeStatusPromiseRef.current) return nativeStatusPromiseRef.current;
+
+    const promise = sendToNative({ action: "get_status" })
+      .then((status) => {
+        if (!status.ok) {
+          const message = status.error ?? "Cannot connect to Mine";
+          nativeStatusErrorRef.current = message;
+          setNativeStatusError(message);
+          return false;
+        }
+
+        uploadPortRef.current = (status.upload_port as number) ?? null;
+        uploadTokenRef.current = (status.upload_token as string) ?? null;
+        supportsPendingUploadsRef.current = Array.isArray(status.features)
+          && status.features.includes("pending_uploads_v1");
+        nativeReadyRef.current = true;
+        nativeStatusErrorRef.current = null;
+        setNativeStatusError(null);
+
+        // Taxonomy and vault list are useful, but they must not block the
+        // first paint of the clipper. Open overlays refresh again when another
+        // tab creates a channel.
+        void listKnownVaults().then((vaultsResult) => {
+          if (vaultsResult.ok) {
+            setKnownVaults(vaultsResult.vaults);
+            setSelectedVault(vaultsResult.current);
+            vaultRef.current = vaultsResult.current;
+            void refreshChannels(vaultsResult.current);
+          }
+        });
+        void refreshChannels();
+        return true;
+      })
+      .finally(() => {
+        if (!nativeReadyRef.current) {
+          nativeStatusPromiseRef.current = null;
+        }
+      });
+
+    nativeStatusPromiseRef.current = promise;
+    return promise;
+  }, [refreshChannels]);
 
   useEffect(() => {
     const onMessage = (msg: { action?: string }) => {
@@ -395,27 +447,7 @@ export function useClipperState() {
       const recent = (stored.recentChannels as string[]) ?? [];
       setRecentTags(recent);
 
-      const status = await sendToNative({ action: "get_status" });
-      if (!status.ok) {
-        showError(status.error ?? "Cannot connect to Mine");
-        return;
-      }
-      uploadPortRef.current = (status.upload_port as number) ?? null;
-      uploadTokenRef.current = (status.upload_token as string) ?? null;
-      supportsPendingUploadsRef.current = Array.isArray(status.features)
-        && status.features.includes("pending_uploads_v1");
-
-      // Taxonomy and vault list are useful, but they must not block the
-      // first paint of the clipper. Open overlays refresh again when another
-      // tab creates a channel.
-      void listKnownVaults().then((vaultsResult) => {
-        if (vaultsResult.ok) {
-          setKnownVaults(vaultsResult.vaults);
-          setSelectedVault(vaultsResult.current);
-          vaultRef.current = vaultsResult.current;
-        }
-      });
-      void refreshChannels();
+      void ensureNativeStatus();
 
       // Check for pre-loaded data (from Instagram feed button)
       const preloaded = await chrome.storage.session.get("preloadedClipData");
@@ -425,7 +457,7 @@ export function useClipperState() {
 
         setMetadataValue(preMeta as PageMetadata);
         setArticleDataValue(preArticle as ArticleData);
-        setArticleExtractionStateValue(articleExtractionStateForResult(preArticle));
+        setArticleExtractionStateValue(articleExtractionStateForResult(preArticle, preMeta));
         setTitle(preMeta.title ?? "");
         setCurrentType("content");
         setState("main");
@@ -462,7 +494,7 @@ export function useClipperState() {
         setArticleDataValue(pending.articleData);
         setArticleExtractionStateValue(
           pending.articleData
-            ? articleExtractionStateForResult(pending.articleData)
+            ? articleExtractionStateForResult(pending.articleData, pending.metadata)
             : "idle",
         );
         setSelectedTags(pending.selectedTags);
@@ -538,7 +570,7 @@ export function useClipperState() {
         deferredArticleRef.current = null;
       }
       setArticleDataValue(article);
-      setArticleExtractionStateValue(articleHasText(article) ? "ready" : "idle");
+      setArticleExtractionStateValue(articleHasSaveableContent(meta, article) ? "ready" : "idle");
       setTitle(meta.title ?? "");
 
       // Map detected type. Precedence (see SPEC_CLIPPER.md § Auto-detection):
@@ -600,8 +632,7 @@ export function useClipperState() {
   async function applyContextMenu(ctx: ContextMenuData, meta: PageMetadata, tabId: number) {
     switch (ctx.menuItemId) {
       case "save-image":
-        meta.detectedType = "image";
-        meta.imageToSave = ctx.srcUrl;
+        applySaveImageContextMenu(ctx, meta);
         if (ctx.srcUrl) {
           try {
             const info = await getImageInfo(tabId, ctx.srcUrl);
@@ -692,6 +723,13 @@ export function useClipperState() {
     if (!metadata || saving) return;
 
     setSaving(true);
+    if (!(await ensureNativeStatus())) {
+      setSaving(false);
+      return {
+        ok: false as const,
+        error: nativeStatusErrorRef.current ?? "Cannot connect to Mine",
+      };
+    }
     let saveMetadata = metadata;
 
     // Re-query selection before saving
@@ -883,6 +921,7 @@ export function useClipperState() {
     recentTags,
     saving,
     ensureArticleLoaded,
+    ensureNativeStatus,
     setMetadataValue,
     screenshotDataUrl,
     screenshotUploadId,
@@ -914,6 +953,7 @@ export function useClipperState() {
     setTitle,
     saving,
     articleExtractionState,
+    nativeStatusError,
     toggleTag,
     createChannel,
     save,
@@ -1065,8 +1105,20 @@ async function hydrateTwitterVideoPreviews(
 
 interface SyndicationMedia {
   type: string;
+  url?: string;
   media_url_https?: string;
   video_info?: { variants?: { content_type: string; bitrate?: number; url: string }[] };
+}
+
+function stripSyndicationMediaLinks(text: string, mediaDetails: SyndicationMedia[]): string {
+  let cleaned = text;
+  for (const media of mediaDetails) {
+    const shortUrl = media.url?.trim();
+    if (shortUrl) {
+      cleaned = cleaned.replaceAll(shortUrl, "");
+    }
+  }
+  return cleaned.trim();
 }
 
 async function fetchTweetBySyndicationApi(
@@ -1078,11 +1130,12 @@ async function fetchTweetBySyndicationApi(
   );
   if (!resp.ok) return null;
   const data = await resp.json();
+  const mediaDetails = (data.mediaDetails ?? []) as SyndicationMedia[];
 
-  const text: string = data.text ?? "";
+  const text = stripSyndicationMediaLinks(data.text ?? "", mediaDetails);
   const media: string[] = [];
 
-  for (const m of (data.mediaDetails ?? []) as SyndicationMedia[]) {
+  for (const m of mediaDetails) {
     if (m.type === "photo" && m.media_url_https) {
       media.push(m.media_url_https + "?name=large");
     } else if ((m.type === "video" || m.type === "animated_gif") && m.video_info?.variants) {

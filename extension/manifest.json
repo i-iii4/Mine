@@ -30,7 +30,18 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["lib/twitterThreadSelection.js", "lib/twitterTweetContent.js", "lib/xLongformArticleExtraction.js", "content.js"],
+      "js": [
+        "lib/twitterThreadSelection.js",
+        "lib/twitterTweetContent.js",
+        "lib/xLongformArticleExtraction.js",
+        "lib/extractionDocumentSanitizer.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["dist/overlay.js"],
       "run_at": "document_idle"
     }
   ],

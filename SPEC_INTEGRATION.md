@@ -1,6 +1,6 @@
 # SPEC: integration layer (watcher + commands)
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md)
 
 Связующий слой: file watcher отслеживает изменения в vault, Tauri commands предоставляют API для фронтенда. Оркестрация файл → парсинг → индексация → thumbnail.
 
@@ -161,6 +161,7 @@ enum CommandError {
 #[tauri::command] delete_block(state, slug: String, delete_unused_media: Option<bool>) -> Result<bool, CommandError>
 #[tauri::command] prepare_delete_blocks(state, slugs: Vec<String>) -> Result<DeleteBlocksPlan, CommandError>
 #[tauri::command] delete_blocks(state, slugs: Vec<String>, delete_unused_media: bool) -> Result<bool, CommandError>
+#[tauri::command] merge_blocks(state, ordered_slugs: Vec<String>) -> Result<MergeBlocksResult, MergeBlocksError>
 #[tauri::command] rename_block_file(state, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError>
 ```
 
@@ -233,6 +234,37 @@ Incremental scan обязан обрабатывать iCloud-style conflict fil
 6. Если patch/reindex unsafe или падает, восстановить original source content и
    вернуть typed error.
 7. Эмитить `thumb:updated` для source block; `block:added` не эмитится.
+
+### Поведение merge_blocks
+
+`merge_blocks(ordered_slugs)` объединяет две и более выбранные карточки в одну
+новую article-карточку. Детальный продуктовый и файловый контракт описан в
+[SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md).
+
+Интеграционный инвариант: frontend не собирает Merge из `createBlock` и N
+`deleteBlock` вызовов. Это один command, потому что операция одновременно
+создаёт новый Markdown, удаляет source `.md`, переписывает внешние ссылки и
+обновляет индекс.
+
+1. Проверить vault state, количество slugs, уникальность slugs, существование
+   и parseability каждого source block.
+2. Отклонить `channel`/collection source blocks.
+3. Построить pure merge plan: frontmatter output, body sections, output slug,
+   deleted source files, external many-to-one wikilink rewrites.
+4. Записать новый `.md` create-new semantics.
+5. Применить external rewrites для parseable non-selected `.md` files that
+   reference selected source slugs.
+6. Только после успешной записи и rewrites удалить selected source `.md` files.
+7. Не копировать, не переименовывать и не удалять media binaries.
+8. Проиндексировать новый блок и rewritten files, удалить index rows source
+   blocks, обновить thumbnail/preview для нового блока.
+9. Если apply падает после первой записи, выполнить best-effort rollback:
+   удалить merged `.md`, восстановить исходные bytes rewritten files/source
+   files и восстановить index rows из восстановленного Markdown.
+10. Эмитить `block:added` для merged block, `block:removed` для source slugs,
+   `thumb:updated` для merged slug и `vault-changed` для route/index refresh.
+11. Вернуть `MergeBlocksResult` с новым `IndexedBlock`, `merged_slug` and
+    `removed_slugs`.
 
 In-app rename must preserve block-reference anchors when rewriting source
 targets:

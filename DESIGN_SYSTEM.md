@@ -3,6 +3,37 @@
 Токены определены в `src/styles/global.css` → `@theme inline`.
 Tailwind v4 генерирует утилиты автоматически из `--radius-*`, `--spacing-*`, `--text-*`.
 
+## Design page contract
+
+Страница `Design` в приложении — это audit surface, а не декоративная
+галерея. Она должна импортировать реальные production primitives и показывать
+их состояния рядом с production-used токенами из `global.css`.
+
+Обязательные разделы:
+
+- token audit: только токены, которые реально используются в desktop UI или
+  Web Clipper: surfaces, text, component fills, shell/feed state tokens,
+  production radius, production spacing, typography. Токены, которые существуют
+  только как неиспользуемые shadcn defaults или историческая шкала, на странице
+  не показываются; значения читаются из текущего root theme через computed CSS
+  variables;
+- core primitives: `Button`, `ActionButton`, `SegmentedControl`, `Input`,
+  `SearchMenuInput`, `MenuTextTrigger`, `ChromeCloseButton`, `Checkbox`,
+  `Progress`, `Tooltip`;
+- floating UI: `DropdownMenu`, `ContextMenu`, `CollectionPicker`,
+  `QuantizedMenuScrollArea`, width roles `command` / `selector` / `picker` and
+  row tokens `default` / `clipper`;
+- app compositions: top chrome, secondary chrome, selection action bar, feed
+  focus/selection states, shortcut badge, text-selection island and drag stack;
+- Web Clipper: full 360px popup states for content, screenshot, link and image
+  using the same extension components that ship in `extension/popup`.
+
+Названия компонентов на странице фиксируют контракт: высоту, radius, цветовой
+токен и ключевую геометрию. Если production primitive меняется, `Design`
+должна меняться в том же PR. Lookalike-компоненты на странице запрещены как
+source of truth; допустимы только небольшие static composition previews для
+состояний, которые ещё не выделены в reusable primitive.
+
 ## Скругления
 
 | Токен | Значение | Утилита | Где |
@@ -921,7 +952,8 @@ primitives и те же состояния, что desktop UI:
   switcher uses `h-8`, inner `h-7`, `p-[2px]`, `text-base`, and
   shrink-to-content width, never stretched full-width;
 - lower body: after the two top rows, the clipper keeps the legacy simple body:
-  `.mine-clipper-body` owns the spacing tokens in `popup-layout.css`.
+  `.mine-clipper-body` owns the spacing tokens in `src/styles/global.css` so
+  the app Design page and the extension render the same lower-body contract.
   `--mine-clipper-after-type-gap` is 16px only between Type row and the first
   preview card; `--mine-clipper-section-gap` is 8px for every lower separation:
   preview -> channel picker -> save/status stack and screenshot media ->
@@ -1412,13 +1444,14 @@ Detail-top-bar typography: `font-mono text-sm`, regular weight, no
 Порядок внутри островка: серое русское количество
 (`1 карточка`, `2 карточки`, `5 карточек`, `25 карточек`), прямые Button
 actions `Connect`, text-only `Disconnect` только внутри collection route,
-text-only red `Delete`, затем rightmost icon-only `X` clear button. Полный
+text-only `Merge` только при двух и более selected cards, text-only red
+`Delete`, затем rightmost icon-only `X` clear button. Полный
 контракт:
 [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
 
 Focused-card batch `Cmd+K` menu следует тому же icon economy: иконка есть у
-`Connect`, у `Disconnect` и `Delete` иконок нет, но сохраняется пустой
-leading-slot для выравнивания текста.
+`Connect`, у `Disconnect`, `Merge` и `Delete` иконок нет, но сохраняется
+пустой leading-slot для выравнивания текста.
 
 Group drag preview использует macOS-style drag flocking: каждый видимый слой —
 реальный frozen card preview из selected set, не пустая plate и не interactive

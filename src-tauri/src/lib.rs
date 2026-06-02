@@ -58,6 +58,7 @@ pub fn run() {
             commands::blocks::rename_block_file,
             commands::blocks::prepare_delete_block,
             commands::blocks::delete_block,
+            commands::blocks::merge_blocks,
             commands::tags::list_tags,
             commands::tags::add_tag,
             commands::tags::remove_tag,

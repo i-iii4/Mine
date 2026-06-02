@@ -31,6 +31,8 @@ import type {
   RemoveMediaAssetFromCardParams,
   DeleteTextSelectionParams,
   ExtractTextSelectionParams,
+  MergeBlocksError,
+  MergeBlocksResult,
   TextSelectionExtractError,
 } from "@/types";
 
@@ -240,6 +242,27 @@ export const deleteBlock = (slug: string, delete_unused_media?: boolean) =>
     "delete_block",
     delete_unused_media === undefined ? { slug } : { slug, delete_unused_media },
   );
+
+function normalizeMergeBlocksError(error: unknown): MergeBlocksError {
+  if (error && typeof error === "object" && "kind" in error) {
+    return error as MergeBlocksError;
+  }
+  if (typeof error === "string") {
+    return { kind: "internal", message: error };
+  }
+  if (error instanceof Error) {
+    return { kind: "internal", message: error.message };
+  }
+  return { kind: "internal", message: String(error) };
+}
+
+export const mergeBlocks = async (ordered_slugs: string[]) => {
+  try {
+    return await invoke<MergeBlocksResult>("merge_blocks", { ordered_slugs });
+  } catch (error) {
+    throw normalizeMergeBlocksError(error);
+  }
+};
 
 // Tags
 export const listTags = () =>

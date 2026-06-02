@@ -425,6 +425,7 @@ import {
   addTag,
   removeTag,
   deleteBlock,
+  mergeBlocks,
   getBlock,
   createMediaAssetCard,
   renameMediaAsset,
@@ -2702,6 +2703,23 @@ export function AppWithVault({
     [reloadAllSnapshots],
   );
 
+  const handleMergeSelectedBlocks = useCallback(
+    async (orderedSlugs: string[]) => {
+      if (orderedSlugs.length < 2) return;
+      setSelectedBlock(null);
+      setSelectedBlockAnchor(null);
+      try {
+        await mergeBlocks(orderedSlugs);
+      } catch (err) {
+        console.error("Failed to merge selected blocks:", err);
+        throw err;
+      } finally {
+        await reloadAllSnapshots();
+      }
+    },
+    [reloadAllSnapshots],
+  );
+
   const requestDeleteBlock = useCallback((slug: string) => {
     setDeleteTargetSlug(slug);
   }, []);
@@ -3101,6 +3119,7 @@ export function AppWithVault({
                 onBatchSetTag={handleBatchSetTag}
                 onCreateAndAssignBatch={handleCreateTagFromBatchMenu}
                 onDeleteSelectedBlocks={handleDeleteSelectedBlocks}
+                onMergeSelectedBlocks={handleMergeSelectedBlocks}
                 onGroupSelectionStart={releaseMainSearchForGroupSelection}
                 onRequestRename={setRenamingBlock}
                 onRequestDelete={requestDeleteBlock}
@@ -3324,6 +3343,7 @@ interface RouteContext {
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
   onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
+  onMergeSelectedBlocks: (orderedSlugs: string[]) => void | Promise<void>;
   onGroupSelectionStart?: () => void;
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
   onRequestDelete: (slug: string) => void;

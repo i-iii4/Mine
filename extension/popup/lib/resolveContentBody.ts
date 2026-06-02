@@ -16,13 +16,15 @@
 //   2. metadata.selection non-empty → selection wins over article.
 //   3. articleData.content present → article body; byline propagates
 //      so the caller can use it as author.
-//   4. Nothing → empty, source = "empty".
+//   4. Twitter/X media-only post → media markdown body.
+//   5. Nothing → empty, source = "empty".
 //
 // Contract test: extension/popup/hooks/resolveContentBody.test.ts
 // Changing the ordering silently will break either save or preview.
 // If you change the rules, update the contract test in the same commit.
 
 import type { PageMetadata, ArticleData } from "./messaging";
+import { articleHasTwitterMediaBody, embeddedMediaMarkdown } from "./socialContent";
 
 export type ContentBodySource = "video" | "selection" | "article" | "empty";
 
@@ -60,6 +62,14 @@ export function resolveContentBody(
       text: articleData.content,
       source: "article",
       byline: articleData.byline ?? null,
+    };
+  }
+
+  if (articleHasTwitterMediaBody(metadata, articleData)) {
+    return {
+      text: embeddedMediaMarkdown(articleData),
+      source: "article",
+      byline: articleData?.byline ?? metadata.author ?? null,
     };
   }
 

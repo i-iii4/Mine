@@ -1,5 +1,38 @@
 # Devlog
 
+## 02.06.2026 [fix] — Keep Instagram feed clip button in page overlay
+
+### Context
+
+- The Instagram feed button is injected by our content script inside the page.
+- A click on that page-owned button does not grant the extension `activeTab`
+  permission for programmatic `chrome.scripting.executeScript`.
+- Background previously tried to inject `overlay.js`, failed under that
+  permission model, and silently fell back to a detached popup window.
+
+### Completed
+
+- Registered `dist/overlay.js` as a static content script on
+  `https://www.instagram.com/*`, so the overlay listener already exists when
+  the feed button is clicked.
+- Changed `showOverlayInThisTab` to be overlay-only: it uses the sender tab and
+  explicit page URL, returns the real mode, and does not open `windows.create`
+  as a successful fallback.
+- Bumped the Instagram clip button version so old injected buttons are replaced
+  after page reload/reinjection.
+- Updated the clipper spec with the Instagram overlay-only contract.
+
+### Verification
+
+- `node --check extension/background.js`
+- `node --check extension/content.js`
+- `bun run build:extension`
+- `bun run lint`
+- `bun run test:frontend -- extension/popup/lib/articleExtractionState.test.ts extension/popup/lib/resolveContentBody.test.ts extension/popup/lib/contextMenuMetadata.test.ts extension/lib/extractionDocumentSanitizer.test.ts`
+- `bun run test`
+- `bun run build`
+- `git diff --check`
+
 ## 29.05.2026 [fix] — Preserve X quote tweets and lazy-load Defuddle
 
 ### Context
@@ -35,6 +68,47 @@
 - `bun run lint`
 - `bun run build:extension`
 - `git diff --check`
+
+## 27.05.2026 [feature] — Implement batch card Merge
+
+### Context
+
+- Grid group selection has batch connect, disconnect, delete and group drag,
+  but no action for combining selected cards.
+- The requested Merge behavior is not a UI-only action: it must preserve
+  Markdown content, media references, collection membership and related-note
+  graph edges.
+
+### Completed
+
+- Added [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) as the canonical batch Merge
+  contract.
+- Added `Merge` to the bottom group-selection action island and the focused-card
+  batch `Cmd+K` menu only when at least two cards are selected.
+- Extracted `CardReferenceRow` from Detail related notes and reused it in the
+  merge reorder dialog, so the dialog does not recreate a lookalike row.
+- Added `MergeCardsDialog`: selected cards open in Grid visual order, can be
+  reordered by a drag handle, use a single `Merge N cards` title, and confirm
+  sends the visible order to backend.
+- Added typed frontend IPC `mergeBlocks(orderedSlugs)` and App wiring that
+  clears selection only after backend success.
+- Added backend `merge_blocks(ordered_slugs)`: it creates one canonical article
+  card, composes ordered Markdown sections, preserves existing media files,
+  rewrites incoming wikilinks/related-note refs many-to-one and removes source
+  `.md` files.
+- Added transaction-like apply/rollback handling: if a partial filesystem/index
+  mutation fails, backend removes the merged file, restores rewritten files and
+  source files, and repairs index rows from restored Markdown.
+- Updated architecture, frontend/group-selection/design-system/storage/
+  integration docs and plan status for the implemented contract.
+
+### Verification
+
+- `cargo test --workspace --all-targets --locked commands::blocks::tests::merge_blocks_ -- --nocapture`
+- `bun run lint`
+- `bun run test:frontend -- Grid.test.tsx App.test.tsx Detail.test.tsx`
+- `bun run build`
+- `bun run test`
 
 ## 26.05.2026 [feature] — Text selection action bar and delete command
 

@@ -49,13 +49,25 @@ describe("article extraction state", () => {
     }))).toBe(true);
   });
 
-  it("classifies only non-empty article text as ready", () => {
+  it("classifies non-empty article text as ready", () => {
     expect(articleExtractionStateForResult(article({ content: "full article" }))).toBe("ready");
     expect(articleExtractionStateForResult(article({ content: "   " }))).toBe("empty");
     expect(articleExtractionStateForResult(article({
       content: "",
       embeddedVideos: [{ src: "https://example.com/v.mp4", poster: null, title: "Preview" }],
     }))).toBe("empty");
+  });
+
+  it("classifies media-only X status clips as ready", () => {
+    const mediaOnlyTweet = article({
+      content: "",
+      embeddedVideos: [{ src: "https://video.twimg.com/v.mp4", poster: null, title: "Preview" }],
+    });
+
+    expect(articleExtractionStateForResult(
+      mediaOnlyTweet,
+      meta({ url: "https://x.com/AwkSilenceGames/status/2061150566542156267" }),
+    )).toBe("ready");
   });
 
   it("builds the Link body H1 required by the clipper storage contract", () => {

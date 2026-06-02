@@ -1,6 +1,6 @@
 # SPEC: Frontend
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 ## Overview
 
@@ -132,6 +132,16 @@ type RenameBlockError =
   | { kind: "internal"; message: string };
 ```
 
+### MergeBlocksResult
+
+```typescript
+interface MergeBlocksResult {
+  block: IndexedBlock;
+  merged_slug: string;
+  removed_slugs: string[];
+}
+```
+
 ## IPC layer — `lib/commands.ts`
 
 Тонкая обёртка над `invoke()`. Каждая функция строго типизирована:
@@ -147,6 +157,7 @@ prepareDeleteBlock(slug: string): Promise<DeleteBlockPlan>
 deleteBlock(slug: string, deleteUnusedMedia?: boolean): Promise<boolean>
 prepareDeleteBlocks(slugs: string[]): Promise<DeleteBlocksPlan>
 deleteBlocks(slugs: string[], deleteUnusedMedia: boolean): Promise<boolean>
+mergeBlocks(orderedSlugs: string[]): Promise<MergeBlocksResult>
 renameBlockFile(oldSlug: string, newStem: string): Promise<RenameBlockResult>
 listTags(): Promise<TagCount[]>
 addTag(slug: string, tag: string): Promise<void>
@@ -1314,9 +1325,10 @@ Image media expansion:
   `Enter` must not fall through to Card activation. `Cmd+K` opens a contextual
   batch menu anchored to the focused card's top-right overflow action; the menu
   contains a muted selected-count header plus `Connect`, collection-scoped
-  `Disconnect` outside Everything and `Delete`. Its icon policy matches the
-  card menu: icon only for `Connect`, empty leading slots for `Disconnect` and
-  `Delete`. The menu shell uses floating width role `command`; its `Connect`
+  `Disconnect` outside Everything, `Merge` when at least two cards are
+  selected, and `Delete`. Its icon policy matches the card menu: icon only for
+  `Connect`, empty leading slots for `Disconnect`, `Merge` and `Delete`. The
+  menu shell uses floating width role `command`; its `Connect`
   submenu uses role `picker`.
 - When at least one card is selected, Grid renders a bottom floating action
   island centered inside the main/right content pane at `bottom-s3` (`16px`
@@ -1326,8 +1338,15 @@ Image media expansion:
   Detail-top-bar typography
   (`font-mono text-sm text-muted-foreground`, regular weight) and direct
   standard Button actions: `Connect`, text-only collection-scoped
-  `Disconnect`, text-only destructive `Delete`; the icon-only `X` clear button
-  is the rightmost control.
+  `Disconnect`, text-only `Merge` for two or more selected cards, text-only
+  destructive `Delete`; the icon-only `X` clear button is the rightmost
+  control.
+- `Merge` opens the reorder-first dialog from
+  [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md). The dialog reuses the same
+  card-reference row visual as Detail `RELATED NOTES`, lets the user reorder
+  selected cards by a drag handle, and commits through one backend
+  `mergeBlocks(orderedSlugs)` command. Frontend must not implement merge as
+  create-plus-N-deletes.
 - Batch Delete opens a plan-first destructive dialog equivalent to single-card
   deletion. It calls `prepareDeleteBlocks(selectedSlugs)`, shows eligible
   unused media when present, offers `Keep media` and `Delete media`, and commits

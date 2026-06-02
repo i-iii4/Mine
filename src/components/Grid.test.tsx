@@ -404,6 +404,7 @@ const BASE_PROPS = {
   onBatchSetTag: vi.fn(),
   onCreateAndAssignBatch: vi.fn(),
   onDeleteSelectedBlocks: vi.fn(),
+  onMergeSelectedBlocks: vi.fn(),
   onRequestRename: vi.fn(),
   onRequestDelete: vi.fn(),
 };
@@ -1295,6 +1296,46 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(gridItemForSlug("block-9511")).not.toHaveAttribute("data-feed-grid-item-selected");
     expect(gridItemForSlug("block-9512")).toHaveAttribute("data-feed-grid-item-selected", "true");
     expect(screen.getByText("1 карточка")).toBeInTheDocument();
+  });
+
+  it("opens the merge dialog from the selection island and submits selected slugs", async () => {
+    vi.useFakeTimers();
+
+    const onMergeSelectedBlocks = vi.fn(async () => undefined);
+    const blocks = [makeBlock(9518), makeBlock(9519)];
+    setBlockHeight(9518, 200);
+    setBlockHeight(9519, 220);
+
+    render(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        onMergeSelectedBlocks={onMergeSelectedBlocks}
+      />,
+    );
+    await flushAsync();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9518"]')!, {
+      metaKey: true,
+    });
+    fireEvent.click(document.querySelector('[data-block-slug="block-9519"]')!, {
+      metaKey: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Merge 2 cards")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onMergeSelectedBlocks).toHaveBeenCalledWith(["block-9518", "block-9519"]);
+    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeNull();
   });
 
   it("toggles the pointer-hovered card with Enter while group selection is active", async () => {

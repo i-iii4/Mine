@@ -44,6 +44,26 @@ function isContentScriptCompatible(url) {
   return url.startsWith("http://") || url.startsWith("https://") || url.startsWith("file://");
 }
 
+function bestContextMenuPageUrl(info, tab) {
+  return tab?.url || info?.pageUrl || info?.frameUrl || info?.srcUrl || info?.linkUrl || null;
+}
+
+async function resolveClipperTarget(tab, fallbackUrl = null) {
+  const tabId = tab?.id;
+  let tabUrl = tab?.url || fallbackUrl || null;
+
+  if (tabId && !tabUrl) {
+    try {
+      const freshTab = await chrome.tabs.get(tabId);
+      tabUrl = freshTab?.url || null;
+    } catch {
+      // Keep the original null URL: openClipperUi will use detached fallback.
+    }
+  }
+
+  return { tabId, tabUrl };
+}
+
 function prepareTabForViewportCapture(tabId, callback) {
   if (typeof tabId !== "number") {
     callback();
@@ -70,14 +90,14 @@ function showExistingClipperOverlay(tabId) {
   });
 }
 
-async function openClipperUi(tab) {
-  const tabId = tab?.id;
-  const tabUrl = tab?.url;
+async function openClipperUi(tab, options = {}) {
+  const { tabId, tabUrl } = await resolveClipperTarget(tab, options.fallbackUrl ?? null);
+  const allowWindowFallback = options.allowWindowFallback !== false;
 
   if (tabId && isContentScriptCompatible(tabUrl)) {
     try {
       if (await showExistingClipperOverlay(tabId)) {
-        return;
+        return "overlay";
       }
 
       // Inject the overlay bundle into the tab's isolated world.
@@ -89,13 +109,18 @@ async function openClipperUi(tab) {
         files: ["dist/overlay.js"],
       });
       if (await showExistingClipperOverlay(tabId)) {
-        return;
+        return "overlay";
       }
       throw new Error("overlay injected but did not acknowledge show");
     } catch (err) {
+      if (!allowWindowFallback) throw err;
       console.warn("[Mine] overlay injection failed, falling back to window", err);
       // fallthrough to detached window
     }
+  }
+
+  if (!allowWindowFallback) {
+    throw new Error("Clipper overlay unavailable for this tab");
   }
 
   // Fallback: detached popup window (service pages, CSP-restricted)
@@ -107,6 +132,7 @@ async function openClipperUi(tab) {
     ...bounds,
   });
   if (win?.id) rememberPopupWindow(win.id);
+  return "window";
 }
 
 // Icon click → open clipper UI. Alt+A shortcut (_execute_action in
@@ -229,7 +255,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 });
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+async function handleContextMenuClick(info, tab) {
   // Store context info — useClipperState will read it via getContextMenuData()
   // on mount and apply it to metadata (type=image from srcUrl, etc.)
   const context = {
@@ -238,10 +264,17 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     linkUrl: info.linkUrl || null,
     selectionText: info.selectionText || null,
     pageUrl: info.pageUrl || tab?.url || null,
+    frameUrl: info.frameUrl || null,
   };
   await chrome.storage.session.set({ contextMenuData: context });
 
-  openClipperUi(tab);
+  await openClipperUi(tab, { fallbackUrl: bestContextMenuPageUrl(info, tab) });
+}
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  handleContextMenuClick(info, tab).catch((e) => {
+    console.error("[Mine] context menu click failed:", e);
+  });
 });
 
 // ── Native messaging ──────────────────────────────────────────────────────
@@ -517,17 +550,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // Content script asks background to inject the overlay bundle into its
-  // own tab and show it. Used by Instagram feed clip button where
-  // content script already has preloadedClipData in storage.session.
+  // Content script asks background to show the overlay in its own tab.
+  // Used by the Instagram feed clip button where content script already has
+  // preloadedClipData in storage.session. This path is overlay-only: the
+  // page-injected button must not silently open a detached popup window.
   if (msg.action === "showOverlayInThisTab") {
     const tab = sender.tab;
     if (!tab) {
       sendResponse({ ok: false, error: "No sender tab" });
       return true;
     }
-    openClipperUi(tab).then(
-      () => sendResponse({ ok: true }),
+    openClipperUi(tab, {
+      fallbackUrl: typeof msg.pageUrl === "string" ? msg.pageUrl : null,
+      allowWindowFallback: false,
+    }).then(
+      (mode) => sendResponse({ ok: mode === "overlay", mode }),
       (err) => sendResponse({ ok: false, error: String(err) }),
     );
     return true;
