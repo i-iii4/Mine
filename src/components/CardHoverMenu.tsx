@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import type { IndexedBlock, LightBlock, TagCount } from "@/types";
 import { getBlock } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
+import { isSafeUrl } from "@/lib/assets";
 import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
@@ -100,7 +101,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
   topChromeInteraction = false,
   triggerVariant = "default",
 }: CardMoreMenuProps<TBlock>) {
-  const hasUrl = !!block.url;
+  const hasUrl = block.url != null && isSafeUrl(block.url);
   const filePath = `${vaultPath}/${block.slug}.md`;
   const [menuOpen, setMenuOpen] = useState(false);
   const menuOpenRef = useRef(false);
@@ -263,7 +264,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   onInteractiveOpenChange,
   onInteractionStart,
 }: CardHoverMenuPropsWithState) {
-  const hasUrl = !!block.url;
+  const hasUrl = block.url != null && isSafeUrl(block.url);
   const [menuOpen, setMenuOpen] = useState(false);
   const [channelOpen, setChannelOpen] = useState(false);
   const [keyboardMenuOpen, setKeyboardMenuOpen] = useState(false);

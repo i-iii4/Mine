@@ -1252,7 +1252,8 @@ fn extract_text_selection_inner(
     };
 
     if let Some(updated) = patched_source.as_ref() {
-        std::fs::write(&source_path, &updated).map_err(internal_text_selection_error)?;
+        files::write_atomically(&source_path, updated.as_bytes())
+        .map_err(internal_text_selection_error)?;
         let reindex_result = (|| -> Result<(), TextSelectionExtractError> {
             let reparsed =
                 parse_markdown_document(&read_slug, updated, file_saved_at(&source_path)).map_err(
@@ -1271,7 +1272,7 @@ fn extract_text_selection_inner(
             Ok(())
         })();
         if let Err(error) = reindex_result {
-            let _ = std::fs::write(&source_path, &content);
+            let _ = files::write_atomically(&source_path, content.as_bytes());
             return Err(error);
         }
     }
@@ -1280,7 +1281,7 @@ fn extract_text_selection_inner(
         Ok(indexed) => Ok(indexed),
         Err(error) => {
             if patched_source.is_some() {
-                let _ = std::fs::write(&source_path, &content);
+                let _ = files::write_atomically(&source_path, content.as_bytes());
                 let _ = index::upsert_block_with_diagnostics(
                     conn,
                     &source_block,
@@ -1380,7 +1381,8 @@ fn delete_text_selection_inner(
 
     let mut updated = content.clone();
     updated.replace_range(content_start..content_end, "");
-    std::fs::write(&source_path, &updated).map_err(internal_text_selection_error)?;
+    files::write_atomically(&source_path, updated.as_bytes())
+        .map_err(internal_text_selection_error)?;
 
     let reindex_result = (|| -> Result<IndexedBlock, TextSelectionExtractError> {
         let reparsed = parse_markdown_document(&read_slug, &updated, file_saved_at(&source_path))
@@ -1408,7 +1410,7 @@ fn delete_text_selection_inner(
     match reindex_result {
         Ok(indexed) => Ok(indexed),
         Err(error) => {
-            let _ = std::fs::write(&source_path, &content);
+            let _ = files::write_atomically(&source_path, content.as_bytes());
             let _ = index::upsert_block_with_diagnostics(
                 conn,
                 &source_block,
@@ -1688,7 +1690,7 @@ fn apply_merge_blocks(
 
     for write in reference_writes {
         let serialized = crate::domain::block::serialize_block(&write.block);
-        std::fs::write(&write.path, serialized).map_err(internal_merge_error)?;
+        files::write_atomically(&write.path, serialized.as_bytes()).map_err(internal_merge_error)?;
         index::upsert_block(conn, &write.block, Some(vault.root()))
             .map_err(internal_merge_error)?;
     }
@@ -1748,7 +1750,7 @@ fn rollback_merge_blocks(
     }
 
     for write in reference_writes {
-        if let Err(error) = std::fs::write(&write.path, &write.content) {
+        if let Err(error) = files::write_atomically(&write.path, write.content.as_bytes()) {
             log::warn!(
                 "failed to restore merge reference file {}: {error:#}",
                 write.path.display()
@@ -1779,7 +1781,7 @@ fn rollback_merge_blocks(
     }
 
     for source in sources {
-        if let Err(error) = std::fs::write(&source.path, &source.content) {
+        if let Err(error) = files::write_atomically(&source.path, source.content.as_bytes()) {
             log::warn!(
                 "failed to restore merged source file {}: {error:#}",
                 source.path.display()
@@ -2207,7 +2209,8 @@ fn rename_media_asset_inner(
     let mut affected_slugs = Vec::new();
     for write in planned_writes {
         let serialized = crate::domain::block::serialize_block(&write.block);
-        std::fs::write(&write.path, serialized).map_err(internal_media_asset_error)?;
+        files::write_atomically(&write.path, serialized.as_bytes())
+            .map_err(internal_media_asset_error)?;
         index::upsert_block(conn, &write.block, Some(vault.root()))
             .map_err(internal_media_asset_error)?;
         let _ = thumbnails::generate_for_block(&write.block, vault);
@@ -2257,7 +2260,8 @@ fn delete_media_asset_inner(
     let mut affected_slugs = Vec::new();
     for write in planned_writes {
         let serialized = crate::domain::block::serialize_block(&write.block);
-        std::fs::write(&write.path, serialized).map_err(internal_media_asset_error)?;
+        files::write_atomically(&write.path, serialized.as_bytes())
+            .map_err(internal_media_asset_error)?;
         index::upsert_block(conn, &write.block, Some(vault.root()))
             .map_err(internal_media_asset_error)?;
         let thumb_path = vault.thumb_path(&write.block.slug);
@@ -2378,7 +2382,8 @@ fn remove_media_asset_from_card_inner(
         .map_err(internal_media_asset_error)?;
 
     let serialized = crate::domain::block::serialize_block(&block);
-    std::fs::write(&source_path, serialized).map_err(internal_media_asset_error)?;
+    files::write_atomically(&source_path, serialized.as_bytes())
+        .map_err(internal_media_asset_error)?;
     index::upsert_block(conn, &block, Some(vault.root())).map_err(internal_media_asset_error)?;
     let thumb_source = thumbnails::generate_for_block(&block, vault);
     if matches!(thumb_source, thumbnails::ThumbSource::None) && thumb_path.exists() {
@@ -2954,7 +2959,7 @@ fn rename_block_file_inner(
 
     for write in &planned_writes {
         let serialized = crate::domain::block::serialize_block(&write.block);
-        std::fs::write(&write.target_path, serialized)
+        files::write_atomically(&write.target_path, serialized.as_bytes())
             .with_context(|| {
                 format!(
                     "failed to write updated block file: {}",
@@ -3474,6 +3479,7 @@ fn file_saved_at(path: &std::path::Path) -> DateTime {
         .and_then(|metadata| metadata.created().ok().or_else(|| metadata.modified().ok()))
         .unwrap_or_else(std::time::SystemTime::now);
     DateTime::new(&crate::util::system_time_to_iso8601(time))
+        // infallible inner unwrap: parsing a hardcoded valid ISO-8601 literal.
         .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
 }
 
@@ -3926,8 +3932,13 @@ mod tests {
         );
         let mut reference_writes =
             build_merge_reference_writes(&vault, &selected_slugs, &merged_block.slug).unwrap();
+        // Inject a write failure: a path whose parent is an existing FILE, so
+        // neither create_dir_all nor the write can succeed. (write_atomically
+        // creates missing parent dirs, so a merely-missing parent now succeeds.)
+        let blocker = vault.root().join("blocker-file");
+        std::fs::write(&blocker, b"x").unwrap();
         reference_writes.push(MergeReferenceWrite {
-            path: vault.root().join("missing-parent").join("Broken.md"),
+            path: blocker.join("Broken.md"),
             block: article("Broken", "Broken body"),
             content: "Broken body".to_string(),
         });

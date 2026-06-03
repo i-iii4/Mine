@@ -537,3 +537,28 @@ Manual:
 - Do not remove all visible `Card` fallback behavior in this same change.
 - Do not add visible loading spinners, service labels or debug text to the feed.
 - Do not solve every mutation refresh cascade in this phase.
+
+## Known trade-offs and residuals (audit 02.06.2026)
+
+Two known deviations are intentionally accepted rather than refactored, because
+the masonry/scroll path is the zero-jank hot path and lacks fine-grained scroll
+regression tests; reworking it risks a perceptual regression the current test
+suite would not catch.
+
+- **Grid keeps a velocity `scrollTop` in `useState`.** Beyond `useGridScroll`
+  (which keeps `scrollTop` in a ref and re-renders only when the visible set
+  changes), `Grid` runs a second RAF-coalesced scroll listener that writes
+  `scrollTop` into React state to drive velocity sampling, priority bounds,
+  autoplay selection and the media preload window. This re-renders `Grid` once
+  per scroll frame during active scrolling. It is RAF-coalesced (not per-pixel)
+  and required by the velocity-aware preload contract, so it is accepted as a
+  deliberate deviation from SPEC_GRID invariant #3 rather than reworked into the
+  ref+tick path.
+- **`GRID_TOP_INSET_PX` coordinate frame.** Layout `positions` start at
+  `top = 0` while the grid is rendered with a `marginTop` of
+  `GRID_TOP_INSET_PX` (32px). Exact viewport checks add the inset to
+  `position.top`, but `getVisibleItemsFromIndex` compares the raw `scrollTop`
+  against un-inset positions, so the visible/priority/preload windows are
+  offset by 32px. The render window (≥640px) absorbs this, so no blank or
+  missing card results; normalizing it risks shifting the visible window
+  without scroll-edge test coverage, so it is left as a documented residual.

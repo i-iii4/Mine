@@ -47,7 +47,7 @@
 | TypeScript | Язык фронтенда |
 | TailwindCSS v4 | Стилизация (CSS-first конфигурация) |
 | shadcn/ui | Дизайн-система: OKLCH-токены, 14 Radix-примитивов (Button, Dialog, Command, ContextMenu и др.), glass-вариант, `cn()` |
-| radix-ui + cmdk | Headless UI-примитивы (основа shadcn), command palette (Cmd+K поиск) |
+| radix-ui | Headless UI-примитивы (основа shadcn) |
 | lucide-react | Иконки (замена ручных SVG) |
 | class-variance-authority | Варианты компонентов (CVA) |
 | tw-animate-css | CSS-анимации для Tailwind v4 (Dialog, DropdownMenu, ContextMenu) |
@@ -55,7 +55,7 @@
 | react-markdown + remark-gfm | Рендеринг markdown в Detail.tsx и popup расширения |
 | @tailwindcss/typography | Стилизация prose-контента (статьи) |
 | Defuddle | Извлечение статей + Markdown-конвертация + YouTube-транскрипты (content script) |
-| src/lib/masonryLayout.ts | Кастомный virtualized masonry layout engine (заменил @virtuoso.dev/masonry) |
+| src/lib/masonryLayout.ts | Кастомный virtualized masonry layout engine |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 | SwiftUI | iOS UI-фреймворк (нативный, без WebView) |
 | UniFFI (Mozilla) | FFI-генератор: Rust → Swift bindings |
@@ -111,7 +111,6 @@ local-arena/
 │   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
 │   │   ├── Detail.tsx          # Lightbox: просмотр, коллекции, навигация стрелками
-│   │   ├── Search.tsx          # Cmd+K поиск (command palette)
 │   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог
 │   │   ├── DropZone.tsx        # Drag-and-drop файлов для создания блоков
 │   │   ├── ImportDialog.tsx    # 4-шаговый импорт из Are.na

@@ -5,6 +5,7 @@ mod commands;
 pub mod domain;
 #[cfg(feature = "desktop")]
 mod import;
+pub mod net;
 pub mod storage;
 pub mod util;
 #[cfg(feature = "desktop")]

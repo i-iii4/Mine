@@ -1,5 +1,71 @@
 # Devlog
 
+## 03.06.2026 [audit] — Codebase audit remediation (Phases 1–6)
+
+### Context
+
+- A full multi-agent audit (6 parallel agents + manual verification by `file:line`)
+  surfaced security, correctness, performance, hygiene, documentation and test gaps.
+- Two systemic issues stood out: some security fixes were claimed done in PLAN but
+  did not actually work (CRIT-7 `_messageId` — the host never echoed the id) or were
+  bypassable (SSRF via HTTP redirects), and PLAN status had drifted from the code
+  (CRIT-9/12 implemented but still marked `[ ]`).
+
+### Completed
+
+Phase 1 — Security:
+- Extracted SSRF validation into new `src-tauri/src/net.rs`; `fetch_validated_get`
+  revalidates every redirect hop (the old code validated only the initial URL).
+  Applied in native_host (`download_file`, `fetch_tweet_media_previews`) and
+  `import/arena_api`. Added `MAX_MEDIA_BYTES` download size cap.
+- CRIT-7: native host now echoes `_messageId` via a static set by the serial main
+  loop, so background.js correlates each response to its request instead of FIFO.
+- Narrowed `<all_urls>` → http/https/file in manifest; explicit `safeMarkdownUrl`
+  `urlTransform` in Detail + popup ReactMarkdown; `isSafeUrl` on card menus.
+
+Phase 2 — Correctness:
+- CRIT-8: `localize_body_images` returns surviving inline files; `cleanup_inline_files`
+  rolls them back on `.md` write failure.
+- Transactional bulk-tag rollback (`rewrite_collection_membership`) shared with
+  `rename_channel` block-file rollback.
+- Cancellation guard + `.catch` on all six `getBlock().then()`. Atomic `.md` write
+  (`files::write_atomically`) for `write_block_file` + all direct `fs::write` in commands.
+
+Phase 3 — Performance:
+- Are.na import off-thread (releases `vault_state` mutex, own SQLite connection).
+- FTS `blocks_au` trigger gated with `UPDATE OF`. Grid per-frame re-render and the
+  32px coordinate offset documented as deliberate residuals in
+  SPEC_FEED_SCROLL_PERFORMANCE.
+
+Phase 4 — Hygiene:
+- Removed `[DELETE]` debug logs, dead code (`transliterate`/`normalize_slug`), and
+  dead npm deps (`@virtuoso.dev/masonry`, `@tanstack/react-virtual`); commented the
+  five empty catches; justified all prod `unwrap`/`expect`; documented why the three
+  extension predicates intentionally differ (decoder capability vs feed classification).
+
+Phase 5 — Documentation:
+- Synced PLAN 9.3 (CRIT-7/8/9/10/12 → done), Phase 9 → PARTIAL, added section 9.13.
+  Fixed CLAUDE.md (removed cmdk/Search.tsx/virtuoso), ARCHITECTURE
+  (`wikilinks.target_slug` + schema-incompleteness disclaimer), AGENTS.md
+  (canonical = CLAUDE.md).
+
+Phase 6 — Tests:
+- `serialize_response` `_messageId` echo test (CRIT-7 proof — fails on old code),
+  6 `preview_plan.rs` unit tests. Remaining (channels commands, bulk-tag rollback,
+  SSRF redirect integration) tracked in PLAN 9.13.13.
+
+New modules: `src-tauri/src/net.rs` (SSRF revalidation + size cap), `src/lib/markdownUrl.ts`
+(tauri-free URL sanitizer shared by app + extension).
+
+### Verification
+
+- `cargo clippy --workspace --all-targets --locked` — clean (exit 0).
+- `cargo test --workspace --all-targets --locked` — passes; new tests confirmed explicitly.
+- `bun run lint`, `bun run build`, `bun run test:frontend` — pass.
+- `bun run build:extension` + `node --check extension/{background,content}.js` — pass.
+- Native host rebuilt and reinstalled via `bun run clipper:install-host`; desktop app
+  relaunched via `cargo tauri dev`.
+
 ## 02.06.2026 [fix] — Keep Instagram feed clip button in page overlay
 
 ### Context

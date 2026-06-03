@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { safeMarkdownUrl } from "@/lib/markdownUrl";
 import { Play } from "lucide-react";
 import { useClipperState } from "./hooks/useClipperState";
 import { resolveContentBody } from "./lib/resolveContentBody";
@@ -262,6 +263,7 @@ export function PopupApp() {
                 <div className="mine-clipper-article-preview prose prose-sm mt-1.5 max-w-none">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
+                    urlTransform={safeMarkdownUrl}
                     components={{
                       img: ({ src, alt, ...props }) => {
                         if (isVideoUrl(src)) {

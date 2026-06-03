@@ -13,8 +13,8 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
-use std::net::{IpAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -22,10 +22,10 @@ use mine_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use mine_lib::domain::channel::Channel;
 use mine_lib::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use mine_lib::domain::vault::{resolve_slug_conflict, VaultLayout};
+use mine_lib::net;
 use mine_lib::storage::{clipper_uploads, db, files, index, thumbnails};
 use mine_lib::util::now_iso8601;
 use percent_encoding::percent_decode_str;
-use url::{Host, Url};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const HOST_API_VERSION: u32 = 2;
@@ -160,15 +160,45 @@ fn write_message(json: &str) -> io::Result<()> {
     out.flush()
 }
 
+/// Sentinel for "no correlation id on the current request".
+const NO_MESSAGE_ID: i64 = -1;
+
+/// Correlation id of the request currently being handled. The serial main loop
+/// sets this before dispatch so every response can echo `_messageId` back,
+/// letting background.js match each response to its originating request instead
+/// of falling back to FIFO ordering. Sound only because the host handles
+/// exactly one message at a time — see the loop in `main`.
+static CURRENT_MESSAGE_ID: AtomicI64 = AtomicI64::new(NO_MESSAGE_ID);
+
+/// Serialize a response, injecting the current `_messageId` when one is set so
+/// the extension can correlate it. Falls back to id-less JSON when no id is
+/// active or the response is not a JSON object.
+fn serialize_response<T: serde::Serialize>(resp: &T) -> String {
+    let fallback = || r#"{"ok":false,"error":"serialization failed"}"#.to_string();
+    let id = CURRENT_MESSAGE_ID.load(Ordering::Relaxed);
+    if id < 0 {
+        return serde_json::to_string(resp).unwrap_or_else(|_| fallback());
+    }
+    match serde_json::to_value(resp) {
+        Ok(serde_json::Value::Object(mut map)) => {
+            map.insert("_messageId".to_string(), serde_json::Value::from(id));
+            serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_else(|_| fallback())
+        }
+        Ok(other) => serde_json::to_string(&other).unwrap_or_else(|_| fallback()),
+        Err(_) => fallback(),
+    }
+}
+
 #[cfg(not(test))]
 fn send_response<T: serde::Serialize>(resp: &T) {
-    let json = serde_json::to_string(resp)
-        .unwrap_or_else(|_| r#"{"ok":false,"error":"serialization failed"}"#.to_string());
-    let _ = write_message(&json);
+    let _ = write_message(&serialize_response(resp));
 }
 
 #[cfg(test)]
-fn send_response<T: serde::Serialize>(_resp: &T) {}
+fn send_response<T: serde::Serialize>(resp: &T) {
+    // Exercise serialization (and _messageId injection) without touching stdout.
+    let _ = serialize_response(resp);
+}
 
 fn send_error(msg: &str) {
     send_response(&ErrorResponse {
@@ -600,7 +630,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     }
 
     // Download inline images (and videos) for article bodies
-    let body = {
+    let (body, inline_files) = {
         let mut raw = p.body.unwrap_or_default();
 
         // For Twitter: fetch video MP4 URLs via syndication API.
@@ -628,7 +658,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             let page_url = p.url.as_deref().unwrap_or("");
             localize_body_images(&raw, vault, &slug, page_url)
         } else {
-            raw
+            (raw, Vec::new())
         }
     };
     let body = if !body.trim().is_empty() && should_write_body_h1(bt, p.url.as_deref()) {
@@ -639,6 +669,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
 
     if bt == BlockType::Article && body.trim().is_empty() {
         cleanup_resolved_media(vault, media_file.as_deref(), thumbnail_file.as_deref());
+        cleanup_inline_files(&inline_files);
         return send_error("article block requires non-empty extracted content");
     }
 
@@ -695,6 +726,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     // Write .md file
     if let Err(e) = files::write_new_block_file(vault, &block) {
         cleanup_new_block_media(vault, &block);
+        cleanup_inline_files(&inline_files);
         return send_error(&format!("failed to write block file: {e}"));
     }
 
@@ -773,6 +805,15 @@ fn should_write_body_h1(block_type: BlockType, url: Option<&str>) -> bool {
         BlockType::Article => !is_social_status,
         BlockType::Video => url.is_some() && !is_social_status,
         BlockType::Image | BlockType::File | BlockType::Channel => false,
+    }
+}
+
+/// Remove inline body media files written during localization. Rolls back
+/// orphaned `slug (image N).*` files when the block write fails, so a retried
+/// clip does not leave duplicates next to stale orphans.
+fn cleanup_inline_files(inline_files: &[std::path::PathBuf]) {
+    for path in inline_files {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -1004,111 +1045,39 @@ fn ext_from_url(url: &str) -> &str {
     }
 }
 
-/// Validate that a URL is safe to fetch (http/https only, no private IPs).
-fn validate_fetch_url(url: &str) -> anyhow::Result<()> {
-    let parsed = Url::parse(url).map_err(|e| anyhow::anyhow!("invalid URL: {e}"))?;
-    match parsed.scheme() {
-        "http" | "https" => {}
-        other => anyhow::bail!("only http:// and https:// URLs are allowed, got: {}", other),
-    }
-
-    let host = parsed
-        .host()
-        .ok_or_else(|| anyhow::anyhow!("URL has no host"))?;
-    match host {
-        Host::Ipv4(addr) => validate_public_ip(IpAddr::V4(addr))?,
-        Host::Ipv6(addr) => validate_public_ip(IpAddr::V6(addr))?,
-        Host::Domain(domain) => {
-            let lower = domain.trim_end_matches('.').to_ascii_lowercase();
-            if lower == "localhost" || lower.ends_with(".localhost") {
-                anyhow::bail!("private/loopback hosts are not allowed: {}", domain);
-            }
-            let port = parsed
-                .port_or_known_default()
-                .ok_or_else(|| anyhow::anyhow!("URL has no resolvable port"))?;
-            let mut resolved_any = false;
-            for addr in (domain, port)
-                .to_socket_addrs()
-                .map_err(|e| anyhow::anyhow!("failed to resolve host {domain}: {e}"))?
-            {
-                resolved_any = true;
-                validate_public_ip(addr.ip())?;
-            }
-            if !resolved_any {
-                anyhow::bail!("host did not resolve: {}", domain);
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_public_ip(ip: IpAddr) -> anyhow::Result<()> {
-    match ip {
-        IpAddr::V4(addr)
-            if addr.is_private()
-                || addr.is_loopback()
-                || addr.is_link_local()
-                || addr.is_broadcast()
-                || addr.is_unspecified() =>
-        {
-            anyhow::bail!("private/loopback addresses are not allowed: {}", addr);
-        }
-        IpAddr::V6(addr)
-            if addr.is_loopback()
-                || addr.is_unspecified()
-                || addr.is_unique_local()
-                || addr.is_unicast_link_local()
-                || addr.is_multicast() =>
-        {
-            anyhow::bail!("private/loopback addresses are not allowed: {}", addr);
-        }
-        _ => Ok(()),
-    }
-}
-
 /// Per-request timeout for inline-media downloads. ureq 2.x default is
 /// 30s — too long for one stuck CDN to monopolize a worker slot when
 /// the parallel pool only has 3 workers serving 15+ images.
 const INLINE_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Per-request timeout for the Twitter syndication API. Without it a hung
+/// `cdn.syndication.twimg.com` would block `save_block` on the serial host
+/// until the OS socket timeout.
+const TWITTER_API_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Download a file from URL to local path.
 /// `referer` should be the page URL (not the image URL) — CDNs validate this.
-/// Retries up to 3 times with backoff.
+/// Retries up to 3 times with backoff. SSRF validation of every redirect hop
+/// and the body-size cap live in `mine_lib::net::download_validated_to_file`.
 fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Result<()> {
-    validate_fetch_url(url)?;
+    let headers = [
+        ("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
+        ("Referer", referer),
+        ("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"),
+    ];
     let mut last_err = None;
     for attempt in 0..3u64 {
         if attempt > 0 {
             std::thread::sleep(std::time::Duration::from_millis(500 * attempt));
         }
-        match ureq::get(url)
-            .timeout(INLINE_REQUEST_TIMEOUT)
-            .set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-            .set("Referer", referer)
-            .set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-            .call()
-        {
-            Ok(resp) => {
-                let mut reader = resp.into_reader();
-                if let Some(parent) = dest.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                let mut file = std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(dest)?;
-                match std::io::copy(&mut reader, &mut file) {
-                    Ok(_) => return Ok(()),
-                    Err(error) => {
-                        let _ = std::fs::remove_file(dest);
-                        return Err(error.into());
-                    }
-                }
-            }
+        match net::download_validated_to_file(url, dest, INLINE_REQUEST_TIMEOUT, &headers) {
+            Ok(()) => return Ok(()),
             Err(e) => last_err = Some(e),
         }
     }
-    Err(last_err.unwrap().into())
+    // The loop runs at least once and only reaches here after recording an
+    // error; the fallback message is defensive, not an expected path.
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("download failed with no recorded error")))
 }
 
 /// Build an Obsidian wikilink embed for a locally-downloaded media file.
@@ -1453,7 +1422,11 @@ struct RewriteSpec {
 
 /// Phase C: dedup by byte comparison among successful downloads, build
 /// rewrite specs, apply in reverse offset order, return new body.
-fn apply_rewrites(body: &str, tasks: &[InlineTask], outcomes: &[Result<(), String>]) -> String {
+fn apply_rewrites(
+    body: &str,
+    tasks: &[InlineTask],
+    outcomes: &[Result<(), String>],
+) -> (String, Vec<std::path::PathBuf>) {
     debug_assert_eq!(tasks.len(), outcomes.len());
 
     // Dedup: pair each successful task with the earliest other successful
@@ -1480,6 +1453,16 @@ fn apply_rewrites(body: &str, tasks: &[InlineTask], outcomes: &[Result<(), Strin
             }
         }
     }
+
+    // Files that physically remain on disk after dedup: successful downloads
+    // not unlinked as duplicates. These are the inline media to roll back if
+    // the block write later fails.
+    let surviving: Vec<std::path::PathBuf> = tasks
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| outcomes[*i].is_ok() && dedup_target[*i].is_none())
+        .map(|(_, task)| task.dest_path.clone())
+        .collect();
 
     // Build rewrite specs against the ORIGINAL body so offsets stay valid.
     let mut specs: Vec<RewriteSpec> = Vec::new();
@@ -1543,13 +1526,21 @@ fn apply_rewrites(body: &str, tasks: &[InlineTask], outcomes: &[Result<(), Strin
         }
         result.replace_range(spec.range, &spec.replacement);
     }
-    result
+    (result, surviving)
 }
 
-fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &str) -> String {
+/// Localize inline body media. Returns the rewritten body and the paths of the
+/// inline files that physically remain on disk, so the caller can roll them
+/// back if the block write fails.
+fn localize_body_images(
+    body: &str,
+    vault: &VaultLayout,
+    slug: &str,
+    page_url: &str,
+) -> (String, Vec<std::path::PathBuf>) {
     let tasks = scan_inline_tasks(body, vault, slug);
     if tasks.is_empty() {
-        return body.to_string();
+        return (body.to_string(), Vec::new());
     }
     let started = std::time::Instant::now();
     log::info!(
@@ -1565,14 +1556,14 @@ fn localize_body_images(body: &str, vault: &VaultLayout, slug: &str, page_url: &
             log::warn!("inline-media: download failed url={} err={}", task.url, e);
         }
     }
-    let result = apply_rewrites(body, &tasks, &outcomes);
+    let (result, inline_files) = apply_rewrites(body, &tasks, &outcomes);
     log::info!(
         "inline-media: done in {:?}, {}/{} ok",
         started.elapsed(),
         ok,
         tasks.len()
     );
-    result
+    (result, inline_files)
 }
 
 /// Compare two files byte-by-byte. Returns true if identical.
@@ -1631,9 +1622,11 @@ fn fetch_tweet_media_previews(tweet_id: &str) -> anyhow::Result<Vec<TwitterMedia
         "https://cdn.syndication.twimg.com/tweet-result?id={}&token=0",
         tweet_id
     );
-    let resp = ureq::get(&api_url)
-        .set("User-Agent", "Mozilla/5.0")
-        .call()?;
+    let resp = net::fetch_validated_get(
+        &api_url,
+        TWITTER_API_TIMEOUT,
+        &[("User-Agent", "Mozilla/5.0")],
+    )?;
     let data: serde_json::Value = resp.into_json()?;
 
     let mut media_previews = Vec::new();
@@ -2002,6 +1995,8 @@ fn main() {
 
     // Process messages until stdin is closed
     loop {
+        // Reset the correlation id; it is set again once the request parses.
+        CURRENT_MESSAGE_ID.store(NO_MESSAGE_ID, Ordering::Relaxed);
         let msg = match read_message() {
             Ok(Some(m)) => m,
             Ok(None) => break,
@@ -2018,6 +2013,11 @@ fn main() {
                 continue;
             }
         };
+
+        // Echo this request's correlation id back on every response it produces.
+        if let Some(id) = req.params.get("_messageId").and_then(|v| v.as_i64()) {
+            CURRENT_MESSAGE_ID.store(id, Ordering::Relaxed);
+        }
 
         // Load vault: prefer per-request vault_path, fallback to config
         let vault_path = req.vault_path.clone().or_else(|| load_vault_path());
@@ -2079,6 +2079,28 @@ mod tests {
 
     fn test_dt() -> DateTime {
         DateTime::new("2026-04-24T12:00:00Z").unwrap()
+    }
+
+    #[test]
+    fn serialize_response_message_id_echo() {
+        // CRIT-7: the host must echo _messageId so background.js can match each
+        // response to its originating request instead of falling back to FIFO
+        // order. Before this fix the host never echoed the id and this would
+        // fail. Only this test mutates CURRENT_MESSAGE_ID, so it is self-contained.
+        CURRENT_MESSAGE_ID.store(42, Ordering::Relaxed);
+        let with_id = serialize_response(&ErrorResponse {
+            ok: false,
+            error: "boom".to_string(),
+        });
+        assert!(with_id.contains("\"_messageId\":42"), "got: {with_id}");
+        assert!(with_id.contains("\"error\":\"boom\""));
+
+        CURRENT_MESSAGE_ID.store(NO_MESSAGE_ID, Ordering::Relaxed);
+        let without_id = serialize_response(&ErrorResponse {
+            ok: false,
+            error: "x".to_string(),
+        });
+        assert!(!without_id.contains("_messageId"), "got: {without_id}");
     }
 
     fn test_channel(tag: &str) -> Channel {
@@ -2403,19 +2425,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_fetch_url_rejects_private_hosts() {
-        assert!(validate_fetch_url("http://127.0.0.1/image.jpg").is_err());
-        assert!(validate_fetch_url("http://10.0.0.2/image.jpg").is_err());
-        assert!(validate_fetch_url("http://localhost/image.jpg").is_err());
-        assert!(validate_fetch_url("http://[::1]/image.jpg").is_err());
-    }
-
-    #[test]
-    fn validate_fetch_url_allows_public_ip() {
-        assert!(validate_fetch_url("https://93.184.216.34/image.jpg").is_ok());
-    }
-
-    #[test]
     fn upload_query_decodes_filename_and_vault_path() {
         let url =
             "/upload?filename=Cindy-Te.jpg&vault_path=%2FUsers%2Fi_iii%2FMobile+Documents%2FMine";
@@ -2722,7 +2731,7 @@ mod tests {
         let body = "intro\n![cap](https://h.com/a.jpg)\nmore";
         let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "Slug");
         let outcomes = vec![Ok(())];
-        let rewritten = apply_rewrites(body, &tasks, &outcomes);
+        let (rewritten, _) = apply_rewrites(body, &tasks, &outcomes);
         assert_eq!(rewritten, "intro\n![[Slug (image 1).jpg|cap]]\nmore");
     }
 
@@ -2732,7 +2741,7 @@ mod tests {
         let body = "x ![a](https://h.com/x.jpg) y";
         let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
         let outcomes = vec![Err("404".to_string())];
-        assert_eq!(apply_rewrites(body, &tasks, &outcomes), body);
+        assert_eq!(apply_rewrites(body, &tasks, &outcomes).0, body);
     }
 
     #[test]
@@ -2741,7 +2750,7 @@ mod tests {
         let body = "![a](https://h.com/1.jpg)\n\n![b](https://h.com/2.jpg)";
         let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
         let outcomes = vec![Ok(()), Ok(())];
-        let rewritten = apply_rewrites(body, &tasks, &outcomes);
+        let (rewritten, _) = apply_rewrites(body, &tasks, &outcomes);
         assert_eq!(
             rewritten,
             "![[S (image 1).jpg|a]]\n\n![[S (image 2).jpg|b]]"
@@ -2760,7 +2769,7 @@ mod tests {
         let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
         assert_eq!(tasks.len(), 2);
         let outcomes = vec![Ok(()), Ok(())];
-        let rewritten = apply_rewrites(body, &tasks, &outcomes);
+        let (rewritten, _) = apply_rewrites(body, &tasks, &outcomes);
         // First image kept (with wikilink), second pair removed entirely.
         assert!(rewritten.contains("![[S (image 1).jpg|first]]"));
         assert!(!rewritten.contains("S (image 2).jpg"));
@@ -2774,9 +2783,9 @@ mod tests {
     fn apply_rewrites_zero_tasks_returns_body_unchanged() {
         let tmp = TempDir::new().unwrap();
         let body = "no images here";
-        assert_eq!(apply_rewrites(body, &[], &[]), body);
+        assert_eq!(apply_rewrites(body, &[], &[]).0, body);
         assert_eq!(
-            localize_body_images(body, &vault_at(tmp.path()), "S", ""),
+            localize_body_images(body, &vault_at(tmp.path()), "S", "").0,
             body
         );
     }

@@ -699,6 +699,13 @@ Tauri event → Frontend обновляет UI
 
 ## SQLite schema (индекс)
 
+> Иллюстративная схема ключевых таблиц. Канонический DDL и полный набор колонок
+> (включая `display_title`, `body_hash`, `preview_manifest`, `feed_playback`,
+> `related_notes`, `thumb_format`/`thumb_mtime`, таблицу `vault_conflicts` и
+> search-таблицы) живут в `src-tauri/src/storage/db.rs`. Реальная таблица
+> `blocks` заметно шире показанной ниже — не полагайтесь на этот блок как на
+> точный список колонок.
+
 ```sql
 -- Блоки (файлы)
 CREATE TABLE blocks (
@@ -758,8 +765,8 @@ CREATE VIRTUAL TABLE blocks_fts USING fts5(
 -- Wikilinks между блоками
 CREATE TABLE wikilinks (
     source_id INTEGER REFERENCES blocks(id) ON DELETE CASCADE,
-    target_path TEXT NOT NULL,            -- [[target]] — имя файла без .md
-    PRIMARY KEY (source_id, target_path)
+    target_slug TEXT NOT NULL,            -- [[target]] — имя файла без .md
+    PRIMARY KEY (source_id, target_slug)
 );
 ```
 

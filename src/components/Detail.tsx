@@ -73,6 +73,7 @@ import {
   isSafeUrl,
   legacyThumbsRoot,
 } from "@/lib/assets";
+import { safeMarkdownUrl } from "@/lib/markdownUrl";
 import { cn } from "@/lib/utils";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
@@ -306,12 +307,16 @@ export function Detail({
   }, [isClosing]);
 
   const refreshFullBlock = useCallback((slug: string) => {
-    void getBlock(slug).then((full) => {
-      if (!full || currentBlockSlugRef.current !== slug) {
-        return;
-      }
-      setFullBlock(full);
-    });
+    void getBlock(slug)
+      .then((full) => {
+        if (!full || currentBlockSlugRef.current !== slug) {
+          return;
+        }
+        setFullBlock(full);
+      })
+      .catch((error) => {
+        console.error("Failed to refresh block:", error);
+      });
   }, []);
 
   useEffect(() => {
@@ -893,11 +898,15 @@ function DetailActionRow({
   useEffect(() => {
     if (!connectOpen) return;
     let cancelled = false;
-    void getBlock(block.slug).then((full) => {
-      if (!cancelled) {
-        setSelectedTags(full?.tags ?? (isIndexedBlock(block) ? block.tags : []));
-      }
-    });
+    void getBlock(block.slug)
+      .then((full) => {
+        if (!cancelled) {
+          setSelectedTags(full?.tags ?? (isIndexedBlock(block) ? block.tags : []));
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to load tags for block:", error);
+      });
     return () => {
       cancelled = true;
     };
@@ -1170,9 +1179,17 @@ function BlockContent({
       return;
     }
     if (block.body.length >= 218) {
-      getBlock(block.slug).then((full) => {
-        if (full) setFullBody(full.body);
-      });
+      let cancelled = false;
+      getBlock(block.slug)
+        .then((full) => {
+          if (!cancelled && full) setFullBody(full.body);
+        })
+        .catch((error) => {
+          console.error("Failed to load full block body:", error);
+        });
+      return () => {
+        cancelled = true;
+      };
     }
   }, [block.slug, block.body.length, fullBlock]);
 
@@ -2730,7 +2747,11 @@ function ArticleBody({
       className="prose prose-sm max-w-none [&>:first-child]:mt-0 [&_li]:leading-5 [&_p]:leading-5"
       data-article-body
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        urlTransform={safeMarkdownUrl}
+        components={components}
+      >
         {processedBody}
       </ReactMarkdown>
       {selectionHandle && (

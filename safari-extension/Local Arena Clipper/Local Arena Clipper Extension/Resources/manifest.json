@@ -29,7 +29,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": ["http://*/*", "https://*/*", "file:///*"],
       "js": [
         "lib/twitterThreadSelection.js",
         "lib/twitterTweetContent.js",
@@ -69,7 +69,7 @@
         "dist/fonts/Geist-Variable.woff2",
         "dist/fonts/GeistMono-Variable.woff2"
       ],
-      "matches": ["<all_urls>"]
+      "matches": ["http://*/*", "https://*/*"]
     }
   ]
 }

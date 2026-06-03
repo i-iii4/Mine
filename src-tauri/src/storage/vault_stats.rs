@@ -163,6 +163,7 @@ mod tests {
                 thumbnail: None,
                 related_notes: Vec::new(),
                 source_media: None,
+                // infallible: parsing a hardcoded valid ISO-8601 literal.
                 saved_at: DateTime::new("2026-01-01T00:00:00Z").unwrap(),
                 source: None,
                 width: None,

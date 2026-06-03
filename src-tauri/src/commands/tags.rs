@@ -2,13 +2,16 @@
 //
 // Contract: SPEC_INTEGRATION.md#commands/tags
 
+use std::path::PathBuf;
+
+use rusqlite::Connection;
 use tauri::{AppHandle, State};
 
 use crate::commands::state::{current_vault_layout, AppState, CommandError};
 use crate::domain::block::{parse_markdown_document, DateTime};
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
-use crate::domain::vault::validate_slug;
-use crate::storage::index::TagCount;
+use crate::domain::vault::{validate_slug, VaultLayout};
+use crate::storage::index::{IndexedBlock, TagCount};
 use crate::storage::{db, files, index};
 use crate::util::append_startup_trace;
 
@@ -119,6 +122,81 @@ pub fn remove_tag(
     Ok(())
 }
 
+/// Apply a frontmatter collection rewrite to every affected block with
+/// all-or-nothing semantics. Original bytes are backed up first; on any
+/// failure every already-written file is restored and re-indexed from the
+/// restored bytes, so a partial failure cannot leave the vault half-renamed.
+fn rewrite_collection_membership(
+    conn: &Connection,
+    vault: &VaultLayout,
+    affected: &[IndexedBlock],
+    mut transform: impl FnMut(&mut Vec<String>),
+) -> Result<(), CommandError> {
+    // Phase 1: read and back up original bytes for every affected file.
+    let mut backups: Vec<(PathBuf, String)> = Vec::with_capacity(affected.len());
+    for indexed_block in affected {
+        let path = vault.block_path(&indexed_block.slug);
+        let (_, content) = files::read_block_file(vault, &path)?;
+        backups.push((path, content));
+    }
+
+    // Phase 2: rewrite each file; roll all of them back on the first failure.
+    for (i, indexed_block) in affected.iter().enumerate() {
+        let (path, content) = &backups[i];
+        let result = (|| -> Result<(), CommandError> {
+            let parsed = parse_markdown_document(&indexed_block.slug, content, file_saved_at(path))
+                .map_err(|e| CommandError::Internal(e.to_string()))?;
+            let mut block = parsed.block;
+            transform(&mut block.frontmatter.tags);
+            files::normalize_block_media_refs_for_index(vault, &mut block);
+            let serialized = patch_collections_frontmatter(content, &block.frontmatter.tags)
+                .map_err(CommandError::Internal)?;
+            files::write_atomically(path, serialized.as_bytes())
+                .map_err(|e| CommandError::Internal(format!("failed to write: {e}")))?;
+            index::upsert_block_with_diagnostics(
+                conn,
+                &block,
+                Some(vault.root()),
+                Some(parsed.origin.as_str()),
+                parsed.index_warning.as_deref(),
+            )?;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            restore_collection_backups(conn, vault, &backups[..=i]);
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
+/// Restore original `.md` bytes and re-index from them. Best-effort: a restore
+/// failure on one file is skipped so the remaining files still recover. Shared
+/// with `rename_channel`, which backs up block files before its DB transaction.
+pub(crate) fn restore_collection_backups(
+    conn: &Connection,
+    vault: &VaultLayout,
+    backups: &[(PathBuf, String)],
+) {
+    for (path, content) in backups {
+        if files::write_atomically(path, content.as_bytes()).is_err() {
+            continue;
+        }
+        let Some(slug) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if let Ok(parsed) = parse_markdown_document(slug, content, file_saved_at(path)) {
+            let _ = index::upsert_block_with_diagnostics(
+                conn,
+                &parsed.block,
+                Some(vault.root()),
+                Some(parsed.origin.as_str()),
+                parsed.index_warning.as_deref(),
+            );
+        }
+    }
+}
+
 /// Rename a tag in ALL blocks: find blocks with old_tag, replace with new_tag
 /// in frontmatter, write back, re-index.
 #[tauri::command(rename_all = "snake_case")]
@@ -146,33 +224,12 @@ pub fn rename_tag(
     }
 
     let affected_blocks = index::list_blocks_by_tag(&vs.conn, &normalized_old)?;
-    for indexed_block in &affected_blocks {
-        let path = vs.vault.block_path(&indexed_block.slug);
-        let (_, content) = files::read_block_file(&vs.vault, &path)?;
-        let parsed = parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path))
-            .map_err(|e| CommandError::Internal(e.to_string()))?;
-        let mut block = parsed.block;
-
-        block.frontmatter.tags.retain(|t| t != &normalized_old);
-        if !block.frontmatter.tags.contains(&normalized_new) {
-            block.frontmatter.tags.push(normalized_new.clone());
+    rewrite_collection_membership(&vs.conn, &vs.vault, &affected_blocks, |tags| {
+        tags.retain(|t| t != &normalized_old);
+        if !tags.contains(&normalized_new) {
+            tags.push(normalized_new.clone());
         }
-        files::normalize_block_media_refs_for_index(&vs.vault, &mut block);
-
-        let serialized = patch_collections_frontmatter(&content, &block.frontmatter.tags)
-            .map_err(CommandError::Internal)?;
-        std::fs::write(&path, serialized)
-            .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
-        index::upsert_block_with_diagnostics(
-            &vs.conn,
-            &block,
-            Some(vs.vault.root()),
-            Some(parsed.origin.as_str()),
-            parsed.index_warning.as_deref(),
-        )?;
-    }
-
-    Ok(())
+    })
 }
 
 /// Delete a tag from ALL blocks: find blocks with tag, remove it from
@@ -192,30 +249,9 @@ pub fn delete_tag_from_all(state: State<'_, AppState>, tag: String) -> Result<()
     validate_collection_ref(&normalized).map_err(CommandError::Internal)?;
 
     let affected_blocks = index::list_blocks_by_tag(&vs.conn, &normalized)?;
-    for indexed_block in &affected_blocks {
-        let path = vs.vault.block_path(&indexed_block.slug);
-        let (_, content) = files::read_block_file(&vs.vault, &path)?;
-        let parsed = parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path))
-            .map_err(|e| CommandError::Internal(e.to_string()))?;
-        let mut block = parsed.block;
-
-        block.frontmatter.tags.retain(|t| t != &normalized);
-        files::normalize_block_media_refs_for_index(&vs.vault, &mut block);
-
-        let serialized = patch_collections_frontmatter(&content, &block.frontmatter.tags)
-            .map_err(CommandError::Internal)?;
-        std::fs::write(&path, serialized)
-            .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
-        index::upsert_block_with_diagnostics(
-            &vs.conn,
-            &block,
-            Some(vs.vault.root()),
-            Some(parsed.origin.as_str()),
-            parsed.index_warning.as_deref(),
-        )?;
-    }
-
-    Ok(())
+    rewrite_collection_membership(&vs.conn, &vs.vault, &affected_blocks, |tags| {
+        tags.retain(|t| t != &normalized);
+    })
 }
 
 fn file_saved_at(path: &std::path::Path) -> DateTime {
@@ -224,6 +260,7 @@ fn file_saved_at(path: &std::path::Path) -> DateTime {
         .and_then(|metadata| metadata.created().ok().or_else(|| metadata.modified().ok()))
         .unwrap_or_else(std::time::SystemTime::now);
     DateTime::new(&crate::util::system_time_to_iso8601(time))
+        // infallible inner unwrap: parsing a hardcoded valid ISO-8601 literal.
         .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
 }
 

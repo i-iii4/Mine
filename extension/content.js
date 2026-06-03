@@ -99,7 +99,9 @@
         const embed = parsed.pathname.match(/\/(?:embed|shorts)\/([\w-]+)/);
         if (embed) return embed[1];
       }
-    } catch {}
+    } catch {
+      // Malformed URL — fall through to null.
+    }
     return null;
   }
 

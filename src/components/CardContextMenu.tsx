@@ -12,6 +12,7 @@ import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { LightBlock, TagCount } from "@/types";
 import { getBlock } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
+import { isSafeUrl } from "@/lib/assets";
 import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
@@ -58,7 +59,7 @@ export function CardTagMenu({
 }: CardTagMenuProps) {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const filePath = `${vaultPath}/${block.slug}.md`;
-  const hasUrl = !!block.url;
+  const hasUrl = block.url != null && isSafeUrl(block.url);
 
   useEffect(() => {
     let cancelled = false;

@@ -231,3 +231,60 @@ pub fn collect_article_preview_images(
     }
     paths
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn primary_preview_path_is_slug_jpg() {
+        assert_eq!(primary_preview_path("Sunset Tokyo"), "Sunset Tokyo.jpg");
+    }
+
+    #[test]
+    fn is_remote_media_only_http_schemes() {
+        assert!(is_remote_media("http://x.com/a.jpg"));
+        assert!(is_remote_media("https://x.com/a.jpg"));
+        assert!(!is_remote_media("a.jpg"));
+        assert!(!is_remote_media("sub/a.jpg"));
+    }
+
+    #[test]
+    fn media_ext_lower_strips_query_and_lowercases() {
+        assert_eq!(media_ext_lower("photo.JPG").as_deref(), Some("jpg"));
+        assert_eq!(media_ext_lower("clip.MP4?name=large").as_deref(), Some("mp4"));
+        assert_eq!(media_ext_lower("noext"), None);
+    }
+
+    #[test]
+    fn image_and_video_ext_predicates() {
+        assert!(is_image_ext("png"));
+        assert!(is_image_ext("avif"));
+        assert!(!is_image_ext("mp4"));
+        assert!(is_video_ext("mp4"));
+        assert!(is_video_ext("webm"));
+        assert!(!is_video_ext("png"));
+    }
+
+    #[test]
+    fn image_and_video_media_classify_by_extension() {
+        assert!(is_image_media("a/b.png"));
+        assert!(!is_image_media("a/b.mp4"));
+        assert!(is_video_media("a/b.mov"));
+        assert!(!is_video_media("a/b.txt"));
+    }
+
+    #[test]
+    fn local_media_items_filters_remote_and_predicate() {
+        let json = r#"["local.png","https://x.com/remote.png","clip.mp4"]"#;
+        assert_eq!(
+            local_media_items(Some(json), is_image_media),
+            vec!["local.png".to_string()]
+        );
+        assert_eq!(
+            local_media_items(Some(json), is_video_media),
+            vec!["clip.mp4".to_string()]
+        );
+        assert!(local_media_items(None, is_image_media).is_empty());
+    }
+}

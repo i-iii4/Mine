@@ -1164,11 +1164,15 @@ export function AppWithVault({
 
     let cancelled = false;
     setSelectedBlockTags([]);
-    void getBlock(selectedBlock.slug).then((full) => {
-      if (!cancelled && full) {
-        setSelectedBlockTags(full.tags);
-      }
-    });
+    void getBlock(selectedBlock.slug)
+      .then((full) => {
+        if (!cancelled && full) {
+          setSelectedBlockTags(full.tags);
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to load block tags:", error);
+      });
     return () => {
       cancelled = true;
     };
@@ -1544,23 +1548,27 @@ export function AppWithVault({
           slug: event.payload.new_slug,
         };
       });
-      void getBlock(event.payload.new_slug).then((full) => {
-        if (!full) {
-          return;
-        }
-        setSelectedBlock((current) => {
-          if (!current) {
-            return current;
+      void getBlock(event.payload.new_slug)
+        .then((full) => {
+          if (!full) {
+            return;
           }
-          if (
-            current.slug !== event.payload.old_slug
-            && current.slug !== event.payload.new_slug
-          ) {
-            return current;
-          }
-          return full;
+          setSelectedBlock((current) => {
+            if (!current) {
+              return current;
+            }
+            if (
+              current.slug !== event.payload.old_slug
+              && current.slug !== event.payload.new_slug
+            ) {
+              return current;
+            }
+            return full;
+          });
+        })
+        .catch((error) => {
+          console.error("Failed to refresh renamed block:", error);
         });
-      });
       scheduleRefresh({
         grid: true,
         previews: true,
@@ -1885,11 +1893,15 @@ export function AppWithVault({
 
   const handleOpenRelatedNote = useCallback((slug: string) => {
     const blockAnchor = relatedNoteBlockAnchor(slug);
-    void getBlock(baseRelatedNoteSlug(slug)).then((block) => {
-      if (block) {
-        openDetailBlock(block, blockAnchor);
-      }
-    });
+    void getBlock(baseRelatedNoteSlug(slug))
+      .then((block) => {
+        if (block) {
+          openDetailBlock(block, blockAnchor);
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to open related note:", error);
+      });
   }, [openDetailBlock]);
 
   // ── Tag management ──────────────────────────────────────────────────────
@@ -2732,22 +2744,16 @@ export function AppWithVault({
 
   const performDeleteBlock = useCallback(
     async (slug: string, deleteUnusedMedia: boolean) => {
-      console.log("[DELETE] start", slug, "currentTag:", currentTag, "selectedBlock:", selectedBlock?.slug);
       setSelectedBlock(null);
       setSelectedBlockAnchor(null);
-      console.log("[DELETE] cleared selectedBlock");
       try {
-        console.log("[DELETE] calling deleteBlock IPC...");
         await deleteBlock(slug, deleteUnusedMedia);
-        console.log("[DELETE] deleteBlock IPC done");
       } catch (err) {
-        console.error("[DELETE] deleteBlock FAILED:", err);
+        console.error("Failed to delete block:", err);
       }
-      console.log("[DELETE] calling reloadAllSnapshots...");
       await reloadAllSnapshots();
-      console.log("[DELETE] reloadAllSnapshots done, blocks:", blocks.length, "tags:", tags.length);
     },
-    [reloadAllSnapshots, currentTag, selectedBlock, blocks.length, tags.length],
+    [reloadAllSnapshots],
   );
 
   const confirmDeleteBlock = useCallback(

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use tauri::{AppHandle, State};
 
 use crate::commands::state::{current_vault_layout, AppState, CommandError};
-use crate::commands::tags::patch_collections_frontmatter;
+use crate::commands::tags::{patch_collections_frontmatter, restore_collection_backups};
 use crate::domain::block::{
     parse_block, parse_markdown_document, serialize_block, Block, BlockType, DateTime, Frontmatter,
 };
@@ -220,7 +220,7 @@ pub fn reorder_channels(
                     if block.frontmatter.block_type == BlockType::Channel {
                         block.frontmatter.position = Some(*pos);
                         let serialized = serialize_block(&block);
-                        let _ = std::fs::write(&md_path, serialized);
+                        let _ = files::write_atomically(&md_path, serialized.as_bytes());
                     }
                 }
             }
@@ -289,8 +289,11 @@ pub fn rename_channel(
         .execute("BEGIN", [])
         .map_err(|e| CommandError::Internal(e.to_string()))?;
 
-    // Update all blocks that have the old tag
+    // Update all blocks that have the old tag. Back up original bytes first so
+    // a mid-loop failure restores the .md files too, not just the DB rows — a
+    // DB ROLLBACK alone would leave the vault half-renamed.
     let affected_blocks = index::list_blocks_by_tag(&vs.conn, &normalized_old)?;
+    let mut backups: Vec<(std::path::PathBuf, String)> = Vec::new();
     for indexed_block in &affected_blocks {
         if indexed_block.slug.is_empty() {
             continue;
@@ -300,17 +303,23 @@ pub fn rename_channel(
             Ok((_, c)) => c,
             Err(e) => {
                 vs.conn.execute("ROLLBACK", []).ok();
+                restore_collection_backups(&vs.conn, &vs.vault, &backups);
                 return Err(CommandError::Internal(format!(
                     "failed to read {}: {}",
                     indexed_block.slug, e
                 )));
             }
         };
-        let parsed = parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path))
-            .map_err(|e| {
-            vs.conn.execute("ROLLBACK", []).ok();
-            CommandError::Internal(e.to_string())
-        })?;
+        backups.push((path.clone(), content.clone()));
+        let parsed =
+            match parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path)) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    vs.conn.execute("ROLLBACK", []).ok();
+                    restore_collection_backups(&vs.conn, &vs.vault, &backups);
+                    return Err(CommandError::Internal(e.to_string()));
+                }
+            };
         let mut block = parsed.block;
 
         // Replace old collection ref with new collection ref.
@@ -320,22 +329,30 @@ pub fn rename_channel(
         }
         files::normalize_block_media_refs_for_index(&vs.vault, &mut block);
 
-        let serialized =
-            patch_collections_frontmatter(&content, &block.frontmatter.tags).map_err(|e| {
+        let serialized = match patch_collections_frontmatter(&content, &block.frontmatter.tags) {
+            Ok(serialized) => serialized,
+            Err(e) => {
                 vs.conn.execute("ROLLBACK", []).ok();
-                CommandError::Internal(e)
-            })?;
-        if let Err(e) = std::fs::write(&path, serialized) {
+                restore_collection_backups(&vs.conn, &vs.vault, &backups);
+                return Err(CommandError::Internal(e));
+            }
+        };
+        if let Err(e) = files::write_atomically(&path, serialized.as_bytes()) {
             vs.conn.execute("ROLLBACK", []).ok();
+            restore_collection_backups(&vs.conn, &vs.vault, &backups);
             return Err(CommandError::Internal(format!("failed to write: {}", e)));
         }
-        index::upsert_block_with_diagnostics(
+        if let Err(e) = index::upsert_block_with_diagnostics(
             &vs.conn,
             &block,
             Some(vs.vault.root()),
             Some(parsed.origin.as_str()),
             parsed.index_warning.as_deref(),
-        )?;
+        ) {
+            vs.conn.execute("ROLLBACK", []).ok();
+            restore_collection_backups(&vs.conn, &vs.vault, &backups);
+            return Err(e.into());
+        }
     }
 
     // Create new channel with same metadata
@@ -348,20 +365,35 @@ pub fn rename_channel(
         created_at: existing.created_at.clone(),
     };
 
-    // Write new channel .md, delete old
+    // Write new channel .md. On any failure below, roll the DB transaction
+    // back and restore the block files; the old channel page is deleted only
+    // after a durable COMMIT so a failure never destroys it.
     let new_block = channel_to_block(&new_channel);
-    files::write_block_file(&vs.vault, &new_block)?;
     let old_path = vs.vault.block_path(&normalized_old);
-    if old_path.exists() {
-        let _ = std::fs::remove_file(&old_path);
+    if let Err(e) = files::write_block_file(&vs.vault, &new_block) {
+        vs.conn.execute("ROLLBACK", []).ok();
+        restore_collection_backups(&vs.conn, &vs.vault, &backups);
+        return Err(e.into());
     }
 
-    index::upsert_channel(&vs.conn, &new_channel)?;
-    index::remove_channel(&vs.conn, &normalized_old)?;
+    if let Err(e) = index::upsert_channel(&vs.conn, &new_channel) {
+        vs.conn.execute("ROLLBACK", []).ok();
+        restore_collection_backups(&vs.conn, &vs.vault, &backups);
+        return Err(e.into());
+    }
+    if let Err(e) = index::remove_channel(&vs.conn, &normalized_old) {
+        vs.conn.execute("ROLLBACK", []).ok();
+        restore_collection_backups(&vs.conn, &vs.vault, &backups);
+        return Err(e.into());
+    }
 
     vs.conn
         .execute("COMMIT", [])
         .map_err(|e| CommandError::Internal(e.to_string()))?;
+
+    if old_path.exists() {
+        let _ = std::fs::remove_file(&old_path);
+    }
 
     let tags = index::get_all_tags(&vs.conn)?;
     let count = tags
@@ -378,6 +410,7 @@ fn file_saved_at(path: &std::path::Path) -> DateTime {
         .and_then(|metadata| metadata.created().ok().or_else(|| metadata.modified().ok()))
         .unwrap_or_else(std::time::SystemTime::now);
     DateTime::new(&crate::util::system_time_to_iso8601(time))
+        // infallible inner unwrap: parsing a hardcoded valid ISO-8601 literal.
         .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
 }
 

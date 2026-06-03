@@ -26,15 +26,55 @@ pub fn write_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf> {
     let path = vault.block_path(&block.slug);
     let content = serialize_block(block);
 
+    write_atomically(&path, content.as_bytes())
+        .with_context(|| format!("failed to write block file: {}", path.display()))?;
+
+    Ok(path)
+}
+
+/// Atomically write bytes to `path`: write a temp file in the same directory,
+/// fsync it, then rename over the destination. A crash leaves either the old
+/// file or the complete new one, never a truncated `.md`. The vault is the
+/// durable, iCloud-synced source of truth, so partial `.md` writes must never
+/// be observable (mirrors `thumbnails::write_thumb_atomically` for derived
+/// files).
+pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create directory: {}", parent.display()))?;
     }
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("block");
+    let tmp = path.with_file_name(format!(
+        "{file_name}.tmp.{}.{}",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
 
-    std::fs::write(&path, content)
-        .with_context(|| format!("failed to write block file: {}", path.display()))?;
+    let write_result = (|| -> Result<()> {
+        let mut file = std::fs::File::create(&tmp)
+            .with_context(|| format!("failed to create temp file: {}", tmp.display()))?;
+        file.write_all(bytes)
+            .with_context(|| format!("failed to write temp file: {}", tmp.display()))?;
+        file.sync_all()
+            .with_context(|| format!("failed to fsync temp file: {}", tmp.display()))?;
+        Ok(())
+    })();
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
 
-    Ok(path)
+    std::fs::rename(&tmp, path).with_context(|| {
+        format!(
+            "failed to rename temp file {} -> {}",
+            tmp.display(),
+            path.display()
+        )
+    })?;
+    Ok(())
 }
 
 /// Write a new block file without overwriting an existing user file.
@@ -378,6 +418,11 @@ pub fn persist_new_reference_block(
         .ok_or_else(|| anyhow::anyhow!("block not found after creation"))
 }
 
+/// Image extensions the bundled `image` crate can decode for thumbnail
+/// generation. Intentionally narrower than `preview_plan::is_image_ext` (which
+/// classifies feed media broadly): AVIF/HEIC are excluded here because the
+/// decoder cannot read them, so attempting a thumbnail would only fail. Kept
+/// separate from `media_dimensions` for the same decoder-capability reason.
 fn is_image_ext(ext: &str) -> bool {
     matches!(
         ext.to_lowercase().as_str(),

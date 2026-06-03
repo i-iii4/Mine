@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::commands::state::{AppState, CommandError};
 use crate::import::arena_api;
 use crate::import::importer;
+use crate::storage::db;
 
 // ─── Response types ──────────────────────────────────────────────────────────
 
@@ -56,19 +57,26 @@ pub fn import_arena_channels(
     state: State<'_, AppState>,
     channels: Vec<ImportChannelRequest>,
 ) -> Result<Vec<importer::ImportChannelResult>, CommandError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    // Clone the layout + db path under a short lock, then release vault_state
+    // before the import's network and file IO. Holding the mutex across a
+    // multi-channel import froze every other command for minutes; the import
+    // runs on its own SQLite connection instead (mirrors start_background_sync).
+    let (vault, db_path) = {
+        let vault_state = state
+            .vault_state
+            .lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+        (vs.vault.clone(), vs.vault.index_db_path())
+    };
+
+    let conn = db::open_or_create(&db_path)?;
 
     let mut results = Vec::new();
-
     for req in &channels {
-        let result =
-            importer::import_channel(&vs.conn, &vs.vault, &req.slug, &req.tag, |progress| {
-                let _ = app.emit("import-progress", &progress);
-            });
+        let result = importer::import_channel(&conn, &vault, &req.slug, &req.tag, |progress| {
+            let _ = app.emit("import-progress", &progress);
+        });
 
         match result {
             Ok(r) => results.push(r),
@@ -88,7 +96,7 @@ pub fn import_arena_channels(
     let _ = app.emit(
         "vault-changed",
         VaultChangedPayload {
-            path: vs.vault.root().to_string_lossy().into_owned(),
+            path: vault.root().to_string_lossy().into_owned(),
         },
     );
 

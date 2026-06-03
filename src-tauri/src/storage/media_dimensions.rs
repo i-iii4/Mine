@@ -150,7 +150,11 @@ pub fn build_media_dimensions_json_from_sources(
 
 /// Fast check whether a filename has an image extension. We only call the
 /// image decoder for files that look like images, so other file types don't
-/// trigger decoder failures.
+/// trigger decoder failures. AVIF/HEIC are listed best-effort: the bundled
+/// `image` decoder may not read them, in which case dimension extraction simply
+/// returns `None`. This set is intentionally distinct from
+/// `preview_plan::is_image_ext` (feed classification) and `files::is_image_ext`
+/// (thumbnail-decodable formats) — each predicate serves a different purpose.
 fn is_image_extension(name: &str) -> bool {
     let lower = name.to_lowercase();
     matches!(

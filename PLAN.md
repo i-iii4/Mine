@@ -551,7 +551,7 @@ Goal: расширение для Chrome и Safari — сохранение сс
 | 8.9 | Переделка UX клиппера: Content/Link, недавние каналы, встроенный список, HTTP-заголовки для загрузки картинок, async контекстное меню | [x] |
 | 8.10 | Багфикс: Referer на URL страницы (не картинки), реалистичный User-Agent, windows.create() вместо openPopup(), адаптивный размер окна | [x] |
 
-### Phase 9 — Аудит и укрепление кодовой базы [DONE]
+### Phase 9 — Аудит и укрепление кодовой базы [PARTIAL]
 
 Goal: довести проект до продакшен-качества по результатам аудитов ([AUDIT.md](AUDIT.md)). Устранить все критические и высокие проблемы, закрыть пробелы в тестовом покрытии, укрепить безопасность.
 
@@ -583,16 +583,16 @@ Goal: довести проект до продакшен-качества по 
 | 9.2.6 | Добавить индекс `idx_blocks_saved_at` | HIGH-1 | [x] |
 | 9.2.7 | Добавить индекс `idx_block_tags_block_id` | HIGH-1 | [x] |
 
-#### 9.3 — Критические исправления повторного и третьего аудитов [PENDING]
+#### 9.3 — Критические исправления повторного и третьего аудитов [DONE]
 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
-| 9.3.1 | FIFO → `Map<messageId, callback>` + очистка таймеров в `onDisconnect` | CRIT-7 | [ ] |
-| 9.3.2 | Откат медиафайлов при ошибке записи .md в native_host | CRIT-8 | [ ] |
-| 9.3.3 | `lock().unwrap()` → `map_err` в watcher/watch.rs:60 | CRIT-9 | [ ] |
-| 9.3.4 | Валидатор slug на IPC-границе: `^[a-z0-9-]+$` | CRIT-10 | [ ] |
+| 9.3.1 | Native messaging matching: хост эхо-возвращает `_messageId`, background.js матчит по нему (FIFO остаётся fallback для старых хостов) | CRIT-7 | [x] |
+| 9.3.2 | Откат медиафайлов при ошибке записи .md в native_host (primary media + inline-картинки статьи через `cleanup_inline_files`) | CRIT-8 | [x] |
+| 9.3.3 | `lock().unwrap()` → `into_inner()` в watcher/watch.rs | CRIT-9 | [x] |
+| 9.3.4 | Валидатор slug на IPC-границе через `validate_slug` (traversal/NUL/`\`/абсолютные/`..`); устаревший критерий `^[a-z0-9-]+$` неприменим после Unicode-NFC identity (Phase 18) | CRIT-10 | [x] |
 | 9.3.5 | Route-scoped `list_grid_blocks(current_tag)` без per-block tags; следующая цель — ещё более лёгкий first-screen DTO | CRIT-11 | [x] |
-| 9.3.6 | SQL-проверка slug вместо загрузки всех блоков в create_block | CRIT-12 | [ ] |
+| 9.3.6 | SQL-проверка slug вместо загрузки всех блоков в create_block | CRIT-12 | [x] |
 | 9.3.7 | `has_thumbnail` / `thumb_format` / `thumb_mtime` в SQLite вместо N syscall-ов в `list_channel_previews` | CRIT-13 | [x] |
 | 9.3.8 | `catch_unwind` в потоке thumb-gen | CRIT-14 | [x] |
 | 9.3.9 | `list_channel_previews` без полного `list_blocks_light()`: SQL top-N slugs для `__all__` и per-tag | PERF-1 | [x] |
@@ -735,6 +735,26 @@ Goal: довести проект до продакшен-качества по 
      |
 9.12 (документация)  — финальный шаг
 ```
+
+#### 9.13 — Ремедиация аудита 02.06.2026 [PARTIAL]
+
+Полный аудит кодовой базы (6 параллельных агентов + ручная верификация по `file:line`). Закрытые пункты:
+
+| # | Task | Status |
+|---|------|--------|
+| 9.13.1 | SSRF: `validate_fetch_url` вынесен в `src-tauri/src/net.rs`, ревалидация каждого redirect-hop через `fetch_validated_get`; применён в native_host + arena_api | [x] |
+| 9.13.2 | Лимит размера скачивания (`MAX_MEDIA_BYTES`) в `net::download_validated_to_file` | [x] |
+| 9.13.3 | CRIT-7 echo `_messageId` (см. 9.3.1); CRIT-8 inline rollback `cleanup_inline_files` (см. 9.3.2) | [x] |
+| 9.13.4 | Сужение `<all_urls>` → http/https/file в manifest content_scripts; http/https в web_accessible_resources | [x] |
+| 9.13.5 | `safeMarkdownUrl` `urlTransform` в Detail + popup ReactMarkdown; `isSafeUrl` на card-меню | [x] |
+| 9.13.6 | Транзакционный откат bulk-tag (`rewrite_collection_membership`) и rename_channel block-file rollback | [x] |
+| 9.13.7 | Cancellation-guard + `.catch` на всех 6 `getBlock().then()` | [x] |
+| 9.13.8 | Атомарная запись `.md` (`files::write_atomically`) для write_block_file + всех прямых `fs::write` в командах | [x] |
+| 9.13.9 | Импорт Are.na off-thread (release `vault_state` mutex, отдельное соединение) | [x] |
+| 9.13.10 | FTS-триггер `blocks_au` с `UPDATE OF`-гардом (нет лишнего FTS-rebuild при sync thumb-метаданных) | [x] |
+| 9.13.11 | Гигиена: удалены debug-логи, мёртвый код (`transliterate`/`normalize_slug`), обоснованы prod `unwrap`, закрыты пустые `catch`, удалены мёртвые npm-deps | [x] |
+| 9.13.12 | Grid per-frame re-render и `GRID_TOP_INSET_PX` coord — задокументированы как осознанные residuals в SPEC_FEED_SCROLL_PERFORMANCE | [x] |
+| 9.13.13 | Тесты: preview_plan.rs (6 unit), `serialize_response` echo `_messageId` (CRIT-7 proof) — сделано. Остаются: channels.rs commands (нужен extract-internal рефактор под State), bulk-tag rollback, SSRF redirect integration (нужен mock HTTP-сервер) | [~] |
 
 ### Phase 10 — UX: навигация, сайдбар, устойчивость [COMPLETED]
 

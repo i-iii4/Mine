@@ -6,12 +6,18 @@
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::io::Read;
 use std::thread;
 use std::time::Duration;
+
+use crate::net;
 
 const API_BASE: &str = "https://api.are.na/v2";
 const PER_PAGE: usize = 50;
 const RATE_LIMIT_MS: u64 = 300;
+/// Overall timeout per Are.na HTTP request. Are.na documents no limit; 20s
+/// tolerates slow channel pages without hanging the import thread forever.
+const ARENA_TIMEOUT: Duration = Duration::from_secs(20);
 
 // ─── API response types ──────────────────────────────────────────────────────
 
@@ -93,8 +99,7 @@ pub fn fetch_user_channels(username: &str) -> Result<Vec<ArenaChannel>> {
 
         log::info!("fetching arena channels: {}", url);
 
-        let response: ChannelsResponse = ureq::get(&url)
-            .call()
+        let response: ChannelsResponse = net::fetch_validated_get(&url, ARENA_TIMEOUT, &[])
             .with_context(|| format!("failed to fetch Are.na channels for {}", username))?
             .into_json()
             .context("failed to parse Are.na channels response")?;
@@ -127,8 +132,7 @@ pub fn fetch_channel_blocks(channel_slug: &str) -> Result<Vec<ArenaBlock>> {
 
         log::info!("fetching arena blocks: {} page {}", channel_slug, page);
 
-        let response: ContentsResponse = ureq::get(&url)
-            .call()
+        let response: ContentsResponse = net::fetch_validated_get(&url, ARENA_TIMEOUT, &[])
             .with_context(|| format!("failed to fetch blocks for channel {}", channel_slug))?
             .into_json()
             .context("failed to parse channel contents")?;
@@ -164,15 +168,17 @@ pub fn fetch_channel_blocks(channel_slug: &str) -> Result<Vec<ArenaBlock>> {
 pub fn download_file(url: &str) -> Result<Vec<u8>> {
     log::info!("downloading: {}", url);
 
-    let response = ureq::get(url)
-        .call()
-        .with_context(|| format!("failed to download {}", url))?;
+    let response = net::fetch_validated_get(url, ARENA_TIMEOUT, &[])?;
 
     let mut bytes = Vec::new();
     response
         .into_reader()
+        .take(net::MAX_MEDIA_BYTES + 1)
         .read_to_end(&mut bytes)
         .with_context(|| format!("failed to read response body from {}", url))?;
+    if bytes.len() as u64 > net::MAX_MEDIA_BYTES {
+        anyhow::bail!("media body exceeds {} bytes: {}", net::MAX_MEDIA_BYTES, url);
+    }
 
     Ok(bytes)
 }

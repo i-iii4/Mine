@@ -146,13 +146,17 @@ chrome.action.onClicked.addListener((tab) => {
     chrome.action.setBadgeText({ text: "•" });
     chrome.action.setBadgeBackgroundColor({ color: "#22c55e" });
     setTimeout(() => chrome.action.setBadgeText({ text: "" }), 1500);
-  } catch {}
+  } catch {
+    // Badge is cosmetic; ignore environments where the action API is absent.
+  }
   openClipperUi(tab).catch((e) => {
     console.error("[Mine] openClipperUi threw:", e);
     try {
       chrome.action.setBadgeText({ text: "ERR" });
       chrome.action.setBadgeBackgroundColor({ color: "#dc2626" });
-    } catch {}
+    } catch {
+      // Badge is cosmetic; ignore if the action API is unavailable.
+    }
   });
 });
 
@@ -281,7 +285,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 // Send a message to the native host and return the response.
 // Uses connectNative for persistent connection within a session.
-// Requests/responses are matched by messageId (not FIFO order).
+// Responses are matched by the messageId the host echoes back; older hosts
+// that don't echo it fall back to FIFO order (resolve oldest pending).
 let nativePort = null;
 const pendingCallbacks = new Map();
 let messageId = 0;
@@ -401,7 +406,9 @@ async function broadcastChannelsChanged(tag) {
     if (runtimeSend && typeof runtimeSend.catch === "function") {
       runtimeSend.catch(() => {});
     }
-  } catch {}
+  } catch {
+    // Best-effort broadcast: no receiver (popup closed) is an expected no-op.
+  }
 
   try {
     const tabs = await chrome.tabs.query({});
@@ -411,7 +418,9 @@ async function broadcastChannelsChanged(tag) {
         void chrome.runtime.lastError;
       });
     }
-  } catch {}
+  } catch {
+    // Best-effort broadcast: a tab with no content-script listener is expected.
+  }
 }
 
 async function ensureDefuddleInjected(sender) {

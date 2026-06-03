@@ -249,7 +249,9 @@ fn create_schema(conn: &Connection) -> Result<()> {
         conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_blocks_card_kind ON blocks(card_kind)");
 
     conn.execute_batch(
-        "CREATE TRIGGER blocks_au AFTER UPDATE ON blocks BEGIN
+        "CREATE TRIGGER blocks_au
+            AFTER UPDATE OF title, display_title, fallback_label, description, body
+            ON blocks BEGIN
             INSERT INTO blocks_fts(blocks_fts, rowid, title, description, body)
             VALUES (
                 'delete',

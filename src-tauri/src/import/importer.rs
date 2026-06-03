@@ -163,6 +163,7 @@ fn import_single_block(
     // Parse saved_at
     let saved_at_str = normalize_datetime(&arena_block.created_at);
     let saved_at = DateTime::new(&saved_at_str)
+        // infallible inner unwrap: parsing a hardcoded valid ISO-8601 literal.
         .unwrap_or_else(|_| DateTime::new("2026-01-01T00:00:00Z").unwrap());
 
     // Build block

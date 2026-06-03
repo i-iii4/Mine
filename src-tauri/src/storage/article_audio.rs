@@ -336,6 +336,7 @@ fn file_saved_at(path: &std::path::Path) -> DateTime {
         .and_then(|metadata| metadata.created().ok().or_else(|| metadata.modified().ok()))
         .unwrap_or_else(std::time::SystemTime::now);
     DateTime::new(&crate::util::system_time_to_iso8601(time))
+        // infallible inner unwrap: parsing a hardcoded valid ISO-8601 literal.
         .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
 }
 
