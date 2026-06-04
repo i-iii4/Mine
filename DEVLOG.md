@@ -1,5 +1,40 @@
 # Devlog
 
+## 04.06.2026 — Удаление Chrome surfaces variant 2
+
+### Контекст
+
+- `Chrome surfaces variant 2` — переключатель в Settings, менявший местами токены
+  `chrome`/`accent` между главным toolbar и баром раскрытой карточки. В Dark разница
+  этих токенов (ΔL 0.012) почти неразличима, поэтому два режима выглядели похоже и
+  систематически путали при обсуждении поверхностей: одно поведение имело два
+  взаимоисключающих режима.
+- Решение: убрать вариант полностью, оставить единственную дефолтную раскладку
+  (variant 1).
+
+### Сделано
+
+- Удалён модуль `src/lib/chromeSurfaceVariant.ts` целиком.
+- `App.tsx`: убраны стейт `chromeSurfaceVariant`, persist-эффект и импорт; четыре
+  тернарника схлопнуты в ветку variant 1 (`topChromeSurfaceClass = "bg-chrome"`,
+  токен `"--chrome"`, secondary bar `detailLayerEntered ? "bg-accent" : "bg-background"`,
+  активный sidebar-поиск `"bg-accent"`).
+- `Detail.tsx`, `Sidebar.tsx`: убран проп; бары раскрытой карточки и link-editor →
+  `"bg-accent"` безусловно.
+- `ThemeMenuButton.tsx`: убраны два пропа и галка `Chrome surfaces variant 2`.
+- Тесты: мок `ThemeMenuButton` в `App.test.tsx` упрощён, variant-2-тест переписан на
+  проверку дефолтных поверхностей, тест галки в `ThemeMenuButton.test.tsx` удалён.
+- Документация: `DESIGN_SYSTEM.md` и `SPEC_FRONTEND.md` очищены от описаний variant 2.
+
+### Итог
+
+- Единая предсказуемая раскладка: главный toolbar `chrome`, бар карточки и нижнее меню
+  `accent` (на одном токене — согласованность, отсутствие которой и порождало путаницу).
+- Гейты зелёные: `eslint` чисто, vitest 463 теста, `tsc -b && vite build` без ошибок.
+- Мёртвый ключ `mine.chromeSurfaceVariant` в `localStorage` пользователей безвреден.
+- Сопутствующе в этой сессии: страница дизайн-системы (`ComponentTestBench`) переработана
+  в человекочитаемый вид с фактическими контрактами по компонентам (отдельный коммит).
+
 ## 03.06.2026 [audit] — Codebase audit remediation (Phases 1–6)
 
 ### Context

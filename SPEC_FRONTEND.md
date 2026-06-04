@@ -848,13 +848,7 @@ Image media expansion:
   остаётся входом для фильтрации Grid route: Everything или текущей коллекции.
   Permanent top chrome uses `bg-chrome`, the app-shell surface midway between
   `bg-background` and the bottom/action/search `bg-accent` surface.
-  Settings exposes `Chrome surfaces variant 2`, persisted in
-  `localStorage` as `mine.chromeSurfaceVariant`. Default `variant1` keeps the
-  mapping above. `variant2` maps permanent top chrome to `bg-accent`, maps
-  main and Detail/link-editor second-level bars to `bg-chrome`, maps classic
-  Detail/Sidebar title chrome to `bg-chrome`, and maps active Sidebar search
-  fill to `bg-active`.
-  Settings also exposes `Hide bottom menu`, persisted in `localStorage` as
+  Settings exposes `Hide bottom menu`, persisted in `localStorage` as
   `mine.bottomActionBarHidden`. When enabled, the bottom app bar is not
   rendered at all, no placeholder row remains, and the same Settings control
   is rendered in permanent top chrome with `side="bottom"` so the user can
@@ -863,7 +857,7 @@ Image media expansion:
   the same surface class as permanent top chrome and is marked with
   `data-traffic-light-reserve`. App also syncs the native Tauri window
   background via `getCurrentWindow().setBackgroundColor()` to the same resolved
-  surface (`--chrome` in variant1, `--accent` in variant2), so the AppKit
+  surface (`--chrome`), so the AppKit
   titlebar area never shows a mismatched fill behind overlay controls. Native
   macOS traffic lights remain AppKit controls, not DOM. Desktop Rust must not
   hide, recolor, alpha-toggle, or install a custom tracking state machine over
@@ -942,9 +936,7 @@ Image media expansion:
   as Detail top bar: `font-mono text-sm text-muted-foreground`, regular
   weight. When the trimmed query is non-empty, only the search surface is filled
   with `bg-accent`, matching the bottom action bar surface. The top header,
-  space selector and separator lines remain on `bg-chrome`. In `variant2`,
-  active search fill uses `bg-active` because permanent top chrome already uses
-  `bg-accent`.
+  space selector and separator lines remain on `bg-chrome`.
 - The clear action appears only when the input value is non-empty. It is an
   icon-only `X` button (`h-6 w-6 rounded-1`, `aria-label="Clear channel
   search"`). Clicking it clears the query, restores the full channel list and
@@ -1007,9 +999,7 @@ Image media expansion:
   adds animated sibling controls. When the flag is on and Detail is open, the
   global top chrome still remains on `bg-chrome` and owns the Detail controls. The
   internal Detail top bar is not rendered, and the Sidebar `Channels:`
-  link-editor top bar is not rendered. If `Chrome surfaces variant 2` is
-  enabled, the global top chrome remains on `bg-accent`; compact geometry and
-  motion stay unchanged.
+  link-editor top bar is not rendered.
 - In Compact Detail mode the `All / Connected` segmented control is part of
   the left Sidebar/search segment, not the right Detail title segment. In
   expanded Sidebar state it sits inside the same search surface as

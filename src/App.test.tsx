@@ -232,29 +232,16 @@ vi.mock("@/components/ActionButton", () => ({
 
 vi.mock("@/components/ThemeMenuButton", () => ({
   ThemeMenuButton: forwardRef(function ThemeMenuButton({
-    chromeSurfaceVariant = "variant1",
-    onChromeSurfaceVariantChange,
     bottomActionBarHidden = false,
     onBottomActionBarHiddenChange,
   }: {
-    chromeSurfaceVariant?: "variant1" | "variant2";
-    onChromeSurfaceVariantChange?: (value: "variant1" | "variant2") => void;
     bottomActionBarHidden?: boolean;
     onBottomActionBarHiddenChange?: (hidden: boolean) => void;
   }, ref) {
     useImperativeHandle(ref, () => ({ toggle: vi.fn() }), []);
     return (
       <>
-        <button
-          type="button"
-          onClick={() => {
-            onChromeSurfaceVariantChange?.(
-              chromeSurfaceVariant === "variant2" ? "variant1" : "variant2",
-            );
-          }}
-        >
-          Settings
-        </button>
+        <button type="button">Settings</button>
         <button
           type="button"
           onClick={() => onBottomActionBarHiddenChange?.(!bottomActionBarHidden)}
@@ -744,7 +731,7 @@ describe("AppWithVault", () => {
     );
   });
 
-  it("switches chrome surfaces to variant 2 from Settings", async () => {
+  it("renders default chrome surfaces", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -765,26 +752,15 @@ describe("AppWithVault", () => {
       expect(setBackgroundColor).toHaveBeenCalledWith("#fcfcfc");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-
-    await waitFor(() => {
-      expect(topSidebarSegment.parentElement).toHaveClass("bg-accent");
-      expect(trafficLightReserve).toHaveClass("bg-accent");
-      expect(secondaryBar).toHaveClass("bg-chrome");
-      expect(setBackgroundColor).toHaveBeenCalledWith("#f8f8f8");
-    });
-    expect(localStorage.getItem("mine.chromeSurfaceVariant")).toBe("variant2");
-
     fireEvent.keyDown(window, { key: "А", code: "KeyF", metaKey: true, shiftKey: true });
     const input = screen.getByRole("textbox", { name: "Search channels" });
     fireEvent.change(input, { target: { value: "alp" } });
-    expect(input.closest("[data-sidebar-top-search-surface]")).toHaveClass("bg-active");
+    expect(input.closest("[data-sidebar-top-search-surface]")).toHaveClass("bg-accent");
 
     fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
     await waitFor(() => {
       expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
     });
-    expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-chrome");
   });
 
   it("hides the bottom action bar without losing Settings access", async () => {
@@ -812,11 +788,9 @@ describe("AppWithVault", () => {
       "[data-top-chrome-settings-fallback]",
     ) as HTMLElement | null;
     expect(topSettingsFallback).toBeInTheDocument();
-    fireEvent.click(within(topSettingsFallback!).getByRole("button", { name: "Settings" }));
-
-    await waitFor(() => {
-      expect(localStorage.getItem("mine.chromeSurfaceVariant")).toBe("variant2");
-    });
+    expect(
+      within(topSettingsFallback!).getByRole("button", { name: "Settings" }),
+    ).toBeInTheDocument();
   });
 
   it("uses the secondary top bar for non-compact Detail chrome instead of body overlays", async () => {

@@ -377,15 +377,6 @@ Theme selector обязан синхронизировать не только w
 системные кнопки, меню и native chrome в ту же light/dark appearance, что и
 приложение. Произвольный цвет traffic lights по-прежнему запрещён.
 
-Settings содержит persisted переключатель `Chrome surfaces variant 2`
-(`localStorage` key `mine.chromeSurfaceVariant`). По умолчанию используется
-variant 1, описанный выше. Variant 2 меняет только surface mapping:
-permanent top chrome становится `bg-accent` как нижняя action bar, второй
-top-bar layer становится `bg-chrome` и в main/Grid state, и в Detail/link-editor
-state, classic Detail/Sidebar title bars также становятся `bg-chrome`, а
-непустой Sidebar search получает `bg-active`, чтобы оставаться видимым на
-`bg-accent` top chrome. Геометрия, typography, spacing и motion не меняются.
-
 Когда sidebar collapsed, top chrome не схлопывается до `0px` и не держит
 пустой слот под исчезнувший поиск. Левый segment сжимается до реального
 содержимого: `80px` traffic-light safety area + `1px` separator + intrinsic
@@ -448,8 +439,7 @@ hover/focus не получает фон: реагирует только placeh
 `text-tertiary-foreground` → `text-muted-foreground`. Когда trimmed query
 непустой, только search surface получает `bg-accent`, тот же surface token, что
 нижняя action bar; весь header, space selector и separator lines остаются на
-`bg-chrome`. В `Chrome surfaces variant 2` этот filled state становится
-`bg-active`, потому что сам permanent top chrome уже использует `bg-accent`.
+`bg-chrome`.
 
 Clear action появляется только когда value непустой: `button h-6 w-6
 rounded-1`, иконка `X` из `lucide-react`, `aria-label="Clear channel search"`.
@@ -1180,10 +1170,6 @@ Sidebar/Detail в App shell запрещены: они создают трети
 |---|---|
 | Main secondary top bar | `h-8 border-b border-border bg-background`, split sidebar/content |
 | Detail/link-editor secondary bar | тот же second-level bar, `bg-accent`; sidebar segment `px-8 gap-2`, content segment `px-8 gap-3` |
-
-Если включён `Chrome surfaces variant 2`, эта таблица меняется только по
-surface: permanent top chrome остаётся `bg-accent`, а оба second-level bar
-состояния используют `bg-chrome`.
 
 Non-compact Detail close не должен распадаться на несколько визуальных шагов.
 Второй top-bar level держит два абсолютных слоя внутри тех же sidebar/content

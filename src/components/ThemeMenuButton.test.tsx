@@ -61,31 +61,6 @@ describe("ThemeMenuButton", () => {
     expect(onCompactDetailTopMenuChange).toHaveBeenCalledWith(true);
   });
 
-  it("exposes the chrome surface variant setting", () => {
-    const onChromeSurfaceVariantChange = vi.fn();
-
-    render(
-      <ThemeMenuButton
-        chromeSurfaceVariant="variant1"
-        onChromeSurfaceVariantChange={onChromeSurfaceVariantChange}
-      />,
-    );
-
-    const trigger = screen.getByText("Settings").closest("[data-slot='dropdown-menu-trigger']");
-    expect(trigger).toBeTruthy();
-    fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
-    fireEvent.pointerUp(trigger!, { button: 0, ctrlKey: false });
-
-    const chromeVariantItem = screen.getByRole("menuitemcheckbox", {
-      name: "Chrome surfaces variant 2",
-    });
-
-    expect(chromeVariantItem).toHaveAttribute("aria-checked", "false");
-    fireEvent.click(chromeVariantItem);
-
-    expect(onChromeSurfaceVariantChange).toHaveBeenCalledWith("variant2");
-  });
-
   it("exposes the bottom menu visibility setting", () => {
     const onBottomActionBarHiddenChange = vi.fn();
 

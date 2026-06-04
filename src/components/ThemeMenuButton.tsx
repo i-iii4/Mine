@@ -9,7 +9,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ActionButton } from "@/components/ActionButton";
-import type { ChromeSurfaceVariant } from "@/lib/chromeSurfaceVariant";
 
 type ThemeMode = "system" | "light" | "dark";
 
@@ -39,8 +38,6 @@ export interface ThemeMenuHandle {
 interface ThemeMenuButtonProps {
   compactDetailTopMenuEnabled?: boolean;
   onCompactDetailTopMenuChange?: (enabled: boolean) => void;
-  chromeSurfaceVariant?: ChromeSurfaceVariant;
-  onChromeSurfaceVariantChange?: (value: ChromeSurfaceVariant) => void;
   bottomActionBarHidden?: boolean;
   onBottomActionBarHiddenChange?: (hidden: boolean) => void;
   menuSide?: "top" | "bottom";
@@ -50,8 +47,6 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>
   {
     compactDetailTopMenuEnabled = false,
     onCompactDetailTopMenuChange,
-    chromeSurfaceVariant = "variant1",
-    onChromeSurfaceVariantChange,
     bottomActionBarHidden = false,
     onBottomActionBarHiddenChange,
     menuSide = "top",
@@ -103,14 +98,6 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>
           onCheckedChange={(checked) => onCompactDetailTopMenuChange?.(checked === true)}
         >
           Compact Detail top menu
-        </DropdownMenuCheckboxItem>
-        <DropdownMenuCheckboxItem
-          checked={chromeSurfaceVariant === "variant2"}
-          onCheckedChange={(checked) => {
-            onChromeSurfaceVariantChange?.(checked === true ? "variant2" : "variant1");
-          }}
-        >
-          Chrome surfaces variant 2
         </DropdownMenuCheckboxItem>
         <DropdownMenuCheckboxItem
           checked={bottomActionBarHidden}

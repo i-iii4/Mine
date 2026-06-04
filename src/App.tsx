@@ -48,12 +48,6 @@ import {
 } from "@/lib/sidebarSearch";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import {
-  getStoredChromeSurfaceVariant,
-  isChromeSurfaceVariant2,
-  CHROME_SURFACE_VARIANT_STORAGE_KEY,
-  type ChromeSurfaceVariant,
-} from "@/lib/chromeSurfaceVariant";
-import {
   BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY,
   getStoredBottomActionBarHidden,
 } from "@/lib/bottomActionBarVisibility";
@@ -228,7 +222,6 @@ function MainSecondaryStatsRight({ stats }: { stats: VaultStats | null }) {
 function MainSecondaryTopBar({
   sidebarCollapsed,
   sidebarResizing,
-  chromeSurfaceVariant,
   stats,
   detailBlock,
   detailTitle,
@@ -247,7 +240,6 @@ function MainSecondaryTopBar({
 }: {
   sidebarCollapsed: boolean;
   sidebarResizing: boolean;
-  chromeSurfaceVariant: ChromeSurfaceVariant;
   stats: VaultStats | null;
   detailBlock?: LightBlock | IndexedBlock | null;
   detailTitle?: string;
@@ -264,7 +256,6 @@ function MainSecondaryTopBar({
   onDetailClose: () => void;
   detailMenuOpenRequestSequence: number;
 }) {
-  const variant2 = isChromeSurfaceVariant2(chromeSurfaceVariant);
   const detailLayerEntered = Boolean(detailBlock && detailEntered);
   const mainLayerEntered = !detailLayerEntered;
   const closeChromeGesture = useChromeDragGesture({ disabled: !detailBlock });
@@ -291,7 +282,7 @@ function MainSecondaryTopBar({
       data-main-secondary-top-bar=""
       className={cn(
         "flex h-8 shrink-0 items-center border-b border-border transition-colors duration-[170ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-        variant2 ? "bg-chrome" : detailLayerEntered ? "bg-accent" : "bg-background",
+        detailLayerEntered ? "bg-accent" : "bg-background",
       )}
     >
       <div
@@ -730,9 +721,6 @@ export function AppWithVault({
   const [compactDetailTopMenuEnabled, setCompactDetailTopMenuEnabled] = useState(
     getStoredCompactDetailTopMenu,
   );
-  const [chromeSurfaceVariant, setChromeSurfaceVariant] = useState(
-    getStoredChromeSurfaceVariant,
-  );
   const [bottomActionBarHidden, setBottomActionBarHidden] = useState(
     getStoredBottomActionBarHidden,
   );
@@ -890,13 +878,10 @@ export function AppWithVault({
   const detailChromeCloseDuration = compactDetailTopMenuActive
     ? DETAIL_COMPACT_CHROME_EXIT_MS
     : DETAIL_SECONDARY_CHROME_EXIT_MS;
-  const chromeSurfaceVariant2 = isChromeSurfaceVariant2(chromeSurfaceVariant);
-  const topChromeSurfaceClass = chromeSurfaceVariant2 ? "bg-accent" : "bg-chrome";
-  const topChromeSurfaceToken: NativeWindowChromeSurfaceToken = chromeSurfaceVariant2
-    ? "--accent"
-    : "--chrome";
+  const topChromeSurfaceClass = "bg-chrome";
+  const topChromeSurfaceToken: NativeWindowChromeSurfaceToken = "--chrome";
   const sidebarSearchActiveSurfaceClass = sidebarSearchHasActiveQuery
-    ? chromeSurfaceVariant2 ? "bg-active" : "bg-accent"
+    ? "bg-accent"
     : "";
   const compactDetailCardTitle = renderedDetailBlock
     ? renderedDetailBlock.title ?? renderedDetailBlock.media_file ?? `${renderedDetailBlock.slug}.md`
@@ -915,10 +900,6 @@ export function AppWithVault({
       compactDetailTopMenuEnabled ? "true" : "false",
     );
   }, [compactDetailTopMenuEnabled]);
-
-  useEffect(() => {
-    window.localStorage.setItem(CHROME_SURFACE_VARIANT_STORAGE_KEY, chromeSurfaceVariant);
-  }, [chromeSurfaceVariant]);
 
   useNativeWindowChromeSurface(topChromeSurfaceToken);
 
@@ -2956,8 +2937,6 @@ export function AppWithVault({
                 ref={themeMenuRef}
                 compactDetailTopMenuEnabled={compactDetailTopMenuEnabled}
                 onCompactDetailTopMenuChange={setCompactDetailTopMenuEnabled}
-                chromeSurfaceVariant={chromeSurfaceVariant}
-                onChromeSurfaceVariantChange={setChromeSurfaceVariant}
                 bottomActionBarHidden={bottomActionBarHidden}
                 onBottomActionBarHiddenChange={setBottomActionBarHidden}
                 menuSide="bottom"
@@ -2989,7 +2968,6 @@ export function AppWithVault({
         <MainSecondaryTopBar
           sidebarCollapsed={sidebarCollapsed}
           sidebarResizing={sidebarResizing}
-          chromeSurfaceVariant={chromeSurfaceVariant}
           stats={vaultStats}
           detailBlock={renderedDetailBlock}
           detailTitle={compactDetailCardTitle}
@@ -3059,7 +3037,6 @@ export function AppWithVault({
         onLinkModeChange={setDetailLinkMode}
         showLinkModeChrome={false}
         detailChromeClosing={detailChromeClosing}
-        chromeSurfaceVariant={chromeSurfaceVariant}
       />
 
       <SidebarResizeHandle
@@ -3158,7 +3135,6 @@ export function AppWithVault({
               thumbsRootPath={thumbsRootPath ?? undefined}
               isClosing={detailChromeClosing}
               topChromeMode="external"
-              chromeSurfaceVariant={chromeSurfaceVariant}
               onClose={handleDetailClose}
               onNavigate={handleDetailNavigate}
               tags={tags}
@@ -3241,8 +3217,6 @@ export function AppWithVault({
             ref={themeMenuRef}
             compactDetailTopMenuEnabled={compactDetailTopMenuEnabled}
             onCompactDetailTopMenuChange={setCompactDetailTopMenuEnabled}
-            chromeSurfaceVariant={chromeSurfaceVariant}
-            onChromeSurfaceVariantChange={setChromeSurfaceVariant}
             bottomActionBarHidden={bottomActionBarHidden}
             onBottomActionBarHiddenChange={setBottomActionBarHidden}
           />
