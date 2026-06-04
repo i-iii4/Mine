@@ -22,7 +22,28 @@ import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -59,9 +80,11 @@ import { TypeSwitcher } from "../../extension/popup/components/TypeSwitcher";
 import { VaultSelect } from "../../extension/popup/components/VaultSelect";
 import type { ChannelInfo } from "../../extension/popup/lib/messaging";
 
+type ColorToken = { readonly token: string; readonly use: string };
+
 type TokenGroup = {
   title: string;
-  tokens: readonly string[];
+  tokens: readonly ColorToken[];
 };
 
 type RedactionIconVariant = {
@@ -82,73 +105,79 @@ const actualMineIconVariant: RedactionIconVariant = {
 
 const COLOR_TOKEN_GROUPS: readonly TokenGroup[] = [
   {
-    title: "Production surfaces",
+    title: "Поверхности",
     tokens: [
-      "--background",
-      "--chrome",
-      "--card",
-      "--popover",
-      "--secondary",
-      "--muted",
-      "--accent",
-      "--active",
-      "--border",
-      "--border-accent",
-      "--input",
+      { token: "--background", use: "Фон страницы" },
+      { token: "--chrome", use: "Верхняя панель оболочки" },
+      { token: "--card", use: "Фон карточки" },
+      { token: "--popover", use: "Фон меню и попапов" },
+      { token: "--secondary", use: "= accent (совместимость shadcn)" },
+      { token: "--muted", use: "= accent (совместимость shadcn)" },
+      { token: "--accent", use: "Hover-фон, action bar" },
+      { token: "--active", use: "Нажатие, активная строка" },
+      { token: "--border", use: "Границы и разделители" },
+      { token: "--border-accent", use: "Акцентная граница (фокус)" },
+      { token: "--input", use: "Фон и рамка инпута" },
     ],
   },
   {
-    title: "Production text",
+    title: "Текст",
     tokens: [
-      "--foreground",
-      "--muted-foreground",
-      "--tertiary-foreground",
-      "--hover-foreground",
-      "--popover-foreground",
-      "--accent-foreground",
+      { token: "--foreground", use: "Основной текст" },
+      { token: "--muted-foreground", use: "Вторичный — мета, счётчики" },
+      { token: "--tertiary-foreground", use: "Третичный — плейсхолдеры" },
+      { token: "--hover-foreground", use: "Текст при hover" },
+      { token: "--popover-foreground", use: "Текст в меню" },
+      { token: "--accent-foreground", use: "Текст на accent" },
     ],
   },
   {
-    title: "Interactive components",
+    title: "Заливки компонентов",
     tokens: [
-      "--component-fill",
-      "--component-fill-inner",
-      "--component-fill-hover",
-      "--destructive",
-      "--primary",
-      "--primary-foreground",
+      { token: "--component-fill", use: "Фон Button, обойма ActionButton" },
+      { token: "--component-fill-inner", use: "Внутренняя пуля ActionButton" },
+      { token: "--component-fill-hover", use: "Hover-обводка, selected" },
+      { token: "--destructive", use: "Ошибки, удаление" },
+      { token: "--primary", use: "Checkbox checked, прогресс" },
+      { token: "--primary-foreground", use: "Текст на primary" },
     ],
   },
   {
-    title: "Shell and feed states",
+    title: "Оболочка и состояния ленты",
     tokens: [
-      "--sidebar",
-      "--sidebar-border",
-      "--glass-bg",
-      "--card-hover-overlay",
-      "--graphic-card-focus-overlay",
-      "--feed-selection-frame",
+      { token: "--sidebar", use: "Фон сайдбара" },
+      { token: "--sidebar-border", use: "Граница сайдбара" },
+      { token: "--glass-bg", use: "Backdrop-стекло" },
+      { token: "--card-hover-overlay", use: "Оверлей hover карточки" },
+      { token: "--graphic-card-focus-overlay", use: "Фокус-затемнение медиа" },
+      { token: "--feed-selection-frame", use: "Рамка выделения ленты" },
     ],
   },
 ];
 
 const RADIUS_TOKENS = [
-  { token: "--radius-0", label: "0px / hard content edges" },
-  { token: "--radius-1", label: "3px / buttons, menus, controls" },
-  { token: "--radius-2", label: "5px / channel thumbnail stack" },
-  { token: "--radius-round", label: "50% / circular clipper controls" },
-  { token: "--radius-card", label: "feed card frame alias" },
-  { token: "--radius-media", label: "feed media alias" },
+  { token: "--radius-0", label: "0px / контент, изображения, текст" },
+  { token: "--radius-1", label: "3px / кнопки, меню, контролы, диалоги" },
+  { token: "--radius-2", label: "5px / стопка превью каналов" },
+  { token: "--radius-round", label: "50% / круглые контролы клиппера" },
+  { token: "--radius-card", label: "алиас рамки карточки (= 0)" },
+  { token: "--radius-media", label: "алиас медиа карточки (= 0)" },
 ] as const;
 
 const SPACING_TOKENS = [
-  { token: "--spacing-s3", label: "16px / selection action bar bottom offset" },
+  { token: "--spacing-s1", label: "4px / внутри мелких элементов" },
+  { token: "--spacing-s2", label: "8px / внутри кнопки, инпута" },
+  { token: "--spacing-s3", label: "16px / между элементами карточки" },
+  { token: "--spacing-s4", label: "24px / padding карточки от края" },
+  { token: "--spacing-s5", label: "32px / gap сетки карточек" },
+  { token: "--spacing-s6", label: "48px / между секциями" },
+  { token: "--spacing-s7", label: "64px / отступ страницы" },
 ] as const;
 
 const TYPE_TOKENS = [
-  { className: "text-sm", label: "text-sm / 12px / 16px" },
-  { className: "text-base", label: "text-base / 14px / 20px" },
-  { className: "text-lg", label: "text-lg / 18px / 24px" },
+  { className: "text-sm", label: "text-sm · 12/16 · мета, счётчики, карточки" },
+  { className: "text-base", label: "text-base · 14/20 · основной текст UI" },
+  { className: "text-lg", label: "text-lg · 18/24 · заголовки" },
 ] as const;
 
 const SAMPLE_TAGS: TagCount[] = [
@@ -205,20 +234,23 @@ export function ComponentTestBench() {
     <TooltipProvider>
       <div className="min-h-full bg-background text-foreground" data-design-system-bench="">
         <div className="border-b border-border px-8 py-6">
-          <p className="font-mono text-sm text-muted-foreground">Design system audit surface</p>
-          <h1 className="mt-2 text-lg font-semibold">Production tokens and components</h1>
+          <p className="font-mono text-sm text-muted-foreground">Аудит дизайн-системы Mine</p>
+          <h1 className="mt-2 text-lg font-semibold">Токены и компоненты продакшена</h1>
           <p className="mt-2 max-w-3xl text-base text-muted-foreground">
-            This page imports real app and Clipper primitives. If a production
-            state is missing here, the page is stale. If a state appears here
-            but has no production primitive, the implementation is drifting.
+            Страница импортирует реальные примитивы приложения и веб-клиппера. Если
+            продакшен-состояние отсутствует здесь — страница устарела. Если состояние
+            есть здесь, но нет прод-примитива — реализация дрейфует. Значения токенов
+            читаются вживую из текущей темы.
           </p>
         </div>
 
         <div className="grid gap-8 px-8 py-8">
-          <AuditContractPanel />
+          <IdeologyPanel />
+          <PrinciplesSection />
           <TokenAuditSection />
           <CoreComponentSection />
           <FloatingUiSection />
+          <DialogPrimitivesSection />
           <ShellAndSelectionSection />
           <CardPatternSection />
           <ClipperParitySection />
@@ -229,50 +261,126 @@ export function ComponentTestBench() {
   );
 }
 
-function AuditContractPanel() {
+function IdeologyPanel() {
   return (
-    <BenchSection
-      title="Coverage contract"
-      description="The page is a visual checklist for prod UI, not a separate style guide."
-    >
+    <section className="grid gap-4 rounded-1 border border-border-accent bg-accent p-6">
+      <div>
+        <p className="font-mono text-sm text-muted-foreground">Идеология</p>
+        <h2 className="mt-1 text-lg font-semibold text-foreground">Что и зачем мы делаем</h2>
+      </div>
+      <div className="grid max-w-3xl gap-3 text-base leading-5 text-foreground">
+        <p>
+          Дизайн-система — это <strong className="font-semibold">контракт</strong>, а не
+          библиотека украшений. Эта страница — поверхность аудита: она импортирует
+          настоящие production-примитивы и показывает их рядом с фактическими значениями
+          токенов из текущей темы. Цель — сделать дрейф видимым до того, как он попадёт
+          в интерфейс.
+        </p>
+        <p>
+          Названия и таблицы фиксируют контракт каждого компонента: высоту, скругление,
+          цветовой токен, отступы и состояния. Если меняется production-примитив — эта
+          страница меняется в том же PR. Lookalike-компоненты как источник истины
+          запрещены; допустимы только небольшие статические превью для состояний, ещё не
+          выделенных в переиспользуемый примитив.
+        </p>
+      </div>
       <div className="grid gap-2 md:grid-cols-3">
-        <ContractCard title="Tokens">
-          Only CSS variables with live app or Clipper references are shown.
-          Tokens that exist only as unused shadcn defaults stay out of this
-          audit surface.
+        <ContractCard title="Требования по токенам">
+          На странице — только CSS-переменные, реально используемые в desktop UI или
+          веб-клиппере. Неиспользуемые shadcn-дефолты и историческая шкала сюда не
+          попадают. Значения читаются вживую через computed CSS, а не хардкодятся.
         </ContractCard>
-        <ContractCard title="Components">
-          Components are imported from production files. Hand-made lookalikes
-          are allowed only for composition notes, never as the source of visual truth.
+        <ContractCard title="Компоненты">
+          Импортируются из production-файлов. Каждый показан со своими реальными
+          размерами, токенами и состояниями — таблица характеристик рядом с живым
+          примером.
         </ContractCard>
-        <ContractCard title="Clipper">
-          Clipper is represented as full popup states and must reuse app
-          primitives: space trigger, segmented control, channel picker,
-          buttons, search input, and close action.
+        <ContractCard title="Клиппер">
+          Представлен полными состояниями popup на реальной ширине 360px и обязан
+          переиспользовать примитивы приложения: триггеры, сегментный контрол, пикер
+          каналов, кнопки, поле поиска.
         </ContractCard>
       </div>
+    </section>
+  );
+}
+
+function PrinciplesSection() {
+  return (
+    <BenchSection
+      title="Принципы"
+      description="Основания, из которых выводятся решения. Сами значения живут в токенах и контрактах компонентов — здесь о том, почему они именно такие и как принимать новые решения."
+    >
+      <div className="grid gap-3 lg:grid-cols-2">
+        <PrincipleCard title="Радиус кодирует роль, а не вкус">
+          Скругление — сигнал, а не украшение. Резкий край сообщает «это контент, окно в
+          данные»; мягкий — «это интерфейс, объект, который можно тронуть». Поэтому радиус
+          выводится из роли элемента, а не подбирается на глаз. Отсюда резкие карточки и
+          мягкие контролы — конкретные значения смотри в токенах скруглений.
+        </PrincipleCard>
+        <PrincipleCard title="Пространство — закрытая шкала, а не диапазон">
+          Отступы берутся из конечного набора ступеней, а не из непрерывного континуума.
+          Ограниченный словарь создаёт ритм и делает отклонение заметным: значение вне
+          шкалы — это всегда либо баг, либо ещё не принятое решение, а не «так получилось».
+          Новая ступень вводится, только если ни одна существующая не подходит.
+        </PrincipleCard>
+        <PrincipleCard title="Минимум различимых ступеней">
+          Каждая ступень — размера, веса, уровня серого — обязана нести различимую задачу.
+          Иерархия строится наименьшим числом ступеней: лишние варианты дают не
+          выразительность, а произвол и дрейф. Прежде чем вводить четвёртую величину, надо
+          доказать, что задача не решается тремя имеющимися.
+        </PrincipleCard>
+        <PrincipleCard title="Цвет — дефицитный сигнал">
+          Оттенок (hue) тратится только на смысл: ошибку, акцент, данные графика. База —
+          чисто нейтральная (<code>oklch(L 0 0)</code>), чтобы не отбирать внимание у
+          контента. Иерархию текста несёт яркость — единственная ось без семантической
+          нагрузки. Любой hue на фоне или основном тексте — сигнал, потраченный впустую.
+        </PrincipleCard>
+        <PrincipleCard title="Поверхности и компоненты — независимые системы">
+          Фоновое наслоение и заливки интерактивных элементов решают разные задачи и имеют
+          разные требования к контрасту. Поэтому это два независимых набора токенов: правка
+          поверхностей не трогает кнопки, а правка кнопок не трогает фоны.
+        </PrincipleCard>
+        <PrincipleCard title="Названное — управляемо">
+          Каждое значение живёт под именем в одном месте (<code>@theme</code>). То, что
+          названо токеном, меняется осознанно и единожды; то, что захардкожено числом в
+          компоненте, неизбежно расходится. Поэтому страница читает значения вживую —
+          расхождение контракта и реализации видно сразу.
+        </PrincipleCard>
+      </div>
     </BenchSection>
+  );
+}
+
+function PrincipleCard({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="rounded-1 border border-border p-4">
+      <p className="text-base font-semibold text-foreground">{title}</p>
+      <p className="mt-2 text-base leading-5 text-muted-foreground [&_code]:rounded-[2px] [&_code]:bg-component-fill [&_code]:px-1 [&_code]:font-mono [&_code]:text-sm [&_code]:text-foreground">
+        {children}
+      </p>
+    </div>
   );
 }
 
 function TokenAuditSection() {
   return (
     <BenchSection
-      title="Tokens"
-      description="Production-used values are read from the current root theme. Switch the app theme to audit both light and dark."
+      title="Токены"
+      description="Значения читаются из текущей темы. Переключите тему приложения, чтобы проверить светлую и тёмную."
     >
       <div className="grid gap-4 xl:grid-cols-2">
         {COLOR_TOKEN_GROUPS.map((group) => (
           <TokenPanel key={group.title} title={group.title}>
             <div className="grid gap-2 sm:grid-cols-2">
               {group.tokens.map((token) => (
-                <ColorTokenChip key={token} token={token} />
+                <ColorTokenChip key={token.token} token={token.token} use={token.use} />
               ))}
             </div>
           </TokenPanel>
         ))}
 
-        <TokenPanel title="Radius">
+        <TokenPanel title="Скругления">
           <div className="grid gap-2 sm:grid-cols-2">
             {RADIUS_TOKENS.map((item) => (
               <DimensionTokenChip key={item.token} token={item.token} label={item.label} kind="radius" />
@@ -280,7 +388,7 @@ function TokenAuditSection() {
           </div>
         </TokenPanel>
 
-        <TokenPanel title="Spacing">
+        <TokenPanel title="Отступы">
           <div className="grid gap-2 sm:grid-cols-2">
             {SPACING_TOKENS.map((item) => (
               <DimensionTokenChip key={item.token} token={item.token} label={item.label} kind="spacing" />
@@ -288,7 +396,7 @@ function TokenAuditSection() {
           </div>
         </TokenPanel>
 
-        <TokenPanel title="Typography">
+        <TokenPanel title="Типографика">
           <div className="grid gap-2">
             {TYPE_TOKENS.map((item) => (
               <div key={item.label} className="rounded-1 border border-border p-3">
@@ -308,10 +416,22 @@ function TokenAuditSection() {
 function CoreComponentSection() {
   return (
     <BenchSection
-      title="Core components"
-      description="Base primitives and all product sizes/states."
+      title="Базовые компоненты"
+      description="Базовые примитивы и все продуктовые размеры и состояния. Рядом с каждым — таблица фактических характеристик."
     >
-      <ComponentSpec label="Button default — h=32, radius=3, bg=component-fill">
+      <ComponentSpec
+        title="Button — размеры"
+        summary="Базовый примитив. Четыре высоты по control-шкале плюс квадратные icon-варианты."
+        specs={[
+          { prop: "Высота", value: "24 · 28 · 32 · 40 (h-6/7/8/10)" },
+          { prop: "Icon", value: "size-8 (32) · size-6 (24, icon-xs)" },
+          { prop: "Скругление", value: "3px · rounded-1 · --radius-1" },
+          { prop: "Фон", value: "--component-fill" },
+          { prop: "Текст", value: "--foreground · 14px · 600" },
+          { prop: "Отступы", value: "px-3 (12) · gap-2 (8)" },
+          { prop: "Disabled", value: "opacity-50" },
+        ]}
+      >
         <Button size="xs">xs 24</Button>
         <Button size="sm">sm 28</Button>
         <Button>default 32</Button>
@@ -319,7 +439,18 @@ function CoreComponentSection() {
         <Button disabled>Disabled</Button>
       </ComponentSpec>
 
-      <ComponentSpec label="Button variants — hover outline=component-fill-hover">
+      <ComponentSpec
+        title="Button — варианты"
+        summary="Один фон, разные акценты. Hover не заливает кнопку, а рисует обводку."
+        specs={[
+          { prop: "default", value: "bg --component-fill" },
+          { prop: "destructive", value: "text --destructive" },
+          { prop: "ghost", value: "bg transparent" },
+          { prop: "link", value: "underline · hover --hover-foreground" },
+          { prop: "Hover", value: "outline 1px · --component-fill-hover" },
+          { prop: "SVG", value: "size-4 (16) · xs size-3 (12)" },
+        ]}
+      >
         <Button variant="default"><Plus />Connect</Button>
         <Button variant="destructive">Delete</Button>
         <Button variant="ghost">Ghost</Button>
@@ -328,14 +459,37 @@ function CoreComponentSection() {
         <ChromeCloseButton label="Close design preview" />
       </ComponentSpec>
 
-      <ComponentSpec label="ActionButton — root h=24, inner h=20, radius=3/2">
+      <ComponentSpec
+        title="ActionButton"
+        summary="Двухслойная пуля топ-бара: внешняя обойма, внутренняя метка, опциональный hotkey-слот."
+        specs={[
+          { prop: "Root", value: "24 (h-6) · p-[2px] · rounded-1" },
+          { prop: "Inner", value: "20 (h-5) · px-[1ch] · rounded-[2px]" },
+          { prop: "Шрифт", value: "font-mono · 12px" },
+          { prop: "Inner фон", value: "--component-fill-inner" },
+          { prop: "Default", value: "transparent → hover --component-fill-hover" },
+          { prop: "Selected", value: "--component-fill-hover" },
+        ]}
+      >
         <ActionButton hotkey="⌘⇧N">New Channel</ActionButton>
         <ActionButton hotkey="⌘,">Settings</ActionButton>
         <ActionButton>No hotkey</ActionButton>
         <ActionButton hotkey="⌘K" isSelected>Selected</ActionButton>
       </ComponentSpec>
 
-      <ComponentSpec label="SegmentedControl — compact h=24, default h=32, clipper h=32">
+      <ComponentSpec
+        title="SegmentedControl"
+        summary="Сегментный переключатель. Три размера, выделенный сегмент — внутренняя заливка."
+        specs={[
+          { prop: "compact", value: "root 24 (h-6) · item 20 (h-5) · 12px mono" },
+          { prop: "default", value: "root 32 (h-8) · item 24 (h-6) · 14px" },
+          { prop: "clipper", value: "root 32 (h-8) · item 28 (h-7) · 14px" },
+          { prop: "Скругление", value: "root rounded-1 (3) · item rounded-[2px]" },
+          { prop: "Отступ", value: "root p-[2px] · item px-[1ch]" },
+          { prop: "Выбран", value: "--component-fill-inner · text --foreground" },
+          { prop: "Не выбран", value: "text --muted-foreground" },
+        ]}
+      >
         <SegmentedControl
           value="all"
           options={SEGMENT_OPTIONS}
@@ -359,7 +513,20 @@ function CoreComponentSection() {
         />
       </ComponentSpec>
 
-      <ComponentSpec label="Input — h=32 default, h=40 clipper, radius=3">
+      <ComponentSpec
+        title="Input"
+        summary="Текстовое поле. Default 32, clipper 40. Ghost — без рамки и фона для встройки в меню."
+        specs={[
+          { prop: "Высота", value: "32 (h-8) · clipper 40 (h-10)" },
+          { prop: "Скругление", value: "3px · rounded-1 · --radius-1" },
+          { prop: "Фон / рамка", value: "--background / --input" },
+          { prop: "Отступы", value: "px-3 py-2 (12 · 8)" },
+          { prop: "Текст", value: "--foreground · 14px" },
+          { prop: "Placeholder", value: "--tertiary-foreground" },
+          { prop: "Focus", value: "border --foreground" },
+          { prop: "Invalid", value: "border --destructive" },
+        ]}
+      >
         <Input placeholder="Default input" className="w-56" />
         <Input defaultValue="Filled input" className="w-56" />
         <Input variant="ghost" placeholder="Ghost input..." className="w-56" />
@@ -367,7 +534,17 @@ function CoreComponentSection() {
         <Input disabled placeholder="Disabled" className="w-56" />
       </ComponentSpec>
 
-      <ComponentSpec label="SearchMenuInput — flat menu header, border-b, no input pill">
+      <ComponentSpec
+        title="SearchMenuInput"
+        summary="Плоский заголовок меню: поле без пилюли, отделено нижней границей. Под ним идут строки действий."
+        specs={[
+          { prop: "Обёртка", value: "p-1 (4) · border-b --border" },
+          { prop: "Input", value: "ghost · rounded-0 · px-2 py-0" },
+          { prop: "Текст", value: "--foreground · 14px" },
+          { prop: "Placeholder", value: "--tertiary-foreground" },
+          { prop: "clipper", value: "ряды 40 (controlSize)" },
+        ]}
+      >
         <div className="w-80 overflow-hidden rounded-1 border border-border bg-popover">
           <SearchMenuInput placeholder="Search channels..." />
           <SearchMenuAction active onPress={() => {}}>
@@ -383,7 +560,17 @@ function CoreComponentSection() {
         </div>
       </ComponentSpec>
 
-      <ComponentSpec label="MenuTextTrigger — topChrome, clipperHeader, actionBar">
+      <ComponentSpec
+        title="MenuTextTrigger"
+        summary="Текстовый триггер меню в трёх поверхностях. Геометрия и цвет зависят от surface."
+        specs={[
+          { prop: "topChrome", value: "rounded-0 · text --muted-foreground" },
+          { prop: "clipperHeader", value: "24 (h-6) · rounded-1 · px-2 · chevron" },
+          { prop: "actionBar", value: "24 (h-6) · p-[2px]" },
+          { prop: "Hover", value: "bg --active (chrome) / --component-fill-hover (bar)" },
+          { prop: "Открыт", value: "bg --active · text --foreground" },
+        ]}
+      >
         <div className="flex h-8 items-center gap-0 overflow-hidden rounded-1 border border-border bg-chrome">
           <MenuTextTrigger label="Mine" surface="topChrome" className="px-3" />
           <MenuTextTrigger label="Everything" surface="topChrome" className="px-6" />
@@ -394,7 +581,18 @@ function CoreComponentSection() {
         <MenuTextTrigger label="Action" surface="actionBar" hotkey="⌘A" />
       </ComponentSpec>
 
-      <ComponentSpec label="Checkbox / Progress / Tooltip — shared primitives">
+      <ComponentSpec
+        title="Checkbox · Progress · Tooltip"
+        summary="Мелкие примитивы состояний. Чекбокс — единственный radius-2 в системе (компенсация масштаба 16px)."
+        specs={[
+          { prop: "Checkbox", value: "size-4 (16) · rounded-[2px]" },
+          { prop: "— checked", value: "bg --primary · галочка 14" },
+          { prop: "Progress", value: "h-2 (8) · rounded-1 · трек --primary/20" },
+          { prop: "— заполнено", value: "bg --primary" },
+          { prop: "Tooltip", value: "bg --foreground · text --background" },
+          { prop: "— геометрия", value: "px-3 py-1.5 · rounded-1 · 12px" },
+        ]}
+      >
         <label className="inline-flex items-center gap-2 text-base">
           <Checkbox />
           Unchecked
@@ -418,10 +616,22 @@ function CoreComponentSection() {
 function FloatingUiSection() {
   return (
     <BenchSection
-      title="Floating UI"
-      description="Menus expose width roles and quantized row-height contracts."
+      title="Плавающие элементы"
+      description="Меню: роли ширины (command / selector / picker) и контракт квантованной высоты строк."
     >
-      <ComponentSpec label="DropdownMenu command — width=max-content, min=12rem, max=18.75rem">
+      <ComponentSpec
+        title="DropdownMenu — command"
+        summary="Командное меню карточки. Ширина по контенту в пределах роли command; вложенный picker открывает CollectionPicker."
+        specs={[
+          { prop: "Ширина", value: "max-content · min 192 · max 300" },
+          { prop: "Контейнер", value: "rounded-1 · bg --popover · border · p-1 · shadow-md" },
+          { prop: "Пункт", value: "py-1.5 px-2 · gap-2 · rounded-1 · 14px" },
+          { prop: "Hover", value: "bg --active · text --accent-foreground" },
+          { prop: "destructive", value: "text --destructive" },
+          { prop: "Разделитель", value: "h-px · bg --border · my-1" },
+          { prop: "SVG", value: "size-4 (16) · --muted-foreground" },
+        ]}
+      >
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button>Open command menu</Button>
@@ -457,7 +667,16 @@ function FloatingUiSection() {
         </DropdownMenu>
       </ComponentSpec>
 
-      <ComponentSpec label="ContextMenu command — right click surface">
+      <ComponentSpec
+        title="ContextMenu"
+        summary="Правый клик. Та же структура, что DropdownMenu, но hover-пункт берёт фон --accent."
+        specs={[
+          { prop: "Контейнер", value: "rounded-1 · bg --popover · border · p-1" },
+          { prop: "Пункт", value: "py-1.5 px-2 · gap-2 · rounded-1" },
+          { prop: "Hover", value: "bg --accent · text --accent-foreground" },
+          { prop: "destructive", value: "text --destructive" },
+        ]}
+      >
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div className="flex h-16 w-64 items-center justify-center rounded-1 border border-dashed border-border text-sm text-muted-foreground">
@@ -472,7 +691,17 @@ function FloatingUiSection() {
         </ContextMenu>
       </ComponentSpec>
 
-      <ComponentSpec label="QuantizedMenuScrollArea — default row=32, clipper row=40">
+      <ComponentSpec
+        title="QuantizedMenuScrollArea"
+        summary="Скролл-область меню с квантованной высотой: показывает целое число строк, обрезка по высоте viewport."
+        specs={[
+          { prop: "Высота строки", value: "default 32 · clipper 40" },
+          { prop: "Padding списка", value: "compact 4 · default 8" },
+          { prop: "maxRows", value: "по умолчанию 8" },
+          { prop: "Высота", value: "rows × rowHeight + padding" },
+          { prop: "Overflow", value: "overflow-y-auto · min-h-0" },
+        ]}
+      >
         <div className="w-72 rounded-1 border border-border bg-popover">
           <QuantizedMenuScrollArea rowCount={6} maxRows={4} innerClassName="p-1">
             {SAMPLE_TAGS.map((tag) => (
@@ -498,13 +727,145 @@ function FloatingUiSection() {
   );
 }
 
+function DialogPrimitivesSection() {
+  return (
+    <BenchSection
+      title="Диалоги и прокрутка"
+      description="Модальные примитивы порталятся в body и центрируются — на странице открываются живым триггером. Внизу — единственный кастомный scrollbar."
+    >
+      <ComponentSpec
+        title="Dialog"
+        summary="Модальное окно для форм (rename, merge, import). Оверлей затемняет фон, окно центрировано."
+        specs={[
+          { prop: "Ширина", value: "max-w-lg (512) · моб calc(100%−2rem)" },
+          { prop: "Скругление", value: "3px · rounded-1" },
+          { prop: "Фон / рамка", value: "--background / border" },
+          { prop: "Отступы", value: "p-6 (24) · gap-4 (16)" },
+          { prop: "Оверлей", value: "bg-black/50 · fixed inset-0" },
+          { prop: "Close", value: "top/right 16 · X size-4 (16)" },
+          { prop: "Title / Desc", value: "18px 600 / 14px --muted-foreground" },
+        ]}
+      >
+        <DialogDemo />
+      </ComponentSpec>
+
+      <ComponentSpec
+        title="AlertDialog"
+        summary="Подтверждение деструктивного действия (удаление). Опциональный media-слот, action + cancel."
+        specs={[
+          { prop: "Размеры", value: "default max-w-lg (512) · sm max-w-xs (320)" },
+          { prop: "Media-слот", value: "size-16 (64) · bg --accent · rounded-1" },
+          { prop: "Отступы", value: "p-6 (24) · gap-4 (16)" },
+          { prop: "Action", value: "Button default" },
+          { prop: "Cancel", value: "Button ghost" },
+          { prop: "Footer", value: "моб column-reverse · sm row/grid" },
+          { prop: "Title / Desc", value: "18px 600 / 14px --muted-foreground" },
+        ]}
+      >
+        <AlertDialogDemo />
+      </ComponentSpec>
+
+      <ComponentSpec
+        title="ScrollArea"
+        summary="Кастомный скроллбар (ImportDialog). Нативные скроллбары в приложении скрыты; здесь — единственный видимый."
+        specs={[
+          { prop: "Скроллбар", value: "верт w-2.5 (10) · гор h-2.5 (10)" },
+          { prop: "Бегунок", value: "bg --border · rounded-1 (3)" },
+          { prop: "Рамка-зазор", value: "1px transparent · p-px" },
+          { prop: "Viewport", value: "size-full · rounded-[inherit]" },
+        ]}
+      >
+        <ScrollAreaDemo />
+      </ComponentSpec>
+    </BenchSection>
+  );
+}
+
+function DialogDemo() {
+  const [open, setOpen] = useState(false);
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button>Открыть диалог</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Переименовать карточку</DialogTitle>
+          <DialogDescription>
+            Имя файла станет основой нового slug.
+          </DialogDescription>
+        </DialogHeader>
+        <Input defaultValue="catalog-cover" />
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Отмена
+          </Button>
+          <Button onClick={() => setOpen(false)}>Сохранить</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AlertDialogDemo() {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="destructive">Открыть подтверждение</Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent size="default">
+        <AlertDialogHeader className="place-items-start text-left">
+          <AlertDialogTitle>Удалить карточку?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Файл и связанные медиа будут удалены без возможности отмены.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Отмена</AlertDialogCancel>
+          <AlertDialogAction>Удалить</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function ScrollAreaDemo() {
+  const rows = [...SAMPLE_TAGS, ...SAMPLE_TAGS];
+  return (
+    <ScrollArea className="h-40 w-64 rounded-1 border border-border">
+      <div className="p-2">
+        {rows.map((tag, index) => (
+          <div
+            key={`${tag.tag}-${index}`}
+            className="flex h-8 items-center justify-between px-2 text-base"
+          >
+            <span className="truncate text-foreground">{tag.tag}</span>
+            <span className="text-muted-foreground">{tag.count}</span>
+          </div>
+        ))}
+      </div>
+    </ScrollArea>
+  );
+}
+
 function ShellAndSelectionSection() {
   return (
     <BenchSection
-      title="Shell and batch selection"
-      description="Top chrome, secondary chrome, bottom/action islands, and selection actions."
+      title="Оболочка и пакетное выделение"
+      description="Верхняя и вторичная панели оболочки, плавающие острова действий, пакетное выделение."
     >
-      <ComponentSpec label="Top chrome — h=32, bg=chrome, font=mono 12/16">
+      <ComponentSpec
+        title="Top chrome"
+        summary="Верхняя панель оболочки: строка навигации и вторичная строка статистики. Моноширинный шрифт."
+        specs={[
+          { prop: "Высота строки", value: "32 (h-8)" },
+          { prop: "Фон", value: "--chrome (нав) · --background (статы)" },
+          { prop: "Шрифт", value: "font-mono · 12px/16" },
+          { prop: "Текст", value: "--muted-foreground · статы --tertiary-foreground" },
+          { prop: "Разделители", value: "border --border" },
+          { prop: "Отступ", value: "px-3 (12)" },
+        ]}
+      >
         <div className="grid w-full overflow-hidden rounded-1 border border-border">
           <div className="grid h-8 grid-cols-[160px_1fr] bg-chrome font-mono text-sm text-muted-foreground">
             <div className="flex items-center border-r border-border px-3">Mine</div>
@@ -520,7 +881,19 @@ function ShellAndSelectionSection() {
         </div>
       </ComponentSpec>
 
-      <ComponentSpec label="GroupSelectionActionBar — h=32, bg=accent, bottom offset=16">
+      <ComponentSpec
+        title="GroupSelectionActionBar"
+        summary="Плавающий остров пакетных действий. Кнопки xs, центрирован, отступ снизу по --spacing-s3."
+        specs={[
+          { prop: "Высота", value: "32 (h-8)" },
+          { prop: "Фон / рамка", value: "--accent / --border" },
+          { prop: "Скругление", value: "3px · rounded-1" },
+          { prop: "Тень", value: "shadow-md" },
+          { prop: "Позиция", value: "bottom 16 (--spacing-s3) · центр" },
+          { prop: "Отступ", value: "px-1 · gap-1 (4)" },
+          { prop: "Кнопки", value: "Button xs · close ghost icon" },
+        ]}
+      >
         <div className="relative h-32 w-full overflow-hidden rounded-1 border border-border bg-background">
           <GroupSelectionActionBar
             selectedBlocks={GROUP_SELECTION_BLOCKS}
@@ -546,10 +919,21 @@ function ShellAndSelectionSection() {
 function CardPatternSection() {
   return (
     <BenchSection
-      title="Cards and inline action patterns"
-      description="Card states that are not isolated shadcn primitives."
+      title="Карточки и инлайн-действия"
+      description="Состояния карточек — это композиции, а не изолированные shadcn-примитивы."
     >
-      <ComponentSpec label="Feed graphic focus — frame=2px outside, wash=graphic-card-focus-overlay">
+      <ComponentSpec
+        title="Карточка ленты — фокус и выделение"
+        summary="Карточки контента: radius 0, медиа в фокусе. Клавиатурный фокус — затемнение поверх медиа, batch-выделение — рамка снаружи."
+        specs={[
+          { prop: "Карточка", value: "border --border · bg --card · rounded-0" },
+          { prop: "Медиа", value: "rounded-0 (--radius-media) · object-cover" },
+          { prop: "Keyboard-фокус", value: "оверлей --graphic-card-focus-overlay" },
+          { prop: "Выделение", value: "рамка 2px снаружи · inset -3px" },
+          { prop: "Цвет рамки", value: "--feed-selection-frame" },
+          { prop: "Отступ", value: "p-3 (12)" },
+        ]}
+      >
         <div className="grid max-w-5xl gap-4 md:grid-cols-3">
           <FeedCardPreview state="default" />
           <FeedCardPreview state="keyboard" />
@@ -557,7 +941,17 @@ function CardPatternSection() {
         </div>
       </ComponentSpec>
 
-      <ComponentSpec label="Focused card badge — h=24, left/top=8, text=⌘K">
+      <ComponentSpec
+        title="Бейдж шортката на карточке"
+        summary="Скоупный шорткат поверх графической карточки — не перекрывает медиа, в отличие от фокус-оверлея."
+        specs={[
+          { prop: "Позиция", value: "absolute · left/top 8" },
+          { prop: "Фон", value: "--component-fill" },
+          { prop: "Текст", value: "--foreground · font-mono · 12px · 600" },
+          { prop: "Скругление", value: "3px · rounded-1" },
+          { prop: "Отступ", value: "px-[1ch]" },
+        ]}
+      >
         <div className="relative w-80 border border-border bg-card p-3">
           <img src={ARTICLE_IMAGE_DATA_URL} alt="" className="block w-full rounded-0" />
           <div className="pointer-events-none absolute left-5 top-5 rounded-1 bg-component-fill px-[1ch] font-mono text-sm font-semibold text-foreground">
@@ -569,7 +963,18 @@ function CardPatternSection() {
         </div>
       </ComponentSpec>
 
-      <ComponentSpec label="Text selection action island — compact, shared button contract">
+      <ComponentSpec
+        title="Остров действий выделения текста"
+        summary="Компактная горизонтальная панель над выделением в статье. Переиспользует контракт Button (xs)."
+        specs={[
+          { prop: "Высота", value: "32 (h-8)" },
+          { prop: "Фон / рамка", value: "--accent / --border" },
+          { prop: "Скругление", value: "3px · rounded-1" },
+          { prop: "Тень", value: "shadow-md" },
+          { prop: "Отступ", value: "px-1 · gap-1 (4)" },
+          { prop: "Кнопки", value: "Button xs · close icon-xs ghost" },
+        ]}
+      >
         <div className="inline-flex h-8 items-center gap-1 rounded-1 border border-border bg-accent px-1 shadow-md">
           <Button size="xs"><Plus className="size-3" />Create Card</Button>
           <Button size="xs" variant="destructive"><Strikethrough className="size-3" />Delete Text</Button>
@@ -579,7 +984,16 @@ function CardPatternSection() {
         </div>
       </ComponentSpec>
 
-      <ComponentSpec label="Drag stack — macOS-style offset preview, no layout mutation">
+      <ComponentSpec
+        title="Стопка перетаскивания"
+        summary="Превью группового drag в стиле macOS: смещённые карточки без мутации раскладки ленты."
+        specs={[
+          { prop: "Карточка", value: "border --border · bg --card · rounded-1 · shadow-md" },
+          { prop: "Смещение", value: "left ~9 · top ~7 на слой" },
+          { prop: "Поворот", value: "−1°…+1.6° на слой" },
+          { prop: "Иконка", value: "GripVertical size-4 (16) · --muted-foreground" },
+        ]}
+      >
         <div className="relative h-28 w-72">
           {[2, 1, 0].map((index) => (
             <div
@@ -609,8 +1023,8 @@ function CardPatternSection() {
 function ClipperParitySection() {
   return (
     <BenchSection
-      title="Web Clipper"
-      description="Full popup states at the actual 360px width. Components below are imported from extension/popup."
+      title="Веб-клиппер"
+      description="Полные состояния popup на реальной ширине 360px. Компоненты импортированы из extension/popup."
     >
       <div className="grid gap-6 xl:grid-cols-2">
         <ClipperFrame type="content" />
@@ -624,7 +1038,7 @@ function ClipperParitySection() {
 
 function ClipperFrame({ type }: { type: ClipPreviewType }) {
   const hasTypeRow = type !== "image";
-  const title = type === "image" ? "Clipper image — no Type row" : `Clipper ${type} — width=360`;
+  const title = type === "image" ? "Клиппер · изображение — без строки Type" : `Клиппер · ${type} — ширина 360`;
 
   return (
     <div>
@@ -767,7 +1181,7 @@ function TokenPanel({ title, children }: { title: string; children: ReactNode })
   );
 }
 
-function ColorTokenChip({ token }: { token: string }) {
+function ColorTokenChip({ token, use }: { token: string; use: string }) {
   return (
     <div className="grid grid-cols-[48px_1fr] gap-3 rounded-1 border border-border p-2">
       <div
@@ -777,6 +1191,7 @@ function ColorTokenChip({ token }: { token: string }) {
       <div className="min-w-0">
         <p className="truncate font-mono text-sm text-foreground">{token}</p>
         <CssVariableValue token={token} />
+        <p className="mt-0.5 text-sm text-muted-foreground">{use}</p>
       </div>
     </div>
   );
@@ -835,14 +1250,45 @@ function useCssVariableValue(token: string): string {
   return value;
 }
 
-function ComponentSpec({ label, children }: { label: string; children: ReactNode }) {
+type SpecRow = { readonly prop: string; readonly value: string };
+
+function ComponentSpec({
+  title,
+  summary,
+  specs,
+  children,
+}: {
+  title: string;
+  summary?: string;
+  specs: readonly SpecRow[];
+  children: ReactNode;
+}) {
   return (
     <div className="rounded-1 border border-border p-4">
-      <p className="mb-3 font-mono text-sm text-muted-foreground">{label}</p>
-      <div className="flex flex-wrap items-center gap-2">
-        {children}
+      <p className="font-mono text-base font-semibold text-foreground">{title}</p>
+      {summary && (
+        <p className="mt-1 max-w-2xl text-base text-muted-foreground">{summary}</p>
+      )}
+      <div className="mt-3 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 self-start rounded-1 border border-dashed border-border bg-accent/40 p-3">
+          {children}
+        </div>
+        <SpecTable specs={specs} />
       </div>
     </div>
+  );
+}
+
+function SpecTable({ specs }: { specs: readonly SpecRow[] }) {
+  return (
+    <dl className="grid h-fit grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)] gap-x-3 gap-y-1.5 rounded-1 border border-border p-3 font-mono text-sm">
+      {specs.map((row) => (
+        <div key={`${row.prop}:${row.value}`} className="contents">
+          <dt className="text-muted-foreground">{row.prop}</dt>
+          <dd className="break-words text-foreground">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -882,8 +1328,8 @@ function ContractCard({ title, children }: { title: string; children: ReactNode 
 function AppIconTemplateBench() {
   return (
     <BenchSection
-      title="App icon"
-      description="Icon source and masked previews stay here because the app icon is a design-system asset."
+      title="Иконка приложения"
+      description="Исходник иконки и превью под маской: иконка приложения — ассет дизайн-системы."
     >
       <div className="grid max-w-xl gap-4 [grid-template-columns:repeat(auto-fill,minmax(304px,1fr))]">
         <RedactionIconCard variant={actualMineIconVariant} />
@@ -898,7 +1344,7 @@ function RedactionIconCard({ variant }: { variant: RedactionIconVariant }) {
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate font-mono text-sm text-foreground">{variant.label}</p>
-          <p className="font-mono text-sm text-muted-foreground">lowercase m</p>
+          <p className="font-mono text-sm text-muted-foreground">строчная m</p>
         </div>
         <div
           className="text-lg leading-6 text-foreground"
@@ -911,9 +1357,9 @@ function RedactionIconCard({ variant }: { variant: RedactionIconVariant }) {
       <div className="flex items-end gap-3">
         <AppIconSourceTemplate variant={variant} />
         <div className="flex items-end gap-2">
-          <AppIconMaskedPreview variant={variant} size={96} label="large" />
-          <AppIconMaskedPreview variant={variant} size={56} label="small" />
-          <AppIconMaskedPreview variant={variant} size={32} label="tiny" />
+          <AppIconMaskedPreview variant={variant} size={96} label="крупно" />
+          <AppIconMaskedPreview variant={variant} size={56} label="средне" />
+          <AppIconMaskedPreview variant={variant} size={32} label="мелко" />
         </div>
       </div>
     </div>
@@ -946,7 +1392,7 @@ function AppIconSourceTemplate({ variant }: { variant: RedactionIconVariant }) {
         </div>
       </div>
       <div className="flex items-center justify-between gap-2 font-mono text-sm text-muted-foreground">
-        <span>source</span>
+        <span>исходник</span>
         <span>1024</span>
       </div>
     </div>
