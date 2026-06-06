@@ -82,3 +82,29 @@ export function decodeLocalMarkdownUrl(src: string): string {
     return src;
   }
 }
+
+/**
+ * Count inline media references with the same decoded source that appear in
+ * `processedBody` before `beforeOffset`. Gives the 0-based occurrence index of a
+ * rendered embed, so a single duplicate can be removed without touching its
+ * identical siblings. `processedBody` is the wikilink-rewritten body that
+ * react-markdown parses; `preprocessWikilinks` rewrites each `![[name]]` into one
+ * `![](name)` in place, so document order and count match the original `.md` 1:1
+ * — the index is valid for the backend, which parses the original file.
+ */
+export function inlineMediaOccurrenceIndex(
+  processedBody: string,
+  decodedSource: string,
+  beforeOffset: number,
+): number {
+  const slice = processedBody.slice(0, Math.max(0, beforeOffset));
+  const image = /!\[[^\]]*\]\(([^)]*)\)/g;
+  let count = 0;
+  let match: RegExpExecArray | null;
+  while ((match = image.exec(slice)) !== null) {
+    if (decodeLocalMarkdownUrl(match[1] ?? "") === decodedSource) {
+      count += 1;
+    }
+  }
+  return count;
+}

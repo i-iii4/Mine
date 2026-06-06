@@ -2322,6 +2322,7 @@ export function AppWithVault({
         media_ref: asset.media_ref,
         source_slug: asset.source_slug,
         reference_kind: asset.reference_kind,
+        occurrence_index: asset.occurrence_index ?? null,
       });
       invalidateRouteSnapshots();
       scheduleRefresh({

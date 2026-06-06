@@ -62,7 +62,7 @@ import type {
   TagCount,
 } from "@/types";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { preprocessWikilinks } from "@/lib/markdownWikilinks";
+import { preprocessWikilinks, inlineMediaOccurrenceIndex } from "@/lib/markdownWikilinks";
 import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
 import {
   thumbnailUrl,
@@ -1713,7 +1713,7 @@ function MediaAssetMoreMenu({
             onSelect={() => setDeleteOpen(true)}
           >
             <MenuIconSlot />
-            Delete
+            Delete Media
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -2640,16 +2640,21 @@ function ArticleBody({
           className={cn(ARTICLE_SECTION_HEADING_CLASSES, props.className)}
         />
       ),
-      img: ({ src, alt, ...props }) => {
+      img: ({ node, src, alt, ...props }) => {
         const decodedSrc = decodeLocalMarkdownUrl(src ?? "");
         const previewTile = findPreviewTileForSource(previewManifest, decodedSrc);
         const resolvedSrc = previewTile?.sourcePath ?? decodedSrc;
         const originalSrc = resolveImageSrc(resolvedSrc, vaultPath);
+        // Which duplicate of this embed in the body — lets removal target one copy.
+        const nodeStartOffset = (node as MarkdownPositionedNode | undefined)?.position?.start?.offset;
+        const occurrenceIndex = typeof nodeStartOffset === "number"
+          ? inlineMediaOccurrenceIndex(processedBody, decodedSrc, nodeStartOffset)
+          : undefined;
         // Video/GIF (downloaded MP4) — render as inline autoplay video with controls.
         // Autoplay must stay muted to satisfy browser/WebView media policies.
         if (/\.mp4(\?|$)|\.webm(\?|$)/i.test(decodedSrc)) {
           const videoAsset = sourceSlug && isLocalMediaRef(resolvedSrc)
-            ? mediaAssetFromMediaRef(sourceSlug, resolvedSrc, "video", "body_embed")
+            ? mediaAssetFromMediaRef(sourceSlug, resolvedSrc, "video", "body_embed", occurrenceIndex)
             : null;
           return (
             <MediaAssetActionFrame
@@ -2680,7 +2685,7 @@ function ArticleBody({
           ? previewAssetUrl(thumbsRootPath, previewTile.previewPath)
           : null;
         const asset = sourceSlug && isExtractableLocalImage(resolvedSrc)
-          ? mediaAssetFromMediaRef(sourceSlug, resolvedSrc, "image", "body_embed")
+          ? mediaAssetFromMediaRef(sourceSlug, resolvedSrc, "image", "body_embed", occurrenceIndex)
           : null;
         return (
           <MediaAssetActionFrame
@@ -3058,12 +3063,14 @@ function mediaAssetFromMediaRef(
   mediaRef: string,
   mediaKind: MediaAssetRef["media_kind"],
   referenceKind: MediaAssetRef["reference_kind"],
+  occurrenceIndex?: number,
 ): MediaAssetRef {
   return {
     source_slug: sourceSlug,
     media_ref: mediaRef,
     media_kind: mediaKind,
     reference_kind: referenceKind,
+    occurrence_index: occurrenceIndex ?? null,
   };
 }
 

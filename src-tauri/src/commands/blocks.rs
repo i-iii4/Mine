@@ -19,7 +19,8 @@ use crate::domain::block::{
 };
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::domain::markdown::{
-    remove_inline_media_references, rename_inline_media_references, rename_wikilink_targets,
+    remove_inline_media_reference_at, remove_inline_media_references,
+    rename_inline_media_references, rename_wikilink_targets,
 };
 use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultLayout};
 use crate::storage::index::IndexedBlock;
@@ -711,6 +712,7 @@ pub fn remove_media_asset_from_card(
     media_ref: String,
     source_slug: String,
     reference_kind: String,
+    occurrence_index: Option<usize>,
 ) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
     let vault_state = state
         .vault_state
@@ -727,6 +729,7 @@ pub fn remove_media_asset_from_card(
         media_ref,
         source_slug,
         reference_kind,
+        occurrence_index,
     )?;
     for slug in &result.affected_slugs {
         app.emit(
@@ -2291,6 +2294,7 @@ fn remove_media_asset_from_card_inner(
     media_ref: String,
     source_slug: String,
     reference_kind: String,
+    occurrence_index: Option<usize>,
 ) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
     validate_slug(&source_slug).map_err(|e| MediaAssetActionError::InvalidMediaRef {
         reason: format!("invalid source slug: {e}"),
@@ -2354,7 +2358,12 @@ fn remove_media_asset_from_card_inner(
                     removals.insert(reference.source);
                 }
             }
-            let next_body = remove_inline_media_references(&block.body, &removals);
+            // With a specific occurrence (duplicate embed of the same media in
+            // one card), drop only that embed; otherwise remove every match.
+            let next_body = match occurrence_index {
+                Some(index) => remove_inline_media_reference_at(&block.body, &removals, index),
+                None => remove_inline_media_references(&block.body, &removals),
+            };
             if next_body != block.body {
                 block.body = next_body;
                 changed = true;
@@ -4341,6 +4350,7 @@ mod tests {
             "photo.png".to_string(),
             "Photo Card".to_string(),
             "frontmatter_file".to_string(),
+            None,
         )
         .unwrap();
 
@@ -4372,6 +4382,7 @@ mod tests {
             "photo.png".to_string(),
             "Source Article".to_string(),
             "body_embed".to_string(),
+            None,
         )
         .unwrap();
 
@@ -4386,6 +4397,38 @@ mod tests {
             files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
         let parsed = crate::domain::block::parse_block("Source Article", &content).unwrap();
         assert_eq!(parsed.body, "Intro\n\nOutro");
+    }
+
+    #[test]
+    fn remove_media_asset_from_card_inner_removes_only_one_duplicate_body_embed() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let source = article(
+            "Source Article",
+            "First\n\n![[photo.png]]\n\nMiddle\n\n![[photo.png]]\n\nLast",
+        );
+        persist_block(&conn, &vault, &source);
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+
+        // Remove only the second of two identical embeds.
+        let result = remove_media_asset_from_card_inner(
+            &state,
+            &conn,
+            &vault,
+            "photo.png".to_string(),
+            "Source Article".to_string(),
+            "body_embed".to_string(),
+            Some(1),
+        )
+        .unwrap();
+
+        assert_eq!(result.affected_slugs, vec!["Source Article".to_string()]);
+        let (_, content) =
+            files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
+        let parsed = crate::domain::block::parse_block("Source Article", &content).unwrap();
+        // One identical embed remains; the media file is untouched.
+        assert_eq!(parsed.body.matches("![[photo.png]]").count(), 1);
+        assert!(vault.root().join("photo.png").exists());
     }
 
     #[test]

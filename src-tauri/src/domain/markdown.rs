@@ -277,11 +277,33 @@ pub fn rename_inline_media_references(body: &str, renames: &BTreeMap<String, Str
 /// reference occupies a whole line, the whole line is removed so article bodies
 /// do not retain an empty media row.
 pub fn remove_inline_media_references(body: &str, removals: &BTreeSet<String>) -> String {
+    remove_inline_media_references_impl(body, removals, None)
+}
+
+/// Remove only the `occurrence`-th (0-based, document order) inline media
+/// reference whose source is in `removals`. Used to delete a single duplicate
+/// embed from a card without touching its identical siblings. If that occurrence
+/// does not exist, the body is returned unchanged.
+pub fn remove_inline_media_reference_at(
+    body: &str,
+    removals: &BTreeSet<String>,
+    occurrence: usize,
+) -> String {
+    remove_inline_media_references_impl(body, removals, Some(occurrence))
+}
+
+fn remove_inline_media_references_impl(
+    body: &str,
+    removals: &BTreeSet<String>,
+    occurrence: Option<usize>,
+) -> String {
     if removals.is_empty() {
         return body.to_string();
     }
 
     let mut ranges = Vec::new();
+    // Counts matching references in document order so `occurrence` can target one.
+    let mut match_index = 0usize;
     let mut i = 0usize;
 
     while i < body.len() {
@@ -304,7 +326,10 @@ pub fn remove_inline_media_references(body: &str, removals: &BTreeSet<String>) -
             let inner = &body[name_start..name_start + close_offset];
             let raw_name = inner.split('|').next().unwrap_or("").trim();
             if removals.contains(raw_name) {
-                ranges.push(expand_media_removal_range(body, excl, end));
+                if occurrence.map_or(true, |target| target == match_index) {
+                    ranges.push(expand_media_removal_range(body, excl, end));
+                }
+                match_index += 1;
             }
             i = end;
             continue;
@@ -331,7 +356,10 @@ pub fn remove_inline_media_references(body: &str, removals: &BTreeSet<String>) -
             .decode_utf8_lossy()
             .into_owned();
         if removals.contains(&decoded) {
-            ranges.push(expand_media_removal_range(body, excl, end));
+            if occurrence.map_or(true, |target| target == match_index) {
+                ranges.push(expand_media_removal_range(body, excl, end));
+            }
+            match_index += 1;
         }
         i = end;
     }
@@ -570,6 +598,25 @@ mod tests {
             remove_inline_media_references(input, &removals),
             "Intro\n\nOutro"
         );
+    }
+
+    #[test]
+    fn remove_inline_media_reference_at_removes_only_the_indexed_occurrence() {
+        let mut removals = BTreeSet::new();
+        removals.insert("photo.png".to_string());
+        let input = "a\n\n![[photo.png]]\n\nb\n\n![[photo.png]]\n\nc";
+
+        let first_gone = remove_inline_media_reference_at(input, &removals, 0);
+        assert_eq!(first_gone.matches("![[photo.png]]").count(), 1);
+
+        let second_gone = remove_inline_media_reference_at(input, &removals, 1);
+        assert_eq!(second_gone.matches("![[photo.png]]").count(), 1);
+        // The two outputs differ — the index targets a distinct embed.
+        assert_ne!(first_gone, second_gone);
+
+        // Out-of-range occurrence leaves the body unchanged.
+        let none_gone = remove_inline_media_reference_at(input, &removals, 5);
+        assert_eq!(none_gone.matches("![[photo.png]]").count(), 2);
     }
 
     #[test]

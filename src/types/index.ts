@@ -197,6 +197,9 @@ export interface MediaAssetRef {
   media_kind: MediaAssetKind;
   source_slug: string;
   reference_kind: "frontmatter_file" | "body_embed";
+  // 0-based index of this embed among identical body refs to the same file.
+  // Lets removal target a single duplicate; null/undefined removes every match.
+  occurrence_index?: number | null;
 }
 
 export interface CreateMediaAssetCardParams {
@@ -209,6 +212,7 @@ export interface RemoveMediaAssetFromCardParams {
   media_ref: string;
   source_slug: string;
   reference_kind: MediaAssetRef["reference_kind"];
+  occurrence_index?: number | null;
 }
 
 export interface RenameMediaAssetParams {

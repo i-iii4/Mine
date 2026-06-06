@@ -1212,7 +1212,7 @@ describe("Detail", () => {
     const renameItem = within(dropdownMenu).getByText("Rename Media...");
     expect(renameItem).toBeInTheDocument();
     expect(within(dropdownMenu).getByText("Remove from Card")).toBeInTheDocument();
-    expect(within(dropdownMenu).getByText("Delete")).toBeInTheDocument();
+    expect(within(dropdownMenu).getByText("Delete Media")).toBeInTheDocument();
     const menuItemFor = (label: string) => (
       within(dropdownMenu).getByText(label).closest("[role='menuitem']") as HTMLElement
     );
@@ -1223,7 +1223,7 @@ describe("Detail", () => {
       "Copy Media",
       "Rename Media...",
       "Remove from Card",
-      "Delete",
+      "Delete Media",
     ]) {
       const iconSlot = menuItemFor(label).querySelector("[data-card-menu-icon-slot]");
       expect(iconSlot).toBeTruthy();
@@ -1421,7 +1421,7 @@ describe("Detail", () => {
     fireEvent.click(trigger!);
 
     const dropdownMenu = await screen.findByRole("menu");
-    fireEvent.click(within(dropdownMenu).getByText("Delete"));
+    fireEvent.click(within(dropdownMenu).getByText("Delete Media"));
 
     const dialog = await screen.findByRole("alertdialog", { name: "Delete media file?" });
     const photoRow = await within(dialog).findByRole("button", { name: "Photo Card" });
@@ -1527,7 +1527,7 @@ describe("Detail", () => {
     fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
     fireEvent.click(trigger!);
     const dropdownMenu = await screen.findByRole("menu");
-    fireEvent.click(within(dropdownMenu).getByText("Delete"));
+    fireEvent.click(within(dropdownMenu).getByText("Delete Media"));
 
     const dialog = await screen.findByRole("alertdialog", { name: "Delete media file?" });
     const row = await within(dialog).findByRole("button", { name: longTitle });
@@ -1603,7 +1603,7 @@ describe("Detail", () => {
     fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
     fireEvent.click(trigger!);
     const dropdownMenu = await screen.findByRole("menu");
-    fireEvent.click(within(dropdownMenu).getByText("Delete"));
+    fireEvent.click(within(dropdownMenu).getByText("Delete Media"));
 
     const dialog = await screen.findByRole("alertdialog", { name: "Delete media file?" });
     const sourceRow = await within(dialog).findByRole("button", { name: "Source Article" });
