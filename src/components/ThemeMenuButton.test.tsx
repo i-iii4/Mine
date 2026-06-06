@@ -22,7 +22,7 @@ describe("ThemeMenuButton", () => {
     fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
     fireEvent.pointerUp(trigger!, { button: 0, ctrlKey: false });
 
-    fireEvent.click(screen.getByRole("menuitem", { name: "Light" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Light" }));
 
     expect(document.documentElement).toHaveAttribute("data-theme", "light");
     expect(document.documentElement.style.colorScheme).toBe("light");
@@ -30,7 +30,15 @@ describe("ThemeMenuButton", () => {
 
     fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
     fireEvent.pointerUp(trigger!, { button: 0, ctrlKey: false });
-    fireEvent.click(screen.getByRole("menuitem", { name: "System" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "High Contrast" }));
+
+    expect(document.documentElement).toHaveAttribute("data-theme", "high-contrast");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+    expect(setTauriTheme).toHaveBeenLastCalledWith("dark");
+
+    fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
+    fireEvent.pointerUp(trigger!, { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "System" }));
 
     expect(document.documentElement).not.toHaveAttribute("data-theme");
     expect(document.documentElement.style.colorScheme).toBe("");

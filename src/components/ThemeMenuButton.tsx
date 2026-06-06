@@ -4,13 +4,14 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ActionButton } from "@/components/ActionButton";
 
-type ThemeMode = "system" | "light" | "dark";
+type ThemeMode = "system" | "light" | "dark" | "high-contrast";
 
 function getStoredTheme(): ThemeMode {
   return (localStorage.getItem("theme") as ThemeMode) ?? "system";
@@ -26,8 +27,11 @@ function applyTheme(mode: ThemeMode) {
     void setTauriTheme(null).catch(() => {});
   } else {
     root.setAttribute("data-theme", mode);
-    root.style.colorScheme = mode;
-    void setTauriTheme(mode).catch(() => {});
+    // high-contrast is a dark variant: report dark to the OS / WebView so the
+    // native window chrome and color-scheme stay dark.
+    const colorScheme = mode === "light" ? "light" : "dark";
+    root.style.colorScheme = colorScheme;
+    void setTauriTheme(colorScheme).catch(() => {});
   }
 }
 
@@ -68,6 +72,7 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>
     system: "System",
     light: "Light",
     dark: "Dark",
+    "high-contrast": "High Contrast",
   };
 
   return (
@@ -83,15 +88,16 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>
         </div>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side={menuSide}>
-        {(["system", "light", "dark"] as const).map((mode) => (
-          <DropdownMenuItem
-            key={mode}
-            onSelect={() => setThemeMode(mode)}
-            className={theme === mode ? "bg-accent" : ""}
-          >
-            {labels[mode]}
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuRadioGroup
+          value={theme}
+          onValueChange={(value) => setThemeMode(value as ThemeMode)}
+        >
+          {(["system", "light", "dark", "high-contrast"] as const).map((mode) => (
+            <DropdownMenuRadioItem key={mode} value={mode}>
+              {labels[mode]}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuCheckboxItem
           checked={compactDetailTopMenuEnabled}

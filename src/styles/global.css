@@ -721,6 +721,63 @@ body {
   --glass-border: oklch(0 0 0 / 8%);
 }
 
+/* High Contrast — a dark variant with an EVEN elevation step (ΔL 0.03) and a
+   wider range than the default dark theme. Surfaces read as a linear ladder
+   (0.14 · 0.17 · 0.20 · 0.23 · 0.26) instead of the default's ragged
+   0.012/0.012/0.025/0.025. Component fills are lifted above the brightest
+   surface so buttons keep separation on every surface. Treated as dark by the
+   OS/WebView (see ThemeMenuButton.applyTheme, nativeWindowChromeSurface). */
+:root[data-theme="high-contrast"] {
+  color-scheme: dark;
+  /* L0 — page / card / popover / sidebar */
+  --background: oklch(0.14 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.14 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.14 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.9189 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  /* L2 — accent / secondary / muted */
+  --secondary: oklch(0.2 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.2 0 0);
+  --muted-foreground: oklch(0.6862 0 0);
+  --tertiary-foreground: oklch(0.5103 0 0);
+  /* L1 — chrome (now a full step, not a half step) */
+  --chrome: oklch(0.17 0 0);
+  --accent: oklch(0.2 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  /* Component fills lifted above the brightest surface (L4 0.26) */
+  --component-fill: oklch(0.27 0 0);
+  --component-fill-inner: oklch(0.32 0 0);
+  --component-fill-hover: oklch(0.37 0 0);
+  /* L3 — active / pressed */
+  --active: oklch(0.23 0 0);
+  --hover-foreground: oklch(0.985 0 0);
+  --primary-hover: oklch(0.8 0 0);
+  --primary-active: oklch(0.7 0 0);
+  --card-hover-overlay: transparent;
+  --graphic-card-focus-overlay: oklch(1 0 0 / 18%);
+  --feed-selection-frame: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  /* L4 — border / input (brightest surface) */
+  --border: oklch(0.26 0 0);
+  --border-accent: oklch(0.985 0 0 / 16%);
+  --input: oklch(0.26 0 0);
+  --ring: oklch(0.6268 0 0);
+  --sidebar: oklch(0.14 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.9189 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.23 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.26 0 0);
+  --sidebar-ring: oklch(0.6268 0 0);
+  --glass-bg: oklch(0.14 0 0 / 60%);
+  --glass-border: oklch(1 0 0 / 8%);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
