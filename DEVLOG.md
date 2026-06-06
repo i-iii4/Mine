@@ -1,5 +1,40 @@
 # Devlog
 
+## 06.06.2026 — High Contrast тема и точечное удаление дубликата медиа
+
+### High Contrast как отдельная тема
+
+- Возвращён переключатель тем: к System / Light / Dark добавлена High Contrast —
+  отдельный `[data-theme="high-contrast"]` с равномерным surface-ладдером
+  (0.14 · 0.17 · 0.20 · 0.23 · 0.26, ΔL 0.03) против рваного дефолтного dark.
+  Dark остаётся прежним; HC — отдельная переключаемая тема для сравнения.
+- Селектор тем переведён с обычных пунктов с фоновой подсветкой на
+  `DropdownMenuRadioGroup` + `DropdownMenuRadioItem` — корректный radio-тип для
+  взаимоисключающего выбора, с индикатором активной темы.
+- HC трактуется как dark для OS/WebView (`applyTheme`, `currentTheme`):
+  `colorScheme: dark`, нативный chrome остаётся тёмным.
+
+### Media actions: переименование и удаление одной копии дубликата
+
+- Пункт меню медиа `Delete` → `Delete Media` (уточняет: удаляется медиафайл,
+  а не карточка).
+- Удаление одной копии дублированного inline-медиа. Раньше `Remove from Card`
+  для `body_embed` удалял все вхождения по тексту ссылки; теперь — только
+  наведённое, по 0-based `occurrence_index`.
+  - `domain/markdown.rs`: `remove_inline_media_reference_at` удаляет N-е
+    совпадение в document order (общий impl с прежней «удалить все»).
+  - `commands/blocks.rs`: параметр `occurrence_index` в команде и `inner`.
+  - Фронт: `inlineMediaOccurrenceIndex` считает индекс из AST-offset в
+    processed-теле. `preprocessWikilinks` переписывает `![[name]]` → `![](name)`
+    1:1, сохраняя порядок, поэтому индекс валиден для backend, парсящего
+    исходный `.md`.
+
+### Гейты
+
+- Rust-тесты (domain-unit на `remove_inline_media_reference_at` + backend
+  «удалить вторую из двух одинаковых копий») — 0 failed.
+- Lint, 463 frontend-теста, `tsc -b && vite build` — зелёные.
+
 ## 04.06.2026 — Удаление Chrome surfaces variant 2
 
 ### Контекст
