@@ -746,7 +746,7 @@ function GalleryTiles({
       : { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr" };
 
   return (
-    <div className="absolute inset-0 grid gap-[2px] bg-background" style={gridStyle}>
+    <div className="absolute inset-0 grid gap-[2px] bg-accent" style={gridStyle}>
       {visibleItems.map((item, index) => {
         const tileStyle = count === 3 && index === 0 ? { gridRow: "1 / span 2" } : undefined;
 
