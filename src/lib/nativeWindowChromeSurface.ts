@@ -76,9 +76,7 @@ function parseCssColorToHex(color: string): string | null {
 
 function currentTheme(): "light" | "dark" {
   const explicitTheme = document.documentElement.getAttribute("data-theme");
-  if (explicitTheme === "light") return "light";
-  // high-contrast is a dark variant.
-  if (explicitTheme === "dark" || explicitTheme === "high-contrast") return "dark";
+  if (explicitTheme === "light" || explicitTheme === "dark") return explicitTheme;
   return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
 }
 

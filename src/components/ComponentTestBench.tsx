@@ -116,7 +116,7 @@ const COLOR_TOKEN_GROUPS: readonly TokenGroup[] = [
       { token: "--accent", use: "Hover-фон, action bar" },
       { token: "--active", use: "Нажатие, активная строка" },
       { token: "--border", use: "Границы и разделители" },
-      { token: "--border-accent", use: "Акцентная граница (фокус)" },
+      { token: "--border-accent", use: "Индикатор навигации/наведения: seam строки, рамка карточки (контраст ~0.30 к фону)" },
       { token: "--input", use: "Фон и рамка инпута" },
     ],
   },

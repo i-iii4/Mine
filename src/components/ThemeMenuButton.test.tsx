@@ -30,14 +30,6 @@ describe("ThemeMenuButton", () => {
 
     fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
     fireEvent.pointerUp(trigger!, { button: 0, ctrlKey: false });
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "High Contrast" }));
-
-    expect(document.documentElement).toHaveAttribute("data-theme", "high-contrast");
-    expect(document.documentElement.style.colorScheme).toBe("dark");
-    expect(setTauriTheme).toHaveBeenLastCalledWith("dark");
-
-    fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
-    fireEvent.pointerUp(trigger!, { button: 0, ctrlKey: false });
     fireEvent.click(screen.getByRole("menuitemradio", { name: "System" }));
 
     expect(document.documentElement).not.toHaveAttribute("data-theme");

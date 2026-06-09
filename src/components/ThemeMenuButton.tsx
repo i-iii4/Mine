@@ -11,10 +11,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ActionButton } from "@/components/ActionButton";
 
-type ThemeMode = "system" | "light" | "dark" | "high-contrast";
+type ThemeMode = "system" | "light" | "dark";
 
 function getStoredTheme(): ThemeMode {
-  return (localStorage.getItem("theme") as ThemeMode) ?? "system";
+  const stored = localStorage.getItem("theme");
+  // High Contrast was merged into Dark; migrate any previously saved value so
+  // users who had it selected land on the (now identical) Dark theme.
+  if (stored === "high-contrast") return "dark";
+  return (stored as ThemeMode) ?? "system";
 }
 
 function applyTheme(mode: ThemeMode) {
@@ -27,11 +31,8 @@ function applyTheme(mode: ThemeMode) {
     void setTauriTheme(null).catch(() => {});
   } else {
     root.setAttribute("data-theme", mode);
-    // high-contrast is a dark variant: report dark to the OS / WebView so the
-    // native window chrome and color-scheme stay dark.
-    const colorScheme = mode === "light" ? "light" : "dark";
-    root.style.colorScheme = colorScheme;
-    void setTauriTheme(colorScheme).catch(() => {});
+    root.style.colorScheme = mode;
+    void setTauriTheme(mode).catch(() => {});
   }
 }
 
@@ -72,7 +73,6 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>
     system: "System",
     light: "Light",
     dark: "Dark",
-    "high-contrast": "High Contrast",
   };
 
   return (
@@ -92,7 +92,7 @@ export const ThemeMenuButton = forwardRef<ThemeMenuHandle, ThemeMenuButtonProps>
           value={theme}
           onValueChange={(value) => setThemeMode(value as ThemeMode)}
         >
-          {(["system", "light", "dark", "high-contrast"] as const).map((mode) => (
+          {(["system", "light", "dark"] as const).map((mode) => (
             <DropdownMenuRadioItem key={mode} value={mode}>
               {labels[mode]}
             </DropdownMenuRadioItem>
