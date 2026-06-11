@@ -3284,11 +3284,17 @@ export function AppWithVault({
         />
       )}
       {activeDragMediaAsset && activeDragMediaAsset.src && (
-        <div className="pointer-events-none max-h-48 max-w-64 overflow-hidden rounded-1 border border-border bg-background shadow-lg">
+        // Single sizing owner: the img box. A max-h/max-w pair on an <img>
+        // always yields an aspect-true box, so no object-fit is needed. The
+        // frame is decoration only — it shrink-wraps the image (inline-flex)
+        // and carries border/radius/shadow. Giving the frame its own max-*
+        // double-constrains the geometry: the border eats into the clamped
+        // box and background slivers leak around the image.
+        <div className="pointer-events-none inline-flex overflow-hidden rounded-1 border border-border bg-background shadow-lg">
           <img
             src={activeDragMediaAsset.src}
             alt=""
-            className="max-h-48 max-w-64 object-contain"
+            className="max-h-48 max-w-64"
             draggable={false}
           />
         </div>
