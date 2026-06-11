@@ -380,6 +380,20 @@ Context-menu клики переопределяют этот выбор в `app
 - `save-link` иначе  → `detectedType = "link"`
 - `save-page` + открытый Twitter lightbox → `detectedType = "image"`
 
+**Twitter/X photo lightbox (любая активация).** URL вида
+`/<handle>/status/<id>/photo/<n>` открывает одно изображение оверлеем над
+твитом. `detectType` классифицирует его как `"article"` (это `/status/`-URL),
+поэтому `useClipperState` init после context-menu переопределяет тип в
+`"image"` для конкретного N-го фото — при **любом** способе активации
+(иконка / попап / overlay), не только через `save-page` ПКМ. Tweet id и индекс
+берутся из сырого `tabUrl`: `meta.url` канонизирован X до `/status/<id>` без
+`/photo/<n>`. Источник изображения — точное N-е фото из syndication API
+(`media_url_https + "?name=large"`, `ext_alt_text`, `original_info`), с фолбэком
+на DOM-детектор лайтбокса (`detectTwitterLightboxImage`). Override не
+применяется, если context menu уже дал `image`/`selection`. Чистая логика —
+`extension/popup/lib/twitterPhotoLightbox.ts`, покрыта
+`twitterPhotoLightbox.test.ts`.
+
 ### Шаг 2 — Default tab (useClipperState init)
 
 | `detectedType` | Таб по умолчанию | Поведение |

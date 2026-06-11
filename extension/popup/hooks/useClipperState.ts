@@ -76,6 +76,11 @@ import {
   type ArticleExtractionState,
 } from "../lib/articleExtractionState";
 import { applySaveImageContextMenu } from "../lib/contextMenuMetadata";
+import {
+  parseTwitterPhotoUrl,
+  fetchTweetPhotoByIndex,
+  type ResolvedLightboxImage,
+} from "../lib/twitterPhotoLightbox";
 
 export type ClipType = "content" | "link" | "image" | "video" | "screenshot";
 export type PopupState = "loading" | "error" | "main";
@@ -560,6 +565,25 @@ export function useClipperState() {
       // Apply context menu overrides
       if (ctxData) {
         await applyContextMenu(ctxData, meta, tabId);
+      }
+
+      // Twitter/X photo lightbox (/status/<id>/photo/<n>): clip the single
+      // image the overlay shows, not the whole tweet thread. tabUrl is the raw
+      // location (meta.url is canonicalized to /status/<id> without the photo
+      // suffix). Skip when the context menu already resolved an explicit type.
+      if (
+        meta.detectedType !== "image" &&
+        meta.detectedType !== "selection" &&
+        tabUrl
+      ) {
+        const photo = await resolveTwitterPhotoLightbox(tabUrl, tabId);
+        if (photo) {
+          meta.detectedType = "image";
+          meta.imageToSave = photo.src;
+          if (photo.alt) meta.imageAlt = photo.alt;
+          if (photo.width) meta.imageWidth = photo.width;
+          if (photo.height) meta.imageHeight = photo.height;
+        }
       }
 
       setMetadataValue(meta);
@@ -1161,4 +1185,35 @@ async function fetchTweetBySyndicationApi(
     byline: authorHandle,
     excerpt: text.slice(0, 200),
   };
+}
+
+// Resolve the single image addressed by a Twitter/X "/status/<id>/photo/<n>"
+// URL. Prefer the syndication API (full-res, indexed by /photo/n, no lazy-DOM
+// dependency); fall back to DOM lightbox detection if the API is unavailable.
+async function resolveTwitterPhotoLightbox(
+  rawUrl: string,
+  tabId: number,
+): Promise<ResolvedLightboxImage | null> {
+  const target = parseTwitterPhotoUrl(rawUrl);
+  if (!target) return null;
+  try {
+    const photo = await fetchTweetPhotoByIndex(target.tweetId, target.photoIndex);
+    if (photo) return photo;
+  } catch {
+    // Syndication unavailable — fall through to DOM detection.
+  }
+  try {
+    const lightbox = await detectTwitterLightbox(tabId);
+    if (lightbox?.src) {
+      return {
+        src: lightbox.src,
+        alt: lightbox.alt ?? null,
+        width: lightbox.width ?? null,
+        height: lightbox.height ?? null,
+      };
+    }
+  } catch {
+    // Both sources failed — caller keeps the original detected type.
+  }
+  return null;
 }
