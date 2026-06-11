@@ -42,6 +42,16 @@ envelopes, а отсутствие worker metrics деградирует в cons
 explicit dev-аудит height drift через `window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__()`
 и не участвует в user-facing scroll/render path.
 
+**Кэшируемость ≠ settled.** Conservative fallback (worst-clamped строки текста)
+держит ленту живой, пока метрики грузятся, но такой layout — временный.
+В module-level `layoutCache` генерация записывается только когда **каждый**
+non-media блок имеет exact word widths (предикат
+`generationHasExactDeterministicHeights`, `src/lib/gridLayoutReadiness.ts`).
+Гейт по одному лишь `wordMetricsSettled` (промис завершился) запрещён: при
+частичной доставке метрик он закреплял fallback-высоты в кэше — под короткими
+social/article карточками оставался серый хвост в 2 резервные строки, и он
+переживал приход точных метрик.
+
 Route switching is snapshot-driven. `App.tsx` owns route/query identity for the
 latest applied `GridSnapshot` and passes an explicit readiness bit to Grid.
 Grid may show the empty-channel placeholder only when that snapshot identity

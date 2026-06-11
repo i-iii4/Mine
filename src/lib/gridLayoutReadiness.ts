@@ -56,6 +56,39 @@ function distanceToViewport(
   return 0;
 }
 
+/**
+ * A block's deterministic height is exact when it does not depend on word
+ * metrics (media cards derive height from media aspect alone) or when its
+ * word widths are already computed. Blocks outside this predicate fall back
+ * to worst-clamped text geometry in `computeCardHeight`.
+ */
+export function blockHasExactDeterministicHeight(
+  block: LightBlock,
+  wordWidthsMap: ReadonlyMap<number, unknown>,
+): boolean {
+  return block.card_kind === "media" || wordWidthsMap.has(block.id);
+}
+
+/**
+ * True when every block in the generation has an exact deterministic height.
+ * Only such generations may be cached as final layouts: a generation where
+ * any text card still uses the worst-clamped fallback must stay uncached,
+ * otherwise the oversized fallback heights (trailing dead space under short
+ * social/article cards) get pinned into the layout cache and survive the
+ * later arrival of word metrics.
+ */
+export function generationHasExactDeterministicHeights(
+  blocks: readonly LightBlock[],
+  wordWidthsMap: ReadonlyMap<number, unknown>,
+): boolean {
+  for (const block of blocks) {
+    if (!blockHasExactDeterministicHeight(block, wordWidthsMap)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function computeCommittedEndIndex(
   blocks: readonly LightBlock[],
   measuredBlockIds: ReadonlySet<number>,

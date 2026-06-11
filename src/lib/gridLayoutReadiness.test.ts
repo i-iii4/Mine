@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { LightBlock } from "@/types";
 import type { MasonryPosition } from "@/lib/masonryLayout";
 import {
+  blockHasExactDeterministicHeight,
   collectViewportFirstMeasurementBatch,
   computeCommittedEndIndex,
   createGridLayoutReadinessDiagnostics,
+  generationHasExactDeterministicHeights,
 } from "./gridLayoutReadiness";
 
 function block(id: number): LightBlock {
@@ -99,5 +101,36 @@ describe("gridLayoutReadiness", () => {
     expect(diagnostics.viewportUnmeasuredCount).toBe(2);
     expect(diagnostics.measuredBlockCount).toBe(2);
     expect(diagnostics.totalBlockCount).toBe(6);
+  });
+});
+
+describe("exact deterministic heights", () => {
+  const widths = { title: [], preview: [], titleSpace: 4, previewSpace: 4 };
+
+  it("media cards are exact without word metrics", () => {
+    const media = { ...block(1), card_kind: "media" as const };
+    expect(blockHasExactDeterministicHeight(media, new Map())).toBe(true);
+  });
+
+  it("text cards are exact only once their word widths are computed", () => {
+    const article = { ...block(2), card_kind: "article" as const };
+    expect(blockHasExactDeterministicHeight(article, new Map())).toBe(false);
+    expect(
+      blockHasExactDeterministicHeight(article, new Map([[2, widths]])),
+    ).toBe(true);
+  });
+
+  it("a generation is cacheable only when every text card has exact metrics", () => {
+    const media = { ...block(1), card_kind: "media" as const };
+    const social = { ...block(2), card_kind: "article" as const };
+    const blocks = [media, social];
+
+    // Social card still on the worst-clamped fallback → must not be cached,
+    // otherwise its oversized height survives the arrival of word metrics.
+    expect(generationHasExactDeterministicHeights(blocks, new Map())).toBe(false);
+    expect(
+      generationHasExactDeterministicHeights(blocks, new Map([[2, widths]])),
+    ).toBe(true);
+    expect(generationHasExactDeterministicHeights([], new Map())).toBe(true);
   });
 });

@@ -49,9 +49,11 @@ import {
   type FeedScrollSignalSample,
 } from "@/lib/feedScrollReadiness";
 import {
+  blockHasExactDeterministicHeight,
   collectViewportFirstMeasurementBatch,
   computeCommittedEndIndex,
   createGridLayoutReadinessDiagnostics,
+  generationHasExactDeterministicHeights,
 } from "@/lib/gridLayoutReadiness";
 import { createGridViewportPaintDiagnostics } from "@/lib/gridViewportDiagnostics";
 import {
@@ -356,13 +358,6 @@ function scrollPositionIntoView(
   if (nextTop !== null) {
     scrollElement.scrollTo({ top: nextTop, behavior: "smooth" });
   }
-}
-
-function blockHasExactDeterministicHeight(
-  block: LightBlock,
-  wordWidthsMap: ReadonlyMap<number, WordWidths>,
-): boolean {
-  return block.card_kind === "media" || wordWidthsMap.has(block.id);
 }
 
 function blockCanRenderFromDeterministicHeight(
@@ -893,11 +888,22 @@ export function Grid({
     [blocks, parentWidth, renderReadyBlockIds],
   );
 
+  // Exactness is stricter than "settled": after the metrics promise resolves,
+  // every block becomes render-ready (fallback heights keep the feed usable),
+  // but a generation is only cacheable when no block sits on the worst-clamped
+  // text fallback — otherwise the oversized fallback layout gets pinned in the
+  // module-level cache and survives the later arrival of exact word widths.
+  const allBlocksHaveExactHeights = useMemo(
+    () => generationHasExactDeterministicHeights(blocks, wordWidthsMap),
+    [blocks, wordWidthsMap],
+  );
+
   const allCurrentGenerationDeterministic =
     wordMetricsSettled &&
     parentWidth > 0 &&
     blocks.length > 0 &&
-    committedEndIndex === blocks.length - 1;
+    committedEndIndex === blocks.length - 1 &&
+    allBlocksHaveExactHeights;
 
   const publishHeightDriftReport = useCallback(
     (results: Array<{ id: number; height: number }>) => {
