@@ -895,6 +895,15 @@ change the semantic token if the surface level changes.
 preview при drag: `rounded-1` (3px), `border border-border`, `bg-background`,
 утилитарная `shadow-lg`. Ordinary feed cards остаются на `--radius-card`.
 
+**Один владелец размера.** В media drag-превью (DragOverlay) геометрию задаёт
+только `<img>` (пара `max-h`/`max-w` даёт бокс точно по аспекту; `object-fit`
+не нужен). Рамка — чистый декоратор: обтягивает контент (`inline-flex`), несёт
+border/radius/shadow и **не имеет собственных size-ограничений**. Дублирование
+`max-*` на рамке двойственно ограничивает геометрию: border съедает клампнутый
+бокс, и вокруг изображения проступают полосы фона; блочная рамка растягивается
+на ширину overlay и оставляет фоновое поле сбоку от вертикальных изображений.
+`bg-background` на рамке — осознанная подложка для изображений с прозрачностью.
+
 Related notes preview:
 - Trigger row остаётся compact button-shell с `rounded-1 border border-border bg-component-fill`.
 - Hover/focus outline trigger row: `outline-1 -outline-offset-1 outline-component-fill-hover`.
