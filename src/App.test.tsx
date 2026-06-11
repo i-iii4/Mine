@@ -1649,4 +1649,74 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid-title-Renamed Alpha")).toHaveTextContent("Renamed Alpha");
     });
   });
+
+  it("refreshes the feed when thumb:updated reports new media metadata for a visible card", async () => {
+    commandMocks.listGridBlocks.mockImplementation(async () => ({
+      blocks: [block(1, "wide-clip")],
+      total_blocks: 1,
+      has_more: false,
+    }));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
+    });
+
+    const gridCallsBefore = commandMocks.listGridBlocks.mock.calls.length;
+
+    // The thumb pipeline finished decoding the image and rewrote the block's
+    // preview_manifest / media_dimensions. The card is in the current feed, so
+    // the grid must reload to recompute its deterministic height (otherwise the
+    // stale square-aspect fallback leaves trailing dead space under the card).
+    fireEvent(
+      window,
+      new CustomEvent("thumb:updated", {
+        detail: { payload: { slug: "wide-clip", is_text: false } },
+      }),
+    );
+
+    await waitFor(
+      () => {
+        expect(commandMocks.listGridBlocks.mock.calls.length).toBeGreaterThan(gridCallsBefore);
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  it("does not reload the feed when thumb:updated targets a card outside the current feed", async () => {
+    commandMocks.listGridBlocks.mockImplementation(async () => ({
+      blocks: [block(1, "visible-card")],
+      total_blocks: 1,
+      has_more: false,
+    }));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
+    });
+
+    const gridCallsBefore = commandMocks.listGridBlocks.mock.calls.length;
+
+    fireEvent(
+      window,
+      new CustomEvent("thumb:updated", {
+        detail: { payload: { slug: "off-screen-card", is_text: false } },
+      }),
+    );
+
+    // Let the coalesced refresh window (2s) elapse — the feed must not reload
+    // for a card it isn't currently showing, to keep the cold-start sweep cheap.
+    await new Promise((resolve) => setTimeout(resolve, 2200));
+    expect(commandMocks.listGridBlocks.mock.calls.length).toBe(gridCallsBefore);
+  });
 });

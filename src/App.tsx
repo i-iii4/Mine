@@ -1558,7 +1558,24 @@ export function AppWithVault({
 
     unlistenFns.push(listen<ThumbUpdatedEvent>("thumb:updated", (event) => {
       bumpThumbVersion(event.payload.slug);
-      scheduleRefresh({ previews: true });
+      // The thumb pipeline also (re)writes the block's preview_manifest /
+      // media_dimensions once the source media becomes decodable. A freshly
+      // clipped card first indexed before its image is readable falls back to a
+      // square media aspect, so its deterministic card height reserves too much
+      // and the card renders with trailing dead space. Grid blocks only refresh
+      // on a grid reload — a previews refresh touches the sidebar, not the feed —
+      // so that stale height would persist until a manual reload. When the
+      // affected card is in the current feed, invalidate its route and schedule a
+      // coalesced grid refresh so the height re-fits the now-known media aspect.
+      const inCurrentGrid = blocksRef.current.some(
+        (block) => block.slug === event.payload.slug,
+      );
+      if (inCurrentGrid) {
+        invalidateRouteSnapshots();
+        scheduleRefresh({ grid: true, previews: true });
+      } else {
+        scheduleRefresh({ previews: true });
+      }
     }));
 
     unlistenFns.push(listen<VaultChangedEvent>("vault-changed", (event) => {
