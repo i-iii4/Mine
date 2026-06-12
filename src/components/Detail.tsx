@@ -26,6 +26,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 import {
+  MetadataRow,
+  METADATA_LABEL_CLASSES,
+  METADATA_VALUE_BASE_CLASSES,
+} from "@/components/MetadataRow";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -772,8 +777,6 @@ function MetadataPanel({
   );
 }
 
-const METADATA_LABEL_CLASSES = "whitespace-nowrap font-mono text-sm leading-4 text-muted-foreground";
-const METADATA_VALUE_BASE_CLASSES = "block min-w-0 font-sans text-sm leading-4 text-foreground";
 const DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT = 5;
 const DELETE_MEDIA_CONNECTED_CARDS_MAX_HEIGHT_PX =
   DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT * CARD_REFERENCE_ROW_ESTIMATED_HEIGHT_PX
@@ -788,28 +791,6 @@ function MetadataTable({ children }: { children: ReactNode }) {
       data-metadata-table
     >
       {children}
-    </div>
-  );
-}
-
-interface MetadataRowProps {
-  label: string;
-  children: ReactNode;
-}
-
-function MetadataRow({
-  label,
-  children,
-}: MetadataRowProps) {
-  return (
-    <div
-      className="relative grid w-full grid-cols-[max-content_minmax(0,1fr)] items-start gap-x-4 pb-2 after:absolute after:bottom-1 after:left-0 after:right-0 after:border-t after:border-border last:pb-0 last:after:hidden"
-      data-metadata-row
-    >
-      <div className={METADATA_LABEL_CLASSES}>
-        {label}
-      </div>
-      <div className="min-w-0 text-right">{children}</div>
     </div>
   );
 }

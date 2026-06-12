@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef, type MouseEvent as ReactMouseEvent } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { ImageOff } from "lucide-react";
 import type { IndexedBlock, LightBlock } from "@/types";
@@ -22,6 +22,8 @@ import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
 import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
 import { buildFeedVideoPosterCandidates } from "@/lib/feedVideoPoster";
 import { getDisplayTitle, getNavigationLabel } from "@/lib/displayTitle";
+import { renderSearchHighlightedText, searchExcerptText } from "@/lib/searchHighlight";
+import { deriveSearchResultRow } from "@/lib/searchResultRow";
 import {
   uniqueDragBlocks,
   type BlockDragData,
@@ -45,47 +47,6 @@ const cardFrameRenderStyle = {
   transform: "translateZ(0)",
   backfaceVisibility: "hidden",
 } as const;
-
-function renderSearchHighlightedText(text: string, match: LightBlock["search_match"] | null | undefined): ReactNode {
-  if (!match || match.ranges.length === 0 || match.excerpt !== text) {
-    return text;
-  }
-
-  const chars = Array.from(text);
-  const nodes: React.ReactNode[] = [];
-  let cursor = 0;
-  match.ranges
-    .filter((range) => range.start >= 0 && range.end > range.start && range.end <= chars.length)
-    .sort((a, b) => a.start - b.start)
-    .forEach((range, index) => {
-      if (range.start < cursor) return;
-      if (range.start > cursor) {
-        nodes.push(chars.slice(cursor, range.start).join(""));
-      }
-      nodes.push(
-        <mark
-          key={`search-match-${index}`}
-          className="bg-active p-0 text-foreground"
-        >
-          {chars.slice(range.start, range.end).join("")}
-        </mark>,
-      );
-      cursor = range.end;
-    });
-  if (cursor < chars.length) {
-    nodes.push(chars.slice(cursor).join(""));
-  }
-
-  return nodes.length > 0 ? nodes : text;
-}
-
-function searchExcerptText(
-  match: LightBlock["search_match"] | null | undefined,
-  fallback: string,
-): string {
-  const excerpt = match?.excerpt;
-  return excerpt && excerpt.trim().length > 0 ? excerpt : fallback;
-}
 
 interface CardProps {
   block: LightBlock;
@@ -277,12 +238,21 @@ export function ReadOnlyCardPreview({
     const previewWidth = firstTile?.width ?? manifest?.width ?? block.width;
     const previewHeight = firstTile?.height ?? manifest?.height ?? block.height;
     const aspectRatio = previewWidth && previewHeight ? previewWidth / previewHeight : 1;
-    const title = getDisplayTitle(block) ?? getNavigationLabel(block);
-    const previewText = block.preview_text?.trim() ?? "";
+    // Text thumbs are dark-ink PNGs that need dark:invert. LightBlock carries
+    // no thumb_format, so the preview manifest is the equal-signal fallback.
+    const isTextThumb = block.thumb_format === "png" || manifest?.kind === "text";
+    // Active search: the micro preview renders the same row model as the
+    // search-result list (title highlight, first-match excerpt as preview).
+    const matchRow = block.search_match ? deriveSearchResultRow(block) : null;
+    const title = matchRow
+      ? matchRow.title
+      : (getDisplayTitle(block) ?? getNavigationLabel(block));
+    const previewText = matchRow
+      ? (matchRow.snippet ?? "")
+      : (block.preview_text?.trim() ?? "");
     const hasText = Boolean(title || previewText || block.author);
     const isPureTextPreview =
-      block.thumb_format === "png" &&
-      manifest?.kind === "text" &&
+      isTextThumb &&
       !block.media_file &&
       !block.thumbnail &&
       !block.first_image &&
@@ -304,7 +274,7 @@ export function ReadOnlyCardPreview({
                 alt=""
                 className={cn(
                   "absolute inset-0 size-full object-cover",
-                  block.thumb_format === "png" && "dark:invert",
+                  isTextThumb && "dark:invert",
                 )}
                 loading="eager"
                 decoding="async"
@@ -319,7 +289,7 @@ export function ReadOnlyCardPreview({
                   className="line-clamp-2 text-sm font-semibold text-foreground"
                   style={contentCardSingleLineTextStyle}
                 >
-                  {title}
+                  {matchRow ? renderSearchHighlightedText(title, matchRow.titleMatch) : title}
                 </p>
               )}
               {previewText && (
@@ -327,7 +297,9 @@ export function ReadOnlyCardPreview({
                   className={cn("text-sm text-muted-foreground", title && "mt-1.5", "line-clamp-3")}
                   style={contentCardPreviewTextStyle}
                 >
-                  {previewText}
+                  {matchRow
+                    ? renderSearchHighlightedText(previewText, matchRow.snippetMatch)
+                    : previewText}
                 </p>
               )}
               {block.author && (

@@ -505,6 +505,8 @@ body {
   --color-component-fill: var(--component-fill);
   --color-component-fill-inner: var(--component-fill-inner);
   --color-component-fill-hover: var(--component-fill-hover);
+  --color-search-mark: var(--search-mark);
+  --color-search-mark-foreground: var(--search-mark-foreground);
 }
 
 :root {
@@ -551,6 +553,10 @@ body {
   --border-accent: oklch(0.79 0 0);
   --input: oklch(0.95 0 0);
   --ring: oklch(0.5693 0 0);
+  /* search match highlighter: the one chromatic state indicator (like
+     destructive) — a real text marker. Dark ink on yellow in both themes. */
+  --search-mark: oklch(0.92 0.17 100);
+  --search-mark-foreground: oklch(0.145 0 0);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -603,6 +609,9 @@ body {
     /* navigation/hover highlight — indicator scale, contrast ~0.30 to background */
     --border-accent: oklch(0.44 0 0);
     --input: oklch(0.26 0 0);
+    /* search match highlighter: dimmed marker yellow, same dark ink */
+    --search-mark: oklch(0.75 0.14 95);
+    --search-mark-foreground: oklch(0.145 0 0);
     /* relative elevation lift scalars: button = zone surface + ΔL. Dark lifts
        +0.15 / +0.18 (5 / 6 ladder quanta of 0.03) above the zone surface; fills
        are derived from the zone surface in the elevation map after theme blocks. */
@@ -670,6 +679,9 @@ body {
   /* navigation/hover highlight — indicator scale, contrast ~0.30 to background */
   --border-accent: oklch(0.44 0 0);
   --input: oklch(0.26 0 0);
+  /* search match highlighter: dimmed marker yellow, same dark ink */
+  --search-mark: oklch(0.75 0.14 95);
+  --search-mark-foreground: oklch(0.145 0 0);
   --ring: oklch(0.6268 0 0);
   --sidebar: oklch(0.14 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
@@ -716,6 +728,9 @@ body {
      sharpness: a dark line on white reads harsher than a light line on dark */
   --border-accent: oklch(0.79 0 0);
   --input: oklch(0.95 0 0);
+  /* search match highlighter: dark ink on yellow in both themes */
+  --search-mark: oklch(0.92 0.17 100);
+  --search-mark-foreground: oklch(0.145 0 0);
   --ring: oklch(0.5693 0 0);
   --sidebar: oklch(1 0 0);
   --sidebar-foreground: oklch(0.145 0 0);

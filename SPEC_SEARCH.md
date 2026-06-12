@@ -4,15 +4,20 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_FRONTEND.md](SPEC_
 
 ## Goal
 
-Search is a scoped filter mode for existing surfaces, not a command palette and
-not a separate results route.
+Search is hybrid retrieval over blocks plus scoped channel filtering. The
+visible block-search UI is the Search Overlay
+([SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md)); this document owns the
+backend read model, ranking, match metadata and card rendering rules.
 
-- `Cmd+F` toggles App-owned main search state; the visual main search component
-  is temporarily hidden.
+- `Cmd+F` opens/closes the Search Overlay — modal block-search navigation. The
+  former invisible grid-filter mode is removed: the Grid is never filtered by a
+  search query.
 - `Shift+Cmd+F` focuses search in the left top chrome segment and filters the
   channel list.
 - `Cmd+K` remains reserved for scoped card/Detail overflow actions and never
   opens search.
+- "No command palette" stays in force: the overlay searches and navigates, it
+  never executes commands. There is still no `/search` route.
 
 The main Grid search must search titles, full card content and searchable
 metadata (`author`, `url`) while keeping the current page model: the user stays
@@ -43,51 +48,34 @@ under vague semantic-neighbor results.
 
 ## Search Scopes
 
-### Main/Grid Search (`Cmd+F`)
+### Main Block Search (`Cmd+F`) — Search Overlay
 
-`Cmd+F` opens or closes the App-owned Grid search state. The visual main search
-component is temporarily not rendered; the route-facing search mechanism,
-state, shortcuts and backend query path remain in place.
-The top chrome is split by the same `--sidebar-width` boundary as the body: the
-left segment contains the native traffic-light spacer, the space selector,
-sidebar channel search and a `border-r border-sidebar-border`, so the
-Sidebar/Main divider continues to the top edge of the window. The right segment
-starts with a current collection switcher and leaves the remaining pixels as
-drag region until the next visual search surface is introduced. The
-bottom app bar also exposes a right-side `Search cards` action with the `⌘F`
-shortcut label and the same toggle behavior. This action is a command trigger,
-not a selected-state control: it must not remain visually pressed while search
-is active.
-Opening from either `Cmd+F` or `Search cards` updates App-owned search state but
-does not render an input while the visual component is disabled.
-The temporary hidden state must not participate in Grid layout, animate over the
-content, or change the Grid scroll viewport.
-Opening Detail or another full-surface mode disables/hides the top-chrome search
-slot. The active route remains unchanged:
+`Cmd+F` opens or closes the Search Overlay; the full visual/keyboard/data
+contract lives in [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md). Key points
+owned here:
 
-- on Everything, search covers all non-channel cards;
-- inside a collection, search covers only cards connected to that collection;
-- clearing the query restores the normal route snapshot and normal ordering.
+- the overlay calls the same route-facing backend command
+  (`list_grid_blocks(query)`) vault-wide (`currentTag` is not passed) and
+  renders `LightBlock` + `search_match` per the Match Metadata / Card Rendering
+  rules below;
+- the Grid is never filtered by a search query: overlay results live in
+  overlay-owned state, the route snapshot underneath stays untouched, and
+  closing the overlay restores exactly the surface the user started from;
+- the bottom app bar exposes a right-side `Search cards` action with the `⌘F`
+  shortcut label and the same toggle behavior. This action is a command
+  trigger, not a selected-state control: it must not remain visually pressed
+  while the overlay is open;
+- the top chrome is split by the same `--sidebar-width` boundary as the body:
+  the left segment contains the native traffic-light spacer, the space
+  selector, sidebar channel search and a `border-r border-sidebar-border`, so
+  the Sidebar/Main divider continues to the top edge of the window. The right
+  segment starts with a current collection switcher and leaves the remaining
+  pixels as drag region;
+- group selection and the overlay do not interact: the modal overlay owns the
+  keyboard entirely while open.
 
-When Grid group selection starts, empty main search state becomes inactive. If
-the query is non-empty, the filtered result set remains active, but keyboard
-ownership moves to Grid selection so the next `Escape` clears selection first.
-
-When `query` is non-empty, Grid ordering is relevance-first. Normal route order
-is still `saved_at DESC`.
-
-Grid search state is App-owned:
-
-```ts
-interface MainSearchState {
-  open: boolean;
-  query: string;
-  sequence: number;
-}
-```
-
-Grid receives `searchQuery` and `searchActive` as rendering context. Grid does
-not own IPC and does not run local filtering over stale blocks.
+When `query` is non-empty, overlay ordering is relevance-first. Normal route
+order in the Grid is always `saved_at DESC`.
 
 ### Sidebar Search (`Shift+Cmd+F`)
 
@@ -184,11 +172,10 @@ keep the current channel order, so the sidebar remains deterministic.
 
 | Shortcut | Scope | Behavior |
 |---|---|---|
-| `Cmd+F` | Main/Grid | Toggle App-owned main search state; visual input is temporarily hidden |
+| `Cmd+F` | Search Overlay | Open/close the modal block-search overlay (keyboard contract inside: SPEC_SEARCH_OVERLAY.md) |
 | `Shift+Cmd+F` | Sidebar | Focus/select the top-chrome channel search input |
 | `Escape` in sidebar search input | Sidebar | Clear the query; if empty, blur the input |
-| Arrow keys after focus returns to Grid | Main/Grid | Use existing Grid keyboard navigation over filtered `layout.positions` |
-| Group selection starts while main search is active | Main/Grid | Deactivate empty search, preserve non-empty query/filter |
+| `Escape` in the search overlay | Search Overlay | Close the overlay regardless of query |
 
 Shortcut handlers must ignore editable/nested overlay targets using the shared
 keyboard target helpers. `Cmd+F` and `Shift+Cmd+F` must call `preventDefault()`
@@ -469,27 +456,19 @@ and the excerpt text actually rendered by cards.
 
 App owns:
 
-- `mainSearchOpen`;
-- `mainSearchQuery`;
+- `searchOverlayOpen` and `searchOverlayQuery` (session-lived, see
+  SPEC_SEARCH_OVERLAY.md);
 - `sidebarSearchQuery`;
 - `sidebarSearchFocusSequence`;
-- per-route normal snapshot cache;
-- per-route+query search request sequence.
+- per-route normal snapshot cache (route-keyed only — search never touches it).
 
-Main search reloads Grid through the same request pipeline as route changes.
-The cache key includes both route and query:
-
-```ts
-routeKey = currentTag ?? "__all__";
-searchKey = `${routeKey}::${normalizedQuery}`;
-```
-
+Overlay search requests are owned by the overlay component: a debounced
+`list_grid_blocks(undefined, 0, limit, query)` call with a request sequence.
 Search results are never applied if:
 
-- the vault path changed;
-- the route changed;
 - the query changed after request start;
-- a newer request sequence completed first.
+- a newer request sequence completed first;
+- the overlay closed.
 
 Debounce: `100ms`. It is short enough to feel live while avoiding one IPC
 request per key repeat.
@@ -549,21 +528,13 @@ Search behavior by semantic state:
 
 ## Interaction With Selection And Navigation
 
-Entering main search mode clears active group selection. Selection over a
-dataset that is about to be filtered is ambiguous and can hide selected cards.
-Entering group selection deactivates empty main search state so `Escape`
-belongs to selection. Non-empty query remains active as the selected filtered
-result set.
+The overlay is modal: while open it owns the keyboard entirely, so it cannot
+conflict with Grid group selection or Grid keyboard focus. The Grid dataset is
+never filtered by search, so no focus pruning is needed.
 
-Grid keyboard focus is pruned to visible filtered results:
-
-- if the focused slug remains in the filtered result set, preserve it;
-- otherwise first arrow/Enter interaction starts from the first visible
-  committed result in the current viewport.
-
-Opening Detail from a filtered result is normal card open behavior. Closing
-Detail restores focus by slug if the slug is still present in the filtered
-result set.
+Opening a result is normal card open behavior into Detail; the overlay closes.
+For a card outside the current route's grid, Detail's sibling navigation has no
+neighbors — an accepted soft degradation (SPEC_SEARCH_OVERLAY.md).
 
 ## Performance Contract
 
@@ -611,24 +582,18 @@ Backend:
 - semantic-only results return no fake highlight ranges;
 - stale embedding rows are ignored when their `chunk_hash` no longer matches.
 
-Frontend:
+Frontend (overlay-specific contract: SPEC_SEARCH_OVERLAY.md → Test Contract):
 
-- `Cmd+F` toggles App-owned main search state; route filtering remains wired
-  through the same `searchQuery` mechanism;
-- bottom app bar `Search cards` with `⌘F` toggles the same main search state;
-- the visual main search component is temporarily absent; the top app chrome
-  still renders the Sidebar/Main divider up to the window top edge;
-- repeat `Cmd+F` and bottom app bar toggle clear/close search state without
-  animating or shifting the Grid surface;
-- starting Grid group selection clears empty active search state, while a
-  non-empty query/filter remains active;
+- `Cmd+F` and the bottom app bar `Search cards` open/close the Search Overlay;
+  the Grid is not refetched and its dataset is untouched;
+- the top app chrome still renders the Sidebar/Main divider up to the window
+  top edge;
 - `Shift+Cmd+F` focuses/selects top-chrome sidebar search and does not change Grid;
 - stale search responses are ignored;
-- clearing query restores normal route order;
-- article body matches replace preview with highlighted excerpt;
-- title matches highlight title without replacing the preview;
+- article body matches render the highlighted excerpt as the row snippet and in
+  the preview card;
+- title matches highlight the title without replacing the preview;
 - author and URL matches do not replace preview text, do not reveal hidden URL
   text and render no `mark`;
 - semantic-only matches show an excerpt without text highlight;
-- selection clears on entering main search;
 - `Cmd+K` remains scoped to card/Detail menus and never opens search.

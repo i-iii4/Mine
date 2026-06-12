@@ -107,7 +107,7 @@ typography must stay inside the 12/14/18px design-system scale.
 
 ## Цветовой принцип
 
-Все серые — чисто нейтральные (R=G=B), chroma 0, hue 0. Никаких тёплых или холодных оттенков. Цвет допустим только в акцентах: ссылки, ошибки (destructive), графики (chart-*).
+Все серые — чисто нейтральные (R=G=B), chroma 0, hue 0. Никаких тёплых или холодных оттенков. Цвет допустим только в акцентах: ссылки, ошибки (destructive), поисковый маркер (search-mark), графики (chart-*).
 
 **Правило:** при добавлении нового серого — `oklch(L 0 0)`. Не вводить hue.
 
@@ -648,15 +648,54 @@ keyboard accessibility. Reusable controls such as `CardMoreMenu` must opt into
 this mode only when rendered inside top chrome; card-local menus keep their
 normal card interaction contract.
 
-Search match mark внутри карточек:
+### Search Overlay
+
+Поиск по блокам (`Cmd+F`, [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md)) —
+модальная панель на Radix `Dialog`: backdrop `bg-black/50`, поверхность
+`rounded-1 border border-border bg-popover` с единой floating-тенью. Геометрия
+фиксированная (не дышит при наборе): ширина `min(960px, 100vw−4rem)`, высота
+`min(640px, 76vh)`, прижата к верхней зоне внимания (`top: 12vh`).
+
+- Header — канон `SearchMenuInput`: `border-b border-border p-1` +
+  `Input ghost h-8 rounded-0 px-2 text-base`, без иконки лупы; справа счётчик
+  результатов (голое число, `text-sm text-tertiary-foreground`, как счётчики
+  каналов) и clear `✕` (`h-6 w-6 rounded-1`,
+  hover `bg-component-fill-hover text-foreground`) при непустом query.
+- Список результатов: строки `rounded-1 px-2 py-1.5`, flex с миниатюрой слева —
+  стандартный `MicroPreviewThumbnail` в слоте `size-8 shrink-0 overflow-hidden
+  bg-component-fill` (тот же паттерн, что related-notes reference row;
+  text-миниатюры получают `dark:invert`). Текстовая колонка: заголовок
+  `text-base font-semibold truncate`; сниппет `text-sm text-muted-foreground
+  line-clamp-2` (line-height 20px). Активная строка `bg-active`; один источник
+  active state (стрелки + реальный pointermove), фокус всегда в инпуте
+  (`aria-activedescendant`).
+- Подсветка — системный search mark (жёлтый текстовыделитель, см. «Search match
+  mark»): различим на любом фоне строки, включая активную.
+- Превью справа (`w-80 border-l border-border p-4`, `flex flex-col gap-4`) —
+  две выделенные зоны. Зона карточки: `ReadOnlyCardPreview` micro — единый
+  шаблон для всех типов, медиа внутри карточного поля `p-4` (без full-bleed);
+  при поиске micro рендерит тот же row-model, что список (подсветка title,
+  excerpt, `bg-search-mark`). Зона метаданных: язык metadata-card Detail
+  (`rounded-1 border border-border bg-accent`, строки — общий `MetadataRow`):
+  Date, Source (домен), Author, Collections (lazy); пустые строки скрываются.
+- Пустые состояния: пустой query → пустые панели; нет результатов —
+  центрированная `No results` (`text-sm text-muted-foreground`). Спиннеров нет.
+
+Search match mark (карточки и список Search Overlay):
 
 - element: `mark` или inline `span`;
 - typography наследуется от родительского title/excerpt;
-- background: `bg-active`;
-- text: `text-foreground`;
+- background: `bg-search-mark` — настоящий текстовыделитель (жёлтый), один из
+  немногих хроматических акцентов системы (как destructive). Серые токены для
+  маркера запрещены: индикатор совпадения обязан контрастировать с любым фоном
+  строки, включая `bg-active` активной строки списка;
+- text: `text-search-mark-foreground` — фиксированные тёмные чернила в обеих
+  темах (на жёлтом текст всегда тёмный);
+- значения: светлая `oklch(0.92 0.17 100)`, тёмная `oklch(0.75 0.14 95)`;
+  чернила `oklch(0.145 0 0)`;
 - radius: none;
 - horizontal padding: `p-0`;
-- no border, no underline, no color accent.
+- no border, no underline.
 
 Prefix search подсвечивает только введённый префикс: `memo` в слове `memory`
 даёт mark вокруг `memo`, а не вокруг всего токена. Чтобы после mark не

@@ -883,7 +883,7 @@ describe("AppWithVault", () => {
     expect(collectionSwitcher).not.toHaveClass("px-6");
   });
 
-  it("keeps Command-F and the bottom action wired without rendering the hidden main search component", async () => {
+  it("opens the search overlay from the bottom action without refetching the grid", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -898,14 +898,14 @@ describe("AppWithVault", () => {
 
     fireEvent.click(searchButton);
     expect(searchButton).not.toHaveAttribute("data-action-selected");
-    fireEvent.keyDown(window, { key: "f", code: "KeyF", metaKey: true });
-
-    expect(screen.queryByRole("textbox", { name: "Search cards" })).not.toBeInTheDocument();
-    expect(document.querySelector("[data-main-search-top-bar]")).toBeNull();
+    expect(document.querySelector("[data-search-overlay]")).not.toBeNull();
+    expect(screen.getByRole("combobox")).toHaveFocus();
+    // Opening with an empty query issues no search request and leaves the grid alone.
     expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeSearchToggle);
+    expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
   });
 
-  it("keeps the native main-search accelerator event wired without rendering the hidden component", async () => {
+  it("toggles the search overlay with the native main accelerator event", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -922,8 +922,69 @@ describe("AppWithVault", () => {
         detail: { payload: "main" },
       }),
     );
+    expect(document.querySelector("[data-search-overlay]")).not.toBeNull();
 
-    expect(screen.queryByRole("textbox", { name: "Search cards" })).not.toBeInTheDocument();
+    fireEvent(
+      window,
+      new CustomEvent("surface-search-shortcut", {
+        detail: { payload: "main" },
+      }),
+    );
+    await waitFor(() => {
+      expect(document.querySelector("[data-search-overlay]")).toBeNull();
+    });
+  });
+
+  it("opens a search result in Detail and closes the overlay", async () => {
+    const matched = {
+      ...block(7, "found-card"),
+      title: "Found card",
+      search_match: {
+        field: "body" as const,
+        kind: "exact" as const,
+        excerpt: "…text around the match…",
+        ranges: [{ start: 17, end: 22 }],
+        score: 100,
+      },
+    };
+    const gridBlocks = [block(1, "alpha-block"), block(2, "beta-block")];
+    commandMocks.listGridBlocks.mockImplementation(async (tag, _offset, _limit, query) => {
+      if (query) {
+        expect(tag).toBeUndefined();
+        return { blocks: [matched], total_blocks: 1, has_more: false };
+      }
+      return { blocks: gridBlocks, total_blocks: 2, has_more: false };
+    });
+    commandMocks.getBlock.mockImplementation(async (slug: string) =>
+      indexedBlock(7, slug, "Found card"),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent(
+      window,
+      new CustomEvent("surface-search-shortcut", { detail: { payload: "main" } }),
+    );
+    const input = screen.getByRole("combobox");
+    fireEvent.change(input, { target: { value: "match" } });
+
+    const option = await screen.findByRole("option", {}, { timeout: 2000 });
+    expect(option.querySelector("mark")).not.toBeNull();
+
+    fireEvent.click(option);
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("Found card");
+    });
+    expect(document.querySelector("[data-search-overlay]")).toBeNull();
+    // The grid dataset stayed untouched by the overlay search.
+    expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
   });
 
   it("opens sidebar search with Shift-Command-F without touching grid query", async () => {

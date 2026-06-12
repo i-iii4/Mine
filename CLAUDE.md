@@ -27,6 +27,7 @@
 - `SPEC_OBSIDIAN_WIKILINKS.md` — inline media в body как Obsidian wikilink `![[name|alt]]`; один canonical syntax на write, оба syntax на read, render preprocessor в frontend, опциональная migration CLI для legacy блоков
 - `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md` — совместимость с обычными Obsidian `.md` без Mine frontmatter: implicit article read-model, optional metadata overlay, no rewrite on read
 - `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md` — implemented migration: collections as Obsidian pages, `Mine Collections` values as quoted wikilinks, legacy formats handled by CLI migration
+- `SPEC_SEARCH_OVERLAY.md` — поиск по блокам: модальный overlay (`Cmd+F`), список результатов с подсветкой первого совпадения, превью-карточка справа; заменяет невидимый грид-фильтр main search
 - `DESIGN_SYSTEM_IOS.md` — дизайн-система iOS: цвета, типографика, компоненты, жесты
 - `AUDIT_PERFORMANCE.md` — аудит производительности и план оптимизации
 - `AUDIT.md` — результаты аудитов кодовой базы (01.03.2026 — первый, 03.03.2026 — повторный), план доработки — Phase 9 в PLAN.md

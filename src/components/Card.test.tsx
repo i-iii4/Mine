@@ -117,6 +117,34 @@ describe("Card", () => {
     expect(screen.getByText("by @fish_elysium")).toBeInTheDocument();
   });
 
+  it("micro preview renders the search excerpt with the highlighter mark", () => {
+    render(
+      <ReadOnlyCardPreview
+        block={block({
+          block_type: "article",
+          card_kind: "article",
+          title: "Card title",
+          preview_text: "Regular preview",
+          search_match: {
+            field: "body",
+            kind: "exact",
+            excerpt: "around the match here",
+            ranges: [{ start: 11, end: 16 }],
+            score: 100,
+          },
+        })}
+        vaultPath={VAULT}
+        thumbsRootPath="/tmp/thumbs"
+        previewMode="micro"
+      />,
+    );
+
+    expect(screen.queryByText("Regular preview")).not.toBeInTheDocument();
+    const mark = screen.getByText("match");
+    expect(mark.tagName).toBe("MARK");
+    expect(mark).toHaveClass("bg-search-mark");
+  });
+
   it("uses search match excerpt and mark for article body matches", () => {
     render(
       <Card
@@ -142,7 +170,7 @@ describe("Card", () => {
     expect(screen.queryByText("Regular preview")).not.toBeInTheDocument();
     const mark = screen.getByText("Aristotle");
     expect(mark.tagName).toBe("MARK");
-    expect(mark).toHaveClass("bg-active");
+    expect(mark).toHaveClass("bg-search-mark");
   });
 
   it("uses search match excerpt and mark for social cards with media", () => {
@@ -172,7 +200,7 @@ describe("Card", () => {
     expect(screen.queryByText("Regular social preview")).not.toBeInTheDocument();
     const mark = screen.getByText("Claude");
     expect(mark.tagName).toBe("MARK");
-    expect(mark).toHaveClass("bg-active");
+    expect(mark).toHaveClass("bg-search-mark");
   });
 
   it("highlights only the matched prefix in search excerpts", () => {
@@ -199,7 +227,7 @@ describe("Card", () => {
 
     const mark = screen.getByText("Mi");
     expect(mark.tagName).toBe("MARK");
-    expect(mark).toHaveClass("bg-active");
+    expect(mark).toHaveClass("bg-search-mark");
     expect(mark).toHaveClass("p-0");
     expect(mark.className).not.toContain("px-");
     expect(mark.className).not.toContain("rounded");

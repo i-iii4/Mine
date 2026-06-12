@@ -117,6 +117,8 @@ const COLOR_TOKEN_GROUPS: readonly TokenGroup[] = [
       { token: "--active", use: "Нажатие, активная строка" },
       { token: "--border", use: "Границы и разделители" },
       { token: "--border-accent", use: "Индикатор навигации/наведения: seam строки, рамка карточки (контраст ~0.30 к фону)" },
+      { token: "--search-mark", use: "Поисковый маркер: фон mark в карточках и Search Overlay (жёлтый текстовыделитель)" },
+      { token: "--search-mark-foreground", use: "Чернила поискового маркера: фиксированно тёмные в обеих темах" },
       { token: "--input", use: "Фон и рамка инпута" },
     ],
   },

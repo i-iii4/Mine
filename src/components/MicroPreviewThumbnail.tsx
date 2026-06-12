@@ -1,7 +1,8 @@
 import type { ComponentPropsWithoutRef } from "react";
 import { thumbnailUrl } from "@/lib/assets";
+import { parsePreviewManifest } from "@/lib/cardLayout";
 import { cn } from "@/lib/utils";
-import type { IndexedBlock, PreviewCard } from "@/types";
+import type { IndexedBlock, LightBlock, PreviewCard } from "@/types";
 
 export interface MicroPreviewModel {
   slug?: string;
@@ -24,6 +25,29 @@ export function microPreviewFromIndexedBlock(
     url: `${thumbnailUrl(thumbsRootPath, block.slug)}${mtime}`,
     text: block.thumb_format === "png",
     hasThumb: block.thumb_format != null,
+  };
+}
+
+/**
+ * LightBlock carries no thumb metadata (`thumb_format`/`thumb_mtime`), but the
+ * thumbnail pipeline guarantees a thumb file per block (SPEC_THUMBNAILS Phase
+ * 1) and the preview manifest tells text apart from media: `kind: "text"`
+ * thumbs are dark-ink PNGs that need `dark:invert`. Legacy blocks without a
+ * manifest fall back to "no media signals → text".
+ */
+export function microPreviewFromLightBlock(
+  block: LightBlock,
+  thumbsRootPath: string,
+): MicroPreviewModel {
+  const manifest = parsePreviewManifest(block);
+  const text = manifest
+    ? manifest.kind === "text"
+    : !(block.media_file || block.thumbnail || block.first_image || block.media_urls);
+  return {
+    slug: block.slug,
+    url: thumbnailUrl(thumbsRootPath, block.slug),
+    text,
+    hasThumb: true,
   };
 }
 

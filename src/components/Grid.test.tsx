@@ -445,19 +445,6 @@ describe("Grid — no collapse after add / revisit", () => {
           {...BASE_PROPS}
           blocks={[]}
           currentTag="empty-channel"
-          searchQuery="missing"
-        />,
-      );
-    });
-    await flushAsync();
-    expect(screen.queryByText(placeholderText)).not.toBeInTheDocument();
-
-    await act(async () => {
-      rerender(
-        <Grid
-          {...BASE_PROPS}
-          blocks={[]}
-          currentTag="empty-channel"
           routeSnapshotReady={false}
         />,
       );
