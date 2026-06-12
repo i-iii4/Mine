@@ -189,6 +189,11 @@ export function VaultSwitcher({
   }, [activateIndex, activeIndex, moveActiveIndex, query, resetMenuSearch, restoreSearchFocus]);
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
+    if (nextOpen) {
+      // The settings window can reorder/add/forget spaces while this menu is
+      // closed — re-read the canonical config order on every open.
+      listKnownVaults().then(setKnownVaults).catch(() => {});
+    }
     if (!isTopChrome) return;
     setOpen(nextOpen);
   }, [isTopChrome]);
@@ -196,7 +201,7 @@ export function VaultSwitcher({
   return (
     <DropdownMenu
       open={isTopChrome ? open : undefined}
-      onOpenChange={isTopChrome ? handleOpenChange : undefined}
+      onOpenChange={handleOpenChange}
     >
       <DropdownMenuTrigger asChild>
         <MenuTextTrigger

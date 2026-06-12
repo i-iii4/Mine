@@ -8,6 +8,7 @@ pub mod clipper_recovery;
 pub mod conflicts;
 pub mod import;
 pub mod search;
+pub mod settings;
 pub mod state;
 pub mod tags;
 pub mod thumbnails;

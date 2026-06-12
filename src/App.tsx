@@ -59,19 +59,12 @@ import { Input } from "@/components/ui/input";
 import { CardMoreMenu } from "@/components/CardHoverMenu";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 
-const COMPACT_DETAIL_TOP_MENU_STORAGE_KEY = "mine.compactDetailTopMenu";
-
 type DetailLinkMode = "all" | "linked";
 
 const DETAIL_LINK_MODE_OPTIONS: SegmentedControlOption<DetailLinkMode>[] = [
   { value: "all", label: "All" },
   { value: "linked", label: "Connected" },
 ];
-
-function getStoredCompactDetailTopMenu(): boolean {
-  if (typeof window === "undefined") return false;
-  return window.localStorage.getItem(COMPACT_DETAIL_TOP_MENU_STORAGE_KEY) === "true";
-}
 
 function baseRelatedNoteSlug(target: string): string {
   return target.split("#", 1)[0] ?? target;
@@ -418,6 +411,7 @@ import {
   extractTextSelection,
   deleteTextSelection,
   sweepVaultThumbnails,
+  openSettingsWindow,
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
@@ -449,7 +443,15 @@ import { Grid } from "@/components/Grid";
 import { DragCardStackPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
-import { ThemeMenuButton, type ThemeMenuHandle } from "@/components/ThemeMenuButton";
+import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
+import {
+  COMPACT_DETAIL_TOP_MENU_STORAGE_KEY,
+  getStoredCompactDetailTopMenu,
+} from "@/lib/compactDetailTopMenuVisibility";
+import {
+  SETTINGS_CHANGED_EVENT,
+  type SettingsChangedPayload,
+} from "@/lib/settingsChanged";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 import { SearchOverlay } from "@/components/SearchOverlay";
 import { DeleteBlockDialog } from "@/components/DeleteBlockDialog";
@@ -658,6 +660,21 @@ export function App() {
       .finally(() => setLoading(false));
   }, []);
 
+  // A space switch may originate in another window (settings). The backend
+  // broadcasts every select_vault; key={vaultPath} below re-mounts the app.
+  // Switches initiated here resolve to the same path — an idempotent set.
+  useEffect(() => {
+    let cancelled = false;
+    const unlisten = listen<{ path: string }>("vault-selected", (event) => {
+      if (cancelled) return;
+      setVaultPath(event.payload.path);
+    });
+    return () => {
+      cancelled = true;
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   if (loading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
@@ -760,7 +777,6 @@ export function AppWithVault({
   const sidebarSearchInputRef = useRef<HTMLInputElement>(null);
   const lastSidebarSearchFocusSequenceRef = useRef(0);
   const sidebarSearchChromeDragGesture = useChromeDragGesture();
-  const themeMenuRef = useRef<ThemeMenuHandle>(null);
   const [compactDetailTopMenuRequestSequence, setCompactDetailTopMenuRequestSequence] = useState(0);
   const [compactDetailChromeEntered, setCompactDetailChromeEntered] = useState(false);
   const gridColumnCountRef = useRef(1);
@@ -1684,6 +1700,33 @@ export function AppWithVault({
     };
   }, [handleSurfaceSearchShortcut]);
 
+  const handleOpenSettings = useCallback(() => {
+    void openSettingsWindow().catch((error) => {
+      console.error("Failed to open settings window:", error);
+    });
+  }, []);
+
+  // The settings window writes localStorage (shared per origin) and emits
+  // this event; re-read the changed key and update the affected state.
+  useEffect(() => {
+    let cancelled = false;
+    const unlisten = listen<SettingsChangedPayload>(SETTINGS_CHANGED_EVENT, (event) => {
+      if (cancelled) return;
+      const { key } = event.payload;
+      if (key === THEME_STORAGE_KEY) {
+        applyTheme(getStoredTheme());
+      } else if (key === COMPACT_DETAIL_TOP_MENU_STORAGE_KEY) {
+        setCompactDetailTopMenuEnabled(getStoredCompactDetailTopMenu());
+      } else if (key === BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY) {
+        setBottomActionBarHidden(getStoredBottomActionBarHidden());
+      }
+    });
+    return () => {
+      cancelled = true;
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   // Global keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1743,10 +1786,9 @@ export function AppWithVault({
       } else if (e.shiftKey && e.key === "N") {
         e.preventDefault();
         setIsCreatingChannel(true);
-      } else if (e.key === ",") {
-        e.preventDefault();
-        themeMenuRef.current?.toggle();
       }
+      // Cmd+, is owned by the native "Settings…" menu item (NSMenu key
+      // equivalent) — it never reaches the webview keydown handler.
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -2906,14 +2948,9 @@ export function AppWithVault({
               className="mr-2 shrink-0"
               data-top-chrome-settings-fallback=""
             >
-              <ThemeMenuButton
-                ref={themeMenuRef}
-                compactDetailTopMenuEnabled={compactDetailTopMenuEnabled}
-                onCompactDetailTopMenuChange={setCompactDetailTopMenuEnabled}
-                bottomActionBarHidden={bottomActionBarHidden}
-                onBottomActionBarHiddenChange={setBottomActionBarHidden}
-                menuSide="bottom"
-              />
+              <ActionButton hotkey="⌘," onClick={handleOpenSettings}>
+                Settings
+              </ActionButton>
             </div>
           )}
           {compactDetailTopMenuActive && renderedDetailBlock ? (
@@ -3201,13 +3238,9 @@ export function AppWithVault({
           <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>
             New Collection
           </ActionButton>
-          <ThemeMenuButton
-            ref={themeMenuRef}
-            compactDetailTopMenuEnabled={compactDetailTopMenuEnabled}
-            onCompactDetailTopMenuChange={setCompactDetailTopMenuEnabled}
-            bottomActionBarHidden={bottomActionBarHidden}
-            onBottomActionBarHiddenChange={setBottomActionBarHidden}
-          />
+          <ActionButton hotkey="⌘," onClick={handleOpenSettings}>
+            Settings
+          </ActionButton>
           <ActionButton
             onClick={() => setDesignSystemOpen((v) => !v)}
             isSelected={designSystemOpen}

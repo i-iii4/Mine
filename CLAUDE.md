@@ -28,6 +28,7 @@
 - `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md` — совместимость с обычными Obsidian `.md` без Mine frontmatter: implicit article read-model, optional metadata overlay, no rewrite on read
 - `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md` — implemented migration: collections as Obsidian pages, `Mine Collections` values as quoted wikilinks, legacy formats handled by CLI migration
 - `SPEC_SEARCH_OVERLAY.md` — поиск по блокам: модальный overlay (`Cmd+F`), список результатов с подсветкой первого совпадения, превью-карточка справа; заменяет невидимый грид-фильтр main search
+- `SPEC_SETTINGS_WINDOW.md` — отдельное окно настроек: Appearance / Spaces / Orphans (сироты-медиа с batch delete/convert), межоконная синхронизация
 - `DESIGN_SYSTEM_IOS.md` — дизайн-система iOS: цвета, типографика, компоненты, жесты
 - `AUDIT_PERFORMANCE.md` — аудит производительности и план оптимизации
 - `AUDIT.md` — результаты аудитов кодовой базы (01.03.2026 — первый, 03.03.2026 — повторный), план доработки — Phase 9 в PLAN.md
@@ -101,12 +102,17 @@ local-arena/
 │   │       ├── tags.rs
 │   │       ├── search.rs
 │   │       ├── vault.rs        # select_vault, get_vault_path, rebuild_index
+│   │       ├── settings.rs     # Окно настроек: spaces list, orphan media (scan/promote/delete)
 │   │       └── import.rs       # list_arena_channels, import_arena_channels
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 ├── src/                        # React-фронтенд
-│   ├── main.tsx                # Точка входа React
+│   ├── main.tsx                # Точка входа React (main-окно)
 │   ├── App.tsx                 # Корневой компонент + роутинг
+│   ├── settings/               # Окно настроек (второй Vite-entry: settings.html)
+│   │   ├── main.tsx            # Bootstrap: тема до первого рендера
+│   │   ├── SettingsApp.tsx     # Хром + навигация разделов
+│   │   └── *Section.tsx        # AppearanceSection, SpacesSection, OrphansSection
 │   ├── components/
 │   │   ├── Grid.tsx            # Virtualized masonry grid — scroll-based windowing, direction-aware overscan, priority loading
 │   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)

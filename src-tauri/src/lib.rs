@@ -24,6 +24,8 @@ use tauri::Manager;
 const MENU_ID_FIND_CARDS: &str = "surface-search-find-cards";
 #[cfg(feature = "desktop")]
 const MENU_ID_FIND_CHANNELS: &str = "surface-search-find-channels";
+/// App menu item opening the standalone settings window (`Cmd+,`).
+const MENU_ID_SETTINGS: &str = "open-settings-window";
 
 #[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -82,6 +84,14 @@ pub fn run() {
             commands::clipper_recovery::discard_clipper_pending_upload,
             commands::conflicts::list_vault_conflicts,
             commands::conflicts::resolve_vault_conflict,
+            commands::settings::open_settings_window,
+            commands::settings::add_known_vault,
+            commands::settings::forget_known_vault,
+            commands::settings::reorder_known_vaults,
+            commands::settings::space_stats,
+            commands::settings::list_orphan_media,
+            commands::settings::promote_orphan_media,
+            commands::settings::delete_orphan_media,
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -91,6 +101,9 @@ pub fn run() {
             }
             MENU_ID_FIND_CHANNELS => {
                 let _ = app.emit("surface-search-shortcut", "sidebar");
+            }
+            MENU_ID_SETTINGS => {
+                let _ = commands::settings::open_settings_window(app.clone());
             }
             _ => {}
         })
@@ -114,6 +127,9 @@ pub fn run() {
             }
 
             // ── Native macOS menu ────────────────────────────────────────
+            let settings_item = MenuItemBuilder::with_id(MENU_ID_SETTINGS, "Settings…")
+                .accelerator("CmdOrCtrl+,")
+                .build(app)?;
             let app_menu = SubmenuBuilder::new(app, "Mine")
                 .about(Some(AboutMetadata {
                     name: Some("Mine".into()),
@@ -122,6 +138,8 @@ pub fn run() {
                     credits: Some("Local-first visual bookmarking".into()),
                     ..Default::default()
                 }))
+                .separator()
+                .item(&settings_item)
                 .separator()
                 .services()
                 .separator()

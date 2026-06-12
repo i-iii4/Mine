@@ -1,0 +1,70 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { emit } from "@tauri-apps/api/event";
+import { setTheme as setTauriTheme } from "@tauri-apps/api/app";
+import { AppearanceSection } from "./AppearanceSection";
+
+vi.mock("@tauri-apps/api/event", () => ({
+  emit: vi.fn(async () => {}),
+  listen: vi.fn(async () => () => {}),
+}));
+
+describe("AppearanceSection", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+    vi.mocked(emit).mockClear();
+    vi.mocked(setTauriTheme).mockClear();
+  });
+
+  it("applies the chosen theme and broadcasts the change", () => {
+    render(<AppearanceSection />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Dark" }));
+
+    expect(localStorage.getItem("theme")).toBe("dark");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(setTauriTheme).toHaveBeenLastCalledWith("dark");
+    expect(emit).toHaveBeenCalledWith("settings-changed", { key: "theme" });
+  });
+
+  it("persists the Compact Detail top menu flag and broadcasts its key", () => {
+    render(<AppearanceSection />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Compact Detail top menu" }));
+
+    expect(localStorage.getItem("mine.compactDetailTopMenu")).toBe("true");
+    expect(emit).toHaveBeenCalledWith("settings-changed", {
+      key: "mine.compactDetailTopMenu",
+    });
+  });
+
+  it("persists the bottom menu visibility flag and broadcasts its key", () => {
+    render(<AppearanceSection />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Hide bottom menu" }));
+
+    expect(localStorage.getItem("mine.bottomActionBarHidden")).toBe("true");
+    expect(emit).toHaveBeenCalledWith("settings-changed", {
+      key: "mine.bottomActionBarHidden",
+    });
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Hide bottom menu" }));
+    expect(localStorage.getItem("mine.bottomActionBarHidden")).toBe("false");
+  });
+
+  it("reflects stored values on mount", () => {
+    localStorage.setItem("theme", "light");
+    localStorage.setItem("mine.compactDetailTopMenu", "true");
+
+    render(<AppearanceSection />);
+
+    expect(screen.getByRole("button", { name: "Light" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "Compact Detail top menu" }),
+    ).toHaveAttribute("data-state", "checked");
+  });
+});

@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
 } from "react";
 import type { ComponentProps } from "react";
 import { MoreHorizontal, Plus, ExternalLink, Trash2, Unlink } from "lucide-react";
@@ -27,6 +26,7 @@ import type { IndexedBlock, LightBlock, TagCount } from "@/types";
 import { getBlock } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
 import { isSafeUrl } from "@/lib/assets";
+import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
@@ -71,18 +71,6 @@ function isCommandK(event: ReactKeyboardEvent): boolean {
     !event.altKey &&
     !event.ctrlKey &&
     event.key.toLowerCase() === "k"
-  );
-}
-
-export function MenuIconSlot({ children }: { children?: ReactNode }) {
-  return (
-    <span
-      aria-hidden="true"
-      className="flex size-3 shrink-0 items-center justify-center"
-      data-card-menu-icon-slot=""
-    >
-      {children}
-    </span>
   );
 }
 

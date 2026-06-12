@@ -1,5 +1,60 @@
 # Devlog
 
+## 12.06.2026 — Окно настроек, redesign Spaces, recent-режим поиска
+
+### Settings Window (Phase 29, SPEC_SETTINGS_WINDOW.md)
+
+- Отдельное компактное окно настроек: Rust `commands/settings.rs`
+  (`open_settings_window` — single instance, Overlay-тайтлбар; spaces
+  list/forget/reorder; orphan media scan/promote/delete), нативный пункт меню
+  `Settings…` (`Cmd+,`), `"settings"` в capabilities.
+- Второй Vite-entry (`settings.html` + `src/settings/`): SettingsApp с хромом
+  как в main (h-8 bg-chrome, traffic-light reserve, drag region), навигация
+  176px, разделы Appearance / Spaces / Orphans. Чанк settings — 10 КБ
+  (изоляция от App/Grid/Detail).
+- Тема вынесена в `src/lib/themeMode.ts`; оба окна применяют её до первого
+  рендера (минус FOUC); `ThemeMenuButton` удалён, его пункты переехали в
+  Appearance. Межоконная синхронизация: localStorage (общий per origin) +
+  Tauri-событие `settings-changed` (`src/lib/settingsChanged.ts`).
+- Orphans: сироты-медиа top-level (referenced-set одним проходом
+  `collect_delete_media_for_block`), batch Convert to Elements (без
+  копирования файла) / Delete (системная корзина) с revalidation и skipped.
+
+### Spaces: пересборка с зафиксированными решениями (Р-1…Р-12)
+
+- Строка пространства: имя → путь → сводка `N elements · N markdown · N
+  media · N files · size`. Файловые метрики — stat-only top-level (iCloud
+  dataless: содержимое не читается, скачивание не триггерится); элементы — из
+  локального индекса пространства (`vault-id` → `app_data/vaults/<id>/
+  index.db`, read-only, `card_kind != 'channel'`), без индекса — `—`.
+  Статистика per-row асинхронно (two-phase канон).
+- Строка — селектор: клик переключает пространство; `select_vault` эмитит
+  `vault-selected`, корневой App ремонтирует `AppWithVault` (key) — окна
+  всегда согласованы. Активная строка `bg-active` (текстовая метка `Current`
+  удалена как типографический мусор).
+- Drag-and-drop порядок (`reorder_known_vaults`, set-equality;
+  PointerSensor distance 8 — клик не drag); порядок config канонический,
+  `VaultSwitcher` перечитывает список при каждом открытии меню.
+- Remove активного: UI сначала переключается на следующее, затем forget —
+  инвариант «vault_path ∈ known_vaults» держится порядком операций, не
+  блокировкой. Единственное пространство забывается без переключения.
+- Дедупликация: `formatBytes` (десятичная база — как Finder) и `MenuIconSlot`
+  (ui/) — общие модули вместо трёх копий.
+
+### Search Overlay: recent-режим с датными секциями
+
+- Пустой запрос больше не мёртвый экран: 20 последних добавленных
+  (`SEARCH_OVERLAY_RECENT_LIMIT`, тот же `list_grid_blocks` без запроса —
+  первая страница ленты), без debounce, счётчик скрыт.
+- Динамические датные секции (`src/lib/recencyBuckets.ts`, канон
+  Notion/Apple Mail): Today / Yesterday / Past 7 days / Past 30 days / месяцы
+  текущего года / голые годы. Граница дня — локальная полночь; сломанный
+  `saved_at` не пересортирует список. Клавиатурная навигация плоская — секции
+  для стрелок невидимы; поисковая выдача не группируется (релевантность, не
+  время).
+- Сниппет результата сжат до одной строки (`line-clamp-1`): заголовок главный,
+  строка либо двухэтажная, либо одноэтажная.
+
 ## 12.06.2026 — Словарь сущностей, detach-семантика, эргономика пикера, порядок коллекций
 
 ### Сквозной UI-нейминг: Space / Collection / Element

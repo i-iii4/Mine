@@ -6,13 +6,14 @@ import {
   ContextMenuSubContent,
   ContextMenuSubTrigger,
 } from "@/components/ui/context-menu";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { ExternalLink, Plus, Trash2, Unlink } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { LightBlock, TagCount } from "@/types";
 import { getBlock } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
 import { isSafeUrl } from "@/lib/assets";
+import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
@@ -27,18 +28,6 @@ interface CardTagMenuProps {
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onRequestRename: (block: LightBlock) => void;
   onRequestDelete: (blockSlug: string) => void;
-}
-
-function MenuIconSlot({ children }: { children?: ReactNode }) {
-  return (
-    <span
-      aria-hidden="true"
-      className="flex size-3 shrink-0 items-center justify-center"
-      data-card-menu-icon-slot=""
-    >
-      {children}
-    </span>
-  );
 }
 
 /**

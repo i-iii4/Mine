@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { GridSnapshot, LightBlock, SearchMatch } from "@/types";
-import { SearchOverlay, SEARCH_OVERLAY_RESULT_LIMIT } from "./SearchOverlay";
+import {
+  SearchOverlay,
+  SEARCH_OVERLAY_RECENT_LIMIT,
+  SEARCH_OVERLAY_RESULT_LIMIT,
+} from "./SearchOverlay";
 
 const listGridBlocksMock = vi.fn<(
   tag?: string,
@@ -120,10 +124,94 @@ describe("SearchOverlay", () => {
     expect(input.selectionEnd).toBe("previous query".length);
   });
 
-  it("does not query the backend while the query is empty", async () => {
+  it("loads recently added elements for an empty query without debounce", async () => {
+    const today = new Date();
+    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+    listGridBlocksMock.mockResolvedValue(
+      snapshot(
+        [
+          makeBlock(1, "fresh", { saved_at: today.toISOString() }),
+          makeBlock(2, "older", { saved_at: yesterday.toISOString() }),
+        ],
+        462,
+      ),
+    );
     renderOverlay();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(listGridBlocksMock).not.toHaveBeenCalled();
+
+    // Recent mode fires immediately (no debounce) with the recent limit and
+    // no query — the canonical saved_at-DESC feed page.
+    expect(listGridBlocksMock).toHaveBeenCalledWith(
+      undefined,
+      0,
+      SEARCH_OVERLAY_RECENT_LIMIT,
+      undefined,
+    );
+
+    // Rows are grouped into dynamic date sections derived from saved_at.
+    expect(await screen.findByText("Today")).toBeInTheDocument();
+    expect(screen.getByText("Yesterday")).toBeInTheDocument();
+    expect(screen.getByText("Title fresh")).toBeInTheDocument();
+    // The header count is a query-result number — hidden in recent mode.
+    expect(screen.queryByText("462")).not.toBeInTheDocument();
+    expect(screen.queryByText("No results")).not.toBeInTheDocument();
+  });
+
+  it("keeps arrow navigation flat across recent date sections", async () => {
+    const today = new Date();
+    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+    listGridBlocksMock.mockResolvedValue(
+      snapshot([
+        makeBlock(1, "fresh", { saved_at: today.toISOString() }),
+        makeBlock(2, "older", { saved_at: yesterday.toISOString() }),
+      ]),
+    );
+    renderOverlay();
+    await screen.findByText("Today");
+
+    const input = screen.getByRole("combobox");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    // The second row lives in the next section — the index walks into it.
+    const options = screen.getAllByRole("option");
+    expect(options[1]).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("returns to recent mode when the query is cleared", async () => {
+    listGridBlocksMock.mockResolvedValue(
+      snapshot([makeBlock(1, "alpha", { saved_at: new Date().toISOString() })]),
+    );
+    const { rerender, onQueryChange, onClose, onOpenBlock } = renderOverlay({
+      query: "alpha",
+    });
+    await waitFor(() => {
+      expect(listGridBlocksMock).toHaveBeenCalledWith(
+        undefined,
+        0,
+        SEARCH_OVERLAY_RESULT_LIMIT,
+        "alpha",
+      );
+    });
+    // Search results are never grouped — relevance order, no date sections.
+    expect(screen.queryByText("Today")).not.toBeInTheDocument();
+
+    rerender(
+      <SearchOverlay
+        open
+        query=""
+        vaultPath="/vault"
+        onQueryChange={onQueryChange}
+        onClose={onClose}
+        onOpenBlock={onOpenBlock}
+      />,
+    );
+    await waitFor(() => {
+      expect(listGridBlocksMock).toHaveBeenCalledWith(
+        undefined,
+        0,
+        SEARCH_OVERLAY_RECENT_LIMIT,
+        undefined,
+      );
+    });
+    expect(await screen.findByText("Today")).toBeInTheDocument();
   });
 
   it("debounces input and queries vault-wide with the result limit", async () => {

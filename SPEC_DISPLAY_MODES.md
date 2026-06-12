@@ -18,7 +18,7 @@ Mine поддерживает несколько способов отображ
 - `src/components/GridSwitch.tsx` (диспатчер)
 - `src/components/Card.tsx` (варианты отображения карточки, если mode требует)
 - `src/App.tsx` (подключение GridSwitch)
-- `src/components/ThemeMenuButton.tsx` (Settings UI)
+- `src/settings/AppearanceSection.tsx` (Settings UI — окно настроек)
 - `src/hooks/useLayoutMode.ts`
 
 **НЕ трогаем (при добавлении display mode):**
@@ -141,7 +141,7 @@ type LayoutMode = "gallery" | "grid" | "table" | "columns";
 
 1. **Rename** `Grid.tsx` → `MasonryGrid.tsx` (чистый rename, export сохраняется)
 2. **GridSwitch** — новый компонент-диспатчер. App.tsx использует `<GridSwitch>` вместо `<Grid>`
-3. **Settings UI** — Layout секция в ThemeMenuButton (уже частично готова в `useLayoutMode`)
+3. **Settings UI** — Layout секция в Appearance (окно настроек, SPEC_SETTINGS_WINDOW.md; частично готова в `useLayoutMode`)
 4. **DenseGrid** — первый альтернативный mode
 5. **TableView** — второй mode
 6. Каждый шаг = отдельный PR с проверкой: sidebar не тронут, gallery mode не сломан

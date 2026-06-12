@@ -34,6 +34,10 @@ import type {
   MergeBlocksError,
   MergeBlocksResult,
   TextSelectionExtractError,
+  OrphanMedia,
+  PromoteOrphanResult,
+  DeleteOrphanResult,
+  SpaceStats,
 } from "@/types";
 
 // Vault
@@ -364,3 +368,28 @@ export const recoverClipperPendingUpload = (upload_id: string) =>
 
 export const discardClipperPendingUpload = (upload_id: string) =>
   invoke<void>("discard_clipper_pending_upload", { upload_id });
+
+// Settings window
+export const openSettingsWindow = () =>
+  invoke<void>("open_settings_window");
+
+export const addKnownVault = (path: string) =>
+  invoke<string[]>("add_known_vault", { path });
+
+export const forgetKnownVault = (path: string) =>
+  invoke<string[]>("forget_known_vault", { path });
+
+export const listOrphanMedia = () =>
+  invoke<OrphanMedia[]>("list_orphan_media");
+
+export const promoteOrphanMedia = (file_names: string[]) =>
+  invoke<PromoteOrphanResult>("promote_orphan_media", { file_names });
+
+export const deleteOrphanMedia = (file_names: string[]) =>
+  invoke<DeleteOrphanResult>("delete_orphan_media", { file_names });
+
+export const spaceStats = (path: string) =>
+  invoke<SpaceStats>("space_stats", { path });
+
+export const reorderKnownVaults = (paths: string[]) =>
+  invoke<string[]>("reorder_known_vaults", { paths });

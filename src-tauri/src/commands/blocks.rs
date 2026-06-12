@@ -2104,7 +2104,7 @@ fn dedupe_strings(values: &mut Vec<String>) {
     values.retain(|value| seen.insert(value.clone()));
 }
 
-fn collect_delete_media_for_block(
+pub(crate) fn collect_delete_media_for_block(
     vault: &VaultLayout,
     block: &IndexedBlock,
     resolver: &mut media_refs::MediaResolver<'_>,
@@ -3434,7 +3434,7 @@ fn resolve_unique_text_selection_slug(
     )
 }
 
-fn resolve_unique_block_slug(
+pub(crate) fn resolve_unique_block_slug(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     raw_slug: &str,

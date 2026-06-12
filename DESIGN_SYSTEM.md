@@ -1260,7 +1260,7 @@ Traffic-light reserve размечается как `data-traffic-light-reserve`
 |---|---|---|---|
 | ⌘⇧O | Space selector | Выбор папки через нативный диалог | top chrome |
 | ⌘⇧N | New Collection | Инлайн-инпут в сайдбаре | слева |
-| ⌘, | Settings | DropdownMenu переключения темы, compact Detail, chrome surface variant и bottom menu visibility | слева |
+| ⌘, | Settings | Открывает отдельное окно настроек (`open_settings_window`); хоткей принадлежит нативному пункту меню `Settings…` | слева |
 | ⌘[ / ⌘] | History | Назад / вперёд по истории страниц | глобально |
 
 ### Сайдбар
@@ -1571,6 +1571,47 @@ Stable preview invariant: обычный sidebar и link-editor использу
 размонтировать строки каналов или `<img>` thumbnail'ы; меняется только правый
 row-action slot (`count/menu` ↔ `Connected/Connect/Disconnect`). Это убирает blink превью при
 переключении в Detail.
+
+### Окно настроек (Settings window)
+
+Отдельное компактное окно (label `settings`, 760×560, min 640×460), второй
+Vite-entry (`settings.html` → `src/settings/`) — не тянет App/Grid/Detail.
+Спецификация: SPEC_SETTINGS_WINDOW.md.
+
+Хром консистентен с main-окном: `titleBarStyle: Overlay` + `hiddenTitle`,
+верхний бар `h-8 bg-chrome border-b border-border` с traffic-light reserve
+`80px`, заголовок `Settings` (`font-mono text-sm text-muted-foreground`),
+`data-tauri-drag-region`; native background синхронизируется через
+`useNativeWindowChromeSurface("--chrome")`, как в main.
+
+Лэйаут: левая навигация `176px` (`border-r border-border`, строки
+`h-8 rounded-1 px-2 font-mono text-sm` — язык сайдбара; активная `bg-active
+text-foreground`, остальные `text-muted-foreground` с hover до foreground) +
+контент `p-s4`, заголовок раздела `text-lg font-semibold`, секции `gap-s3`.
+
+Строка настройки: лейбл слева (`text-base`) с опциональной подписью
+(`text-sm text-muted-foreground`) под ним, контрол справа. Никаких новых
+токенов — всё из существующей системы.
+
+Строка пространства (Spaces): имя → путь → сводка
+`N elements · N markdown · N media · N files · size` (голые числа — язык
+счётчиков; `formatBytes` — десятичная база как в Finder). Строка — селектор:
+клик переключает пространство, активная строка `bg-active` (канон выбранного,
+без текстовых меток), остальные `bg-accent hover:bg-active`. Строки
+перетаскиваются (dnd-kit, distance 8 — клик не drag); порядок в config —
+канонический для всех списков пространств. Правый слот фиксированного размера
+(`size-8`): `⋯`-кнопка `opacity-0 → group-hover/focus-within:opacity-100`
+(opacity-канон карточек, открытое меню пиннит видимость). Никаких постоянных
+кнопок у строк: единственная команда `Remove Space` живёт в `⋯`-меню
+(`variant="detach"` + `Unlink`); Remove активного переключает на следующее
+пространство до забывания. Полные зафиксированные решения —
+SPEC_SETTINGS_WINDOW.md § Design decisions.
+
+Межоконная синхронизация: settings-окно пишет localStorage (общий per origin)
+и эмитит Tauri-событие `settings-changed` (`{ key }`); main-окно перечитывает
+изменённый ключ. Тема применяется каждым окном самостоятельно при старте
+(`applyTheme(getStoredTheme())` до первого рендера) — модуль
+`src/lib/themeMode.ts`.
 
 ### Сетка
 

@@ -70,6 +70,12 @@ pub fn select_vault(
     append_startup_trace(&app, "select_vault", &format!("start path={path}"));
     let result = initialize_vault(&app, &state, &path)?;
     save_vault_path(&app, &path);
+    // Broadcast the switch to every window: the main window re-mounts on this
+    // even when the switch originated elsewhere (e.g. the settings window).
+    let _ = app.emit(
+        "vault-selected",
+        VaultChangedPayload { path: path.clone() },
+    );
     append_startup_trace(
         &app,
         "select_vault",
@@ -1033,7 +1039,7 @@ fn generate_vault_id() -> Result<String, CommandError> {
     ))
 }
 
-fn derived_store_root(app: &AppHandle, vault_id: &str) -> Result<PathBuf, CommandError> {
+pub(crate) fn derived_store_root(app: &AppHandle, vault_id: &str) -> Result<PathBuf, CommandError> {
     let app_data = app
         .path()
         .app_data_dir()

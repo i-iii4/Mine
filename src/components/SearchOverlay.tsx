@@ -34,6 +34,7 @@ import {
 import { domainFromUrl, isSafeUrl, legacyThumbsRoot } from "@/lib/assets";
 import { listGridBlocks } from "@/lib/commands";
 import { normalizeSurfaceSearchQuery } from "@/lib/searchQuery";
+import { groupByRecency } from "@/lib/recencyBuckets";
 import { deriveSearchResultRow } from "@/lib/searchResultRow";
 import { renderSearchHighlightedText } from "@/lib/searchHighlight";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
@@ -43,6 +44,13 @@ import type { LightBlock, TagCount } from "@/types";
 
 /** One request, top results only — refining the query beats paging (SPEC). */
 export const SEARCH_OVERLAY_RESULT_LIMIT = 200;
+
+/**
+ * Empty-query state shows the freshest saved elements (Р-13/Р-14,
+ * SPEC_SEARCH_OVERLAY.md): a springboard to recent work, not a history
+ * browser — one or two screens, beyond that the user searches.
+ */
+export const SEARCH_OVERLAY_RECENT_LIMIT = 20;
 
 /** Same live-typing debounce as the rest of surface search (SPEC_SEARCH.md). */
 const SEARCH_OVERLAY_DEBOUNCE_MS = 100;
@@ -106,10 +114,17 @@ export function SearchOverlay({
 
   const normalizedQuery = normalizeSurfaceSearchQuery(query);
 
+  // searchQuery === null → recent mode: the same grid contract without a
+  // query returns the canonical saved_at-DESC order (the feed's first page).
   const runSearch = useCallback(
-    (searchQuery: string, options: { preserveActive: boolean }) => {
+    (searchQuery: string | null, options: { preserveActive: boolean }) => {
       const sequence = ++requestSequenceRef.current;
-      void listGridBlocks(undefined, 0, SEARCH_OVERLAY_RESULT_LIMIT, searchQuery)
+      void listGridBlocks(
+        undefined,
+        0,
+        searchQuery === null ? SEARCH_OVERLAY_RECENT_LIMIT : SEARCH_OVERLAY_RESULT_LIMIT,
+        searchQuery ?? undefined,
+      )
         .then((grid) => {
           if (requestSequenceRef.current !== sequence) return;
           setResults((previous) => {
@@ -143,10 +158,10 @@ export function SearchOverlay({
   useEffect(() => {
     if (!open) return;
     if (!normalizedQuery) {
-      requestSequenceRef.current += 1;
-      setResults(null);
-      setTotalBlocks(null);
+      // Recent mode loads immediately: the debounce exists for the typing
+      // race, a static list has nothing to wait for (Р-16).
       setActiveIndex(0);
+      runSearch(null, { preserveActive: false });
       return;
     }
     const timer = window.setTimeout(() => {
@@ -156,15 +171,16 @@ export function SearchOverlay({
   }, [normalizedQuery, open, runSearch]);
 
   // The result set is overlay-owned state, so vault mutations (delete, rename,
-  // clipper saves, watcher events) must re-run the active query. App dispatches
+  // clipper saves, watcher events) must re-run the active query — including
+  // recent mode, which is just the empty query. App dispatches
   // "vault-refreshed" after every fresh grid snapshot — the same invalidation
   // signal, replayed here without debounce.
   useEffect(() => {
-    if (!open || !normalizedQuery) return;
+    if (!open) return;
     const handler = () => {
       // Cached collections may be stale after the mutation too.
       setTagsBySlug(new Map());
-      runSearch(normalizedQuery, { preserveActive: true });
+      runSearch(normalizedQuery || null, { preserveActive: true });
     };
     window.addEventListener("vault-refreshed", handler);
     return () => window.removeEventListener("vault-refreshed", handler);
@@ -210,6 +226,16 @@ export function SearchOverlay({
     })),
     [resolvedThumbsRoot, results],
   );
+
+  // Recent mode groups rows into dynamic date sections (Today · Yesterday ·
+  // Past 7 days · …). Rows keep their flat index — keyboard navigation and
+  // the active row are blind to section boundaries. Search results stay
+  // ungrouped: there the order is relevance, not time.
+  const recentGroups = useMemo(() => {
+    if (normalizedQuery.length > 0) return null;
+    const indexed = rows.map((entry, index) => ({ ...entry, index }));
+    return groupByRecency(indexed, (entry) => entry.block.saved_at, new Date());
+  }, [normalizedQuery, rows]);
 
   const activeBlock = results?.[activeIndex] ?? null;
 
@@ -329,9 +355,56 @@ export function SearchOverlay({
     inputRef.current?.focus();
   }, [onQueryChange]);
 
-  const showCount = normalizedQuery.length > 0 && totalBlocks !== null;
-  const showNoResults =
-    normalizedQuery.length > 0 && results !== null && results.length === 0;
+  const isRecentMode = normalizedQuery.length === 0;
+  const showCount = !isRecentMode && totalBlocks !== null;
+  const showNoResults = !isRecentMode && results !== null && results.length === 0;
+
+  // One row template for both modes; `index` is always the flat results
+  // index, so the active row and arrow keys ignore section grouping.
+  const renderResultRow = (
+    { block, row, preview }: (typeof rows)[number],
+    index: number,
+  ) => (
+    <div
+      key={block.id}
+      id={searchOverlayOptionDomId(block.id)}
+      role="option"
+      aria-selected={index === activeIndex}
+      className={cn(
+        "flex cursor-default items-center gap-2 rounded-1 px-2 py-1.5",
+        index === activeIndex && "bg-active",
+      )}
+      onPointerMove={(event) => handleRowPointerMove(event, index)}
+      onClick={() => onOpenBlock(block)}
+    >
+      <div
+        aria-hidden="true"
+        className="size-8 shrink-0 overflow-hidden bg-component-fill"
+      >
+        <MicroPreviewThumbnail
+          preview={preview}
+          loading="lazy"
+          draggable={false}
+          onError={(event) => {
+            event.currentTarget.style.display = "none";
+          }}
+        />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-base font-semibold text-foreground">
+          {renderSearchHighlightedText(row.title, row.titleMatch)}
+        </p>
+        {row.snippet && (
+          <p
+            className="mt-0.5 line-clamp-1 text-sm text-muted-foreground"
+            style={snippetLineHeightStyle}
+          >
+            {renderSearchHighlightedText(row.snippet, row.snippetMatch)}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <Dialog
@@ -404,47 +477,24 @@ export function SearchOverlay({
                 No results
               </div>
             )}
-            {rows.map(({ block, row, preview }, index) => (
-              <div
-                key={block.id}
-                id={searchOverlayOptionDomId(block.id)}
-                role="option"
-                aria-selected={index === activeIndex}
-                className={cn(
-                  "flex cursor-default items-center gap-2 rounded-1 px-2 py-1.5",
-                  index === activeIndex && "bg-active",
-                )}
-                onPointerMove={(event) => handleRowPointerMove(event, index)}
-                onClick={() => onOpenBlock(block)}
-              >
-                <div
-                  aria-hidden="true"
-                  className="size-8 shrink-0 overflow-hidden bg-component-fill"
-                >
-                  <MicroPreviewThumbnail
-                    preview={preview}
-                    loading="lazy"
-                    draggable={false}
-                    onError={(event) => {
-                      event.currentTarget.style.display = "none";
-                    }}
-                  />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-base font-semibold text-foreground">
-                    {renderSearchHighlightedText(row.title, row.titleMatch)}
-                  </p>
-                  {row.snippet && (
-                    <p
-                      className="mt-0.5 line-clamp-2 text-sm text-muted-foreground"
-                      style={snippetLineHeightStyle}
+            {recentGroups
+              ? recentGroups.map((group) => (
+                  <div key={group.label} role="presentation">
+                    {/* Dynamic date sections (Notion convention): the label
+                        is derived from saved_at, never typed in. */}
+                    <div
+                      role="presentation"
+                      className="px-2 pb-1 pt-2 text-sm text-muted-foreground"
+                      data-search-overlay-recent-label=""
                     >
-                      {renderSearchHighlightedText(row.snippet, row.snippetMatch)}
-                    </p>
-                  )}
-                </div>
-              </div>
-            ))}
+                      {group.label}
+                    </div>
+                    {group.items.map(({ block, row, preview, index }) =>
+                      renderResultRow({ block, row, preview }, index),
+                    )}
+                  </div>
+                ))
+              : rows.map((entry, index) => renderResultRow(entry, index))}
           </div>
 
           {/* Two delimited zones: the card (micro preview — one uniform

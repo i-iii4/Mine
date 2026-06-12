@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { forwardRef, useImperativeHandle } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
@@ -24,6 +23,7 @@ const commandMocks = vi.hoisted(() => ({
   extractInlineMedia: vi.fn(),
   extractTextSelection: vi.fn(),
   deleteTextSelection: vi.fn(),
+  openSettingsWindow: vi.fn<() => Promise<void>>(async () => {}),
 }));
 
 const sidebarResizeState = vi.hoisted(() => ({
@@ -57,6 +57,7 @@ vi.mock("@/lib/commands", () => ({
   extractInlineMedia: commandMocks.extractInlineMedia,
   extractTextSelection: commandMocks.extractTextSelection,
   deleteTextSelection: commandMocks.deleteTextSelection,
+  openSettingsWindow: commandMocks.openSettingsWindow,
 }));
 
 vi.mock("@/lib/articleAudioDesktopGateway", () => ({
@@ -228,29 +229,6 @@ vi.mock("@/components/ActionButton", () => ({
       {children}
     </button>
   ),
-}));
-
-vi.mock("@/components/ThemeMenuButton", () => ({
-  ThemeMenuButton: forwardRef(function ThemeMenuButton({
-    bottomActionBarHidden = false,
-    onBottomActionBarHiddenChange,
-  }: {
-    bottomActionBarHidden?: boolean;
-    onBottomActionBarHiddenChange?: (hidden: boolean) => void;
-  }, ref) {
-    useImperativeHandle(ref, () => ({ toggle: vi.fn() }), []);
-    return (
-      <>
-        <button type="button">Settings</button>
-        <button
-          type="button"
-          onClick={() => onBottomActionBarHiddenChange?.(!bottomActionBarHidden)}
-        >
-          Hide bottom menu
-        </button>
-      </>
-    );
-  }),
 }));
 
 vi.mock("@/components/Sidebar", async () => {
@@ -764,7 +742,24 @@ describe("AppWithVault", () => {
     });
   });
 
-  it("hides the bottom action bar without losing Settings access", async () => {
+  it("opens the settings window from the bottom action bar", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const bottomBar = document.querySelector("[data-bottom-action-bar]") as HTMLElement;
+    expect(bottomBar).toBeInTheDocument();
+    fireEvent.click(within(bottomBar).getByRole("button", { name: /Settings/ }));
+    expect(commandMocks.openSettingsWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the bottom action bar via settings-changed without losing Settings access", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -778,20 +773,28 @@ describe("AppWithVault", () => {
     expect(document.querySelector("[data-bottom-action-bar]")).toBeInTheDocument();
     expect(document.querySelector("[data-top-chrome-settings-fallback]")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide bottom menu" }));
+    // The settings window writes localStorage and emits settings-changed;
+    // the main window re-reads the key (test setup bridges Tauri events
+    // onto window CustomEvents, detail carries the Tauri event envelope).
+    localStorage.setItem("mine.bottomActionBarHidden", "true");
+    window.dispatchEvent(
+      new CustomEvent("settings-changed", {
+        detail: { payload: { key: "mine.bottomActionBarHidden" } },
+      }),
+    );
 
     await waitFor(() => {
       expect(document.querySelector("[data-bottom-action-bar]")).not.toBeInTheDocument();
     });
-    expect(localStorage.getItem("mine.bottomActionBarHidden")).toBe("true");
 
     const topSettingsFallback = document.querySelector(
       "[data-top-chrome-settings-fallback]",
     ) as HTMLElement | null;
     expect(topSettingsFallback).toBeInTheDocument();
-    expect(
-      within(topSettingsFallback!).getByRole("button", { name: "Settings" }),
-    ).toBeInTheDocument();
+    fireEvent.click(
+      within(topSettingsFallback!).getByRole("button", { name: /Settings/ }),
+    );
+    expect(commandMocks.openSettingsWindow).toHaveBeenCalledTimes(1);
   });
 
   it("uses the secondary top bar for non-compact Detail chrome instead of body overlays", async () => {
@@ -901,8 +904,17 @@ describe("AppWithVault", () => {
     expect(searchButton).not.toHaveAttribute("data-action-selected");
     expect(document.querySelector("[data-search-overlay]")).not.toBeNull();
     expect(screen.getByRole("combobox")).toHaveFocus();
-    // Opening with an empty query issues no search request and leaves the grid alone.
-    expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeSearchToggle);
+    // Opening with an empty query issues exactly one recent-mode request
+    // (limit 20, no query) and leaves the grid itself alone.
+    expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(
+      gridCallsBeforeSearchToggle + 1,
+    );
+    expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith(
+      undefined,
+      0,
+      20,
+      undefined,
+    );
     expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
   });
 

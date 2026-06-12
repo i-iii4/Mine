@@ -104,7 +104,8 @@ import {
 } from "@/lib/textSelectionActionBarPlacement";
 import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
-import { CardMoreMenu, MenuIconSlot } from "./CardHoverMenu";
+import { CardMoreMenu } from "./CardHoverMenu";
+import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import {
   CARD_REFERENCE_ROW_ESTIMATED_HEIGHT_PX,
   CARD_REFERENCE_ROW_GAP_PX,

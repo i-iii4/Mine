@@ -1246,6 +1246,7 @@ Specification: [SPEC_SEARCH.md](SPEC_SEARCH.md).
 | 27.6 | Right collection switcher | [x] | Right top chrome shows the current Grid route collection and opens a searchable destination dropdown ordered like Sidebar; active/current rows are omitted; fixed `Create channel` opens a separate dialog; space/collection/sidebar search inputs keep focus while arrows move `aria-activedescendant`; floating menu widths are documented as semantic roles (`command`, `selector`, `picker`) |
 | 27.7 | Optional Compact Detail top menu | [x] | Settings flag moves Detail controls into permanent top chrome when Detail is open: `All / Connected` lives only in expanded Sidebar/search segment, the right segment keeps a persistent clickable collection switcher plus animated card title, overflow and close; compact geometry is stable before/after Detail so collection labels do not jump; all compact chrome controls use the shared click-vs-window-drag threshold |
 | 27.8 | Tests + manual QA | [ ] | Automated backend/frontend coverage is in place; real-vault dark/light QA remains |
+| 27.9 | Recent empty state | [x] | Пустой query в Search Overlay показывает 20 последних добавленных (`saved_at DESC`, тот же `list_grid_blocks` без запроса, без debounce), сгруппированных в динамические датные секции (`recencyBuckets.ts`: Today/Yesterday/Past 7 days/Past 30 days/месяцы/годы, локальная полночь); счётчик скрыт; плоская клавиатурная навигация поверх секций; решения Р-13…Р-16 в SPEC_SEARCH_OVERLAY § Recent-режим |
 
 ### Phase 28 — Hybrid Search
 
@@ -1266,6 +1267,23 @@ Specification: [SPEC_SEARCH.md](SPEC_SEARCH.md).
 | 28.6 | Fusion/rerank | [x] | Merge lexical, alias, fuzzy and semantic candidates with deterministic ranking and tests preserving exact-match trust |
 | 28.7 | Semantic UX | [x] | Render semantic-only excerpts without fake highlights and keep progressive result snapshots stable |
 | 28.8 | Verification | [x] | Cross-language, typo, alias, stale-index, route-filter and performance tests on realistic vault data |
+
+### Phase 29 — Settings Window [COMPLETE]
+
+Goal: standalone compact settings window (chrome consistent with main), left
+section nav, cross-window sync. Specification:
+[SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md).
+
+| # | Slice | Status | Scope |
+|---|---|---|---|
+| 29.1 | Rust commands | [x] | `commands/settings.rs`: `open_settings_window` (single instance, Overlay titlebar), `add_known_vault`/`forget_known_vault` (config-only, active not removable), orphan media scan/promote/delete (one-pass referenced-set через `collect_delete_media_for_block`, promote без копирования, revalidation + skipped) |
+| 29.2 | Window wiring | [x] | Регистрация команд в `lib.rs`, нативный пункт меню `Settings…` (`Cmd+,`), `capabilities/default.json` windows += `settings` |
+| 29.3 | Settings frontend | [x] | Второй Vite-entry `settings.html` + `src/settings/` (SettingsApp, Appearance/Spaces/Orphans), chrome bar h-8 bg-chrome + traffic-light reserve, nav 176px bg-active |
+| 29.4 | Theme extraction | [x] | `src/lib/themeMode.ts` (вынос из ThemeMenuButton), оба окна применяют тему до первого рендера; ThemeMenuButton удалён |
+| 29.5 | Cross-window sync | [x] | `settings-changed` Tauri event (`src/lib/settingsChanged.ts`), main-окно перечитывает тему/compact/bottom; кнопка Settings в нижней панели → `open_settings_window` |
+| 29.6 | Tests | [x] | Rust: 8 тестов (spaces dedupe/forget-active, space stats scan/index/validation, orphan scan/promote/delete edge cases); frontend: themeMode, formatBytes, SettingsApp nav, 3 секции, App интеграция |
+| 29.7 | Spaces redesign | [x] | Строка пространства: per-row статистика `space_stats(path)` (stat-only top-level + elements из локального индекса `card_kind != 'channel'`, без чтения содержимого — iCloud dataless safe); сводка `N elements · N markdown · N media · N files · size`; `Remove Space` в `⋯`-меню (detach); зафиксированные решения Р-1…Р-12 в SPEC § Design decisions; `formatBytes` (десятичная база) и `MenuIconSlot` (ui/) дедуплицированы |
+| 29.8 | Spaces interactions | [x] | Клик по строке = переключение (`select_vault` эмитит `vault-selected`, корневой App ремонтирует `AppWithVault`); активная строка `bg-active` без текстовой метки; dnd-kit reorder (`reorder_known_vaults`, set-equality; PointerSensor distance 8); `VaultSwitcher` перечитывает список при открытии меню; Remove активного → switch на следующее, затем forget (инвариант config); единственное пространство забывается без переключения |
 
 ### Backlog
 

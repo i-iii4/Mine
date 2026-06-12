@@ -12,6 +12,15 @@ export default defineConfig(async () => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      // Two webviews, two HTML entries: the main window and the settings window.
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        settings: path.resolve(__dirname, "settings.html"),
+      },
+    },
+  },
   test: {
     globals: true,
     environment: "jsdom",

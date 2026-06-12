@@ -405,3 +405,29 @@ export interface ImportProgress {
   total: number;
   block_title: string | null;
 }
+
+// ─── Settings window ─────────────────────────────────────────────────────────
+
+export interface OrphanMedia {
+  file_name: string;
+  size_bytes: number;
+  modified_secs: number;
+}
+
+export interface PromoteOrphanResult {
+  created: IndexedBlock[];
+  skipped: string[];
+}
+
+export interface DeleteOrphanResult {
+  deleted: string[];
+  skipped: string[];
+}
+
+export interface SpaceStats {
+  file_count: number;
+  markdown_count: number;
+  media_count: number;
+  total_bytes: number;
+  element_count: number | null;
+}
