@@ -1,6 +1,40 @@
 # Devlog
 
-## 11.06.2026 — Кэш-гейт точных высот и drag-превью медиа
+## 12.06.2026 — Search Overlay: поиск по блокам
+
+### Модальный поиск-навигация (SPEC_SEARCH_OVERLAY.md)
+
+- Первый видимый UI main search: `Cmd+F` / `Search cards` открывают модальный
+  overlay (Radix Dialog, фикс-геометрия `min(960px)×min(640px,76vh)`, top 12vh):
+  строка поиска (канон `SearchMenuInput`, счётчик результатов, clear), слева
+  список результатов, справа превью. Vault-wide scope, debounce 100ms,
+  sequence-гонки, limit 200; Enter/клик открывает Detail.
+- Backend не менялся: существующий `list_grid_blocks(query)` + `SearchMatch`.
+  Чистое ядро строк — `deriveSearchResultRow` (правила Match Metadata: title
+  highlight, body/description excerpt, semantic без mark, author/url не
+  светятся) + общий рендер `searchHighlight.tsx` (вынесен из Card).
+- Демонтирован мёртвый невидимый грид-фильтр: `mainSearchQuery`-пайплайн,
+  query-ключи маршрутного кэша, `searchQuery` prop грида. Грид никогда не
+  фильтруется поиском; дефолтный тестовый мок ассертит `query === undefined`
+  для всех грид-вызовов. `SPEC_SEARCH.md` переписан под overlay-модель.
+
+### Итерации ревью: маркер, миниатюры, зоны превью
+
+- Подсветка совпадения: серый mark из поверхностного ладдера (`bg-active`)
+  неотличим от фона активной строки — категориальная ошибка (индикатор из
+  поверхностного токена). Введён хроматический акцент `--search-mark` — жёлтый
+  текстовыделитель с фиксированными тёмными чернилами
+  (`--search-mark-foreground`) в обеих темах; внесён в цветовой принцип,
+  токен-аудит бенча и DESIGN_SYSTEM.
+- Строки результатов получили стандартную миниатюру `MicroPreviewThumbnail`
+  (паттерн related-notes row); фабрика `microPreviewFromLightBlock` определяет
+  text-миниатюры по `preview_manifest.kind` (у LightBlock нет thumb_format) —
+  заодно закрыт дефект `dark:invert` для drag-превью текстовых карточек.
+- Превью справа — две выделенные зоны: карточка `ReadOnlyCardPreview` micro
+  (единый шаблон для всех типов, медиа в карточном поле, без full-bleed;
+  match-рендер тем же row-model, что список) и блок метаданных языком Detail
+  (`MetadataRow` вынесен в общий компонент): Date, Source, Author, Collections
+  (lazy через батч-команду тегов, кэш по slug); пустые строки скрываются.
 
 ### Грид: fallback-высоты больше не закрепляются в layout cache
 
