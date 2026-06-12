@@ -16,15 +16,22 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { X } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ReadOnlyCardPreview } from "@/components/Card";
+import { CardHoverMenu } from "@/components/CardHoverMenu";
 import {
   MicroPreviewThumbnail,
   microPreviewFromLightBlock,
 } from "@/components/MicroPreviewThumbnail";
-import { MetadataRow, METADATA_VALUE_BASE_CLASSES } from "@/components/MetadataRow";
-import { domainFromUrl, legacyThumbsRoot } from "@/lib/assets";
+import {
+  MetadataRow,
+  MetadataLinkValue,
+  formatMetadataCardKind,
+  METADATA_VALUE_BASE_CLASSES,
+} from "@/components/MetadataRow";
+import { domainFromUrl, isSafeUrl, legacyThumbsRoot } from "@/lib/assets";
 import { listGridBlocks } from "@/lib/commands";
 import { normalizeSurfaceSearchQuery } from "@/lib/searchQuery";
 import { deriveSearchResultRow } from "@/lib/searchResultRow";
@@ -32,7 +39,7 @@ import { renderSearchHighlightedText } from "@/lib/searchHighlight";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
 import { cn } from "@/lib/utils";
-import type { LightBlock } from "@/types";
+import type { LightBlock, TagCount } from "@/types";
 
 /** One request, top results only — refining the query beats paging (SPEC). */
 export const SEARCH_OVERLAY_RESULT_LIMIT = 200;
@@ -58,6 +65,13 @@ interface SearchOverlayProps {
   onOpenBlock: (block: LightBlock) => void;
   /** Lazy collections for the metadata block (existing batched tags command). */
   loadBlockTags?: (slugs: string[]) => Promise<Map<string, string[]>>;
+  /** Hover actions on the preview reuse the main-page CardHoverMenu contract. */
+  tags?: TagCount[];
+  currentTag?: string;
+  onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void | Promise<void>;
+  onCreateAndAssign?: (tag: string, blockSlug: string) => void | Promise<void>;
+  onRequestRename?: (block: LightBlock) => void;
+  onRequestDelete?: (slug: string) => void;
 }
 
 export function SearchOverlay({
@@ -69,10 +83,19 @@ export function SearchOverlay({
   onClose,
   onOpenBlock,
   loadBlockTags,
+  tags = [],
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
 }: SearchOverlayProps) {
   const [results, setResults] = useState<LightBlock[] | null>(null);
   const [totalBlocks, setTotalBlocks] = useState<number | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  // Collections for the metadata block: lazy per active row, cached per slug,
+  // invalidated together with the result set on vault mutations.
+  const [tagsBySlug, setTagsBySlug] = useState<Map<string, string[]>>(new Map());
 
   const inputRef = useRef<HTMLInputElement>(null);
   const requestSequenceRef = useRef(0);
@@ -83,6 +106,40 @@ export function SearchOverlay({
 
   const normalizedQuery = normalizeSurfaceSearchQuery(query);
 
+  const runSearch = useCallback(
+    (searchQuery: string, options: { preserveActive: boolean }) => {
+      const sequence = ++requestSequenceRef.current;
+      void listGridBlocks(undefined, 0, SEARCH_OVERLAY_RESULT_LIMIT, searchQuery)
+        .then((grid) => {
+          if (requestSequenceRef.current !== sequence) return;
+          setResults((previous) => {
+            if (options.preserveActive) {
+              // Silent refresh (vault mutated): keep the user's place — follow
+              // the active slug into the new result set, or clamp the index
+              // when that card is gone (e.g. it was just deleted).
+              setActiveIndex((index) => {
+                const activeSlugBefore = previous?.[index]?.slug ?? null;
+                const followed = activeSlugBefore
+                  ? grid.blocks.findIndex((candidate) => candidate.slug === activeSlugBefore)
+                  : -1;
+                if (followed >= 0) return followed;
+                return Math.min(index, Math.max(0, grid.blocks.length - 1));
+              });
+            } else {
+              setActiveIndex(0);
+            }
+            return grid.blocks;
+          });
+          setTotalBlocks(grid.total_blocks);
+        })
+        .catch((error) => {
+          if (requestSequenceRef.current !== sequence) return;
+          console.error("Search overlay query failed:", error);
+        });
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!open) return;
     if (!normalizedQuery) {
@@ -92,22 +149,53 @@ export function SearchOverlay({
       setActiveIndex(0);
       return;
     }
-    const sequence = ++requestSequenceRef.current;
     const timer = window.setTimeout(() => {
-      void listGridBlocks(undefined, 0, SEARCH_OVERLAY_RESULT_LIMIT, normalizedQuery)
-        .then((grid) => {
-          if (requestSequenceRef.current !== sequence) return;
-          setResults(grid.blocks);
-          setTotalBlocks(grid.total_blocks);
-          setActiveIndex(0);
-        })
-        .catch((error) => {
-          if (requestSequenceRef.current !== sequence) return;
-          console.error("Search overlay query failed:", error);
-        });
+      runSearch(normalizedQuery, { preserveActive: false });
     }, SEARCH_OVERLAY_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [normalizedQuery, open]);
+  }, [normalizedQuery, open, runSearch]);
+
+  // The result set is overlay-owned state, so vault mutations (delete, rename,
+  // clipper saves, watcher events) must re-run the active query. App dispatches
+  // "vault-refreshed" after every fresh grid snapshot — the same invalidation
+  // signal, replayed here without debounce.
+  useEffect(() => {
+    if (!open || !normalizedQuery) return;
+    const handler = () => {
+      // Cached collections may be stale after the mutation too.
+      setTagsBySlug(new Map());
+      runSearch(normalizedQuery, { preserveActive: true });
+    };
+    window.addEventListener("vault-refreshed", handler);
+    return () => window.removeEventListener("vault-refreshed", handler);
+  }, [normalizedQuery, open, runSearch]);
+
+  // Optimistic delete: App announces a confirmed delete before the IPC and
+  // snapshot reload finish, so the row vanishes the moment the user confirms.
+  // The subsequent "vault-refreshed" re-runs the query and settles the truth.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (event: Event) => {
+      const slug = (event as CustomEvent<{ slug?: string }>).detail?.slug;
+      if (!slug) return;
+      setResults((previous) => {
+        if (!previous?.some((candidate) => candidate.slug === slug)) return previous;
+        const next = previous.filter((candidate) => candidate.slug !== slug);
+        setActiveIndex((index) => {
+          const activeSlugBefore = previous[index]?.slug ?? null;
+          const followed = activeSlugBefore
+            ? next.findIndex((candidate) => candidate.slug === activeSlugBefore)
+            : -1;
+          if (followed >= 0) return followed;
+          return Math.min(index, Math.max(0, next.length - 1));
+        });
+        setTotalBlocks((total) => (total === null ? total : Math.max(0, total - 1)));
+        return next;
+      });
+    };
+    window.addEventListener("block-deleted", handler);
+    return () => window.removeEventListener("block-deleted", handler);
+  }, [open]);
 
   const resolvedThumbsRoot = useMemo(
     () => thumbsRootPath ?? legacyThumbsRoot(vaultPath),
@@ -133,9 +221,6 @@ export function SearchOverlay({
       ?.scrollIntoView?.({ block: "nearest" });
   }, [activeBlock]);
 
-  // Collections for the metadata block: lazy per active row, cached per slug
-  // for the overlay session (tags are not part of the LightBlock projection).
-  const [tagsBySlug, setTagsBySlug] = useState<Map<string, string[]>>(new Map());
   const activeSlug = activeBlock?.slug ?? null;
   useEffect(() => {
     if (!open || !activeSlug || !loadBlockTags) return;
@@ -161,6 +246,41 @@ export function SearchOverlay({
   }, [activeSlug, loadBlockTags, open, tagsBySlug]);
 
   const activeTags = activeSlug ? tagsBySlug.get(activeSlug) ?? null : null;
+
+  // Optimistic local membership: the Collections row and the picker reflect
+  // the toggle immediately; App invalidates its snapshots in the background.
+  const applyTagsDelta = useCallback(
+    (slug: string, tag: string, connected: boolean) => {
+      setTagsBySlug((current) => {
+        const existing = current.get(slug) ?? [];
+        const next = new Map(current);
+        next.set(
+          slug,
+          connected
+            ? existing.includes(tag) ? existing : [...existing, tag]
+            : existing.filter((t) => t !== tag),
+        );
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleToggleTag = useCallback(
+    (slug: string, tag: string, hasTag: boolean) => {
+      applyTagsDelta(slug, tag, !hasTag);
+      void onToggleTag?.(slug, tag, hasTag);
+    },
+    [applyTagsDelta, onToggleTag],
+  );
+
+  const handleCreateAndAssign = useCallback(
+    (tag: string, blockSlug: string) => {
+      applyTagsDelta(blockSlug, tag, true);
+      void onCreateAndAssign?.(tag, blockSlug);
+    },
+    [applyTagsDelta, onCreateAndAssign],
+  );
 
   const moveActiveIndex = useCallback(
     (delta: number) => {
@@ -338,7 +458,7 @@ export function SearchOverlay({
                   role="button"
                   tabIndex={-1}
                   aria-label="Open card"
-                  className="cursor-pointer"
+                  className="group relative cursor-pointer"
                   onClick={() => onOpenBlock(activeBlock)}
                   data-search-overlay-preview
                 >
@@ -349,6 +469,18 @@ export function SearchOverlay({
                     width={288}
                     previewMode="micro"
                     shadow="none"
+                  />
+                  {/* The real main-page hover menu — More (top-right) plus
+                      Source/Connect (bottom row), revealed on hover. */}
+                  <CardHoverMenu
+                    block={activeBlock}
+                    vaultPath={vaultPath}
+                    tags={tags}
+                    currentTag={currentTag}
+                    onToggleTag={handleToggleTag}
+                    onCreateAndAssign={handleCreateAndAssign}
+                    onRequestRename={onRequestRename ?? (() => {})}
+                    onRequestDelete={onRequestDelete ?? (() => {})}
                   />
                 </div>
                 <div
@@ -365,11 +497,17 @@ export function SearchOverlay({
                         })}
                       </span>
                     </MetadataRow>
-                    {activeBlock.url && domainFromUrl(activeBlock.url) && (
+                    <MetadataRow label="Type">
+                      <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
+                        {formatMetadataCardKind(activeBlock.card_kind)}
+                      </span>
+                    </MetadataRow>
+                    {activeBlock.url && isSafeUrl(activeBlock.url) && domainFromUrl(activeBlock.url) && (
                       <MetadataRow label="Source">
-                        <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
-                          {domainFromUrl(activeBlock.url)}
-                        </span>
+                        <MetadataLinkValue
+                          value={domainFromUrl(activeBlock.url)}
+                          onClick={() => void openUrl(activeBlock.url!)}
+                        />
                       </MetadataRow>
                     )}
                     {activeBlock.author && (

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { GridSnapshot, LightBlock, SearchMatch } from "@/types";
 import { SearchOverlay, SEARCH_OVERLAY_RESULT_LIMIT } from "./SearchOverlay";
 
@@ -17,11 +17,40 @@ vi.mock("@/lib/commands", () => ({
     limit?: number,
     query?: string,
   ) => listGridBlocksMock(tag, offset, limit, query),
+  // CardHoverMenu lazily loads the full block for its Connect submenu.
+  getBlock: async () => null,
 }));
 
 vi.mock("@/components/Card", () => ({
   ReadOnlyCardPreview: ({ block, previewMode }: { block: LightBlock; previewMode?: string }) => (
     <div data-testid="overlay-preview" data-preview-mode={previewMode}>{block.slug}</div>
+  ),
+}));
+
+const openUrlMock = vi.fn();
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: (url: string) => openUrlMock(url),
+  revealItemInDir: vi.fn(),
+}));
+
+vi.mock("@/components/CollectionPicker", () => ({
+  COLLECTION_PICKER_CONTENT_CLASS: "",
+  CollectionPicker: ({
+    blockSlug,
+    selectedTags,
+    onToggleTag,
+  }: {
+    blockSlug: string;
+    selectedTags: string[];
+    onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="picker-toggle-design"
+      onClick={() => onToggleTag(blockSlug, "design", selectedTags.includes("design"))}
+    >
+      toggle design
+    </button>
   ),
 }));
 
@@ -79,6 +108,7 @@ function renderOverlay(props: Partial<Parameters<typeof SearchOverlay>[0]> = {})
 beforeEach(() => {
   listGridBlocksMock.mockReset();
   listGridBlocksMock.mockResolvedValue(snapshot([]));
+  openUrlMock.mockReset();
 });
 
 describe("SearchOverlay", () => {
@@ -255,15 +285,25 @@ describe("SearchOverlay", () => {
       expect(screen.getByTestId("overlay-preview")).toHaveTextContent("alpha");
     });
     expect(screen.getByTestId("overlay-preview")).toHaveAttribute("data-preview-mode", "micro");
-    expect(screen.getByText("Date")).toBeInTheDocument();
-    expect(screen.getByText("Source")).toBeInTheDocument();
-    expect(screen.getByText("example.com")).toBeInTheDocument();
-    expect(screen.getByText("Author")).toBeInTheDocument();
-    expect(screen.getByText("@author")).toBeInTheDocument();
+    const metadata = within(
+      document.querySelector("[data-search-overlay-metadata]") as HTMLElement,
+    );
+    expect(metadata.getByText("Date")).toBeInTheDocument();
+    expect(metadata.getByText("Type")).toBeInTheDocument();
+    expect(metadata.getByText("Article")).toBeInTheDocument();
+    expect(metadata.getByText("example.com")).toBeInTheDocument();
+    expect(metadata.getByText("Author")).toBeInTheDocument();
+    expect(metadata.getByText("@author")).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByText("Collections")).toBeInTheDocument();
+      expect(metadata.getByText("Collections")).toBeInTheDocument();
     });
-    expect(screen.getByText("design, reading")).toBeInTheDocument();
+    expect(metadata.getByText("design, reading")).toBeInTheDocument();
+    // Hover actions live on the card preview, like the main-page hover menu.
+    const preview = within(
+      document.querySelector("[data-search-overlay-preview]") as HTMLElement,
+    );
+    expect(preview.getByRole("button", { name: /Source/ })).toBeInTheDocument();
+    expect(preview.getByRole("button", { name: /Connect/ })).toBeInTheDocument();
   });
 
   it("hides empty metadata rows for a block without url, author and collections", async () => {
@@ -283,6 +323,138 @@ describe("SearchOverlay", () => {
       expect(loadBlockTags).toHaveBeenCalled();
     });
     expect(screen.queryByText("Collections")).not.toBeInTheDocument();
+  });
+
+  it("hover actions open the source url; blocks without url render no Source button", async () => {
+    listGridBlocksMock.mockResolvedValue(snapshot([
+      makeBlock(1, "with-url", { url: "https://example.com/article" }),
+      makeBlock(2, "no-url", { url: null }),
+    ]));
+    renderOverlay({ query: "a" });
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(2);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Source/ }));
+    expect(openUrlMock).toHaveBeenCalledWith("https://example.com/article");
+    expect(screen.getByRole("button", { name: /Connect/ })).toBeInTheDocument();
+    // The real CardHoverMenu contract: wrapper + More (⋯) + Source + Connect.
+    const preview = within(
+      document.querySelector("[data-search-overlay-preview]") as HTMLElement,
+    );
+    expect(preview.getAllByRole("button")).toHaveLength(3);
+    expect(
+      document.querySelector("[data-card-hover-bottom-actions]"),
+    ).not.toBeNull();
+
+    // Move to the block without url — Source disappears, Connect stays.
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+    expect(screen.queryByRole("button", { name: /Source/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Connect/ })).toBeInTheDocument();
+  });
+
+  it("metadata Source value is clickable and opens the url", async () => {
+    listGridBlocksMock.mockResolvedValue(snapshot([
+      makeBlock(1, "alpha", { url: "https://example.com/article" }),
+    ]));
+    renderOverlay({ query: "alpha" });
+    await waitFor(() => {
+      expect(screen.getByText("example.com")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "example.com" }));
+    expect(openUrlMock).toHaveBeenCalledWith("https://example.com/article");
+  });
+
+  it("Connect toggle updates the Collections row optimistically", async () => {
+    listGridBlocksMock.mockResolvedValue(snapshot([makeBlock(1, "alpha")]));
+    const loadBlockTags = vi.fn(async () => new Map([["alpha", ["reading"]]]));
+    const onToggleTag = vi.fn();
+    renderOverlay({ query: "alpha", loadBlockTags, onToggleTag });
+
+    await waitFor(() => {
+      expect(screen.getByText("reading")).toBeInTheDocument();
+    });
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Connect/ }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByTestId("picker-toggle-design"));
+
+    expect(onToggleTag).toHaveBeenCalledWith("alpha", "design", false);
+    await waitFor(() => {
+      expect(screen.getByText("reading, design")).toBeInTheDocument();
+    });
+  });
+
+  it("re-runs the active query on vault-refreshed and keeps the active row by slug", async () => {
+    const blocks = [makeBlock(1, "alpha"), makeBlock(2, "beta"), makeBlock(3, "gamma")];
+    listGridBlocksMock.mockResolvedValue(snapshot(blocks));
+    renderOverlay({ query: "a" });
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(3);
+    });
+
+    // Move to "beta", then simulate a vault mutation that deletes "alpha".
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+    expect(screen.getByTestId("overlay-preview")).toHaveTextContent("beta");
+
+    listGridBlocksMock.mockResolvedValue(
+      snapshot([makeBlock(2, "beta"), makeBlock(3, "gamma")]),
+    );
+    fireEvent(window, new Event("vault-refreshed"));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(2);
+    });
+    // The deleted card is gone; the active row followed the slug.
+    expect(screen.queryByText("Title alpha")).not.toBeInTheDocument();
+    expect(screen.getByTestId("overlay-preview")).toHaveTextContent("beta");
+  });
+
+  it("removes a row instantly on the optimistic block-deleted notice", async () => {
+    listGridBlocksMock.mockResolvedValue(
+      snapshot([makeBlock(1, "alpha"), makeBlock(2, "beta"), makeBlock(3, "gamma")], 3),
+    );
+    renderOverlay({ query: "a" });
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(3);
+    });
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+    const fetchCallsBefore = listGridBlocksMock.mock.calls.length;
+
+    fireEvent(
+      window,
+      new CustomEvent("block-deleted", { detail: { slug: "beta" } }),
+    );
+
+    // Immediate, no refetch needed: row gone, count decremented, index clamped.
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+    expect(screen.queryByText("Title beta")).not.toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByTestId("overlay-preview")).toHaveTextContent("gamma");
+    expect(listGridBlocksMock.mock.calls.length).toBe(fetchCallsBefore);
+  });
+
+  it("clamps the active row when the active card itself was deleted", async () => {
+    listGridBlocksMock.mockResolvedValue(
+      snapshot([makeBlock(1, "alpha"), makeBlock(2, "beta")]),
+    );
+    renderOverlay({ query: "a" });
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(2);
+    });
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+    expect(screen.getByTestId("overlay-preview")).toHaveTextContent("beta");
+
+    listGridBlocksMock.mockResolvedValue(snapshot([makeBlock(1, "alpha")]));
+    fireEvent(window, new Event("vault-refreshed"));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(1);
+    });
+    expect(screen.getByTestId("overlay-preview")).toHaveTextContent("alpha");
   });
 
   it("clear button resets the query and returns focus to the input", async () => {

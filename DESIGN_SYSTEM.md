@@ -677,7 +677,11 @@ normal card interaction contract.
   при поиске micro рендерит тот же row-model, что список (подсветка title,
   excerpt, `bg-search-mark`). Зона метаданных: язык metadata-card Detail
   (`rounded-1 border border-border bg-accent`, строки — общий `MetadataRow`):
-  Date, Source (домен), Author, Collections (lazy); пустые строки скрываются.
+  Date, Type, Source (домен, кликабельный `MetadataLinkValue`), Author,
+  Collections (lazy, оптимистичное обновление при Connect); пустые строки
+  скрываются. Контекстные действия — настоящий `CardHoverMenu` поверх
+  превью-карточки (тот же компонент, что на главной): `More` (⋯) + `Source` +
+  `Connect`, со всем наследуемым поведением hover/pin/stopPropagation.
 - Пустые состояния: пустой query → пустые панели; нет результатов —
   центрированная `No results` (`text-sm text-muted-foreground`). Спиннеров нет.
 

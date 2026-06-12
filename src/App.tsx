@@ -2696,6 +2696,10 @@ export function AppWithVault({
     async (slug: string, deleteUnusedMedia: boolean) => {
       setSelectedBlock(null);
       setSelectedBlockAnchor(null);
+      // Optimistic notice for overlay-owned result sets (search): the row
+      // disappears immediately; the later "vault-refreshed" confirms the
+      // truth (and self-heals the list if the delete failed).
+      window.dispatchEvent(new CustomEvent("block-deleted", { detail: { slug } }));
       try {
         await deleteBlock(slug, deleteUnusedMedia);
       } catch (err) {
@@ -3180,6 +3184,12 @@ export function AppWithVault({
         onClose={() => setSearchOverlayOpen(false)}
         onOpenBlock={handleSearchOverlayOpenBlock}
         loadBlockTags={handleLoadBlockTags}
+        tags={tags}
+        currentTag={currentTag}
+        onToggleTag={handleToggleTag}
+        onCreateAndAssign={handleCreateTagFromMenu}
+        onRequestRename={setRenamingBlock}
+        onRequestDelete={requestDeleteBlock}
       />
     </div>{/* end body */}
 

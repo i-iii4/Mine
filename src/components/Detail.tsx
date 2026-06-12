@@ -27,6 +27,8 @@ import { Button } from "@/components/ui/button";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 import {
   MetadataRow,
+  MetadataLinkValue,
+  formatMetadataCardKind,
   METADATA_LABEL_CLASSES,
   METADATA_VALUE_BASE_CLASSES,
 } from "@/components/MetadataRow";
@@ -830,25 +832,6 @@ function MetadataTextValue({
   );
 }
 
-function MetadataLinkValue({
-  value,
-  onClick,
-}: {
-  value: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(METADATA_VALUE_BASE_CLASSES, "w-full truncate text-right hover:underline")}
-      title={value}
-    >
-      {value}
-    </button>
-  );
-}
-
 function DetailActionRow({
   block,
   tags,
@@ -1008,10 +991,6 @@ function RelatedNotesSection({
       </div>
     </section>
   );
-}
-
-function formatMetadataCardKind(cardKind: LightBlock["card_kind"] | IndexedBlock["card_kind"]): string {
-  return cardKind.charAt(0).toUpperCase() + cardKind.slice(1);
 }
 
 function getIndexWarning(block: LightBlock | IndexedBlock): string | null {

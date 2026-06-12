@@ -4,11 +4,40 @@
 // one visual contract for "metadata about a card" everywhere.
 
 import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
+import type { IndexedBlock, LightBlock } from "@/types";
 
 export const METADATA_LABEL_CLASSES =
   "whitespace-nowrap font-mono text-sm leading-4 text-muted-foreground";
 export const METADATA_VALUE_BASE_CLASSES =
   "block min-w-0 font-sans text-sm leading-4 text-foreground";
+
+/** Human-readable card kind for the Type metadata row ("article" → "Article"). */
+export function formatMetadataCardKind(
+  cardKind: LightBlock["card_kind"] | IndexedBlock["card_kind"],
+): string {
+  return cardKind.charAt(0).toUpperCase() + cardKind.slice(1);
+}
+
+/** Clickable metadata value (e.g. Source domain): plain text, underline on hover. */
+export function MetadataLinkValue({
+  value,
+  onClick,
+}: {
+  value: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(METADATA_VALUE_BASE_CLASSES, "w-full truncate text-right hover:underline")}
+      title={value}
+    >
+      {value}
+    </button>
+  );
+}
 
 interface MetadataRowProps {
   label: string;

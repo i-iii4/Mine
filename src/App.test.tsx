@@ -290,6 +290,7 @@ function block(id: number, slug: string): LightBlock {
   return {
     id,
     slug,
+    card_kind: "article",
     block_type: "article",
     title: slug,
     url: null,
@@ -1652,11 +1653,20 @@ describe("AppWithVault", () => {
     expect(await screen.findByText("Delete card?")).toBeInTheDocument();
     expect(screen.getByText(/1 media file is only used by this card/)).toBeInTheDocument();
 
+    const deletedSlugs: string[] = [];
+    const onBlockDeleted = (event: Event) => {
+      const slug = (event as CustomEvent<{ slug?: string }>).detail?.slug;
+      if (slug) deletedSlugs.push(slug);
+    };
+    window.addEventListener("block-deleted", onBlockDeleted);
     fireEvent.click(screen.getByRole("button", { name: "Keep media" }));
 
     await waitFor(() => {
       expect(commandMocks.deleteBlock).toHaveBeenCalledWith("alpha-block", false);
     });
+    // Optimistic notice for overlay-owned result sets fires on confirm.
+    expect(deletedSlugs).toEqual(["alpha-block"]);
+    window.removeEventListener("block-deleted", onBlockDeleted);
   });
 
   it("updates the open detail when block:renamed arrives", async () => {
