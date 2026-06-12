@@ -62,13 +62,13 @@ membership. It does not make the source article/card the action target.
 
 1. Media actions never rename, delete, or connect the visible source card as a
    side effect.
-2. `Create Card` and image drag always create a new standalone media card for
+2. `Create Element` and image drag always create a new standalone media card for
    the selected media asset. Choosing `Everything` creates it without channel
    membership; choosing a channel writes that channel to the new card.
 3. `Rename Media` renames the physical media file and rewrites references to that
    media file, but it does not rename any `.md` file, title, H1, URL, or source
    note.
-4. `Remove from Card` removes only this media reference from the current card.
+4. `Remove from Element` removes only this media reference from the current card.
    The media file and all other cards/notes remain unchanged.
 5. `Delete` deletes only the physical media file and removes parseable
    references to that file from every card/note that used it. Cards and notes
@@ -152,23 +152,23 @@ three visible buttons on the media surface.
 
 Menu items:
 
-1. `Create Card` — submenu picker for `Everything` plus channels.
+1. `Create Element` — submenu picker for `Everything` plus channels.
 2. `Reveal in Finder`.
 3. `Copy Path`.
 4. `Copy Media`.
 5. `Rename Media...`.
-6. `Remove from Card`.
+6. `Remove from Element`.
 7. `Delete`.
 
 The menu must not include card-level actions such as `Source`, `Remove from
 collection`, card rename, or card delete.
 
-Icon policy matches the main card overflow menu: only `Create Card` renders an
+Icon policy matches the main card overflow menu: only `Create Element` renders an
 icon (`Plus`). `Reveal in Finder`, `Copy Path`, `Copy Media`, `Rename Media...`,
-`Remove from Card` and `Delete` keep the same leading icon slot empty so labels
+`Remove from Element` and `Delete` keep the same leading icon slot empty so labels
 align without adding decorative per-command icons.
 
-`Create Card` submenu height follows the global searchable floating-menu
+`Create Element` submenu height follows the global searchable floating-menu
 contract: fixed search header, shared `QuantizedMenuScrollArea` for the channel
 rows, `default` 32px row token, and no local `max-height` value.
 
@@ -220,11 +220,11 @@ Image click contract:
 
 ## User Flows
 
-### Create Card from primary media
+### Create Element from primary media
 
 1. User opens a media card whose primary file is `photo.jpg`.
 2. User hovers the image and opens `...`.
-3. User selects `Create Card`.
+3. User selects `Create Element`.
 4. User picks `Everything` or a channel from the plain list. Rows do not contain
    separate per-row action buttons.
 5. Backend creates a new standalone media card for `photo.jpg`.
@@ -234,14 +234,14 @@ Image click contract:
 7. The menu closes after the selection.
 8. The currently open card is not otherwise renamed, deleted, or rewritten.
 
-Even if the current card already points to `photo.jpg`, `Create Card` still
+Even if the current card already points to `photo.jpg`, `Create Element` still
 creates a new card. Reuse is not part of the contract.
 
-### Create Card from inline image
+### Create Element from inline image
 
 1. User opens an article containing `![[photo.jpg]]`.
 2. User hovers that exact inline image and opens `...`.
-3. User selects `Create Card` and picks `Everything` or a channel.
+3. User selects `Create Element` and picks `Everything` or a channel.
 4. Backend creates a new standalone media card for `photo.jpg`.
 5. The source article stays open and unchanged.
 
@@ -318,7 +318,7 @@ indexing:
 2. UI calls `prepare_delete_media_asset(media_ref)`.
 3. UI confirmation shows:
    - thumbnail/preview of the exact media file that will be deleted;
-   - `Connected cards` subsection title above the reference list;
+   - `Connected elements` subsection title above the reference list;
    - every card/note that currently references that file, rendered with the
      same clickable related-note row component used in the Detail right sidebar.
      Rows keep the same thumbnail, hover preview, and click-to-open behavior.
@@ -340,7 +340,7 @@ indexing:
 
 ### Remove media from card
 
-1. User chooses `Remove from Card` from a media menu.
+1. User chooses `Remove from Element` from a media menu.
 2. UI confirms that only the current card reference will be removed.
 3. Backend removes `frontmatter.file`/matching `thumbnail` for primary media,
    or removes matching inline body embeds for body media.
@@ -523,8 +523,8 @@ Drop routing:
 | Article inline image | same menu and same commands as primary media |
 | Video | shows menu, no drag payload |
 | Drag | image drag creates `media_asset`, sidebar drop calls media command |
-| Menu | contains Create Card, Reveal in Finder, Copy Path, Copy Media, Rename Media, Remove from Card, Delete only |
-| Icon economy | only Create Card renders an icon; remaining command rows keep empty icon slots |
+| Menu | contains Create Element, Reveal in Finder, Copy Path, Copy Media, Rename Media, Remove from Element, Delete only |
+| Icon economy | only Create Element renders an icon; remaining command rows keep empty icon slots |
 | Regression | card hover menu remains card-level and still uses card actions |
 
 ### Manual QA
@@ -551,11 +551,11 @@ Drop routing:
 - [ ] The hover trigger is the standard icon-only default Button under an
       ellipsis menu.
 - [ ] Menu actions target only the media file.
-- [ ] Only `Create Card` renders an icon in the media menu; other rows reserve
+- [ ] Only `Create Element` renders an icon in the media menu; other rows reserve
       an empty leading slot.
-- [ ] Create Card always creates a new standalone media card and optionally
+- [ ] Create Element always creates a new standalone media card and optionally
       connects that card.
-- [ ] Create Card submenu uses the shared quantized menu list height and never
+- [ ] Create Element submenu uses the shared quantized menu list height and never
       clips a partial channel row.
 - [ ] Image drag to sidebar uses the same media materialization path.
 - [ ] Video has actions but no drag.

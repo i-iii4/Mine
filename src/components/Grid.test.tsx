@@ -414,7 +414,7 @@ const BASE_PROPS = {
 describe("Grid — no collapse after add / revisit", () => {
   it("renders a centered italic placeholder for an empty channel", async () => {
     vi.useFakeTimers();
-    const placeholderText = "Cards connected to this channel will appear here.";
+    const placeholderText = "Elements connected to this collection will appear here.";
 
     const { rerender } = render(
       <Grid {...BASE_PROPS} blocks={[]} currentTag="empty-channel" />,
@@ -1314,7 +1314,7 @@ describe("Grid — no collapse after add / revisit", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Merge" }));
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Merge 2 cards")).toBeInTheDocument();
+    expect(within(dialog).getByText("Merge 2 elements")).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
     await act(async () => {
@@ -1488,7 +1488,7 @@ describe("Grid — no collapse after add / revisit", () => {
     const deleteItem = within(batchMenu).getByText("Delete").closest("[role='menuitem']");
     expect(connectItem?.querySelector("svg")).toBeTruthy();
     expect(deleteItem?.querySelector("[data-card-menu-icon-slot]")).toBeTruthy();
-    expect(deleteItem?.querySelector("svg")).toBeNull();
+    expect(deleteItem?.querySelector("svg")).toBeTruthy();
     expect(within(batchMenu).queryByText("Disconnect")).toBeNull();
     expect(within(batchMenu).queryByText("Source")).toBeNull();
     expect(within(batchMenu).queryByText("Rename…")).toBeNull();
@@ -1535,7 +1535,7 @@ describe("Grid — no collapse after add / revisit", () => {
     const batchMenu = document.querySelector("[data-feed-grid-batch-menu]") as HTMLElement;
     const disconnectItem = within(batchMenu).getByText("Disconnect").closest("[role='menuitem']");
     expect(disconnectItem?.querySelector("[data-card-menu-icon-slot]")).toBeTruthy();
-    expect(disconnectItem?.querySelector("svg")).toBeNull();
+    expect(disconnectItem?.querySelector("svg")).toBeTruthy();
 
     fireEvent.click(within(batchMenu).getByText("Disconnect"));
     await act(async () => {

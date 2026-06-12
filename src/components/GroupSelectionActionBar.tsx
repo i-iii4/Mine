@@ -175,7 +175,7 @@ export function GroupSelectionActionBar({
               type="button"
               variant="default"
               size="xs"
-              className="shrink-0"
+              className="shrink-0 text-detach"
               onClick={() => {
                 void handleRemoveFromCollection();
               }}

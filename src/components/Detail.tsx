@@ -21,6 +21,7 @@ import {
   MoreHorizontal,
   Plus,
   Trash2,
+  Unlink,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -1617,7 +1618,7 @@ function MediaAssetMoreMenu({
               <MenuIconSlot>
                 <Plus className="size-3" />
               </MenuIconSlot>
-              Create Card
+              Create Element
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
               <MediaAssetCollectionPicker
@@ -1664,15 +1665,19 @@ function MediaAssetMoreMenu({
             <MenuIconSlot />
             Rename Media...
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setRemoveOpen(true)}>
-            <MenuIconSlot />
-            Remove from Card
+          <DropdownMenuItem variant="detach" onSelect={() => setRemoveOpen(true)}>
+            <MenuIconSlot>
+              <Unlink className="size-3" />
+            </MenuIconSlot>
+            Remove from Element
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
             onSelect={() => setDeleteOpen(true)}
           >
-            <MenuIconSlot />
+            <MenuIconSlot>
+              <Trash2 className="size-3" />
+            </MenuIconSlot>
             Delete Media
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -1769,6 +1774,8 @@ function CreateCardCollectionPicker<TPayload>({
 }) {
   const [search, setSearch] = useState("");
   const [pendingTag, setPendingTag] = useState<string | null>(null);
+  // Canonical sidebar order from props; only the current collection is
+  // hoisted to the top (stable sort keeps the rest untouched).
   const sortedTags = useMemo(() => {
     return [...tags].sort((a, b) => {
       if (currentTag) {
@@ -1776,7 +1783,7 @@ function CreateCardCollectionPicker<TPayload>({
         const bCurrent = b.tag === currentTag;
         if (aCurrent !== bCurrent) return aCurrent ? -1 : 1;
       }
-      return a.tag.localeCompare(b.tag);
+      return 0;
     });
   }, [currentTag, tags]);
   const lc = search.toLowerCase();
@@ -1812,7 +1819,7 @@ function CreateCardCollectionPicker<TPayload>({
         autoFocus
         value={search}
         onChange={(event) => setSearch(event.target.value)}
-        placeholder="Search channels..."
+        placeholder="Search collections..."
         onKeyDown={(event) => event.stopPropagation()}
       />
       <QuantizedMenuScrollArea
@@ -1853,7 +1860,7 @@ function CreateCardCollectionPicker<TPayload>({
 
         {filtered.length === 0 && !canCreate && (
           <p className="flex h-[var(--menu-row-height)] items-center justify-center px-2 text-center text-sm text-muted-foreground">
-            No channels
+            No collections
           </p>
         )}
       </QuantizedMenuScrollArea>
@@ -2009,7 +2016,7 @@ function RemoveMediaAssetFromCardDialog({
               })();
             }}
           >
-            {submitting ? "Removing..." : "Remove from Card"}
+            {submitting ? "Removing..." : "Remove from Element"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -2112,7 +2119,7 @@ function DeleteMediaAssetDialog({
           </div>
         </div>
         <div className="min-w-0 space-y-1">
-          <div className={METADATA_LABEL_CLASSES}>Connected cards</div>
+          <div className={METADATA_LABEL_CLASSES}>Connected elements</div>
           <div
             className="min-w-0 overflow-y-auto pr-1"
             style={{ maxHeight: DELETE_MEDIA_CONNECTED_CARDS_MAX_HEIGHT_PX }}
@@ -2886,7 +2893,7 @@ function TextSelectionActionBar({
               }}
             >
               <Plus className="size-3" aria-hidden="true" />
-              Create Card
+              Create Element
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent

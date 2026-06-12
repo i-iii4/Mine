@@ -887,7 +887,7 @@ describe("Detail", () => {
     const actionBar = document.querySelector("[data-text-selection-action-bar]") as HTMLElement;
     expect(actionBar).toBeTruthy();
     expect(actionBar.parentElement).toBe(document.body);
-    const createButton = within(actionBar).getByRole("button", { name: "Create Card" });
+    const createButton = within(actionBar).getByRole("button", { name: "Create Element" });
     const deleteButton = within(actionBar).getByRole("button", { name: "Delete Text" });
     const clearButton = within(actionBar).getByRole("button", { name: "Clear text selection" });
     expect(createButton.querySelector("svg")).toBeTruthy();
@@ -1205,25 +1205,26 @@ describe("Detail", () => {
     fireEvent.click(trigger!);
 
     const dropdownMenu = await screen.findByRole("menu");
-    expect(within(dropdownMenu).getByText("Create Card")).toBeInTheDocument();
+    expect(within(dropdownMenu).getByText("Create Element")).toBeInTheDocument();
     expect(within(dropdownMenu).getByText("Reveal in Finder")).toBeInTheDocument();
     expect(within(dropdownMenu).getByText("Copy Path")).toBeInTheDocument();
     expect(within(dropdownMenu).getByText("Copy Media")).toBeInTheDocument();
     const renameItem = within(dropdownMenu).getByText("Rename Media...");
     expect(renameItem).toBeInTheDocument();
-    expect(within(dropdownMenu).getByText("Remove from Card")).toBeInTheDocument();
+    expect(within(dropdownMenu).getByText("Remove from Element")).toBeInTheDocument();
     expect(within(dropdownMenu).getByText("Delete Media")).toBeInTheDocument();
     const menuItemFor = (label: string) => (
       within(dropdownMenu).getByText(label).closest("[role='menuitem']") as HTMLElement
     );
-    expect(menuItemFor("Create Card").querySelector("[data-card-menu-icon-slot] svg")).toBeTruthy();
+    expect(menuItemFor("Create Element").querySelector("[data-card-menu-icon-slot] svg")).toBeTruthy();
+    // Remove from Element (Unlink) and Delete Media (Trash2) carry real icons.
+    expect(menuItemFor("Remove from Element").querySelector("[data-card-menu-icon-slot] svg")).toBeTruthy();
+    expect(menuItemFor("Delete Media").querySelector("[data-card-menu-icon-slot] svg")).toBeTruthy();
     for (const label of [
       "Reveal in Finder",
       "Copy Path",
       "Copy Media",
       "Rename Media...",
-      "Remove from Card",
-      "Delete Media",
     ]) {
       const iconSlot = menuItemFor(label).querySelector("[data-card-menu-icon-slot]");
       expect(iconSlot).toBeTruthy();
@@ -1294,12 +1295,12 @@ describe("Detail", () => {
 
     fireEvent.contextMenu(image!);
     const dropdownMenu = await screen.findByRole("menu");
-    expect(within(dropdownMenu).getByText("Create Card")).toBeInTheDocument();
+    expect(within(dropdownMenu).getByText("Create Element")).toBeInTheDocument();
     expect(within(dropdownMenu).getByText("Rename Media...")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Image preview" })).not.toBeInTheDocument();
   });
 
-  it("uses the shared quantized list height for Create Card from image", () => {
+  it("uses the shared quantized list height for Create Element from image", () => {
     const asset: MediaAssetRef = {
       media_ref: "photo.jpg",
       media_kind: "image",
@@ -1426,7 +1427,7 @@ describe("Detail", () => {
     const dialog = await screen.findByRole("alertdialog", { name: "Delete media file?" });
     const photoRow = await within(dialog).findByRole("button", { name: "Photo Card" });
     const sourceRow = within(dialog).getByRole("button", { name: "Source Article" });
-    expect(within(dialog).getByText("Connected cards")).toBeInTheDocument();
+    expect(within(dialog).getByText("Connected elements")).toBeInTheDocument();
     const connectedCardsScroll = dialog.querySelector("[data-delete-media-connected-cards-scroll]");
     expect(connectedCardsScroll).toHaveAttribute("data-visible-card-count", "5");
     expect(connectedCardsScroll).toHaveStyle({ maxHeight: "216px" });

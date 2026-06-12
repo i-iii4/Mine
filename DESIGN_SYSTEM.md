@@ -3,6 +3,30 @@
 Токены определены в `src/styles/global.css` → `@theme inline`.
 Tailwind v4 генерирует утилиты автоматически из `--radius-*`, `--spacing-*`, `--text-*`.
 
+## Словарь сущностей (UI-нейминг)
+
+Три уровня иерархии, сквозные термины во **всех** пользовательских строках —
+меню, кнопки, плейсхолдеры, диалоги, тултипы, нативное меню macOS, веб-клиппер:
+
+| Уровень | Термин в UI | Что это (внутреннее имя в коде) |
+|---|---|---|
+| 1 | **Space** | vault — корневая папка пользователя |
+| 2 | **Collection** | channel/tag — Obsidian-страница коллекции |
+| 3 | **Element** | block/card — карточка контента |
+
+Старые UI-термины `card(s)`, `channel(s)`, `vault` запрещены в видимых
+строках. Внутренние имена кода (типы, команды, маршруты `/channel/:tag`,
+frontmatter `type: channel`, `Mine Collections`) **не** переименовываются —
+словарь касается только слоя, который читает пользователь. Примеры:
+`Search elements`, `New Collection`, `Find Elements` (нативное меню),
+`Connected elements`, `Delete element?`, `Save to 1 collection` (клиппер),
+`Select Space`.
+
+Развод имён поиска: сайдбарный фильтр списка коллекций называется
+`Filter collections` (он фильтрует строки, не ищет по vault); `Search
+collections` зарезервировано за поиском в выпадающем переключателе коллекций;
+`Search elements` — глобальный поиск элементов (`Cmd+F`).
+
 ## Design page contract
 
 Страница `Design` в приложении — это audit surface, а не декоративная
@@ -107,7 +131,43 @@ typography must stay inside the 12/14/18px design-system scale.
 
 ## Цветовой принцип
 
-Все серые — чисто нейтральные (R=G=B), chroma 0, hue 0. Никаких тёплых или холодных оттенков. Цвет допустим только в акцентах: ссылки, ошибки (destructive), поисковый маркер (search-mark), графики (chart-*).
+Все серые — чисто нейтральные (R=G=B), chroma 0, hue 0. Никаких тёплых или холодных оттенков. Цвет допустим только в акцентах: ссылки, ошибки (destructive), разъединение (detach), поисковый маркер (search-mark), графики (chart-*).
+
+### Два уровня «опасных» действий
+
+Сквозное правило для всех меню, кнопок и подтверждений:
+
+| Токен | Цвет | Семантика | Примеры |
+|---|---|---|---|
+| `--destructive` | красный | действие **безвозвратно удаляет контент** | `Delete`, `Delete Media`, `Delete Text`, удаление коллекции |
+| `--detach` | оранжевый | действие **разрывает связь, контент сохраняется** | `Disconnect`, `Remove from Element` |
+
+**Принцип выбора значений (теория, не вкус).** Хью-якоря семантических
+акцентов берутся из платформенной палитры macOS system colors — приложение
+живёт среди системных поверхностей, и культурные коды «опасности» у
+пользователя уже откалиброваны ОС:
+
+- `--destructive` унаследован от shadcn-пресета и по хью совпадает с
+  `systemRed` (#FF3B30 ≈ hue 27) — оставлен как якорь «потеря данных»;
+- `--detach` заякорен на `systemOrange` (#FF9500 ≈ `oklch(0.75 0.17 63)`) —
+  системный код «предупреждение без потери».
+
+Межсемантические дистанции в **каждой** теме: Δhue ≥ 35° и ΔL ≥ 0.07 —
+различие категориальное, а не оттеночное. Светлота подгоняется под роль
+текста: на светлой теме оранжевый затемнён до читаемости на белом, на тёмной —
+осветлён.
+
+| Тема | `--destructive` | `--detach` | Δhue | ΔL |
+|---|---|---|---|---|
+| Светлая | `oklch(0.577 0.245 27)` | `oklch(0.66 0.17 65)` | 38° | 0.083 |
+| Тёмная | `oklch(0.704 0.191 22)` | `oklch(0.78 0.16 70)` | 48° | 0.076 |
+
+Пункты меню используют `variant="detach"` (`DropdownMenuItem` /
+`ContextMenuItem`) — оранжевый текст, стандартный hover/focus-фон, как у
+destructive; в иконочном слоте — `Unlink` (разрыв цепи), у destructive-пунктов
+удаления — `Trash2` (корзина). Действие, которое выглядит «удаляющим», но не
+трогает файлы, обязано быть оранжевым, а не красным — иначе пользователь не
+отличает потерю данных от рассоединения.
 
 **Правило:** при добавлении нового серого — `oklch(L 0 0)`. Не вводить hue.
 
@@ -421,7 +481,7 @@ selector, sidebar channel search и `border-r border-sidebar-border`, поэто
 chrome начинается с current collection switcher, а оставшаяся область остаётся
 drag region до нового search surface. Поиск не участвует в layout Grid, не
 анимирует страницу и не меняет scroll viewport.
-Bottom app bar справа содержит `ActionButton` `Search cards` с `hotkey="⌘F"`.
+Bottom app bar справа содержит `ActionButton` `Search elements` с `hotkey="⌘F"`.
 Это command trigger, а не selected/toggle visual state: кнопка не получает
 `isSelected` и не остаётся зажатой, даже когда search state активен. Button и
 повторный shortcut переключают App-owned main search state без показа input.
@@ -530,7 +590,7 @@ hover/focus не получает фон: реагирует только placeh
 `bg-chrome`.
 
 Clear action появляется только когда value непустой: `button h-6 w-6
-rounded-1`, иконка `X` из `lucide-react`, `aria-label="Clear channel search"`.
+rounded-1`, иконка `X` из `lucide-react`, `aria-label="Clear collection search"`.
 Hover/focus clear action использует `bg-component-fill-hover text-foreground`.
 Click очищает query, восстанавливает полный список каналов и возвращает focus
 в input. `Escape` с непустым value очищает поле; `Escape` с пустым value
@@ -561,7 +621,7 @@ Hover/open/keyboard-focus рисует только inner pill
 current item. Search input остаётся единственным focus owner внутри dropdown:
 hover по destination rows не переводит фокус с input на строку. Строки ниже
 input — menu-styled action buttons с `role="menuitem"`, а не roving-focus
-`DropdownMenuItem`. Внизу всегда закреплена строка `Create channel`; она не
+`DropdownMenuItem`. Внизу всегда закреплена строка `Create collection`; она не
 является search result и не меняет текст на `Create "{query}"`. Нажатие
 закрывает dropdown и открывает отдельный create-channel dialog; dialog может
 prefill'иться текущим query, валидирует пустые/дублирующиеся имена, вызывает
@@ -579,9 +639,9 @@ compact geometry: collection switcher использует `px-3` уже на г
 странице, поэтому `Everything`/название текущего канала не меняет X-position
 при открытии и закрытии Detail. Permanent top chrome всегда остаётся
 `bg-chrome`; открытие Detail не меняет его surface. Внутренний Detail top bar и sidebar
-`Channels:` bar не рендерятся. Segmented control `All / Connected`
+`Collections:` bar не рендерятся. Segmented control `All / Connected`
 принадлежит левому Sidebar/search segment: в expanded state он стоит внутри
-search surface справа от `Search channels...` и слева от вертикального sidebar
+search surface справа от `Filter collections...` и слева от вертикального sidebar
 divider; в collapsed state search скрыт и `All / Connected` не рендерится,
 потому что в compact rail нет списка строк, который нужно фильтровать. Правая
 часть top chrome начинается с того же кликабельного collection switcher, затем
@@ -601,7 +661,7 @@ divider; в collapsed state search скрыт и `All / Connected` не ренд
   `h-5 px-[1ch] rounded-[2px]`; active segment
   `bg-component-fill-inner text-foreground`, inactive
   `text-muted-foreground`.
-- `Channels:` label в этом режиме запрещён.
+- `Collections:` label в этом режиме запрещён.
 - Текущая коллекция: штатный `TopCollectionSwitcher` в compact geometry
   (`px-3`, inner pill `h-6 px-2`). Это постоянный элемент right top chrome, а
   не часть условного Detail-блока: trigger остаётся тем же DOM/layout control
@@ -818,11 +878,12 @@ top `More` и bottom action row, но программное открытие `C
 - Connect: `DropdownMenu` со списком каналов (`CollectionPicker`)
 - More / right-click menu: `DropdownMenu` / `ContextMenu` — Connect
   (подменю), Source, Reveal in Finder, Copy Path, Rename…, Disconnect from
-  current collection, Delete. Иконки используются только у `Connect` и
-  `Source`; остальные строки получают пустой leading-slot той же ширины, чтобы
-  текстовая колонка была выровнена по одному уровню. Термин `Remove from
-  collection` запрещён для card membership actions — в UI используется только
-  `Disconnect`.
+  current collection, Delete. Иконки используются у `Connect` (`Plus`),
+  `Source` (`ExternalLink`), `Disconnect` (`Unlink` — разрыв цепи) и `Delete`
+  (`Trash2` — корзина); остальные строки получают пустой leading-slot той же
+  ширины, чтобы текстовая колонка была выровнена по одному уровню. Термин
+  `Remove from collection` запрещён для card membership actions — в UI
+  используется только `Disconnect`.
 
 ### Media Asset Hover Menu
 
@@ -837,15 +898,15 @@ Media Asset Hover Menu — отдельный contract от Card Hover Menu. О�
 **Расположение:** `absolute right-2 top-2` относительно прямоугольника самого
 media asset.
 
-**Меню:** одно overflow-меню под многоточием. Команды: `Create Card`, `Reveal
-in Finder`, `Copy Path`, `Copy Media`, `Rename Media...`, `Remove from Card`,
+**Меню:** одно overflow-меню под многоточием. Команды: `Create Element`, `Reveal
+in Finder`, `Copy Path`, `Copy Media`, `Rename Media...`, `Remove from Element`,
 `Delete`.
 
-Icon economy mirrors card menus: only `Create Card` shows a real icon (`Plus`).
-Every other media command keeps the same leading slot empty. Do not render
-folder/copy/pencil/trash icons in this menu.
+Icon economy mirrors card menus: `Create Element` (`Plus`), `Remove from
+Element` (`Unlink`) and `Delete` (`Trash2`) show real icons. Every other media
+command keeps the same leading slot empty (no folder/copy/pencil icons).
 
-`Create Card` открывает searchable submenu для `Everything` и каналов. Этот
+`Create Element` открывает searchable submenu для `Everything` и каналов. Этот
 submenu не имеет собственного ограничения высоты: список обязан использовать
 общий `QuantizedMenuScrollArea` с `default` row token, как обычный Connect
 picker.
@@ -874,12 +935,24 @@ CollectionPicker membership rows:
 - Название канала слева остаётся обычным UI-шрифтом.
 - Правый slot имеет `w-[10ch]`; connected row всегда показывает кнопку
   `Connected`, а на active row текст замещается на `Disconnect`.
+- Вся строка кликабельна и выполняет то же действие, что правая кнопка
+  (toggle membership) — в кнопку не нужно целиться; кнопка останавливает
+  всплытие, двойного срабатывания нет.
+- Порядок коллекций во всех списках (пикеры, переключатели, клиппер) —
+  канонический ручной порядок сайдбара (channel positions, затем
+  positionless-теги по алфавиту). Локальные пересортировки запрещены;
+  допустимое исключение — поднятие текущей коллекции наверх стабильным
+  сортом.
+- Правый внутренний отступ строки равен вертикальному зазору кнопки:
+  `pr-[calc((var(--menu-row-height)-1.5rem)/2)]` — 4px в menu-рядах (32px),
+  8px в clipper-рядах (40px). Кнопка сидит в строке с равным воздухом со всех
+  сторон на обоих row-токенах.
 - Unconnected row показывает count по умолчанию; на active row count скрывается
   и появляется `Connect`.
 - Active row имеет один source of truth: общий `activeIndex`, который обновляют
   pointer move и ArrowUp/ArrowDown. CSS `:hover` не должен создавать
   второй независимый selected state.
-- `Create channel`, когда он показан в Connect picker, считается таким же
+- `Create collection`, когда он показан в Connect picker, считается таким же
   navigable item: `ArrowDown`/`ArrowUp` могут поставить на него active state, а
   `Enter` запускает create-and-assign.
 - Pointer enter не меняет `activeIndex`: после keyboard navigation список может
@@ -891,8 +964,9 @@ CollectionPicker membership rows:
   outline-component-fill-hover`. Count/action visibility переключается без
   opacity transition, чтобы keyboard navigation не оставляла fade-tail на
   предыдущей строке.
-- Видимое состояние `Disconnect` использует destructive button semantics:
-  `text-destructive` при той же серой заливке и той же hover/focus outline.
+- Видимое состояние `Disconnect` использует detach-семантику (разъединение,
+  не удаление): `text-detach` при той же серой заливке и той же hover/focus
+  outline.
 - Клик по action button не должен всплывать в parent row/menu surface.
 
 ### Text Selection Action Bar
@@ -906,8 +980,8 @@ near the first selected rendered Markdown block.
   foreground only on hover/active. It carries the `dnd-kit` draggable payload
   `type: "text_selection"`. The native highlighted text itself is never a Mine
   drag source.
-- `Create Card`: standard `Button size="xs"` with `Plus size-3` inside the bar;
-  opens the same searchable channel picker contract as media asset `Create Card`
+- `Create Element`: standard `Button size="xs"` with `Plus size-3` inside the bar;
+  opens the same searchable channel picker contract as media asset `Create Element`
   (`Everything`, channels, shared `SearchMenuInput`, `QuantizedMenuScrollArea`,
   optional create channel).
 - `Delete Text`: destructive `Button size="xs"` with `Trash2 size-3`; removes
@@ -1057,9 +1131,14 @@ container. Запрещено писать shadow-local самодельные d
 `bg-active`. `ContextMenu` и `Command` сохраняют `bg-accent`/selected
 поведение.
 
-### Деструктивные пункты
+### Деструктивные и detach-пункты
 
-Текст красный (`text-destructive`), фон при фокусе — стандартный DropdownMenu/ContextMenu focus surface (`focus:bg-active` для DropdownMenu, `focus:bg-accent` для ContextMenu). Без красного фона при наведении.
+`variant="destructive"`: текст красный (`text-destructive`) — действие
+безвозвратно удаляет контент. `variant="detach"`: текст оранжевый
+(`text-detach`) — действие разрывает связь, контент сохраняется (`Disconnect`,
+`Remove from Element`). Оба: фон при фокусе — стандартный
+DropdownMenu/ContextMenu focus surface (`focus:bg-active` для DropdownMenu,
+`focus:bg-accent` для ContextMenu), без цветного фона при наведении.
 
 ## Web Clipper UI parity
 
@@ -1180,7 +1259,7 @@ Traffic-light reserve размечается как `data-traffic-light-reserve`
 | Hotkey | Label | Действие | Положение |
 |---|---|---|---|
 | ⌘⇧O | Space selector | Выбор папки через нативный диалог | top chrome |
-| ⌘⇧N | New Channel | Инлайн-инпут в сайдбаре | слева |
+| ⌘⇧N | New Collection | Инлайн-инпут в сайдбаре | слева |
 | ⌘, | Settings | DropdownMenu переключения темы, compact Detail, chrome surface variant и bottom menu visibility | слева |
 | ⌘[ / ⌘] | History | Назад / вперёд по истории страниц | глобально |
 
@@ -1300,7 +1379,7 @@ Top inset списка в раскрытой карточке не меняет 
 использует `pt-8` (32px). В expanded главной это даёт общий visual top offset
 64px: второй bar 32px + content inset 32px. Когда Detail открыт в
 non-compact shell, второй bar становится Detail/link-editor chrome: в sidebar
-segment живёт `Channels:` + `All / Connected`, в content segment — filename,
+segment живёт `Collections:` + `All / Connected`, в content segment — filename,
 overflow и close. Body-level `absolute inset-x-0 top-0 h-8` overlays для
 Sidebar/Detail в App shell запрещены: они создают третий слой под вторым bar.
 
@@ -1393,7 +1472,7 @@ loading/skeleton text. Пока snapshot не загружен, segment ренд
 React commit; запрещены промежуточные `calculating`, `rendering layout` и
 прочие служебные сообщения в chrome.
 
-Содержимое surface: `Channels:` + selector `All / Connected`. `Channels:`
+Содержимое surface: `Collections:` + selector `All / Connected`. `Collections:`
 использует `font-mono text-sm text-muted-foreground`. Selector повторяет
 ActionButton geometry: outer `h-6 p-[2px] rounded-1`, segments `h-5
 px-[1ch] rounded-[2px] text-muted-foreground`. Hover заливает только outer
@@ -1402,7 +1481,7 @@ control через стандартный `hover:bg-component-fill-hover`; ак�
 
 Если включён Compact Detail top menu, эта link-editor surface не рендерится:
 тот же `All / Connected` state показывается внутри permanent top chrome
-Sidebar/search segment, без подписи `Channels:`.
+Sidebar/search segment, без подписи `Collections:`.
 
 Detail article/metadata layout использует right-anchored fixed-rail contract:
 `grid w-full
@@ -1450,7 +1529,7 @@ overlay всегда показывает серую кнопку `Connected`; �
 Action button: `absolute right-0 top-1/2 -translate-y-1/2 z-10 h-6 w-[10ch]
 rounded-1 bg-component-fill px-[1ch] font-semibold`, hover/focus outline
 `outline-1 -outline-offset-1 outline-component-fill-hover`.
-Видимый текст `Disconnect` использует `text-destructive`; `Connected` и
+Видимый текст `Disconnect` использует `text-detach` (разъединение, не удаление); `Connected` и
 `Connect` остаются `text-foreground`.
 
 CollectionPicker inside card/Detail menus follows the same row action visual

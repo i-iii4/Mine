@@ -478,6 +478,7 @@ body {
   --color-accent-foreground: var(--accent-foreground);
   --color-chrome: var(--chrome);
   --color-destructive: var(--destructive);
+  --color-detach: var(--detach);
   --color-border: var(--border);
   --color-border-accent: var(--border-accent);
   --color-input: var(--input);
@@ -546,6 +547,8 @@ body {
   --graphic-card-focus-overlay: oklch(0 0 0 / 14%);
   --feed-selection-frame: oklch(0.145 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  /* detach accent: breaks a link, content survives (Disconnect, Remove from Element) */
+  --detach: oklch(0.66 0.17 65);
   /* surface +3 / border */
   --border: oklch(0.95 0 0);
   /* navigation/hover highlight — light uses lower dL (~0.21) for equal perceived
@@ -624,6 +627,8 @@ body {
     --graphic-card-focus-overlay: oklch(1 0 0 / 18%);
     --feed-selection-frame: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
+  /* detach accent: breaks a link, content survives */
+  --detach: oklch(0.78 0.16 70);
     --ring: oklch(0.6268 0 0);
     --chart-1: oklch(0.488 0.243 264.376);
     --chart-2: oklch(0.696 0.17 162.48);
@@ -675,6 +680,8 @@ body {
   --graphic-card-focus-overlay: oklch(1 0 0 / 18%);
   --feed-selection-frame: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  /* detach accent: breaks a link, content survives */
+  --detach: oklch(0.78 0.16 70);
   --border: oklch(0.26 0 0);
   /* navigation/hover highlight — indicator scale, contrast ~0.30 to background */
   --border-accent: oklch(0.44 0 0);
@@ -723,6 +730,8 @@ body {
   --graphic-card-focus-overlay: oklch(0 0 0 / 14%);
   --feed-selection-frame: oklch(0.145 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  /* detach accent: breaks a link, content survives (Disconnect, Remove from Element) */
+  --detach: oklch(0.66 0.17 65);
   --border: oklch(0.95 0 0);
   /* navigation/hover highlight — light uses lower dL (~0.21) for equal perceived
      sharpness: a dark line on white reads harsher than a light line on dark */

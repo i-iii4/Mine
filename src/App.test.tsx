@@ -44,7 +44,7 @@ vi.mock("@/lib/commands", () => ({
   getVaultStats: commandMocks.getVaultStats,
   createChannel: commandMocks.createChannel,
   deleteChannel: vi.fn(),
-  reorderChannels: vi.fn(),
+  reorderCollections: vi.fn(),
   renameChannel: vi.fn(),
   renameBlockFile: commandMocks.renameBlockFile,
   deleteTagFromAll: vi.fn(),
@@ -507,7 +507,7 @@ describe("AppWithVault", () => {
     });
     await waitFor(() => {
       expect(document.querySelector("[data-main-secondary-stats-right]")).toHaveTextContent(
-        "1 card in channel",
+        "1 element in collection",
       );
     });
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
@@ -530,7 +530,7 @@ describe("AppWithVault", () => {
     });
     await waitFor(() => {
       expect(document.querySelector("[data-main-secondary-stats-right]")).toHaveTextContent(
-        "2 cards",
+        "2 elements",
       );
     });
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
@@ -686,7 +686,7 @@ describe("AppWithVault", () => {
     expect(spaceSwitcher).toHaveTextContent("vault");
     expect(topSidebarSegment?.querySelector("[data-top-chrome-space-separator]")).toBeInTheDocument();
     expect(topSidebarSegment?.querySelector("[data-top-chrome-search-separator]")).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Search cards" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Search elements" })).not.toBeInTheDocument();
     expect(document.querySelector("[data-main-search-top-bar]")).toBeNull();
   });
 
@@ -713,7 +713,7 @@ describe("AppWithVault", () => {
     expect(sidebarSegment).toHaveClass("border-r", "border-sidebar-border");
     expect(contentSegment).toHaveClass("flex-1");
     expect(sidebarSegment).toHaveTextContent("1 466 files260 .md1 204 media4,8 GB");
-    expect(contentSegment).toHaveTextContent("2 cards");
+    expect(contentSegment).toHaveTextContent("2 elements");
     expect(sidebarSegment?.querySelector("[data-main-secondary-stats-left] > div")).toHaveClass(
       "gap-5",
     );
@@ -754,7 +754,7 @@ describe("AppWithVault", () => {
     });
 
     fireEvent.keyDown(window, { key: "А", code: "KeyF", metaKey: true, shiftKey: true });
-    const input = screen.getByRole("textbox", { name: "Search channels" });
+    const input = screen.getByRole("textbox", { name: "Filter collections" });
     fireEvent.change(input, { target: { value: "alp" } });
     expect(input.closest("[data-sidebar-top-search-surface]")).toHaveClass("bg-accent");
 
@@ -828,7 +828,7 @@ describe("AppWithVault", () => {
       expect(secondaryDetailMenu).toHaveAttribute("data-entered", "true");
       expect(secondarySidebarBar).toHaveAttribute("data-entered", "true");
     });
-    expect(secondarySidebarBar).toHaveTextContent("Channels:");
+    expect(secondarySidebarBar).toHaveTextContent("Collections:");
     expect(within(secondarySidebarBar!).getByRole("button", { name: "All" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -850,7 +850,7 @@ describe("AppWithVault", () => {
       "data-entered",
       "true",
     );
-    expect(within(secondaryContentSegment!).getByText("2 cards")).toBeInTheDocument();
+    expect(within(secondaryContentSegment!).getByText("2 elements")).toBeInTheDocument();
   });
 
   it("keeps space and collection controls while hiding channel search when the sidebar is collapsed", async () => {
@@ -878,7 +878,7 @@ describe("AppWithVault", () => {
     expect(topSidebarSegment?.querySelector("[data-top-chrome-space-separator]")).toBeInTheDocument();
     expect(topSidebarSegment?.querySelector("[data-top-chrome-search-separator]")).not.toBeInTheDocument();
     expect(document.querySelector("[data-top-chrome-space-measure]")).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Search channels" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Filter collections" })).not.toBeInTheDocument();
     const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
     expect(collectionSwitcher).toHaveClass("px-3");
     expect(collectionSwitcher).not.toHaveClass("px-6");
@@ -895,7 +895,7 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
     const gridCallsBeforeSearchToggle = commandMocks.listGridBlocks.mock.calls.length;
-    const searchButton = screen.getByRole("button", { name: /Search cards/ });
+    const searchButton = screen.getByRole("button", { name: /Search elements/ });
 
     fireEvent.click(searchButton);
     expect(searchButton).not.toHaveAttribute("data-action-selected");
@@ -1001,7 +1001,7 @@ describe("AppWithVault", () => {
     const gridCallsBeforeSearch = commandMocks.listGridBlocks.mock.calls.length;
 
     fireEvent.keyDown(window, { key: "А", code: "KeyF", metaKey: true, shiftKey: true });
-    const input = screen.getByRole("textbox", { name: "Search channels" });
+    const input = screen.getByRole("textbox", { name: "Filter collections" });
     await waitFor(() => {
       expect(input).toHaveFocus();
     });
@@ -1015,15 +1015,15 @@ describe("AppWithVault", () => {
     expect(input).toHaveAttribute("autocorrect", "off");
     expect(input).toHaveAttribute("autocapitalize", "none");
     expect(input).toHaveAttribute("spellcheck", "false");
-    expect(screen.queryByRole("button", { name: "Clear channel search" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear collection search" })).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "alp" } });
 
     expect(searchSurface).toHaveClass("bg-accent");
-    fireEvent.click(screen.getByRole("button", { name: "Clear channel search" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear collection search" }));
     expect(input).toHaveFocus();
     expect(input).toHaveValue("");
     expect(searchSurface).not.toHaveClass("bg-accent");
-    expect(screen.queryByRole("button", { name: "Clear channel search" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear collection search" })).not.toBeInTheDocument();
 
     fireEvent.change(input, { target: { value: "alp" } });
     fireEvent.keyDown(input, { key: "Escape" });
@@ -1049,7 +1049,7 @@ describe("AppWithVault", () => {
     });
 
     fireEvent.keyDown(window, { key: "F", code: "KeyF", metaKey: true, shiftKey: true });
-    const input = screen.getByRole("textbox", { name: "Search channels" });
+    const input = screen.getByRole("textbox", { name: "Filter collections" });
     await waitFor(() => {
       expect(input).toHaveFocus();
     });
@@ -1104,7 +1104,7 @@ describe("AppWithVault", () => {
       "data-top-collection-menu-align-offset",
       "24",
     );
-    expect(screen.getByRole("menuitem", { name: "Create channel" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Create collection" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Everything" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "alpha" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "beta" })).toBeInTheDocument();
@@ -1118,7 +1118,7 @@ describe("AppWithVault", () => {
     expect(search).toHaveFocus();
 
     fireEvent.change(search, { target: { value: "alpha" } });
-    expect(screen.getByRole("menuitem", { name: "Create channel" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Create collection" })).toBeInTheDocument();
 
     fireEvent.change(search, { target: { value: "bet" } });
     expect(screen.queryByRole("menuitem", { name: "alpha" })).not.toBeInTheDocument();
@@ -1234,7 +1234,7 @@ describe("AppWithVault", () => {
     fireEvent.click(screen.getByRole("button", { name: "Switch collection: Everything" }));
     const search = await screen.findByRole("textbox", { name: "Search collections" });
     fireEvent.change(search, { target: { value: "gamma" } });
-    fireEvent.click(screen.getByRole("menuitem", { name: "Create channel" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Create collection" }));
     const channelName = await screen.findByRole("textbox", { name: "Channel name" });
     expect(channelName).toHaveValue("gamma");
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
@@ -1266,7 +1266,7 @@ describe("AppWithVault", () => {
       }),
     );
 
-    const input = screen.getByRole("textbox", { name: "Search channels" });
+    const input = screen.getByRole("textbox", { name: "Filter collections" });
     await waitFor(() => {
       expect(input).toHaveFocus();
     });
@@ -1650,8 +1650,8 @@ describe("AppWithVault", () => {
       expect(commandMocks.prepareDeleteBlock).toHaveBeenCalledWith("alpha-block");
     });
     expect(commandMocks.deleteBlock).not.toHaveBeenCalled();
-    expect(await screen.findByText("Delete card?")).toBeInTheDocument();
-    expect(screen.getByText(/1 media file is only used by this card/)).toBeInTheDocument();
+    expect(await screen.findByText("Delete element?")).toBeInTheDocument();
+    expect(screen.getByText(/1 media file is only used by this element/)).toBeInTheDocument();
 
     const deletedSlugs: string[] = [];
     const onBlockDeleted = (event: Event) => {

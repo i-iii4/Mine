@@ -316,7 +316,6 @@ export function PopupApp() {
         <ChannelList
           channels={clipper.channels}
           selectedTags={clipper.selectedTags}
-          recentTags={clipper.recentTags}
           onToggle={clipper.toggleTag}
           onCreate={clipper.createChannel}
         />

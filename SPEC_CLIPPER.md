@@ -502,7 +502,7 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 │  │ Content / screenshot preview   │  │ ← legacy local rounded card
 │  └────────────────────────────────┘  │
 │  ┌────────────────────────────────┐  │
-│  │ Search channels...             │  │
+│  │ Search collections...             │  │
 │  ├────────────────────────────────┤  │ ← shared CollectionPicker surface
 │  │ design                 Connect │  │
 │  │ inspiration          Connected │  │
@@ -573,7 +573,11 @@ preview — локальная карточка `rounded-1 border border-border 
 
 Channel picker не имеет собственной clipper-разметки. `ChannelList` является
 только adapter `ChannelInfo[] -> TagCount[]` и рендерит общий
-`CollectionPicker` с дефолтным menu layout, тем же `SearchMenuInput`
+`CollectionPicker`. **Порядок коллекций канонический** — ровно тот, что отдал
+backend (`list_channels`: sidebar positions, затем positionless-теги): клиппер
+не пересортировывает список (бывшая recent/count-приоритезация удалена — во
+всех списках коллекций приложения и клиппера один ручной порядок сайдбара).
+Используется тот же `SearchMenuInput`
 menu-header search row, row/action slot, active state, conditional create row
 и keyboard/pointer arbitration, что card Connect menus в основном приложении:
 printable keys stay routed to search, `ArrowDown`/`ArrowUp` can reach the
@@ -1253,6 +1257,6 @@ surface: данные поста предзагружаются в `chrome.stora
 | 5 | Selection clip | Выделенный текст → тип Selection |
 | 6 | Context menu image | ПКМ по изображению → popup с Image |
 | 7 | Channel picker | Каналы загружаются из vault |
-| 8 | Create channel | Ввод нового имени → создание канала |
+| 8 | Create collection | Ввод нового имени → создание канала |
 | 9 | Save + auto-close | Сохранение → зелёная галочка → закрытие |
 | 10 | Error state | Нет vault → сообщение об ошибке |

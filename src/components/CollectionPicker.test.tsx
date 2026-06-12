@@ -90,7 +90,7 @@ describe("CollectionPicker", () => {
       />,
     );
     const picker = container.querySelector("[data-collection-picker]") as HTMLElement;
-    const input = screen.getByPlaceholderText("Search channels...");
+    const input = screen.getByPlaceholderText("Search collections...");
 
     expect(input.parentElement).toHaveClass("border-b", "border-border", "p-1");
     expect(input).toHaveClass("border-none", "bg-transparent", "rounded-0", "px-2", "py-0");
@@ -248,7 +248,7 @@ describe("CollectionPicker", () => {
 
     fireEvent.keyDown(picker, { key: "t" });
 
-    expect(screen.getByPlaceholderText("Search channels...")).toHaveValue("t");
+    expect(screen.getByPlaceholderText("Search collections...")).toHaveValue("t");
   });
 
   it("keeps printable typing routed to search from a hovered row", () => {
@@ -267,7 +267,7 @@ describe("CollectionPicker", () => {
     fireEvent.pointerMove(row);
     fireEvent.keyDown(row, { key: "p" });
 
-    expect(screen.getByPlaceholderText("Search channels...")).toHaveValue("p");
+    expect(screen.getByPlaceholderText("Search collections...")).toHaveValue("p");
   });
 
   it("lets ArrowDown reach the create-channel action from search", () => {
@@ -283,7 +283,7 @@ describe("CollectionPicker", () => {
       />,
     );
     const picker = container.querySelector("[data-collection-picker]") as HTMLElement;
-    const input = screen.getByPlaceholderText("Search channels...");
+    const input = screen.getByPlaceholderText("Search collections...");
 
     fireEvent.change(input, { target: { value: "new-channel" } });
     fireEvent.keyDown(picker, { key: "ArrowDown" });
@@ -310,7 +310,7 @@ describe("CollectionPicker", () => {
     );
 
     const picker = container.querySelector("[data-collection-picker]") as HTMLElement;
-    const input = screen.getByPlaceholderText("Search channels...");
+    const input = screen.getByPlaceholderText("Search collections...");
     expect(picker).toHaveClass("h-full");
     expect(input).toHaveClass("h-10", "rounded-0", "px-3", "py-0");
     expect(input).not.toHaveClass("focus-visible:border-border-accent");

@@ -776,7 +776,7 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
 }) {
   const label = (
     <span className="shrink-0 font-mono text-sm text-muted-foreground">
-      Channels:
+      Collections:
     </span>
   );
   const control = (
@@ -784,7 +784,7 @@ const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
       value={value}
       options={SIDEBAR_LINK_MODE_OPTIONS}
       onChange={onChange}
-      aria-label="Channel filter"
+      aria-label="Collection filter"
       data-sidebar-link-mode-control
     />
   );
@@ -1104,7 +1104,7 @@ function SidebarRowBody({
           {linkEditor.checked ? (
             <>
               <span className="group-hover:hidden group-focus-within:hidden">Connected</span>
-              <span className="hidden text-destructive group-hover:inline group-focus-within:inline">Disconnect</span>
+              <span className="hidden text-detach group-hover:inline group-focus-within:inline">Disconnect</span>
             </>
           ) : (
             "Connect"
@@ -1503,7 +1503,7 @@ function SidebarCreateChannelRowBody({
         data-sidebar-row-text=""
         className="shrink-0 whitespace-nowrap text-left"
       >
-        Create New Channel
+        Create New Collection
       </span>
       <Plus
         aria-hidden="true"

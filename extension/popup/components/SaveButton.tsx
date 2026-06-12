@@ -20,7 +20,7 @@ export function SaveButton({ count, saving, onClick }: SaveButtonProps) {
   }
 
   const label =
-    count === 0 ? "Save" : count === 1 ? "Save to 1 channel" : `Save to ${count} channels`;
+    count === 0 ? "Save" : count === 1 ? "Save to 1 collection" : `Save to ${count} collections`;
 
   return (
     <Button size="clipper" onClick={onClick} className="w-full">

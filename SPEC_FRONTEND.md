@@ -221,10 +221,10 @@ near the first selected rendered Markdown block:
   the same Pointer Events drag stack as card, tag, and inline-media drags and
   does not depend on WebKit HTML5 selected text drag behavior. Visually it uses
   the same ghost icon button contract as close: no independent border or fill.
-- right: `Create Card`, `Delete Text`, and close.
+- right: `Create Element`, `Delete Text`, and close.
 
-`Create Card` opens the same searchable channel picker contract as media asset
-`Create Card`: `Everything` plus channels, shared `SearchMenuInput`, shared
+`Create Element` opens the same searchable channel picker contract as media asset
+`Create Element`: `Everything` plus channels, shared `SearchMenuInput`, shared
 `QuantizedMenuScrollArea`, and optional channel creation when the filtered list
 is empty. It uses the same `Plus` icon convention as the main grid group-action
 bar. Selecting `Everything` creates the text card without collection membership.
@@ -259,7 +259,7 @@ multiple Markdown lines. Frontend block offsets are only a fallback hint when
 the selected text cannot be located directly. This prevents duplicate text from
 anchoring to the wrong paragraph without rejecting valid rendered selections.
 
-Drag/drop or `Create Card` creates a new article card through
+Drag/drop or `Create Element` creates a new article card through
 `extractTextSelection`; it does not connect the source card itself and does not
 enter the inline-media extraction path.
 
@@ -720,12 +720,12 @@ Frontend rules:
   embeds;
 - show one `Button variant="default" size="icon"` ellipsis trigger in the
   media's top-right corner;
-- menu items are `Create Card`, `Reveal in Finder`, `Copy Path`, `Copy Media`,
-  `Rename Media...`, `Remove from Card`, `Delete`;
-- media action menu icon policy matches card menus: only `Create Card` renders
+- menu items are `Create Element`, `Reveal in Finder`, `Copy Path`, `Copy Media`,
+  `Rename Media...`, `Remove from Element`, `Delete`;
+- media action menu icon policy matches card menus: only `Create Element` renders
   the `Plus` icon; all other media commands reserve the leading icon slot but
   render it empty so text aligns without decorative per-command icons;
-- the `Create Card` submenu is part of the same searchable floating-menu
+- the `Create Element` submenu is part of the same searchable floating-menu
   contract as `CollectionPicker`: search stays fixed, the channel list scrolls
   through `QuantizedMenuScrollArea`, rows use the shared `default` 32px token,
   and no raw `max-h-*`/ad hoc scroll cap is allowed;
@@ -785,7 +785,7 @@ Image media expansion:
   добавляет символ в search query; parent DropdownMenu typeahead не перехватывает
   эти клавиши.
 - `ArrowUp` / `ArrowDown` перемещают active item внутри отфильтрованного списка
-  и условной строки `Create channel`, когда она показана. Active row/action
+  и условной строки `Create collection`, когда она показана. Active row/action
   использует `bg-active`, показывает правую action button и скрывает count.
   Pointer hover и keyboard navigation не являются двумя независимыми visual
   states: pointer move и ArrowUp/ArrowDown обновляют один общий
@@ -796,7 +796,7 @@ Image media expansion:
   hover по частично видимому row не вызывает `scrollIntoView`, чтобы menu не
   дёргался под курсором.
 - `Enter` на active row выполняет `Connect`/`Disconnect`, оставляя меню
-  пригодным для дальнейшей навигации. `Enter` на active `Create channel`
+  пригодным для дальнейшей навигации. `Enter` на active `Create collection`
   создаёт канал и присоединяет текущую карточку.
 - `Escape` внутри submenu закрывает только Connect submenu и возвращает фокус
   на parent `Connect` item в overflow menu. В standalone DropdownMenu content
@@ -876,7 +876,7 @@ Image media expansion:
   `border-r border-sidebar-border`, справа current collection switcher и
   оставшийся drag region. Так разделитель Sidebar/Main продолжается до
   верхнего края окна, а search не является overlay над Grid.
-- В правой части bottom app bar есть `Search cards` action с shortcut label
+- В правой части bottom app bar есть `Search elements` action с shortcut label
   `⌘F`. Это command trigger, не selected/toggle visual state: кнопка не
   остаётся визуально нажатой при активном search state. Кнопка и повторное
   `Cmd+F` закрывают main search state и очищают query. Закрытие не анимирует
@@ -884,7 +884,7 @@ Image media expansion:
 - Bottom app bar actions use `ActionButton`: outer `h-6 p-[2px]`, inner text
   boxes `h-5 inline-flex items-center leading-none`. Vertical centering is
   owned by fixed 20px inner boxes, not by vertical padding.
-- Пока visual component скрыт, `Cmd+F`/`Search cards` не создают input и не
+- Пока visual component скрыт, `Cmd+F`/`Search elements` не создают input и не
   переносят caret.
 - Если пользователь начинает Grid group selection при активном main search,
   пустой search становится inactive; непустой
@@ -970,7 +970,7 @@ Image media expansion:
   pointer hover over destination rows must not blur or move focus out of the
   input. Destination rows and the pinned create action are menu-styled buttons
   with `role="menuitem"`, not roving-focus `DropdownMenuItem`. A fixed pinned
-  bottom `Create channel` action is always available and never appears as an
+  bottom `Create collection` action is always available and never appears as an
   inline search result; it opens a separate create-channel dialog, which may
   prefill from the search query, validates empty/duplicate names, refreshes
   snapshots and navigates to the new channel after creation.
@@ -1003,7 +1003,7 @@ Image media expansion:
 - In Compact Detail mode the `All / Connected` segmented control is part of
   the left Sidebar/search segment, not the right Detail title segment. In
   expanded Sidebar state it sits inside the same search surface as
-  `Search channels...`, to the right of the input and to the left of the
+  `Search collections...`, to the right of the input and to the left of the
   vertical Sidebar divider. In collapsed Sidebar state channel search remains
   hidden and the segmented control is omitted; there is no useful row list to
   filter in the collapsed rail, and adding the control creates unnecessary

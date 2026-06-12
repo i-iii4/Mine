@@ -123,7 +123,7 @@ export function Sidebar({
         {isCreating ? (
           <InlineInput
             defaultValue=""
-            placeholder="New channel..."
+            placeholder="New collection..."
             onSubmit={(value) => {
               onCreateChannel(value);
               setIsCreating(false);
@@ -137,7 +137,7 @@ export function Sidebar({
             className="mt-1 w-full justify-start rounded-1 text-muted-foreground hover:bg-accent"
           >
             <Plus className="size-3" />
-            <span>New channel</span>
+            <span>New collection</span>
           </Button>
         )}
       </nav>

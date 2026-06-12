@@ -61,7 +61,7 @@ owned here:
 - the Grid is never filtered by a search query: overlay results live in
   overlay-owned state, the route snapshot underneath stays untouched, and
   closing the overlay restores exactly the surface the user started from;
-- the bottom app bar exposes a right-side `Search cards` action with the `⌘F`
+- the bottom app bar exposes a right-side `Search elements` action with the `⌘F`
   shortcut label and the same toggle behavior. This action is a command
   trigger, not a selected-state control: it must not remain visually pressed
   while the overlay is open;
@@ -114,7 +114,7 @@ search control is a wrapper surface with a transparent input, not a standalone
 framed input. Empty hover/focus changes only placeholder color from tertiary to
 muted. A non-empty trimmed query fills only that search surface with
 `bg-accent`, matching the bottom action bar, and shows an icon-only
-`Clear channel search` button (`X`, `h-6 w-6 rounded-1`) on the right. Clear
+`Clear collection search` button (`X`, `h-6 w-6 rounded-1`) on the right. Clear
 restores the full channel list and returns focus to the input.
 
 `Shift+Cmd+F` focuses/selects that top-chrome input. It filters only sidebar
@@ -148,7 +148,7 @@ not duplicated as a disabled row, not marked with a check/radio icon and not
 styled as selected. Choosing any visible item immediately navigates to that
 collection route and closes the menu.
 
-The collection switcher dropdown has a pinned bottom `Create channel` action
+The collection switcher dropdown has a pinned bottom `Create collection` action
 that is always available and never appears as an inline search result.
 Activating it closes the dropdown and opens a separate create-channel dialog.
 The dialog may prefill from the current search query, validates empty/duplicate
@@ -584,7 +584,7 @@ Backend:
 
 Frontend (overlay-specific contract: SPEC_SEARCH_OVERLAY.md → Test Contract):
 
-- `Cmd+F` and the bottom app bar `Search cards` open/close the Search Overlay;
+- `Cmd+F` and the bottom app bar `Search elements` open/close the Search Overlay;
   the Grid is not refetched and its dataset is untouched;
 - the top app chrome still renders the Sidebar/Main divider up to the window
   top edge;

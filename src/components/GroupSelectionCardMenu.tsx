@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { MoreHorizontal, Plus } from "lucide-react";
+import { MoreHorizontal, Plus, Trash2, Unlink } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -229,8 +229,10 @@ export function GroupSelectionCardMenu({
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           {currentTag && (
-            <DropdownMenuItem onSelect={handleDisconnectFromCollection}>
-              <MenuIconSlot />
+            <DropdownMenuItem variant="detach" onSelect={handleDisconnectFromCollection}>
+              <MenuIconSlot>
+                <Unlink className="size-3" />
+              </MenuIconSlot>
               Disconnect
             </DropdownMenuItem>
           )}
@@ -247,7 +249,9 @@ export function GroupSelectionCardMenu({
               setDeleteOpen(true);
             }}
           >
-            <MenuIconSlot />
+            <MenuIconSlot>
+              <Trash2 className="size-3" />
+            </MenuIconSlot>
             Delete
           </DropdownMenuItem>
           {actionError && (

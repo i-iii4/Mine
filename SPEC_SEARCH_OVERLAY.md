@@ -56,8 +56,8 @@ Contract. Backend-разделы не меняются.
 
 | Триггер | Поведение |
 |---|---|
-| `Cmd+F` (native menu «Find Cards» → событие `surface-search-shortcut: "main"`) | Открыть overlay; если открыт — закрыть |
-| Кнопка `Search cards` (`⌘F`) в нижнем баре | То же, что `Cmd+F`; кнопка остаётся command trigger без pressed-состояния |
+| `Cmd+F` (native menu «Find Elements» → событие `surface-search-shortcut: "main"`) | Открыть overlay; если открыт — закрыть |
+| Кнопка `Search elements` (`⌘F`) в нижнем баре | То же, что `Cmd+F`; кнопка остаётся command trigger без pressed-состояния |
 | `Escape` | Закрыть overlay (целиком, независимо от query) |
 | Клик в backdrop | Закрыть overlay |
 | `Enter` / клик по результату / клик по превью | Открыть карточку в Detail, overlay закрыть |
@@ -79,7 +79,7 @@ selection невозможен — модальность забирает кл�
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ [input: Search cards…]                            312    ✕  │  ← header
+│ [input: Search elements…]                            312    ✕  │  ← header
 ├──────────────────────────────────────────┬──────────────────┤
 │ Title of the card                        │                  │
 │ …snippet with the first ▮match▮ around…  │   ReadOnlyCard   │
@@ -114,7 +114,7 @@ selection невозможен — модальность забирает кл�
 - контейнер `border-b border-border p-1`;
 - `Input variant="ghost"` `h-8 rounded-0 px-2 text-base`, без иконки лупы
   (правило системы: search input не использует иконку), placeholder
-  `Search cards…` цветом tertiary;
+  `Search elements…` цветом tertiary;
 - `SEARCH_INPUT_SUPPRESSION_PROPS` (autoComplete/autoCorrect/autoCapitalize
   off, spellCheck false);
 - фокус всегда в инпуте; автофокус при открытии; DOM-фокус из инпута не
@@ -310,7 +310,7 @@ SPEC_SEARCH) промежуточное состояние не успевает
 |---|---|
 | `src/components/SearchOverlay.tsx` | Новый компонент: Dialog-поверхность, header, список, превью, клавиатура |
 | `src/lib/searchResultRow.ts` | Новый чистый маппер `deriveSearchResultRow(block)` → `{ title, titleMatch, snippet, snippetMatch }` по правилам Match Metadata (тестируемое ядро строк списка) |
-| `src/App.tsx` | Состояние `{open, query}`; `surface-search-shortcut: "main"` и `Search cards` открывают overlay; демонтаж эффекта грид-фильтрации; `openDetailBlock` из результата |
+| `src/App.tsx` | Состояние `{open, query}`; `surface-search-shortcut: "main"` и `Search elements` открывают overlay; демонтаж эффекта грид-фильтрации; `openDetailBlock` из результата |
 | `SPEC_SEARCH.md` | Правки секций Main/Grid Search, Keyboard Contract, Frontend Data Flow, Test Contract (см. «Отношение к SPEC_SEARCH.md») |
 | `DESIGN_SYSTEM.md` | Раздел Search Overlay: геометрия панели, строка результата, счётчик, превью |
 | `CLAUDE.md`, `ARCHITECTURE.md` | Ссылки на этот SPEC |
@@ -348,7 +348,7 @@ SPEC_SEARCH) промежуточное состояние не успевает
 
 - событие `surface-search-shortcut: "main"` открывает overlay; повторное —
   закрывает;
-- кнопка `Search cards` открывает overlay и не остаётся pressed;
+- кнопка `Search elements` открывает overlay и не остаётся pressed;
 - выбор результата открывает Detail этой карточки, overlay закрыт;
 - открытие/закрытие оверлея не меняет `blocks` грида и не инвалидирует
   кэш маршрутов;

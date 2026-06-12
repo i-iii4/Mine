@@ -16,14 +16,14 @@ describe("VaultPicker", () => {
     render(<VaultPicker onVaultSelected={vi.fn()} />);
     expect(screen.getByText("Mine")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Select Vault" }),
+      screen.getByRole("button", { name: "Select Space" }),
     ).toBeInTheDocument();
   });
 
   it("renders description text", () => {
     render(<VaultPicker onVaultSelected={vi.fn()} />);
     expect(
-      screen.getByText(/Choose a folder for your vault/),
+      screen.getByText(/Choose a folder for your space/),
     ).toBeInTheDocument();
   });
 
@@ -31,7 +31,7 @@ describe("VaultPicker", () => {
     const onSelected = vi.fn();
     mockOpen.mockResolvedValue(null as never);
     render(<VaultPicker onVaultSelected={onSelected} />);
-    fireEvent.click(screen.getByRole("button", { name: "Select Vault" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select Space" }));
     await waitFor(() => {
       expect(mockOpen).toHaveBeenCalled();
     });
@@ -42,7 +42,7 @@ describe("VaultPicker", () => {
     mockOpen.mockResolvedValue("/test/vault" as never);
     mockInvoke.mockResolvedValue({ indexed: 42, errors: 0 });
     render(<VaultPicker onVaultSelected={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Select Vault" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select Space" }));
     await waitFor(() => {
       expect(screen.getByText("42")).toBeInTheDocument();
     });
@@ -52,7 +52,7 @@ describe("VaultPicker", () => {
     mockOpen.mockResolvedValue("/test/vault" as never);
     mockInvoke.mockRejectedValue(new Error("DB error"));
     render(<VaultPicker onVaultSelected={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Select Vault" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select Space" }));
     await waitFor(() => {
       expect(screen.getByText(/DB error/)).toBeInTheDocument();
     });

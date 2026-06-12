@@ -356,7 +356,7 @@ export function SearchOverlay({
         )}
         data-search-overlay
       >
-        <DialogTitle className="sr-only">Search cards</DialogTitle>
+        <DialogTitle className="sr-only">Search elements</DialogTitle>
 
         <div className="flex shrink-0 items-center gap-1 border-b border-border p-1">
           <Input
@@ -365,7 +365,7 @@ export function SearchOverlay({
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
             onKeyDown={handleInputKeyDown}
-            placeholder="Search cards…"
+            placeholder="Search elements…"
             className="h-8 min-w-0 flex-1 rounded-0 px-2"
             role="combobox"
             aria-expanded={rows.length > 0}
@@ -457,7 +457,7 @@ export function SearchOverlay({
                 <div
                   role="button"
                   tabIndex={-1}
-                  aria-label="Open card"
+                  aria-label="Open element"
                   className="group relative cursor-pointer"
                   onClick={() => onOpenBlock(activeBlock)}
                   data-search-overlay-preview

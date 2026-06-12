@@ -85,7 +85,7 @@ const GRID_BOTTOM_INSET_PX = 32;
 const MARQUEE_DRAG_THRESHOLD_PX = 4;
 const SCROLL_ANCHOR_REFERENCE_OFFSET_PX = 32;
 const EMPTY_CHANNEL_PLACEHOLDER_TEXT =
-  "Cards connected to this channel will appear here.";
+  "Elements connected to this collection will appear here.";
 const INITIAL_FEED_SCROLL_SIGNAL: FeedScrollSignal = {
   scrollTop: 0,
   scrollDirection: "idle",

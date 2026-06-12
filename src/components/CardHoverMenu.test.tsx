@@ -162,7 +162,10 @@ describe("CardHoverMenu", () => {
 
     expect(connectItem.closest("[role='menuitem']")?.querySelector("svg")).toBeTruthy();
     expect(sourceItem.closest("[role='menuitem']")?.querySelector("svg")).toBeTruthy();
-    for (const item of [revealItem, copyItem, renameItem, disconnectItem, deleteItem]) {
+    // Disconnect (Unlink) and Delete (Trash2) now carry real icons.
+    expect(disconnectItem.closest("[role='menuitem']")?.querySelector("svg")).toBeTruthy();
+    expect(deleteItem.closest("[role='menuitem']")?.querySelector("svg")).toBeTruthy();
+    for (const item of [revealItem, copyItem, renameItem]) {
       const menuItem = item.closest("[role='menuitem']");
       expect(menuItem?.querySelector("[data-card-menu-icon-slot]")).toBeTruthy();
       expect(menuItem?.querySelector("svg")).toBeNull();

@@ -92,7 +92,6 @@ export interface ClipperState {
   articleData: ArticleData | null;
   channels: ChannelInfo[];
   selectedTags: string[];
-  recentTags: string[];
   currentType: ClipType;
   title: string;
   saving: boolean;
@@ -109,7 +108,6 @@ export function useClipperState() {
   const [articleData, setArticleData] = useState<ArticleData | null>(null);
   const [channels, setChannels] = useState<ChannelInfo[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [recentTags, setRecentTags] = useState<string[]>([]);
   const [currentType, setCurrentType] = useState<ClipType>("link");
   const [title, setTitle] = useState("");
   const [saving, setSaving] = useState(false);
@@ -375,7 +373,6 @@ export function useClipperState() {
         metadata,
         articleData,
         selectedTags,
-        recentTags,
         title,
         currentType,
         selectedVault: vaultRef.current,
@@ -413,7 +410,6 @@ export function useClipperState() {
     metadata,
     articleData,
     selectedTags,
-    recentTags,
     title,
     currentType,
     screenshotDataUrl,
@@ -448,10 +444,6 @@ export function useClipperState() {
         chrome.action.setBadgeText({ text: "" });
       }
 
-      const stored = await chrome.storage.local.get("recentChannels");
-      const recent = (stored.recentChannels as string[]) ?? [];
-      setRecentTags(recent);
-
       void ensureNativeStatus();
 
       // Check for pre-loaded data (from Instagram feed button)
@@ -477,7 +469,6 @@ export function useClipperState() {
           metadata: PageMetadata | null;
           articleData: ArticleData | null;
           selectedTags: string[];
-          recentTags: string[];
           title: string;
           currentType: ClipType;
           selectedVault: string | null;
@@ -503,7 +494,6 @@ export function useClipperState() {
             : "idle",
         );
         setSelectedTags(pending.selectedTags);
-        setRecentTags(pending.recentTags);
         setTitle(pending.title);
         setCurrentType(pending.currentType);
 
@@ -735,7 +725,7 @@ export function useClipperState() {
   const createChannel = useCallback(async (name: string) => {
     const result = await sendToNative({ action: "create_channel", tag: name, vault_path: vaultRef.current });
     if (!result.ok) {
-      showError(result.error ?? "Failed to create channel");
+      showError(result.error ?? "Failed to create collection");
       return;
     }
     const tag = typeof result.tag === "string" ? result.tag : name;
@@ -919,15 +909,6 @@ export function useClipperState() {
     setSaving(false);
 
     if (result.ok) {
-      // Persist recent channels
-      if (selectedTags.length > 0) {
-        const updated = [
-          ...selectedTags,
-          ...recentTags.filter((t) => !selectedTags.includes(t)),
-        ].slice(0, 10);
-        setRecentTags(updated);
-        chrome.storage.local.set({ recentChannels: updated });
-      }
       return { ok: true as const };
     }
     if (currentType === "screenshot") {
@@ -942,7 +923,6 @@ export function useClipperState() {
     currentType,
     title,
     selectedTags,
-    recentTags,
     saving,
     ensureArticleLoaded,
     ensureNativeStatus,
@@ -966,7 +946,6 @@ export function useClipperState() {
     articleData,
     channels,
     selectedTags,
-    recentTags,
     currentType,
     setCurrentType: handleTypeChange,
     screenshotDataUrl,

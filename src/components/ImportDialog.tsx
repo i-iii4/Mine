@@ -81,7 +81,7 @@ export function ImportDialog({
       setStep("select");
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : "Failed to fetch channels",
+        e instanceof Error ? e.message : "Failed to fetch Are.na channels",
       );
     } finally {
       setLoading(false);

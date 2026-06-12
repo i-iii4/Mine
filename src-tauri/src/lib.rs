@@ -132,11 +132,11 @@ pub fn run() {
                 .quit()
                 .build()?;
 
-            let find_cards_item = MenuItemBuilder::with_id(MENU_ID_FIND_CARDS, "Find Cards")
+            let find_cards_item = MenuItemBuilder::with_id(MENU_ID_FIND_CARDS, "Find Elements")
                 .accelerator("CmdOrCtrl+F")
                 .build(app)?;
             let find_channels_item =
-                MenuItemBuilder::with_id(MENU_ID_FIND_CHANNELS, "Find Channels")
+                MenuItemBuilder::with_id(MENU_ID_FIND_CHANNELS, "Find Collections")
                     .accelerator("CmdOrCtrl+Shift+F")
                     .build(app)?;
 

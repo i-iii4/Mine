@@ -37,7 +37,7 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
           Mine
         </h1>
         <p className="text-base text-muted-foreground">
-          Choose a folder for your vault. All blocks will be stored as files in
+          Choose a folder for your space. All elements will be stored as files in
           this directory.
         </p>
 
@@ -62,7 +62,7 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
           </div>
         ) : (
           <Button onClick={handleSelect} disabled={loading}>
-            {loading ? "Opening..." : "Select Vault"}
+            {loading ? "Opening..." : "Select Space"}
           </Button>
         )}
 

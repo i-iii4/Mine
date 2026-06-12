@@ -7,7 +7,7 @@ import {
   ContextMenuSubTrigger,
 } from "@/components/ui/context-menu";
 import { useEffect, useState, type ReactNode } from "react";
-import { ExternalLink, Plus } from "lucide-react";
+import { ExternalLink, Plus, Trash2, Unlink } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { LightBlock, TagCount } from "@/types";
 import { getBlock } from "@/lib/commands";
@@ -124,8 +124,10 @@ export function CardTagMenu({
       </ContextMenuItem>
 
       {currentTag && selectedTags.includes(currentTag) && (
-        <ContextMenuItem onSelect={() => onToggleTag(block.slug, currentTag, true)}>
-          <MenuIconSlot />
+        <ContextMenuItem variant="detach" onSelect={() => onToggleTag(block.slug, currentTag, true)}>
+          <MenuIconSlot>
+            <Unlink className="size-3" />
+          </MenuIconSlot>
           Disconnect from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
         </ContextMenuItem>
       )}
@@ -134,7 +136,9 @@ export function CardTagMenu({
         variant="destructive"
         onSelect={() => onRequestDelete(block.slug)}
       >
-        <MenuIconSlot />
+        <MenuIconSlot>
+          <Trash2 className="size-3" />
+        </MenuIconSlot>
         Delete
       </ContextMenuItem>
     </ContextMenuContent>

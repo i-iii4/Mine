@@ -128,8 +128,8 @@ function formatPluralCount(count: number, singular: string, plural: string): str
 }
 
 function formatCardCount(count: number, inChannel: boolean): string {
-  const base = formatPluralCount(count, "card", "cards");
-  return inChannel ? `${base} in channel` : base;
+  const base = formatPluralCount(count, "element", "elements");
+  return inChannel ? `${base} in collection` : base;
 }
 
 function formatFileCount(count: number): string {
@@ -305,7 +305,7 @@ function MainSecondaryTopBar({
             data-secondary-sidebar-link-mode-bar=""
           >
             <span className="shrink-0 font-mono text-sm text-muted-foreground">
-              Channels:
+              Collections:
             </span>
             <CompactDetailLinkModeSwitch
               value={detailLinkMode}
@@ -499,7 +499,7 @@ function CompactDetailLinkModeSwitch({
       value={value}
       options={DETAIL_LINK_MODE_OPTIONS}
       onChange={onChange}
-      aria-label="Channel filter"
+      aria-label="Collection filter"
       data-entered={entered === undefined ? undefined : entered ? "true" : "false"}
       data-compact-detail-link-mode-control=""
       className={className}
@@ -2055,7 +2055,7 @@ export function AppWithVault({
 
         await reloadAllSnapshots();
       } catch (err) {
-        console.error("Failed to create channel:", err);
+        console.error("Failed to create collection:", err);
       }
     },
     [
@@ -2851,13 +2851,13 @@ export function AppWithVault({
                   <Input
                     ref={sidebarSearchInputRef}
                     {...SEARCH_INPUT_SUPPRESSION_PROPS}
-                    aria-label="Search channels"
+                    aria-label="Filter collections"
                     aria-activedescendant={
                       sidebarSearchKeyboardNavigationFocus
                         ? sidebarRowDomId(sidebarSearchKeyboardNavigationFocus.rowKey)
                         : undefined
                     }
-                    placeholder="Search channels..."
+                    placeholder="Filter collections..."
                     variant="ghost"
                     value={sidebarSearchQuery}
                     onChange={(event) => handleSidebarSearchChange(event.target.value)}
@@ -2868,7 +2868,7 @@ export function AppWithVault({
                   {sidebarSearchHasValue && (
                     <button
                       type="button"
-                      aria-label="Clear channel search"
+                      aria-label="Clear collection search"
                       className={cn(
                         "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-1 text-muted-foreground hover:bg-component-fill-hover hover:text-foreground focus-visible:bg-component-fill-hover focus-visible:text-foreground focus-visible:outline-none",
                         compactDetailTopMenuActive ? "mr-1" : "mr-3",
@@ -2921,7 +2921,7 @@ export function AppWithVault({
               block={renderedDetailBlock}
               cardTitle={compactDetailCardTitle}
               vaultPath={vaultPath}
-              tags={tags}
+              tags={orderedTags}
               currentTag={currentTag}
               onToggleTag={handleToggleTag}
               onCreateAndAssign={handleCreateTagFromMenu}
@@ -2948,7 +2948,7 @@ export function AppWithVault({
           detailLinkMode={detailLinkMode}
           onDetailLinkModeChange={setDetailLinkMode}
           vaultPath={vaultPath}
-          tags={tags}
+          tags={orderedTags}
           currentTag={currentTag}
           onToggleTag={handleToggleTag}
           onCreateAndAssign={handleCreateTagFromMenu}
@@ -2967,7 +2967,7 @@ export function AppWithVault({
         isResizing={sidebarResizing}
         vaultPath={vaultPath}
         thumbsRootPath={thumbsRootPath ?? undefined}
-        tags={tags}
+        tags={orderedTags}
         currentTag={currentTag}
         orderedTags={orderedTags}
         channelPreviews={channelPreviews}
@@ -3057,7 +3057,7 @@ export function AppWithVault({
                 blocks={activeBlocks}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath ?? undefined}
-                tags={tags}
+                tags={orderedTags}
                 currentTag={currentTag}
                 routeSnapshotReady={gridRouteSnapshotReady}
                 scrollToTop={scrollToTopSignal}
@@ -3108,7 +3108,7 @@ export function AppWithVault({
               topChromeMode="external"
               onClose={handleDetailClose}
               onNavigate={handleDetailNavigate}
-              tags={tags}
+              tags={orderedTags}
               currentTag={currentTag}
               onToggleTag={handleToggleTag}
               onCreateAndAssign={handleCreateTagFromMenu}
@@ -3184,7 +3184,7 @@ export function AppWithVault({
         onClose={() => setSearchOverlayOpen(false)}
         onOpenBlock={handleSearchOverlayOpenBlock}
         loadBlockTags={handleLoadBlockTags}
-        tags={tags}
+        tags={orderedTags}
         currentTag={currentTag}
         onToggleTag={handleToggleTag}
         onCreateAndAssign={handleCreateTagFromMenu}
@@ -3199,7 +3199,7 @@ export function AppWithVault({
           data-bottom-action-bar=""
         >
           <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>
-            New Channel
+            New Collection
           </ActionButton>
           <ThemeMenuButton
             ref={themeMenuRef}
@@ -3222,7 +3222,7 @@ export function AppWithVault({
             hotkey="⌘F"
             onClick={toggleSearchOverlay}
           >
-            Search cards
+            Search elements
           </ActionButton>
         </div>
       )}

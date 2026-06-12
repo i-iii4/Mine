@@ -44,7 +44,7 @@ export function DeleteBlockDialog({
       >
         <AlertDialogHeader className="place-items-start text-left">
           <AlertDialogTitle>
-            Delete card?
+            Delete element?
           </AlertDialogTitle>
           <AlertDialogDescription>
             {deleteDialogDescription(error, plan, unusedCount, sharedCount)}
@@ -85,15 +85,15 @@ function deleteDialogDescription(
   if (error) return `Could not prepare delete plan: ${error}`;
   if (!plan) return "Checking media references before deleting.";
   if (unusedCount > 0 && sharedCount > 0) {
-    return `${mediaCountLabel(unusedCount)} ${mediaCountVerb(unusedCount)} only used by this card. ${mediaCountLabel(sharedCount)} ${mediaCountVerb(sharedCount)} used by other cards and will stay in the vault.`;
+    return `${mediaCountLabel(unusedCount)} ${mediaCountVerb(unusedCount)} only used by this element. ${mediaCountLabel(sharedCount)} ${mediaCountVerb(sharedCount)} used by other cards and will stay in the vault.`;
   }
   if (unusedCount > 0) {
-    return `${mediaCountLabel(unusedCount)} ${mediaCountVerb(unusedCount)} only used by this card. Delete ${mediaObjectPronoun(unusedCount)} too, or keep ${mediaObjectPronoun(unusedCount)} in the vault.`;
+    return `${mediaCountLabel(unusedCount)} ${mediaCountVerb(unusedCount)} only used by this element. Delete ${mediaObjectPronoun(unusedCount)} too, or keep ${mediaObjectPronoun(unusedCount)} in the vault.`;
   }
   if (sharedCount > 0) {
     return `${mediaCountLabel(sharedCount)} ${mediaCountVerb(sharedCount)} used by other cards and will stay in the vault. Only this card will be deleted.`;
   }
-  return "This will delete only the card.";
+  return "This will delete only the element.";
 }
 
 function mediaCountLabel(count: number) {

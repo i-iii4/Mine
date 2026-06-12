@@ -315,7 +315,7 @@ export function TopCollectionSwitcher({
               onPress={openCreateDialog}
             >
               <span className="min-w-0 truncate">
-                Create channel
+                Create collection
               </span>
             </SearchMenuAction>
           </div>
@@ -332,7 +332,7 @@ export function TopCollectionSwitcher({
             }}
           >
             <DialogHeader>
-              <DialogTitle>Create channel</DialogTitle>
+              <DialogTitle>Create collection</DialogTitle>
             </DialogHeader>
             <div className="grid gap-2">
               <Input

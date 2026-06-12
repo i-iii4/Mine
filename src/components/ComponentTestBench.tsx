@@ -139,7 +139,8 @@ const COLOR_TOKEN_GROUPS: readonly TokenGroup[] = [
       { token: "--component-fill", use: "Фон Button, обойма ActionButton" },
       { token: "--component-fill-inner", use: "Внутренняя пуля ActionButton" },
       { token: "--component-fill-hover", use: "Hover-обводка, selected" },
-      { token: "--destructive", use: "Ошибки, удаление" },
+      { token: "--destructive", use: "Ошибки, безвозвратное удаление контента (Delete)" },
+      { token: "--detach", use: "Разъединение без удаления контента (Disconnect, Remove from Element)" },
       { token: "--primary", use: "Checkbox checked, прогресс" },
       { token: "--primary-foreground", use: "Текст на primary" },
     ],
@@ -473,7 +474,7 @@ function CoreComponentSection() {
           { prop: "Selected", value: "--component-fill-hover" },
         ]}
       >
-        <ActionButton hotkey="⌘⇧N">New Channel</ActionButton>
+        <ActionButton hotkey="⌘⇧N">New Collection</ActionButton>
         <ActionButton hotkey="⌘,">Settings</ActionButton>
         <ActionButton>No hotkey</ActionButton>
         <ActionButton hotkey="⌘K" isSelected>Selected</ActionButton>
@@ -496,21 +497,21 @@ function CoreComponentSection() {
           value="all"
           options={SEGMENT_OPTIONS}
           onChange={() => {}}
-          aria-label="Compact channel filter"
+          aria-label="Compact collection filter"
           size="compact"
         />
         <SegmentedControl
           value="connected"
           options={SEGMENT_OPTIONS}
           onChange={() => {}}
-          aria-label="Default channel filter"
+          aria-label="Default collection filter"
           size="default"
         />
         <SegmentedControl
           value="all"
           options={SEGMENT_OPTIONS}
           onChange={() => {}}
-          aria-label="Clipper channel filter"
+          aria-label="Clipper collection filter"
           size="clipper"
         />
       </ComponentSpec>
@@ -548,7 +549,7 @@ function CoreComponentSection() {
         ]}
       >
         <div className="w-80 overflow-hidden rounded-1 border border-border bg-popover">
-          <SearchMenuInput placeholder="Search channels..." />
+          <SearchMenuInput placeholder="Search collections..." />
           <SearchMenuAction active onPress={() => {}}>
             <span className="truncate">Beautiful web</span>
             <span className="ml-auto text-muted-foreground">30</span>
@@ -686,7 +687,7 @@ function FloatingUiSection() {
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent>
-            <ContextMenuItem>Create Card</ContextMenuItem>
+            <ContextMenuItem>Create Element</ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem variant="destructive">Delete</ContextMenuItem>
           </ContextMenuContent>
@@ -978,7 +979,7 @@ function CardPatternSection() {
         ]}
       >
         <div className="inline-flex h-8 items-center gap-1 rounded-1 border border-border bg-accent px-1 shadow-md">
-          <Button size="xs"><Plus className="size-3" />Create Card</Button>
+          <Button size="xs"><Plus className="size-3" />Create Element</Button>
           <Button size="xs" variant="destructive"><Strikethrough className="size-3" />Delete Text</Button>
           <Button size="icon-xs" variant="ghost" aria-label="Close text selection menu">
             <X className="size-3" />
@@ -1081,7 +1082,6 @@ function ClipperFrame({ type }: { type: ClipPreviewType }) {
           <ChannelList
             channels={CLIPPER_CHANNELS}
             selectedTags={["beautiful-web"]}
-            recentTags={["beautiful-web", "catalogs"]}
             onToggle={() => {}}
             onCreate={() => {}}
           />

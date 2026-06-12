@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import type { ComponentProps } from "react";
-import { MoreHorizontal, Plus, ExternalLink } from "lucide-react";
+import { MoreHorizontal, Plus, ExternalLink, Trash2, Unlink } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
@@ -230,9 +230,12 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
 
         {currentTag && selectedTags.includes(currentTag) && (
           <DropdownMenuItem
+            variant="detach"
             onSelect={() => onToggleTag(block.slug, currentTag, true)}
           >
-            <MenuIconSlot />
+            <MenuIconSlot>
+              <Unlink className="size-3" />
+            </MenuIconSlot>
             Disconnect from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
           </DropdownMenuItem>
         )}
@@ -241,7 +244,9 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
           variant="destructive"
           onSelect={() => onRequestDelete(block.slug)}
         >
-          <MenuIconSlot />
+          <MenuIconSlot>
+            <Trash2 className="size-3" />
+          </MenuIconSlot>
           Delete
         </DropdownMenuItem>
       </DropdownMenuContent>

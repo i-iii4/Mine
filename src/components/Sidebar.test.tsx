@@ -139,7 +139,7 @@ describe("Sidebar", () => {
   it("renders the new-channel row outside the guided channel grid", () => {
     const { container } = renderSidebar({ ...defaultProps, width: 600 });
 
-    const button = screen.getByRole("button", { name: "Create New Channel" });
+    const button = screen.getByRole("button", { name: "Create New Collection" });
     const row = button.closest("[data-sidebar-new-channel-row]") as HTMLElement;
     expect(row).toHaveAttribute("data-sidebar-new-channel-row", "");
     expect(row).toHaveAttribute("data-sidebar-row", "");
@@ -147,7 +147,7 @@ describe("Sidebar", () => {
     expect(row.closest("[data-sidebar-rows]")).toBeNull();
     expect(row).not.toHaveAttribute("data-sidebar-row-surface");
     expect(container.querySelector("[data-sidebar-rows]")).toBeInTheDocument();
-    const label = within(row).getByText("Create New Channel");
+    const label = within(row).getByText("Create New Collection");
     expect(label).toHaveAttribute("data-sidebar-row-text", "");
     expect(label).not.toHaveAttribute("data-sidebar-title-fade-width");
     expect(label).not.toHaveClass("max-w-[150px]");
@@ -167,7 +167,7 @@ describe("Sidebar", () => {
       onCreateChannel,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Create New Channel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create New Collection" }));
     expect(onSetCreatingChannel).toHaveBeenCalledWith(true);
 
     rerender(sidebarTree({
@@ -272,7 +272,7 @@ describe("Sidebar", () => {
     expect(onRenameTag).toHaveBeenCalledWith("alpha", "Renamed");
   });
 
-  it("uses the row hover seam when card content is dragged over Create New Channel", () => {
+  it("uses the row hover seam when card content is dragged over Create New Collection", () => {
     dndContextState.over = { id: "create-channel" };
     const { container } = renderSidebar({
       ...defaultProps,
@@ -547,7 +547,7 @@ describe("Sidebar", () => {
     expect(screen.getByText("5")).not.toHaveClass("opacity-0");
     expect(betaAction).toHaveClass("opacity-0");
     expect(betaAction).toHaveClass("pointer-events-none");
-    expect(alphaAction.querySelector(".text-destructive")).toHaveTextContent("Disconnect");
+    expect(alphaAction.querySelector(".text-detach")).toHaveTextContent("Disconnect");
 
     fireEvent.click(alphaAction);
     expect(onToggleLinkedTag).toHaveBeenCalledWith("open-block", "alpha", true);
@@ -851,7 +851,7 @@ describe("Sidebar", () => {
     expect(
       container.querySelector("[data-sidebar-link-mode-bar] span[aria-hidden='true']"),
     ).toHaveClass("detail-top-bar-line-enter");
-    expect(screen.getByText("Channels:")).toHaveClass("text-muted-foreground");
+    expect(screen.getByText("Collections:")).toHaveClass("text-muted-foreground");
     expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("text-muted-foreground");
     expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-8");
   });

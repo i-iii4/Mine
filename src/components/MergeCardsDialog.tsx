@@ -152,7 +152,7 @@ export function MergeCardsDialog({
 }
 
 function mergeDialogTitle(count: number): string {
-  return `Merge ${count} ${count === 1 ? "card" : "cards"}`;
+  return `Merge ${count} ${count === 1 ? "element" : "elements"}`;
 }
 
 function MergeCardsDialogRow({
@@ -205,9 +205,9 @@ function mergeErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object" && "kind" in error) {
     const kind = String((error as { kind: unknown }).kind);
-    if (kind === "too_few_cards") return "Select at least two cards.";
-    if (kind === "duplicate_slug") return "The merge list contains the same card twice.";
-    if (kind === "block_not_found") return "One of the selected cards no longer exists.";
+    if (kind === "too_few_cards") return "Select at least two elements.";
+    if (kind === "duplicate_slug") return "The merge list contains the same element twice.";
+    if (kind === "block_not_found") return "One of the selected elements no longer exists.";
     if (kind === "block_not_mergeable") return "Channels cannot be merged.";
     if ("message" in error && typeof (error as { message: unknown }).message === "string") {
       return (error as { message: string }).message;
