@@ -597,6 +597,26 @@ describe("Card", () => {
     expect(preview.compareDocumentPosition(author) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("renders a single-image article from the real image, not the slug thumbnail file", () => {
+    // Regression: the slug thumbnail file is the backend text-render fallback
+    // when an image had not downloaded at thumb-gen time, so the main card must
+    // show the real image (preview/source), never thumbnailUrl(slug). That
+    // keeps the text-render confined to the small micro-previews.
+    const b = block({
+      block_type: "article",
+      title: "Single Image Article",
+      body: "![[hero.webp]]\n\nArticle body.",
+      first_image: "hero.webp",
+      media_urls: "[\"hero.webp\"]",
+      media_dimensions: "{\"hero.webp\":[1200,800]}",
+    });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const img = container.querySelector("img");
+    expect(img).toBeTruthy();
+    expect(img!.getAttribute("src")).toContain("hero.webp");
+    expect(img!.getAttribute("src")).not.toContain("test-block");
+  });
+
   it("article card hides author when absent", () => {
     const b = block({
       block_type: "article",

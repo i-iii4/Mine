@@ -1433,7 +1433,12 @@ fn non_empty_trimmed_owned(value: String) -> Option<String> {
 }
 
 fn normalize_excerpt_text(input: &str) -> String {
-    input.split_whitespace().collect::<Vec<_>>().join(" ")
+    // Share the preview-text plain-text flattening so search excerpts never
+    // surface raw markdown: `#` headings and Obsidian `![[name]]` embeds (which
+    // article clips place at the top of the body) must not leak into the
+    // result preview. Matching still runs over this flattened text, so excerpt
+    // and highlight stay computed on one representation.
+    crate::domain::block::markdown_to_plain_text(input)
 }
 
 fn first_match_range<'a>(
@@ -1899,6 +1904,44 @@ mod tests {
         assert_eq!(search_match.kind, SearchMatchKind::Semantic);
         assert!(search_match.ranges.is_empty());
         assert!(search_match.excerpt.contains("experience"));
+    }
+
+    #[test]
+    fn body_excerpt_omits_raw_wikilink_and_heading() {
+        // Article clip: H1 + an inline-media wikilink at the top of the body.
+        // A body-term match must yield a clean excerpt — no `![[...]]`, no `#`.
+        let conn = test_conn();
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "ai-labor-market",
+                "article",
+                Some("Как искусственный интеллект повлияет на рынок труда"),
+                "2026-01-01T00:00:00Z",
+                &["research"],
+                "# Как искусственный интеллект повлияет на рынок труда\n\n![[Как искусственный интеллект повлияет на рынок труда (image 1).webp]]\n\nSmith Collection / Gado / Getty Images\n\nАмериканский The Wall Street Journal провёл опрос экономистов.",
+            ),
+            None,
+        )
+        .unwrap();
+
+        warm_search_index(&conn, None).unwrap();
+        let (blocks, _) =
+            search_grid_blocks_with_provider(&conn, None, 0, 20, "экономистов", None).unwrap();
+
+        let block = blocks
+            .iter()
+            .find(|block| block.slug == "ai-labor-market")
+            .expect("article present in results");
+        let search_match = block.search_match.as_ref().expect("body match present");
+        assert_eq!(search_match.field, SearchMatchField::Body);
+        assert!(
+            !search_match.excerpt.contains("![["),
+            "excerpt leaked a raw wikilink: {}",
+            search_match.excerpt
+        );
+        assert!(!search_match.excerpt.contains(".webp"));
+        assert!(search_match.excerpt.contains("экономистов"));
     }
 
     #[test]

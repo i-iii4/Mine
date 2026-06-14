@@ -1201,14 +1201,33 @@ const ArticleCard = memo(function ArticleCard({
               <div className="absolute inset-0 bg-accent" />
             )
           ) : !measurementMode && (
-            <img
-              src={thumbnailUrl(thumbsRootPath, block.slug)}
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover"
-              loading={imgLoading}
-              decoding="async"
-              draggable={false}
-            />
+            // Single-image article: render the real image via the same cascade
+            // as the gallery (previewPath → source file → thumbnail file only as
+            // last resort). Using the thumbnail file directly here let the
+            // backend's text-render fallback (for clips whose image had not
+            // downloaded at thumb-gen time) leak into the main card. The text
+            // thumbnail stays confined to the small micro-previews where it
+            // belongs. Fall back to the thumbnail file only when no media item
+            // exists at all (defensive — article-media implies one).
+            primaryMedia ? (
+              <GalleryTileImage
+                item={primaryMedia}
+                vaultPath={vaultPath}
+                thumbsRootPath={thumbsRootPath}
+                fallbackSlug={block.slug}
+                allowSourceFallback
+                loading={imgLoading}
+              />
+            ) : (
+              <img
+                src={thumbnailUrl(thumbsRootPath, block.slug)}
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover"
+                loading={imgLoading}
+                decoding="async"
+                draggable={false}
+              />
+            )
           )}
           {rendersFeedVideo && !shouldAutoplayVideo && <PlayBadge />}
         </GraphicSurface>

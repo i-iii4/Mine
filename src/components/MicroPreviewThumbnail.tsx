@@ -16,15 +16,24 @@ export function microPreviewFromPreviewCard(card: PreviewCard): MicroPreviewMode
 }
 
 export function microPreviewFromIndexedBlock(
-  block: Pick<IndexedBlock, "slug" | "thumb_format" | "thumb_mtime">,
+  block: Pick<IndexedBlock, "slug" | "thumb_format" | "thumb_mtime" | "preview_manifest">,
   thumbsRootPath: string,
 ): MicroPreviewModel {
   const mtime = block.thumb_mtime > 0 ? `?m=${block.thumb_mtime}` : "";
+  const manifest = parsePreviewManifest(block);
   return {
     slug: block.slug,
     url: `${thumbnailUrl(thumbsRootPath, block.slug)}${mtime}`,
-    text: block.thumb_format === "png",
-    hasThumb: block.thumb_format != null,
+    // Text-thumb detection drives dark:invert. preview_manifest is stable
+    // across the indexing→thumb-generation window; thumb_format is briefly null
+    // right after a fresh clip, which would mis-flag a text thumb as media.
+    // Fall back to thumb_format only for legacy blocks without a manifest.
+    text: manifest ? manifest.kind === "text" : block.thumb_format === "png",
+    // The thumbnail pipeline guarantees a thumb file per block, so always
+    // attempt the image (matches microPreviewFromLightBlock). thumb_format
+    // being momentarily null must not hide an already-present thumbnail; the
+    // consumer's onError handles the rare brand-new-block-with-no-file case.
+    hasThumb: true,
   };
 }
 

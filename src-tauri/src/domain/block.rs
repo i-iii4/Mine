@@ -495,7 +495,7 @@ pub fn ensure_body_starts_with_h1(body: &str, heading: &str) -> String {
 /// syntax once at indexing time, normalize whitespace, then truncate on a word
 /// boundary with an ellipsis. Full article bodies remain in `blocks.body`.
 pub fn build_preview_text(body: &str, max_chars: usize) -> String {
-    truncate_preview_text(&plain_text_preview(body), max_chars)
+    truncate_preview_text(&markdown_to_plain_text(body), max_chars)
 }
 
 fn normalize_optional_title(title: Option<&str>) -> Option<String> {
@@ -515,7 +515,14 @@ fn trim_trailing_heading_hashes(heading: &str) -> &str {
     }
 }
 
-fn plain_text_preview(body: &str) -> String {
+/// Flatten a markdown body into a single line of plain display text: drops
+/// heading/list/quote prefixes, Obsidian wikilink embeds and text links,
+/// markdown links/images, and inline emphasis/code markers, then collapses
+/// whitespace. Single source of truth shared by preview-text indexing
+/// (`build_preview_text`) and search-excerpt generation
+/// (`search_engine::normalize_excerpt_text`) so both surfaces render identical
+/// clean text — no `#` headings, no raw `![[name]]` wikilinks.
+pub fn markdown_to_plain_text(body: &str) -> String {
     let mut parts = Vec::new();
 
     for raw_line in body.lines() {
@@ -1754,6 +1761,22 @@ mod tests {
         assert!(!preview.contains("[ ]"));
         assert!(!preview.contains("![["));
         assert!(!preview.ends_with("платфор…"));
+    }
+
+    #[test]
+    fn markdown_to_plain_text_strips_article_heading_and_wikilink_embed() {
+        // Mirrors a clipped article: H1 title, an inline-media wikilink whose
+        // name carries dots and parens, then caption and body. Search excerpts
+        // build on this output, so the raw `#` and `![[...]]` must be gone.
+        let body = "# Как искусственный интеллект повлияет на рынок труда\n\n![[Как искусственный интеллект повлияет на рынок труда (image 1).webp]]\n\nSmith Collection / Gado / Getty Images\n\nАмериканский The Wall Street Journal провёл опрос.";
+        let plain = markdown_to_plain_text(body);
+        assert!(!plain.contains("![["));
+        assert!(!plain.contains(".webp"));
+        assert!(!plain.contains('#'));
+        assert!(plain.starts_with(
+            "Как искусственный интеллект повлияет на рынок труда Smith Collection"
+        ));
+        assert!(plain.contains("Американский The Wall Street Journal провёл опрос."));
     }
 
     #[test]
