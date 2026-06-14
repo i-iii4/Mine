@@ -397,11 +397,13 @@ fn resolve_tile_posters(
         if !tile.is_video {
             continue;
         }
-        let Some(ref poster_name) = tile.preview_path else {
-            continue;
-        };
+        // Derive the poster name from the source rather than `tile.preview_path`
+        // so existing gallery blocks resolve too: their manifest predates
+        // per-video posters and carries `preview_path: null`, but the backend
+        // always names a video poster `<media-stem>.jpg`, matching the frontend.
+        let poster_name = crate::storage::preview_plan::media_poster_path(&tile.source_path);
         // Skip posters already on disk as a real JPEG.
-        let poster_path = vault.thumbs_dir().join(poster_name);
+        let poster_path = vault.thumbs_dir().join(&poster_name);
         if matches!(
             thumbnails::thumb_disk_state(&poster_path),
             thumbnails::ThumbDiskState::Jpeg
@@ -410,7 +412,7 @@ fn resolve_tile_posters(
         }
         if let Some(media_path) = resolve_block_reference(vault, &block.slug, &tile.source_path) {
             out.push(TilePosterUpgrade {
-                poster_name: poster_name.clone(),
+                poster_name,
                 media_path: media_path.to_string_lossy().into_owned(),
                 kind: "video".into(),
             });

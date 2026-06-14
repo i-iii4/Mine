@@ -124,6 +124,14 @@ export function normalizeFeedPreviewManifest(
 
           if (!previewPath && isVideoPoster) {
             previewPath = primaryPreviewPath;
+          } else if (!previewPath && isVideo && legacySyntheticPreview) {
+            // Gallery video tile renders from its generated per-video poster
+            // `<stem>.jpg`. Derive that name even when the manifest predates
+            // per-video posters (preview_path null): the backend generates the
+            // same `<stem>.jpg` from the source, so the file matches — and if
+            // it isn't there yet, GalleryTileImage's onError falls back to the
+            // block thumbnail. Avoids a full reindex of existing gallery blocks.
+            previewPath = legacySyntheticPreview;
           }
 
           return {

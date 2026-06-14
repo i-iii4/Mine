@@ -697,6 +697,35 @@ describe("Card", () => {
     expect(srcs.every((s) => !s.includes("test-block"))).toBe(true);
   });
 
+  it("derives video gallery posters when the manifest predates per-video posters (preview_path null)", () => {
+    // Existing gallery blocks have preview_path: null in their stored manifest.
+    // The frontend must still derive each video tile's <stem>.jpg poster so the
+    // tiles differ instead of all falling back to the block thumbnail.
+    const b = block({
+      block_type: "article",
+      url: "https://www.instagram.com/p/Y/",
+      author: "@a",
+      body: "![[a (video 1).mp4]]\n![[b (video 2).mp4]]",
+      media_urls: "[\"a (video 1).mp4\",\"b (video 2).mp4\"]",
+      preview_manifest: JSON.stringify({
+        kind: "composite",
+        primary_preview_path: "test-block.jpg",
+        width: 1,
+        height: 1,
+        tiles: [
+          { source_path: "a (video 1).mp4", preview_path: null, width: 800, height: 600, is_video: true, is_video_poster: false },
+          { source_path: "b (video 2).mp4", preview_path: null, width: 800, height: 600, is_video: true, is_video_poster: false },
+        ],
+        overflow_count: 0,
+      }),
+    });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const srcs = Array.from(container.querySelectorAll("img")).map((img) => img.getAttribute("src") ?? "");
+    expect(srcs.length).toBeGreaterThanOrEqual(2);
+    expect(srcs[0]).not.toEqual(srcs[1]);
+    expect(srcs.every((s) => !s.includes("test-block"))).toBe(true);
+  });
+
   it("renders legacy article multi-image previews from source images when preview_manifest is missing", () => {
     const b = block({
       block_type: "article",
