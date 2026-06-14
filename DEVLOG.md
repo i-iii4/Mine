@@ -1,5 +1,101 @@
 # Devlog
 
+## 14.06.2026 — Design variant, фиксы превью, видео-постеры галереи, изгнание thumbnail-аномалий
+
+### Goal
+Завершить ось дизайн-варианта (alt-раскладка) и провести серию фиксов
+корректности превью, выявленных на реальном iCloud-vault: сырой markdown в
+поиске, пропадающие/дублирующиеся миниатюры, повторяющиеся постеры видео в
+галерее. Плюс изгнать две фоновые аномалии sweep'а.
+
+### Design variant (ось раскладки, ортогональная теме)
+- Вынес `alt` из значений темы в отдельную ось `data-design="alt"` на корне.
+  Новый `src/lib/designMode.ts` — единый переключатель: CSS читает атрибут
+  напрямую, JS-раскладка (масонри) подписывается через `useDesignMode`
+  (MutationObserver + `useSyncExternalStore`), persist в `localStorage["mine.design"]`.
+- `global.css` — CSS-переменные метрик варианта (`--sidebar-nav-pad-x`,
+  `--top-collection-pad-x` и т. д.), дефолты + override в `[data-design="alt"]`.
+- `Grid.tsx` — `GAP`/инсеты зависят от `useDesignMode`; `layoutGap` встроен в
+  ключ кэша раскладки, иначе модульный `layoutCache` выдал бы раскладку с
+  чужим gap (предотвращён скрытый баг).
+
+### Три фикса корректности превью
+1. **Сырой markdown в excerpt поиска.** `normalize_excerpt_text`
+   (search_engine.rs) схлопывал только пробелы — `#` заголовки и Obsidian
+   `![[name]]` embed-ы протекали в превью результатов. Вынес единую
+   `domain::block::markdown_to_plain_text` (бывшая приватная
+   `plain_text_preview`); и `build_preview_text`, и excerpt чистят через неё.
+2. **Пропадающая миниатюра в диалоге удаления медиа.**
+   `microPreviewFromIndexedBlock` прятал существующий thumb, пока `thumb_format`
+   кратко `null` после свежего клипа. Унифицировал с `microPreviewFromLightBlock`:
+   `hasThumb: true` (pipeline гарантирует файл, `onError` страхует), text-флаг —
+   через стабильный `preview_manifest`, не `thumb_format`.
+3. **Text-картинка в основной карточке статьи.** Single-image статья рендерила
+   `thumbnailUrl(slug)` — туда протекал backend-овский text-render (когда
+   изображение не докачалось к моменту генерации thumb). Перевёл на
+   `GalleryTileImage` (каскад previewPath → source → thumbnail), как у мультиизображений.
+
+### Постеры видео в галерее (per-block WebView decode)
+- Видео-плитки галереи показывали один общий thumbnail (видео нельзя
+  отрисовать в `<img>`, все плитки падали на `<slug>.jpg`). Rust-декодер не
+  берёт web-H.264 — постеры делает WebView, как уже делает `<slug>.jpg`.
+- Backend: `media_thumb_path`/`media_poster_path` (имя `<media-stem>.jpg`),
+  видео-плитка несёт `preview_path` в манифесте; `list_pending_thumb_upgrades`
+  и upgrade-событие watcher'а включают недостающие постеры плиток;
+  `save_tile_poster` пишет JPEG по имени медиафайла.
+- Frontend: `useThumbnailUpgrade` декодирует каждое видео через общий
+  `captureVideoFrame` и сохраняет постер; `normalize` сохраняет
+  `<stem>.jpg` для видео (для существующих блоков деривирует имя из source,
+  без переиндексации); `GalleryTileImage` рендерит видео-плитку из её постера.
+
+### Изгнание thumbnail-аномалий
+- **Цикл регенерации.** Пустой `.md` (Force-directed.md, 0 байт) →
+  `ThumbSource::None` → thumb всегда отсутствует → `is_thumb_fresh` всегда
+  false → бесконечная регенерация. `block_has_renderable_source`
+  короткозамыкает `is_thumb_fresh` на fresh для contentless-блоков.
+- **Orphan/invalid-slug строки.** `thumb_sweep` лишь пропускал невалидные
+  slug-и и не сверял удалённые `.md` (delete-событие iCloud терял watcher).
+  Теперь sweep удаляет invalid-slug и orphan-строки (нет `.md` на диске) — та
+  же сверка, что `full_scan` делает при открытии vault, но без ожидания
+  перезапуска. Вычистил 3 мусорных файла (пустой `.md` с Unicode-only
+  заголовком + его медиа, пустой Force-directed.md); рабочий дубликат остался.
+
+### Checks
+- `cargo test --lib` — 552/552 passed (новые: markdown_to_plain_text,
+  excerpt-без-wikilink, media_poster_path/media_thumb_path, resolve_tile_posters,
+  validate_tile_poster, contentless-fresh, orphan-removal)
+- `bun run test:frontend` — 553→… passed, новые тесты карточки и
+  MicroPreviewThumbnail; `tsc -b` + ESLint чисты; clippy чист по изменённому коду
+- Проверено вживую на iCloud Mine vault: excerpt без `![[…]]`; карточка статьи
+  показывает реальное фото; галерея «AI sketches» (8 видео) — 4 разных постера;
+  orphan-строки изгнаны из индекса (`empty-slug rows: 0`, аномалии в логах прекратились)
+
+### Push
+- `a453683` — Design variant: alt layout axis orthogonal to color theme
+- `b4843a4` — Fix raw markdown in search excerpts and hidden/duplicated thumbnails
+- `f693ac0` — Per-video gallery tile posters via the WebView decode pipeline
+- `b95849e` — Show per-video gallery posters without reindexing existing blocks
+- `c217189` — Stop the thumbnail sweep loop on contentless and orphan blocks
+
+### Decisions and lessons learned
+1. **Единый источник «markdown → plain text».** Дублирование преобразования с
+   расхождением (preview_text чистил, excerpt — нет) — повторяющийся
+   антипаттерн сессии. И для миниатюр (две фабрики `MicroPreviewModel`), и для
+   excerpt лечилось сведением к одной функции, а не латанием симптома.
+2. **Rust не декодирует web-H.264.** Постеры видео в Mine — всегда WebView
+   (two-phase), Rust пишет лишь placeholder. Любая «генерация кадра видео»
+   должна идти через `captureVideoFrame`, не через `mp4`+OpenH264 (тот падает
+   `failed to decode any frame` на Instagram-клипах).
+3. **Существующие блоки несут устаревший манифест.** Изменение `media_tile`
+   применяется только при переиндексации. Для миграции дешевле деривировать
+   значение детерминированно на обеих сторонах (имя постера = `<stem>.jpg`),
+   чем гнать reindex всего vault.
+4. **iCloud теряет delete-события.** notify-watcher не всегда получает удаление
+   файла на iCloud Drive → orphan-строки в индексе. Sweep должен сам сверяться
+   с диском, а не полагаться только на `full_scan` при открытии vault.
+
+---
+
 ## 12.06.2026 — Окно настроек, redesign Spaces, recent-режим поиска
 
 ### Settings Window (Phase 29, SPEC_SETTINGS_WINDOW.md)
