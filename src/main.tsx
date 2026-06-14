@@ -2,12 +2,14 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
+import { applyDesign, getStoredDesignMode } from "@/lib/designMode";
 import { App } from "./App";
 import "./styles/global.css";
 
-// Apply the stored theme before first paint (the settings window owns the
-// theme controls; the main window re-applies on the "settings-changed" event).
+// Apply the stored theme and design variant before first paint (the settings
+// window owns the controls; this window re-applies on "settings-changed").
 applyTheme(getStoredTheme());
+applyDesign(getStoredDesignMode());
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },

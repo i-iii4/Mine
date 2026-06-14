@@ -13,6 +13,7 @@ describe("AppearanceSection", () => {
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("data-design");
     vi.mocked(emit).mockClear();
     vi.mocked(setTauriTheme).mockClear();
   });
@@ -26,6 +27,22 @@ describe("AppearanceSection", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     expect(setTauriTheme).toHaveBeenLastCalledWith("dark");
     expect(emit).toHaveBeenCalledWith("settings-changed", { key: "theme" });
+  });
+
+  it("switches the design variant independently of the theme", () => {
+    render(<AppearanceSection />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Alt" }));
+
+    expect(localStorage.getItem("mine.design")).toBe("alt");
+    expect(document.documentElement.getAttribute("data-design")).toBe("alt");
+    expect(emit).toHaveBeenCalledWith("settings-changed", { key: "mine.design" });
+    // The theme control is untouched: light/dark/system combine with alt.
+    expect(localStorage.getItem("theme")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Light" }));
+    expect(document.documentElement.getAttribute("data-design")).toBe("alt");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
   });
 
   it("persists the Compact Detail top menu flag and broadcasts its key", () => {

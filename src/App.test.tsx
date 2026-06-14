@@ -1097,7 +1097,7 @@ describe("AppWithVault", () => {
     });
 
     const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
-    expect(collectionSwitcher).toHaveClass("px-6");
+    expect(collectionSwitcher).toHaveClass("px-[var(--top-collection-pad-x)]");
     expect(collectionSwitcher).not.toHaveClass("px-3");
     expect(collectionSwitcher).toHaveClass("font-mono");
     expect(collectionSwitcher).toHaveClass("text-sm");

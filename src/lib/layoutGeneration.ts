@@ -54,11 +54,14 @@ export function buildLayoutGenerationKey({
   routeKey,
   heightBucket,
   parentWidth,
+  layoutGap,
 }: {
   blocks: readonly LightBlock[];
   routeKey?: string;
   heightBucket: number;
   parentWidth: number;
+  /** Card gap the layout was computed with (design variants change it). */
+  layoutGap?: number;
 }): LayoutGenerationKey {
   const blockSignatures = blocks.map((block, index) => `${index}:${buildBlockLayoutSignature(block)}`);
   const orderedHash = hashString(blockSignatures.join("||"));
@@ -75,6 +78,7 @@ export function buildLayoutGenerationKey({
     routeKey ?? "__all__",
     `hb=${heightBucket}`,
     `pw=${Math.round(parentWidth)}`,
+    `gap=${layoutGap ?? 32}`,
     `n=${blocks.length}`,
     `sig=${orderedHash}`,
     `edge=${hashString(edgeSample)}`,

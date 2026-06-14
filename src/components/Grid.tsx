@@ -65,6 +65,7 @@ import {
   isEditableKeyboardTarget,
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
+import { useDesignMode } from "@/lib/designMode";
 
 declare global {
   interface Window {
@@ -75,12 +76,18 @@ declare global {
 // ─── Layout constants ───────────────────────────────────────────────────────
 
 const COLUMN_MIN_WIDTH = 220;
-const GAP = 32;
+// Card gap and container side insets are design-variant metrics: the alt
+// design (data-design="alt", src/lib/designMode.ts) tightens both to 16px.
+const GAP_DEFAULT = 32;
+const GAP_ALT = 16;
+const GRID_X_INSET_DEFAULT = 32;
+const GRID_X_INSET_ALT = 16;
+const GRID_TOP_INSET_DEFAULT = 32;
+const GRID_TOP_INSET_ALT = 16;
 const MEASUREMENT_BATCH_SIZE = 24;
 const INITIAL_COMMIT_BLOCKS = 48;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
-const GRID_TOP_INSET_PX = 32;
 const GRID_BOTTOM_INSET_PX = 32;
 const MARQUEE_DRAG_THRESHOLD_PX = 4;
 const SCROLL_ANCHOR_REFERENCE_OFFSET_PX = 32;
@@ -226,6 +233,7 @@ function firstVisibleSlug(
   scrollTop: number,
   viewportHeight: number,
   liveBlockIds: ReadonlySet<number>,
+  topInset: number,
 ): string | null {
   const viewportTop = scrollTop;
   const viewportBottom = scrollTop + viewportHeight;
@@ -234,8 +242,8 @@ function firstVisibleSlug(
   for (const item of positions) {
     const block = blocks[item.index];
     if (!block || !liveBlockIds.has(block.id)) continue;
-    const itemTop = GRID_TOP_INSET_PX + item.top;
-    const itemBottom = GRID_TOP_INSET_PX + item.bottom;
+    const itemTop = topInset + item.top;
+    const itemBottom = topInset + item.bottom;
     if (itemBottom < viewportTop || itemTop > viewportBottom) continue;
     if (
       !best ||
@@ -262,6 +270,7 @@ function findViewportPreservationAnchor(
   currentSlugs: ReadonlySet<string>,
   scrollTop: number,
   viewportHeight: number,
+  topInset: number,
 ): ScrollAnchor | null {
   if (viewportHeight <= 0) return null;
 
@@ -277,8 +286,8 @@ function findViewportPreservationAnchor(
     const block = blocks[position.index];
     if (!block || !currentSlugs.has(block.slug)) continue;
 
-    const itemTop = GRID_TOP_INSET_PX + position.top;
-    const itemBottom = GRID_TOP_INSET_PX + position.bottom;
+    const itemTop = topInset + position.top;
+    const itemBottom = topInset + position.bottom;
     const visible = itemBottom >= viewportTop && itemTop <= viewportBottom;
     const distanceFromReference =
       referenceY < itemTop
@@ -316,11 +325,12 @@ function clampedScrollTopForAnchor(
   viewportHeight: number,
   position: MasonryPosition,
   anchor: ScrollAnchor,
+  topInset: number,
 ): number {
-  const unclamped = GRID_TOP_INSET_PX + position.top - anchor.offsetTop;
+  const unclamped = topInset + position.top - anchor.offsetTop;
   const maxScrollTop = Math.max(
     0,
-    GRID_TOP_INSET_PX + layout.totalHeight + GRID_BOTTOM_INSET_PX - viewportHeight,
+    topInset + layout.totalHeight + GRID_BOTTOM_INSET_PX - viewportHeight,
   );
   return Math.min(Math.max(0, unclamped), maxScrollTop);
 }
@@ -329,22 +339,24 @@ function isPositionVisibleInViewport(
   position: MasonryPosition,
   scrollTop: number,
   viewportHeight: number,
+  topInset: number,
 ): boolean {
   if (viewportHeight <= 0) return false;
   const viewportTop = scrollTop;
   const viewportBottom = scrollTop + viewportHeight;
-  const itemTop = GRID_TOP_INSET_PX + position.top;
-  const itemBottom = GRID_TOP_INSET_PX + position.bottom;
+  const itemTop = topInset + position.top;
+  const itemBottom = topInset + position.bottom;
   return itemBottom >= viewportTop && itemTop <= viewportBottom;
 }
 
 function scrollPositionIntoView(
   scrollElement: HTMLElement,
   position: MasonryPosition,
+  topInset: number,
 ): void {
   const padding = 32;
-  const itemTop = GRID_TOP_INSET_PX + position.top;
-  const itemBottom = GRID_TOP_INSET_PX + position.bottom;
+  const itemTop = topInset + position.top;
+  const itemBottom = topInset + position.bottom;
   const viewportTop = scrollElement.scrollTop;
   const viewportBottom = viewportTop + scrollElement.clientHeight;
   let nextTop: number | null = null;
@@ -542,6 +554,8 @@ interface GridProps {
 interface GridContext {
   vaultPath: string;
   thumbsRootPath?: string;
+  /** Design-variant top inset between the chrome and the first card row. */
+  gridTopInset: number;
   focusedSlug: string | null;
   pinnedActionMenuSlug: string | null;
   selectedSlugs: ReadonlySet<string>;
@@ -573,8 +587,8 @@ const layoutCache = new LayoutCache(10);
 
 // ─── Deterministic layout computation ──────────────────────────────────────
 
-function deriveColumnWidth(parentWidth: number): number {
-  return getMasonryColumnWidth(parentWidth, COLUMN_MIN_WIDTH, GAP);
+function deriveColumnWidth(parentWidth: number, gap: number): number {
+  return getMasonryColumnWidth(parentWidth, COLUMN_MIN_WIDTH, gap);
 }
 
 function scheduleIdleTask(callback: () => void): number {
@@ -598,8 +612,9 @@ function buildLayout(
   blocks: LightBlock[],
   parentWidth: number,
   wordWidthsMap: Map<number, WordWidths>,
+  gap: number,
 ): MasonryLayout {
-  const columnWidth = deriveColumnWidth(parentWidth);
+  const columnWidth = deriveColumnWidth(parentWidth, gap);
 
   const heights = blocks.map((block) => {
     return computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null);
@@ -609,7 +624,7 @@ function buildLayout(
     heights,
     parentWidth,
     COLUMN_MIN_WIDTH,
-    GAP,
+    gap,
   );
 }
 
@@ -646,6 +661,10 @@ export function Grid({
   loadingMoreBlocks = false,
   onLoadMoreBlocks,
 }: GridProps) {
+  const designMode = useDesignMode();
+  const layoutGap = designMode === "alt" ? GAP_ALT : GAP_DEFAULT;
+  const gridXInset = designMode === "alt" ? GRID_X_INSET_ALT : GRID_X_INSET_DEFAULT;
+  const gridTopInset = designMode === "alt" ? GRID_TOP_INSET_ALT : GRID_TOP_INSET_DEFAULT;
   const parentRef = useRef<HTMLDivElement>(null);
   const [parentWidth, setParentWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
@@ -823,15 +842,21 @@ export function Grid({
   // Current column width bucket. Changes when parentWidth crosses a 40px
   // boundary — at that point we may need to measure blocks again at the
   // new column width, since text wraps differently.
-  const bucket = useMemo(() => bucketize(deriveColumnWidth(parentWidth)), [parentWidth]);
+  const bucket = useMemo(
+    () => bucketize(deriveColumnWidth(parentWidth, layoutGap)),
+    [layoutGap, parentWidth],
+  );
   const generationKey = useMemo<LayoutGenerationKey>(
     () => buildLayoutGenerationKey({
       blocks,
       routeKey: currentTag ?? "__all__",
       heightBucket: bucket,
       parentWidth,
+      // The module-level layoutCache must never serve a layout computed with
+      // a different gap (design variants change it).
+      layoutGap,
     }),
-    [blocks, bucket, currentTag, parentWidth],
+    [blocks, bucket, currentTag, layoutGap, parentWidth],
   );
   const heightDriftBlocksById = useMemo(() => {
     const map = new Map<number, LightBlock>();
@@ -921,7 +946,9 @@ export function Grid({
           const debug = window.__MINE_FEED_SCROLL_DEBUG__;
           if (!debug || debug.layoutGenerationKey !== generationKey) return;
 
-          const columnWidth = deriveColumnWidth(driftContext.parentWidth);
+          // generationKey embeds the gap, so a matching driftContext is
+          // guaranteed to have been built with the current layoutGap.
+          const columnWidth = deriveColumnWidth(driftContext.parentWidth, layoutGap);
           const observations: CardHeightDriftObservation[] = [];
           for (const result of measuredResults) {
             const block = driftContext.blocksById.get(result.id);
@@ -967,16 +994,16 @@ export function Grid({
     }
 
     if (!allCurrentGenerationDeterministic) {
-      return buildLayout(blocks, parentWidth, wordWidthsMap);
+      return buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap);
     }
 
     const cached = layoutCache.get(generationKey);
     if (cached) return cached;
 
-    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap);
+    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap);
     layoutCache.set(generationKey, fresh);
     return fresh;
-  }, [allCurrentGenerationDeterministic, blocks, generationKey, parentWidth, wordWidthsMap]);
+  }, [allCurrentGenerationDeterministic, blocks, generationKey, layoutGap, parentWidth, wordWidthsMap]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);
@@ -1124,6 +1151,7 @@ export function Grid({
           currentSlugs,
           latestScrollTopRef.current,
           scrollElement.clientHeight || viewportHeight,
+          gridTopInset,
         );
         if (anchor) {
           pendingScrollAnchorRef.current = { routeKey, anchor };
@@ -1145,6 +1173,7 @@ export function Grid({
             scrollElement.clientHeight || viewportHeight,
             nextPosition,
             pending.anchor,
+            gridTopInset,
           );
           pendingScrollAnchorRef.current = null;
           suppressedFocusedScrollSlugRef.current = focusedSlug;
@@ -1386,7 +1415,7 @@ export function Grid({
         if (suppressedFocusedScrollSlugRef.current === focusedSlug) return;
         suppressedFocusedScrollSlugRef.current = null;
       }
-      scrollPositionIntoView(scrollElement, position);
+      scrollPositionIntoView(scrollElement, position, gridTopInset);
     });
     return () => cancelAnimationFrame(rafId);
   }, [blocks, feedInteractionMode, focusedSlug, layout.positions]);
@@ -1582,6 +1611,7 @@ export function Grid({
             focusedPosition,
             currentScrollTop,
             currentViewportHeight,
+            gridTopInset,
           )
         ) {
           return;
@@ -1685,6 +1715,7 @@ export function Grid({
           currentScrollTop,
           currentViewportHeight,
           renderReadyBlockIds,
+          gridTopInset,
         );
         if (firstSlug) {
           setFocusedSlug(firstSlug);
@@ -1706,6 +1737,7 @@ export function Grid({
           focusedPosition,
           currentScrollTop,
           currentViewportHeight,
+          gridTopInset,
         )
       ) {
         const firstSlug = firstVisibleSlug(
@@ -1714,6 +1746,7 @@ export function Grid({
           currentScrollTop,
           currentViewportHeight,
           renderReadyBlockIds,
+          gridTopInset,
         );
         if (firstSlug) {
           setFocusedSlug(firstSlug);
@@ -1913,6 +1946,7 @@ export function Grid({
     () => ({
       vaultPath,
       thumbsRootPath: resolvedThumbsRootPath,
+      gridTopInset,
       focusedSlug: keyboardFocusedSlug,
       pinnedActionMenuSlug,
       selectedSlugs,
@@ -1940,6 +1974,7 @@ export function Grid({
     [
       vaultPath,
       resolvedThumbsRootPath,
+      gridTopInset,
       keyboardFocusedSlug,
       pinnedActionMenuSlug,
       selectedSlugs,
@@ -1978,8 +2013,8 @@ export function Grid({
           onPointerCancel={finishMarqueeSelection}
           className="h-full overflow-x-hidden overflow-y-auto pb-8"
           style={{
-            paddingLeft: sidebarCollapsed ? 72 : 32,
-            paddingRight: sidebarCollapsed ? 72 : 32,
+            paddingLeft: sidebarCollapsed ? 72 : gridXInset,
+            paddingRight: sidebarCollapsed ? 72 : gridXInset,
             scrollbarGutter: "stable",
             transition: "padding-left 200ms ease, padding-right 200ms ease",
           }}
@@ -2006,7 +2041,7 @@ export function Grid({
           {parentWidth > 0 && heightDriftAuditBatch.length > 0 && (
             <MeasurementPass
               blocks={heightDriftAuditBatch}
-              columnWidth={deriveColumnWidth(parentWidth)}
+              columnWidth={deriveColumnWidth(parentWidth, layoutGap)}
               vaultPath={vaultPath}
               thumbsRootPath={resolvedThumbsRootPath}
               onMeasured={publishHeightDriftReport}
@@ -2077,7 +2112,7 @@ function VirtualMasonryLayout({
   return (
     <div
       className="relative"
-      style={{ height: totalHeight || 1, marginTop: GRID_TOP_INSET_PX }}
+      style={{ height: totalHeight || 1, marginTop: context.gridTopInset }}
       data-grid-layout
     >
       {visibleItems.map((item) => {

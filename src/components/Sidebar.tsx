@@ -573,9 +573,12 @@ export function Sidebar({
         ref={navRef}
         className={cn(
           "relative flex-1 overflow-y-auto",
-          "pt-8",
           "pb-8",
-          compact ? "px-2" : "px-8",
+          // Table insets are design-variant metrics: the alt design pulls the
+          // table flush to the divider and edges, rows get inner padding.
+          compact
+            ? "px-2 pt-8"
+            : "px-[var(--sidebar-nav-pad-x)] pt-[var(--sidebar-nav-pad-top)]",
         )}
         data-sidebar-scroll
         data-sidebar-link-editor-mode={isLinkEditorActive ? "true" : undefined}
@@ -1001,7 +1004,12 @@ function SidebarRowBody({
                 "rounded-1 p-2",
                 "text-muted-foreground",
               )
-            : cn("relative flex items-center py-1 font-sans text-base text-muted-foreground")
+            : cn(
+                "relative flex items-center py-1 font-sans text-base text-muted-foreground",
+                // Inner row padding is a design-variant metric (alt: 16px so
+                // text and count do not touch the divider and screen edge).
+                "pl-[var(--sidebar-row-pad-x)]",
+              )
         }
       >
         <SidebarRowTitleCell compact={compact}>
@@ -1058,7 +1066,7 @@ function SidebarRowBody({
         {!compact && (
           <span
             className={cn(
-              "absolute inset-y-0 right-0 flex w-8 items-center justify-end text-right text-sm font-mono text-muted-foreground",
+              "absolute inset-y-0 right-[var(--sidebar-row-pad-x)] flex w-8 items-center justify-end text-right text-sm font-mono text-muted-foreground",
               "-translate-x-px",
               isLinkEditor
                 ? cn(
@@ -1094,7 +1102,7 @@ function SidebarRowBody({
           className={cn(
             SIDEBAR_ROW_ACTION_BUTTON_CLASS,
             "absolute top-1/2 z-10 w-[10ch] -translate-y-1/2 transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-            "right-0",
+            "right-[var(--sidebar-row-pad-x)]",
             linkEditor.checked
               ? "opacity-100"
               : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
@@ -1144,7 +1152,7 @@ function SidebarEditableRowBody({
               "rounded-1 p-2",
               "text-muted-foreground",
             )
-          : cn("relative flex min-h-10 w-full items-center py-1 font-sans text-base text-muted-foreground")
+          : cn("relative flex min-h-10 w-full items-center py-1 pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground")
       }
       data-sidebar-editable-row-body
       data-sidebar-editable-row-full-width
@@ -1493,7 +1501,7 @@ function SidebarCreateChannelRowBody({
               !isEditing && "group-hover:text-foreground group-focus-within:text-foreground",
             )
           : cn(
-              "relative flex min-h-10 w-full items-center py-1 font-sans text-base text-muted-foreground",
+              "relative flex min-h-10 w-full items-center py-1 pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground",
               !isEditing && "group-hover:text-foreground group-focus-within:text-foreground",
             )
       }

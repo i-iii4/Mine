@@ -168,7 +168,7 @@ function MainSecondaryStatsLeft({
   return (
     <div
       data-main-secondary-stats-left=""
-      className="flex h-full min-w-0 items-center overflow-hidden px-8 font-mono text-sm leading-none text-tertiary-foreground"
+      className="flex h-full min-w-0 items-center overflow-hidden px-[var(--main-secondary-pad-x)] font-mono text-sm leading-none text-tertiary-foreground"
     >
       {stats && (
         <div className="flex min-w-0 items-center gap-5 overflow-hidden whitespace-nowrap">
@@ -197,7 +197,7 @@ function MainSecondaryStatsRight({ stats }: { stats: VaultStats | null }) {
   return (
     <div
       data-main-secondary-stats-right=""
-      className="flex h-full min-w-0 items-center justify-start overflow-hidden px-8 font-mono text-sm leading-none text-tertiary-foreground"
+      className="flex h-full min-w-0 items-center justify-start overflow-hidden px-[var(--main-secondary-pad-x)] font-mono text-sm leading-none text-tertiary-foreground"
     >
       {stats && (
         <span className="truncate whitespace-nowrap" title={cardCount}>
@@ -293,7 +293,7 @@ function MainSecondaryTopBar({
         </div>
         {detailBlock && !sidebarCollapsed && (
           <div
-            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 items-center gap-2 px-8"
+            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 items-center gap-2 px-[var(--main-secondary-pad-x)]"
             data-entered={detailLayerEntered ? "true" : "false"}
             data-secondary-sidebar-link-mode-bar=""
           >
@@ -444,6 +444,11 @@ import { DragCardStackPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
+import {
+  applyDesign,
+  getStoredDesignMode,
+  DESIGN_STORAGE_KEY,
+} from "@/lib/designMode";
 import {
   COMPACT_DETAIL_TOP_MENU_STORAGE_KEY,
   getStoredCompactDetailTopMenu,
@@ -1715,6 +1720,8 @@ export function AppWithVault({
       const { key } = event.payload;
       if (key === THEME_STORAGE_KEY) {
         applyTheme(getStoredTheme());
+      } else if (key === DESIGN_STORAGE_KEY) {
+        applyDesign(getStoredDesignMode());
       } else if (key === COMPACT_DETAIL_TOP_MENU_STORAGE_KEY) {
         setCompactDetailTopMenuEnabled(getStoredCompactDetailTopMenu());
       } else if (key === BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY) {
@@ -2943,16 +2950,6 @@ export function AppWithVault({
             onNavigate={handleTopCollectionNavigate}
             onCreateCollection={handleTopCollectionCreate}
           />
-          {bottomActionBarHidden && (
-            <div
-              className="mr-2 shrink-0"
-              data-top-chrome-settings-fallback=""
-            >
-              <ActionButton hotkey="⌘," onClick={handleOpenSettings}>
-                Settings
-              </ActionButton>
-            </div>
-          )}
           {compactDetailTopMenuActive && renderedDetailBlock ? (
             <CompactDetailTopMenu
               block={renderedDetailBlock}
@@ -2970,6 +2967,18 @@ export function AppWithVault({
             />
           ) : (
             <div data-tauri-drag-region className="h-full min-w-0 flex-1" />
+          )}
+          {bottomActionBarHidden && (
+            <div
+              // Right-edge inset follows the app-wide 32px edge rhythm (the
+              // bottom action bar's px-8, the grid's side insets).
+              className="ml-2 mr-8 shrink-0"
+              data-top-chrome-settings-fallback=""
+            >
+              <ActionButton hotkey="⌘," onClick={handleOpenSettings}>
+                Settings
+              </ActionButton>
+            </div>
           )}
         </div>
       </header>

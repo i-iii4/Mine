@@ -753,6 +753,29 @@ body {
   --glass-border: oklch(0 0 0 / 8%);
 }
 
+/* ── Design variants: layout metrics ──────────────────────────────────────────
+   The alternative design ("Alt" in Theme, root attribute data-design="alt")
+   changes layout metrics only — colors follow the system scheme. Defaults
+   reproduce the primary design; the alt block overrides them. JS-computed
+   layout (masonry grid) reads the same attribute via src/lib/designMode.ts. */
+:root {
+  --sidebar-nav-pad-x: 32px;   /* sidebar table inset from panel edges */
+  --sidebar-nav-pad-top: 32px; /* sidebar table inset from the top chrome */
+  --sidebar-row-pad-x: 0px;    /* inner row padding: text left / count right */
+  /* top chrome: collection switcher trigger padding; its label text lands at
+     this value + the 8px inner pill padding (default 24+8 = 32 = card edge) */
+  --top-collection-pad-x: 24px;
+  /* second chrome row: vault meta (left) and collection count (right) */
+  --main-secondary-pad-x: 32px;
+}
+:root[data-design="alt"] {
+  --sidebar-nav-pad-x: 0px;
+  --sidebar-nav-pad-top: 0px;
+  --sidebar-row-pad-x: 16px;
+  --top-collection-pad-x: 8px;  /* 8 + 8 inner = 16, flush with alt cards */
+  --main-secondary-pad-x: 16px;
+}
+
 /* ── Relative elevation (color architecture, category 3) ─────────────────────
    A button is a surface lifted a consistent ΔL above the background of its zone,
    not an absolute fill. Each zone exposes its own background through --surface;

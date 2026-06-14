@@ -254,7 +254,9 @@ export function TopCollectionSwitcher({
             {...topChromeTrigger.triggerProps}
             className={cn(
               "max-w-[50%]",
-              compact ? "px-3" : "px-6",
+              // Label text = this padding + 8px inner pill padding; the alt
+              // design keeps it flush with the grid's card edge (16px).
+              compact ? "px-3" : "px-[var(--top-collection-pad-x)]",
             )}
           />
         </DropdownMenuTrigger>

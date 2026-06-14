@@ -9,6 +9,12 @@ import {
   type ThemeMode,
 } from "@/lib/themeMode";
 import {
+  applyDesign,
+  getStoredDesignMode,
+  DESIGN_STORAGE_KEY,
+  type DesignMode,
+} from "@/lib/designMode";
+import {
   COMPACT_DETAIL_TOP_MENU_STORAGE_KEY,
   getStoredCompactDetailTopMenu,
 } from "@/lib/compactDetailTopMenuVisibility";
@@ -25,6 +31,12 @@ const THEME_OPTIONS = [
   { value: "system", label: "System" },
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
+] as const;
+
+// Layout axis, orthogonal to the color theme: any theme + either design.
+const DESIGN_OPTIONS = [
+  { value: "default", label: "Default" },
+  { value: "alt", label: "Alt" },
 ] as const;
 
 // Broadcast a settings change to every window (the main window re-reads the
@@ -57,6 +69,7 @@ function SettingRow({ label, caption, children }: SettingRowProps) {
 
 export function AppearanceSection() {
   const [theme, setTheme] = useState<ThemeMode>(getStoredTheme);
+  const [design, setDesign] = useState<DesignMode>(getStoredDesignMode);
   const [compactDetailTopMenu, setCompactDetailTopMenu] = useState(
     getStoredCompactDetailTopMenu,
   );
@@ -68,6 +81,12 @@ export function AppearanceSection() {
     setTheme(mode);
     applyTheme(mode);
     broadcastSettingsChange(THEME_STORAGE_KEY);
+  };
+
+  const handleDesignChange = (mode: DesignMode) => {
+    setDesign(mode);
+    applyDesign(mode);
+    broadcastSettingsChange(DESIGN_STORAGE_KEY);
   };
 
   const handleCompactChange = (checked: boolean) => {
@@ -93,6 +112,19 @@ export function AppearanceSection() {
           value={theme}
           options={THEME_OPTIONS}
           onChange={handleThemeChange}
+        />
+      </SettingRow>
+
+      <SettingRow
+        label="Design"
+        caption="Experimental layout variant — combines with any theme"
+      >
+        <SegmentedControl
+          aria-label="Design"
+          size="default"
+          value={design}
+          options={DESIGN_OPTIONS}
+          onChange={handleDesignChange}
         />
       </SettingRow>
 

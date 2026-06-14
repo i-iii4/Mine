@@ -542,7 +542,7 @@ describe("Sidebar", () => {
     expect(alphaAction).toHaveTextContent("Connected");
     expect(alphaAction).toHaveClass("w-[10ch]");
     expect(alphaAction).toHaveClass("absolute");
-    expect(alphaAction).toHaveClass("right-0");
+    expect(alphaAction).toHaveClass("right-[var(--sidebar-row-pad-x)]");
     expect(alphaAction.closest("a")).toBeNull();
     expect(screen.getByText("5")).not.toHaveClass("opacity-0");
     expect(betaAction).toHaveClass("opacity-0");
