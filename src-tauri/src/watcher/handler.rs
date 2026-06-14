@@ -343,29 +343,44 @@ pub fn thumb_sweep(
     let indexed = index::list_blocks(conn).context("thumb_sweep: failed to list blocks")?;
 
     let mut jobs: Vec<ThumbJob> = Vec::with_capacity(indexed.len());
+    let mut orphans_removed = 0usize;
     for row in indexed {
-        // Defensive: a row with a slug that cannot form a valid block
-        // path (empty, path traversal, separator) would panic
-        // `block_path`'s debug_assert. Such rows should not exist in
-        // steady state but can survive legacy imports or a partially
-        // rolled-back migration. Skip them instead of tanking the sweep.
+        // A row with a slug that cannot form a valid block path (empty, path
+        // traversal, separator) is unreachable from the UI and a stale
+        // artifact — legacy import, partial migration, or a deleted `.md`
+        // whose slug never validated. Remove it so it stops resurfacing every
+        // sweep instead of just being skipped.
         if crate::domain::vault::validate_slug(&row.slug).is_err() {
-            log::warn!(
-                "thumb_sweep: skipping block with invalid slug {:?}",
+            log::info!("thumb_sweep: removing invalid-slug block {:?}", row.slug);
+            let _ = index::remove_block(conn, &row.slug);
+            orphans_removed += 1;
+            continue;
+        }
+        let source_path = vault.block_path(&row.slug);
+        if !source_path.exists() {
+            // Orphan: the `.md` is gone (e.g. an iCloud delete event the notify
+            // watcher never received). full_scan reconciles these on vault
+            // open; do it here too so the sweep stops regenerating a thumb for
+            // a block that no longer exists on disk.
+            log::info!(
+                "thumb_sweep: removing orphan block {:?} (no .md on disk)",
                 row.slug
             );
+            let _ = index::remove_block(conn, &row.slug);
+            let _ = std::fs::remove_file(vault.thumb_path(&row.slug));
+            orphans_removed += 1;
             continue;
         }
         match row.to_domain_block() {
-            Ok(block) => {
-                let source_path = vault.block_path(&block.slug);
-                jobs.push(ThumbJob { block, source_path });
-            }
+            Ok(block) => jobs.push(ThumbJob { block, source_path }),
             Err(e) => log::warn!(
                 "thumb_sweep: failed to project block {} from DB: {e}",
                 row.slug
             ),
         }
+    }
+    if orphans_removed > 0 {
+        log::info!("thumb_sweep: removed {orphans_removed} orphan/invalid block(s)");
     }
 
     let count = jobs.len();
@@ -1308,6 +1323,33 @@ mod tests {
 
         let blocks = index::list_blocks(&conn).unwrap();
         assert_eq!(blocks.len(), 3);
+    }
+
+    #[test]
+    fn thumb_sweep_removes_orphan_block_whose_md_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
+        let conn = test_conn();
+
+        write_md_file(&vault, "keep", "article", &[]);
+        write_md_file(&vault, "gone", "article", &[]);
+        full_scan(&conn, &vault, None, None).unwrap();
+        assert_eq!(index::list_blocks(&conn).unwrap().len(), 2);
+
+        // Delete one .md while it is still indexed (an iCloud delete event the
+        // notify watcher never received leaves exactly this orphan row).
+        std::fs::remove_file(vault.block_path("gone")).unwrap();
+
+        thumb_sweep(&conn, &vault, None, None).unwrap();
+
+        let slugs: Vec<String> = index::list_blocks(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|b| b.slug)
+            .collect();
+        assert!(slugs.contains(&"keep".to_string()));
+        assert!(!slugs.contains(&"gone".to_string()), "orphan should be removed");
     }
 
     #[test]

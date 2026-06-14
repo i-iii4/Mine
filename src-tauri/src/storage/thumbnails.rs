@@ -236,6 +236,17 @@ fn preview_dependency_paths(block: &Block, vault: &VaultLayout) -> Vec<std::path
     Vec::new()
 }
 
+/// True when `generate_for_block` could produce something for this block: it
+/// has a media file, a poster, a title, or non-empty body to bake into a text
+/// thumb. A block with none of these (an empty `.md`) produces no thumb at
+/// all, so there is nothing to draw, ever.
+fn block_has_renderable_source(block: &Block) -> bool {
+    block.frontmatter.file.is_some()
+        || block.frontmatter.thumbnail.is_some()
+        || block.frontmatter.title.is_some()
+        || !block.body.trim().is_empty()
+}
+
 /// Returns `true` if the thumbnail at `thumb_path` is still usable for
 /// `block`. False means the thumb must be regenerated.
 ///
@@ -256,6 +267,13 @@ pub fn is_thumb_fresh(
     block: &Block,
     vault: &VaultLayout,
 ) -> bool {
+    // A block with no renderable source can never produce a thumb, so treat it
+    // as fresh — otherwise the sweep loops forever on it: thumb missing →
+    // regenerate → ThumbSource::None → still missing → regenerate → … An empty
+    // `.md` file is the canonical trigger for this.
+    if !block_has_renderable_source(block) {
+        return true;
+    }
     let Ok(thumb_meta) = std::fs::metadata(thumb_path) else {
         log::debug!("is_thumb_fresh({}): thumb missing", block.slug);
         return false;
@@ -1208,6 +1226,45 @@ mod tests {
         assert!(dest.exists());
         assert_eq!(w, 480);
         assert_eq!(h, 480);
+    }
+
+    #[test]
+    fn is_thumb_fresh_true_for_contentless_block_avoids_regenerate_loop() {
+        use crate::domain::block::{DateTime, Frontmatter};
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        // Empty `.md`: no media, no title, empty body → ThumbSource::None.
+        // Without the freshness guard this loops forever: missing thumb →
+        // regenerate → None → still missing → regenerate → …
+        let block = Block {
+            slug: "ghost".to_string(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Article,
+                title: None,
+                description: None,
+                url: None,
+                file: None,
+                thumbnail: None,
+                tags: vec![],
+                related_notes: Vec::new(),
+                source_media: None,
+                saved_at: DateTime::new("2026-01-15T12:00:00Z").unwrap(),
+                source: None,
+                width: None,
+                height: None,
+                author: None,
+                position: None,
+                color: None,
+                icon: None,
+            },
+            body: String::new(),
+        };
+        assert!(is_thumb_fresh(
+            &vault.thumb_path("ghost"),
+            &vault.block_path("ghost"),
+            &block,
+            &vault,
+        ));
     }
 
     #[test]
