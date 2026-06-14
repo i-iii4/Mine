@@ -133,6 +133,19 @@ impl VaultLayout {
         self.thumbs_dir().join(format!("{}.jpg", slug))
     }
 
+    /// Path to a per-media tile poster in the local derived store:
+    /// `<derived_root>/cache/thumbs/<media-stem>.jpg`.
+    ///
+    /// Unlike `thumb_path`, the key is a media filename (spaces, parens,
+    /// `(video 1)` suffixes), not a block slug, so no slug validation applies.
+    /// Used for gallery video tiles where each video needs its own frame,
+    /// distinct from the block's representative `<slug>.jpg`.
+    pub fn media_thumb_path(&self, media_name: &str) -> PathBuf {
+        // Drop the media extension; keep the rest verbatim (spaces, parens).
+        let stem = media_name.rsplit_once('.').map_or(media_name, |(stem, _)| stem);
+        self.thumbs_dir().join(format!("{stem}.jpg"))
+    }
+
     /// Path to an article-audio sidecar JSON in the local derived store:
     /// `<derived_root>/cache/audio/<slug>.json`.
     pub fn article_audio_state_path(&self, slug: &str) -> PathBuf {
@@ -466,6 +479,14 @@ mod tests {
         assert_eq!(
             layout().legacy_thumbs_dir(),
             PathBuf::from("/vault/.arena/cache/thumbs")
+        );
+    }
+
+    #[test]
+    fn media_thumb_path_uses_media_stem() {
+        assert_eq!(
+            layout().media_thumb_path("clip (video 1).mp4"),
+            PathBuf::from("/vault/.arena/cache/thumbs/clip (video 1).jpg")
         );
     }
 

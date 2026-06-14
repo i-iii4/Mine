@@ -28,6 +28,15 @@ pub fn primary_preview_path(slug: &str) -> String {
     format!("{slug}.jpg")
 }
 
+/// Preview-path value for a per-media tile poster: the media filename with its
+/// extension swapped for `.jpg`. Mirrors `Vault::media_thumb_path`; the value
+/// goes into `FeedPreviewTile.preview_path` and is resolved on the frontend
+/// via `previewAssetUrl(thumbsRoot, value)`.
+pub fn media_poster_path(media_name: &str) -> String {
+    let stem = media_name.rsplit_once('.').map_or(media_name, |(stem, _)| stem);
+    format!("{stem}.jpg")
+}
+
 pub fn is_article_card(block: &Block) -> bool {
     derive_card_kind(block) == CardKind::Article
 }
@@ -232,6 +241,43 @@ pub fn collect_article_preview_images(
     paths
 }
 
+/// Resolve the body videos that occupy a visible gallery tile and therefore
+/// need their own poster frame, as `(source, path)` pairs in document order.
+///
+/// Mirrors the manifest tile window — the first `PREVIEW_TILE_LIMIT` media
+/// items (images and videos alike each consume a slot) — so the generated
+/// posters line up 1:1 with the tiles the card renders. A video file cannot be
+/// drawn into an `<img>`, so each such tile needs a `<media-stem>.jpg` poster,
+/// distinct from the block's representative `<slug>.jpg`.
+pub fn collect_gallery_video_posters(
+    block: &Block,
+    vault: &VaultLayout,
+) -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    let mut tile_count = 0usize;
+    for reference in iter_inline_media_references(&block.body) {
+        if tile_count >= PREVIEW_TILE_LIMIT {
+            break;
+        }
+        if reference.source.is_empty() || is_remote_media(&reference.source) {
+            continue;
+        }
+        let ext = media_ext_lower(&reference.source).unwrap_or_default();
+        let is_image = is_image_ext(&ext);
+        let is_video = is_video_ext(&ext);
+        if !is_image && !is_video {
+            continue;
+        }
+        tile_count += 1;
+        if is_video {
+            if let Some(path) = media_refs::resolve_inline_media(vault, &block.slug, &reference) {
+                out.push((reference.source, path));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +285,15 @@ mod tests {
     #[test]
     fn primary_preview_path_is_slug_jpg() {
         assert_eq!(primary_preview_path("Sunset Tokyo"), "Sunset Tokyo.jpg");
+    }
+
+    #[test]
+    fn media_poster_path_swaps_extension_for_jpg() {
+        assert_eq!(media_poster_path("clip (video 1).mp4"), "clip (video 1).jpg");
+        // Only the final extension is replaced.
+        assert_eq!(media_poster_path("a.b.mov"), "a.b.jpg");
+        // No extension → append .jpg.
+        assert_eq!(media_poster_path("noext"), "noext.jpg");
     }
 
     #[test]

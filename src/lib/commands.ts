@@ -314,14 +314,29 @@ export const importArenaChannels = (channels: ImportChannelRequest[]) =>
   invoke<ImportChannelResult[]>("import_arena_channels", { channels });
 
 // Thumbnails (Phase 2 pipeline — see SPEC_THUMBNAILS.md)
+export interface TilePosterUpgrade {
+  /** Destination poster filename (`<media-stem>.jpg`) = the tile's previewPath. */
+  posterName: string;
+  mediaPath: string;
+  kind: "video";
+}
+
 export interface ThumbUpgradeRequest {
   slug: string;
+  /** Empty when only tile posters are missing (block thumb already a JPEG). */
   mediaPath: string;
   kind: "image" | "video";
+  /** Per-video gallery tile posters to generate for this block. */
+  tilePosters: TilePosterUpgrade[];
 }
 
 export const saveThumb = (slug: string, bytes: Uint8Array) =>
   invoke<void>("save_thumb", { slug, bytes: Array.from(bytes) });
+
+/** Write a decoded JPEG poster for one gallery video tile. `posterName` is the
+ *  tile's previewPath (`<media-stem>.jpg`); `slug` owns the card to refresh. */
+export const saveTilePoster = (posterName: string, slug: string, bytes: Uint8Array) =>
+  invoke<void>("save_tile_poster", { posterName, slug, bytes: Array.from(bytes) });
 
 /** Re-verify the thumb cache against current media dependencies.
  *  Fire on window focus / visibility changes so that external edits

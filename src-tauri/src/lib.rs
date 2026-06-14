@@ -78,6 +78,7 @@ pub fn run() {
             commands::import::list_arena_channels,
             commands::import::import_arena_channels,
             commands::thumbnails::save_thumb,
+            commands::thumbnails::save_tile_poster,
             commands::thumbnails::list_pending_thumb_upgrades,
             commands::clipper_recovery::list_clipper_recovery_items,
             commands::clipper_recovery::recover_clipper_pending_upload,

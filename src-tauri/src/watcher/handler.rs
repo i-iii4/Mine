@@ -60,6 +60,17 @@ struct ThumbUpgradeRequestedPayload {
     #[serde(rename = "mediaPath")]
     media_path: String,
     kind: String,
+    #[serde(rename = "tilePosters")]
+    tile_posters: Vec<TilePosterUpgradePayload>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TilePosterUpgradePayload {
+    #[serde(rename = "posterName")]
+    poster_name: String,
+    #[serde(rename = "mediaPath")]
+    media_path: String,
+    kind: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -631,21 +642,64 @@ fn emit_thumb_events(
         },
     );
 
-    // Only text placeholders trigger upgrade requests. Real JPEG thumbs
-    // from Rust decode are already the final result.
-    if source != thumbnails::ThumbSource::Text {
+    // Per-video gallery tile posters are independent of the block thumb: a
+    // block can have a real <slug>.jpg yet still need its tile posters.
+    let tile_posters = resolve_tile_posters_for_block(vault, block);
+
+    // Block <slug>.jpg upgrade — only when Phase 1 wrote a text placeholder.
+    // A real JPEG thumb from Rust decode is already the final result.
+    let slug_upgrade = if source == thumbnails::ThumbSource::Text {
+        resolve_upgrade_media_for_block(vault, block)
+    } else {
+        None
+    };
+
+    if slug_upgrade.is_none() && tile_posters.is_empty() {
         return;
     }
-    if let Some((media_path, kind)) = resolve_upgrade_media_for_block(vault, block) {
-        let _ = app.emit(
-            "thumb:upgrade-requested",
-            ThumbUpgradeRequestedPayload {
-                slug: block.slug.clone(),
-                media_path: media_path.to_string_lossy().into_owned(),
-                kind: kind.into(),
-            },
-        );
+
+    let (media_path, kind) = slug_upgrade
+        .map(|(path, kind)| (path.to_string_lossy().into_owned(), kind.to_string()))
+        .unwrap_or_default();
+    let _ = app.emit(
+        "thumb:upgrade-requested",
+        ThumbUpgradeRequestedPayload {
+            slug: block.slug.clone(),
+            media_path,
+            kind,
+            tile_posters,
+        },
+    );
+}
+
+/// Resolve per-video gallery tile posters still missing for `block`, mirroring
+/// `commands::thumbnails::resolve_tile_posters` but from a full `Block`. For
+/// each gallery video tile whose `<media-stem>.jpg` poster is not yet a real
+/// JPEG, return the destination poster name and resolved source video path for
+/// the browser to decode.
+fn resolve_tile_posters_for_block(
+    vault: &VaultLayout,
+    block: &Block,
+) -> Vec<TilePosterUpgradePayload> {
+    let mut out = Vec::new();
+    for (source, media_path) in
+        crate::storage::preview_plan::collect_gallery_video_posters(block, vault)
+    {
+        let poster_name = crate::storage::preview_plan::media_poster_path(&source);
+        let poster_path = vault.thumbs_dir().join(&poster_name);
+        if matches!(
+            thumbnails::thumb_disk_state(&poster_path),
+            thumbnails::ThumbDiskState::Jpeg
+        ) {
+            continue;
+        }
+        out.push(TilePosterUpgradePayload {
+            poster_name,
+            media_path: media_path.to_string_lossy().into_owned(),
+            kind: "video".into(),
+        });
     }
+    out
 }
 
 /// Mirror of `commands::thumbnails::resolve_upgrade_media` but working

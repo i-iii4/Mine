@@ -665,6 +665,38 @@ describe("Card", () => {
     expect(screen.queryByText("+2")).not.toBeInTheDocument();
   });
 
+  it("renders video gallery tiles from per-video posters, not one shared block thumbnail", () => {
+    // Regression: each gallery video tile must show its OWN generated poster
+    // (preview_path = <video-stem>.jpg). A video cannot be drawn into an <img>,
+    // so without per-tile posters every tile falls back to the single
+    // <slug>.jpg and repeats the same frame.
+    const b = block({
+      block_type: "article",
+      url: "https://www.instagram.com/p/X/",
+      author: "@a",
+      body: "![[clip (video 1).mp4]]\n![[clip (video 2).mp4]]",
+      media_urls: "[\"clip (video 1).mp4\",\"clip (video 2).mp4\"]",
+      preview_manifest: JSON.stringify({
+        kind: "composite",
+        primary_preview_path: "test-block.jpg",
+        width: 1,
+        height: 1,
+        tiles: [
+          { source_path: "clip (video 1).mp4", preview_path: "clip (video 1).jpg", width: 860, height: 720, is_video: true, is_video_poster: false },
+          { source_path: "clip (video 2).mp4", preview_path: "clip (video 2).jpg", width: 860, height: 720, is_video: true, is_video_poster: false },
+        ],
+        overflow_count: 0,
+      }),
+    });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const srcs = Array.from(container.querySelectorAll("img")).map((img) => img.getAttribute("src") ?? "");
+    expect(srcs.length).toBeGreaterThanOrEqual(2);
+    // Distinct posters, not the same image repeated, and not the shared thumb.
+    expect(srcs[0]).not.toEqual(srcs[1]);
+    expect(srcs.some((s) => s.includes("video"))).toBe(true);
+    expect(srcs.every((s) => !s.includes("test-block"))).toBe(true);
+  });
+
   it("renders legacy article multi-image previews from source images when preview_manifest is missing", () => {
     const b = block({
       block_type: "article",
@@ -958,7 +990,7 @@ describe("Card", () => {
     expect(container.querySelector("svg path[d]")).toBeNull();
   });
 
-  it("keeps gallery video tiles preview-only and uses block poster fallback", () => {
+  it("renders gallery tiles preview-only: video tile uses its own poster, image tile its source", () => {
     const b = block({
       block_type: "article",
       title: "Mixed Gallery",
@@ -980,7 +1012,10 @@ describe("Card", () => {
     expect(container.querySelector("video")).toBeNull();
     const images = Array.from(container.querySelectorAll("img"));
     expect(images).toHaveLength(2);
-    expect(images[0]?.getAttribute("src")).toContain("/test-block.jpg");
+    // Video tile shows its own generated poster, not the shared block thumbnail.
+    expect(images[0]?.getAttribute("src")).toContain("clip.jpg");
+    expect(images[0]?.getAttribute("src")).not.toContain("test-block");
+    // Image tile renders its real source directly.
     expect(images[1]?.getAttribute("src")).toContain("/still.jpg");
   });
 

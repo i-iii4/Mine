@@ -26,7 +26,7 @@ use crate::storage::media_dimensions::{
 use crate::storage::media_refs;
 use crate::storage::preview_plan::{
     is_image_media, is_remote_media, is_video_media, local_media_items, media_ext_lower,
-    primary_preview_path, PREVIEW_TILE_LIMIT,
+    media_poster_path, primary_preview_path, PREVIEW_TILE_LIMIT,
 };
 use crate::storage::search_engine;
 
@@ -186,6 +186,9 @@ pub struct PendingThumbUpgradeBlock {
     pub thumbnail: Option<String>,
     pub first_image: Option<String>,
     pub media_urls: Option<String>,
+    /// Serialized feed preview manifest — its video tiles drive per-video
+    /// gallery poster upgrades (each video tile's `preview_path` poster).
+    pub preview_manifest: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,7 +402,10 @@ fn media_tile(
     let dims_entry = dims.get(src).copied();
     FeedPreviewTile {
         source_path: src.to_string(),
-        preview_path: None,
+        // Video tiles point at their own generated poster frame (a video file
+        // cannot be drawn into an <img>); image tiles render the real source
+        // directly on the frontend, so they carry no preview path.
+        preview_path: is_video.then(|| media_poster_path(src)),
         width: dims_entry.map(|[w, _]| w),
         height: dims_entry.map(|[_, h]| h),
         is_video,
@@ -2137,7 +2143,7 @@ pub fn list_pending_thumb_upgrade_blocks(
     conn: &Connection,
 ) -> Result<Vec<PendingThumbUpgradeBlock>> {
     let mut stmt = conn.prepare(
-        "SELECT slug, media_file, thumbnail, first_image, media_urls
+        "SELECT slug, media_file, thumbnail, first_image, media_urls, preview_manifest
          FROM blocks
          WHERE slug != ''
            AND card_kind != 'channel'
@@ -2152,6 +2158,7 @@ pub fn list_pending_thumb_upgrade_blocks(
                 thumbnail: row.get(2)?,
                 first_image: row.get(3)?,
                 media_urls: row.get(4)?,
+                preview_manifest: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -3527,7 +3534,35 @@ mod tests {
         assert_eq!(manifest.tiles.len(), 1);
         assert!(manifest.tiles[0].is_video);
         assert!(manifest.tiles[0].is_video_poster);
-        assert_eq!(manifest.tiles[0].preview_path, None);
+        // Video tiles carry their own per-video poster path (a video cannot be
+        // drawn into an <img>); the poster is generated as `<media-stem>.jpg`.
+        assert_eq!(manifest.tiles[0].preview_path.as_deref(), Some("clip.jpg"));
+    }
+
+    #[test]
+    fn social_gallery_assigns_poster_path_to_video_tiles_only() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "ig-mixed",
+            "article",
+            Some("Mixed"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "![](one.mp4)\n![](two.jpg)\n![](three.mp4)",
+        );
+        block.frontmatter.url = Some("https://www.instagram.com/p/X/".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+
+        let light = list_blocks_light(&conn).unwrap();
+        let manifest: FeedPreviewManifest =
+            serde_json::from_str(light[0].preview_manifest.as_deref().unwrap()).unwrap();
+        assert_eq!(manifest.kind, FeedPreviewKind::Composite);
+        assert_eq!(manifest.tiles.len(), 3);
+        // Each video tile gets its own poster; the image tile has none and
+        // renders its real source on the frontend.
+        assert_eq!(manifest.tiles[0].preview_path.as_deref(), Some("one.jpg"));
+        assert_eq!(manifest.tiles[1].preview_path, None);
+        assert_eq!(manifest.tiles[2].preview_path.as_deref(), Some("three.jpg"));
     }
 
     #[test]
@@ -3645,7 +3680,8 @@ mod tests {
             serde_json::from_str(light[0].preview_manifest.as_deref().unwrap()).unwrap();
         assert_eq!(manifest.tiles.len(), 2);
         assert!(manifest.tiles[0].is_video);
-        assert_eq!(manifest.tiles[0].preview_path, None);
+        // Video tile carries its own per-video poster path.
+        assert_eq!(manifest.tiles[0].preview_path.as_deref(), Some("clip.jpg"));
         assert_eq!(light[0].feed_playback, None);
     }
 

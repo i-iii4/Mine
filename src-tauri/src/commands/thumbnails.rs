@@ -32,6 +32,27 @@ pub struct ThumbUpgradeRequest {
     /// `"image"` or `"video"` — tells the worker which decoder branch to
     /// use (`createImageBitmap` vs `<video>` frame capture).
     pub kind: String,
+    /// Per-video gallery tile posters to (re)generate for this block, batched
+    /// into the block's request so one upgrade pass decodes every video the
+    /// card needs. Empty for non-gallery blocks. Each is decoded by the
+    /// browser and saved via `save_tile_poster`. Note `slug`/`media_path`
+    /// above may be empty when only tile posters are missing (the block thumb
+    /// is already a real JPEG) — the frontend skips an empty `media_path`.
+    #[serde(rename = "tilePosters")]
+    pub tile_posters: Vec<TilePosterUpgrade>,
+}
+
+/// One per-video gallery tile poster to generate via the browser.
+#[derive(Debug, Clone, Serialize)]
+pub struct TilePosterUpgrade {
+    /// Destination poster filename (`<media-stem>.jpg`) — the exact value
+    /// carried in the tile's `preview_path`. Saved via `save_tile_poster`.
+    #[serde(rename = "posterName")]
+    pub poster_name: String,
+    #[serde(rename = "mediaPath")]
+    pub media_path: String,
+    /// Always `"video"` today (image tiles render their source directly).
+    pub kind: String,
 }
 
 // ─── Commands ───────────────────────────────────────────────────────────────
@@ -129,6 +150,83 @@ struct ThumbUpdatedPayload {
     is_text: bool,
 }
 
+/// Write a decoded JPEG poster for a single gallery video tile into the vault
+/// cache. `poster_name` is the tile's `preview_path` value (`<media-stem>.jpg`)
+/// — a media filename, not a block slug, so it is validated as a plain
+/// filename rather than via `validate_slug`. `slug` is the owning block, used
+/// only to emit `thumb:updated` so its card refreshes the tile.
+#[tauri::command]
+pub fn save_tile_poster(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    poster_name: String,
+    slug: String,
+    bytes: Vec<u8>,
+) -> Result<(), CommandError> {
+    validate_tile_poster_request(&poster_name, &bytes)?;
+
+    let thumbs_dir = {
+        let vault_state = state
+            .vault_state
+            .lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        vault_state
+            .as_ref()
+            .ok_or(CommandError::NoVault)?
+            .vault
+            .thumbs_dir()
+    };
+
+    std::fs::create_dir_all(&thumbs_dir)
+        .map_err(|e| CommandError::Internal(format!("create thumbs dir: {e}")))?;
+    let dest = thumbs_dir.join(&poster_name);
+
+    // Atomic write: same-directory temp file then rename.
+    let tmp_path = dest.with_extension("jpg.tmp");
+    {
+        let mut f = std::fs::File::create(&tmp_path)
+            .map_err(|e| CommandError::Internal(format!("create tmp tile poster: {e}")))?;
+        f.write_all(&bytes)
+            .map_err(|e| CommandError::Internal(format!("write tmp tile poster: {e}")))?;
+        f.sync_all()
+            .map_err(|e| CommandError::Internal(format!("sync tmp tile poster: {e}")))?;
+    }
+    std::fs::rename(&tmp_path, &dest)
+        .map_err(|e| CommandError::Internal(format!("rename tmp tile poster: {e}")))?;
+
+    // The tile lives inside the block's card; refresh it.
+    let _ = app.emit(
+        "thumb:updated",
+        ThumbUpdatedPayload {
+            slug,
+            is_text: false,
+        },
+    );
+    Ok(())
+}
+
+fn validate_tile_poster_request(poster_name: &str, bytes: &[u8]) -> Result<(), CommandError> {
+    // poster_name is a media-derived filename (spaces and parens allowed), not
+    // a slug. Reject path separators, traversal, NUL, and non-`.jpg` names.
+    if poster_name.is_empty()
+        || poster_name.contains('/')
+        || poster_name.contains('\\')
+        || poster_name.contains('\0')
+        || poster_name.contains("..")
+        || !poster_name.ends_with(".jpg")
+    {
+        return Err(CommandError::Internal(format!(
+            "save_tile_poster: unsafe poster name {poster_name:?}"
+        )));
+    }
+    if bytes.len() < 3 || bytes[0] != 0xFF || bytes[1] != 0xD8 || bytes[2] != 0xFF {
+        return Err(CommandError::Internal(
+            "save_tile_poster: bytes are not a JPEG (missing FF D8 FF magic)".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Enumerate every indexed block whose current on-disk thumb is missing or
 /// is not a real JPEG, and which references media the browser can decode.
 /// Returned list is what the frontend feeds into the worker queue at startup
@@ -167,16 +265,28 @@ pub async fn list_pending_thumb_upgrades(
 
             let mut out: Vec<ThumbUpgradeRequest> = Vec::new();
             for block in &blocks {
-                if let Some((media_path, kind)) = resolve_upgrade_media(&vault, block) {
-                    if !needs_browser_thumb_upgrade(&vault, block) {
-                        continue;
-                    }
-                    out.push(ThumbUpgradeRequest {
-                        slug: block.slug.clone(),
-                        media_path: media_path.to_string_lossy().into_owned(),
-                        kind: kind.into(),
-                    });
+                // Block <slug>.jpg upgrade — only when the current thumb is not
+                // already a real JPEG.
+                let slug_upgrade = resolve_upgrade_media(&vault, block)
+                    .filter(|_| needs_browser_thumb_upgrade(&vault, block));
+                // Per-video gallery tile posters that are still missing. These
+                // are independent of the block thumb: a block can have a real
+                // <slug>.jpg yet still be missing its tile posters.
+                let tile_posters = resolve_tile_posters(&vault, block);
+
+                if slug_upgrade.is_none() && tile_posters.is_empty() {
+                    continue;
                 }
+
+                let (media_path, kind) = slug_upgrade
+                    .map(|(path, kind)| (path.to_string_lossy().into_owned(), kind.to_string()))
+                    .unwrap_or_default();
+                out.push(ThumbUpgradeRequest {
+                    slug: block.slug.clone(),
+                    media_path,
+                    kind,
+                    tile_posters,
+                });
             }
 
             log::info!("list_pending_thumb_upgrades: {} block(s) queued", out.len());
@@ -266,6 +376,49 @@ fn resolve_upgrade_media(
     None
 }
 
+/// Resolve per-video gallery tile posters still missing for `block`. For each
+/// video tile in the block's preview manifest whose `<media-stem>.jpg` poster
+/// is not yet a real JPEG, return the destination poster name and the resolved
+/// source video path for the browser to decode. Image tiles are skipped — they
+/// render their real source directly.
+fn resolve_tile_posters(
+    vault: &crate::domain::vault::VaultLayout,
+    block: &index::PendingThumbUpgradeBlock,
+) -> Vec<TilePosterUpgrade> {
+    let Some(ref manifest_json) = block.preview_manifest else {
+        return Vec::new();
+    };
+    let Ok(manifest) = serde_json::from_str::<index::FeedPreviewManifest>(manifest_json) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for tile in &manifest.tiles {
+        if !tile.is_video {
+            continue;
+        }
+        let Some(ref poster_name) = tile.preview_path else {
+            continue;
+        };
+        // Skip posters already on disk as a real JPEG.
+        let poster_path = vault.thumbs_dir().join(poster_name);
+        if matches!(
+            thumbnails::thumb_disk_state(&poster_path),
+            thumbnails::ThumbDiskState::Jpeg
+        ) {
+            continue;
+        }
+        if let Some(media_path) = resolve_block_reference(vault, &block.slug, &tile.source_path) {
+            out.push(TilePosterUpgrade {
+                poster_name: poster_name.clone(),
+                media_path: media_path.to_string_lossy().into_owned(),
+                kind: "video".into(),
+            });
+        }
+    }
+    out
+}
+
 fn resolve_block_reference(
     vault: &crate::domain::vault::VaultLayout,
     slug: &str,
@@ -341,6 +494,7 @@ mod tests {
             thumbnail: None,
             first_image: Some("artx-img0.webp".into()),
             media_urls: Some(r#"["artx-img0.webp"]"#.into()),
+            preview_manifest: None,
         };
         let resolved = resolve_upgrade_media(&vault, &target);
         let (path, kind) = resolved.expect("must resolve");
@@ -358,6 +512,7 @@ mod tests {
             thumbnail: None,
             first_image: None,
             media_urls: None,
+            preview_manifest: None,
         };
 
         assert!(resolve_upgrade_media(&vault, &target).is_none());
@@ -373,6 +528,7 @@ mod tests {
             thumbnail: None,
             first_image: Some("ghost-img0.heic".into()),
             media_urls: Some(r#"["ghost-img0.heic"]"#.into()),
+            preview_manifest: None,
         };
 
         assert!(resolve_upgrade_media(&vault, &target).is_none());
@@ -452,6 +608,7 @@ mod tests {
             thumbnail: None,
             first_image: Some("later.jpg".into()),
             media_urls: Some(r#"["clip.mp4","later.jpg"]"#.into()),
+            preview_manifest: None,
         };
 
         let (path, kind) = resolve_upgrade_media(&vault, &block).unwrap();
@@ -475,6 +632,7 @@ mod tests {
             thumbnail: None,
             first_image: None,
             media_urls: None,
+            preview_manifest: None,
         };
 
         assert!(!needs_browser_thumb_upgrade(&vault, &block));
@@ -493,6 +651,7 @@ mod tests {
             thumbnail: None,
             first_image: None,
             media_urls: None,
+            preview_manifest: None,
         };
 
         assert!(needs_browser_thumb_upgrade(&vault, &block));
@@ -584,5 +743,94 @@ mod tests {
     #[test]
     fn validate_thumb_write_request_rejects_non_jpeg_bytes() {
         assert!(validate_thumb_write_request("valid slug", &[0x89, 0x50, 0x4E]).is_err());
+    }
+
+    // ── tile posters ─────────────────────────────────────────────────────
+
+    #[test]
+    fn validate_tile_poster_request_accepts_media_filename() {
+        assert!(
+            validate_tile_poster_request("clip (video 1).jpg", &[0xFF, 0xD8, 0xFF, 0x00]).is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_tile_poster_request_rejects_unsafe_names_and_non_jpeg() {
+        for name in ["../x.jpg", "a/b.jpg", "a\\b.jpg", "x.png", "", "foo\0.jpg"] {
+            assert!(
+                validate_tile_poster_request(name, &[0xFF, 0xD8, 0xFF, 0x00]).is_err(),
+                "should reject {name:?}"
+            );
+        }
+        // valid name, but not JPEG bytes
+        assert!(validate_tile_poster_request("x.jpg", &[0x89, 0x50, 0x4E]).is_err());
+    }
+
+    #[test]
+    fn resolve_tile_posters_returns_video_tiles_missing_posters() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        std::fs::write(dir.path().join("clip-a.mp4"), b"fake").unwrap();
+        std::fs::write(dir.path().join("clip-b.mp4"), b"fake").unwrap();
+
+        let manifest = serde_json::json!({
+            "kind": "composite",
+            "primary_preview_path": "g.jpg",
+            "width": 1, "height": 1,
+            "tiles": [
+                {"source_path": "clip-a.mp4", "preview_path": "clip-a.jpg", "width": 800, "height": 600, "is_video": true, "is_video_poster": false},
+                {"source_path": "still.jpg", "preview_path": null, "width": 800, "height": 600, "is_video": false, "is_video_poster": false},
+                {"source_path": "clip-b.mp4", "preview_path": "clip-b.jpg", "width": 800, "height": 600, "is_video": true, "is_video_poster": false}
+            ],
+            "overflow_count": 0
+        })
+        .to_string();
+
+        let block = index::PendingThumbUpgradeBlock {
+            slug: "g".into(),
+            media_file: None,
+            thumbnail: None,
+            first_image: None,
+            media_urls: Some(r#"["clip-a.mp4","still.jpg","clip-b.mp4"]"#.into()),
+            preview_manifest: Some(manifest),
+        };
+
+        let posters = resolve_tile_posters(&vault, &block);
+        // Only the two video tiles; the image tile is skipped.
+        assert_eq!(posters.len(), 2);
+        assert_eq!(posters[0].poster_name, "clip-a.jpg");
+        assert_eq!(posters[1].poster_name, "clip-b.jpg");
+        assert!(posters.iter().all(|p| p.kind == "video"));
+    }
+
+    #[test]
+    fn resolve_tile_posters_skips_existing_jpeg_poster() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        std::fs::write(dir.path().join("clip-a.mp4"), b"fake").unwrap();
+        // Poster already on disk as a real JPEG.
+        create_test_image(&vault.thumbs_dir().join("clip-a.jpg"), 80, 60);
+
+        let manifest = serde_json::json!({
+            "kind": "video_poster",
+            "primary_preview_path": "g.jpg",
+            "width": 1, "height": 1,
+            "tiles": [
+                {"source_path": "clip-a.mp4", "preview_path": "clip-a.jpg", "width": 800, "height": 600, "is_video": true, "is_video_poster": false}
+            ],
+            "overflow_count": 0
+        })
+        .to_string();
+
+        let block = index::PendingThumbUpgradeBlock {
+            slug: "g".into(),
+            media_file: None,
+            thumbnail: None,
+            first_image: None,
+            media_urls: Some(r#"["clip-a.mp4"]"#.into()),
+            preview_manifest: Some(manifest),
+        };
+
+        assert!(resolve_tile_posters(&vault, &block).is_empty());
     }
 }

@@ -645,7 +645,10 @@ function GalleryTileImage({
   allowSourceFallback: boolean;
   loading: "eager" | "lazy";
 }) {
-  const previewSrc = item.previewPath && !item.isVideo
+  // A video tile's previewPath now points at its own generated poster frame
+  // (per-video, distinct from the block's <slug>.jpg), so videos use it too;
+  // image tiles carry no previewPath and fall through to the real source.
+  const previewSrc = item.previewPath
     ? previewAssetUrl(thumbsRootPath, item.previewPath)
     : null;
   const sourceSrc = allowSourceFallback

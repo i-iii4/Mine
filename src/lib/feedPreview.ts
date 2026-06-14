@@ -107,9 +107,15 @@ export function normalizeFeedPreviewManifest(
           const isVideo = asBoolean(tile.is_video);
           const isVideoPoster = asBoolean(tile.is_video_poster);
 
+          // Image tiles render their real source directly, so a synthetic
+          // `<stem>.jpg` preview that merely mirrors the source is dropped to
+          // avoid 404s on `<slug> (image N).jpg`. Video tiles are different: a
+          // video cannot be drawn into an <img>, so `<stem>.jpg` is a real
+          // generated per-video poster and must be kept.
           const legacySyntheticPreview = legacySyntheticTilePreviewPath(sourcePath);
           if (
             previewPath
+            && !isVideo
             && legacySyntheticPreview
             && decodeLocalMarkdownUrl(previewPath) === legacySyntheticPreview
           ) {

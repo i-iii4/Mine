@@ -20,7 +20,8 @@
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { listPendingThumbUpgrades, saveThumb } from "@/lib/commands";
+import { listPendingThumbUpgrades, saveThumb, saveTilePoster } from "@/lib/commands";
+import type { TilePosterUpgrade } from "@/lib/commands";
 import type { ThumbWorkerRequest, ThumbWorkerResponse } from "@/workers/thumbWorker";
 
 // Tauri event payload. Matches `ThumbUpgradeRequestedPayload` in
@@ -29,6 +30,8 @@ interface ThumbUpgradeRequestedEvent {
   slug: string;
   mediaPath: string;
   kind: "image" | "video";
+  /** Per-video gallery tile posters; absent for non-gallery blocks. */
+  tilePosters?: TilePosterUpgrade[];
 }
 
 // ─── Video frame extraction (main thread) ───────────────────────────────────
@@ -184,7 +187,11 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
       try {
         const pending = await listPendingThumbUpgrades();
         for (const req of pending) {
-          enqueue(req.slug, req.mediaPath, req.kind);
+          // mediaPath is empty when only tile posters are missing.
+          if (req.mediaPath) enqueue(req.slug, req.mediaPath, req.kind);
+          for (const tile of req.tilePosters ?? []) {
+            enqueueTilePoster(req.slug, tile);
+          }
         }
       } catch (err) {
         console.warn("[thumb upgrade] startup enumeration failed:", err);
@@ -195,8 +202,11 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
     const unlistenPromise = listen<ThumbUpgradeRequestedEvent>(
       "thumb:upgrade-requested",
       (event) => {
-        const { slug, mediaPath, kind } = event.payload;
-        enqueue(slug, mediaPath, kind);
+        const { slug, mediaPath, kind, tilePosters } = event.payload;
+        if (mediaPath) enqueue(slug, mediaPath, kind);
+        for (const tile of tilePosters ?? []) {
+          enqueueTilePoster(slug, tile);
+        }
       },
     );
 
@@ -232,6 +242,18 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
         onUpgraded?.();
       } catch (err) {
         console.warn(`[thumb upgrade] video ${slug} failed:`, err);
+      }
+    }
+
+    // Decode one gallery video tile's poster on the main thread (same <video>
+    // path as the block thumb) and save it under its own `<media-stem>.jpg`.
+    async function enqueueTilePoster(slug: string, tile: TilePosterUpgrade) {
+      try {
+        const bytes = await extractVideoFrame(convertFileSrc(tile.mediaPath), 480);
+        await saveTilePoster(tile.posterName, slug, new Uint8Array(bytes));
+        onUpgraded?.();
+      } catch (err) {
+        console.warn(`[thumb upgrade] tile poster ${tile.posterName} failed:`, err);
       }
     }
 
