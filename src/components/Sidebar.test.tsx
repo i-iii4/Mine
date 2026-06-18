@@ -782,6 +782,88 @@ describe("Sidebar", () => {
     expect(firstThumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
   });
 
+  it("does not open the sidebar hover preview while a drag is in flight", async () => {
+    vi.useFakeTimers();
+    const previews = new Map([
+      ["alpha", [{
+        url: "asset://localhost/thumbs/alpha-a.jpg",
+        text: false,
+        hasThumb: true,
+        slug: "alpha-a",
+      }]],
+    ]);
+    const { container } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      vaultPath: "/vault",
+      thumbsRootPath: "/vault/.arena/cache/thumbs",
+      channelPreviews: previews,
+      isDropDragging: true,
+    });
+
+    const firstThumbnail = container.querySelector(
+      '[data-sidebar-preview-thumbnail="trigger"]',
+    );
+    expect(firstThumbnail).not.toBeNull();
+
+    fireEvent.pointerEnter(firstThumbnail!);
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector("[data-sidebar-thumbnail-hover-preview]"),
+    ).not.toBeInTheDocument();
+    expect(firstThumbnail).not.toHaveAttribute("data-sidebar-preview-active");
+    expect(invoke).not.toHaveBeenCalledWith("get_block", { slug: "alpha-a" });
+  });
+
+  it("closes an already-open sidebar hover preview when a drag begins", async () => {
+    vi.useFakeTimers();
+    vi.mocked(invoke).mockResolvedValue(previewBlock("alpha-a"));
+    const previews = new Map([
+      ["alpha", [{
+        url: "asset://localhost/thumbs/alpha-a.jpg",
+        text: false,
+        hasThumb: true,
+        slug: "alpha-a",
+      }]],
+    ]);
+    const baseProps = {
+      ...defaultProps,
+      width: 600,
+      vaultPath: "/vault",
+      thumbsRootPath: "/vault/.arena/cache/thumbs",
+      channelPreviews: previews,
+      isDropDragging: false,
+    };
+    const { container, rerender } = renderSidebar(baseProps);
+
+    const firstThumbnail = container.querySelector(
+      '[data-sidebar-preview-thumbnail="trigger"]',
+    );
+    fireEvent.pointerEnter(firstThumbnail!);
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(
+      container.querySelector("[data-sidebar-thumbnail-hover-preview]"),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      rerender(sidebarTree({ ...baseProps, isDropDragging: true }));
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector("[data-sidebar-thumbnail-hover-preview]"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders continuous sidebar guidelines and keeps the protected action area in row mode", () => {
     const previews = new Map([
       ["alpha", [{

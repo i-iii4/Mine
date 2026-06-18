@@ -217,6 +217,10 @@ export function Sidebar({
   const previewOpenTimerRef = useRef<number | null>(null);
   const previewCloseTimerRef = useRef<number | null>(null);
   const lastPreviewOpenedAtRef = useRef<number | null>(null);
+  // Mirror the live drag state so the deferred open timer can read the current
+  // value at fire time, not the value captured when the timer was scheduled.
+  const isDropDraggingRef = useRef(isDropDragging);
+  isDropDraggingRef.current = isDropDragging;
   const sidebarRowSwitchFrameRef = useRef<number | null>(null);
   const sidebarKeyboardFocusTimerRef = useRef<number | null>(null);
   const sidebarRowFocusKeyRef = useRef<string | null>(null);
@@ -434,12 +438,23 @@ export function Sidebar({
     closePreview();
   }, [closePreview]);
 
+  // Tear down an already-open preview the moment a drag begins.
+  useEffect(() => {
+    if (isDropDragging) {
+      closePreview();
+    }
+  }, [isDropDragging, closePreview]);
+
   const openPreview = useCallback((target: SidebarPreviewTarget) => {
+    // Never reveal the hover preview while a drag is in flight — pointer-enter
+    // events still fire over the sidebar during a drag-and-drop gesture.
+    if (isDropDraggingRef.current) return;
     if (!previewTriggerRefs.current.has(target.key)) return;
     setHoveredPreview(target);
   }, []);
 
   const schedulePreviewOpen = useCallback((target: SidebarPreviewTarget) => {
+    if (isDropDraggingRef.current) return;
     clearPreviewOpenTimer();
     clearPreviewCloseTimer();
     setHoveredPreview(null);
