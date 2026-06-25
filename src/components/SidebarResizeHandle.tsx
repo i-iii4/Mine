@@ -1,11 +1,29 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { cn } from "@/lib/utils";
 
 const DRAG_THRESHOLD = 4;
-const TITLEBAR_HEIGHT = 32;
+// Both top chrome bars are h-8 (32px). The visible sidebar/main divider runs
+// through the TOP menu and the BODY, but the SECONDARY (stats) bar in between
+// has no visible line — so the hit zone and highlight cover the top band and
+// the body band and skip the secondary bar's band entirely.
+const TOP_MENU_HEIGHT = 32;
+const SECONDARY_BAR_HEIGHT = 32;
+// The pill stays to the RIGHT of the divider line (PILL_GAP) so that when the
+// sidebar is collapsed (width → 0, line at x=0) it still sits on-screen as a
+// grab tab. The hit zone, however, straddles the line: it extends LEFT_CATCH
+// past the line on the sidebar side and far enough right to cover the pill.
+// Both zone edges therefore land off the visible line — the natural aim point —
+// which kills the boundary flicker, and gives real catch area on the left.
+const LEFT_CATCH = 8;
+const PILL_GAP = 6;
+const PILL_WIDTH = 6; // w-1.5
+const HANDLE_WIDTH = LEFT_CATCH + PILL_GAP + PILL_WIDTH + 2; // 22px, 2px right slack
+const PILL_MARGIN_LEFT = LEFT_CATCH + PILL_GAP; // keep pill at line + PILL_GAP
 
 interface SidebarResizeHandleProps {
   isResizing: boolean;
+  /** Whether the secondary (stats) bar is shown — its band is skipped. */
+  secondaryBarVisible: boolean;
   disabled: boolean;
   onResizeStart: (startX: number, startWidth: number) => void;
   onResizeUpdate: (clientX: number) => void;
@@ -25,6 +43,7 @@ function clearNativeSelection(): void {
 
 export function SidebarResizeHandle({
   isResizing,
+  secondaryBarVisible,
   disabled,
   onResizeStart,
   onResizeUpdate,
@@ -35,6 +54,13 @@ export function SidebarResizeHandle({
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
   const didDragRef = useRef(false);
+
+  // Drop a stale hover when the handle is disabled mid-gesture (e.g. a block
+  // drag begins): pointer-events:none means a pointerleave never arrives, so
+  // the pill would otherwise stay lit.
+  useEffect(() => {
+    if (disabled) setHovered(false);
+  }, [disabled]);
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -75,6 +101,9 @@ export function SidebarResizeHandle({
       if (didDragRef.current) {
         onResizeEnd();
       } else {
+        // A stationary click (no drag past threshold) toggles collapse/expand in
+        // both directions — this is the peek-tab behaviour. Drag resizes; drag to
+        // the edge collapses via endResize.
         document.body.classList.remove("sidebar-resizing");
         onToggleCollapsed();
       }
@@ -98,36 +127,49 @@ export function SidebarResizeHandle({
     [onResizeEnd],
   );
 
-  const showPill = hovered || isResizing;
+  const showPill = !disabled && (hovered || isResizing);
+  const bodyTop = secondaryBarVisible ? TOP_MENU_HEIGHT + SECONDARY_BAR_HEIGHT : TOP_MENU_HEIGHT;
+
+  const stripClassName = cn(
+    "fixed z-40 flex items-center",
+    disabled && "pointer-events-none",
+    !isResizing && "cursor-col-resize",
+  );
+  const stripHandlers = {
+    onPointerEnter: () => setHovered(true),
+    onPointerLeave: () => setHovered(false),
+    onPointerDown: handlePointerDown,
+    onPointerMove: handlePointerMove,
+    onPointerUp: handlePointerUp,
+    onPointerCancel: handlePointerCancel,
+  };
+  const stripLeft = `calc(var(--sidebar-width) - ${LEFT_CATCH}px)`;
 
   return (
-    <div
-      className={cn(
-        "fixed z-40 flex items-center",
-        disabled && "pointer-events-none",
-        !isResizing && "cursor-col-resize",
-      )}
-      style={{
-        top: TITLEBAR_HEIGHT,
-        bottom: 0,
-        left: "var(--sidebar-width)",
-        width: 14,
-      }}
-      onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => setHovered(false)}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerCancel}
-    >
-      {/* Pill handle: 4px left zone + 6px gap + pill + 2px right */}
+    <>
+      {/* Top menu band: the line is visible here, so it stays resizable. */}
       <div
-        className={cn(
-          "h-10 w-1.5 rounded-full bg-border transition-opacity duration-150",
-          showPill ? "opacity-100" : "opacity-0",
-        )}
-        style={{ marginLeft: 6 }}
+        className={stripClassName}
+        style={{ top: 0, height: TOP_MENU_HEIGHT, left: stripLeft, width: HANDLE_WIDTH }}
+        {...stripHandlers}
       />
-    </div>
+      {/* Body band: starts below the secondary (stats) bar, so that bar's band —
+          which has no visible line — is skipped. The pill lives here. */}
+      <div
+        className={stripClassName}
+        style={{ top: bodyTop, bottom: 0, left: stripLeft, width: HANDLE_WIDTH }}
+        {...stripHandlers}
+      >
+        {/* Pill sits to the right of the line (PILL_GAP). Stays put in both states:
+            when collapsed the line is at x=0, so the pill is at x=PILL_GAP, on-screen. */}
+        <div
+          className={cn(
+            "h-10 w-1.5 rounded-full bg-border transition-opacity duration-150",
+            showPill ? "opacity-100" : "opacity-0",
+          )}
+          style={{ marginLeft: PILL_MARGIN_LEFT }}
+        />
+      </div>
+    </>
   );
 }

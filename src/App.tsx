@@ -3060,6 +3060,7 @@ export function AppWithVault({
 
       <SidebarResizeHandle
         isResizing={sidebarResizing}
+        secondaryBarVisible={mainSecondaryTopBarVisible}
         disabled={
           activeDragBlock !== null
           || activeDragMediaAsset !== null
