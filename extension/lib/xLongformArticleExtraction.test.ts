@@ -189,4 +189,83 @@ describe("X long-form article extraction", () => {
     expect(result?.article.content).toBe("");
     expect(result?.article.embeddedVideos).toEqual([]);
   });
+
+  it("interleaves an inline DraftEditor image between the paragraphs around it", () => {
+    renderTweet(`
+      <div data-testid="twitterArticleReadView">
+        <a href="/joeschmidtiv/article/2059642470334677472/media/COVER">
+          <div data-testid="tweetPhoto">
+            <img src="https://pbs.twimg.com/media/COVER?format=jpg&name=small" />
+          </div>
+        </a>
+        <div data-testid="twitter-article-title">Inline Image Ordering</div>
+        <div data-testid="twitterArticleRichTextView">
+          <div><div class="DraftEditor-root"><div class="DraftEditor-editorContainer">
+            <div data-testid="longformRichTextComponent" class="public-DraftEditor-content">
+              <div data-contents="true">
+                <h2 class="longform-header-two" data-block="true">
+                  <div><span><span data-text="true">First Section</span></span></div>
+                </h2>
+                <div class="longform-unstyled" data-block="true">
+                  <div><span><span data-text="true">Paragraph one has enough words to read like a genuine long-form article body rather than a short tweet preview pretending to be prose, so the extractor confidently treats this surface as a real article.</span></span></div>
+                </div>
+                <div data-block="true">
+                  <a href="/joeschmidtiv/article/2059642470334677472/media/INLINE">
+                    <div data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/INLINE?format=jpg&name=small" /></div>
+                  </a>
+                </div>
+                <div class="longform-unstyled" data-block="true">
+                  <div><span><span data-text="true">Paragraph two continues after the screenshot and proves the inline image landed between the two surrounding paragraphs in reading order, exactly where the author placed it, and was not dumped at the very end.</span></span></div>
+                </div>
+              </div>
+            </div>
+          </div></div></div>
+        </div>
+      </div>
+    `);
+
+    const result = extract();
+    const content = result?.article.content ?? "";
+
+    const cover = content.indexOf("![](https://pbs.twimg.com/media/COVER?format=jpg&name=large)");
+    const header = content.indexOf("## First Section");
+    const paragraphOne = content.indexOf("Paragraph one has enough words");
+    const inline = content.indexOf("![](https://pbs.twimg.com/media/INLINE?format=jpg&name=large)");
+    const paragraphTwo = content.indexOf("Paragraph two continues after the screenshot");
+
+    expect(result?.status).toBe("article");
+    for (const index of [cover, header, paragraphOne, inline, paragraphTwo]) {
+      expect(index).toBeGreaterThanOrEqual(0);
+    }
+    // Cover at the very top, inline image strictly between its two paragraphs.
+    expect(cover).toBeLessThan(header);
+    expect(header).toBeLessThan(paragraphOne);
+    expect(paragraphOne).toBeLessThan(inline);
+    expect(inline).toBeLessThan(paragraphTwo);
+  });
+
+  it("interleaves an inline image in the plain div[dir] long-form surface", () => {
+    renderTweet(`
+      <div data-testid="x-longform-article">
+        <div dir="auto">Paragraph one is long enough to read like genuine article prose and clear the minimum body length the extractor requires.</div>
+        <img src="https://pbs.twimg.com/media/MIDDLE.jpg" />
+        <div dir="auto">Paragraph two follows the screenshot and must stay after the inline image in the assembled markdown so reading order is preserved.</div>
+        <div dir="auto">Paragraph three adds more length so the body easily passes the minimum character gate without depending on the images at all.</div>
+      </div>
+    `);
+
+    const result = extract();
+    const content = result?.article.content ?? "";
+
+    const paragraphOne = content.indexOf("Paragraph one is long enough");
+    const inline = content.indexOf("![](https://pbs.twimg.com/media/MIDDLE.jpg)");
+    const paragraphTwo = content.indexOf("Paragraph two follows the screenshot");
+
+    expect(result?.status).toBe("article");
+    expect(paragraphOne).toBeGreaterThanOrEqual(0);
+    expect(inline).toBeGreaterThanOrEqual(0);
+    expect(paragraphTwo).toBeGreaterThanOrEqual(0);
+    expect(paragraphOne).toBeLessThan(inline);
+    expect(inline).toBeLessThan(paragraphTwo);
+  });
 });

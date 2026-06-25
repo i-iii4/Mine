@@ -214,21 +214,21 @@
       }
       const text = textFromElement(block, textOptions);
       if (text.length < 2) continue;
-      if (paragraphs.some((existing) => existing === text)) continue;
-      if (paragraphs.some((existing) => existing.includes(text) && text.length < 120)) continue;
-      if (paragraphs.some((existing) => text.includes(existing) && existing.length < 120)) {
+      if (paragraphs.some((existing) => existing.markdown === text)) continue;
+      if (paragraphs.some((existing) => existing.markdown.includes(text) && text.length < 120)) continue;
+      if (paragraphs.some((existing) => text.includes(existing.markdown) && existing.markdown.length < 120)) {
         for (let index = paragraphs.length - 1; index >= 0; index -= 1) {
-          if (text.includes(paragraphs[index]) && paragraphs[index].length < 120) {
+          if (text.includes(paragraphs[index].markdown) && paragraphs[index].markdown.length < 120) {
             paragraphs.splice(index, 1);
           }
         }
       }
-      paragraphs.push(text);
+      paragraphs.push({ markdown: text, node: block });
     }
 
     if (paragraphs.length === 0) {
       const text = textFromElement(surface, textOptions);
-      if (text) paragraphs.push(text);
+      if (text) paragraphs.push({ markdown: text, node: surface });
     }
 
     return paragraphs;
@@ -256,8 +256,8 @@
         markdown = `## ${markdown.replace(/^#+\s*/, "")}`;
       }
 
-      if (!paragraphs.includes(markdown)) {
-        paragraphs.push(markdown);
+      if (!paragraphs.some((existing) => existing.markdown === markdown)) {
+        paragraphs.push({ markdown, node: block });
       }
     }
 
@@ -307,12 +307,15 @@
     return null;
   }
 
-  function isNodeBefore(node, referenceNode) {
-    if (!node || !referenceNode || node === referenceNode) return false;
-    return Boolean(node.compareDocumentPosition(referenceNode) & Node.DOCUMENT_POSITION_FOLLOWING);
+  // Document-order test: true when node `a` precedes node `b`, or when `b` is
+  // nested inside `a` (an ancestor is considered to come first).
+  function isNodeBeforeInDocument(a, b) {
+    if (!a || !b || a === b) return false;
+    const rel = a.compareDocumentPosition(b);
+    return Boolean(rel & (Node.DOCUMENT_POSITION_FOLLOWING | Node.DOCUMENT_POSITION_CONTAINED_BY));
   }
 
-  function collectArticleImages(surface, bodyRoot = null) {
+  function collectArticleImages(surface) {
     const images = [];
     const seen = new Set();
     for (const img of surface.querySelectorAll("img")) {
@@ -329,9 +332,12 @@
       }
       if (seen.has(normalizedSrc)) continue;
       seen.add(normalizedSrc);
+      // `node` anchors the image in document order so the assembly step can
+      // interleave it with the surrounding paragraphs at its real position.
+      // `querySelectorAll` already yields images in document order.
       images.push({
-        src: normalizedSrc,
-        placement: bodyRoot && isNodeBefore(articleMediaLink || img, bodyRoot) ? "beforeBody" : "afterBody",
+        markdown: `![](${normalizedSrc})`,
+        node: articleMediaLink || img,
       });
     }
     return images;
@@ -350,23 +356,31 @@
     return src;
   }
 
+  // Merge paragraphs and images into a single stream that follows document
+  // order, so inline images land between the paragraphs that surround them
+  // instead of being bucketed before/after the whole body. Both inputs are
+  // already in document order, so this is a linear two-pointer merge — stable,
+  // no sort. Each item carries `{ markdown, node }`.
   function buildMarkdown(paragraphs, images) {
-    const beforeBody = [];
-    const afterBody = [];
-    for (const image of images) {
-      const line = `![](${image.src})`;
-      if (image.placement === "beforeBody") {
-        beforeBody.push(line);
+    const merged = [];
+    let pi = 0;
+    let ii = 0;
+    while (pi < paragraphs.length && ii < images.length) {
+      if (isNodeBeforeInDocument(images[ii].node, paragraphs[pi].node)) {
+        merged.push(images[ii].markdown);
+        ii += 1;
       } else {
-        afterBody.push(line);
+        merged.push(paragraphs[pi].markdown);
+        pi += 1;
       }
     }
-    const parts = [
-      ...beforeBody,
-      ...paragraphs.map((paragraph) => paragraph.trim()).filter(Boolean),
-      ...afterBody,
-    ];
-    return parts.join("\n\n").trim();
+    while (pi < paragraphs.length) merged.push(paragraphs[pi++].markdown);
+    while (ii < images.length) merged.push(images[ii++].markdown);
+    return merged
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join("\n\n")
+      .trim();
   }
 
   function titleFromParagraphs(paragraphs, fallbackTitle, surface) {
@@ -374,9 +388,9 @@
     const explicitTitle = titleElement ? compactText(titleElement.textContent || "") : "";
     if (explicitTitle) return explicitTitle;
     const candidate = paragraphs.find((paragraph) => {
-      const plain = paragraph.replace(/^#+\s*/, "");
+      const plain = paragraph.markdown.replace(/^#+\s*/, "");
       return plain.length >= 8 && plain.length <= 140;
-    })?.replace(/^#+\s*/, "");
+    })?.markdown.replace(/^#+\s*/, "");
     return candidate || fallbackTitle || "";
   }
 
@@ -398,7 +412,9 @@
     if (paragraphs.length === 0) {
       paragraphs.push(...collectParagraphTexts(longformSurface, { excludeTweetText: true }));
     }
-    const bodyText = plainTextFromMarkdown(paragraphs.join(" "));
+    const bodyText = plainTextFromMarkdown(
+      paragraphs.map((paragraph) => paragraph.markdown).join(" "),
+    );
     const hasBody =
       paragraphs.length >= MIN_PARAGRAPH_COUNT &&
       bodyText.length >= MIN_BODY_CHARS;
@@ -420,8 +436,7 @@
       };
     }
 
-    const bodyRoot = longformSurface.querySelector?.(LONGFORM_RICH_SELECTOR) || null;
-    const images = collectArticleImages(targetArticle, bodyRoot);
+    const images = collectArticleImages(targetArticle);
     const content = buildMarkdown(paragraphs, images);
     const title = titleFromParagraphs(paragraphs, fallbackTitle, longformSurface);
 

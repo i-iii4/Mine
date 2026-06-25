@@ -1,5 +1,46 @@
 # Devlog
 
+## 24.06.2026 — X-клиппер: сохранение позиции inline-изображений в статье
+
+### Проблема
+При сохранении длинной X-статьи (`https://x.com/cyntro_py/status/2065152957679608156`)
+в `How to reduce AI costs.md` скриншоты в теле шли в неверном порядке. Obsidian Web
+Clipper расставлял их корректно. Inline-изображения «между абзацами» уезжали в конец.
+
+### Причина
+`buildMarkdown` раскладывал картинки бинарно — корзина «до тела» и корзина «после
+тела» — теряя их позиции внутри текста. Inline-изображения (вложенные в bodyRoot)
+классифицировались как «после тела», потому что `compareDocumentPosition` для
+вложенного узла возвращает `CONTAINS | PRECEDING` (без бита `FOLLOWING`). Порядок и
+нумерация ниже по конвейеру (`native_host.rs`) выводятся целиком из порядка markdown,
+поэтому неверная сборка давала неверную нумерацию `(image N)`.
+
+### Фикс (`extension/lib/xLongformArticleExtraction.js`)
+- `collectArticleImages` теперь возвращает `{ markdown, node }` — каждое изображение
+  несёт ссылку на свой DOM-узел (для article-media — на ссылку-обёртку).
+- `collectParagraphTexts` / `collectDraftEditorBlocks` тоже возвращают `{ markdown, node }`.
+- `buildMarkdown` переписан на two-pointer merge двух списков, отсортированных по
+  DOM-порядку: на каждом шаге выбирается тот элемент (абзац или картинка), чей узел
+  идёт раньше в документе (`isNodeBeforeInDocument`). Позиция inline-изображений
+  сохраняется ровно там, где их разместил автор.
+- `isNodeBefore` → `isNodeBeforeInDocument`: корректная проверка через
+  `DOCUMENT_POSITION_FOLLOWING | DOCUMENT_POSITION_CONTAINED_BY`.
+
+### Что не тронуто
+- Экспортируемый контракт модуля (`extractXLongformArticle`) не изменён — 4 правленые
+  функции приватны.
+- Defuddle-путь для не-X контента не затрагивается (X-URL идут через свой экстрактор).
+- Нумерация/дедуп/скачивание изображений в `native_host.rs` — без изменений, они и так
+  выводятся из порядка markdown.
+
+### Тесты
+- `xLongformArticleExtraction.test.ts`: +2 теста — interleaving inline-изображения
+  между абзацами в DraftEditor-поверхности и в plain `div[dir]`-поверхности. 20/20
+  зелёные, eslint чисто. `bun run build:extension` синхронизировал Safari-копию.
+
+### Замечание
+Уже сохранённый `How to reduce AI costs.md` сам не починится — нужен повторный клип.
+
 ## 18.06.2026 — Sidebar: подавление hover-превью во время drag
 
 ### Проблема
