@@ -762,6 +762,20 @@ body {
   --sidebar-nav-pad-x: 32px;   /* sidebar table inset from panel edges */
   --sidebar-nav-pad-top: 32px; /* sidebar table inset from the top chrome */
   --sidebar-row-pad-x: 0px;    /* inner row padding: text left / count right */
+  /* Row reserved width = meta column (88) + fixed paddings/gap, per design.
+     default: 88 + nav-pad 32×2 + divider-gap 4 = 156. The name column is then
+     clamp(88, sidebar-width − reserved − icons-min(88), 150); the icon strip
+     takes the rest. Pure CSS so columns follow the drag synchronously. */
+  --sidebar-reserved: 156px;
+  --sidebar-name-col: clamp(
+    88px,
+    calc(var(--sidebar-width) - var(--sidebar-reserved) - 88px),
+    150px
+  );
+  /* The frozen "three equal columns" layout width. At/below it the columns stop
+     reflowing: the nav holds this width and the narrowing panel (overflow-hidden)
+     slides its right edge over it like a curtain. = reserved + 2×88. */
+  --sidebar-min-width: 332px;
   /* top chrome: collection switcher trigger padding; its label text lands at
      this value + the 8px inner pill padding (default 24+8 = 32 = card edge) */
   --top-collection-pad-x: 24px;
@@ -772,6 +786,9 @@ body {
   --sidebar-nav-pad-x: 0px;
   --sidebar-nav-pad-top: 0px;
   --sidebar-row-pad-x: 16px;
+  /* alt: meta 88 + row-pad 16 + divider-gap 4 = 108 */
+  --sidebar-reserved: 108px;
+  --sidebar-min-width: 284px;
   --top-collection-pad-x: 8px;  /* 8 + 8 inner = 16, flush with alt cards */
   --main-secondary-pad-x: 16px;
 }

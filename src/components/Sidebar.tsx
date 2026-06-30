@@ -54,7 +54,6 @@ const SIDEBAR_PREVIEW_WIDTH = 240;
 const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
 const SIDEBAR_PREVIEW_GAP = 8;
 const SIDEBAR_PREVIEW_VIEWPORT_MARGIN = 16;
-const SIDEBAR_ROW_TITLE_COLUMN_WIDTH = 150;
 const SIDEBAR_PREVIEW_DIVIDER_GAP = 4;
 const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = 80;
 const SIDEBAR_ROW_ACTION_BUTTON_GAP = 8;
@@ -179,8 +178,6 @@ function createSidebarSeamAccentSet(
 }
 
 export function Sidebar({
-  width,
-  collapsed,
   isResizing,
   vaultPath,
   thumbsRootPath,
@@ -253,7 +250,9 @@ export function Sidebar({
     [onRenameTag],
   );
 
-  const compact = width > 0 && width < 320;
+  // The compact icon-rail state is gone: the panel is either the full table or
+  // fully collapsed (removed). Rows always render the three-column layout.
+  const compact = false;
   const isLinkingBlock = !!linkedBlockSlug && !!onToggleLinkedTag;
   const isLinkEditorActive = isLinkingBlock && !detailChromeClosing;
   const linkedTagSet = useMemo(() => new Set(linkedTags), [linkedTags]);
@@ -565,8 +564,10 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        "relative flex shrink-0 flex-col border-r border-sidebar-border",
-        collapsed && "overflow-hidden",
+        // overflow-hidden is always on: below the minimum width the panel keeps
+        // narrowing while the nav holds --sidebar-min-width, so the right edge
+        // clips the frozen menu like a curtain.
+        "relative flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border",
       )}
       style={{
         width: "var(--sidebar-width)",
@@ -587,7 +588,9 @@ export function Sidebar({
       <nav
         ref={navRef}
         className={cn(
-          "relative flex-1 overflow-y-auto",
+          // min-width freezes the menu at the three-equal-columns layout: below
+          // it the nav keeps this width and the panel's overflow-hidden clips it.
+          "relative min-w-[var(--sidebar-min-width)] flex-1 overflow-y-auto",
           "pb-8",
           // Table insets are design-variant metrics: the alt design pulls the
           // table flush to the divider and edges, rows get inner padding.
@@ -613,7 +616,7 @@ export function Sidebar({
                 aria-hidden="true"
                 data-sidebar-guideline="left"
                 className="absolute inset-y-0 w-px bg-sidebar-border"
-                style={{ left: `${SIDEBAR_ROW_TITLE_COLUMN_WIDTH}px` }}
+                style={{ left: "calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col))" }}
               />
               <span
                 aria-hidden="true"
@@ -917,7 +920,7 @@ function SidebarRowTitleCell({
       className={cn(
         compact
           ? "flex-1 truncate"
-          : "min-w-[100px] max-w-[150px] flex-1 translate-x-px overflow-hidden whitespace-nowrap",
+          : "w-[var(--sidebar-name-col)] shrink-0 translate-x-px overflow-hidden whitespace-nowrap",
         className,
       )}
       style={compact ? undefined : SIDEBAR_ROW_TEXT_MASK_STYLE}

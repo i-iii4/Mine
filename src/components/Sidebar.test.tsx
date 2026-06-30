@@ -487,7 +487,7 @@ describe("Sidebar", () => {
     });
 
     const nav = container.querySelector("[data-sidebar-scroll]");
-    expect(nav).toHaveClass("pt-8");
+    expect(nav).toHaveClass("pt-[var(--sidebar-nav-pad-top)]");
     expect(nav).toHaveClass("pb-8");
     expect(container.querySelector("aside")?.firstElementChild).toBe(nav);
   });
@@ -888,12 +888,11 @@ describe("Sidebar", () => {
     const rightDivider = rows.querySelector('[data-sidebar-guideline="right"]') as HTMLSpanElement;
 
     expect(leftDivider).toHaveClass("bg-sidebar-border");
-    expect(leftDivider).toHaveStyle({ left: "150px" });
+    expect(leftDivider).toHaveStyle({ left: "calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col))" });
     expect(title).toHaveAttribute("data-sidebar-title-fade-width", "24");
     expect(title).toHaveAttribute("data-sidebar-title-protected-width", "4");
-    expect(title).toHaveClass("min-w-[100px]");
-    expect(title).toHaveClass("max-w-[150px]");
-    expect(title).toHaveClass("flex-1");
+    expect(title).toHaveClass("w-[var(--sidebar-name-col)]");
+    expect(title).toHaveClass("shrink-0");
     expect(title).not.toHaveClass("truncate");
     expect(rail).toHaveStyle({ paddingLeft: "4px" });
     expect(rightDivider).toHaveClass("bg-sidebar-border");
@@ -935,7 +934,7 @@ describe("Sidebar", () => {
     ).toHaveClass("detail-top-bar-line-enter");
     expect(screen.getByText("Collections:")).toHaveClass("text-muted-foreground");
     expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("text-muted-foreground");
-    expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-8");
+    expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-[var(--sidebar-nav-pad-top)]");
   });
 
   it("keeps link-editor chrome entered when switching the active detail block", async () => {
