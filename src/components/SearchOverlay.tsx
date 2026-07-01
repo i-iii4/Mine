@@ -497,10 +497,10 @@ export function SearchOverlay({
               : rows.map((entry, index) => renderResultRow(entry, index))}
           </div>
 
-          {/* Two delimited zones: the card (micro preview — one uniform
-              template for every block type, media inside the card padding,
-              never full-bleed) and the metadata block (Detail metadata-card
-              language). */}
+          {/* Two zones: the card (micro preview — one uniform template for
+              every block type, media inside the card padding, never
+              full-bleed; accent-toned) and the metadata block — bare
+              MetadataRow list, no card chrome of its own. */}
           <div className="flex w-80 shrink-0 flex-col gap-4 overflow-y-auto border-l border-border p-4">
             {activeBlock && (
               <>
@@ -519,6 +519,7 @@ export function SearchOverlay({
                     width={288}
                     previewMode="micro"
                     shadow="none"
+                    className="bg-accent"
                   />
                   {/* The real main-page hover menu — More (top-right) plus
                       Source/Connect (bottom row), revealed on hover. */}
@@ -534,47 +535,45 @@ export function SearchOverlay({
                   />
                 </div>
                 <div
-                  className="shrink-0 overflow-hidden rounded-1 border border-border bg-accent"
+                  className="shrink-0"
                   data-search-overlay-metadata
                 >
-                  <div className="px-2 pb-4 pt-4">
-                    <MetadataRow label="Date">
+                  <MetadataRow label="Date">
+                    <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
+                      {new Date(activeBlock.saved_at).toLocaleDateString("ru-RU", {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </span>
+                  </MetadataRow>
+                  <MetadataRow label="Type">
+                    <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
+                      {formatMetadataCardKind(activeBlock.card_kind)}
+                    </span>
+                  </MetadataRow>
+                  {activeBlock.url && isSafeUrl(activeBlock.url) && domainFromUrl(activeBlock.url) && (
+                    <MetadataRow label="Source">
+                      <MetadataLinkValue
+                        value={domainFromUrl(activeBlock.url)}
+                        onClick={() => void openUrl(activeBlock.url!)}
+                      />
+                    </MetadataRow>
+                  )}
+                  {activeBlock.author && (
+                    <MetadataRow label="Author">
                       <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
-                        {new Date(activeBlock.saved_at).toLocaleDateString("ru-RU", {
-                          day: "numeric",
-                          month: "short",
-                          year: "numeric",
-                        })}
+                        {activeBlock.author}
                       </span>
                     </MetadataRow>
-                    <MetadataRow label="Type">
-                      <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
-                        {formatMetadataCardKind(activeBlock.card_kind)}
+                  )}
+                  {activeTags && activeTags.length > 0 && (
+                    <MetadataRow label="Collections">
+                      <span className={cn(METADATA_VALUE_BASE_CLASSES, "whitespace-normal")}>
+                        {activeTags.join(", ")}
                       </span>
                     </MetadataRow>
-                    {activeBlock.url && isSafeUrl(activeBlock.url) && domainFromUrl(activeBlock.url) && (
-                      <MetadataRow label="Source">
-                        <MetadataLinkValue
-                          value={domainFromUrl(activeBlock.url)}
-                          onClick={() => void openUrl(activeBlock.url!)}
-                        />
-                      </MetadataRow>
-                    )}
-                    {activeBlock.author && (
-                      <MetadataRow label="Author">
-                        <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
-                          {activeBlock.author}
-                        </span>
-                      </MetadataRow>
-                    )}
-                    {activeTags && activeTags.length > 0 && (
-                      <MetadataRow label="Collections">
-                        <span className={cn(METADATA_VALUE_BASE_CLASSES, "whitespace-normal")}>
-                          {activeTags.join(", ")}
-                        </span>
-                      </MetadataRow>
-                    )}
-                  </div>
+                  )}
                 </div>
               </>
             )}

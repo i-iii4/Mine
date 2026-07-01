@@ -174,15 +174,17 @@ selection невозможен — модальность забирает кл�
 ### Превью (справа): карточка + блок метаданных
 
 Панель `w-80 border-l border-border p-4`, `flex flex-col gap-4`,
-`overflow-y-auto`. Две выделенные зоны:
+`overflow-y-auto`. Две зоны — карточка (единственная выделенная рамкой) и
+плоский блок метаданных:
 
 **Зона 1 — карточка.** `ReadOnlyCardPreview previewMode="micro"`
 (`width = 288`, `shadow="none"`) — единый превью-шаблон для **всех** типов
 блоков: медиа рендерится `GraphicSurface` с аспектом из манифеста **внутри
 карточного поля `p-4`** (никакого full-bleed — image-карточка получает те же
 отступы, что текстовые), затем title (clamp 2) / превью-текст (clamp 3) /
-автор. Собственная рамка `CardFrame` (`border bg-card rounded-1`) и есть
-выделение зоны; от `border-l` панели её отделяет поле `p-4`.
+автор. Собственная рамка `CardFrame` (`border rounded-1`, фон переопределён на
+`bg-accent`) и есть выделение зоны; от `border-l` панели её отделяет поле
+`p-4`.
 
 При активном `search_match` micro-превью использует тот же row-model, что
 список (`deriveSearchResultRow`): подсветка title, excerpt первого совпадения
@@ -200,10 +202,11 @@ in Finder, Copy Path, Rename…, Disconnect, Delete), `Source` (низ-лево,
 обновлением строки `Collections` (локальный кэш по slug); фактическое членство
 меняет существующий App-обработчик. Внутри metadata-card кнопок нет.
 
-**Зона 2 — метаданные.** Язык metadata-card из Detail: контейнер
-`rounded-1 border border-border bg-accent`, контент `px-2 pt-4 pb-4`, строки —
-общий `MetadataRow` (`src/components/MetadataRow.tsx`, вынесен из Detail: mono
-muted label слева, sans value справа, hairline-разделители).
+**Зона 2 — метаданные.** Без собственного карточного контейнера (никакой
+рамки, фона и скругления): строки — общий `MetadataRow`
+(`src/components/MetadataRow.tsx`, вынесен из Detail: mono muted label слева,
+sans value справа, hairline-разделители) — рендерятся плоским списком прямо в
+панели.
 
 | Строка | Источник | Кейс отсутствия |
 |---|---|---|
