@@ -76,13 +76,18 @@ type FeedPlaybackDescriptor = {
 
 ### Eligibility matrix v1
 
-- разрешены только локальные `mp4`
-- разрешены только локальные `webm`
-- `mov`, `m4v`, remote video URLs, multi-media cases => `feed_playback = null`
+- разрешены только локальные `mp4`, `m4v`, `mov`, `webm`
+- `m4v` и `mov` — mp4-family контейнеры (mov = QuickTime, играет нативно в
+  WKWebView), поэтому маппятся на `container: "mp4"` в дескрипторе; playback
+  резолвит реальное расширение `source_path`
+- remote video URLs и multi-media cases => `feed_playback = null`
 - single-video clips делятся на два autoplay profile:
   - `standard`
   - `heavy`
-- truly excessive single-video clips тоже получают `feed_playback = null`
+- single-video clip получает `feed_playback = null` только при выходе за
+  пиксельные hard-лимиты (longest side > `5120px` или площадь > `12_000_000`);
+  размер файла из дисквалификации исключён — файлы крупнее standard-порога
+  получают профиль `heavy` при любом размере
 
 ### Autoplay profiles
 
@@ -91,24 +96,39 @@ type FeedPlaybackDescriptor = {
   - feed surface использует `direct -> blob -> poster-only`
 - `heavy`
   - larger, но всё ещё допустимые single-video clips
-  - feed surface использует `direct -> blob -> poster-only`
-  - blob fallback разрешён только для active heavy surface; Grid гарантирует
-    максимум один active `heavy` clip, поэтому память bounded одним source
-  - direct-loading не обрывается по короткому таймеру: активным может быть
-    только один `heavy` clip, поэтому он может дождаться первого playable
-    frame, пока карточка остаётся active playback candidate
+  - feed surface использует только `direct -> poster-only`; blob-фолбэк запрещён
+    полностью, потому что heavy-файлы крупные (до 512 MiB), а активных heavy
+    может быть до двух — буферизация всего файла в памяти дала бы до ~1 GiB
+  - любая ошибка direct у heavy => сразу `failed_poster_only`; восстановление
+    идёт через memory-free retry (переигрывание с `loading_direct`), не через blob
+  - direct-loading не обрывается по короткому таймеру: heavy clip может дождаться
+    первого playable frame, пока карточка остаётся active playback candidate
 
 ### Policy thresholds v1
 
 - `standard`
-  - source bytes `<= 10 MiB`
+  - source bytes `<= 24 MiB`
   - longest side `<= 2560px`
   - pixel area `<= 4_000_000`
 - `heavy`
-  - source bytes `<= 64 MiB`
+  - всё локально играбельное сверх standard-порогов, в пределах пиксельных и
+    байтового hard-лимитов
   - longest side `<= 5120px`
   - pixel area `<= 12_000_000`
-- above hard limits => `feed_playback = null`
+  - source bytes `<= 512 MiB` (`FEED_AUTOPLAY_HARD_MAX_SOURCE_BYTES`); heavy
+    стримит с диска, поэтому память bounded даже на больших файлах, но байтовый
+    потолок нужен, чтобы `<video src>` к dataless multi-gigabyte iCloud-файлу не
+    форсил полную загрузку ради проскролла
+- above hard limits (пиксельные лимиты или source bytes > 512 MiB) =>
+  `feed_playback = null`: клип остаётся poster-only в ленте, играбелен только в
+  Detail
+
+Правило выбора профиля: `standard` требует полностью известных габаритов
+(`width` и `height` оба заданы) в пределах standard-лимитов. Видео с
+неизвлечёнными габаритами (`dims = None` — любой не-MP4 контейнер `mov`/`webm`
+или MP4 с нечитаемым заголовком) не декодируется вслепую по standard-цене
+(браузер декодирует standard в ленте, а размер кадра мог бы оказаться 4K/8K) и
+падает в `heavy` — прямой стрим с диска с bounded memory, а не standard.
 
 ### Allowed block cases
 
@@ -168,17 +188,33 @@ Autoplay semantics в descriptor не кодируются.
   прямоугольником
 - `FeedVideoSurface` принимает optional `posterCandidates`; если они переданы, poster branch использует общий candidate chain вместо single hardcoded poster URL
 - `standard`: direct timeout/error => blob fallback
-- `heavy`: direct error / play rejection => blob fallback; blob failure => poster-only
-- blob timeout/error => permanent poster-only
+- `heavy`: direct error / play rejection => `failed_poster_only` напрямую
+  (blob-фолбэк запрещён); восстановление — через memory-free retry
+- `failed_poster_only` (blob timeout/error у standard или direct-ошибка у heavy)
+  не терминален: пока surface смонтирована и `allowPlayback = true`,
+  воспроизведение переигрывается с `loading_direct` через
+  `FEED_VIDEO_RETRY_DELAY_MS`, максимум `FEED_VIDEO_MAX_RETRIES` раз на маунт;
+  после исчерпания — poster-only до сброса `allowPlayback` / `src`
 - пустой `<video>` без `src` запрещён
 
 ### Timeouts
 
 - `FEED_VIDEO_DIRECT_TIMEOUT_MS = 1200`
-- `FEED_VIDEO_BLOB_TIMEOUT_MS = 1800`
+- `FEED_VIDEO_BLOB_TIMEOUT_MS = 1800` — покрывает только decode + play: таймер
+  стартует с момента получения blob (после `fetch`, перед decode/play), чтобы
+  крупный, но валидный клип не был прерван мид-download бюджетом, предназначенным
+  для декодирования
+- `FEED_VIDEO_FETCH_TIMEOUT_MS = 20000` — отдельный таймаут на сам `fetch` стадии
+  `loading_blob` (только standard, у heavy blob-пути нет): по истечении fetch
+  abort'ится и фаза уходит в `failed_poster_only`, откуда работает существующий
+  retry. Без него зависший fetch пинил бы `loading_blob` бесконечно
+- `FEED_VIDEO_RETRY_DELAY_MS = 4000` — задержка перед повторной попыткой из
+  `failed_poster_only`
+- `FEED_VIDEO_MAX_RETRIES = 2` — число повторов на маунт (сбрасывается при
+  сбросе `allowPlayback` / `src`)
 - `heavy` direct-loading does not use a short self-timeout
-- `heavy` blob-loading also does not use the short blob timeout; it is aborted
-  by unmount/inactive state instead
+- `heavy` не использует blob-путь вовсе, поэтому blob- и fetch-таймеры к нему
+  неприменимы
 
 ## Poster contract
 
@@ -198,6 +234,10 @@ Poster source резолвится в таком порядке:
 - `FeedVideoSurface` и poster-only branches обязаны использовать один и тот же candidate chain
 - dedicated `video`, single-video `article` и single-video `social` не имеют отдельных poster source-of-truth
 - autoplay ineligible / delayed / disabled card остаётся visual-video-card с постером и `PlayBadge`
+- `FeedVideoSurface` сам рендерит `PlayBadge` во всех фазах с видимым постером
+  (`poster`, `loading_direct`, `loading_blob`, `failed_poster_only`) и убирает
+  его только над реально играющей поверхностью; разрыв, при котором
+  `failed_poster_only` оставался без бейджа, закрыт
 - при `img` load failure runtime пробует следующий candidate, а не схлопывается сразу в blank/black card
 - inline video tiles не должны полагаться на derived `video-stem.jpg`, если
   backend не создал такой asset; tile UI обязан fallback'иться на block-level
@@ -221,7 +261,7 @@ Poster source резолвится в таком порядке:
 ### Global policy
 
 - multiple `standard` videos may autoplay simultaneously on the grid route
-- `heavy` videos stay conservative: максимум один `heavy` autoplay video одновременно
+- `heavy` videos stay conservative: не более `FEED_HEAVY_MAX_ACTIVE` (= 2) `heavy` autoplay video одновременно
 
 ### Source of truth
 
@@ -235,10 +275,18 @@ Poster source резолвится в таком порядке:
 - карточка должна иметь валидный `feed_playback`
 - playback surface карточки должна быть покрыта expanded autoplay window минимум на `50%`
 - `standard` cards autoplay'ят все, если проходят visibility threshold
-- из `heavy` cards активна только одна:
-  - heavy clip с фактическим viewport overlap имеет приоритет над off-screen clip, который ещё linger'ит внутри expanded autoplay window
-  - если несколько heavy clip'ов реально видимы, активна top-most candidate
-  - если ни один heavy clip не видим в strict viewport, остаётся top-most candidate внутри expanded autoplay window
+- из `heavy` cards активны до `FEED_HEAVY_MAX_ACTIVE` (= 2):
+  - отбор по видимой доле поверхности с детерминированным total tie-break:
+    `inViewport` → viewport-доля → window-доля → верхний раньше (меньший `top`) →
+    расстояние до центра → `slug`; финальный slug-tie-break делает порядок
+    независимым от порядка обхода `visibleItems`
+  - гистерезис `FEED_HEAVY_HYSTERESIS_FRACTION` (= 0.1): инкумбент держит слот,
+    пока претендент не превосходит его viewport-долю более чем на 0.1, — так
+    маргинальное дрожание видимости не выбивает уже играющий clip
+  - гистерезис НЕ переносится через границу `inViewport`: инкумбент, ушедший из
+    strict viewport, не удерживает слот против претендента, который уже внутри
+    viewport, какой бы малой ни была его видимая доля; margin-защита по доле
+    работает только когда оба кандидата по одну сторону границы
 - если ни одна не проходит threshold, autoplay не запускается
 
 ### Prewarm / linger policy

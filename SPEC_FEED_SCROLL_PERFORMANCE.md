@@ -24,6 +24,13 @@ decoded-media readiness are separate concerns with separate budgets.
   local preview exists.
 - The hot scroll path uses preview/poster/thumbnail assets only. Original source
   media is not part of feed readiness.
+- Image-карточки рисуют прогретый derived-тумб (manifest primary preview, иначе
+  `<slug>.jpg`) базовым слоем первым кадром; полноразмерный оригинал грузится
+  поверх и появляется fade-in по `load`. Так прогретый тумб становится реально
+  отрисованным пикселем, а не только декодированным в кэше — закрыт decode-miss
+  source-first рендера. Базовый слой размонтируется после загрузки оригинала
+  (`showBase && !primaryLoaded`), а не остаётся под ним: иначе у прозрачных PNG
+  сквозь оригинал просвечивал бы непрозрачный JPEG-тумб.
 - The solution must remain bounded in DOM nodes, image decode concurrency and
   memory pressure.
 - The feed must degrade predictably: if preview assets are missing, Grid keeps a
@@ -140,11 +147,25 @@ The render window decides which `GridItem`s are mounted in DOM.
 Target formula:
 
 ```ts
-renderForwardPx = clamp(Math.max(720, vh * 0.75 + v * 80), 640, 1800)
-renderBackwardPx = clamp(Math.max(360, vh * 0.35), 320, 800)
+renderForwardPx = clamp(Math.max(720, vh * 0.75 + quantizeVelocityContribution(v * 80)), 640, 1800)
+renderBackwardPx = clamp(Math.max(360, vh * FEED_RENDER_RUNWAY_BACKWARD_VIEWPORT_RATIO), 320, 800)
 ```
 
 `renderForwardPx` and `renderBackwardPx` are mirrored when scrolling backward.
+
+Backward runway floor поднят с `vh * 0.35` до
+`vh * FEED_RENDER_RUNWAY_BACKWARD_VIEWPORT_RATIO` (`= 0.5`), чтобы держать
+linger-контракт: за курсором скролла остаётся не меньше `0.5 * vh` уже
+смонтированных карточек, и разворот направления не приземляется на unmounted
+(blank) регион. `800px` cap держит backward DOM bounded; при этом floor
+`>= 0.5 * vh` выполняется для всех `vh <= 1600` — весь реалистичный desktop-диапазон.
+
+Velocity-вклады (`v * 80` в render, `v * 350` в priority, `v * 600` в preload)
+квантуются ВВЕРХ шагом `FEED_SCROLL_WINDOW_VELOCITY_QUANTUM_PX` (`= 200`) через
+`quantizeVelocityContribution`. Округление вверх (никогда вниз) гарантирует, что
+квантованное окно не уже неквантованного, а стабильная identity окна между
+соседними кадрами не пересоздаёт `getVisibleItems` и не форсит лишний Grid-ререндер
+при неизменном visible set, пока сглаженная velocity дрейфует.
 
 Commit lookahead is block-based because it is a diagnostics/readiness frontier,
 not a live-render gate:
@@ -182,6 +203,16 @@ hook must fall back to Grid's ResizeObserver-measured viewport height. A
 transient or test-environment `clientHeight === 0` must not disable the
 anti-blank invariant.
 
+### Scroll anchor at the feed head
+
+Когда контент над viewport сдвигается (высота карточки уточнилась после preview
+upgrade, вставка/удаление блока), Grid держит первую видимую карточку на месте,
+пересчитывая `scrollTop` под новые позиции, — чтобы рост/сжатие выше по ленте не
+дёргал viewport. Этот scroll-якорь подавляется у самого верха ленты: при
+`scrollTop <= TOP_OF_FEED_SCROLL_EPSILON_PX` (`= 0.5px`) вставка блоков в начало
+должна ПОКАЗАТЬ новый контент, а не зафиксировать старую первую карточку и спрятать
+свежие ряды над viewport. Вдали от верха guard неактивен и якорь работает.
+
 ### 2. Image Priority Window
 
 The priority window decides which mounted images use eager loading.
@@ -189,7 +220,7 @@ The priority window decides which mounted images use eager loading.
 Target formula:
 
 ```ts
-priorityForwardPx = clamp(vh * 3 + v * 350, 3200, 8000)
+priorityForwardPx = clamp(vh * 3 + quantizeVelocityContribution(v * 350), 3200, 8000)
 priorityBackwardPx = clamp(vh * 1.1, 800, 2400)
 ```
 
@@ -205,7 +236,7 @@ mounting extra `GridItem`s.
 Target formula:
 
 ```ts
-mediaPreloadForwardPx = clamp(vh * 4 + v * 600, 4800, 14000)
+mediaPreloadForwardPx = clamp(vh * 4 + quantizeVelocityContribution(v * 600), 4800, 14000)
 mediaPreloadBackwardPx = clamp(vh * 1.5, 1600, 3600)
 ```
 
@@ -264,6 +295,18 @@ Source media rule:
 This rule protects fast scroll from accidentally reading large originals or
 remote resources.
 
+### Per-block candidate memoization
+
+`feedMediaCandidatesForBlock` мемоизирует результат на блок через `WeakMap`
+(`src/lib/feedMediaCandidates.ts`); ключ инвалидации — `preview_manifest`,
+`feed_playback`, `slug`, `width`, `height`, `thumbsRootPath`. Возвращаемый массив
+`readonly`. Preloader пересчитывает preload-окно на каждом rAF-коалесцированном
+кадре скролла (до ~120/с) и для каждого блока в окне вызывает эту функцию, которая
+парсит `preview_manifest` и `feed_playback` JSON; без кэша это сотни `JSON.parse`
+на секунду скролла — чистое давление на GC. `WeakMap` ключуется на identity блока,
+поэтому не течёт при замене массива блоков, а хранение полного набора входов
+деривации гарантирует пересчёт при мутации контента переиспользованного объекта.
+
 ## Preload Scheduler
 
 Expected module boundary:
@@ -291,7 +334,11 @@ Scheduling rules:
 
 - Queue keys are `(generation, url)`.
 - A generation changes when route, query, vault, thumbs root or
-  `layoutGenerationKey` changes.
+  `layoutGenerationKey` changes. `layoutGenerationKey` строится по точной
+  геометрии колонок (`cw` = columnWidth, `cc` = columnCount), а не по сырому
+  пикселю ресайза, поэтому generation reset срабатывает только при реальной смене
+  поколения раскладки; sub-column resize (drag сайдбара, gutter скроллбара) не
+  сбрасывает поколение и не churn'ит preload-очередь.
 - Stale decode work may finish, but its result is ignored if generation changed.
 - Active decode count never exceeds `4`.
 - Queue length never exceeds `160`; farthest candidates are dropped first.
@@ -553,7 +600,10 @@ suite would not catch.
   per scroll frame during active scrolling. It is RAF-coalesced (not per-pixel)
   and required by the velocity-aware preload contract, so it is accepted as a
   deliberate deviation from SPEC_GRID invariant #3 rather than reworked into the
-  ref+tick path.
+  ref+tick path. Второй полный ререндер Grid на том же кадре скролла устранён:
+  эффект `getVisibleItems` в `useGridScroll` байлаутит по `samePositions`, поэтому
+  чистая velocity-рябь (идентичный visible set при дрейфе окна) больше не бампит
+  `scrollTick` и не форсит лишний рендер.
 - **`GRID_TOP_INSET_PX` coordinate frame.** Layout `positions` start at
   `top = 0` while the grid is rendered with a `marginTop` of
   `GRID_TOP_INSET_PX` (32px). Exact viewport checks add the inset to

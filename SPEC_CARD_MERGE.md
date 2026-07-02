@@ -316,6 +316,16 @@ Author: Ada
 ![[diagram.png]]
 ```
 
+### Preview Tiles
+
+Merged-карточка — это `article` с multi-section body, поэтому её preview-манифест
+(social/article tiles) собирается из **всех** `---`-секций body, а не только из
+первой. Card merge склеивает секции через `\n\n---\n\n`, и реальное медиа часто
+живёт в поздних секциях; сбор только по первой секции терял бы эти тайлы и их
+постеры (`extract_social_preview_tiles`, `src-tauri/src/storage/index.rs`).
+`PREVIEW_TILE_LIMIT = 4` действует глобально по всему body, порядок тайлов —
+порядок медиа в документе.
+
 ## Media Ownership
 
 Merge must never copy, rewrite, rename or delete media files.

@@ -53,7 +53,7 @@ Pipeline обязан удовлетворять **каждому** из эти�
 - **N1.** Не поддерживает форматы media которых нет в клиппере. Если клиппер когда-то начнёт сохранять SVG — это расширение pipeline, не automatic.
 - **N2.** Не пытается валидировать content thumb файла beyond magic bytes check (JPEG/PNG prefix). Глубокая валидация image integrity — out of scope.
 - **N3.** Не делает reactive update thumbs если пользователь руками заменил media file в vault (watcher detects и перегенерирует — это отдельный flow через `VaultEvent::MediaChanged`, специфицирован в SPEC_INTEGRATION.md).
-- **N4.** Не оптимизирует качество thumb (quality 85 JPEG, fixed 480×480 max). Tuning качества — отдельная задача.
+- **N4.** Не оптимизирует качество thumb (quality 85 JPEG, fixed 640×640 max). Tuning качества — отдельная задача.
 - **N5.** Не делает real-media WebView upgrade для блоков, сохранённых из
   клиппера **пока main app закрыт**. Native host всё равно создаёт `.md`,
   media-файл, Phase 1 thumb и синхронизирует thumb metadata; upgrade до real
@@ -120,21 +120,26 @@ Pipeline — two-phase:
 
 Для большинства image blocks (JPEG/PNG из 90% источников) Phase 2 **не требуется** — Phase 1 даёт финальный результат. Phase 2 нужен только для exotic forматов (webp VP8X, HEIC, AVIF) и video.
 
-### Feed height re-fit при позднем приходе размеров медиа
+### Feed thumb-версия и height re-fit
 
-`thumb:updated` сигнализирует не только о готовности миниатюры, но и о том, что
-индексатор (пере)записал `preview_manifest` / `media_dimensions` блока. Свежий
-клип, впервые проиндексированный до того, как его изображение стало
-декодируемым, получает квадратный fallback-аспект, и его детерминированная
-высота карточки (`computeCardHeight`, см. `SPEC_GRID.md`) резервирует лишнее —
-под контентом остаётся серый хвост. Грид-блоки обновляются только при
-grid-reload (previews-refresh трогает сайдбар, не ленту), поэтому `App.tsx` на
-`thumb:updated`, **если задетая карточка в текущей ленте**, инвалидирует маршрут
-и планирует коалесцированный grid-refresh — высота пересчитывается под уже
-известный аспект медиа. Фильтр по видимости держит cold-start sweep дешёвым
-(на свежем свипе `thumb:updated` не летит для уже сгенерированных миниатюр).
-Покрыто `src/App.test.tsx` («refreshes the feed when thumb:updated…», «does not
-reload the feed…»).
+`thumb:updated` больше **не** инвалидирует route-снапшоты и не рефетчит грид.
+Хотя `save_thumb` / `save_tile_poster` переписывают файл (и иногда
+`preview_manifest`), строка блока байт-идентична, поэтому grid-рефетч свёлся бы к
+no-op по пикселям, одновременно прогоняя весь проскролленный диапазон через IPC —
+storm во время Phase-2 backlog. Вместо этого введена per-slug feed thumb-версия
+(`?v=N` в URL тумба/постера): `App.tsx` инкрементирует её в обработчике
+`thumb:updated` только для slug, присутствующего в текущей ленте, и пробрасывает
+`App → Grid → GridItem → Card` (`thumbVersions`). Это перезапрашивает WebView
+только у затронутой карточки, не трогая остальные.
+
+Полный рефетч ленты — и вместе с ним height re-fit по `preview_manifest` /
+`media_dimensions` для свежего клипа, впервые проиндексированного до того, как его
+изображение стало декодируемым (квадратный fallback-аспект даёт серый хвост под
+`computeCardHeight`, см. `SPEC_GRID.md`), — остаётся только для реальных событий
+изменения ленты: `vault-changed`, `block:added`, `block:removed` и навигации.
+Покрыто `src/App.test.tsx` («bumps only the affected card's thumb version on
+thumb:updated without reloading the feed», «does not bump the thumb version or
+reload the feed for a card outside the current feed»).
 
 ## Data Model
 
@@ -213,6 +218,14 @@ type PreviewCard = {
 type ChannelPreviews = Map<string, PreviewCard[]>;
 ```
 
+`concurrency: 4` относится только к image-worker (`src/workers/thumbWorker.ts`,
+`MAX_CONCURRENCY = 4`), декодирующему изображения off-main-thread через
+`createImageBitmap`. Видео и tile-постеры декодируются на main-thread (у
+Dedicated Worker нет `<video>`), поэтому идут через `DecodeQueue`
+(`src/lib/decodeQueue.ts`) с `concurrency = 2`, дедупом по ключу и одним ретраем
+на сессию: при неудаче — повтор через ~30 с backoff, после исчерпания —
+`console.warn` и отложить до следующего запуска.
+
 ## Phase 1: Instant placeholder (Rust synchronous)
 
 Runs inside native host `handle_save_block` **before** the response is sent to the clipper.
@@ -255,15 +268,15 @@ if candidate is None:
 read first 12 bytes of candidate file
 
 if bytes[0..3] == [0xFF, 0xD8, 0xFF]:  # JPEG
-    generate_thumbnail(candidate, thumb_path, 480)  # Rust decode, always works for JPEG
+    generate_thumbnail(candidate, thumb_path, 640)  # Rust decode, always works for JPEG
     return ThumbSource::Image
 
 if bytes[0..4] == [0x89, 0x50, 0x4E, 0x47]:  # PNG
-    generate_thumbnail(candidate, thumb_path, 480)  # Rust decode, always works for PNG
+    generate_thumbnail(candidate, thumb_path, 640)  # Rust decode, always works for PNG
     return ThumbSource::Image
 
 if bytes[0..3] == [0x47, 0x49, 0x46]:  # GIF
-    generate_thumbnail(candidate, thumb_path, 480)  # Rust decode, first frame
+    generate_thumbnail(candidate, thumb_path, 640)  # Rust decode, first frame
     return ThumbSource::Image
 
 # Anything else (WebP variants, HEIC, AVIF, TIFF, video, exotic formats):
@@ -332,6 +345,20 @@ type UpgradeRequest = {
 
 Frontend `useThumbnailUpgrade` hook subscribes and enqueues.
 
+### Dispatch, dedup and listen race
+
+Стартовая энумерация `list_pending_thumb_upgrades` и live-события
+`thumb:upgrade-requested` идут через один общий `dispatch` (`planThumbUpgrade`,
+`src/lib/thumbUpgradePlan.ts`) с едиными дедуп-структурами: image-путь дедупится
+по slug, video/tile — внутри `DecodeQueue` по ключу, поэтому один и тот же target
+не обрабатывается дважды при пересечении startup backlog и live-событий.
+Image-запросы, пришедшие до готовности worker'а, буферизуются и сливаются, как
+только worker поднялся, — событие в этом окне не теряется. После установления
+`listen`-подписки энумерация повторяется: событие, прилетевшее между стартовой
+энумерацией и активной подпиской, иначе было бы потеряно, а дедуп отбрасывает
+всё уже поставленное в очередь или in-flight, так что переживает только реально
+пропущенная работа.
+
 ### Worker pipeline
 
 Web Worker (`src/workers/thumbWorker.ts`) receives messages via `postMessage`:
@@ -357,7 +384,7 @@ Worker processes one request:
 const response = await fetch(assetUrl);
 const blob = await response.blob();
 const bitmap = await createImageBitmap(blob);  // native decode ANY format
-const { targetW, targetH } = computeCoverSize(bitmap.width, bitmap.height, 480, 480);
+const { targetW, targetH } = computeCoverSize(bitmap.width, bitmap.height, 640, 640);
 const canvas = new OffscreenCanvas(targetW, targetH);
 const ctx = canvas.getContext('2d')!;
 ctx.drawImage(bitmap, 0, 0, targetW, targetH);
@@ -381,6 +408,13 @@ const bytes = new Uint8Array(await response.arrayBuffer());
 ```
 
 Video support detail: current plan is Option B — main thread does video upgrade using `<video>` element (attach to hidden DOM, `seek(0.1)`, `drawImage` on canvas at `loadeddata` event). Worker handles images only. Video upgrade slower (~300ms per video due to buffering) but works unconditionally.
+
+Video decode uses two separate timeouts: `VIDEO_METADATA_TIMEOUT_MS = 15_000`
+waiting for `loadedmetadata` (covers time queued in the media-decoder pool) plus
+`VIDEO_DECODE_TIMEOUT_MS = 10_000` for capturing a usable frame once metadata has
+loaded. A single timer started at element creation would charge time spent merely
+queued in the pool against the decode budget, timing out slow-to-start but valid
+videos before they ever decode.
 
 ### Main-thread handling of result
 
@@ -569,6 +603,14 @@ fn save_thumb(
 - Invalid bytes → `CommandError::InvalidArgument`
 - Path traversal attempt → `CommandError::InvalidArgument`
 
+**Transport:** декодированный JPEG передаётся бинарным raw-IPC — `Uint8Array`
+телом запроса (`invoke("save_thumb", bytes, { headers })`), а не как JSON-массив
+чисел, чтобы избежать JSON-инфляции и парсинга сотен килобайт. Метаданные (`slug`;
+для `save_tile_poster` — `posterName` и `slug`) едут в percent-encoded заголовках:
+`encodeURIComponent` держит юникод-slug'и (кириллица, символы вроде ⊷) ASCII-safe
+для HTTP-заголовков, Rust percent-декодирует. JSON-массив чисел остаётся только
+как fallback-ветка.
+
 #### `list_pending_thumb_upgrades`
 
 ```rust
@@ -666,7 +708,7 @@ type WorkerRequest = {
   slug: string;
   assetUrl: string;     // fetch-able URL
   kind: 'image' | 'video';
-  targetSize: number;   // max side, default 480
+  targetSize: number;   // max side, default 640
 };
 ```
 
@@ -915,7 +957,7 @@ worker upgrades media placeholders.
 
 ### Q5: Worker JPEG quality vs file size
 
-Current Rust pipeline uses JPEG quality 85, ~3-5KB per 480×480 thumbnail. WebView `convertToBlob({quality: 0.85})` produces similar size. **Decision:** keep quality 85 for consistency. Tuning is out-of-scope for this SPEC.
+Current Rust pipeline uses JPEG quality 85, ~5-9KB per 640×640 thumbnail. WebView `convertToBlob({quality: 0.85})` produces similar size. **Decision:** keep quality 85 for consistency. Tuning is out-of-scope for this SPEC.
 
 ### Q6: Does `thumb:updated` event fire during Phase 1 as well?
 
@@ -949,6 +991,15 @@ If Phase C virtualization introduces rendering bugs:
 No source-vault file migration. Existing thumb files are used as-is. SQLite
 schemas that predate `thumb_format` / `thumb_mtime` get additive columns and a
 metadata backfill from the existing thumb cache.
+
+Бамп `DEFAULT_MAX_SIZE` 480 → 640 применяется **forward-only**. `is_thumb_fresh`
+остаётся stat-only (mtime + JPEG/PNG magic bytes), поэтому существующие 480px
+тумбы **не** регенерируются массово — полный rebake на старте вызвал бы
+focus-stall. Тумб апгрейдится до 640 лениво: когда mtime источника дрейфует
+(re-clip, замена медиа) и отрабатывает штатный путь регенерации.
+`THUMB_FORMAT_VERSION` намеренно не бампнут — 480px тумбы остаются валидным
+контентом, просто меньшего разрешения; бамп версии форсировал бы ровно ту
+массовую регенерацию, которой это избегает.
 
 ## Appendix A: Implemented pipeline state (08.05.2026)
 

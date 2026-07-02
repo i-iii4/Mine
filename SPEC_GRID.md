@@ -323,6 +323,26 @@ export async function invalidateFontCache(): Promise<void>;
 они не меняют measured widths. Worker вычисляет в chunks по 500 блоков,
 отправляет `progress` сообщения для UI.
 
+**Grid-состояние `wordWidthsMap` инкрементально.** Эффект метрик в `Grid` не
+очищает `wordWidthsMap` при смене identity массива `blocks` (как было раньше);
+дозапрашиваются только блоки со сменившейся `FontMetricsCacheIdentity`
+(новые/отредактированные), результат мержится в существующую Map. При этом Map
+и параллельный `wordWidthsIdentityRef` прунятся до живого множества: удаляются
+записи блоков, которых нет в текущем `blocks`, и записи с несовпавшим
+`cacheKey`. Последнее важно для корректности — отредактированный блок теряет
+render-ready-статус и идёт через скелетон до прихода новых метрик, а не
+рисуется старой высотой.
+
+Grid передаёт в `fetchWordWidths` только блоки со сменившейся font-metrics cache
+identity (`createFontMetricsCacheIdentity`, `src/components/Grid.tsx`) — новые или
+отредактированные, а не весь массив. `wordWidthsMap` и `wordWidthsIdentityRef`
+мержатся инкрементально по мере ответов worker'а: no-op refresh (`reconcileBlocks`
+вернул тот же контент в новом массиве) не роняет уже вычисленные метрики и не
+заставляет worker пересчитывать весь корпус. Обе структуры прунятся до живого
+множества блоков — удаляются id вне текущего `blocks` и записи с несовпавшим
+`cacheKey`, — чтобы за долгую сессию память не росла неограниченно;
+отредактированный блок при этом уходит через скелетон до переизмерения.
+
 ### `src/workers/fontMetrics.worker.ts`
 
 ```ts
@@ -368,7 +388,8 @@ self.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
 ```ts
 /**
  * LRU cache для committed exact layouts. Caller передаёт generation-aware key,
- * который уже включает route, width bucket и ordered layout fingerprint.
+ * который уже включает route, точную геометрию колонок (cw, cc) и ordered
+ * layout fingerprint.
  */
 export class LayoutCache {
   private map = new Map<string, MasonryLayout>();
@@ -380,10 +401,13 @@ export class LayoutCache {
 }
 ```
 
-Ключ строится не внутри `LayoutCache`, а в `layoutGenerationKey`: route, width
-bucket и ordered layout fingerprint. Fingerprint включает layout-relevant
-content (`preview_manifest`, display title, preview text и media geometry), так
-что same-id content changes не могут reuse stale layout.
+Ключ строится не внутри `LayoutCache`, а в `layoutGenerationKey`: route, точная
+геометрия колонок (`cw` = columnWidth, `cc` = columnCount) и ordered layout
+fingerprint. Сырой `parentWidth` намеренно исключён — masonry это чистая функция
+от `(columnWidth, columnCount, gap, heights)`, поэтому ключ меняется только при
+реальной смене раскладки, а sub-column resize держит кэш живым. Fingerprint
+включает layout-relevant content (`preview_manifest`, display title, preview text
+и media geometry), так что same-id content changes не могут reuse stale layout.
 
 ### `src/hooks/useGridScroll.ts`
 
@@ -483,7 +507,9 @@ export function Grid({ blocks, parentWidth, ... }: GridProps) {
 ```
 1. ResizeObserver fires на Grid scrollport
 2. Grid.tsx reads the scrollport content-box width and updates `parentWidth`
-3. useMemoizedLayout: LayoutCache miss (новый parentWidth bucket)
+3. useMemoizedLayout: LayoutCache miss только если resize пересёк границу
+   columnWidth/columnCount; sub-column resize (тот же columnWidth и columnCount)
+   даёт cache HIT и пропускает пересчёт
 4. Пересчёт heights (pure JS, wordWidths из cache) — O(N) ~10ms для 10000
 5. Пересчёт layout — O(N) ~3ms
 6. createVisibilityIndex — O(N) ~1ms
@@ -538,6 +564,12 @@ layout cache keys, visible render and hidden audit must agree on one width
 source. Mixing `clientWidth` padding-box and `ResizeObserver.contentRect`
 content-box is forbidden because it produces column-width shrink on route
 remounts.
+
+10. **`VirtualMasonryLayout` не пересоздаётся при смене поколения.** Компонент не
+имеет `key={generationKey}`; смена generation обновляет только позиции через
+React reconciliation по `block.id`, без remount карточек. Это сохраняет уже
+смонтированные `<img>` и играющие видео при resize и re-layout вместо их
+пересоздания.
 
 ---
 
@@ -708,7 +740,7 @@ Rationale: небольшой текущий gain, но архитектурна
 |---|---|
 | `WeakMap<blocks, layout>` | WeakMap автоматически собирается GC, нет LRU semantics, нет control над size |
 | LRU по `blocks.length + first/last id + width` | Same-id content/preview changes могут reuse stale layout |
-| **LRU Map по generation-aware key** (chosen) | Явный size limit, предсказуемая eviction, key включает route, width bucket и layout-relevant fingerprint |
+| **LRU Map по generation-aware key** (chosen) | Явный size limit, предсказуемая eviction, key включает route, точную геометрию колонок (cw, cc) и layout-relevant fingerprint |
 
 Rationale: channel switching — user-facing performance requirement, но
 мгновенность не должна покупать stale layout. `LayoutCache` остаётся простым LRU,

@@ -172,6 +172,7 @@ Rust IPC returns new array reference every time → `setBlocks(new_array)` alway
 - `App.tsx:314`: `listBlocks()` returns new array from Rust even if data unchanged
 - Every `loadData()` → `setBlocks()` → full cascade
 - Fix: diff blocks before setBlocks, skip if unchanged
+- Status: FIXED — `App.tsx` applies `reconcileBlocks` (`src/lib/blockIdentity.ts`) before `setBlocks`; unchanged blocks keep their prior object identity and an all-equal refresh returns the previous array, so a no-op refresh is a no-op render
 
 **H2. ImageCard, LinkCard, VideoCard, FileCard not memoized**
 - `Card.tsx`: 4 components re-render on every parent render
@@ -204,6 +205,7 @@ Rust IPC returns new array reference every time → `setBlocks(new_array)` alway
   concurrency, queue, LRU, timeout and generation-reset limits. Original source
   media must stay outside the preload hot path. Retuning requires diagnostics
   evidence, not changing overscan constants by taste.
+- Status: FIXED — SPEC_FEED_SCROLL_PERFORMANCE.md implemented (adaptive render/priority/preload windows, shared preview-only candidates, bounded decode queue); the source-first decode miss where the feed rendered originals directly is closed by two-phase `ImageCard` render (warm derived-thumb base layer, full original fades in on `load`)
 
 **H7. Grid layout readiness: strict prefix blocks deep viewport**
 - Symptom: after C7, fast/random scroll can still expose a blank or skeleton
