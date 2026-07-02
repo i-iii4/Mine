@@ -165,11 +165,17 @@
 
     const out = [];
     for (const video of root.querySelectorAll("video")) {
-      const src = absoluteUrl(
+      const rawSrc = absoluteUrl(
         video.currentSrc ||
         video.getAttribute("src") ||
         video.querySelector("source[src]")?.getAttribute("src"),
       );
+      // Player-runtime sources (blob:/mediasource:) are useless to the clipper:
+      // they cannot be re-fetched, saved, or keyed against a canonical embed
+      // URL, so on a page like YouTube the DOM player's blob <video> would push a
+      // duplicate preview that the markdown-body embed (canonical URL) cannot
+      // dedup against. Treat them as no source and fall back to the poster.
+      const src = rawSrc && /^(blob|mediasource):/i.test(rawSrc) ? null : rawSrc;
       const poster = absoluteUrl(video.getAttribute("poster"));
       pushUniqueVideo(out, {
         src,
