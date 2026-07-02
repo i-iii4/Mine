@@ -234,8 +234,12 @@ Desktop feed-video после финализации живёт по четыр�
 - `preview_manifest` остаётся layout/preview source-of-truth
 - `feed_playback` — отдельный nullable descriptor autoplay eligibility
 - `feed_playback.profile` делит одиночные feed-video на:
-  - `standard` — compact clips с `direct -> blob -> poster-only`
-  - `heavy` — larger but still acceptable clips с longer `direct -> poster-only`
+  - `standard` — compact clips с `direct -> blob -> poster-only`; blob-фолбэк
+    только у standard (файлы малы), а зависший `fetch` ограничен
+    `FEED_VIDEO_FETCH_TIMEOUT_MS` и уходит в retry-путь
+  - `heavy` — крупные clips, строго `direct -> poster-only` (без blob-буфера в
+    памяти); видео с неизвлечёнными габаритами (`dims = None`) тоже получает
+    `heavy`, чтобы пиксельные hard-caps оставались enforceable
 
 Frontend больше не принимает autoplay-решения по regex от имени файла. Единственная feed autoplay surface — `FeedVideoSurface` с poster-first state machine:
 
@@ -244,22 +248,24 @@ Frontend больше не принимает autoplay-решения по regex
 - `playing_direct`
 - `loading_blob`
 - `playing_blob`
-- `failed_poster_only`
+- `failed_poster_only` — не терминальна: пока surface смонтирована и
+  `allowPlayback = true`, воспроизведение переигрывается с `loading_direct` до
+  `FEED_VIDEO_MAX_RETRIES` раз (memory-free recovery, не через blob)
 
 Backend derivation больше не режет любой non-compact single-video clip в `poster-only`.
 Теперь политика двухступенчатая:
 
-- `standard` до `10 MiB`, `2560px`, `4_000_000 px`
-- `heavy` до `64 MiB`, `5120px`, `12_000_000 px`
-- выше hard limits autoplay descriptor не создаётся вовсе
+- `standard` до `24 MiB`, `2560px`, `4_000_000 px` (требует полностью известных габаритов)
+- `heavy` до `512 MiB`, `5120px`, `12_000_000 px` (либо `dims = None`)
+- выше hard limits (пиксельные лимиты или source bytes > `512 MiB`) autoplay descriptor не создаётся вовсе
 
 Grid держит дополнительный invariant:
 
 - все видимые `standard` video cards могут autoplay'ить одновременно
-- из `heavy` video cards одновременно autoplay'ит максимум одна
+- из `heavy` video cards одновременно autoplay'ит пул `FEED_HEAVY_MAX_ACTIVE` (= 2)
 - autoplay разрешён только для committed prefix текущего generation; `measuring` больше не обнуляет already-committed autoplay path
 - autoplay gating использует expanded autoplay window (`viewport ± 50%` его высоты): playback surface должна быть покрыта этим окном минимум на `50%`, чтобы video успевало стартовать до фактического входа в viewport и гасло только после выхода
-- `heavy` active card выбирается с приоритетом для реального viewport overlap: in-viewport heavy clip beats off-screen lingering heavy clip; при прочих равных побеждает top-most candidate
+- `heavy` slots выбираются по видимой доле с детерминированным tie-break (`inViewport` → viewport-доля → window-доля → top-most → центр → slug) и гистерезисом `0.1`, который НЕ переносится через границу `inViewport`: инкумбент, ушедший из viewport, не удерживает слот против претендента внутри него
 
 Frontend feed-video runtime теперь использует единый poster contract для single-video cards:
 
@@ -486,7 +492,10 @@ iOS UI contract:
 - `Grid.tsx` использует собственный windowed masonry renderer: карточки позиционируются абсолютно, контейнер получает вычисленную `totalHeight`, в DOM остаются только видимые элементы плюс overscan.
 - Геометрия карточки больше не должна выводиться из независимых эвристик в `Card.tsx` и `cardHeight.ts`. Введён общий descriptor-driven слой (`src/lib/cardLayout.ts`): variant карточки, preview text и media geometry вычисляются один раз и затем используются и для рендера, и для расчёта высоты.
 - Контентные карточки больше не кодируют spacing через variant-specific `mt-*` ветки. Введён slot-based contract: frame карточки задаёт общий inset, media идёт первой, а текстовые слоты живут единым text-stack ниже (`media -> display title/preview -> author`). Внутренние gap'ы появляются только между реально существующими соседними слотами. Это устраняет phantom top gap и сохраняет системный отступ под media.
-- Layout generation теперь keyed by `layoutGenerationKey = route + width bucket + ordered block layout fingerprint`. Fingerprint включает layout-relevant content блока, в том числе `preview_manifest`, поэтому same-id content/preview changes не могут reuse stale heights/layout.
+- Layout generation теперь keyed by `layoutGenerationKey = route + exact column geometry (cw|cc) + ordered block layout fingerprint`. Ключ строится по точной геометрии колонок (`columnWidth`, `columnCount`), а не по сырому `parentWidth`: masonry — чистая функция от `(columnWidth, columnCount, gap, heights)`, поэтому `layoutCache` переживает sub-column resize (полоса прокрутки, несколько px сайдбара), а не инвалидируется на каждый пиксель. Fingerprint включает layout-relevant content блока, в том числе `preview_manifest`, поэтому same-id content/preview changes не могут reuse stale heights/layout.
+- `VirtualMasonryLayout` не имеет `key={generationKey}`: смена поколения обновляет позиции через React reconciliation по `block.id`, а не размонтирует все смонтированные карточки. Раньше пагинация, `thumb:updated` и каждый пиксель ресайза пересоздавали `<img>` и сбрасывали играющие видео.
+- `reconcileBlocks` (`src/lib/blockIdentity.ts`) сохраняет object-identity неизменённых блоков и всего массива при рефреше снапшота — снимает каскад «новый массив → пересчёт всего». Word-метрики следствием инкрементальны: `wordWidthsMap` мержится, а не очищается, и прунится до живого множества блоков (отредактированный блок идёт через скелетон до переизмерения).
+- `thumb:updated` в ленте не рефетчит грид: введена per-slug feed thumb-версия (`?v=N` в URL тумба/постера), проброс `App → Grid → GridItem → Card`, инкремент только для slug в текущей ленте. Перезапрашивается WebView-кэшем только затронутая карточка; полный рефетч остаётся для `vault-changed`/`block:added`/`block:removed`/navigation.
 - Font metrics cache использует тот же принцип: IndexedDB word widths keyed by
   `cacheKey = version + fontHash + blockId + measured textHash`, а не только
   `blockId`. Поэтому редактирование текста карточки при прежнем id не может
@@ -1288,6 +1297,27 @@ only when `ensureArticleLoaded()` reaches a Defuddle path. The loader suppresses
 only the known Temml quirks-mode vendor warning while the bundle is evaluated;
 all extraction failures still return normal `empty/failed` ArticleData and do
 not leak page-level UI into the popup.
+
+### 027: Feed thumb freshness is a per-slug version, not a feed refetch
+
+| Approach | Problem |
+|---|---|
+| Полный рефетч ленты на каждый `thumb:updated` | Во время Phase-2 backlog это тысячи `LightBlock` через IPC каждые ~2 с; вдобавок `reconcileBlocks` (по object-identity) делает такой рефетч no-op'ом — пиксели тайловых постеров не обновляются вовсе |
+| Cache-buster по `thumb_mtime` из БД в feed | `LightBlock` не несёт `thumb_mtime`; тянуть его в горячий route read — лишний вес на каждый кадр |
+| Per-slug feed thumb-версия `?v=N` (chosen) | `App` держит `Map<slug, version>`, инкремент в обработчике `thumb:updated` только для slug в текущей ленте; версия прокинута отдельным примитивным пропом `App → Grid → GridItem → Card` и дописана в URL тумба/постера |
+
+Rationale: `thumb:updated` — точечное событие про один блок, а не сигнал
+пересобрать ленту. Отдельная версия сбрасывает и React-мемоизацию карточки, и
+memory-cache WKWebView (иначе он отдаёт старый тумб по тому же URL), перерисовывая
+ровно затронутую карточку. Это единственный механизм, доводящий генерируемые
+Phase-2 тайловые постеры галерейных видео до уже смонтированной карточки. Полный
+рефетч ленты остаётся только для событий, реально меняющих корпус
+(`vault-changed`, `block:added/removed`, navigation). Тумбы Rust-стороны подняты
+`480 → 640px` forward-only: `is_thumb_fresh` остаётся stat-only, существующие
+480px апгрейдятся лениво при mtime-дрейфе, без массового регенерационного шторма.
+Полные контракты: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md),
+[SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md),
+[SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md).
 
 ## Dependencies
 

@@ -148,13 +148,13 @@ Goal: устранить две подтверждённые архитекту�
   - single-video poster contract унифицирован на frontend feed path:
     - `FeedVideoSurface` и poster-only branches теперь используют один candidate chain;
     - poster source выбирается в порядке `feed_playback.poster_preview_path -> preview_manifest.primary_preview_path -> tile preview -> block thumb`;
-  - autoplay policy стала двухступенчатой вместо жёсткого compact-only gate:
-    - `standard` — compact clips идут через `direct -> blob -> poster-only`;
-    - `heavy` — larger single-video clips теперь тоже получают `feed_playback`, но идут через longer `direct -> poster-only` без blob fallback;
-    - descriptor не создаётся только для truly excessive clips выше hard limits;
+  - autoplay policy стала двухступенчатой вместо жёсткого compact-only gate (пороги подняты в feed-оптимизации 02.07.2026, см. ниже):
+    - `standard` — clips до `24 MiB` идут через `direct -> blob -> poster-only`; зависший `fetch` ограничен `FEED_VIDEO_FETCH_TIMEOUT_MS` и уходит в retry;
+    - `heavy` — clips до `512 MiB` (или с неизвлечёнными габаритами) идут строго `direct -> poster-only` без blob-буфера; `failed_poster_only` не терминальна (memory-free retry);
+    - descriptor не создаётся только выше hard limits (пиксельные лимиты или source bytes > `512 MiB`);
   - grid autoplay policy смягчена под feed UX:
     - все committed `standard` clips autoplay'ят одновременно, если их playback surface покрыта expanded autoplay window (`viewport ± 50%` высоты экрана) минимум на `50%`;
-    - `heavy` clips остаются консервативными: одновременно autoplay'ит только один committed heavy clip, при этом in-viewport heavy имеет приоритет над off-screen lingering candidate;
+    - `heavy` clips autoplay'ят пулом `FEED_HEAVY_MAX_ACTIVE` (= 2) с детерминированным tie-break и гистерезисом `0.1`, который не переносится через границу `inViewport`;
     - autoplay больше не сбрасывается на всём `measuring`; уже committed prefix может продолжать и начинать playback, пока нижняя часть grid ещё догоняет layout;
   - `C5` остаётся `[~]` до ручной приёмки пользователем: autoplay dedicated video, autoplay single-video previews, preview-only multi-media, no blank square on failures.
 - `C6` завершён:
@@ -256,6 +256,31 @@ web-clipper при закрытом desktop UI, iCloud sync или внешни�
 | 24.3 | Call catch-up before final route-facing reads: `list_grid_blocks`, `list_tags`, `list_channels`, `list_channel_previews`, `search_blocks`, `get_block` | [ ] |
 | 24.4 | Preserve fast startup by allowing provisional cached snapshots only until catch-up completes | [ ] |
 | 24.5 | Tests: create `.md` directly on disk and assert grid/list/search/detail visibility without restart/rebuild; include missed-watcher regression | [ ] |
+
+### Feed & video optimization — 02.07.2026 [COMPLETED]
+
+Многоагентный аудит рендера ленты и видео → две волны оптимизаций → адверсариальное
+ревью диффа → закрытие 12 подтверждённых регрессий. Диагноз главной жалобы «видео
+во viewport статично»: корень не в постер-пайплайне (постеры на месте, все видео
+h264), а в гейтинге воспроизведения (heavy-лимит 1) и индексном слое (тайлы только
+из первой секции). Детали — [DEVLOG.md](DEVLOG.md) 02.07.2026.
+
+- Рендер: убран `key={generationKey}` remount, generation key по геометрии колонок
+  (`cw|cc`), `reconcileBlocks` сохраняет identity, инкрементальные+прунящиеся
+  word-метрики, второй ререндер на кадр скролла устранён, refresh загруженного
+  диапазона вместо первой страницы.
+- Видео: heavy-пул `= 2` (было `1`) с гистерезисом; порог standard `24 MiB`,
+  hard-cut заменён потолком `512 MiB`; mov/m4v в автоплее; ретраи из
+  `failed_poster_only`; heavy строго direct-only; тайлы social/article из всех
+  `---`-секций (вернуло видео merged-блоков).
+- Постеры: `DecodeQueue` concurrency 2, двухэтапные таймауты, дедуп, `640px`,
+  per-slug feed thumb-версия (`?v=N`) вместо full refetch, `MEDIA_INDEX_VERSION` 3.
+- Проверки: vitest `611/611`, cargo test `638/638`, tsc/eslint/clippy чисто; smoke
+  на реальном iCloud Mine vault пройден (тайл-постеры merged-блоков генерируются).
+- Известное наблюдение: binary IPC (`save_thumb`/`save_tile_poster`) на текущей
+  Tauri-конфигурации идёт через `InvokeBody::Json` fallback (custom-protocol
+  недоступен) — корректно, но заявленный raw-выигрыш не реализуется; кандидат на
+  перевод в base64 отдельной задачей.
 
 ### Current thumbnail / hover hardening — 08.05.2026 [COMPLETED]
 
