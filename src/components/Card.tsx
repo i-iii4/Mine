@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
 import { FeedVideoSurface } from "./FeedVideoSurface";
 import { FeedVideoPoster } from "./FeedVideoPoster";
+import { PlayBadge } from "./PlayBadge";
 
 const PriorityContext = createContext(false);
 const usePriority = () => useContext(PriorityContext);
@@ -48,10 +49,24 @@ const cardFrameRenderStyle = {
   backfaceVisibility: "hidden",
 } as const;
 
+// Per-slug thumbnail cache-buster. On a `thumb:updated` event the feed bumps a
+// per-slug version (App → Grid → Card) so a regenerated poster/thumbnail is
+// refetched even when its file bytes were rewritten in place — APFS keeps the
+// mtime, and the WebView would otherwise serve the stale image (or a
+// previously-failed request) from its in-memory cache. `version <= 0` is the
+// steady state and leaves the URL untouched, so an unversioned card renders a
+// byte-identical URL to before.
+function withThumbVersion(url: string, version: number | undefined): string {
+  if (!version || version <= 0) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}v=${version}`;
+}
+
 interface CardProps {
   block: LightBlock;
   vaultPath: string;
   thumbsRootPath?: string;
+  /** Per-slug cache-buster bumped on `thumb:updated`; see {@link withThumbVersion}. */
+  thumbVersion?: number;
   priority?: boolean;
   allowPlayback?: boolean;
   openMoreMenuRequestSequence?: number;
@@ -125,7 +140,7 @@ export function MeasuredCardFrame({
   );
 }
 
-export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumbVersion, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
   const dragBlocks = useMemo(() => {
     const candidateBlocks = dragBlocksProp && dragBlocksProp.length > 0
       ? dragBlocksProp
@@ -197,7 +212,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, prior
           onKeyboardMoreMenuOpenChange={onKeyboardMoreMenuOpenChange}
         />
       )}
-      <CardContent block={block} vaultPath={vaultPath} thumbsRootPath={thumbsRootPath} priority={priority} allowPlayback={allowPlayback} />
+      <CardContent block={block} vaultPath={vaultPath} thumbsRootPath={thumbsRootPath} thumbVersion={thumbVersion} priority={priority} allowPlayback={allowPlayback} />
     </CardFrame>
   );
 });
@@ -563,6 +578,7 @@ export function CardContent({
   block,
   vaultPath,
   thumbsRootPath,
+  thumbVersion,
   priority,
   allowPlayback = false,
   measurementMode = false,
@@ -570,6 +586,7 @@ export function CardContent({
   block: LightBlock;
   vaultPath: string;
   thumbsRootPath?: string;
+  thumbVersion?: number;
   priority?: boolean;
   allowPlayback?: boolean;
   measurementMode?: boolean;
@@ -587,18 +604,18 @@ export function CardContent({
   const content = (() => {
     switch (descriptor.variant) {
       case "image":
-        return <ImageCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
+        return <ImageCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} measurementMode={measurementMode} />;
       case "link":
-        return <LinkCard block={block} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} measurementMode={measurementMode} />;
+        return <LinkCard block={block} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} measurementMode={measurementMode} />;
       case "article-text":
       case "article-media":
-        return <ArticleCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
+        return <ArticleCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "social-text":
       case "social-single-media":
       case "social-media-grid":
-        return <SocialCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
+        return <SocialCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "video":
-        return <VideoCard block={block} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
+        return <VideoCard block={block} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "file":
         return <FileCard block={block} />;
     }
@@ -634,6 +651,7 @@ function GalleryTileImage({
   item,
   vaultPath,
   thumbsRootPath,
+  thumbVersion,
   fallbackSlug,
   allowSourceFallback,
   loading,
@@ -641,6 +659,7 @@ function GalleryTileImage({
   item: CardLayoutDescriptor["mediaItems"][number];
   vaultPath: string;
   thumbsRootPath: string;
+  thumbVersion?: number;
   fallbackSlug: string;
   allowSourceFallback: boolean;
   loading: "eager" | "lazy";
@@ -648,13 +667,15 @@ function GalleryTileImage({
   // A video tile's previewPath now points at its own generated poster frame
   // (per-video, distinct from the block's <slug>.jpg), so videos use it too;
   // image tiles carry no previewPath and fall through to the real source.
+  // Derived thumbnail/preview URLs carry the cache-buster; the source media
+  // file does not (it is never regenerated by the thumb pipeline).
   const previewSrc = item.previewPath
-    ? previewAssetUrl(thumbsRootPath, item.previewPath)
+    ? withThumbVersion(previewAssetUrl(thumbsRootPath, item.previewPath), thumbVersion)
     : null;
   const sourceSrc = allowSourceFallback
     ? resolveFeedMediaSrc(vaultPath, item.sourcePath)
     : null;
-  const fallbackSrc = thumbnailUrl(thumbsRootPath, fallbackSlug);
+  const fallbackSrc = withThumbVersion(thumbnailUrl(thumbsRootPath, fallbackSlug), thumbVersion);
   const [src, setSrc] = useState(previewSrc ?? sourceSrc ?? fallbackSrc);
 
   useEffect(() => {
@@ -682,28 +703,18 @@ function GalleryTileImage({
   );
 }
 
-function PlayBadge() {
-  return (
-    <div className="absolute inset-0 flex items-center justify-center">
-      <div className="flex size-8 items-center justify-center rounded-full bg-black/50 text-white">
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M4 2.5v11l10-5.5L4 2.5z" />
-        </svg>
-      </div>
-    </div>
-  );
-}
-
 function GalleryTiles({
   items,
   vaultPath,
   thumbsRootPath,
+  thumbVersion,
   fallbackSlug,
   measurementMode,
 }: {
   items: CardLayoutDescriptor["mediaItems"];
   vaultPath: string;
   thumbsRootPath: string;
+  thumbVersion?: number;
   fallbackSlug: string;
   measurementMode: boolean;
 }) {
@@ -732,6 +743,7 @@ function GalleryTiles({
                 item={item}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath}
+                thumbVersion={thumbVersion}
                 fallbackSlug={fallbackSlug}
                 allowSourceFallback
                 loading={imgLoading}
@@ -743,6 +755,7 @@ function GalleryTiles({
                   item={item}
                   vaultPath={vaultPath}
                   thumbsRootPath={thumbsRootPath}
+                  thumbVersion={thumbVersion}
                   fallbackSlug={fallbackSlug}
                   allowSourceFallback={false}
                   loading={imgLoading}
@@ -767,6 +780,7 @@ const ImageCard = memo(function ImageCard({
   previewManifest,
   vaultPath,
   thumbsRootPath,
+  thumbVersion,
   measurementMode = false,
 }: {
   block: LightBlock;
@@ -774,6 +788,7 @@ const ImageCard = memo(function ImageCard({
   previewManifest: ReturnType<typeof parsePreviewManifest>;
   vaultPath: string;
   thumbsRootPath: string;
+  thumbVersion?: number;
   measurementMode?: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
@@ -797,10 +812,10 @@ const ImageCard = memo(function ImageCard({
     return uniqueUrls([
       resolveOptionalMediaReference(vaultPath, block.media_file),
       previewManifest?.primaryPreviewPath
-        ? previewAssetUrl(thumbsRootPath, previewManifest.primaryPreviewPath)
+        ? withThumbVersion(previewAssetUrl(thumbsRootPath, previewManifest.primaryPreviewPath), thumbVersion)
         : null,
       resolveOptionalMediaReference(vaultPath, block.thumbnail),
-      thumbnailUrl(thumbsRootPath, block.slug),
+      withThumbVersion(thumbnailUrl(thumbsRootPath, block.slug), thumbVersion),
     ]);
   }, [
     block.media_file,
@@ -809,9 +824,29 @@ const ImageCard = memo(function ImageCard({
     previewManifest?.primaryPreviewPath,
     vaultPath,
     thumbsRootPath,
+    thumbVersion,
   ]);
 
+  // Warm, low-res base layer. The feed preloader
+  // (feedMediaCandidatesForBlock) decodes the block's derived thumbnail — the
+  // manifest primary preview when present, otherwise <slug>.jpg — ahead of the
+  // viewport. Painting that exact URL first is a decode-cache hit, so the card
+  // is never blank while the full-size original decodes on top of it. The
+  // original alone (rendered as the primary src below) is not part of feed
+  // readiness, which is why source-first cards used to "arrive" during scroll.
+  const baseThumbUrl = useMemo(
+    () =>
+      withThumbVersion(
+        previewManifest?.primaryPreviewPath
+          ? previewAssetUrl(thumbsRootPath, previewManifest.primaryPreviewPath)
+          : thumbnailUrl(thumbsRootPath, block.slug),
+        thumbVersion,
+      ),
+    [previewManifest?.primaryPreviewPath, thumbsRootPath, block.slug, thumbVersion],
+  );
+
   const [sourceIndex, setSourceIndex] = useState(0);
+  const [primaryLoaded, setPrimaryLoaded] = useState(false);
   const sourcesKey = sources.join("|");
 
   // Reset the cascade when the input set changes (new block, vault
@@ -821,6 +856,7 @@ const ImageCard = memo(function ImageCard({
   // and, in extreme cases, infinite loaders.
   useEffect(() => {
     setSourceIndex(0);
+    setPrimaryLoaded(false);
   }, [sourcesKey]);
 
   useEffect(() => {
@@ -854,24 +890,56 @@ const ImageCard = memo(function ImageCard({
     ? `${descriptor.primaryAspectRatio}`
     : "1";
 
+  // Two-phase render only makes sense while the primary src is the full-size
+  // original, distinct from the warmed thumbnail. Once the cascade falls
+  // through to the thumbnail itself (or a block with no distinct thumb), the
+  // base layer would duplicate the primary, so we drop it and show a single
+  // <img> — the pre-two-phase behavior.
+  const showBase = baseThumbUrl !== currentSrc;
+  const primaryVisible = primaryLoaded || !showBase;
+  // Unmount the base once the original has loaded: the base is an opaque
+  // background-image JPEG (Rust to_rgb8, no alpha), so leaving it mounted under a
+  // transparent PNG/WebP shows a cropped opaque thumbnail through the transparent
+  // areas instead of the card surface, and keeps a second decoded bitmap alive
+  // per card. The now-opaque, decoded original covers the same box in the same
+  // commit, so dropping the base underneath it is seamless.
+  const renderBase = showBase && !primaryLoaded;
+
   return (
     <GraphicSurface
       style={{ aspectRatio }}
     >
       {!measurementMode && (
-        <img
-          // Keyed by src so React remounts the element when we fall
-          // through to the next candidate. Without the key the browser
-          // would reuse the failed request entry and never re-request.
-          key={currentSrc}
-          src={currentSrc}
-          alt={navigationLabel}
-          className="absolute inset-0 h-full w-full object-cover"
-          loading={imgLoading}
-          decoding="async"
-          draggable={false}
-          onError={() => setSourceIndex((i) => i + 1)}
-        />
+        <>
+          {renderBase && (
+            <div
+              data-card-image-base=""
+              aria-hidden="true"
+              className="absolute inset-0 bg-cover bg-center"
+              style={{ backgroundImage: `url("${baseThumbUrl}")` }}
+            />
+          )}
+          <img
+            // Keyed by src so React remounts the element when we fall
+            // through to the next candidate. Without the key the browser
+            // would reuse the failed request entry and never re-request.
+            key={currentSrc}
+            src={currentSrc}
+            alt={navigationLabel}
+            className={cn(
+              "absolute inset-0 h-full w-full object-cover transition-opacity duration-150",
+              primaryVisible ? "opacity-100" : "opacity-0",
+            )}
+            loading={imgLoading}
+            decoding="async"
+            draggable={false}
+            onLoad={() => setPrimaryLoaded(true)}
+            onError={() => {
+              setPrimaryLoaded(false);
+              setSourceIndex((i) => i + 1);
+            }}
+          />
+        </>
       )}
     </GraphicSurface>
   );
@@ -887,12 +955,14 @@ const LinkCard = memo(function LinkCard({
   previewManifest,
   vaultPath,
   thumbsRootPath,
+  thumbVersion,
   measurementMode = false,
 }: {
   block: LightBlock;
   previewManifest: ReturnType<typeof parsePreviewManifest>;
   vaultPath: string;
   thumbsRootPath: string;
+  thumbVersion?: number;
   measurementMode?: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
@@ -902,12 +972,12 @@ const LinkCard = memo(function LinkCard({
   const sources = useMemo(
     () => uniqueUrls([
       previewManifest?.primaryPreviewPath
-        ? previewAssetUrl(thumbsRootPath, previewManifest.primaryPreviewPath)
+        ? withThumbVersion(previewAssetUrl(thumbsRootPath, previewManifest.primaryPreviewPath), thumbVersion)
         : null,
       resolveOptionalMediaReference(vaultPath, block.thumbnail),
-      thumbnailUrl(thumbsRootPath, block.slug),
+      withThumbVersion(thumbnailUrl(thumbsRootPath, block.slug), thumbVersion),
     ]),
-    [block.slug, block.thumbnail, previewManifest?.primaryPreviewPath, thumbsRootPath, vaultPath],
+    [block.slug, block.thumbnail, previewManifest?.primaryPreviewPath, thumbsRootPath, vaultPath, thumbVersion],
   );
   const [sourceIndex, setSourceIndex] = useState(0);
   const sourcesKey = sources.join("|");
@@ -996,6 +1066,7 @@ const SocialCard = memo(function SocialCard({
   previewManifest,
   vaultPath,
   thumbsRootPath,
+  thumbVersion,
   playback,
   allowPlayback,
   measurementMode = false,
@@ -1005,6 +1076,7 @@ const SocialCard = memo(function SocialCard({
   previewManifest: ReturnType<typeof parsePreviewManifest>;
   vaultPath: string;
   thumbsRootPath: string;
+  thumbVersion?: number;
   playback: ReturnType<typeof normalizeFeedPlayback>;
   allowPlayback: boolean;
   measurementMode?: boolean;
@@ -1037,7 +1109,7 @@ const SocialCard = memo(function SocialCard({
           previewManifest,
           playback,
           primaryMedia: m,
-        });
+        }).map((url) => withThumbVersion(url, thumbVersion));
         return (
           <GraphicSurface
             className="w-full"
@@ -1066,6 +1138,7 @@ const SocialCard = memo(function SocialCard({
                     item={m}
                     vaultPath={vaultPath}
                     thumbsRootPath={thumbsRootPath}
+                    thumbVersion={thumbVersion}
                     fallbackSlug={block.slug}
                     allowSourceFallback={!m.isVideo}
                     loading={imgLoading}
@@ -1089,6 +1162,7 @@ const SocialCard = memo(function SocialCard({
             items={media}
             vaultPath={vaultPath}
             thumbsRootPath={thumbsRootPath}
+            thumbVersion={thumbVersion}
             fallbackSlug={block.slug}
             measurementMode={measurementMode}
           />
@@ -1126,6 +1200,7 @@ const ArticleCard = memo(function ArticleCard({
   previewManifest,
   vaultPath,
   thumbsRootPath,
+  thumbVersion,
   playback,
   allowPlayback,
   measurementMode = false,
@@ -1135,6 +1210,7 @@ const ArticleCard = memo(function ArticleCard({
   previewManifest: ReturnType<typeof parsePreviewManifest>;
   vaultPath: string;
   thumbsRootPath: string;
+  thumbVersion?: number;
   playback: ReturnType<typeof normalizeFeedPlayback>;
   allowPlayback: boolean;
   measurementMode?: boolean;
@@ -1151,7 +1227,7 @@ const ArticleCard = memo(function ArticleCard({
     previewManifest,
     playback,
     primaryMedia,
-  });
+  }).map((url) => withThumbVersion(url, thumbVersion));
   const displayTitle = getDisplayTitle(block);
   const titleSearchMatch = block.search_match?.field === "title" ? block.search_match : null;
   const previewSearchMatch =
@@ -1180,6 +1256,7 @@ const ArticleCard = memo(function ArticleCard({
               items={descriptor.mediaItems}
               vaultPath={vaultPath}
               thumbsRootPath={thumbsRootPath}
+              thumbVersion={thumbVersion}
               fallbackSlug={block.slug}
               measurementMode={measurementMode}
             />
@@ -1217,13 +1294,14 @@ const ArticleCard = memo(function ArticleCard({
                 item={primaryMedia}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath}
+                thumbVersion={thumbVersion}
                 fallbackSlug={block.slug}
                 allowSourceFallback
                 loading={imgLoading}
               />
             ) : (
               <img
-                src={thumbnailUrl(thumbsRootPath, block.slug)}
+                src={withThumbVersion(thumbnailUrl(thumbsRootPath, block.slug), thumbVersion)}
                 alt=""
                 className="absolute inset-0 h-full w-full object-cover"
                 loading={imgLoading}
@@ -1277,6 +1355,7 @@ const VideoCard = memo(function VideoCard({
   previewManifest,
   vaultPath,
   thumbsRootPath,
+  thumbVersion,
   playback,
   allowPlayback,
   measurementMode = false,
@@ -1285,6 +1364,7 @@ const VideoCard = memo(function VideoCard({
   previewManifest: ReturnType<typeof parsePreviewManifest>;
   vaultPath: string;
   thumbsRootPath: string;
+  thumbVersion?: number;
   playback: ReturnType<typeof normalizeFeedPlayback>;
   allowPlayback: boolean;
   measurementMode?: boolean;
@@ -1297,7 +1377,7 @@ const VideoCard = memo(function VideoCard({
       thumbsRootPath,
       previewManifest,
       playback,
-    }),
+    }).map((url) => withThumbVersion(url, thumbVersion)),
     resolveOptionalMediaReference(vaultPath, block.thumbnail),
   ]);
 

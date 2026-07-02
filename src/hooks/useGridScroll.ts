@@ -114,8 +114,17 @@ export function useGridScroll(
     const el = scrollElementRef.current;
     const scrollTop = el?.scrollTop ?? 0;
     scrollTopRef.current = scrollTop;
-    lastVisibleRef.current = getVisibleItems(scrollTop);
-    setScrollTick((t) => t + 1);
+    // getVisibleItems changes identity on every layout change AND on every
+    // velocity-driven readiness-window change. The synchronous useMemo above
+    // has already recomputed visibleItems for this render, so bump scrollTick
+    // only when the freshly computed set actually differs from what is mounted.
+    // Otherwise a pure velocity ripple (identical visible set) would force a
+    // second, wasted Grid render every scroll frame.
+    const next = getVisibleItems(scrollTop);
+    if (!samePositions(next, lastVisibleRef.current)) {
+      lastVisibleRef.current = next;
+      setScrollTick((t) => t + 1);
+    }
   }, [getVisibleItems, resetKey, scrollElementRef]);
 
   // Synchronous compute during render. Recomputes when:

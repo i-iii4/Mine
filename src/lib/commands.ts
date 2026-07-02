@@ -330,13 +330,26 @@ export interface ThumbUpgradeRequest {
   tilePosters: TilePosterUpgrade[];
 }
 
+// Binary IPC: the decoded JPEG travels as the raw request body (Uint8Array →
+// application/octet-stream), not a JSON number array, so a 40–80 KB thumb no
+// longer inflates ~4x into a payload the main thread must build and Rust must
+// parse. Metadata rides in percent-encoded headers — encodeURIComponent keeps
+// Unicode slugs (Cyrillic, symbols like ⊷) ASCII-safe for HTTP header
+// transport; Rust percent-decodes them.
 export const saveThumb = (slug: string, bytes: Uint8Array) =>
-  invoke<void>("save_thumb", { slug, bytes: Array.from(bytes) });
+  invoke<void>("save_thumb", bytes, {
+    headers: { "x-slug": encodeURIComponent(slug) },
+  });
 
 /** Write a decoded JPEG poster for one gallery video tile. `posterName` is the
  *  tile's previewPath (`<media-stem>.jpg`); `slug` owns the card to refresh. */
 export const saveTilePoster = (posterName: string, slug: string, bytes: Uint8Array) =>
-  invoke<void>("save_tile_poster", { posterName, slug, bytes: Array.from(bytes) });
+  invoke<void>("save_tile_poster", bytes, {
+    headers: {
+      "x-poster-name": encodeURIComponent(posterName),
+      "x-slug": encodeURIComponent(slug),
+    },
+  });
 
 /** Re-verify the thumb cache against current media dependencies.
  *  Fire on window focus / visibility changes so that external edits

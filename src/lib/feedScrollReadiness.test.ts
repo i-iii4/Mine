@@ -14,7 +14,7 @@ describe("computeFeedScrollReadinessWindows", () => {
     });
 
     expect(windows).toMatchObject({
-      renderBeforePx: 360,
+      renderBeforePx: 450,
       renderAfterPx: 720,
       priorityBeforePx: 990,
       priorityAfterPx: 3200,
@@ -33,7 +33,8 @@ describe("computeFeedScrollReadinessWindows", () => {
     });
 
     expect(windows.renderAfterPx).toBe(1300);
-    expect(windows.priorityAfterPx).toBe(5350);
+    // 5 px/ms * 350 = 1750 velocity contribution, quantized up to 1800.
+    expect(windows.priorityAfterPx).toBe(5400);
     expect(windows.preloadAfterPx).toBe(7800);
     expect(windows.commitLookaheadBlocks).toBe(80);
   });
@@ -63,6 +64,68 @@ describe("computeFeedScrollReadinessWindows", () => {
     expect(windows.priorityAfterPx).toBe(8000);
     expect(windows.preloadAfterPx).toBe(14000);
     expect(windows.preloadBeforePx).toBe(3600);
+  });
+
+  it("quantizes velocity growth so nearby velocities produce identical windows", () => {
+    const at = (velocity: number) =>
+      computeFeedScrollReadinessWindows({
+        viewportHeight: 900,
+        scrollVelocityPxMs: velocity,
+        scrollDirection: "forward",
+        visibleItemCount: 20,
+      });
+
+    // 0.1 and 0.2 px/ms: every velocity contribution lands in the first 200 px
+    // bucket, so the full window set is identical.
+    expect(at(0.2)).toEqual(at(0.1));
+
+    // The render window shares one 200 px bucket across a broad velocity range
+    // (contribution = v * 80, below 200 px for any v < 2.5). This is what keeps
+    // getVisibleItems identity stable frame-to-frame during steady scrolling.
+    expect(at(2.0).renderAfterPx).toBe(at(1.0).renderAfterPx);
+
+    // Crossing into the next render bucket widens the render window.
+    expect(at(3.0).renderAfterPx).toBeGreaterThan(at(2.0).renderAfterPx);
+  });
+
+  it("never narrows a window below its unquantized value", () => {
+    const vh = 1000;
+    for (const velocity of [0, 0.4, 0.9, 1.7, 2.6, 4.3]) {
+      const windows = computeFeedScrollReadinessWindows({
+        viewportHeight: vh,
+        scrollVelocityPxMs: velocity,
+        scrollDirection: "forward",
+        visibleItemCount: 20,
+      });
+      const rawRenderAfter = Math.round(
+        Math.min(Math.max(Math.max(720, vh * 0.75 + velocity * 80), 640), 1800),
+      );
+      const rawPriorityAfter = Math.round(
+        Math.min(Math.max(vh * 3 + velocity * 350, 3200), 8000),
+      );
+      const rawPreloadAfter = Math.round(
+        Math.min(Math.max(vh * 4 + velocity * 600, 4800), 14000),
+      );
+      expect(windows.renderAfterPx).toBeGreaterThanOrEqual(rawRenderAfter);
+      expect(windows.priorityAfterPx).toBeGreaterThanOrEqual(rawPriorityAfter);
+      expect(windows.preloadAfterPx).toBeGreaterThanOrEqual(rawPreloadAfter);
+    }
+  });
+
+  it("keeps the backward render window at or above half the viewport (linger contract)", () => {
+    for (const vh of [600, 900, 1200]) {
+      const windows = computeFeedScrollReadinessWindows({
+        viewportHeight: vh,
+        scrollVelocityPxMs: 0,
+        scrollDirection: "forward",
+        visibleItemCount: 20,
+      });
+      // Scrolling forward, the backward window is exposed as renderBeforePx.
+      expect(windows.renderBeforePx).toBeGreaterThanOrEqual(vh * 0.5);
+      // Priority and preload backward windows share the same lower bound.
+      expect(windows.priorityBeforePx).toBeGreaterThanOrEqual(vh * 0.5);
+      expect(windows.preloadBeforePx).toBeGreaterThanOrEqual(vh * 0.5);
+    }
   });
 });
 

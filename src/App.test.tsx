@@ -7,6 +7,25 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
 import { AppWithVault } from "./App";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
+import { SEARCH_OVERLAY_RECENT_LIMIT, SEARCH_OVERLAY_RESULT_LIMIT } from "@/components/SearchOverlay";
+
+// The search overlay shares the list_grid_blocks command: recent mode passes
+// SEARCH_OVERLAY_RECENT_LIMIT without a query, query mode passes a query string
+// with SEARCH_OVERLAY_RESULT_LIMIT. Grid-load mocks must serve those calls
+// without asserting the grid-load contract (offset 0 / limit multiple of 200 /
+// no query) — a thrown assertion inside the mock surfaces as an unhandled
+// rejection in whatever test is running when the overlay's async query lands,
+// which is a flake. The signature is matched exactly on both fields so a grid
+// regression that starts passing a query is NOT silently absorbed here
+// (SEARCH_OVERLAY_RESULT_LIMIT equals GRID_PAGE_SIZE): a query-mode call must
+// also carry the overlay's result limit, and a recent-mode call its recent
+// limit, otherwise it falls through to the strict grid assertions.
+function isSearchOverlayQuery(limit: number, query?: string): boolean {
+  return (
+    (query !== undefined && limit === SEARCH_OVERLAY_RESULT_LIMIT) ||
+    (query === undefined && limit === SEARCH_OVERLAY_RECENT_LIMIT)
+  );
+}
 
 const commandMocks = vi.hoisted(() => ({
   openVault: vi.fn<(path: string) => Promise<VaultOpenResult>>(),
@@ -133,6 +152,7 @@ vi.mock("@/components/Grid", () => ({
     keyboardNavigationDisabled,
     restoreFocusSlug,
     restoreFocusSequence,
+    thumbVersions,
     onBlockClick,
     onGroupSelectionStart,
   }: {
@@ -143,6 +163,7 @@ vi.mock("@/components/Grid", () => ({
     keyboardNavigationDisabled?: boolean;
     restoreFocusSlug?: string | null;
     restoreFocusSequence?: number;
+    thumbVersions?: ReadonlyMap<string, number>;
     onBlockClick: (block: LightBlock) => void;
     onGroupSelectionStart?: () => void;
   }) => (
@@ -152,6 +173,9 @@ vi.mock("@/components/Grid", () => ({
       <div data-testid="grid-detail-open">{String(Boolean(detailOpen))}</div>
       <div data-testid="grid-keyboard-disabled">{String(Boolean(keyboardNavigationDisabled))}</div>
       <div data-testid="grid-restore">{`${restoreFocusSlug ?? "none"}:${restoreFocusSequence ?? 0}`}</div>
+      <div data-testid="grid-thumb-versions">
+        {blocks.map((item) => `${item.slug}=${thumbVersions?.get(item.slug) ?? 0}`).join(",")}
+      </div>
       <button type="button" onClick={() => onGroupSelectionStart?.()}>
         Start group selection
       </button>
@@ -395,6 +419,9 @@ describe("AppWithVault", () => {
     commandMocks.mergeBlocks.mockResolvedValue({});
     commandMocks.getBlock.mockImplementation(async (slug: string) => indexedBlock(1, slug, slug));
     commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
+      if (isSearchOverlayQuery(limit, query)) {
+        return snapshots.get(tag ?? "__all__") ?? snapshots.get("__all__")!;
+      }
       expect(offset).toBe(0);
       expect(limit).toBe(200);
       expect(query).toBeUndefined();
@@ -519,6 +546,9 @@ describe("AppWithVault", () => {
   it("does not treat a pending uncached route as an authoritative empty grid", async () => {
     const alphaDeferred = deferred<GridSnapshot>();
     commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
+      if (isSearchOverlayQuery(limit, query)) {
+        return { blocks: [], total_blocks: 0, has_more: false };
+      }
       expect(offset).toBe(0);
       expect(limit).toBe(200);
       expect(query).toBeUndefined();
@@ -574,7 +604,10 @@ describe("AppWithVault", () => {
     };
     const allDeferred = deferred<GridSnapshot>();
 
-    commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit) => {
+    commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
+      if (isSearchOverlayQuery(limit, query)) {
+        return { blocks: [], total_blocks: 0, has_more: false };
+      }
       expect(offset).toBe(0);
       expect(limit).toBe(200);
       if ((tag ?? "__all__") === "__all__") {
@@ -1733,7 +1766,7 @@ describe("AppWithVault", () => {
     });
   });
 
-  it("refreshes the feed when thumb:updated reports new media metadata for a visible card", async () => {
+  it("bumps only the affected card's thumb version on thumb:updated without reloading the feed", async () => {
     commandMocks.listGridBlocks.mockImplementation(async () => ({
       blocks: [block(1, "wide-clip")],
       total_blocks: 1,
@@ -1749,13 +1782,14 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
     });
+    expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent("wide-clip=0");
 
     const gridCallsBefore = commandMocks.listGridBlocks.mock.calls.length;
 
-    // The thumb pipeline finished decoding the image and rewrote the block's
-    // preview_manifest / media_dimensions. The card is in the current feed, so
-    // the grid must reload to recompute its deterministic height (otherwise the
-    // stale square-aspect fallback leaves trailing dead space under the card).
+    // save_tile_poster / save_thumb rewrote the poster in place; the block row is
+    // byte-identical, so a grid refetch would reconcile to a no-op for pixels
+    // while streaming the scrolled range through IPC. Instead the affected card's
+    // per-slug cache-buster is bumped so only that card refetches its thumbnail.
     fireEvent(
       window,
       new CustomEvent("thumb:updated", {
@@ -1763,15 +1797,17 @@ describe("AppWithVault", () => {
       }),
     );
 
-    await waitFor(
-      () => {
-        expect(commandMocks.listGridBlocks.mock.calls.length).toBeGreaterThan(gridCallsBefore);
-      },
-      { timeout: 3000 },
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent("wide-clip=1");
+    });
+
+    // Let the coalesced refresh window (2s) elapse — the grid is never refetched
+    // for a thumb-only update.
+    await new Promise((resolve) => setTimeout(resolve, 2200));
+    expect(commandMocks.listGridBlocks.mock.calls.length).toBe(gridCallsBefore);
   });
 
-  it("does not reload the feed when thumb:updated targets a card outside the current feed", async () => {
+  it("does not bump the thumb version or reload the feed for a card outside the current feed", async () => {
     commandMocks.listGridBlocks.mockImplementation(async () => ({
       blocks: [block(1, "visible-card")],
       total_blocks: 1,
@@ -1787,6 +1823,7 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
     });
+    expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent("visible-card=0");
 
     const gridCallsBefore = commandMocks.listGridBlocks.mock.calls.length;
 
@@ -1801,5 +1838,7 @@ describe("AppWithVault", () => {
     // for a card it isn't currently showing, to keep the cold-start sweep cheap.
     await new Promise((resolve) => setTimeout(resolve, 2200));
     expect(commandMocks.listGridBlocks.mock.calls.length).toBe(gridCallsBefore);
+    // The off-screen slug is not in the feed, so its version stays untouched.
+    expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent("visible-card=0");
   });
 });

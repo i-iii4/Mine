@@ -9,11 +9,18 @@
 //      backlog of placeholders left over from previous sessions, from
 //      the clipper running while the main app was closed, etc.)
 //
-// On success, writes decoded JPEG bytes back to Rust via `save_thumb`,
-// which in turn emits `thumb:updated` — the sidebar cache-bust hook
-// listens for that event. This keeps the data flow one-directional
-// (worker → Rust → event → UI) and means the hook itself never needs
-// to touch the sidebar state.
+// Images decode off-main-thread in the worker (`createImageBitmap`).
+// Videos have to decode on the main thread — a `<video>` element is
+// unavailable inside a Dedicated Worker — so they run through a
+// `DecodeQueue` that bounds parallelism, deduplicates by target, and
+// retries a failed decode once per session. Both paths dedup the startup
+// backlog against live events so no target is processed twice.
+//
+// On success, writes decoded JPEG bytes back to Rust via `save_thumb` /
+// `save_tile_poster`, which in turn emit `thumb:updated` — the sidebar
+// cache-bust hook listens for that event. This keeps the data flow
+// one-directional (decode → Rust → event → UI) and means the hook itself
+// never needs to touch the sidebar state.
 //
 // Contract: SPEC_THUMBNAILS.md#contracts
 
@@ -22,6 +29,9 @@ import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { listPendingThumbUpgrades, saveThumb, saveTilePoster } from "@/lib/commands";
 import type { TilePosterUpgrade } from "@/lib/commands";
+import { DecodeQueue } from "@/lib/decodeQueue";
+import { planThumbUpgrade } from "@/lib/thumbUpgradePlan";
+import type { ThumbUpgradeInput } from "@/lib/thumbUpgradePlan";
 import type { ThumbWorkerRequest, ThumbWorkerResponse } from "@/workers/thumbWorker";
 
 // Tauri event payload. Matches `ThumbUpgradeRequestedPayload` in
@@ -34,19 +44,37 @@ interface ThumbUpgradeRequestedEvent {
   tilePosters?: TilePosterUpgrade[];
 }
 
-// ─── Video frame extraction (main thread) ───────────────────────────────────
-//
-// Creates a hidden <video>, seeks to 0.1s (skip black intro frames),
-// draws the frame onto a <canvas>, encodes as JPEG. Runs on the main
-// thread because Dedicated Workers have no DOM access for <video>.
-// Concurrency is naturally limited by the browser's media decoder pool.
+// ─── Tuning constants ────────────────────────────────────────────────────────
 
 const JPEG_QUALITY = 0.85;
-const VIDEO_TIMEOUT_MS = 10_000;
 const BRIGHTNESS_THRESHOLD = 40;
+// Max side of a decoded thumb, in px. Matches the Rust-side thumbnail size so
+// sidebar resolution stays consistent regardless of which decoder produced it.
+export const THUMB_UPGRADE_TARGET_PX = 640;
+// Budget for the browser to deliver `loadedmetadata` after the <video> src is
+// set — this covers time spent queued in the media-decoder pool.
+export const VIDEO_METADATA_TIMEOUT_MS = 15_000;
+// Budget for capturing a usable frame once metadata has loaded. Kept separate
+// from the metadata wait so pool queueing never eats the decode budget.
+export const VIDEO_DECODE_TIMEOUT_MS = 10_000;
+// Parallel main-thread video decodes. Two keeps the media-decoder pool from
+// starving the tail without serializing the whole backlog.
+export const VIDEO_DECODE_CONCURRENCY = 2;
+// Backoff before the single in-session retry of a failed video decode.
+export const VIDEO_DECODE_RETRY_DELAY_MS = 30_000;
+// Retries per target per session, beyond the first attempt.
+export const VIDEO_DECODE_MAX_RETRIES = 1;
+
 // Seek positions to try — skip black fade-in frames.
 // Relative to duration when > 1, absolute seconds otherwise.
 const SEEK_CANDIDATES = [0.1, 0.5, 1, 2];
+
+// ─── Video frame extraction (main thread) ───────────────────────────────────
+//
+// Creates a hidden <video>, seeks past black intro frames, draws the frame
+// onto a <canvas>, encodes as JPEG. Runs on the main thread because Dedicated
+// Workers have no DOM access for <video>. Parallelism is bounded by the
+// DecodeQueue in the hook below.
 
 function extractVideoFrame(url: string, maxSize: number): Promise<ArrayBuffer> {
   return new Promise((resolve, reject) => {
@@ -58,14 +86,34 @@ function extractVideoFrame(url: string, maxSize: number): Promise<ArrayBuffer> {
     let candidateIdx = 0;
     let lastBlob: ArrayBuffer | null = null;
 
-    const timer = setTimeout(() => finish(new Error("video decode timeout")), VIDEO_TIMEOUT_MS);
+    // Two honest budgets: waiting for metadata (element created →
+    // loadedmetadata) and decoding a usable frame (loadedmetadata → captured
+    // frame). A single timer started at element creation would charge time
+    // spent merely queued in the browser's media-decoder pool against the
+    // decode budget, timing out slow-to-start videos before they ever decode.
+    let metadataTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+      () => finish(new Error("video metadata timeout")),
+      VIDEO_METADATA_TIMEOUT_MS,
+    );
+    let decodeTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function clearTimers() {
+      if (metadataTimer !== null) {
+        clearTimeout(metadataTimer);
+        metadataTimer = null;
+      }
+      if (decodeTimer !== null) {
+        clearTimeout(decodeTimer);
+        decodeTimer = null;
+      }
+    }
 
     function finish(err: Error): void;
     function finish(err: null, buf: ArrayBuffer): void;
     function finish(err: Error | null, buf?: ArrayBuffer) {
       if (done) return;
       done = true;
-      clearTimeout(timer);
+      clearTimers();
       video.removeAttribute("src");
       video.load();
       if (err) reject(err); else resolve(buf!);
@@ -84,7 +132,18 @@ function extractVideoFrame(url: string, maxSize: number): Promise<ArrayBuffer> {
       candidateIdx++;
     }
 
-    video.onloadedmetadata = () => seekNext();
+    video.onloadedmetadata = () => {
+      // Metadata arrived — start the decode budget and stop the metadata one.
+      if (metadataTimer !== null) {
+        clearTimeout(metadataTimer);
+        metadataTimer = null;
+      }
+      decodeTimer = setTimeout(
+        () => finish(new Error("video decode timeout")),
+        VIDEO_DECODE_TIMEOUT_MS,
+      );
+      seekNext();
+    };
 
     video.onseeked = () => {
       const vw = video.videoWidth;
@@ -154,11 +213,100 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
   useEffect(() => {
     if (!enabled) return;
 
-    // Lazy-spawn the worker on first mount. Vite's `?worker` import
-    // wires up the bundler's worker transform; the result is a class
-    // that constructs a real `Worker` when `new`ed.
     let cancelled = false;
     let worker: Worker | null = null;
+
+    // Dedup for the image (worker) path, keyed by slug. Cleared when the
+    // worker replies. The video/tile dedup lives inside `videoQueue`.
+    const imageInFlight = new Set<string>();
+    // Image requests that arrived while the worker was still spawning; drained
+    // once it is ready so an event in that window is never dropped.
+    const preWorkerImages: { slug: string; assetUrl: string }[] = [];
+
+    const videoQueue = new DecodeQueue({
+      concurrency: VIDEO_DECODE_CONCURRENCY,
+      retryDelayMs: VIDEO_DECODE_RETRY_DELAY_MS,
+      maxRetries: VIDEO_DECODE_MAX_RETRIES,
+      onGaveUp: (key, error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[thumb upgrade] ${key} gave up after retry: ${message}`);
+      },
+    });
+
+    function postImageToWorker(slug: string, assetUrl: string) {
+      const w = workerRef.current;
+      if (!w) return;
+      const id = `${nextIdRef.current++}`;
+      pendingRef.current.set(id, { slug });
+      const req: ThumbWorkerRequest = {
+        id,
+        slug,
+        assetUrl,
+        kind: "image",
+        targetSize: THUMB_UPGRADE_TARGET_PX,
+      };
+      w.postMessage(req);
+    }
+
+    function enqueueImage(slug: string, assetUrl: string) {
+      if (imageInFlight.has(slug)) return;
+      imageInFlight.add(slug);
+      if (!workerRef.current) {
+        preWorkerImages.push({ slug, assetUrl });
+        return;
+      }
+      postImageToWorker(slug, assetUrl);
+    }
+
+    function enqueueVideo(key: string, slug: string, assetUrl: string) {
+      videoQueue.enqueue(key, async () => {
+        const bytes = await extractVideoFrame(assetUrl, THUMB_UPGRADE_TARGET_PX);
+        if (cancelled) return;
+        await saveThumb(slug, new Uint8Array(bytes));
+        onUpgraded?.();
+      });
+    }
+
+    function enqueueTilePoster(key: string, slug: string, tile: TilePosterUpgrade) {
+      videoQueue.enqueue(key, async () => {
+        const bytes = await extractVideoFrame(convertFileSrc(tile.mediaPath), THUMB_UPGRADE_TARGET_PX);
+        if (cancelled) return;
+        await saveTilePoster(tile.posterName, slug, new Uint8Array(bytes));
+        onUpgraded?.();
+      });
+    }
+
+    function dispatch(input: ThumbUpgradeInput) {
+      for (const action of planThumbUpgrade(input)) {
+        switch (action.kind) {
+          case "image":
+            enqueueImage(action.slug, convertFileSrc(action.mediaPath));
+            break;
+          case "video":
+            enqueueVideo(action.key, action.slug, convertFileSrc(action.mediaPath));
+            break;
+          case "tile":
+            enqueueTilePoster(action.key, action.slug, action.tile);
+            break;
+        }
+      }
+    }
+
+    async function enumeratePending() {
+      try {
+        const pending = await listPendingThumbUpgrades();
+        if (cancelled) return;
+        for (const req of pending) {
+          dispatch(req);
+        }
+      } catch (err) {
+        console.warn("[thumb upgrade] startup enumeration failed:", err);
+      }
+    }
+
+    // Lazy-spawn the worker on first mount. Vite's `?worker` import wires up
+    // the bundler's worker transform; the result is a class that constructs a
+    // real `Worker` when `new`ed.
     (async () => {
       const { default: ThumbWorker } = await import("@/workers/thumbWorker?worker");
       if (cancelled) return;
@@ -167,7 +315,9 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
 
       worker.onmessage = async (event: MessageEvent<ThumbWorkerResponse>) => {
         const msg = event.data;
+        const entry = pendingRef.current.get(msg.id);
         pendingRef.current.delete(msg.id);
+        if (entry) imageInFlight.delete(entry.slug);
         if (!msg.ok) {
           console.warn(`[thumb upgrade] ${msg.slug} failed: ${msg.error}`);
           return;
@@ -184,85 +334,36 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
         console.error("[thumb upgrade] worker error:", e.message);
       };
 
-      try {
-        const pending = await listPendingThumbUpgrades();
-        for (const req of pending) {
-          // mediaPath is empty when only tile posters are missing.
-          if (req.mediaPath) enqueue(req.slug, req.mediaPath, req.kind);
-          for (const tile of req.tilePosters ?? []) {
-            enqueueTilePoster(req.slug, tile);
-          }
-        }
-      } catch (err) {
-        console.warn("[thumb upgrade] startup enumeration failed:", err);
+      // Drain image requests buffered while the worker was spawning.
+      for (const buffered of preWorkerImages) {
+        postImageToWorker(buffered.slug, buffered.assetUrl);
       }
+      preWorkerImages.length = 0;
+
+      await enumeratePending();
     })();
 
     // Subscribe to live upgrade requests from the watcher.
     const unlistenPromise = listen<ThumbUpgradeRequestedEvent>(
       "thumb:upgrade-requested",
-      (event) => {
-        const { slug, mediaPath, kind, tilePosters } = event.payload;
-        if (mediaPath) enqueue(slug, mediaPath, kind);
-        for (const tile of tilePosters ?? []) {
-          enqueueTilePoster(slug, tile);
-        }
-      },
+      (event) => dispatch(event.payload),
     );
 
-    function enqueue(slug: string, mediaPath: string, kind: "image" | "video") {
-      const assetUrl = convertFileSrc(mediaPath);
-
-      // Video: decode on main thread via <video> + <canvas>.
-      // Dedicated Workers have no DOM, so <video> is unavailable there.
-      if (kind === "video") {
-        decodeVideoOnMainThread(slug, assetUrl);
-        return;
-      }
-
-      // Image: send to worker (createImageBitmap, off-main-thread).
-      const w = workerRef.current;
-      if (!w) return;
-      const id = `${nextIdRef.current++}`;
-      pendingRef.current.set(id, { slug });
-      const req: ThumbWorkerRequest = {
-        id,
-        slug,
-        assetUrl,
-        kind,
-        targetSize: 480,
-      };
-      w.postMessage(req);
-    }
-
-    async function decodeVideoOnMainThread(slug: string, url: string) {
-      try {
-        const bytes = await extractVideoFrame(url, 480);
-        await saveThumb(slug, new Uint8Array(bytes));
-        onUpgraded?.();
-      } catch (err) {
-        console.warn(`[thumb upgrade] video ${slug} failed:`, err);
-      }
-    }
-
-    // Decode one gallery video tile's poster on the main thread (same <video>
-    // path as the block thumb) and save it under its own `<media-stem>.jpg`.
-    async function enqueueTilePoster(slug: string, tile: TilePosterUpgrade) {
-      try {
-        const bytes = await extractVideoFrame(convertFileSrc(tile.mediaPath), 480);
-        await saveTilePoster(tile.posterName, slug, new Uint8Array(bytes));
-        onUpgraded?.();
-      } catch (err) {
-        console.warn(`[thumb upgrade] tile poster ${tile.posterName} failed:`, err);
-      }
-    }
+    // Close the listen race: an event fired between the startup enumeration
+    // and the subscription becoming active would otherwise be lost. Once the
+    // subscription is registered, re-enumerate — dedup drops anything already
+    // queued or in-flight, so only genuinely-missed work survives.
+    unlistenPromise.then(() => {
+      if (!cancelled) void enumeratePending();
+    });
 
     return () => {
       cancelled = true;
       unlistenPromise.then((fn) => fn());
-      // Cancel in-flight work, then terminate. The worker tears down
-      // its fetch AbortControllers on "cancel"; terminate() is the
-      // hard stop that guarantees no response lands after unmount.
+      videoQueue.dispose();
+      // Cancel in-flight worker work, then terminate. The worker tears down
+      // its fetch AbortControllers on "cancel"; terminate() is the hard stop
+      // that guarantees no response lands after unmount.
       if (worker) {
         try {
           worker.postMessage({ type: "cancel" });

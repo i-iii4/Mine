@@ -27,13 +27,64 @@ function pushUniqueCandidate(
   candidates.push(candidate);
 }
 
+interface FeedMediaCandidateCacheEntry {
+  previewManifest: string | null;
+  feedPlayback: string | null;
+  slug: string;
+  width: number | null;
+  height: number | null;
+  thumbsRootPath: string;
+  candidates: readonly FeedMediaCandidate[];
+}
+
+// Per-block memoization of derived preload candidates. The feed preloader
+// recomputes its preload window on every rAF-coalesced scroll frame (up to
+// ~120/s), and for each of the dozens of blocks in that window it calls this
+// function, which parses `preview_manifest` and `feed_playback` JSON. Without
+// caching that is hundreds of JSON.parse calls per scrolled second — pure GC
+// pressure. The WeakMap keys on block identity, so it never leaks when the
+// blocks array is replaced. Correctness never relies on block identity being
+// stable: the stored fields are the full set of inputs to the derivation, so a
+// reused block object with mutated content still recomputes on mismatch.
+const candidateCache = new WeakMap<LightBlock, FeedMediaCandidateCacheEntry>();
+
 export function feedMediaCandidatesForBlock({
   block,
   thumbsRootPath,
 }: {
   block: LightBlock;
   thumbsRootPath: string;
-}): FeedMediaCandidate[] {
+}): readonly FeedMediaCandidate[] {
+  const cached = candidateCache.get(block);
+  if (
+    cached &&
+    cached.previewManifest === block.preview_manifest &&
+    cached.feedPlayback === block.feed_playback &&
+    cached.slug === block.slug &&
+    cached.width === block.width &&
+    cached.height === block.height &&
+    cached.thumbsRootPath === thumbsRootPath
+  ) {
+    return cached.candidates;
+  }
+
+  const candidates = computeFeedMediaCandidates(block, thumbsRootPath);
+  candidateCache.set(block, {
+    previewManifest: block.preview_manifest,
+    feedPlayback: block.feed_playback,
+    slug: block.slug,
+    width: block.width,
+    height: block.height,
+    thumbsRootPath,
+    candidates,
+  });
+  return candidates;
+}
+
+function computeFeedMediaCandidates(
+  block: LightBlock,
+  thumbsRootPath: string,
+): readonly FeedMediaCandidate[] {
   const candidates: FeedMediaCandidate[] = [];
   const seen = new Set<string>();
   const previewManifest = normalizeFeedPreviewManifest(block.preview_manifest);

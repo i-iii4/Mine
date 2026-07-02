@@ -33,6 +33,7 @@ import {
 } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { collectionRefLabel } from "@/lib/collections";
+import { reconcileBlocks } from "@/lib/blockIdentity";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { cn } from "@/lib/utils";
 import {
@@ -722,6 +723,13 @@ export function AppWithVault({
     : undefined;
 
   const [blocks, setBlocks] = useState<LightBlock[]>([]);
+  // Per-slug feed thumbnail cache-buster. A `thumb:updated` event bumps the
+  // affected slug so its mounted card re-renders and refetches the regenerated
+  // poster/thumbnail (see Grid `thumbVersions`), without invalidating the route
+  // cache or refetching the whole scrolled range through IPC.
+  const [feedThumbVersions, setFeedThumbVersions] = useState<Map<string, number>>(
+    () => new Map(),
+  );
   const [totalBlocks, setTotalBlocks] = useState(0);
   const [gridSnapshotIdentity, setGridSnapshotIdentity] = useState<{
     routeKey: string;
@@ -851,7 +859,10 @@ export function AppWithVault({
   const applyGridSnapshot = useCallback((tag: string | undefined, grid: GridSnapshot) => {
     const routeKey = routeKeyFor(tag);
     routeSnapshotCacheRef.current.set(routeKey, grid);
-    setBlocks(grid.blocks);
+    // Preserve object identity for blocks whose content did not change so a
+    // no-op refresh does not invalidate the grid's downstream memos or remount
+    // any cards.
+    setBlocks((prev) => reconcileBlocks(prev, grid.blocks));
     setGridSnapshotIdentity({ routeKey });
     setTotalBlocks(grid.total_blocks);
     setHasMoreBlocks(grid.has_more);
@@ -861,6 +872,19 @@ export function AppWithVault({
   const invalidateRouteSnapshots = useCallback(() => {
     routeSnapshotCacheRef.current.clear();
     lastRevalidatedRouteKeyRef.current = null;
+  }, []);
+
+  // Bump the feed cache-buster for a slug that is currently in the loaded feed.
+  // Slugs outside the feed are ignored — their card is not mounted, so there is
+  // nothing to refetch. This re-renders only the affected card (Grid keys the
+  // version per GridItem), not the whole feed.
+  const bumpFeedThumbVersion = useCallback((slug: string) => {
+    if (!blocksRef.current.some((block) => block.slug === slug)) return;
+    setFeedThumbVersions((prev) => {
+      const next = new Map(prev);
+      next.set(slug, (prev.get(slug) ?? 0) + 1);
+      return next;
+    });
   }, []);
 
   // Redirect if navigated to a channel that doesn't exist (check both tags and channels)
@@ -995,10 +1019,19 @@ export function AppWithVault({
     tag = currentTagRef.current,
     preferCachedRoute = false,
     invalidateCachedRoutes = false,
+    preserveLoadedRange = false,
   }: {
     tag?: string;
     preferCachedRoute?: boolean;
     invalidateCachedRoutes?: boolean;
+    /**
+     * When refreshing the currently displayed route, re-fetch the whole loaded
+     * range (all pages the user has scrolled through) instead of just the
+     * first page. Without this a refresh after a vault change would truncate a
+     * deep feed back to one page, collapsing the viewport and jumping the
+     * scroll position.
+     */
+    preserveLoadedRange?: boolean;
   } = {}) => {
     const requestId = ++loadRequestIdRef.current;
     const pathAtStart = vaultPathRef.current;
@@ -1020,8 +1053,16 @@ export function AppWithVault({
       tag: tagAtStart ?? "__all__",
       preferCachedRoute,
     });
+    // The refresh path always targets the current route, so the loaded block
+    // count is that route's loaded range. Round up to a whole number of pages
+    // (minimum one) so the backend returns the full contiguous span.
+    const loadedCount = preserveLoadedRange ? blocksRef.current.length : 0;
+    const pageLimit = Math.max(
+      GRID_PAGE_SIZE,
+      Math.ceil(loadedCount / GRID_PAGE_SIZE) * GRID_PAGE_SIZE,
+    );
     try {
-      const grid = await fetchGridBlocks(tagAtStart, 0, GRID_PAGE_SIZE);
+      const grid = await fetchGridBlocks(tagAtStart, 0, pageLimit);
       if (
         loadRequestIdRef.current !== requestId
         || vaultPathRef.current !== pathAtStart
@@ -1201,7 +1242,9 @@ export function AppWithVault({
     refreshInFlightRef.current = true;
     try {
       await Promise.all([
-        pending.grid ? loadGridSnapshotRef.current({ preferCachedRoute: true }) : Promise.resolve(),
+        pending.grid
+          ? loadGridSnapshotRef.current({ preferCachedRoute: true, preserveLoadedRange: true })
+          : Promise.resolve(),
         pending.taxonomy ? loadTaxonomySnapshotRef.current() : Promise.resolve(),
         pending.previews ? loadPreviews() : Promise.resolve(),
       ]);
@@ -1535,25 +1578,20 @@ export function AppWithVault({
     }));
 
     unlistenFns.push(listen<ThumbUpdatedEvent>("thumb:updated", (event) => {
+      // Sidebar preview cache-buster (its own version ref, applied on the next
+      // previews refresh below).
       bumpThumbVersion(event.payload.slug);
-      // The thumb pipeline also (re)writes the block's preview_manifest /
-      // media_dimensions once the source media becomes decodable. A freshly
-      // clipped card first indexed before its image is readable falls back to a
-      // square media aspect, so its deterministic card height reserves too much
-      // and the card renders with trailing dead space. Grid blocks only refresh
-      // on a grid reload — a previews refresh touches the sidebar, not the feed —
-      // so that stale height would persist until a manual reload. When the
-      // affected card is in the current feed, invalidate its route and schedule a
-      // coalesced grid refresh so the height re-fits the now-known media aspect.
-      const inCurrentGrid = blocksRef.current.some(
-        (block) => block.slug === event.payload.slug,
-      );
-      if (inCurrentGrid) {
-        invalidateRouteSnapshots();
-        scheduleRefresh({ grid: true, previews: true });
-      } else {
-        scheduleRefresh({ previews: true });
-      }
+      // Feed cache-buster for the mounted card. save_tile_poster / save_thumb
+      // write the regenerated file (and sometimes rewrite preview_manifest), but
+      // the block row is byte-identical, so a grid refetch reconciles to a no-op
+      // for pixels while streaming the whole scrolled range through IPC — a storm
+      // during the Phase-2 thumb backlog. Bumping the per-slug version instead
+      // re-renders and refetches only the affected card. A genuine
+      // preview_manifest height re-fit rides the next real grid refresh
+      // (vault-changed / block:added / block:removed / navigation), which is why
+      // the full refetch is kept only for those events.
+      bumpFeedThumbVersion(event.payload.slug);
+      scheduleRefresh({ previews: true });
     }));
 
     unlistenFns.push(listen<VaultChangedEvent>("vault-changed", (event) => {
@@ -1611,7 +1649,7 @@ export function AppWithVault({
         unlisten.then((fn) => fn());
       }
     };
-  }, [bumpThumbVersion, invalidateRouteSnapshots, invalidateRoutesForTags, migrationRequired, reloadAllSnapshots, requestVaultStatsRefresh, scheduleRefresh, vaultReady]);
+  }, [bumpThumbVersion, bumpFeedThumbVersion, invalidateRouteSnapshots, invalidateRoutesForTags, migrationRequired, reloadAllSnapshots, requestVaultStatsRefresh, scheduleRefresh, vaultReady]);
 
   useEffect(() => {
     return () => {
@@ -3104,6 +3142,7 @@ export function AppWithVault({
                 blocks={activeBlocks}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath ?? undefined}
+                thumbVersions={feedThumbVersions}
                 tags={orderedTags}
                 currentTag={currentTag}
                 routeSnapshotReady={gridRouteSnapshotReady}
@@ -3342,6 +3381,7 @@ interface RouteContext {
   blocks: LightBlock[];
   vaultPath: string;
   thumbsRootPath?: string;
+  thumbVersions: ReadonlyMap<string, number>;
   tags: TagCount[];
   currentTag?: string;
   routeSnapshotReady: boolean;

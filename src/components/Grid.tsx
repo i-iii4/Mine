@@ -23,6 +23,7 @@ import { MergeCardsDialog } from "./MergeCardsDialog";
 import {
   computeMasonryLayout,
   createVisibilityIndex,
+  getMasonryColumnCount,
   getMasonryColumnWidth,
   getVisibleItemsFromIndex,
   type MasonryPosition,
@@ -31,8 +32,7 @@ import {
 import { computeCardHeight } from "@/lib/cardHeight";
 import { computeFeedPlaybackSurfaceEnvelope } from "@/lib/cardHeight";
 import { LayoutCache } from "@/lib/layoutCache";
-import { fetchWordWidths } from "@/lib/fontMetrics";
-import { bucketize } from "@/lib/heightBucket";
+import { createFontMetricsCacheIdentity, fetchWordWidths } from "@/lib/fontMetrics";
 import { useGridScroll } from "@/hooks/useGridScroll";
 import { useFeedMediaPreloader } from "@/hooks/useFeedMediaPreloader";
 import type { WordWidths } from "@/types/fontMetrics";
@@ -88,9 +88,25 @@ const MEASUREMENT_BATCH_SIZE = 24;
 const INITIAL_COMMIT_BLOCKS = 48;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
+// Heavy autoplay clips play direct-from-disk, so a small bounded pool can run at
+// once instead of a single global slot. Keep this small: each active heavy clip
+// is a decoding <video> surface, and the backend lifts the heavy file-size cap
+// on the assumption that only a few heavy clips are ever live simultaneously.
+export const FEED_HEAVY_MAX_ACTIVE = 2;
+// A currently-active heavy clip keeps its pool slot until a challenger exceeds
+// its viewport-visible fraction by more than this margin. The hysteresis stops
+// two similarly-visible heavy clips from swapping the marginal slot on every
+// frame during slow scrolling near a pool boundary.
+export const FEED_HEAVY_HYSTERESIS_FRACTION = 0.1;
 const GRID_BOTTOM_INSET_PX = 32;
 const MARQUEE_DRAG_THRESHOLD_PX = 4;
 const SCROLL_ANCHOR_REFERENCE_OFFSET_PX = 32;
+// At (or within a sub-pixel of) the very top of the feed the viewport must keep
+// showing the newest content: a prepend (new clip via clipper/import → watcher
+// refresh; feed is saved_at DESC) or any batch insert at the head should reveal
+// the new cards, not anchor the old first card and push the fresh rows above the
+// viewport. Above this threshold the anchor behaves normally.
+const TOP_OF_FEED_SCROLL_EPSILON_PX = 0.5;
 const EMPTY_CHANNEL_PLACEHOLDER_TEXT =
   "Elements connected to this collection will appear here.";
 const INITIAL_FEED_SCROLL_SIGNAL: FeedScrollSignal = {
@@ -255,13 +271,6 @@ function firstVisibleSlug(
   }
 
   return best ? blocks[best.index]?.slug ?? null : null;
-}
-
-function hasRemovedBlocks(
-  previousBlocks: readonly LightBlock[],
-  currentSlugs: ReadonlySet<string>,
-): boolean {
-  return previousBlocks.some((block) => !currentSlugs.has(block.slug));
 }
 
 function findViewportPreservationAnchor(
@@ -523,6 +532,13 @@ interface GridProps {
   blocks: LightBlock[];
   vaultPath: string;
   thumbsRootPath?: string;
+  /**
+   * Per-slug thumbnail cache-buster. Bumped by App on a `thumb:updated` event
+   * so the affected card re-renders and refetches its regenerated
+   * poster/thumbnail without a full grid reload. Slugs absent from the map are
+   * version 0 (unversioned URLs).
+   */
+  thumbVersions?: ReadonlyMap<string, number>;
   tags: TagCount[];
   currentTag?: string;
   routeSnapshotReady?: boolean;
@@ -628,12 +644,117 @@ function buildLayout(
   );
 }
 
+// ─── Heavy autoplay pool arbitration ───────────────────────────────────────
+
+export interface HeavyPlaybackCandidate {
+  slug: string;
+  /** Whether the playback surface overlaps the strict viewport at all. */
+  inViewport: boolean;
+  /** Surface fraction covered by the strict viewport. */
+  viewportVisibleFraction: number;
+  /** Surface fraction covered by the expanded autoplay window. */
+  windowVisibleFraction: number;
+  /** Distance of the surface center from the viewport center. */
+  centerDistance: number;
+  /** Surface top in layout coordinates; smaller wins ties (top-most first). */
+  top: number;
+}
+
+// Strict, total ordering of heavy candidates from strongest to weakest. The
+// final slug tie-break makes the order independent of visibleItems iteration
+// order, so the pool never flickers on incidental reordering.
+function compareHeavyPlaybackStrength(
+  a: HeavyPlaybackCandidate,
+  b: HeavyPlaybackCandidate,
+): number {
+  if (a.inViewport !== b.inViewport) return a.inViewport ? -1 : 1;
+  if (Math.abs(a.viewportVisibleFraction - b.viewportVisibleFraction) > 0.001) {
+    return b.viewportVisibleFraction - a.viewportVisibleFraction;
+  }
+  if (Math.abs(a.windowVisibleFraction - b.windowVisibleFraction) > 0.001) {
+    return b.windowVisibleFraction - a.windowVisibleFraction;
+  }
+  if (Math.abs(a.top - b.top) > 0.5) return a.top - b.top;
+  if (Math.abs(a.centerDistance - b.centerDistance) > 0.5) {
+    return a.centerDistance - b.centerDistance;
+  }
+  return a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0;
+}
+
+/**
+ * Pick which heavy autoplay clips play, bounded to `maxActive`, with hysteresis
+ * against the currently-active set so a marginal challenger cannot displace an
+ * incumbent unless it is decisively more visible.
+ *
+ * The ranking is deterministic (see {@link compareHeavyPlaybackStrength}). An
+ * incumbent that just fell out of the winner set reclaims its slot from the
+ * weakest non-incumbent winner unless that winner beats it by more than
+ * `hysteresisFraction` on viewport-visible fraction.
+ */
+export function selectActiveHeavyPlaybackSlugs(
+  candidates: readonly HeavyPlaybackCandidate[],
+  previousActive: ReadonlySet<string>,
+  maxActive: number = FEED_HEAVY_MAX_ACTIVE,
+  hysteresisFraction: number = FEED_HEAVY_HYSTERESIS_FRACTION,
+): Set<string> {
+  if (maxActive <= 0 || candidates.length === 0) return new Set<string>();
+
+  const ranked = [...candidates].sort(compareHeavyPlaybackStrength);
+  const keep = new Set(ranked.slice(0, maxActive).map((candidate) => candidate.slug));
+
+  // No boundary contention: either nothing was active before, or every
+  // candidate already fits, so hysteresis cannot change the outcome.
+  if (previousActive.size === 0 || ranked.length <= maxActive) {
+    return keep;
+  }
+
+  const bySlug = new Map(ranked.map((candidate) => [candidate.slug, candidate]));
+  const atRiskIncumbents = ranked.filter(
+    (candidate) => previousActive.has(candidate.slug) && !keep.has(candidate.slug),
+  );
+
+  for (const incumbent of atRiskIncumbents) {
+    // Weakest challenger (non-incumbent) currently holding a slot.
+    let weakestChallenger: HeavyPlaybackCandidate | null = null;
+    for (const slug of keep) {
+      if (previousActive.has(slug)) continue;
+      const challenger = bySlug.get(slug);
+      if (!challenger) continue;
+      if (
+        weakestChallenger === null ||
+        compareHeavyPlaybackStrength(challenger, weakestChallenger) > 0
+      ) {
+        weakestChallenger = challenger;
+      }
+    }
+    if (!weakestChallenger) break;
+    // Hysteresis must not carry across the inViewport boundary: an incumbent
+    // that has scrolled out of the strict viewport cannot hold its slot against
+    // a challenger that is already inside it, however small the challenger's
+    // visible fraction. The fraction-margin protection only applies when both
+    // are on the same side of the boundary.
+    if (weakestChallenger.inViewport && !incumbent.inViewport) {
+      continue;
+    }
+    if (
+      weakestChallenger.viewportVisibleFraction <=
+      incumbent.viewportVisibleFraction + hysteresisFraction
+    ) {
+      keep.delete(weakestChallenger.slug);
+      keep.add(incumbent.slug);
+    }
+  }
+
+  return keep;
+}
+
 // ─── Grid component ────────────────────────────────────────────────────────
 
 export function Grid({
   blocks,
   vaultPath,
   thumbsRootPath,
+  thumbVersions,
   tags,
   currentTag,
   routeSnapshotReady = true,
@@ -715,6 +836,11 @@ export function Grid({
   const [wordWidthsMap, setWordWidthsMap] = useState<Map<number, WordWidths>>(new Map());
   const [wordMetricsSettled, setWordMetricsSettled] = useState(blocks.length === 0);
   const [heightDriftAuditBatch, setHeightDriftAuditBatch] = useState<LightBlock[]>([]);
+  // Font-metrics cache identity (createFontMetricsCacheIdentity.cacheKey) per
+  // block id, tracking exactly which measured text each map entry was computed
+  // for. Lets the metrics effect fetch only genuinely new or edited blocks
+  // instead of clearing every word width on each blocks identity change.
+  const wordWidthsIdentityRef = useRef<Map<number, string>>(new Map());
 
   const readGridScrollMetrics = useCallback((
     element: HTMLElement,
@@ -821,13 +947,73 @@ export function Grid({
 
   useEffect(() => {
     let cancelled = false;
-    setWordWidthsMap(new Map());
-    setWordMetricsSettled(blocks.length === 0);
-    void fetchWordWidths(blocks)
-      .then((map) => {
-        if (!cancelled) {
-          setWordWidthsMap(map);
+
+    // A block needs (re)measuring only when we have no word widths recorded for
+    // its id, or the recorded widths were computed for a different text slice
+    // (cacheKey mismatch after an in-place edit). Blocks whose widths are still
+    // valid keep their exact height and stay rendered — no map reset, no
+    // skeleton flash, no O(N) IndexedDB re-query on every pagination page.
+    const identityByBlockId = new Map<number, string>();
+    const needsCompute: LightBlock[] = [];
+    for (const block of blocks) {
+      const identity = createFontMetricsCacheIdentity(block);
+      identityByBlockId.set(block.id, identity.cacheKey);
+      if (wordWidthsIdentityRef.current.get(block.id) !== identity.cacheKey) {
+        needsCompute.push(block);
+      }
+    }
+
+    // Prune metrics that no longer apply, before the early return so a
+    // removal-only change still frees the entries. An id absent from the current
+    // block set has left the feed (channel switch, pagination reset); an id whose
+    // recorded cacheKey no longer matches was edited in place. Dropping the stale
+    // entry makes the edited block fall back to the skeleton until its recomputed
+    // widths arrive instead of being laid out at its pre-edit height, and bounds
+    // both structures to the live block set across a long session.
+    for (const id of [...wordWidthsIdentityRef.current.keys()]) {
+      const currentKey = identityByBlockId.get(id);
+      if (currentKey === undefined || wordWidthsIdentityRef.current.get(id) !== currentKey) {
+        wordWidthsIdentityRef.current.delete(id);
+      }
+    }
+    setWordWidthsMap((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const id of prev.keys()) {
+        if (!wordWidthsIdentityRef.current.has(id)) {
+          next.delete(id);
+          changed = true;
         }
+      }
+      return changed ? next : prev;
+    });
+
+    if (needsCompute.length === 0) {
+      setWordMetricsSettled(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // New or edited blocks have no exact height yet; hold them in the skeleton
+    // state until their widths arrive rather than flashing a fallback height.
+    setWordMetricsSettled(false);
+    void fetchWordWidths(needsCompute)
+      .then((computed) => {
+        if (cancelled || computed.size === 0) return;
+        for (const id of computed.keys()) {
+          const cacheKey = identityByBlockId.get(id);
+          if (cacheKey !== undefined) {
+            wordWidthsIdentityRef.current.set(id, cacheKey);
+          }
+        }
+        setWordWidthsMap((prev) => {
+          const next = new Map(prev);
+          for (const [id, widths] of computed) {
+            next.set(id, widths);
+          }
+          return next;
+        });
       })
       .finally(() => {
         if (!cancelled) {
@@ -839,24 +1025,30 @@ export function Grid({
     };
   }, [blocks]);
 
-  // Current column width bucket. Changes when parentWidth crosses a 40px
-  // boundary — at that point we may need to measure blocks again at the
-  // new column width, since text wraps differently.
-  const bucket = useMemo(
-    () => bucketize(deriveColumnWidth(parentWidth, layoutGap)),
+  // Exact masonry column geometry. The layout is a pure function of these plus
+  // the gap and block heights, so the generation key changes only when the
+  // layout would actually change — not on every pixel of a sidebar/scrollbar
+  // resize. That keeps VirtualMasonryLayout mounted and the module-level
+  // layoutCache warm across sub-column-width width changes.
+  const columnWidth = useMemo(
+    () => deriveColumnWidth(parentWidth, layoutGap),
+    [layoutGap, parentWidth],
+  );
+  const columnCount = useMemo(
+    () => getMasonryColumnCount(parentWidth, COLUMN_MIN_WIDTH, layoutGap),
     [layoutGap, parentWidth],
   );
   const generationKey = useMemo<LayoutGenerationKey>(
     () => buildLayoutGenerationKey({
       blocks,
       routeKey: currentTag ?? "__all__",
-      heightBucket: bucket,
-      parentWidth,
+      columnWidth,
+      columnCount,
       // The module-level layoutCache must never serve a layout computed with
       // a different gap (design variants change it).
       layoutGap,
     }),
-    [blocks, bucket, currentTag, layoutGap, parentWidth],
+    [blocks, columnCount, columnWidth, currentTag, layoutGap],
   );
   const heightDriftBlocksById = useMemo(() => {
     const map = new Map<number, LightBlock>();
@@ -1141,21 +1333,32 @@ export function Grid({
       previous &&
       previous.routeKey === routeKey &&
       Math.abs(previous.parentWidth - parentWidth) <= 0.5 &&
-      viewportHeight > 0
+      viewportHeight > 0 &&
+      // At the very top of the feed, do not anchor: a head insert must reveal the
+      // new cards. Anchoring the old first card here (single-column, or a batch
+      // insert of >= columnCount cards) fixes it in place and hides the fresh
+      // rows above the viewport. Away from the top this guard is inactive and
+      // anchoring keeps the first visible card fixed when content above it moves.
+      latestScrollTopRef.current > TOP_OF_FEED_SCROLL_EPSILON_PX &&
+      // The layout object changes identity only when positions actually change
+      // (blocks added/removed, or a block's height changed after a preview
+      // upgrade). Re-anchoring on every layout change — not just removals —
+      // keeps the first visible card fixed when content above the viewport
+      // grows or shrinks. When nothing above shifted, the anchor resolves to
+      // the current scrollTop and the apply step below is a no-op.
+      previous.positions !== layout.positions
     ) {
       const currentSlugs = new Set(blocks.map((block) => block.slug));
-      if (hasRemovedBlocks(previous.blocks, currentSlugs)) {
-        const anchor = findViewportPreservationAnchor(
-          previous.positions,
-          previous.blocks,
-          currentSlugs,
-          latestScrollTopRef.current,
-          scrollElement.clientHeight || viewportHeight,
-          gridTopInset,
-        );
-        if (anchor) {
-          pendingScrollAnchorRef.current = { routeKey, anchor };
-        }
+      const anchor = findViewportPreservationAnchor(
+        previous.positions,
+        previous.blocks,
+        currentSlugs,
+        latestScrollTopRef.current,
+        scrollElement.clientHeight || viewportHeight,
+        gridTopInset,
+      );
+      if (anchor) {
+        pendingScrollAnchorRef.current = { routeKey, anchor };
       }
     }
 
@@ -1784,6 +1987,8 @@ export function Grid({
     viewportHeight,
   ]);
 
+  const activeHeavyPlaybackRef = useRef<ReadonlySet<string>>(new Set<string>());
+
   const activePlaybackSlugs = useMemo(() => {
     if (renderReadyBlockIds.size === 0 || viewportHeight <= 0) {
       return new Set<string>();
@@ -1798,16 +2003,7 @@ export function Grid({
     const viewportBottom = scrollTop + viewportHeight;
     const viewportCenter = scrollTop + viewportHeight / 2;
     const active = new Set<string>();
-    let activeHeavy:
-      | {
-          slug: string;
-          inViewport: boolean;
-          viewportVisibleFraction: number;
-          windowVisibleFraction: number;
-          centerDistance: number;
-          top: number;
-        }
-      | null = null;
+    const heavyCandidates: HeavyPlaybackCandidate[] = [];
 
     for (const item of visibleItems) {
       const block = blocks[item.index];
@@ -1836,48 +2032,31 @@ export function Grid({
       const windowVisibleFraction = windowVisiblePx / safeSurfaceHeight;
       if (windowVisibleFraction < FEED_AUTOPLAY_MIN_VISIBLE_FRACTION) continue;
 
+      // Standard clips buffer through a size-capped blob, so any number of them
+      // may play at once.
       if (playback.profile === "standard") {
         active.add(block.slug);
         continue;
       }
 
-      const inViewport = viewportVisiblePx > 0;
-      const viewportVisibleFraction = Math.max(viewportVisiblePx, 0) / safeSurfaceHeight;
-      const centerDistance = Math.abs(
-        surfaceTop + playbackSurface.heightPx / 2 - viewportCenter,
-      );
-
-      if (
-        !activeHeavy ||
-        (inViewport && !activeHeavy.inViewport) ||
-        (inViewport === activeHeavy.inViewport &&
-          viewportVisibleFraction > activeHeavy.viewportVisibleFraction + 0.001) ||
-        (inViewport === activeHeavy.inViewport &&
-          Math.abs(viewportVisibleFraction - activeHeavy.viewportVisibleFraction) <= 0.001 &&
-          windowVisibleFraction > activeHeavy.windowVisibleFraction + 0.001) ||
-        (inViewport === activeHeavy.inViewport &&
-          Math.abs(viewportVisibleFraction - activeHeavy.viewportVisibleFraction) <= 0.001 &&
-          Math.abs(windowVisibleFraction - activeHeavy.windowVisibleFraction) <= 0.001 &&
-          surfaceTop < activeHeavy.top - 0.5) ||
-        (inViewport === activeHeavy.inViewport &&
-          Math.abs(viewportVisibleFraction - activeHeavy.viewportVisibleFraction) <= 0.001 &&
-          Math.abs(windowVisibleFraction - activeHeavy.windowVisibleFraction) <= 0.001 &&
-          Math.abs(surfaceTop - activeHeavy.top) <= 0.5 &&
-          centerDistance < activeHeavy.centerDistance - 0.5)
-      ) {
-        activeHeavy = {
-          slug: block.slug,
-          inViewport,
-          viewportVisibleFraction,
-          windowVisibleFraction,
-          centerDistance,
-          top: surfaceTop,
-        };
-      }
+      // Heavy clips compete for the bounded heavy pool.
+      heavyCandidates.push({
+        slug: block.slug,
+        inViewport: viewportVisiblePx > 0,
+        viewportVisibleFraction: Math.max(viewportVisiblePx, 0) / safeSurfaceHeight,
+        windowVisibleFraction,
+        centerDistance: Math.abs(
+          surfaceTop + playbackSurface.heightPx / 2 - viewportCenter,
+        ),
+        top: surfaceTop,
+      });
     }
 
-    if (activeHeavy) {
-      active.add(activeHeavy.slug);
+    for (const slug of selectActiveHeavyPlaybackSlugs(
+      heavyCandidates,
+      activeHeavyPlaybackRef.current,
+    )) {
+      active.add(slug);
     }
 
     return active;
@@ -1889,6 +2068,18 @@ export function Grid({
     viewportHeight,
     visibleItems,
   ]);
+
+  // Remember which heavy clips are currently active so the next arbitration
+  // applies hysteresis against the committed set, not a fresh computation.
+  useEffect(() => {
+    const heavy = new Set<string>();
+    for (const slug of activePlaybackSlugs) {
+      if (autoplayEligibleBySlug.get(slug)?.profile === "heavy") {
+        heavy.add(slug);
+      }
+    }
+    activeHeavyPlaybackRef.current = heavy;
+  }, [activePlaybackSlugs, autoplayEligibleBySlug]);
 
   useEffect(() => {
     if (!hasMoreBlocks || loadingMoreBlocks || !onLoadMoreBlocks) {
@@ -2024,13 +2215,13 @@ export function Grid({
         >
           {parentWidth > 0 && blocks.length > 0 && (
             <VirtualMasonryLayout
-              key={generationKey}
               blocks={blocks}
               visibleItems={visibleItems}
               totalHeight={layout.totalHeight}
               priorityBounds={priorityBounds}
               liveBlockIds={renderReadyBlockIds}
               activePlaybackSlugs={activePlaybackSlugs}
+              thumbVersions={thumbVersions}
               marqueeRect={marqueeRect}
               context={gridContext}
             />
@@ -2097,6 +2288,7 @@ function VirtualMasonryLayout({
   priorityBounds,
   liveBlockIds,
   activePlaybackSlugs,
+  thumbVersions,
   marqueeRect,
   context,
 }: {
@@ -2106,6 +2298,7 @@ function VirtualMasonryLayout({
   priorityBounds: { start: number; end: number };
   liveBlockIds: ReadonlySet<number>;
   activePlaybackSlugs: Set<string>;
+  thumbVersions?: ReadonlyMap<string, number>;
   marqueeRect: LayoutRect | null;
   context: GridContext;
 }) {
@@ -2129,6 +2322,7 @@ function VirtualMasonryLayout({
             }
             isCommitted={isLive}
             allowPlayback={activePlaybackSlugs.has(block.slug)}
+            thumbVersion={thumbVersions?.get(block.slug) ?? 0}
             isFocused={
               block.slug === context.focusedSlug ||
               block.slug === context.pinnedActionMenuSlug
@@ -2160,6 +2354,7 @@ const GridItem = memo(function GridItem({
   priority,
   isCommitted,
   allowPlayback,
+  thumbVersion,
   isFocused,
   isSelected,
   context,
@@ -2169,6 +2364,7 @@ const GridItem = memo(function GridItem({
   priority: boolean;
   isCommitted: boolean;
   allowPlayback: boolean;
+  thumbVersion: number;
   isFocused: boolean;
   isSelected: boolean;
   context: GridContext;
@@ -2182,6 +2378,32 @@ const GridItem = memo(function GridItem({
       ? context.selectionBatchMenuRequest.sequence
       : 0;
   const isPinnedActionMenuAnchor = block.slug === context.pinnedActionMenuSlug;
+
+  // Stabilize the reference-identity props handed to the memoized Card. A fresh
+  // dragBlocks array or a fresh inline callback on every GridItem render defeats
+  // Card's memo, so any re-render of GridItem (focus change, gridContext
+  // identity churn) would needlessly re-render the whole Card subtree. These
+  // deps are all stable during a pure scroll, so scrolling never re-renders Card.
+  const dragBlocks = useMemo(
+    () =>
+      isSelected
+        ? [
+            block,
+            ...context.selectedBlocks.filter((other) => other.slug !== block.slug),
+          ]
+        : [block],
+    [block, isSelected, context.selectedBlocks],
+  );
+  const clearSelectionOnDragStart =
+    !isSelected && context.selectedSlugs.size > 0
+      ? context.onClearSelection
+      : undefined;
+  const handleKeyboardMoreMenuOpenChange = useCallback(
+    (open: boolean) => {
+      context.onKeyboardActionMenuOpenChange(block.slug, open);
+    },
+    [context.onKeyboardActionMenuOpenChange, block.slug],
+  );
 
   return (
     <div
@@ -2219,26 +2441,14 @@ const GridItem = memo(function GridItem({
             block={block}
             vaultPath={context.vaultPath}
             thumbsRootPath={context.thumbsRootPath}
+            thumbVersion={thumbVersion}
             priority={priority}
             allowPlayback={allowPlayback}
             openMoreMenuRequestSequence={openMoreMenuRequestSequence}
             hoverEnabled={context.hoverEnabled && !isPinnedActionMenuAnchor}
-            dragBlocks={
-              isSelected
-                ? [
-                    block,
-                    ...context.selectedBlocks.filter((item) => item.slug !== block.slug),
-                  ]
-                : [block]
-            }
-            clearSelectionOnDragStart={
-              !isSelected && context.selectedSlugs.size > 0
-                ? context.onClearSelection
-                : undefined
-            }
-            onKeyboardMoreMenuOpenChange={(open) => {
-              context.onKeyboardActionMenuOpenChange(block.slug, open);
-            }}
+            dragBlocks={dragBlocks}
+            clearSelectionOnDragStart={clearSelectionOnDragStart}
+            onKeyboardMoreMenuOpenChange={handleKeyboardMoreMenuOpenChange}
             onModifiedClick={context.onModifiedCardClick}
             onClick={context.onBlockClick}
             tags={context.tags}

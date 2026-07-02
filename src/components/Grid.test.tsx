@@ -12,7 +12,13 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, act, fireEvent, screen, within } from "@testing-library/react";
-import { Grid } from "./Grid";
+import {
+  Grid,
+  selectActiveHeavyPlaybackSlugs,
+  FEED_HEAVY_MAX_ACTIVE,
+  FEED_HEAVY_HYSTERESIS_FRACTION,
+  type HeavyPlaybackCandidate,
+} from "./Grid";
 import { computeMasonryLayout } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
 import type { LightBlock } from "@/types";
@@ -1047,6 +1053,51 @@ describe("Grid — no collapse after add / revisit", () => {
 
     expect(scrollEl?.scrollTop).toBe(264);
     expect(gridItemForSlug("block-9603")).toBeTruthy();
+  });
+
+  it("keeps the viewport at the top when a batch of cards is inserted at the head", async () => {
+    vi.useFakeTimers();
+
+    // Single column at 280px, a deep feed so there is room to scroll. The
+    // viewport starts at the very top (scrollTop 0).
+    const blocks = Array.from({ length: 10 }, (_, index) => makeBlock(9700 + index));
+    for (const block of blocks) {
+      setBlockHeight(block.id, 200);
+    }
+
+    const { rerender } = render(
+      <Grid {...BASE_PROPS} blocks={blocks} currentTag="head-insert-anchor" />,
+    );
+
+    act(() => {
+      triggerResize(280, 300);
+    });
+    await flushAsync();
+
+    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
+    expect(scrollEl).toBeTruthy();
+    expect(scrollEl?.scrollTop).toBe(0);
+
+    // Prepend a full batch (>= columnCount) of new cards at the head, as a
+    // clipper/import save does (feed is saved_at DESC). The viewport must stay at
+    // the top to reveal them, not anchor the old first card and push the new rows
+    // above the fold.
+    const prepended = [
+      makeBlock(9690),
+      makeBlock(9691),
+      makeBlock(9692),
+      ...blocks,
+    ];
+    for (const block of prepended) {
+      setBlockHeight(block.id, 200);
+    }
+    rerender(
+      <Grid {...BASE_PROPS} blocks={prepended} currentTag="head-insert-anchor" />,
+    );
+    await flushAsync();
+
+    expect(scrollEl?.scrollTop).toBe(0);
+    expect(gridItemForSlug("block-9690")).toBeTruthy();
   });
 
   it("does not let stale keyboard focus override delete scroll anchoring", async () => {
@@ -2194,6 +2245,40 @@ describe("Grid — no collapse after add / revisit", () => {
     assertPositionsMatchFreshLayout(visitAAgain, positions, 1200);
   });
 
+  it("keeps the masonry layout DOM node mounted when blocks grow", async () => {
+    vi.useFakeTimers();
+
+    const initial = Array.from({ length: 8 }, (_, i) => makeBlock(3000 + i));
+    for (const block of initial) {
+      setBlockHeight(block.id, 200);
+    }
+
+    const { rerender } = render(
+      <Grid {...BASE_PROPS} blocks={initial} currentTag="no-remount" />,
+    );
+    await flushAsync();
+
+    const layoutNodeBefore = document.querySelector("[data-grid-layout]");
+    expect(layoutNodeBefore).toBeTruthy();
+
+    // Simulate a pagination page arriving: the block list grows, which changes
+    // the generation key. The virtualized layout must reconcile in place, not
+    // remount — remounting would tear down every mounted <img> and reset any
+    // playing video.
+    const grown = [
+      ...initial,
+      ...Array.from({ length: 4 }, (_, i) => makeBlock(3100 + i)),
+    ];
+    for (const block of grown) {
+      setBlockHeight(block.id, 200);
+    }
+    rerender(<Grid {...BASE_PROPS} blocks={grown} currentTag="no-remount" />);
+    await flushAsync();
+
+    const layoutNodeAfter = document.querySelector("[data-grid-layout]");
+    expect(layoutNodeAfter).toBe(layoutNodeBefore);
+  });
+
   it("re-measures when layout-relevant text changes at the same block ids", async () => {
     vi.useFakeTimers();
 
@@ -2440,7 +2525,7 @@ describe("Grid — no collapse after add / revisit", () => {
     ).toBeFalsy();
   });
 
-  it("prefers an in-viewport heavy clip over an off-screen lingering heavy clip", async () => {
+  it("plays both visible heavy clips up to the heavy pool limit", async () => {
     vi.useFakeTimers();
 
     const blocks = [
@@ -2470,11 +2555,12 @@ describe("Grid — no collapse after add / revisit", () => {
 
     await flushAsync();
 
+    // Two heavy clips both inside the autoplay window fit the pool of 2.
     expect(
       document.querySelector(
         "[data-block-slug='block-1601'] [data-feed-video-surface='true']",
       ),
-    ).toBeFalsy();
+    ).toBeTruthy();
     expect(
       document.querySelector(
         "[data-block-slug='block-1602'] [data-feed-video-surface='true']",
@@ -2482,7 +2568,7 @@ describe("Grid — no collapse after add / revisit", () => {
     ).toBeTruthy();
   });
 
-  it("keeps only the top-most heavy video active when multiple heavy cards compete", async () => {
+  it("keeps only the two most visible heavy videos active when more heavy cards compete", async () => {
     vi.useFakeTimers();
 
     const blocks = [
@@ -2502,7 +2588,9 @@ describe("Grid — no collapse after add / revisit", () => {
 
     await flushAsync();
 
-    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(1);
+    // Pool of 2: the two top-most fully-visible heavy clips play, the third
+    // (only partially visible) does not.
+    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(2);
     expect(
       document.querySelector(
         "[data-block-slug='block-1201'] [data-feed-video-surface='true']",
@@ -2512,10 +2600,15 @@ describe("Grid — no collapse after add / revisit", () => {
       document.querySelector(
         "[data-block-slug='block-1202'] [data-feed-video-surface='true']",
       ),
+    ).toBeTruthy();
+    expect(
+      document.querySelector(
+        "[data-block-slug='block-1203'] [data-feed-video-surface='true']",
+      ),
     ).toBeFalsy();
   });
 
-  it("allows one heavy video alongside visible standard videos", async () => {
+  it("allows two heavy videos alongside visible standard videos", async () => {
     vi.useFakeTimers();
 
     const blocks = [
@@ -2535,7 +2628,8 @@ describe("Grid — no collapse after add / revisit", () => {
 
     await flushAsync();
 
-    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(2);
+    // Standard clips are unbounded; both heavy clips fit the pool of 2.
+    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(3);
     expect(
       document.querySelector(
         "[data-block-slug='block-1301'] [data-feed-video-surface='true']",
@@ -2550,7 +2644,7 @@ describe("Grid — no collapse after add / revisit", () => {
       document.querySelector(
         "[data-block-slug='block-1303'] [data-feed-video-surface='true']",
       ),
-    ).toBeFalsy();
+    ).toBeTruthy();
   });
 
   it("uses visible playback surface, not full card height, for tall article-video cards", async () => {
@@ -2632,3 +2726,130 @@ function assertPositionsMatchExplicitLayout(
     }
   }
 }
+
+// ─── Heavy autoplay pool arbitration (pure) ─────────────────────────────────
+
+function heavyCandidate(
+  slug: string,
+  overrides: Partial<HeavyPlaybackCandidate> = {},
+): HeavyPlaybackCandidate {
+  return {
+    slug,
+    inViewport: true,
+    viewportVisibleFraction: 1,
+    windowVisibleFraction: 1,
+    centerDistance: 0,
+    top: 0,
+    ...overrides,
+  };
+}
+
+describe("selectActiveHeavyPlaybackSlugs", () => {
+  it("caps the pool at FEED_HEAVY_MAX_ACTIVE, keeping the most visible clips", () => {
+    expect(FEED_HEAVY_MAX_ACTIVE).toBe(2);
+
+    const active = selectActiveHeavyPlaybackSlugs(
+      [
+        heavyCandidate("a", { viewportVisibleFraction: 0.9, top: 0 }),
+        heavyCandidate("b", { viewportVisibleFraction: 0.6, top: 400 }),
+        heavyCandidate("c", { viewportVisibleFraction: 0.3, top: 800 }),
+      ],
+      new Set(),
+    );
+
+    expect(active).toEqual(new Set(["a", "b"]));
+  });
+
+  it("prefers in-viewport clips over an off-screen clip lingering in the window", () => {
+    const active = selectActiveHeavyPlaybackSlugs(
+      [
+        heavyCandidate("visible-a", {
+          inViewport: true,
+          viewportVisibleFraction: 0.5,
+          top: 0,
+        }),
+        heavyCandidate("visible-b", {
+          inViewport: true,
+          viewportVisibleFraction: 0.5,
+          top: 400,
+        }),
+        heavyCandidate("lingering", {
+          inViewport: false,
+          viewportVisibleFraction: 0,
+          windowVisibleFraction: 0.6,
+          top: 800,
+        }),
+      ],
+      new Set(),
+    );
+
+    expect(active).toEqual(new Set(["visible-a", "visible-b"]));
+  });
+
+  it("breaks ties deterministically by layout position regardless of input order", () => {
+    const build = (order: string[]): Set<string> =>
+      selectActiveHeavyPlaybackSlugs(
+        order.map((slug, index) =>
+          heavyCandidate(slug, { top: { top32: 32, top364: 364, top696: 696 }[slug] ?? index }),
+        ),
+        new Set(),
+      );
+
+    // Three equally-visible clips: the two top-most win, independent of order.
+    const forward = build(["top32", "top364", "top696"]);
+    const shuffled = build(["top696", "top32", "top364"]);
+
+    expect(forward).toEqual(new Set(["top32", "top364"]));
+    expect(shuffled).toEqual(forward);
+  });
+
+  it("applies hysteresis so a marginal challenger cannot evict an incumbent", () => {
+    expect(FEED_HEAVY_HYSTERESIS_FRACTION).toBe(0.1);
+
+    // The pool holds "strong" and incumbent "held"; challenger "rising" competes
+    // for the marginal (second) slot occupied by "held".
+    const candidates = (risingFraction: number): HeavyPlaybackCandidate[] => [
+      heavyCandidate("strong", { viewportVisibleFraction: 0.9, top: 0 }),
+      heavyCandidate("held", { viewportVisibleFraction: 0.5, top: 400 }),
+      heavyCandidate("rising", { viewportVisibleFraction: risingFraction, top: 800 }),
+    ];
+    const previous = new Set(["strong", "held"]);
+
+    // +0.05 over the incumbent: within the 0.1 margin, incumbent keeps the slot.
+    expect(selectActiveHeavyPlaybackSlugs(candidates(0.55), previous)).toEqual(
+      new Set(["strong", "held"]),
+    );
+
+    // +0.15 over the incumbent: beyond the margin, the challenger takes the slot.
+    expect(selectActiveHeavyPlaybackSlugs(candidates(0.65), previous)).toEqual(
+      new Set(["strong", "rising"]),
+    );
+  });
+
+  it("does not let an off-screen incumbent hold its slot against an in-viewport challenger", () => {
+    // "lingering" was active but has scrolled out of the strict viewport
+    // (inViewport false, fraction 0); it lingers only in the expanded window.
+    // "rising" is inside the viewport but only marginally visible. Hysteresis
+    // must not carry across the inViewport boundary, so the in-viewport
+    // challenger takes the slot even though its fraction is within the margin.
+    const active = selectActiveHeavyPlaybackSlugs(
+      [
+        heavyCandidate("strong", { inViewport: true, viewportVisibleFraction: 0.9, top: 0 }),
+        heavyCandidate("rising", { inViewport: true, viewportVisibleFraction: 0.05, top: 400 }),
+        heavyCandidate("lingering", {
+          inViewport: false,
+          viewportVisibleFraction: 0,
+          windowVisibleFraction: 0.6,
+          top: 800,
+        }),
+      ],
+      new Set(["strong", "lingering"]),
+    );
+
+    expect(active).toEqual(new Set(["strong", "rising"]));
+  });
+
+  it("returns an empty pool when there are no heavy candidates", () => {
+    expect(selectActiveHeavyPlaybackSlugs([], new Set(["stale"]))).toEqual(new Set());
+  });
+});

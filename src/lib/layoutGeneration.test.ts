@@ -4,6 +4,7 @@ import {
   buildBlockLayoutSignature,
   buildLayoutGenerationKey,
 } from "./layoutGeneration";
+import { getMasonryColumnCount, getMasonryColumnWidth } from "./masonryLayout";
 
 function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
   return {
@@ -32,8 +33,8 @@ function generationKey(blocks: LightBlock[], parentWidth = 1200): string {
   return buildLayoutGenerationKey({
     blocks,
     routeKey: "__all__",
-    heightBucket: Math.round(parentWidth / 40),
-    parentWidth,
+    columnWidth: getMasonryColumnWidth(parentWidth, 220, 32),
+    columnCount: getMasonryColumnCount(parentWidth, 220, 32),
   });
 }
 

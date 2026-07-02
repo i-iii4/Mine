@@ -29,10 +29,33 @@ export const FEED_FAST_SCROLL_EXIT_VELOCITY_PX_MS = 1.2;
 export const FEED_SCROLL_VELOCITY_ALPHA = 0.3;
 export const FEED_RENDER_RUNWAY_MIN_FORWARD_PX = 720;
 export const FEED_RENDER_RUNWAY_MAX_FORWARD_PX = 1800;
+// Velocity-dependent window growth is quantized to this step so the window
+// identity stays stable across consecutive animation frames while the smoothed
+// velocity drifts. Without quantization every scroll frame produces a slightly
+// different renderAfterPx, which re-creates the getVisibleItems callback and
+// forces a redundant Grid re-render even when the visible set is unchanged.
+export const FEED_SCROLL_WINDOW_VELOCITY_QUANTUM_PX = 200;
+// Backward render runway floor as a fraction of the viewport. It guarantees the
+// window behind the scroll cursor never drops below the linger contract
+// (SPEC_FEED_VIDEO.md: keep already-committed cards mounted when the scroll
+// direction reverses).
+export const FEED_RENDER_RUNWAY_BACKWARD_VIEWPORT_RATIO = 0.5;
 
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(Math.max(value, min), max);
+}
+
+// Round a velocity-driven window contribution UP to the quantum. Rounding up
+// (never down) guarantees the quantized window is always at least as wide as
+// the raw value, so quantization can never narrow a window below what the
+// continuous formula would produce.
+function quantizeVelocityContribution(px: number): number {
+  if (!Number.isFinite(px) || px <= 0) return 0;
+  return (
+    Math.ceil(px / FEED_SCROLL_WINDOW_VELOCITY_QUANTUM_PX) *
+    FEED_SCROLL_WINDOW_VELOCITY_QUANTUM_PX
+  );
 }
 
 function safeViewportHeight(value: number): number {
@@ -68,14 +91,37 @@ export function computeFeedScrollReadinessWindows({
   const velocity = safeVelocity(scrollVelocityPxMs);
 
   const renderForwardPx = clamp(
-    Math.max(FEED_RENDER_RUNWAY_MIN_FORWARD_PX, vh * 0.75 + velocity * 80),
+    Math.max(
+      FEED_RENDER_RUNWAY_MIN_FORWARD_PX,
+      vh * 0.75 + quantizeVelocityContribution(velocity * 80),
+    ),
     640,
     FEED_RENDER_RUNWAY_MAX_FORWARD_PX,
   );
-  const renderBackwardPx = clamp(Math.max(360, vh * 0.35), 320, 800);
-  const priorityForwardPx = clamp(vh * 3 + velocity * 350, 3200, 8000);
+  // Backward runway floor honors the linger contract: keep at least half a
+  // viewport of already-committed cards mounted behind the scroll cursor so a
+  // direction reversal never lands on an unmounted (blank) region. The 800px
+  // cap keeps backward DOM bounded; it holds the >= 0.5 * vh floor for every
+  // viewport up to 1600px, which covers the full realistic desktop feed range.
+  const renderBackwardPx = clamp(
+    Math.max(360, vh * FEED_RENDER_RUNWAY_BACKWARD_VIEWPORT_RATIO),
+    320,
+    800,
+  );
+  const priorityForwardPx = clamp(
+    vh * 3 + quantizeVelocityContribution(velocity * 350),
+    3200,
+    8000,
+  );
+  // priorityBackward (1.1 * vh) and preloadBackward (1.5 * vh) already sit above
+  // the 0.5 * vh backward floor, so the render window is the only one that
+  // needed raising to satisfy the linger contract consistently.
   const priorityBackwardPx = clamp(vh * 1.1, 800, 2400);
-  const preloadForwardPx = clamp(vh * 4 + velocity * 600, 4800, 14000);
+  const preloadForwardPx = clamp(
+    vh * 4 + quantizeVelocityContribution(velocity * 600),
+    4800,
+    14000,
+  );
   const preloadBackwardPx = clamp(vh * 1.5, 1600, 3600);
 
   const render = orientWindow(scrollDirection, renderBackwardPx, renderForwardPx);

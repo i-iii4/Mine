@@ -163,3 +163,66 @@ describe("feedMediaCandidatesForBlock", () => {
     ]);
   });
 });
+
+describe("feedMediaCandidatesForBlock memoization", () => {
+  it("returns the same array instance for repeated calls on the same block", () => {
+    const target = block({
+      preview_manifest: JSON.stringify({
+        kind: "image",
+        primary_preview_path: "primary.jpg",
+        width: 100,
+        height: 100,
+        tiles: [],
+        overflow_count: 0,
+      }),
+    });
+
+    const first = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/thumbs" });
+    const second = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/thumbs" });
+
+    expect(second).toBe(first);
+  });
+
+  it("recomputes when preview_manifest changes on a reused block object", () => {
+    const target = block({ preview_manifest: null });
+
+    const first = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/thumbs" });
+    expect(first.map((candidate) => candidate.role)).toEqual(["thumbnail"]);
+
+    target.preview_manifest = JSON.stringify({
+      kind: "image",
+      primary_preview_path: "primary.jpg",
+      width: 100,
+      height: 100,
+      tiles: [],
+      overflow_count: 0,
+    });
+    const second = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/thumbs" });
+
+    expect(second).not.toBe(first);
+    expect(second.map((candidate) => candidate.role)).toEqual(["primary-preview", "thumbnail"]);
+  });
+
+  it("recomputes when thumbsRootPath changes for the same block", () => {
+    const target = block();
+
+    const first = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/thumbs" });
+    const second = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/other" });
+
+    expect(second).not.toBe(first);
+    expect(first[0]?.url).toBe("asset://localhost//thumbs/alpha.jpg");
+    expect(second[0]?.url).toBe("asset://localhost//other/alpha.jpg");
+  });
+
+  it("recomputes when slug changes on a reused block object", () => {
+    const target = block({ slug: "alpha" });
+
+    const first = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/thumbs" });
+    target.slug = "beta";
+    const second = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/thumbs" });
+
+    expect(second).not.toBe(first);
+    expect(first[0]?.url).toBe("asset://localhost//thumbs/alpha.jpg");
+    expect(second[0]?.url).toBe("asset://localhost//thumbs/beta.jpg");
+  });
+});

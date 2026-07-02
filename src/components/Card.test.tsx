@@ -470,6 +470,44 @@ describe("Card", () => {
     expect(img).not.toHaveAttribute("src", expect.stringContaining("/.arena/cache/thumbs/"));
   });
 
+  it("renders image cards in two phases: warmed thumbnail base under a fading original", () => {
+    // The feed preloader decodes the derived thumbnail ahead of the viewport,
+    // so the base layer paints it instantly (decode-cache hit) while the
+    // full-size original loads on top and fades in once decoded.
+    const b = block({ block_type: "image", title: "Sunset", media_file: "sunset.jpg" });
+    const { container } = render(
+      <Card block={b} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} />,
+    );
+
+    const base = container.querySelector("[data-card-image-base]");
+    expect(base).toBeInTheDocument();
+    expect(base?.getAttribute("style")).toContain("/tmp/thumbs/test-block.jpg");
+
+    const img = screen.getByRole("img");
+    expect(img.getAttribute("src")).toContain("sunset.jpg");
+    expect(img).toHaveClass("opacity-0");
+
+    fireEvent.load(img);
+    expect(img).toHaveClass("opacity-100");
+  });
+
+  it("unmounts the image base layer once the original has loaded", () => {
+    // The base is an opaque JPEG background (Rust to_rgb8, no alpha). Leaving it
+    // mounted under a transparent PNG/WebP shows a cropped opaque thumbnail
+    // through the transparent areas and keeps a second decoded bitmap alive, so
+    // it must be dropped once the original is on screen.
+    const b = block({ block_type: "image", title: "Sunset", media_file: "sunset.jpg" });
+    const { container } = render(
+      <Card block={b} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} />,
+    );
+
+    expect(container.querySelector("[data-card-image-base]")).toBeInTheDocument();
+
+    fireEvent.load(screen.getByRole("img"));
+
+    expect(container.querySelector("[data-card-image-base]")).not.toBeInTheDocument();
+  });
+
   it("falls through to the cached thumbnail when the source media load fails", () => {
     const b = block({
       block_type: "image",

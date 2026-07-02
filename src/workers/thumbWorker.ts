@@ -46,7 +46,7 @@ export type ThumbWorkerResponse =
 // ─── Queue state ────────────────────────────────────────────────────────────
 
 const MAX_CONCURRENCY = 4;
-const DEFAULT_TARGET = 480;
+const DEFAULT_TARGET = 640;
 const JPEG_QUALITY = 0.85;
 
 interface QueueEntry {
@@ -164,7 +164,7 @@ async function decodeVideoFrame(_blob: Blob): Promise<ImageBitmap> {
 
 /// Resize `bitmap` to fit within `max × max` preserving aspect ratio
 /// and encode as JPEG. The max-side convention matches Rust
-/// `DEFAULT_MAX_SIZE = 480` so sidebar thumb resolution stays
+/// `DEFAULT_MAX_SIZE = 640` so sidebar thumb resolution stays
 /// consistent regardless of which decoder path produced it.
 async function encodeJpeg(
   bitmap: ImageBitmap,

@@ -50,7 +50,60 @@ function Harness({
   );
 }
 
+function CountingHarness({
+  positions,
+  overscan,
+}: {
+  positions: MasonryPosition[];
+  overscan: number;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const renderCountRef = useRef(0);
+  renderCountRef.current += 1;
+  const getVisibleItems = useCallback(
+    (scrollTop: number) => visibleForViewport(positions, scrollTop, 100 + overscan),
+    [positions, overscan],
+  );
+  const visible = useGridScroll(scrollRef, {
+    getVisibleItems,
+    resetKey: "count",
+    viewportHeight: 100,
+  });
+
+  return (
+    <div ref={scrollRef} data-testid="scroll">
+      <div data-testid="rendercount">{renderCountRef.current}</div>
+      <div data-testid="visible">{visible.map((item) => item.index).join(",")}</div>
+    </div>
+  );
+}
+
 describe("useGridScroll", () => {
+  it("does not bump render state when a readiness-window change leaves the visible set identical", () => {
+    // item 1 sits at top 500, far outside both the 100 px viewport and the
+    // widened overscan below, so it never enters the visible set.
+    const positions = [position(0, 0), position(1, 500), position(2, 1000)];
+
+    const { rerender } = render(
+      <CountingHarness positions={positions} overscan={0} />,
+    );
+    expect(screen.getByTestId("visible")).toHaveTextContent("0");
+    const before = Number(screen.getByTestId("rendercount").textContent);
+
+    // Widen the overscan enough to change getVisibleItems identity but not
+    // enough to pull item 1 into view. This mirrors a velocity ripple changing
+    // the readiness window without changing which cards are mounted.
+    act(() => {
+      rerender(<CountingHarness positions={positions} overscan={150} />);
+    });
+
+    expect(screen.getByTestId("visible")).toHaveTextContent("0");
+    const after = Number(screen.getByTestId("rendercount").textContent);
+    // Exactly one render for the prop change itself. The identity-change effect
+    // must not bump scrollTick because the visible set did not change.
+    expect(after - before).toBe(1);
+  });
+
   it("synchronously updates the visible window when a native scroll jump would blank the viewport", () => {
     const positions = [
       position(0, 0),

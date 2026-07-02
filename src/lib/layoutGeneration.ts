@@ -52,14 +52,23 @@ export function buildBlockLayoutSignature(block: LightBlock): BlockLayoutSignatu
 export function buildLayoutGenerationKey({
   blocks,
   routeKey,
-  heightBucket,
-  parentWidth,
+  columnWidth,
+  columnCount,
   layoutGap,
 }: {
   blocks: readonly LightBlock[];
   routeKey?: string;
-  heightBucket: number;
-  parentWidth: number;
+  /**
+   * Exact masonry column width the layout is computed at. The masonry layout
+   * is a pure function of (columnWidth, columnCount, gap, block heights), so
+   * keying on the exact column geometry — not the raw parent width — keeps the
+   * module-level layout cache alive across sub-column-width resizes (sidebar
+   * drag, scrollbar gutter) while never serving a layout built for a different
+   * column width.
+   */
+  columnWidth: number;
+  /** Column count the layout is computed at. */
+  columnCount: number;
   /** Card gap the layout was computed with (design variants change it). */
   layoutGap?: number;
 }): LayoutGenerationKey {
@@ -76,8 +85,8 @@ export function buildLayoutGenerationKey({
 
   return [
     routeKey ?? "__all__",
-    `hb=${heightBucket}`,
-    `pw=${Math.round(parentWidth)}`,
+    `cw=${Math.round(columnWidth)}`,
+    `cc=${columnCount}`,
     `gap=${layoutGap ?? 32}`,
     `n=${blocks.length}`,
     `sig=${orderedHash}`,

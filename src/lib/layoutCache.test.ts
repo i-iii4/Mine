@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { LayoutCache } from "./layoutCache";
-import { computeMasonryLayout } from "./masonryLayout";
+import {
+  computeMasonryLayout,
+  getMasonryColumnCount,
+  getMasonryColumnWidth,
+} from "./masonryLayout";
 import type { LightBlock } from "@/types";
 import { buildLayoutGenerationKey } from "./layoutGeneration";
 
@@ -32,8 +36,8 @@ function generationKey(blocks: LightBlock[], parentWidth: number): string {
   return buildLayoutGenerationKey({
     blocks,
     routeKey: "__all__",
-    heightBucket: Math.round(parentWidth / 40),
-    parentWidth,
+    columnWidth: getMasonryColumnWidth(parentWidth, 220, 32),
+    columnCount: getMasonryColumnCount(parentWidth, 220, 32),
   });
 }
 
