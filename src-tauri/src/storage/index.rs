@@ -32,7 +32,7 @@ use crate::storage::search_engine;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-const MEDIA_INDEX_VERSION: i64 = 2;
+const MEDIA_INDEX_VERSION: i64 = 3;
 const COLLECTION_INDEX_VERSION: i64 = 1;
 
 /// A block as read from the database index.
@@ -254,10 +254,21 @@ pub struct FeedPlaybackDescriptor {
 }
 
 pub(crate) const LIGHT_BLOCK_BODY_PREVIEW_CHARS: i64 = 220;
-const FEED_AUTOPLAY_STANDARD_MAX_SOURCE_BYTES: u64 = 10 * 1024 * 1024;
+// The standard profile plays through a blob URL (fully buffered in memory), so
+// its byte ceiling bounds that allocation. The heavy profile streams from disk
+// with bounded memory, so within its own much larger byte ceiling only the
+// decoder's pixel limits (longest side / area) can force a block out.
+const FEED_AUTOPLAY_STANDARD_MAX_SOURCE_BYTES: u64 = 24 * 1024 * 1024;
 const FEED_AUTOPLAY_STANDARD_MAX_LONGEST_SIDE_PX: u32 = 2560;
 const FEED_AUTOPLAY_STANDARD_MAX_PIXEL_AREA: u64 = 4_000_000;
-const FEED_AUTOPLAY_HARD_MAX_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
+// Upper byte bound for the heavy profile. A source larger than this is never
+// autoplayed in the feed (feed_playback = null, poster only): on an iCloud
+// vault a `<video src>` pointed at a dataless multi-gigabyte file forces the
+// system to download the entire file just to scroll past it. Sized to clear
+// legitimate large clips (≈100 MB DNA-repair reference footage, long phone
+// recordings) while cutting off multi-gigabyte files; oversized videos stay
+// playable on demand from the Detail view.
+const FEED_AUTOPLAY_HARD_MAX_SOURCE_BYTES: u64 = 512 * 1024 * 1024;
 const FEED_AUTOPLAY_HARD_MAX_LONGEST_SIDE_PX: u32 = 5120;
 const FEED_AUTOPLAY_HARD_MAX_PIXEL_AREA: u64 = 12_000_000;
 
@@ -457,13 +468,32 @@ fn extract_social_preview_tiles(
     dims: &std::collections::HashMap<String, [u32; 2]>,
     media_urls: Option<&str>,
 ) -> Vec<FeedPreviewTile> {
-    let first_section = body.split("\n---").next().unwrap_or(body);
+    // Scan the whole body, across every `---` section. Two producers emit
+    // multi-section social bodies: a Twitter thread clip (one section per
+    // tweet) and a card merge (one section per merged card, joined by
+    // `\n\n---\n\n`). Both carry real media in later sections, so restricting
+    // to the first section drops those tiles and their posters. Quoted tweets
+    // are not separate sections — the clipper blockquotes them inside the
+    // parent tweet's section — so no quoted media is excluded by design here.
     let mut tiles = Vec::new();
     let mut next_is_video_poster = false;
-    let resolved_media = local_media_items(media_urls, |_| true);
+    // Index into the UNFILTERED media_urls list. media_urls records every
+    // inline reference in body order, including remote URLs stored verbatim,
+    // so its positions line up 1:1 with the body media scan below. Using the
+    // remote-filtered list here instead would compact away remote entries and
+    // shift every following local tile onto the wrong source_path/poster.
+    let all_media = media_urls
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
+        .unwrap_or_default();
     let mut media_index = 0usize;
 
-    for line in first_section.lines() {
+    for line in body.lines() {
+        // A tweet-video marker never spans sections; reset it at each `---`
+        // boundary so it cannot bleed into the next merged card / tweet.
+        if line.trim() == "---" {
+            next_is_video_poster = false;
+            continue;
+        }
         if line.trim() == "<!-- tweet-video -->" {
             next_is_video_poster = true;
             continue;
@@ -471,11 +501,18 @@ fn extract_social_preview_tiles(
         let Some(src) = parse_inline_media_src(line) else {
             continue;
         };
-        let resolved_src = resolved_media.get(media_index).cloned().unwrap_or(src);
+        // Prefer media_urls because it has already passed through the canonical
+        // backend resolver; fall back to the raw body src only if the lists
+        // somehow diverge in length.
+        let resolved_src = all_media.get(media_index).cloned().unwrap_or(src);
         media_index += 1;
-        // Preserve tweet-video marker order from the body, but prefer
-        // media_urls because it has already passed through the canonical
-        // backend resolver.
+        if is_remote_media(&resolved_src) {
+            // Remote media cannot render as a local preview tile. Skip it, but
+            // media_index already advanced so later local tiles keep aligning
+            // to their real media_urls entry. Consume any pending marker too.
+            next_is_video_poster = false;
+            continue;
+        }
         tiles.push(media_tile(
             &resolved_src,
             dims,
@@ -710,7 +747,12 @@ fn autoplay_container_for_source(src: &str) -> Option<FeedPlaybackContainer> {
         return None;
     }
     match media_ext_lower(src).as_deref() {
-        Some("mp4") => Some(FeedPlaybackContainer::Mp4),
+        // m4v is a plain MP4 container and mov (QuickTime) plays natively in
+        // WKWebView; both share the mp4-family playback path. Mapping them onto
+        // the existing Mp4 container keeps the descriptor's JSON schema and the
+        // frontend container whitelist unchanged — playback resolves the real
+        // `source_path` extension, so no new container value is needed.
+        Some("mp4" | "m4v" | "mov") => Some(FeedPlaybackContainer::Mp4),
         Some("webm") => Some(FeedPlaybackContainer::Webm),
         _ => None,
     }
@@ -751,6 +793,8 @@ fn feed_autoplay_profile_for_source(
     width: Option<u32>,
     height: Option<u32>,
 ) -> Option<FeedPlaybackProfile> {
+    // Hard pixel caps disqualify autoplay outright, but only when a dimension
+    // is actually known: a missing width/height passes this check trivially.
     if !feed_autoplay_dimensions_within_limits(
         width,
         height,
@@ -760,32 +804,41 @@ fn feed_autoplay_profile_for_source(
         return None;
     }
 
+    // The standard profile buffers the whole source in an in-memory blob and
+    // decodes it in the feed, so it is only safe when the frame size is fully
+    // known AND within the standard pixel budget. A video whose dimensions we
+    // could not extract (any non-MP4 container, or an MP4 with an unreadable
+    // header) must never be decoded blind at standard cost — it could be 4K/8K
+    // — so it falls through to the heavy profile (direct disk streaming with
+    // bounded memory) instead.
+    let standard_dimensions_ok = width.is_some()
+        && height.is_some()
+        && feed_autoplay_dimensions_within_limits(
+            width,
+            height,
+            FEED_AUTOPLAY_STANDARD_MAX_LONGEST_SIDE_PX,
+            FEED_AUTOPLAY_STANDARD_MAX_PIXEL_AREA,
+        );
+
     match vault_root {
         Some(root) => {
+            // A missing (evicted) source cannot be played back, so drop the
+            // descriptor.
             let bytes = local_media_file_size_bytes(root, source_path)?;
+            // Files above the heavy byte ceiling are never autoplayed: on an
+            // iCloud vault a `<video src>` to a dataless multi-gigabyte file
+            // forces a full download just to scroll past it.
             if bytes > FEED_AUTOPLAY_HARD_MAX_SOURCE_BYTES {
                 return None;
             }
-            if bytes <= FEED_AUTOPLAY_STANDARD_MAX_SOURCE_BYTES
-                && feed_autoplay_dimensions_within_limits(
-                    width,
-                    height,
-                    FEED_AUTOPLAY_STANDARD_MAX_LONGEST_SIDE_PX,
-                    FEED_AUTOPLAY_STANDARD_MAX_PIXEL_AREA,
-                )
-            {
+            if bytes <= FEED_AUTOPLAY_STANDARD_MAX_SOURCE_BYTES && standard_dimensions_ok {
                 Some(FeedPlaybackProfile::Standard)
             } else {
                 Some(FeedPlaybackProfile::Heavy)
             }
         }
         None => {
-            if feed_autoplay_dimensions_within_limits(
-                width,
-                height,
-                FEED_AUTOPLAY_STANDARD_MAX_LONGEST_SIDE_PX,
-                FEED_AUTOPLAY_STANDARD_MAX_PIXEL_AREA,
-            ) {
+            if standard_dimensions_ok {
                 Some(FeedPlaybackProfile::Standard)
             } else {
                 Some(FeedPlaybackProfile::Heavy)
@@ -1301,7 +1354,7 @@ pub fn backfill_missing_thumb_metadata(conn: &Connection, vault: &VaultLayout) -
 /// `preview_manifest` may be non-null but stale after a resolver migration.
 pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<usize> {
     let mut stmt = conn.prepare(
-        "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, thumb_format
+        "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, thumb_format, body_hash
          FROM blocks
          WHERE slug != ''
            AND card_kind != 'channel'
@@ -1323,6 +1376,7 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
                 row.get::<_, Option<i64>>(6)?,
                 row.get::<_, String>(7)?,
                 row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<String>>(9)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1331,7 +1385,8 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
     let mut resolver = media_refs::MediaResolver::new(vault);
     let mut updated = 0usize;
 
-    for (slug, raw_type, url, media_file, thumbnail, width, height, body, raw_thumb_format) in rows
+    for (slug, raw_type, url, media_file, thumbnail, width, height, body, raw_thumb_format, body_hash) in
+        rows
     {
         let block_type = BlockType::from_str(&raw_type)
             .with_context(|| format!("unknown block_type in media index backfill: {raw_type}"))?;
@@ -1386,6 +1441,11 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
             thumb_format,
         );
 
+        // Guard against a concurrent full_scan/watcher having reindexed this
+        // file between the snapshot SELECT above and this UPDATE: if it did,
+        // the row's body_hash no longer matches the snapshot, so skip it and
+        // leave the fresh data (and its version stamp) in place. `IS` matches
+        // NULL == NULL so legacy rows with no stored hash still backfill.
         updated += conn.execute(
             "UPDATE blocks
              SET first_image = ?2,
@@ -1394,7 +1454,7 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
                  preview_manifest = ?5,
                  feed_playback = ?6,
                  media_index_version = ?7
-             WHERE slug = ?1",
+             WHERE slug = ?1 AND body_hash IS ?8",
             params![
                 slug,
                 first_image,
@@ -1403,6 +1463,7 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
                 preview_manifest,
                 feed_playback,
                 MEDIA_INDEX_VERSION,
+                body_hash,
             ],
         )?;
     }
@@ -3566,6 +3627,41 @@ mod tests {
     }
 
     #[test]
+    fn social_preview_collects_tiles_across_all_dash_sections() {
+        // A card merge (or a threaded tweet) joins sections with `\n\n---\n\n`.
+        // Media in later sections must still become tiles and posters, not be
+        // dropped by a first-section-only scan.
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "merged-social",
+            "article",
+            Some("Merged"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "first tweet\n<!-- tweet-video -->\n![](a.mp4)\n\n---\n\n![](b.jpg)\n\n---\n\nlast tweet\n![](c.mp4)",
+        );
+        block.frontmatter.url = Some("https://x.com/user/status/1".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+
+        let light = list_blocks_light(&conn).unwrap();
+        let manifest: FeedPreviewManifest =
+            serde_json::from_str(light[0].preview_manifest.as_deref().unwrap()).unwrap();
+        assert_eq!(manifest.kind, FeedPreviewKind::Composite);
+        assert_eq!(manifest.tiles.len(), 3);
+        assert_eq!(manifest.tiles[0].source_path, "a.mp4");
+        assert!(manifest.tiles[0].is_video);
+        assert_eq!(manifest.tiles[0].preview_path.as_deref(), Some("a.jpg"));
+        // Second section: image tile renders its own source, no poster.
+        assert_eq!(manifest.tiles[1].source_path, "b.jpg");
+        assert!(!manifest.tiles[1].is_video);
+        assert_eq!(manifest.tiles[1].preview_path, None);
+        // Third section: the video that a first-section scan used to drop.
+        assert_eq!(manifest.tiles[2].source_path, "c.mp4");
+        assert!(manifest.tiles[2].is_video);
+        assert_eq!(manifest.tiles[2].preview_path.as_deref(), Some("c.jpg"));
+    }
+
+    #[test]
     fn list_blocks_light_serializes_feed_playback_for_dedicated_mp4_video() {
         let conn = test_conn();
         let mut block = make_block_full(
@@ -3614,11 +3710,14 @@ mod tests {
             serde_json::from_str(light[0].feed_playback.as_deref().unwrap()).unwrap();
         assert_eq!(playback.source_path, "demo.webm");
         assert_eq!(playback.container, FeedPlaybackContainer::Webm);
-        assert_eq!(playback.profile, FeedPlaybackProfile::Standard);
+        // WebM dimensions are never extracted (no frontmatter, no probe), so
+        // the frame size is unknown and the source must stream as heavy rather
+        // than be buffered/decoded blind at standard cost.
+        assert_eq!(playback.profile, FeedPlaybackProfile::Heavy);
     }
 
     #[test]
-    fn list_blocks_light_keeps_feed_playback_null_for_dedicated_mov_video() {
+    fn list_blocks_light_serializes_feed_playback_for_dedicated_mov_video() {
         let conn = test_conn();
         let mut block = make_block_full(
             "feed-video-mov",
@@ -3633,7 +3732,139 @@ mod tests {
         sync_test_jpeg_thumb(&conn, "feed-video-mov");
 
         let light = list_blocks_light(&conn).unwrap();
-        assert_eq!(light[0].feed_playback, None);
+        let playback: FeedPlaybackDescriptor =
+            serde_json::from_str(light[0].feed_playback.as_deref().unwrap()).unwrap();
+        assert_eq!(playback.source_path, "demo.mov");
+        // QuickTime `.mov` plays natively; it maps onto the mp4-family path.
+        assert_eq!(playback.container, FeedPlaybackContainer::Mp4);
+        // `.mov` dimensions are not probed, so the unknown frame size forces
+        // the heavy (direct-stream) profile rather than the in-memory standard.
+        assert_eq!(playback.profile, FeedPlaybackProfile::Heavy);
+    }
+
+    #[test]
+    fn list_blocks_light_serializes_feed_playback_for_dedicated_m4v_video() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "feed-video-m4v",
+            "video",
+            Some("Demo"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.file = Some("demo.m4v".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+        sync_test_jpeg_thumb(&conn, "feed-video-m4v");
+
+        let light = list_blocks_light(&conn).unwrap();
+        let playback: FeedPlaybackDescriptor =
+            serde_json::from_str(light[0].feed_playback.as_deref().unwrap()).unwrap();
+        assert_eq!(playback.source_path, "demo.m4v");
+        // `.m4v` is a plain MP4 container.
+        assert_eq!(playback.container, FeedPlaybackContainer::Mp4);
+        // No frontmatter dimensions and no on-disk file to probe in this test,
+        // so the unknown frame size resolves to the heavy profile.
+        assert_eq!(playback.profile, FeedPlaybackProfile::Heavy);
+    }
+
+    #[test]
+    fn feed_autoplay_profile_unknown_dimensions_never_uses_standard() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        write_test_media(&vault, "clip.mov", 4 * 1024 * 1024);
+
+        // Unknown frame size (e.g. a `.mov` we cannot probe) must stream as
+        // heavy, never buffer/decode blind at standard cost, even when small.
+        assert_eq!(
+            feed_autoplay_profile_for_source(Some(vault.root()), "clip.mov", None, None),
+            Some(FeedPlaybackProfile::Heavy)
+        );
+        // The same small file with known, in-limit dimensions is standard.
+        assert_eq!(
+            feed_autoplay_profile_for_source(
+                Some(vault.root()),
+                "clip.mov",
+                Some(1280),
+                Some(720)
+            ),
+            Some(FeedPlaybackProfile::Standard)
+        );
+    }
+
+    #[test]
+    fn feed_autoplay_profile_byte_ceiling_streams_large_but_drops_oversized() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+
+        // Sparse files report a large logical size without writing the bytes.
+        let write_sparse = |name: &str, len: u64| {
+            let file = std::fs::File::create(dir.path().join(name)).unwrap();
+            file.set_len(len).unwrap();
+        };
+
+        // 200 MiB with known in-limit dimensions is a valid heavy clip.
+        write_sparse("big.mp4", 200 * 1024 * 1024);
+        assert_eq!(
+            feed_autoplay_profile_for_source(
+                Some(vault.root()),
+                "big.mp4",
+                Some(1920),
+                Some(1080)
+            ),
+            Some(FeedPlaybackProfile::Heavy)
+        );
+
+        // Beyond the 512 MiB ceiling autoplay is dropped entirely (poster only,
+        // playable on demand from Detail).
+        write_sparse("huge.mp4", 600 * 1024 * 1024);
+        assert_eq!(
+            feed_autoplay_profile_for_source(
+                Some(vault.root()),
+                "huge.mp4",
+                Some(1920),
+                Some(1080)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_social_preview_tiles_skips_remote_media_without_shifting_local_tiles() {
+        let dims = std::collections::HashMap::new();
+        // A remote image sits between two local videos. It must be dropped as a
+        // tile WITHOUT shifting the second video onto the first video's source.
+        let body = "![](vid1.mp4)\n![](https://cdn.example.com/remote.jpg)\n![](vid2.mp4)";
+        let media_urls =
+            serde_json::to_string(&["vid1.mp4", "https://cdn.example.com/remote.jpg", "vid2.mp4"])
+                .unwrap();
+
+        let tiles = extract_social_preview_tiles(body, &dims, Some(&media_urls));
+
+        assert_eq!(tiles.len(), 2);
+        assert_eq!(tiles[0].source_path, "vid1.mp4");
+        assert!(tiles[0].is_video);
+        assert_eq!(tiles[0].preview_path.as_deref(), Some("vid1.jpg"));
+        assert_eq!(tiles[1].source_path, "vid2.mp4");
+        assert!(tiles[1].is_video);
+        assert_eq!(tiles[1].preview_path.as_deref(), Some("vid2.jpg"));
+    }
+
+    #[test]
+    fn extract_social_preview_tiles_resets_video_poster_marker_at_section_break() {
+        let dims = std::collections::HashMap::new();
+        // A tweet-video marker precedes a `---` section break with no media in
+        // between: it must not leak onto the media in the next section.
+        let body = "<!-- tweet-video -->\n---\n![](a.mp4)\n![](b.jpg)";
+        let media_urls = serde_json::to_string(&["a.mp4", "b.jpg"]).unwrap();
+
+        let tiles = extract_social_preview_tiles(body, &dims, Some(&media_urls));
+
+        assert_eq!(tiles.len(), 2);
+        assert_eq!(tiles[0].source_path, "a.mp4");
+        assert!(!tiles[0].is_video_poster);
+        assert_eq!(tiles[1].source_path, "b.jpg");
+        assert!(!tiles[1].is_video_poster);
     }
 
     #[test]
@@ -3657,7 +3888,9 @@ mod tests {
         assert_eq!(playback.source_path, "clip.mp4");
         assert_eq!(playback.poster_preview_path, "tweet-video-playback.jpg");
         assert_eq!(playback.container, FeedPlaybackContainer::Mp4);
-        assert_eq!(playback.profile, FeedPlaybackProfile::Standard);
+        // The inline clip carries no extracted dimensions, so playback streams
+        // as heavy rather than buffering an unknown frame size in memory.
+        assert_eq!(playback.profile, FeedPlaybackProfile::Heavy);
     }
 
     #[test]
@@ -3960,6 +4193,73 @@ mod tests {
     }
 
     #[test]
+    fn backfill_media_index_update_guard_skips_row_changed_after_snapshot() {
+        // Isolates the `AND body_hash IS ?` guard that backfill_media_index
+        // adds to its UPDATE. It models the race where a concurrent
+        // full_scan/watcher reindexes the file (new body_hash + fresh derived
+        // columns + version stamp) between backfill's snapshot SELECT and its
+        // write: the stale write must become a no-op so the fresh row survives.
+        let conn = test_conn();
+        let block = make_block_full(
+            "racy",
+            "article",
+            Some("Racy"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "![](old.jpg)",
+        );
+        upsert_block(&conn, &block, None).unwrap();
+
+        // The body_hash backfill would have captured in its snapshot.
+        let snapshot_hash: Option<String> = conn
+            .query_row("SELECT body_hash FROM blocks WHERE slug = 'racy'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(snapshot_hash.is_some());
+
+        // A concurrent reindexer rewrites the row to newer content after the
+        // snapshot was taken.
+        conn.execute(
+            "UPDATE blocks
+             SET media_urls = 'fresh', body_hash = 'reindexed-hash', media_index_version = ?1
+             WHERE slug = 'racy'",
+            params![MEDIA_INDEX_VERSION],
+        )
+        .unwrap();
+
+        // The guarded UPDATE carrying the STALE snapshot hash must not fire.
+        let changed = conn
+            .execute(
+                "UPDATE blocks
+                 SET media_urls = 'stale', media_index_version = ?2
+                 WHERE slug = 'racy' AND body_hash IS ?1",
+                params![snapshot_hash, MEDIA_INDEX_VERSION],
+            )
+            .unwrap();
+        assert_eq!(changed, 0);
+
+        let media_urls: Option<String> = conn
+            .query_row("SELECT media_urls FROM blocks WHERE slug = 'racy'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(media_urls.as_deref(), Some("fresh"));
+
+        // With the row's current hash the same guard permits the write, so a
+        // non-racing backfill still updates normally.
+        let changed = conn
+            .execute(
+                "UPDATE blocks
+                 SET media_urls = 'applied'
+                 WHERE slug = 'racy' AND body_hash IS 'reindexed-hash'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(changed, 1);
+    }
+
+    #[test]
     fn backfill_collection_index_rebuilds_memberships_from_mine_collections_only() {
         let dir = tempfile::tempdir().unwrap();
         let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
@@ -4216,7 +4516,10 @@ mod tests {
         assert_eq!(manifest.kind, FeedPreviewKind::VideoPoster);
         assert_eq!(playback.source_path, "clip.mp4");
         assert_eq!(playback.poster_preview_path, "legacy-contract-video.jpg");
-        assert_eq!(playback.profile, FeedPlaybackProfile::Standard);
+        // The inline clip has no extracted dimensions, so the restored
+        // descriptor streams as heavy rather than buffering an unknown frame
+        // size in memory.
+        assert_eq!(playback.profile, FeedPlaybackProfile::Heavy);
     }
 
     #[test]
@@ -4277,34 +4580,77 @@ mod tests {
         assert_eq!(playback.profile, FeedPlaybackProfile::Heavy);
     }
 
+    /// Classify a dedicated video of `size_bytes` with in-limits dimensions, so
+    /// only the byte budget decides between the standard and heavy profiles.
+    fn profile_for_video_of_size(size_bytes: usize) -> Option<FeedPlaybackProfile> {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("clip.mp4"), vec![0u8; size_bytes]).unwrap();
+        feed_autoplay_profile_for_source(Some(dir.path()), "clip.mp4", Some(1280), Some(720))
+    }
+
     #[test]
-    fn backfill_missing_feed_playback_clears_stale_truly_excessive_video_descriptors() {
+    fn feed_playback_profile_is_standard_at_byte_budget_boundary() {
+        assert_eq!(
+            profile_for_video_of_size(24 * 1024 * 1024),
+            Some(FeedPlaybackProfile::Standard),
+        );
+    }
+
+    #[test]
+    fn feed_playback_profile_is_heavy_one_byte_over_budget() {
+        assert_eq!(
+            profile_for_video_of_size(24 * 1024 * 1024 + 1),
+            Some(FeedPlaybackProfile::Heavy),
+        );
+    }
+
+    #[test]
+    fn feed_playback_profile_is_heavy_for_oversized_but_decodable_video() {
+        // 65 MiB used to be hard-cut to None; it is now a playable heavy source.
+        assert_eq!(
+            profile_for_video_of_size(65 * 1024 * 1024),
+            Some(FeedPlaybackProfile::Heavy),
+        );
+    }
+
+    #[test]
+    fn feed_playback_profile_is_none_for_pixel_excessive_video() {
+        // Pixel hard caps survive the byte-cap removal: a 6000px source that a
+        // decoder cannot handle stays disqualified regardless of file size.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("clip.mp4"), vec![0u8; 1024]).unwrap();
+        assert_eq!(
+            feed_autoplay_profile_for_source(Some(dir.path()), "clip.mp4", Some(6000), Some(6000)),
+            None,
+        );
+    }
+
+    #[test]
+    fn backfill_missing_feed_playback_clears_descriptor_for_evicted_source() {
         let dir = tempfile::tempdir().unwrap();
         let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
         let mut block = make_block_full(
-            "stale-heavy-video",
+            "evicted-video",
             "video",
-            Some("Heavy clip"),
+            Some("Clip"),
             "2026-01-01T00:00:00Z",
             &[],
             "",
         );
-        block.frontmatter.file = Some("heavy.mp4".to_string());
-        block.frontmatter.width = Some(4096);
-        block.frontmatter.height = Some(1956);
-        write_test_media(
-            &vault,
-            "heavy.mp4",
-            (FEED_AUTOPLAY_HARD_MAX_SOURCE_BYTES + 1) as usize,
-        );
-
+        block.frontmatter.file = Some("gone.mp4".to_string());
+        block.frontmatter.width = Some(1280);
+        block.frontmatter.height = Some(720);
+        // Derive without a vault root so a descriptor is stored from dimensions
+        // alone, without the file existing on disk.
         upsert_block(&conn, &block, None).unwrap();
-        sync_test_jpeg_thumb(&conn, "stale-heavy-video");
+        sync_test_jpeg_thumb(&conn, "evicted-video");
 
         let before = list_blocks_light(&conn).unwrap();
         assert!(before[0].feed_playback.is_some());
 
+        // The source never materializes in the vault: stat() fails, so the
+        // descriptor is dropped rather than downgraded to a heavy profile.
         assert_eq!(backfill_missing_feed_playback(&conn, &vault).unwrap(), 1);
 
         let after = list_blocks_light(&conn).unwrap();

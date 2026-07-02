@@ -7,8 +7,10 @@
 // Contract: SPEC_THUMBNAILS.md#contracts
 
 use serde::Serialize;
+use std::borrow::Cow;
 use std::io::Write;
 use std::path::PathBuf;
+use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::state::{AppState, CommandError};
@@ -65,6 +67,12 @@ pub struct TilePosterUpgrade {
 /// / `<video>` + `OffscreenCanvas.convertToBlob('image/jpeg', 0.85)`,
 /// then ships the resulting bytes here.
 ///
+/// Transport: the JPEG travels as the raw IPC request body
+/// (`application/octet-stream`), not a JSON number array, so a 40–80 KB
+/// thumb no longer inflates ~4x into a JSON payload the main thread has to
+/// build and Rust has to parse. `slug` rides in the percent-encoded
+/// `x-slug` header (see `decode_header`).
+///
 /// Preconditions enforced in code:
 ///   - Vault is open
 ///   - `slug` is a safe filename stem (`validate_slug`)
@@ -78,9 +86,10 @@ pub struct TilePosterUpgrade {
 pub fn save_thumb(
     app: AppHandle,
     state: State<'_, AppState>,
-    slug: String,
-    bytes: Vec<u8>,
+    request: Request<'_>,
 ) -> Result<(), CommandError> {
+    let slug = decode_header(&request, "x-slug")?;
+    let bytes = request_jpeg_bytes(&request)?;
     validate_thumb_write_request(&slug, &bytes)?;
 
     let (thumb_path, db_path, vault_root) = {
@@ -144,6 +153,48 @@ fn validate_thumb_write_request(slug: &str, bytes: &[u8]) -> Result<(), CommandE
     Ok(())
 }
 
+// ─── Binary IPC transport ─────────────────────────────────────────────────────
+
+/// Percent-decode an IPC metadata header value into its original Unicode string.
+///
+/// The JPEG rides in the raw request body, so metadata (slug, poster name)
+/// travels in request headers instead. HTTP header values are ASCII-only, yet
+/// slugs are routinely Unicode (Cyrillic, symbols like `⊷`), so the frontend
+/// percent-encodes them with `encodeURIComponent`. This reverses that.
+fn percent_decode_header(name: &str, raw: &str) -> Result<String, CommandError> {
+    percent_encoding::percent_decode_str(raw)
+        .decode_utf8()
+        .map(|decoded| decoded.into_owned())
+        .map_err(|_| CommandError::Internal(format!("{name} header is not valid UTF-8")))
+}
+
+/// Read a required metadata header off a raw-IPC request and percent-decode it.
+fn decode_header(request: &Request<'_>, name: &str) -> Result<String, CommandError> {
+    let raw = request
+        .headers()
+        .get(name)
+        .ok_or_else(|| CommandError::Internal(format!("missing {name} header")))?
+        .to_str()
+        .map_err(|_| CommandError::Internal(format!("{name} header value must be ASCII")))?;
+    percent_decode_header(name, raw)
+}
+
+/// Extract the JPEG bytes carried as the raw IPC request body.
+///
+/// The desktop custom-protocol transport delivers them as `InvokeBody::Raw`
+/// (the fast path — borrowed, zero-copy). The postMessage fallback, used only
+/// when the custom protocol is unavailable (e.g. blocked by CSP), serializes
+/// the payload to a JSON number array instead; accept that too so the command
+/// stays transport-agnostic.
+fn request_jpeg_bytes<'a>(request: &'a Request<'_>) -> Result<Cow<'a, [u8]>, CommandError> {
+    match request.body() {
+        InvokeBody::Raw(bytes) => Ok(Cow::Borrowed(bytes.as_slice())),
+        InvokeBody::Json(value) => serde_json::from_value::<Vec<u8>>(value.clone())
+            .map(Cow::Owned)
+            .map_err(|_| CommandError::Internal("request body is not a JPEG byte array".into())),
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct ThumbUpdatedPayload {
     slug: String,
@@ -155,14 +206,19 @@ struct ThumbUpdatedPayload {
 /// — a media filename, not a block slug, so it is validated as a plain
 /// filename rather than via `validate_slug`. `slug` is the owning block, used
 /// only to emit `thumb:updated` so its card refreshes the tile.
+///
+/// Transport mirrors `save_thumb`: the JPEG is the raw request body while
+/// `poster_name` and `slug` ride in the percent-encoded `x-poster-name` and
+/// `x-slug` headers.
 #[tauri::command]
 pub fn save_tile_poster(
     app: AppHandle,
     state: State<'_, AppState>,
-    poster_name: String,
-    slug: String,
-    bytes: Vec<u8>,
+    request: Request<'_>,
 ) -> Result<(), CommandError> {
+    let poster_name = decode_header(&request, "x-poster-name")?;
+    let slug = decode_header(&request, "x-slug")?;
+    let bytes = request_jpeg_bytes(&request)?;
     validate_tile_poster_request(&poster_name, &bytes)?;
 
     let thumbs_dir = {
@@ -745,6 +801,47 @@ mod tests {
     #[test]
     fn validate_thumb_write_request_rejects_non_jpeg_bytes() {
         assert!(validate_thumb_write_request("valid slug", &[0x89, 0x50, 0x4E]).is_err());
+    }
+
+    // ── header percent-decode (binary IPC metadata) ──────────────────────
+
+    #[test]
+    fn percent_decode_header_roundtrips_cyrillic() {
+        // encodeURIComponent("привет")
+        assert_eq!(
+            percent_decode_header("x-slug", "%D0%BF%D1%80%D0%B8%D0%B2%D0%B5%D1%82").unwrap(),
+            "привет"
+        );
+    }
+
+    #[test]
+    fn percent_decode_header_roundtrips_multibyte_symbol() {
+        // encodeURIComponent("⊷") — U+22B7, a 3-byte UTF-8 sequence
+        assert_eq!(percent_decode_header("x-slug", "%E2%8A%B7").unwrap(), "⊷");
+    }
+
+    #[test]
+    fn percent_decode_header_roundtrips_spaces_and_bare_ascii() {
+        assert_eq!(percent_decode_header("x-slug", "a%20b%20c").unwrap(), "a b c");
+        assert_eq!(
+            percent_decode_header("x-slug", "plain-ascii_slug").unwrap(),
+            "plain-ascii_slug"
+        );
+    }
+
+    #[test]
+    fn percent_decode_header_roundtrips_poster_filename_with_parens() {
+        // encodeURIComponent("clip (video 1).jpg") — parens stay literal, space → %20
+        assert_eq!(
+            percent_decode_header("x-poster-name", "clip%20(video%201).jpg").unwrap(),
+            "clip (video 1).jpg"
+        );
+    }
+
+    #[test]
+    fn percent_decode_header_rejects_invalid_utf8() {
+        // %FF %FE is not a valid UTF-8 sequence
+        assert!(percent_decode_header("x-slug", "%FF%FE").is_err());
     }
 
     // ── tile posters ─────────────────────────────────────────────────────

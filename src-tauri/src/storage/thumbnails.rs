@@ -1,7 +1,7 @@
 // Thumbnails: image resize and caching.
 //
 // Generates thumbnail previews for block images.
-// Max side = 480px (2x for Retina), saves as JPEG (quality 85).
+// Max side = 640px (2x for Retina), saves as JPEG (quality 85).
 // Does not upscale images smaller than max_size.
 //
 // Contract: SPEC_STORAGE.md#storage/thumbnails
@@ -21,8 +21,11 @@ use crate::storage::preview_plan::{
 };
 pub use crate::storage::preview_plan::{is_image_ext, is_video_ext};
 
-/// Default max side for thumbnails: 480px covers 240px CSS columns at 2x Retina.
-pub const DEFAULT_MAX_SIZE: u32 = 480;
+/// Default max side for thumbnails: 640px covers masonry columns up to
+/// ~320px CSS at 2x Retina. Real columns run 220-304+ CSS px, and portrait
+/// content cropped to the card aspect needs headroom above a flat 2x, so the
+/// earlier 480px (a strict "240px column × 2x") upscaled in narrow windows.
+pub const DEFAULT_MAX_SIZE: u32 = 640;
 const JPEG_QUALITY: u8 = 85;
 
 /// Write a thumbnail to `dest` atomically: encode into a per-process,
@@ -261,6 +264,23 @@ fn block_has_renderable_source(block: &Block) -> bool {
 ///    code — e.g. JPEG text placeholders from before the switch to PNG
 ///    — so they auto-regenerate on the next full_scan without any
 ///    manual migration step.
+///
+/// The thumb's PIXEL SIZE is deliberately NOT a freshness signal, so a
+/// `DEFAULT_MAX_SIZE` increase (480 → 640) is applied forward-only: a legacy
+/// thumb smaller than the current cap stays fresh until its source `.md` or a
+/// preview dependency changes, at which point mtime drift regenerates it at
+/// the new size. Deciding size-staleness correctly would require reading the
+/// SOURCE image's dimensions (the thumb is not upscaled, so its expected
+/// longest side is `min(DEFAULT_MAX_SIZE, source_longest_side)`), but this
+/// function is a stat-only hot path — it runs on every window-focus sweep and
+/// is budgeted at ~50 ms for a 5000-block vault (see `thumb_sweep`). Opening
+/// and header-reading every source image here would blow that budget and
+/// re-introduce the multi-second focus stall the sweep was built to avoid, and
+/// a thumb-only size heuristic cannot distinguish a legitimately small thumb
+/// from an old-cap one without thrashing sources whose longest side is exactly
+/// the old cap. A version bump is likewise avoided: it would force-regenerate
+/// every thumb in one storm. Forward-only trades an eventual size upgrade for a
+/// cheap, storm-free sweep.
 pub fn is_thumb_fresh(
     thumb_path: &Path,
     source_path: &Path,
@@ -1381,7 +1401,7 @@ mod tests {
         let red = dir.path().join("img-red.jpg");
         let green = dir.path().join("img-green.jpg");
         let blue = dir.path().join("img-blue.jpg");
-        create_test_image_with_color(&red, 240, 480, [240, 20, 20]);
+        create_test_image_with_color(&red, 240, 640, [240, 20, 20]);
         create_test_image_with_color(&green, 480, 240, [20, 240, 20]);
         create_test_image_with_color(&blue, 360, 360, [20, 20, 240]);
 
@@ -1570,6 +1590,32 @@ mod tests {
         create_test_image(&embedded, 120, 120);
 
         assert!(!is_thumb_fresh(&thumb, &source, &block, &vault));
+    }
+
+    #[test]
+    fn is_thumb_fresh_ignores_thumb_pixel_size_forward_only() {
+        // A DEFAULT_MAX_SIZE increase is forward-only: a legacy thumb capped at
+        // the old 480 size stays fresh even though the current cap (640) is
+        // larger, because is_thumb_fresh is a stat-only hot path and must not
+        // read the source image's dimensions to detect an upscale opportunity.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let source = dir.path().join("article.md");
+        std::fs::write(&source, "# Source\n").unwrap();
+
+        // Large embedded image: a fresh 640-cap thumb would be bigger than the
+        // legacy 480-cap thumb produced below.
+        let embedded = dir.path().join("hero.png");
+        create_test_image(&embedded, 1200, 900);
+        let block = make_article("article", "![](hero.png)");
+
+        let thumb = vault.thumb_path("article");
+        generate_thumbnail(&embedded, &thumb, 480).unwrap();
+        let (tw, th) = image::open(&thumb).unwrap().dimensions();
+        assert_eq!(tw.max(th), 480);
+
+        // Smaller than DEFAULT_MAX_SIZE, yet still fresh — size is not a signal.
+        assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
     }
 
     #[test]
