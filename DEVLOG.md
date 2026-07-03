@@ -17,6 +17,9 @@ Overlay считал любой непустой query готовым к пои�
 ### Что сделано
 - Overlay вводит pending-состояние для непустого query короче 2 нормализованных
   символов: без IPC, счётчика и `No results`.
+- Backend `SearchPlan` теперь тоже отказывается строить план для
+  stopword-filtered query короче 2 alphanumeric символов, поэтому `г`/`Г` не
+  может попасть в FTS как `г*` или alias `g*` даже при обходе UI guard.
 - Backend запускает semantic-only слой только когда stopword-filtered query
   содержит минимум 3 alphanumeric символа.
 - Короткие кириллические/mixed-layout запросы остаются lexical/alias/fuzzy:
@@ -24,8 +27,10 @@ Overlay считал любой непустой query готовым к пои�
 
 ### Тесты
 - `SearchOverlay.test.tsx`: one-character query не вызывает IPC и не показывает
-  пустое состояние.
-- `search_engine.rs`: короткий кириллический query bypasses semantic provider.
+  пустое состояние; переход с готовой выдачи на `Г` очищает список без нового
+  IPC.
+- `search_engine.rs`: односимвольный query не создаёт search plan; короткий
+  кириллический query bypasses semantic provider.
 
 ## 02.07.2026 — Search Overlay: счётчик выдачи больше не показывает размер vault
 

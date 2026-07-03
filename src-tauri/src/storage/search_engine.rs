@@ -26,6 +26,7 @@ const SEARCH_EMBEDDING_MODEL_ID: &str = "intfloat/multilingual-e5-small";
 const SEARCH_EMBEDDING_DIM: usize = 384;
 const SEARCH_EMBEDDING_BATCH: usize = 32;
 const SEMANTIC_CANDIDATE_LIMIT: usize = 200;
+const SEARCH_MIN_QUERY_CHARS: usize = 2;
 const SEMANTIC_MIN_QUERY_CHARS: usize = 3;
 const SEMANTIC_MIN_SCORE: f32 = 0.58;
 const TITLE_MATCH_WEIGHT: f64 = 8.0;
@@ -1111,11 +1112,14 @@ impl SearchPlan {
             }
         }
 
-        (!groups.is_empty()).then_some(Self {
+        let plan = Self {
             literal_query,
             literal_terms,
             groups,
-        })
+        };
+
+        (!plan.groups.is_empty() && plan.meaningful_char_count() >= SEARCH_MIN_QUERY_CHARS)
+            .then_some(plan)
     }
 
     fn candidate_fts5_query(&self) -> String {
@@ -2022,6 +2026,31 @@ mod tests {
 
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].slug, "memory-title");
+    }
+
+    #[test]
+    fn one_character_query_does_not_create_search_plan() {
+        let conn = test_conn();
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "available-title",
+                "article",
+                Some("Available notes"),
+                "2026-01-01T00:00:00Z",
+                &[],
+                "Plain lexical body.",
+            ),
+            None,
+        )
+        .unwrap();
+
+        let provider = PanicSemanticProvider;
+        let (blocks, has_more) =
+            search_grid_blocks_with_provider(&conn, None, 0, 20, "г", Some(&provider)).unwrap();
+
+        assert!(!has_more);
+        assert!(blocks.is_empty());
     }
 
     #[test]

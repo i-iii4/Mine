@@ -258,6 +258,8 @@ Implemented behavior:
 - `list_grid_blocks(..., query)` delegates non-empty queries to the backend
   `SearchEngine` boundary;
 - lexical retrieval still uses SQLite FTS5 with prefix terms;
+- query planning refuses stopword-filtered queries shorter than 2 alphanumeric
+  characters, so one-letter fragments never reach FTS/alias/semantic retrieval;
 - query planning expands stopword-filtered token groups with deterministic
   aliases/transliteration;
 - each token group is route-filtered as an OR group internally, while different
@@ -335,6 +337,8 @@ Rules:
 - multi-token text is an AND query;
 - matching is case-insensitive according to the SQLite FTS tokenizer;
 - empty or whitespace-only query is the normal Grid route;
+- after stopword filtering, a query with fewer than 2 alphanumeric characters
+  is treated as not ready and returns no search plan;
 - semantic-only retrieval is gated until the stopword-filtered query contains
   at least 3 alphanumeric characters;
 - invalid punctuation must not throw user-visible SQL/FTS errors.
@@ -580,6 +584,7 @@ Backend:
   ranges;
 - exact title matches outrank semantic-only body matches;
 - punctuation in user query cannot break FTS SQL;
+- one-character Cyrillic/Latin queries return no search plan;
 - short Cyrillic/mixed-layout queries bypass the semantic provider;
 - pagination returns `has_more` correctly in search mode;
 - snippets return plain text and valid ranges;

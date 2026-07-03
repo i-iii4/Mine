@@ -244,6 +244,39 @@ describe("SearchOverlay", () => {
     expect(screen.queryByTestId("overlay-preview")).not.toBeInTheDocument();
   });
 
+  it("clears visible results when an existing search is replaced by one Cyrillic character", async () => {
+    listGridBlocksMock.mockResolvedValue(snapshot([makeBlock(1, "alpha")]));
+    const { rerender, onQueryChange, onClose, onOpenBlock } = renderOverlay({
+      query: "alpha",
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Title alpha")).toBeInTheDocument();
+    });
+    expect(listGridBlocksMock).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <SearchOverlay
+        open
+        query="Г"
+        vaultPath="/vault"
+        onQueryChange={onQueryChange}
+        onClose={onClose}
+        onOpenBlock={onOpenBlock}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Title alpha")).not.toBeInTheDocument();
+    });
+    await new Promise((resolve) => window.setTimeout(resolve, 150));
+    expect(listGridBlocksMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("No results")).not.toBeInTheDocument();
+    expect(
+      document.querySelector("[data-search-overlay-result-count]"),
+    ).toBeNull();
+  });
+
   it("renders result rows, the displayed-result count, and the preview of the active row", async () => {
     listGridBlocksMock.mockResolvedValue(
       snapshot([makeBlock(1, "alpha"), makeBlock(2, "beta")], 42),
