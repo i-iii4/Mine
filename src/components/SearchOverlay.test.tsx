@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 import type { GridSnapshot, LightBlock, SearchMatch } from "@/types";
 import {
   SearchOverlay,
+  SEARCH_OVERLAY_MIN_QUERY_CHARS,
   SEARCH_OVERLAY_RECENT_LIMIT,
   SEARCH_OVERLAY_RESULT_LIMIT,
 } from "./SearchOverlay";
@@ -231,6 +232,18 @@ describe("SearchOverlay", () => {
     });
   });
 
+  it("keeps a one-character query pending without an IPC request or empty state", () => {
+    renderOverlay({ query: "a" });
+
+    expect(SEARCH_OVERLAY_MIN_QUERY_CHARS).toBe(2);
+    expect(listGridBlocksMock).not.toHaveBeenCalled();
+    expect(screen.queryByText("No results")).not.toBeInTheDocument();
+    expect(
+      document.querySelector("[data-search-overlay-result-count]"),
+    ).toBeNull();
+    expect(screen.queryByTestId("overlay-preview")).not.toBeInTheDocument();
+  });
+
   it("renders result rows, the displayed-result count, and the preview of the active row", async () => {
     listGridBlocksMock.mockResolvedValue(
       snapshot([makeBlock(1, "alpha"), makeBlock(2, "beta")], 42),
@@ -316,7 +329,7 @@ describe("SearchOverlay", () => {
     listGridBlocksMock.mockResolvedValue(
       snapshot([makeBlock(1, "alpha"), makeBlock(2, "beta")]),
     );
-    renderOverlay({ query: "a" });
+    renderOverlay({ query: "al" });
     await waitFor(() => {
       expect(screen.getAllByRole("option")).toHaveLength(2);
     });
@@ -339,7 +352,7 @@ describe("SearchOverlay", () => {
   it("Enter opens the active block; row and preview clicks open too", async () => {
     const blocks = [makeBlock(1, "alpha"), makeBlock(2, "beta")];
     listGridBlocksMock.mockResolvedValue(snapshot(blocks));
-    const { onOpenBlock } = renderOverlay({ query: "a" });
+    const { onOpenBlock } = renderOverlay({ query: "al" });
     await waitFor(() => {
       expect(screen.getAllByRole("option")).toHaveLength(2);
     });
@@ -491,7 +504,7 @@ describe("SearchOverlay", () => {
       makeBlock(1, "with-url", { url: "https://example.com/article" }),
       makeBlock(2, "no-url", { url: null }),
     ]));
-    renderOverlay({ query: "a" });
+    renderOverlay({ query: "al" });
     await waitFor(() => {
       expect(screen.getAllByRole("option")).toHaveLength(2);
     });
@@ -552,7 +565,7 @@ describe("SearchOverlay", () => {
   it("re-runs the active query on vault-refreshed and keeps the active row by slug", async () => {
     const blocks = [makeBlock(1, "alpha"), makeBlock(2, "beta"), makeBlock(3, "gamma")];
     listGridBlocksMock.mockResolvedValue(snapshot(blocks));
-    renderOverlay({ query: "a" });
+    renderOverlay({ query: "al" });
     await waitFor(() => {
       expect(screen.getAllByRole("option")).toHaveLength(3);
     });
@@ -578,7 +591,7 @@ describe("SearchOverlay", () => {
     listGridBlocksMock.mockResolvedValue(
       snapshot([makeBlock(1, "alpha"), makeBlock(2, "beta"), makeBlock(3, "gamma")], 3),
     );
-    renderOverlay({ query: "a" });
+    renderOverlay({ query: "al" });
     await waitFor(() => {
       expect(screen.getAllByRole("option")).toHaveLength(3);
     });
@@ -602,7 +615,7 @@ describe("SearchOverlay", () => {
     listGridBlocksMock.mockResolvedValue(
       snapshot([makeBlock(1, "alpha"), makeBlock(2, "beta")]),
     );
-    renderOverlay({ query: "a" });
+    renderOverlay({ query: "al" });
     await waitFor(() => {
       expect(screen.getAllByRole("option")).toHaveLength(2);
     });

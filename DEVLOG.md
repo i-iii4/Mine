@@ -1,5 +1,32 @@
 # Devlog
 
+## 02.07.2026 — Search Overlay: короткий ввод больше не запускает шумный semantic search
+
+### Проблема
+В Search Overlay односимвольный запрос вроде `a` показывал `0` и `No results`,
+потому что backend выкидывал `a` как stopword и возвращал пустой search plan.
+При следующем символе смешанный/кириллический ввод вроде `aв` или `ав` мог
+включить semantic search и принести `200+` результатов, хотя буквальный FTS
+совпадал только с небольшим числом карточек.
+
+### Причина
+Overlay считал любой непустой query готовым к поиску. На backend стороне
+`SearchPlan::allows_semantic_only()` разрешал semantic для любого запроса с
+кириллическим символом, без минимальной смысловой длины.
+
+### Что сделано
+- Overlay вводит pending-состояние для непустого query короче 2 нормализованных
+  символов: без IPC, счётчика и `No results`.
+- Backend запускает semantic-only слой только когда stopword-filtered query
+  содержит минимум 3 alphanumeric символа.
+- Короткие кириллические/mixed-layout запросы остаются lexical/alias/fuzzy:
+  `ав` может найти `av*`, но не вытягивает 200 semantic-кандидатов.
+
+### Тесты
+- `SearchOverlay.test.tsx`: one-character query не вызывает IPC и не показывает
+  пустое состояние.
+- `search_engine.rs`: короткий кириллический query bypasses semantic provider.
+
 ## 02.07.2026 — Search Overlay: счётчик выдачи больше не показывает размер vault
 
 ### Проблема

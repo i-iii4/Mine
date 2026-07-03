@@ -55,6 +55,9 @@ export const SEARCH_OVERLAY_RECENT_LIMIT = 20;
 /** Same live-typing debounce as the rest of surface search (SPEC_SEARCH.md). */
 const SEARCH_OVERLAY_DEBOUNCE_MS = 100;
 
+/** One typed character is too noisy for vault-wide body/hybrid search. */
+export const SEARCH_OVERLAY_MIN_QUERY_CHARS = 2;
+
 const snippetLineHeightStyle = {
   lineHeight: `${CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX}px`,
 } as const;
@@ -114,6 +117,10 @@ export function SearchOverlay({
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
 
   const normalizedQuery = normalizeSurfaceSearchQuery(query);
+  const normalizedQueryLength = Array.from(normalizedQuery).length;
+  const isRecentMode = normalizedQuery.length === 0;
+  const queryReadyForSearch =
+    isRecentMode || normalizedQueryLength >= SEARCH_OVERLAY_MIN_QUERY_CHARS;
 
   // searchQuery === null → recent mode: the same grid contract without a
   // query returns the canonical saved_at-DESC order (the feed's first page).
@@ -160,18 +167,26 @@ export function SearchOverlay({
 
   useEffect(() => {
     if (!open) return;
-    if (!normalizedQuery) {
+    if (isRecentMode) {
       // Recent mode loads immediately: the debounce exists for the typing
       // race, a static list has nothing to wait for (Р-16).
       setActiveIndex(0);
       runSearch(null, { preserveActive: false });
       return;
     }
+    if (!queryReadyForSearch) {
+      requestSequenceRef.current += 1;
+      setResults(null);
+      setResultHasMore(false);
+      setSettledQueryKey(null);
+      setActiveIndex(0);
+      return;
+    }
     const timer = window.setTimeout(() => {
       runSearch(normalizedQuery, { preserveActive: false });
     }, SEARCH_OVERLAY_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [normalizedQuery, open, runSearch]);
+  }, [isRecentMode, normalizedQuery, open, queryReadyForSearch, runSearch]);
 
   // The result set is overlay-owned state, so vault mutations (delete, rename,
   // clipper saves, watcher events) must re-run the active query — including
@@ -183,11 +198,12 @@ export function SearchOverlay({
     const handler = () => {
       // Cached collections may be stale after the mutation too.
       setTagsBySlug(new Map());
+      if (!queryReadyForSearch) return;
       runSearch(normalizedQuery || null, { preserveActive: true });
     };
     window.addEventListener("vault-refreshed", handler);
     return () => window.removeEventListener("vault-refreshed", handler);
-  }, [normalizedQuery, open, runSearch]);
+  }, [normalizedQuery, open, queryReadyForSearch, runSearch]);
 
   // Optimistic delete: App announces a confirmed delete before the IPC and
   // snapshot reload finish, so the row vanishes the moment the user confirms.
@@ -357,13 +373,17 @@ export function SearchOverlay({
     inputRef.current?.focus();
   }, [onQueryChange]);
 
-  const isRecentMode = normalizedQuery.length === 0;
   const currentQuerySettled = settledQueryKey === normalizedQuery;
-  const showCount = !isRecentMode && currentQuerySettled && results !== null;
+  const showCount =
+    !isRecentMode && queryReadyForSearch && currentQuerySettled && results !== null;
   const resultCountLabel =
     results && resultHasMore ? `${results.length}+` : `${results?.length ?? 0}`;
   const showNoResults =
-    !isRecentMode && currentQuerySettled && results !== null && results.length === 0;
+    !isRecentMode
+    && queryReadyForSearch
+    && currentQuerySettled
+    && results !== null
+    && results.length === 0;
 
   // One row template for both modes; `index` is always the flat results
   // index, so the active row and arrow keys ignore section grouping.

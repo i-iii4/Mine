@@ -274,7 +274,10 @@ Implemented behavior:
 - single-token Latin queries stay strict and bypass semantic embedding work:
   semantic-only cards are not injected into the visible result set;
 - semantic-only cards are allowed for cross-language Cyrillic queries and
-  multi-token semantic queries where literal matching alone is insufficient;
+  multi-token semantic queries where literal matching alone is insufficient,
+  but only after the normalized meaningful query has at least 3 alphanumeric
+  characters. One- and two-character queries stay lexical/alias/fuzzy only so
+  `в`, `ав` or mixed-layout fragments cannot pull a 200-row semantic tail;
 - background metadata backfill warms chunks/vectors after vault open; keypress
   search never downloads a model or generates missing embeddings in the
   foreground;
@@ -332,6 +335,8 @@ Rules:
 - multi-token text is an AND query;
 - matching is case-insensitive according to the SQLite FTS tokenizer;
 - empty or whitespace-only query is the normal Grid route;
+- semantic-only retrieval is gated until the stopword-filtered query contains
+  at least 3 alphanumeric characters;
 - invalid punctuation must not throw user-visible SQL/FTS errors.
 
 Hybrid query normalization additionally produces:
@@ -575,6 +580,7 @@ Backend:
   ranges;
 - exact title matches outrank semantic-only body matches;
 - punctuation in user query cannot break FTS SQL;
+- short Cyrillic/mixed-layout queries bypass the semantic provider;
 - pagination returns `has_more` correctly in search mode;
 - snippets return plain text and valid ranges;
 - prefix snippets return only the typed prefix range;
