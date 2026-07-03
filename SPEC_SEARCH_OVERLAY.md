@@ -119,9 +119,13 @@ selection невозможен — модальность забирает кл�
   off, spellCheck false);
 - фокус всегда в инпуте; автофокус при открытии; DOM-фокус из инпута не
   уходит (input-owned keyboard model);
-- справа в header: счётчик результатов — голое число (`total_blocks`),
-  `text-sm text-tertiary-foreground`, как счётчики каналов в сайдбаре;
-  отображается только при непустом query и завершённом запросе;
+- справа в header: счётчик текущей выдачи — количество реально показанных
+  search rows (`blocks.length`, с суффиксом `+`, если backend вернул
+  `has_more`), `text-sm text-tertiary-foreground`, как счётчики каналов в
+  сайдбаре; отображается только при непустом query и завершённом запросе для
+  текущей строки ввода. `GridSnapshot.total_blocks` не используется здесь: в
+  `list_grid_blocks` это общий non-channel размер vault для `Everything`, а не
+  количество совпадений поиска;
 - правее счётчика clear-кнопка `✕` (`h-6 w-6 rounded-1`, hover/focus
   `bg-component-fill-hover text-foreground`, `aria-label="Clear search"`),
   видна только при непустом query; клик очищает query и возвращает фокус в
@@ -366,7 +370,9 @@ SPEC_SEARCH) промежуточное состояние не успевает
 - открытие рендерит инпут с автофокусом; прежний query выделен целиком;
 - ввод → debounce → `fetchGridBlocks(undefined, 0, 200, query)` вызван;
   устаревший ответ (query успел смениться) отброшен;
-- счётчик показывает `total_blocks`; clear очищает query и возвращает фокус;
+- счётчик показывает количество текущих search rows (`0`, `N`, `N+` при
+  `has_more`), не старый `total_blocks` vault-а; clear очищает query и
+  возвращает фокус;
 - `ArrowDown/Up` двигают `activeIndex` и `aria-activedescendant`, фокус
   остаётся в инпуте; первый результат активен по умолчанию;
 - `Enter` вызывает open-callback активного блока и закрывает overlay;

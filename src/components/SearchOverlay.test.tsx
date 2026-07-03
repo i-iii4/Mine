@@ -87,8 +87,12 @@ function bodyMatch(excerpt: string, ranges: SearchMatch["ranges"]): SearchMatch 
   return { field: "body", kind: "exact", excerpt, ranges, score: 100 };
 }
 
-function snapshot(blocks: LightBlock[], total = blocks.length): GridSnapshot {
-  return { blocks, total_blocks: total, has_more: false };
+function snapshot(
+  blocks: LightBlock[],
+  total = blocks.length,
+  hasMore = false,
+): GridSnapshot {
+  return { blocks, total_blocks: total, has_more: hasMore };
 }
 
 function renderOverlay(props: Partial<Parameters<typeof SearchOverlay>[0]> = {}) {
@@ -227,7 +231,7 @@ describe("SearchOverlay", () => {
     });
   });
 
-  it("renders result rows, the count, and the preview of the active row", async () => {
+  it("renders result rows, the displayed-result count, and the preview of the active row", async () => {
     listGridBlocksMock.mockResolvedValue(
       snapshot([makeBlock(1, "alpha"), makeBlock(2, "beta")], 42),
     );
@@ -236,11 +240,76 @@ describe("SearchOverlay", () => {
     await waitFor(() => {
       expect(screen.getAllByRole("option")).toHaveLength(2);
     });
-    expect(screen.getByText("42")).toBeInTheDocument();
+    expect(
+      document.querySelector("[data-search-overlay-result-count]"),
+    ).toHaveTextContent("2");
+    expect(screen.queryByText("42")).not.toBeInTheDocument();
     expect(screen.getAllByRole("option")[0]).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("overlay-preview")).toHaveTextContent("alpha");
     // Each row carries the standard micro preview thumbnail.
     expect(screen.getAllByRole("option")[0]!.querySelector("img")).not.toBeNull();
+  });
+
+  it("adds a plus to the displayed-result count when more search rows exist", async () => {
+    listGridBlocksMock.mockResolvedValue(
+      snapshot([makeBlock(1, "alpha"), makeBlock(2, "beta")], 508, true),
+    );
+    renderOverlay({ query: "alpha" });
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(2);
+    });
+    expect(
+      document.querySelector("[data-search-overlay-result-count]"),
+    ).toHaveTextContent("2+");
+    expect(screen.queryByText("508")).not.toBeInTheDocument();
+  });
+
+  it("does not show the previous recent total while a typed query is still pending", async () => {
+    listGridBlocksMock.mockResolvedValueOnce(
+      snapshot([makeBlock(1, "recent", { saved_at: new Date().toISOString() })], 508),
+    );
+    let resolveSearch: ((grid: GridSnapshot) => void) | null = null;
+    listGridBlocksMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveSearch = resolve; }),
+    );
+    const { rerender, onQueryChange, onClose, onOpenBlock } = renderOverlay();
+
+    await screen.findByText("Title recent");
+    expect(screen.queryByText("508")).not.toBeInTheDocument();
+
+    rerender(
+      <SearchOverlay
+        open
+        query="csd"
+        vaultPath="/vault"
+        onQueryChange={onQueryChange}
+        onClose={onClose}
+        onOpenBlock={onOpenBlock}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(listGridBlocksMock).toHaveBeenCalledWith(
+        undefined,
+        0,
+        SEARCH_OVERLAY_RESULT_LIMIT,
+        "csd",
+      );
+    });
+    expect(
+      document.querySelector("[data-search-overlay-result-count]"),
+    ).toBeNull();
+    expect(screen.queryByText("508")).not.toBeInTheDocument();
+
+    resolveSearch!(snapshot([], 508));
+    await waitFor(() => {
+      expect(screen.getByText("No results")).toBeInTheDocument();
+    });
+    expect(
+      document.querySelector("[data-search-overlay-result-count]"),
+    ).toHaveTextContent("0");
+    expect(screen.queryByText("508")).not.toBeInTheDocument();
   });
 
   it("moves the active row with arrows while focus stays in the input", async () => {
@@ -347,11 +416,15 @@ describe("SearchOverlay", () => {
   });
 
   it("shows No results for a non-empty query with an empty response", async () => {
-    listGridBlocksMock.mockResolvedValue(snapshot([]));
+    listGridBlocksMock.mockResolvedValue(snapshot([], 508));
     renderOverlay({ query: "nothing" });
     await waitFor(() => {
       expect(screen.getByText("No results")).toBeInTheDocument();
     });
+    expect(
+      document.querySelector("[data-search-overlay-result-count]"),
+    ).toHaveTextContent("0");
+    expect(screen.queryByText("508")).not.toBeInTheDocument();
     expect(screen.queryByTestId("overlay-preview")).not.toBeInTheDocument();
   });
 

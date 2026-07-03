@@ -99,7 +99,8 @@ export function SearchOverlay({
   onRequestDelete,
 }: SearchOverlayProps) {
   const [results, setResults] = useState<LightBlock[] | null>(null);
-  const [totalBlocks, setTotalBlocks] = useState<number | null>(null);
+  const [resultHasMore, setResultHasMore] = useState(false);
+  const [settledQueryKey, setSettledQueryKey] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   // Collections for the metadata block: lazy per active row, cached per slug,
   // invalidated together with the result set on vault mutations.
@@ -119,6 +120,7 @@ export function SearchOverlay({
   const runSearch = useCallback(
     (searchQuery: string | null, options: { preserveActive: boolean }) => {
       const sequence = ++requestSequenceRef.current;
+      const queryKey = searchQuery ?? "";
       void listGridBlocks(
         undefined,
         0,
@@ -145,7 +147,8 @@ export function SearchOverlay({
             }
             return grid.blocks;
           });
-          setTotalBlocks(grid.total_blocks);
+          setResultHasMore(grid.has_more);
+          setSettledQueryKey(queryKey);
         })
         .catch((error) => {
           if (requestSequenceRef.current !== sequence) return;
@@ -205,7 +208,6 @@ export function SearchOverlay({
           if (followed >= 0) return followed;
           return Math.min(index, Math.max(0, next.length - 1));
         });
-        setTotalBlocks((total) => (total === null ? total : Math.max(0, total - 1)));
         return next;
       });
     };
@@ -356,8 +358,12 @@ export function SearchOverlay({
   }, [onQueryChange]);
 
   const isRecentMode = normalizedQuery.length === 0;
-  const showCount = !isRecentMode && totalBlocks !== null;
-  const showNoResults = !isRecentMode && results !== null && results.length === 0;
+  const currentQuerySettled = settledQueryKey === normalizedQuery;
+  const showCount = !isRecentMode && currentQuerySettled && results !== null;
+  const resultCountLabel =
+    results && resultHasMore ? `${results.length}+` : `${results?.length ?? 0}`;
+  const showNoResults =
+    !isRecentMode && currentQuerySettled && results !== null && results.length === 0;
 
   // One row template for both modes; `index` is always the flat results
   // index, so the active row and arrow keys ignore section grouping.
@@ -449,8 +455,11 @@ export function SearchOverlay({
             {...SEARCH_INPUT_SUPPRESSION_PROPS}
           />
           {showCount && (
-            <span className="shrink-0 px-1 text-sm text-tertiary-foreground">
-              {totalBlocks}
+            <span
+              className="shrink-0 px-1 text-sm text-tertiary-foreground"
+              data-search-overlay-result-count=""
+            >
+              {resultCountLabel}
             </span>
           )}
           {query.length > 0 && (
