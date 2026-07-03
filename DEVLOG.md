@@ -1,5 +1,31 @@
 # Devlog
 
+## 03.07.2026 — Sidebar hover seam behind feature flag
+
+### Задача
+Проверить более тихий hover state бокового меню: при наведении должна
+подкрашиваться только типографика строки, без дополнительного акцента
+горизонтальной линии.
+
+### Что сделано
+- Добавлен `SIDEBAR_ROW_HOVER_SEAM_ENABLED` в `src/lib/featureFlags.ts`.
+- Sidebar прокидывает значение флага в `data-sidebar-row-hover-seam` на
+  `[data-sidebar-scroll]`.
+- CSS row seam accent (`:hover`, `data-sidebar-row-focused`,
+  `data-sidebar-row-seam-accent`) теперь применяется только при
+  `data-sidebar-row-hover-seam="true"`.
+- Pointer/focus/drag-over state строки не удалён: `data-sidebar-row-focused`,
+  `data-sidebar-row-seam-accent` и подсветка текста продолжают работать, а
+  прежний визуальный акцент линии возвращается включением флага.
+- `DESIGN_SYSTEM.md` обновлён: зафиксирован экспериментальный режим, где hover
+  меняет только текст.
+
+### Проверки
+- `bunx vitest run src/components/Sidebar.test.tsx`
+- `bunx tsc -b --pretty false`
+- `bun run lint`
+- `NODE_OPTIONS=--max-old-space-size=6144 bun run build`
+
 ## 03.07.2026 — Graph View M0: карточки-миниатюры и коллекции-лейблы
 
 ### Задача

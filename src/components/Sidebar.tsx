@@ -38,6 +38,7 @@ import {
 import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
 import { getBlock } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
+import { SIDEBAR_ROW_HOVER_SEAM_ENABLED } from "@/lib/featureFlags";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import {
   buildSidebarRowOrder,
@@ -600,6 +601,7 @@ export function Sidebar({
         )}
         data-sidebar-scroll
         data-sidebar-link-editor-mode={isLinkEditorActive ? "true" : undefined}
+        data-sidebar-row-hover-seam={SIDEBAR_ROW_HOVER_SEAM_ENABLED ? "true" : "false"}
         data-sidebar-row-focus-mode={hasSidebarRowFocusMode ? "true" : undefined}
         data-sidebar-row-switching={sidebarRowSwitching ? "true" : undefined}
         onPointerMove={handleSidebarPointerMove}

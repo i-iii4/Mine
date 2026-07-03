@@ -113,9 +113,9 @@ select,
   color: var(--foreground);
 }
 
-[data-sidebar-row-surface]:hover::after,
-[data-sidebar-row-surface][data-sidebar-row-focused="true"]::after,
-[data-sidebar-row-surface][data-sidebar-row-seam-accent="true"]::after {
+[data-sidebar-scroll][data-sidebar-row-hover-seam="true"] [data-sidebar-row-surface]:hover::after,
+[data-sidebar-scroll][data-sidebar-row-hover-seam="true"] [data-sidebar-row-surface][data-sidebar-row-focused="true"]::after,
+[data-sidebar-scroll][data-sidebar-row-hover-seam="true"] [data-sidebar-row-surface][data-sidebar-row-seam-accent="true"]::after {
   background-color: var(--border-accent);
 }
 

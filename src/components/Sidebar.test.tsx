@@ -10,6 +10,7 @@ import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
 } from "@/lib/hoverPreviewTiming";
+import { SIDEBAR_ROW_HOVER_SEAM_ENABLED } from "@/lib/featureFlags";
 
 const dndContextState = vi.hoisted(() => ({
   over: null as { id: string } | null,
@@ -339,6 +340,10 @@ describe("Sidebar", () => {
     const allRow = everythingRow;
     const alphaRow = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
     const betaRow = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
+    expect(nav).toHaveAttribute(
+      "data-sidebar-row-hover-seam",
+      SIDEBAR_ROW_HOVER_SEAM_ENABLED ? "true" : "false",
+    );
     expect(alphaRow).toHaveAttribute("data-sidebar-row-surface", "");
     expect(alphaRow).toHaveAttribute("data-sidebar-row-active", "true");
     expect(allRow).not.toHaveAttribute("data-sidebar-row-seam-accent");

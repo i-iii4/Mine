@@ -386,10 +386,13 @@ row text to `text-foreground`; all other row labels/counts stay
 `text-muted-foreground`. The selected route also remains `text-foreground` if
 another row is currently focused. Thumbnail strips do not participate in this
 state and stay visually unchanged. The row separator is a single owned seam per
-row; hover/focus changes the color of the hovered row seam and the previous row
-seam to `border-accent`, never their thickness. Enter/exit uses `180ms
-cubic-bezier(0.22, 1, 0.36, 1)`; switching directly between rows inside focus
-mode disables transition for that switch frame.
+row. The experimental flag `SIDEBAR_ROW_HOVER_SEAM_ENABLED` controls whether
+hover/focus also changes the hovered row seam and the previous row seam to
+`border-accent`. Current test setting is `false`: hover/focus only brightens
+text, while the seam stays `sidebar-border`. The previous seam highlight remains
+available behind the flag and, when enabled, never changes line thickness.
+Enter/exit uses `180ms cubic-bezier(0.22, 1, 0.36, 1)`; switching directly
+between rows inside focus mode disables transition for that switch frame.
 
 ### Токены интерактивных состояний
 
