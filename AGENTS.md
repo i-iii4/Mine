@@ -25,6 +25,7 @@
 - `SPEC_FEED_SCROLL_PERFORMANCE.md` — C7-контракт бесконечного canvas-feel для ленты: render window, media preload/decode window, лимиты, диагностика
 - `SPEC_GRID_LAYOUT_READINESS.md` — C8-контракт viewport-first measurement: live measured islands, layout diagnostics, deep fast-scroll acceptance
 - `SPEC_THUMBNAILS.md` — полная спецификация preview/thumbnail pipeline
+- `SPEC_GRAPH_VIEW.md` — спецификация Graph View: Canvas force-directed graph на базе решения Longevity Landscape, graph snapshot read model, коллекции/wikilinks/related notes, физика, UX и проверки
 - `SPEC_FEED_VIDEO.md` — спецификация desktop feed video contract: surfaces, `feed_playback`, autoplay gating
 - `SPEC_ARTICLE_AUDIO.md` — спецификация manual article audio renditions: speech prep, derived audio state, desktop/iOS controls
 - `SPEC_MEDIA_ASSET_ACTIONS.md` — спецификация media-level hover/drag/actions: Create Card, Reveal, Copy Path, Copy Media, Rename Media, Remove from Card, Delete для конкретного local media asset
@@ -55,6 +56,7 @@
 | url + getrandom + tiny_http | Native-host URL validation, upload token generation, local binary upload server |
 | React 19 | UI-фреймворк |
 | Vite | Сборка фронтенда, HMR |
+| react-force-graph-2d + d3-force | Canvas Graph View: force-directed layout, zoom/pan, custom node paint |
 | TypeScript | Язык фронтенда |
 | TailwindCSS v4 | Стилизация (CSS-first конфигурация) |
 | shadcn/ui | Дизайн-система: OKLCH-токены, Radix-примитивы (Button, Dialog, ContextMenu и др.), glass-вариант, `cn()` |
@@ -99,6 +101,7 @@ local-arena/
 │   │   │   ├── db.rs           # Connection pool, migrations
 │   │   │   ├── index.rs        # Frontmatter → SQLite indexing
 │   │   │   ├── files.rs        # File operations (copy, move, delete, derived artifact rename)
+│   │   │   ├── graph.rs        # GraphSnapshot projection for Graph View
 │   │   │   └── thumbnails.rs   # Thumbnail generation + cache
 │   │   ├── watcher/            # File system watcher
 │   │   │   ├── mod.rs
@@ -115,6 +118,7 @@ local-arena/
 │   │       ├── article_audio_desktop.rs # Native macOS helper orchestration + voice defaults
 │   │       ├── state.rs        # AppState, VaultState, CommandError
 │   │       ├── blocks.rs       # create/delete/rename block commands → вызывает domain + storage
+│   │       ├── graph.rs        # list_graph_snapshot command
 │   │       ├── tags.rs
 │   │       ├── search.rs
 │   │       ├── vault.rs        # select_vault, get_vault_path, rebuild_index
@@ -129,6 +133,7 @@ local-arena/
 │   ├── App.tsx                 # Корневой компонент + роутинг
 │   ├── components/
 │   │   ├── Grid.tsx            # Masonry-сетка с чанковым рендерингом (IntersectionObserver)
+│   │   ├── GraphView.tsx       # Canvas force-directed graph: card thumbnails + collection labels
 │   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
 │   │   ├── Detail.tsx          # Lightbox: просмотр, коллекции, навигация стрелками

@@ -17,6 +17,7 @@ import { ActionButton } from "@/components/ActionButton";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 import { CollectionPicker } from "@/components/CollectionPicker";
 import { GroupSelectionActionBar } from "@/components/GroupSelectionActionBar";
+import { GraphCollectionLabel } from "@/components/GraphCollectionLabel";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
@@ -582,6 +583,23 @@ function CoreComponentSection() {
           <MenuTextTrigger label="Mine" surface="clipperHeader" showChevron />
         </div>
         <MenuTextTrigger label="Action" surface="actionBar" hotkey="⌘A" />
+      </ComponentSpec>
+
+      <ComponentSpec
+        title="GraphCollectionLabel"
+        summary="Капсульный label коллекции в Graph View: Badge-форма, sidebar-типографика, chrome-fill и button-hover outline."
+        specs={[
+          { prop: "Основа", value: "Badge graphLabel · interactive" },
+          { prop: "Текст", value: "font-sans · text-base · regular" },
+          { prop: "Цвет текста", value: "--muted-foreground" },
+          { prop: "Заливка", value: "bg-chrome · --chrome" },
+          { prop: "Hover", value: "outline 1px · --component-fill-hover" },
+          { prop: "Форма", value: "h-7 · rounded-pill · px-3" },
+        ]}
+      >
+        <GraphCollectionLabel>Everything</GraphCollectionLabel>
+        <GraphCollectionLabel>Visual research</GraphCollectionLabel>
+        <GraphCollectionLabel>Long collection title</GraphCollectionLabel>
       </ComponentSpec>
 
       <ComponentSpec

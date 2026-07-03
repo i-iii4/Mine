@@ -42,8 +42,8 @@ collections` зарезервировано за поиском в выпада�
   не показываются; значения читаются из текущего root theme через computed CSS
   variables;
 - core primitives: `Button`, `ActionButton`, `SegmentedControl`, `Input`,
-  `SearchMenuInput`, `MenuTextTrigger`, `ChromeCloseButton`, `Checkbox`,
-  `Progress`, `Tooltip`;
+  `SearchMenuInput`, `MenuTextTrigger`, `GraphCollectionLabel`,
+  `ChromeCloseButton`, `Checkbox`, `Progress`, `Tooltip`;
 - floating UI: `DropdownMenu`, `ContextMenu`, `CollectionPicker`,
   `QuantizedMenuScrollArea`, width roles `command` / `selector` / `picker` and
   row tokens `default` / `clipper`;
@@ -63,12 +63,12 @@ source of truth; допустимы только небольшие static compo
 | Токен | Значение | Утилита | Где |
 |---|---|---|---|
 | `--radius-0` | 0 | `rounded-0` | Карточки контента, изображения, текстовые блоки |
-| `--radius-1` | 3px | `rounded-1` | Все элементы интерфейса: кнопки, инпуты, бейджи, попапы, меню, тултипы, диалоги |
+| `--radius-1` | 3px | `rounded-1` | Основные элементы интерфейса: кнопки, инпуты, попапы, меню, тултипы, диалоги |
 | — | 2px | `rounded-[2px]` | Чекбоксы (16px, компенсация масштаба) |
 | `--radius-pill` | 9999px | `rounded-pill` | Переключатели, тоглы, прогресс-бар |
 | `--radius-round` | 50% | `rounded-round` | Аватары, индикаторы статуса |
 
-**Правило:** содержимое — без скругления (`rounded-0`), интерфейс — 3px (`rounded-1`), чекбоксы — 2px.
+**Правило:** содержимое — без скругления (`rounded-0`), интерфейс — 3px (`rounded-1`), бейджи и pill-контролы — капсулы (`rounded-pill`), чекбоксы — 2px.
 
 ## Отступы
 
@@ -118,9 +118,10 @@ typography must stay inside the 12/14/18px design-system scale.
 | Вес | Утилита | Где |
 |---|---|---|
 | 400 | по умолчанию | Основной текст |
-| 600 | `font-semibold` | Заголовки, активный элемент сайдбара, кнопки, бейджи, метки |
+| 600 | `font-semibold` | Заголовки, активный элемент сайдбара, кнопки, метки |
 
-**Только два веса.** `font-medium` (500), `font-bold` (700) и прочие не используются.
+Базовый UI использует 400/600. `font-bold` (700) и прочие веса не
+используются.
 
 ### Шрифты
 
@@ -447,7 +448,9 @@ mode disables transition for that switch frame.
 Input и Command по умолчанию — 32px (`h-8`). Clipper использует
 `Input controlSize="clipper"` (`h-10`) только внутри popup/overlay строк.
 
-**Скругление всех элементов интерфейса — 3px (`rounded-1`).** Без исключений: Button, ActionButton (обе пули), Badge, DropdownMenu, Tooltip, Input.
+**Скругление основных элементов интерфейса — 3px (`rounded-1`).** Button,
+ActionButton (обе пули), DropdownMenu, Tooltip, Input используют этот радиус.
+`Badge` является отдельным pill-примитивом и использует `rounded-pill`.
 
 **Семантические токены скругления** (управляются из `global.css`):
 - `--radius-card` → скругление карточек (по умолчанию `var(--radius-1)` = 3px)
@@ -785,11 +788,35 @@ URL text and never render `mark`.
 | `default` | `bg-primary text-primary-foreground` |
 | `secondary` | `bg-secondary text-secondary-foreground` |
 | `destructive` | `bg-destructive text-white` |
-| `outline` | `border text-foreground` |
+| `outline` | `border-border bg-component-fill text-foreground` |
+| `graphLabel` | `border-border bg-chrome font-sans font-normal text-muted-foreground hover:text-foreground` |
 | `ghost` | `hover:bg-accent hover:text-accent-foreground` |
 | `link` | `text-primary underline-offset-4 hover:underline` |
 
-Все бейджи: `rounded-1 px-2 py-0.5 text-sm font-semibold`.
+Все бейджи следуют capsule-контракту: `h-7 rounded-pill px-3 py-1 text-base`.
+Обычные варианты используют `font-semibold`. `graphLabel` использует
+типографику бокового интерфейса: `font-sans text-base font-normal
+text-muted-foreground`. Интерактивные бейджи используют button-hover:
+`outline-1 -outline-offset-1 outline-component-fill-hover`.
+
+### GraphCollectionLabel
+
+`GraphCollectionLabel` — дизайн-системный эталон label-ноды коллекции. Это
+capsule Badge, а не Button: компонент собирается как
+`Badge variant="graphLabel" interactive` и получает только button-like hover/focus
+outline. Заливка всегда `bg-chrome`, то есть тот же surface, что permanent top
+chrome; это сохраняет читаемость label поверх canvas-контента. Текст повторяет
+боковой интерфейс: `font-sans text-base font-normal text-muted-foreground`; при
+hover/focus текст становится `text-foreground`, как hover-строки бокового
+интерфейса.
+
+Graph View рендерит collection labels canvas-native, но обязан повторять этот
+контракт токенов: `bg-chrome`, `border-border`, `text-muted-foreground`,
+hover/focus text `text-foreground`, hover outline из
+`outline-component-fill-hover`, `h-7`, `px-3`, `rounded-pill`, `text-base`,
+`font-normal`. Это исключение сделано архитектурно: граф, hitbox, hover/drag и
+collision должны жить в одном canvas/d3-force координатном пространстве, без DOM
+overlay поверх графа.
 
 ### AlertDialog
 
@@ -1630,7 +1657,9 @@ masonry layout складываются из второго shell top-bar level 
 virtual layout inset `32px` через `marginTop`. Inset живёт на внутреннем
 virtual layout, а не на scrollport.
 
-Паддинги сетки: 32px по бокам (при развёрнутом сайдбаре), 72px (при свёрнутом — компенсация ширины).
+Паддинги сетки единые для раскрытого и свёрнутого сайдбара: 32px по бокам в
+обычном дизайне и 16px в alt design. Сворачивание сайдбара не увеличивает
+боковые отступы карточек и не компенсирует ширину rail внутри Grid.
 
 Пустой канал показывает только текстовый placeholder, без card surface, quote
 marker, border, иконок или CTA-кнопок. Placeholder центрируется в видимом

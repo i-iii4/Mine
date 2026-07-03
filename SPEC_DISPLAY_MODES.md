@@ -1,6 +1,6 @@
 # SPEC: Display Modes
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_GRID.md](SPEC_GRID.md) | [PRINCIPLES.md](PRINCIPLES.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [PRINCIPLES.md](PRINCIPLES.md)
 
 ## Overview
 
@@ -163,3 +163,22 @@ type LayoutMode = "gallery" | "grid" | "table" | "columns";
 - Изменения в индексации, парсинге frontmatter, watcher
 - Изменения в типах `LightBlock`, `IndexedBlock`, `PreviewItem`
 - Drag-and-drop между modes (каждый mode реализует свой DnD если нужно)
+
+## Graph View Exception
+
+Graph View is a special display surface, not a pure renderer over
+`DisplayModeProps.blocks`.
+
+Reason: graph edges are not present in `LightBlock[]`. They come from
+`block_tags`, `wikilinks`, `related_notes`, and `channels`, so the frontend must
+request a dedicated backend `GraphSnapshot`.
+
+Rules:
+
+- Graph View still participates in the layout-mode UI and lives in the main
+  content area.
+- Graph View must not mutate Sidebar, thumbnail, watcher, or file-write
+  contracts merely to render a graph.
+- Graph View may add a dedicated read-only IPC command and DTOs as specified in
+  [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
+- Existing pure display modes continue to follow the render-only contract above.

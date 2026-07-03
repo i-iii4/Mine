@@ -47,6 +47,7 @@ pub fn run() {
             commands::article_audio::set_article_audio_position,
             commands::blocks::list_blocks,
             commands::blocks::list_grid_blocks,
+            commands::graph::list_graph_snapshot,
             commands::blocks::get_block,
             commands::blocks::create_block,
             commands::blocks::extract_inline_media,

@@ -61,11 +61,22 @@ import { CardMoreMenu } from "@/components/CardHoverMenu";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 
 type DetailLinkMode = "all" | "linked";
+type MainViewMode = "grid" | "graph";
 
 const DETAIL_LINK_MODE_OPTIONS: SegmentedControlOption<DetailLinkMode>[] = [
   { value: "all", label: "All" },
   { value: "linked", label: "Connected" },
 ];
+
+const MAIN_VIEW_MODE_STORAGE_KEY = "mine.mainViewMode";
+
+function getStoredMainViewMode(): MainViewMode {
+  return window.localStorage.getItem(MAIN_VIEW_MODE_STORAGE_KEY) === "graph" ? "graph" : "grid";
+}
+
+function persistMainViewMode(mode: MainViewMode) {
+  window.localStorage.setItem(MAIN_VIEW_MODE_STORAGE_KEY, mode);
+}
 
 function baseRelatedNoteSlug(target: string): string {
   return target.split("#", 1)[0] ?? target;
@@ -441,6 +452,7 @@ import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { ClipperRecoveryBanner } from "@/components/ClipperRecoveryBanner";
 import { VaultConflictsBanner } from "@/components/VaultConflictsBanner";
 import { Grid } from "@/components/Grid";
+import { GraphView } from "@/components/GraphView";
 import { DragCardStackPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
@@ -747,6 +759,7 @@ export function AppWithVault({
   const [bottomActionBarHidden, setBottomActionBarHidden] = useState(
     getStoredBottomActionBarHidden,
   );
+  const [mainViewMode, setMainViewMode] = useState<MainViewMode>(getStoredMainViewMode);
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [pendingCreateChannelDrop, setPendingCreateChannelDrop] =
@@ -1746,6 +1759,14 @@ export function AppWithVault({
   const handleOpenSettings = useCallback(() => {
     void openSettingsWindow().catch((error) => {
       console.error("Failed to open settings window:", error);
+    });
+  }, []);
+
+  const toggleMainViewMode = useCallback(() => {
+    setMainViewMode((current) => {
+      const next = current === "graph" ? "grid" : "graph";
+      persistMainViewMode(next);
+      return next;
     });
   }, []);
 
@@ -3010,9 +3031,12 @@ export function AppWithVault({
             <div
               // Right-edge inset follows the app-wide 32px edge rhythm (the
               // bottom action bar's px-8, the grid's side insets).
-              className="ml-2 mr-8 shrink-0"
+              className="ml-2 mr-8 flex shrink-0 items-center gap-2"
               data-top-chrome-settings-fallback=""
             >
+              <ActionButton onClick={toggleMainViewMode} isSelected={mainViewMode === "graph"}>
+                {mainViewMode === "graph" ? "Grid" : "Graph"}
+              </ActionButton>
               <ActionButton hotkey="⌘," onClick={handleOpenSettings}>
                 Settings
               </ActionButton>
@@ -3145,9 +3169,9 @@ export function AppWithVault({
                 thumbVersions={feedThumbVersions}
                 tags={orderedTags}
                 currentTag={currentTag}
+                viewMode={mainViewMode}
                 routeSnapshotReady={gridRouteSnapshotReady}
                 scrollToTop={scrollToTopSignal}
-                sidebarCollapsed={sidebarCollapsed}
                 blockDragActive={activeDragBlocks.length > 0}
                 detailOpen={Boolean(renderedDetailBlock)}
                 keyboardNavigationDisabled={gridKeyboardNavigationDisabled}
@@ -3167,6 +3191,8 @@ export function AppWithVault({
                 hasMoreBlocks={hasMoreBlocks}
                 loadingMoreBlocks={loadingMoreBlocks}
                 onLoadMoreBlocks={loadMoreBlocks}
+                onOpenBlock={openDetailBlock}
+                onNavigateCollection={handleTopCollectionNavigate}
               />
             }
           >
@@ -3296,6 +3322,12 @@ export function AppWithVault({
           >
             Design
           </ActionButton>
+          <ActionButton
+            onClick={toggleMainViewMode}
+            isSelected={mainViewMode === "graph"}
+          >
+            {mainViewMode === "graph" ? "Grid" : "Graph"}
+          </ActionButton>
           <div className="flex-1" />
           {isSyncing && (
             <span className="text-sm text-muted-foreground">Syncing…</span>
@@ -3384,9 +3416,9 @@ interface RouteContext {
   thumbVersions: ReadonlyMap<string, number>;
   tags: TagCount[];
   currentTag?: string;
+  viewMode: MainViewMode;
   routeSnapshotReady: boolean;
   scrollToTop: number;
-  sidebarCollapsed: boolean;
   blockDragActive: boolean;
   detailOpen: boolean;
   keyboardNavigationDisabled: boolean;
@@ -3407,6 +3439,8 @@ interface RouteContext {
   hasMoreBlocks: boolean;
   loadingMoreBlocks: boolean;
   onLoadMoreBlocks: () => void;
+  onOpenBlock: (block: LightBlock | IndexedBlock) => void;
+  onNavigateCollection: (collectionRef?: string) => void;
 }
 
 function PageShell(props: RouteContext) {
@@ -3421,10 +3455,36 @@ function useRouteCtx(): RouteContext {
 
 function AllBlocksPage() {
   const ctx = useRouteCtx();
+  if (ctx.viewMode === "graph") {
+    return (
+      <GraphView
+        currentCollection={undefined}
+        vaultPath={ctx.vaultPath}
+        thumbsRootPath={ctx.thumbsRootPath}
+        loadedBlocks={ctx.blocks}
+        thumbVersions={ctx.thumbVersions}
+        onOpenBlock={ctx.onOpenBlock}
+        onNavigateCollection={ctx.onNavigateCollection}
+      />
+    );
+  }
   return <Grid {...ctx} blocks={ctx.blocks} />;
 }
 
 function ChannelPage() {
   const ctx = useRouteCtx();
+  if (ctx.viewMode === "graph") {
+    return (
+      <GraphView
+        currentCollection={ctx.currentTag}
+        vaultPath={ctx.vaultPath}
+        thumbsRootPath={ctx.thumbsRootPath}
+        loadedBlocks={ctx.blocks}
+        thumbVersions={ctx.thumbVersions}
+        onOpenBlock={ctx.onOpenBlock}
+        onNavigateCollection={ctx.onNavigateCollection}
+      />
+    );
+  }
   return <Grid {...ctx} blocks={ctx.blocks} />;
 }

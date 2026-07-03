@@ -6,6 +6,7 @@ pub mod blocks;
 pub mod channels;
 pub mod clipper_recovery;
 pub mod conflicts;
+pub mod graph;
 pub mod import;
 pub mod search;
 pub mod settings;

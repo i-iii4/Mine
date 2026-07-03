@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   IndexedBlock,
   GridSnapshot,
+  GraphSnapshot,
   LightBlock,
   DeleteBlockPlan,
   RenameBlockError,
@@ -98,6 +99,11 @@ export const listGridBlocks = (
     offset: offset ?? null,
     limit: limit ?? null,
     query: query ?? null,
+  });
+
+export const listGraphSnapshot = (current_collection?: string) =>
+  invoke<GraphSnapshot>("list_graph_snapshot", {
+    current_collection: current_collection ?? null,
   });
 
 export const getBlock = (slug: string) =>

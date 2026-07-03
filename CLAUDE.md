@@ -20,6 +20,7 @@
 - `SPEC_GRID.md` — спецификация zero-jank masonry grid: Canvas measureText precomputation, dual-path (native grid-lanes + virtualized JS), детерминистические высоты
 - `SPEC_THUMBNAILS.md` — спецификация thumbnail pipeline: two-phase (Rust instant placeholder + WebView async upgrade), event-driven sidebar, виртуализация, поддержка всех форматов клиппера через native decoder
 - `SPEC_DISPLAY_MODES.md` — спецификация display modes: архитектура переключения между masonry/grid/table/columns, принцип изоляции (display mode = только рендеринг), единый интерфейс `DisplayModeProps`
+- `SPEC_GRAPH_VIEW.md` — спецификация Graph View: Canvas force-directed graph на базе решения Longevity Landscape, graph snapshot read model, коллекции/wikilinks/related notes, физика, UX и проверки
 - `SPEC_MEDIA_ASSET_ACTIONS.md` — media-level hover/drag/actions для конкретного local media asset, независимо от frontmatter/body source
 - `SPEC_INLINE_MEDIA_EXTRACTION.md` — спецификация перетаскивания inline-изображений из статьи в отдельный блок с односторонней связью на исходную заметку
 - `SPEC_CARD_MERGE.md` — batch Merge для выбранных карточек: reorder dialog, Markdown composition, media reuse, relationship preservation
@@ -46,6 +47,7 @@
 | ureq | Синхронный HTTP-клиент (импорт Are.na) |
 | React 19 | UI-фреймворк |
 | Vite | Сборка фронтенда, HMR |
+| react-force-graph-2d + d3-force | Canvas Graph View: force-directed layout, zoom/pan, custom node paint |
 | TypeScript | Язык фронтенда |
 | TailwindCSS v4 | Стилизация (CSS-first конфигурация) |
 | shadcn/ui | Дизайн-система: OKLCH-токены, 14 Radix-примитивов (Button, Dialog, Command, ContextMenu и др.), glass-вариант, `cn()` |
@@ -85,6 +87,7 @@ local-arena/
 │   │   │   ├── db.rs           # Connection pool, migrations
 │   │   │   ├── index.rs        # Frontmatter → SQLite indexing
 │   │   │   ├── files.rs        # File operations (copy, move, delete)
+│   │   │   ├── graph.rs        # GraphSnapshot projection for Graph View
 │   │   │   └── thumbnails.rs   # Thumbnail generation + cache
 │   │   ├── watcher/            # File system watcher
 │   │   │   ├── mod.rs
@@ -99,6 +102,7 @@ local-arena/
 │   │       ├── mod.rs
 │   │       ├── state.rs        # AppState, VaultState, CommandError
 │   │       ├── blocks.rs       # → вызывает domain + storage
+│   │       ├── graph.rs        # list_graph_snapshot command
 │   │       ├── tags.rs
 │   │       ├── search.rs
 │   │       ├── vault.rs        # select_vault, get_vault_path, rebuild_index
@@ -115,6 +119,7 @@ local-arena/
 │   │   └── *Section.tsx        # AppearanceSection, SpacesSection, OrphansSection
 │   ├── components/
 │   │   ├── Grid.tsx            # Virtualized masonry grid — scroll-based windowing, direction-aware overscan, priority loading
+│   │   ├── GraphView.tsx       # Canvas force-directed graph: card thumbnails + collection labels
 │   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
 │   │   ├── Detail.tsx          # Lightbox: просмотр, коллекции, навигация стрелками

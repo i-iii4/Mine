@@ -126,7 +126,6 @@ export function FeedScrollAuditRoute() {
         tags={[]}
         currentTag={undefined}
         scrollToTop={0}
-        sidebarCollapsed={false}
         keyboardNavigationDisabled
         heightDriftAuditMode
         onBlockClick={noop}

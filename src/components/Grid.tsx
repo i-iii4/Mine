@@ -543,7 +543,6 @@ interface GridProps {
   currentTag?: string;
   routeSnapshotReady?: boolean;
   scrollToTop: number;
-  sidebarCollapsed?: boolean;
   blockDragActive?: boolean;
   detailOpen?: boolean;
   keyboardNavigationDisabled?: boolean;
@@ -759,7 +758,6 @@ export function Grid({
   currentTag,
   routeSnapshotReady = true,
   scrollToTop,
-  sidebarCollapsed = false,
   blockDragActive = false,
   detailOpen = false,
   keyboardNavigationDisabled = false,
@@ -2204,8 +2202,8 @@ export function Grid({
           onPointerCancel={finishMarqueeSelection}
           className="h-full overflow-x-hidden overflow-y-auto pb-8"
           style={{
-            paddingLeft: sidebarCollapsed ? 72 : gridXInset,
-            paddingRight: sidebarCollapsed ? 72 : gridXInset,
+            paddingLeft: gridXInset,
+            paddingRight: gridXInset,
             scrollbarGutter: "stable",
             transition: "padding-left 200ms ease, padding-right 200ms ease",
           }}

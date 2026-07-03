@@ -1,5 +1,116 @@
 # Devlog
 
+## 03.07.2026 — Graph View M0: карточки-миниатюры и коллекции-лейблы
+
+### Задача
+Перейти от спецификации Graph View к первому рабочему срезу: два типа нодов
+(`card`, `collection`), карточки как маленькие квадратные thumbnails, коллекции
+как текстовые label-ноды, на базе выбранного Canvas/d3-force стека.
+
+### Что сделано
+- Добавлены зависимости `react-force-graph-2d`, `d3-force`, `@types/d3-force`.
+- Добавлен backend read model `storage::graph::graph_snapshot` и IPC-команда
+  `list_graph_snapshot`.
+- `GraphSnapshot` M0 строится из SQLite: non-channel карточки, promoted/linked
+  коллекции и `collection_membership` связи из `block_tags`.
+- Для scoped collection-графа возвращаются карточки текущей коллекции и другие
+  коллекции этих же карточек; чужие карточки в scoped snapshot не попадают.
+- Добавлен `GraphView` на Canvas: карточки отображаются как маленькие
+  квадратные sidebar-style thumbnails без скруглений и без масштабирования при
+  zoom, коллекции как canvas-native capsule labels по контракту
+  `GraphCollectionLabel` (`bg-chrome`, `border-border`, typography бокового
+  интерфейса, hover text `text-foreground`, button-like hover outline),
+  есть ResizeObserver, `nodePointerAreaPaint`, d3-force charge/collide tuning и
+  локальные ручные константы для дальнейшей настройки в Mine.
+- Hover по карточке не меняет сам graph canvas: нет затемнения, highlight,
+  outline, label reveal или изменения линков. Вместо этого после sidebar
+  delay/warm-window таймингов появляется `ReadOnlyCardPreview` в режиме `micro`
+  шириной 240px, позиционированный рядом с graph-нодой через
+  `graph2ScreenCoords`.
+- Добавлен переключатель Grid/Graph в bottom action bar и top fallback при
+  скрытом bottom menu; режим сохраняется в `localStorage`.
+- Graph View открывает существующий Detail для карточек и переключает route для
+  коллекций.
+- `GraphCollectionLabel` добавлен на страницу дизайн-системы
+  (`ComponentTestBench`) как эталон визуального контракта collection label.
+- Collection labels переведены из DOM overlay в тот же canvas/d3-force слой, что
+  и карточки: прямоугольная collision force считает размеры пуль в graph
+  coordinates из screen-fixed typography и текущего zoom, сохраняет минимум 2px
+  зазора между каналами, убирает parallax при pan/zoom и использует native
+  ForceGraph hit areas для click/drag. Первый `zoomToFit` выполняется без
+  анимационного промежуточного кадра, чтобы стартовое открытие не показывало
+  наложенные labels.
+- Zoom стабилизирован как camera-only interaction: `onZoom` больше не вызывает
+  `d3ReheatSimulation()`, collision force не добавляет bounce velocity, а
+  collection label text рисуется в screen-space (`14px` после
+  `ctx.scale(1 / globalScale)`), чтобы текст не пропадал на сильном zoom.
+  Collection labels также сортируются в paint-order после карточек, чтобы
+  миниатюры не могли перекрыть текст.
+
+### Ограничения M0
+- Wikilinks, related notes и unresolved/red-link nodes остаются следующим срезом.
+- Нет graph-local search, edge toggles и Detail-aware centering через
+  `graph2ScreenCoords`.
+- В Settings -> Appearance пока нет общего layout-mode выбора; M0 использует
+  существующую action-bar интеграцию.
+
+### Проверки
+- `bunx tsc -b --pretty false`
+- `bun run lint`
+- `NODE_OPTIONS=--max-old-space-size=6144 bun run build`
+- `cargo check --manifest-path src-tauri/Cargo.toml`
+- `cargo test --manifest-path src-tauri/Cargo.toml storage::graph`
+- Dev-сессия запущена через `bun run tauri dev`; активный vault
+  `cea575682e5a4018991c0097fbedff66` содержит 511 non-channel карточек,
+  15 коллекций и 144 collection-membership связи.
+
+## 02.07.2026 — Graph View: перенос технического решения из Longevity Landscape
+
+### Задача
+Начать следующий большой функциональный блок — Graph View — не с импровизации, а
+с переноса уже проверенного технического решения из проекта Longevity Landscape.
+
+### Что изучено
+- `/Users/i_iii/Проекты/longevity-landscape/src/lib/actors.ts`: graph-specific
+  read model, directed event rules, dedupe связей, synthetic approach nodes.
+- `/Users/i_iii/Проекты/longevity-landscape/src/components/graph/graph-config.ts`:
+  Canvas palette в одном месте, `getGraphPhysics(nodeCount)`, node sizing и
+  progressive labels.
+- `/Users/i_iii/Проекты/longevity-landscape/src/components/graph/actor-graph.tsx`:
+  `react-force-graph-2d`, ResizeObserver, custom Canvas paint,
+  `nodePointerAreaPaint`, 1-hop hover, selected state, search dimming,
+  Detail-aware centering через `graph2ScreenCoords`.
+- `/Users/i_iii/Проекты/longevity-landscape/src/components/graph/graph-with-filters.tsx`:
+  отдельный слой controls/search/toggles/Detail integration поверх Canvas.
+- Longevity docs/devlog: выбор `react-force-graph-2d`, отказ от SVG-flow,
+  Sigma/WebGL и handwritten D3+Canvas; уроки про `key` remount, `overflow-hidden`,
+  стабильную толщину линков и отказ от hover-card на графе.
+
+### Что сделано
+- Создан `SPEC_GRAPH_VIEW.md` — полный контракт Graph View для Mine: graph
+  snapshot read model, node/link types, scopes, large-vault policy, backend IPC,
+  Canvas renderer, physics, UX, display mode integration, events and tests.
+- `ARCHITECTURE.md` обновлён: Graph View добавлен в Related documents,
+  frontend rendering model и decision record `028`.
+- `PLAN.md` обновлён: добавлена Phase 30 — Graph View, первый slice
+  `Longevity extraction + SPEC` отмечен выполненным.
+- `CLAUDE.md`, `AGENTS.md`, `SPEC_DISPLAY_MODES.md` обновлены ссылками и
+  уточнением, что Graph View является special display surface с отдельным
+  backend `GraphSnapshot`, а не pure renderer over `LightBlock[]`.
+
+### Решения
+- Для Mine переносится не доменная модель Longevity, а архитектура: Canvas
+  force graph + backend-owned graph projection + Detail-aware interaction.
+- Graph View не должен строиться на `LightBlock[]`: связи живут в SQLite
+  `block_tags`, `wikilinks`, `related_notes`, `channels`.
+- `forceEdgeRepel` из Longevity не входит в базовый контракт: рабочий подход —
+  proportional charge + `forceCollide`; кастомная O(n^2) сила остаётся
+  диагностическим запасным вариантом.
+
+### Проверки
+- Документационные ссылки и план обновлены. Runtime/build не запускались,
+  потому что этот шаг не меняет код приложения или зависимости.
+
 ## 02.07.2026 — Search Overlay: короткий ввод больше не запускает шумный semantic search
 
 ### Проблема

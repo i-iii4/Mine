@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Goal
 
@@ -1309,6 +1309,24 @@ section nav, cross-window sync. Specification:
 | 29.6 | Tests | [x] | Rust: 8 тестов (spaces dedupe/forget-active, space stats scan/index/validation, orphan scan/promote/delete edge cases); frontend: themeMode, formatBytes, SettingsApp nav, 3 секции, App интеграция |
 | 29.7 | Spaces redesign | [x] | Строка пространства: per-row статистика `space_stats(path)` (stat-only top-level + elements из локального индекса `card_kind != 'channel'`, без чтения содержимого — iCloud dataless safe); сводка `N elements · N markdown · N media · N files · size`; `Remove Space` в `⋯`-меню (detach); зафиксированные решения Р-1…Р-12 в SPEC § Design decisions; `formatBytes` (десятичная база) и `MenuIconSlot` (ui/) дедуплицированы |
 | 29.8 | Spaces interactions | [x] | Клик по строке = переключение (`select_vault` эмитит `vault-selected`, корневой App ремонтирует `AppWithVault`); активная строка `bg-active` без текстовой метки; dnd-kit reorder (`reorder_known_vaults`, set-equality; PointerSensor distance 8); `VaultSwitcher` перечитывает список при открытии меню; Remove активного → switch на следующее, затем forget (инвариант config); единственное пространство забывается без переключения |
+
+### Phase 30 — Graph View
+
+Goal: add an Obsidian-style spatial map for Mine collections, blocks, wikilinks,
+and related-note provenance using the technical solution extracted from
+Longevity Landscape.
+
+Specification: [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
+
+| # | Slice | Status | Scope |
+|---|---|---|---|
+| 30.1 | Longevity extraction + SPEC | [x] | Studied `/Users/i_iii/Проекты/longevity-landscape` Graph View and documented the transferable Canvas/d3-force renderer, backend graph snapshot, physics, UX, large-vault policy and tests |
+| 30.2 | Dependencies + DTOs | [x] | Added `react-force-graph-2d`, `d3-force`, `@types/d3-force`; introduced M0 Rust/TS `GraphSnapshot`, `card`/`collection` node types and `collection_membership` links |
+| 30.3 | Backend graph snapshot | [~] | Added `storage::graph` and `commands::graph` over `blocks`, `channels`, `block_tags`; M0 scopes Everything/current collection and keeps neighbor collections for scoped cards. Wikilinks/related notes/unresolved nodes remain follow-up |
+| 30.4 | Canvas renderer | [~] | Added `GraphView` with custom Canvas card thumbnails, collection label nodes, hit areas, stable links, sidebar-timed card hover preview and ResizeObserver. Dedicated graph config extraction remains follow-up |
+| 30.5 | Controls + Detail integration | [~] | M0 opens block Detail and switches collection routes. Scope/edge toggles, graph-local search, selected-node sync and conditional centering remain follow-up |
+| 30.6 | Display mode wiring | [~] | M0 exposes Graph/Grid toggle in bottom action bar and top fallback, persists mode in `localStorage`, preserves route changes and refreshes on `vault-refreshed`. Settings layout integration remains follow-up |
+| 30.7 | Verification | [~] | Added Rust graph read-model tests, `tsc`, lint, production build and real-vault count sanity check. Frontend interaction tests and Playwright canvas nonblank/resize/Detail-centering checks remain follow-up |
 
 ### Backlog
 

@@ -142,6 +142,37 @@ export interface GridSnapshot {
   has_more: boolean;
 }
 
+export type GraphNodeKind = "card" | "collection";
+export type GraphLinkKind = "collection_membership";
+
+export interface GraphNode {
+  id: string;
+  kind: GraphNodeKind;
+  label: string;
+  slug: string | null;
+  collection_ref: string | null;
+  card_kind: CardKind | null;
+  block_type: BlockType | null;
+  thumbnail: string | null;
+  preview_manifest: string | null;
+  degree: number;
+}
+
+export interface GraphLink {
+  id: string;
+  kind: GraphLinkKind;
+  source: string;
+  target: string;
+}
+
+export interface GraphSnapshot {
+  nodes: GraphNode[];
+  links: GraphLink[];
+  total_cards: number;
+  total_collections: number;
+  current_collection: string | null;
+}
+
 export interface RenameBlockResult {
   old_slug: string;
   new_slug: string;

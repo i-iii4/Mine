@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
 
 ## Context
 
@@ -489,6 +489,14 @@ iOS UI contract:
   совпадает с текущим route/search state. `blocks.length === 0` сам по себе не
   является доказательством пустого канала: во время быстрого uncached route
   switch это может быть pending state предыдущего snapshot.
+- Graph View добавляет отдельный route-facing read model `GraphSnapshot` вместо
+  попытки строить связи из `LightBlock[]` на фронтенде. Snapshot собирается из
+  SQLite и отдаёт typed nodes/links для Canvas force-directed renderer. M0
+  реализует карточки и коллекции через `block_tags`/`channels`; `wikilinks`,
+  `related_notes` и unresolved nodes остаются следующим срезом. Это специальный
+  display surface: визуально живёт рядом с Grid, но backend-owned projection
+  обязателен, потому что связи не входят в обычный карточечный список. Полный
+  контракт: [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
 - `Grid.tsx` использует собственный windowed masonry renderer: карточки позиционируются абсолютно, контейнер получает вычисленную `totalHeight`, в DOM остаются только видимые элементы плюс overscan.
 - Геометрия карточки больше не должна выводиться из независимых эвристик в `Card.tsx` и `cardHeight.ts`. Введён общий descriptor-driven слой (`src/lib/cardLayout.ts`): variant карточки, preview text и media geometry вычисляются один раз и затем используются и для рендера, и для расчёта высоты.
 - Контентные карточки больше не кодируют spacing через variant-specific `mt-*` ветки. Введён slot-based contract: frame карточки задаёт общий inset, media идёт первой, а текстовые слоты живут единым text-stack ниже (`media -> display title/preview -> author`). Внутренние gap'ы появляются только между реально существующими соседними слотами. Это устраняет phantom top gap и сохраняет системный отступ под media.
@@ -1319,6 +1327,30 @@ Phase-2 тайловые постеры галерейных видео до у�
 [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md),
 [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md).
 
+### 028: Graph View uses Canvas force graph plus backend GraphSnapshot
+
+| Approach | Problem |
+|---|---|
+| Build graph from frontend `LightBlock[]` | `LightBlock` intentionally omits collection arrays and relation edges; frontend would need hidden refetches or stale ad-hoc joins |
+| `@xyflow/react` / SVG flow editor | Good for node editors and DAG-like canvases, not dense knowledge graphs with pan/zoom/physics |
+| Sigma.js + Graphology | Strong WebGL graph stack, but custom Mine node rendering would move into shader/WebGL complexity too early |
+| Handwritten D3-force + Canvas | Maximum control, but repeats zoom, pan, hit-testing and pointer-area infrastructure |
+| `react-force-graph-2d` + backend `GraphSnapshot` (chosen) | Canvas + d3-force + built-in zoom/pan/click, while Rust owns the graph projection from SQLite |
+
+Rationale: Graph View needs the same architectural boundary as Search and Grid:
+purpose-built backend read model, light frontend rendering. The renderer follows
+the Longevity Landscape architecture: Canvas drawing through `nodeCanvasObject`,
+dynamic physics scaled by node count, `ResizeObserver`, stable link widths, and
+backend-owned graph projection. Mine-specific hover opens the same read-only
+micro preview used by Sidebar thumbnails after the shared sidebar hover delay,
+without changing graph node/link styling. Full contract:
+[SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
+
+M0 note: the first implementation uses `card` nodes as 32px derived-thumbnail
+squares and `collection` nodes as label pills, with only
+`collection_membership` links. Detail-aware centering and wikilink/related-note
+edges are intentionally deferred.
+
 ## Dependencies
 
 | Package | Version | Purpose | License |
@@ -1338,6 +1370,8 @@ Phase-2 тайловые постеры галерейных видео до у�
 | tiny_http | latest | Local HTTP upload server for extension binary payloads | MIT/Apache-2.0 |
 | react | 19.x | UI-фреймворк | MIT |
 | vite | latest | Сборщик | MIT |
+| react-force-graph-2d | 1.x | Canvas force-directed Graph View renderer with zoom/pan/hit-testing | MIT |
+| d3-force | 3.x | Force simulation primitives for Graph View physics tuning | ISC |
 | ureq | 2.x | Синхронный HTTP-клиент (импорт Are.na) | MIT/Apache-2.0 |
 | tailwindcss | 4.x | Стилизация | MIT |
 | shadcn/ui | latest | Компонентная библиотека: Button, Dialog, ContextMenu и др. | MIT |
