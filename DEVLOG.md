@@ -1,5 +1,28 @@
 # Devlog
 
+## 02.07.2026 — Клиппер: blob-video не создаёт дубли preview
+
+### Задача
+После основной оптимизации ленты был вынесен маленький фикс клиппера для
+single-video страниц вроде YouTube: DOM-плеер страницы может отдавать runtime
+`blob:` / `mediasource:` `<video>` без собственного poster, а рядом может быть
+ещё один ambient/cinematic player node. Оба попадали в `embeddedVideos` как
+разные `src`, но с одним effective poster из `og:image`, поэтому popup показывал
+два одинаковых video preview. Markdown-дедуп не мог их схлопнуть, потому что
+ключом был ephemeral blob URL, а не canonical embed URL.
+
+### Что сделано
+- `extractEmbeddedVideoPreviews` в `extension/content.js` и Safari-копии теперь
+  считает `blob:` / `mediasource:` источники отсутствующим `src`.
+- Такие runtime-only video nodes могут дать только poster/frame fallback, но не
+  seed'ят отдельный saveable preview.
+- YouTube-путь после этого падает в один `og:image`/poster preview и transcript
+  body без лишнего embed.
+
+### Документация
+- `SPEC_CLIPPER.md` уточняет, что DOM `<video>` с `blob:` / `mediasource:` не
+  является canonical video source и не участвует в дедупе как отдельный preview.
+
 ## 02.07.2026 — Оптимизация ленты и видео-пайплайна: две волны + фикс регрессий
 
 ### Задача
