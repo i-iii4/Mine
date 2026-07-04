@@ -114,6 +114,11 @@ type SidebarPreviewPosition = {
   left: number;
 };
 
+type CardMenuPoint = {
+  x: number;
+  y: number;
+};
+
 type SidebarKeyboardNavigationFocus = {
   rowKey: string;
   sequence: number;
@@ -144,6 +149,8 @@ interface SidebarProps {
   onRenameTag: (oldTag: string, newTag: string) => void;
   onCreateChannel: (tag: string) => void;
   onOpenBlock?: (block: IndexedBlock) => void;
+  onOpenCardMenu?: (block: LightBlock | IndexedBlock, point: CardMenuPoint) => void;
+  hoverPreviewFrozen?: boolean;
   onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign?: (tag: string, blockSlug: string) => void;
   onRequestRename?: (block: LightBlock) => void;
@@ -192,6 +199,8 @@ export function Sidebar({
   onRenameTag,
   onCreateChannel,
   onOpenBlock,
+  onOpenCardMenu,
+  hoverPreviewFrozen = false,
   onNavClick,
   onScrollToTop,
   keyboardNavigationFocus,
@@ -215,6 +224,8 @@ export function Sidebar({
   const previewOpenTimerRef = useRef<number | null>(null);
   const previewCloseTimerRef = useRef<number | null>(null);
   const lastPreviewOpenedAtRef = useRef<number | null>(null);
+  const lastPointerPointRef = useRef<CardMenuPoint | null>(null);
+  const previousHoverPreviewFrozenRef = useRef(hoverPreviewFrozen);
   // Mirror the live drag state so the deferred open timer can read the current
   // value at fire time, not the value captured when the timer was scheduled.
   const isDropDraggingRef = useRef(isDropDragging);
@@ -231,6 +242,23 @@ export function Sidebar({
   const [sidebarRowSwitching, setSidebarRowSwitching] = useState(false);
   const location = useLocation();
   const { over } = useDndContext();
+
+  useEffect(() => {
+    const recordPointerPoint = (event: Event) => {
+      const point = clientPointFromEvent(event);
+      if (point) {
+        lastPointerPointRef.current = point;
+      }
+    };
+    window.addEventListener("pointermove", recordPointerPoint, true);
+    window.addEventListener("pointerdown", recordPointerPoint, true);
+    window.addEventListener("contextmenu", recordPointerPoint, true);
+    return () => {
+      window.removeEventListener("pointermove", recordPointerPoint, true);
+      window.removeEventListener("pointerdown", recordPointerPoint, true);
+      window.removeEventListener("contextmenu", recordPointerPoint, true);
+    };
+  }, []);
 
   // Auto-scroll sidebar to the active channel (e.g. after Opt+Cmd+Arrow)
   useEffect(() => {
@@ -435,8 +463,9 @@ export function Sidebar({
   }, [clearPreviewCloseTimer, clearPreviewOpenTimer]);
 
   const requestPreviewClose = useCallback(() => {
+    if (hoverPreviewFrozen) return;
     closePreview();
-  }, [closePreview]);
+  }, [closePreview, hoverPreviewFrozen]);
 
   // Tear down an already-open preview the moment a drag begins.
   useEffect(() => {
@@ -448,12 +477,14 @@ export function Sidebar({
   const openPreview = useCallback((target: SidebarPreviewTarget) => {
     // Never reveal the hover preview while a drag is in flight — pointer-enter
     // events still fire over the sidebar during a drag-and-drop gesture.
+    if (hoverPreviewFrozen) return;
     if (isDropDraggingRef.current) return;
     if (!previewTriggerRefs.current.has(target.key)) return;
     setHoveredPreview(target);
-  }, []);
+  }, [hoverPreviewFrozen]);
 
   const schedulePreviewOpen = useCallback((target: SidebarPreviewTarget) => {
+    if (hoverPreviewFrozen) return;
     if (isDropDraggingRef.current) return;
     clearPreviewOpenTimer();
     clearPreviewCloseTimer();
@@ -467,7 +498,29 @@ export function Sidebar({
       previewOpenTimerRef.current = null;
       openPreview(target);
     }, delay);
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, openPreview]);
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, hoverPreviewFrozen, openPreview]);
+
+  useEffect(() => {
+    if (hoverPreviewFrozen) {
+      clearPreviewOpenTimer();
+    }
+  }, [clearPreviewOpenTimer, hoverPreviewFrozen]);
+
+  const pointerIsInsidePreviewTrigger = useCallback((target: SidebarPreviewTarget) => {
+    const point = lastPointerPointRef.current;
+    const trigger = previewTriggerRefs.current.get(target.key);
+    if (!point || !trigger) return false;
+    return pointIsInsideRect(point, trigger.getBoundingClientRect());
+  }, []);
+
+  useEffect(() => {
+    const wasFrozen = previousHoverPreviewFrozenRef.current;
+    previousHoverPreviewFrozenRef.current = hoverPreviewFrozen;
+    if (!wasFrozen || hoverPreviewFrozen || !hoveredPreview) return;
+    if (!pointerIsInsidePreviewTrigger(hoveredPreview)) {
+      closePreview();
+    }
+  }, [closePreview, hoveredPreview, hoverPreviewFrozen, pointerIsInsidePreviewTrigger]);
 
   const openPreviewBlock = useCallback((target: SidebarPreviewTarget) => {
     if (!onOpenBlock) return;
@@ -482,6 +535,21 @@ export function Sidebar({
         void error;
       });
   }, [closePreview, onOpenBlock]);
+
+  const openPreviewCardMenu = useCallback((target: SidebarPreviewTarget, point: CardMenuPoint) => {
+    if (!onOpenCardMenu) return;
+    clearPreviewOpenTimer();
+    clearPreviewCloseTimer();
+    void getBlock(target.slug)
+      .then((block) => {
+        if (block) {
+          onOpenCardMenu(block, point);
+        }
+      })
+      .catch((error) => {
+        void error;
+      });
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, onOpenCardMenu]);
 
   useEffect(() => () => {
     clearPreviewOpenTimer();
@@ -639,6 +707,7 @@ export function Sidebar({
               onPreviewEnter={schedulePreviewOpen}
               onPreviewLeave={requestPreviewClose}
               onPreviewClick={openPreviewBlock}
+              onPreviewContextMenu={openPreviewCardMenu}
               onPreviewTriggerRef={setPreviewTriggerRef}
               activePreviewKey={hoveredPreview?.key ?? null}
               compact={compact}
@@ -669,6 +738,7 @@ export function Sidebar({
                   onPreviewEnter={schedulePreviewOpen}
                   onPreviewLeave={requestPreviewClose}
                   onPreviewClick={openPreviewBlock}
+                  onPreviewContextMenu={openPreviewCardMenu}
                   onPreviewTriggerRef={setPreviewTriggerRef}
                   activePreviewKey={hoveredPreview?.key ?? null}
                   compact={compact}
@@ -786,6 +856,18 @@ function computeSidebarPreviewPosition(
         triggerRect.top - SIDEBAR_PREVIEW_GAP - previewHeight,
       );
   return { top, left };
+}
+
+function clientPointFromEvent(event: Event): CardMenuPoint | null {
+  if (!(event instanceof MouseEvent)) return null;
+  return { x: event.clientX, y: event.clientY };
+}
+
+function pointIsInsideRect(point: CardMenuPoint, rect: DOMRect): boolean {
+  return point.x >= rect.left
+    && point.x <= rect.right
+    && point.y >= rect.top
+    && point.y <= rect.bottom;
 }
 
 const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
@@ -955,6 +1037,7 @@ function SidebarRowBody({
   onPreviewEnter,
   onPreviewLeave,
   onPreviewClick,
+  onPreviewContextMenu,
   onPreviewTriggerRef,
   activePreviewKey,
   compact,
@@ -976,6 +1059,7 @@ function SidebarRowBody({
   onPreviewEnter: (target: SidebarPreviewTarget) => void;
   onPreviewLeave: () => void;
   onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
   activePreviewKey: string | null;
   compact?: boolean;
@@ -1044,6 +1128,7 @@ function SidebarRowBody({
               onPreviewEnter={onPreviewEnter}
               onPreviewLeave={onPreviewLeave}
               onPreviewClick={onPreviewClick}
+              onPreviewContextMenu={onPreviewContextMenu}
               onPreviewTriggerRef={onPreviewTriggerRef}
               activePreviewKey={activePreviewKey}
               allowHoverPreview
@@ -1198,6 +1283,7 @@ const NavItem = memo(function NavItem({
   onPreviewEnter,
   onPreviewLeave,
   onPreviewClick,
+  onPreviewContextMenu,
   onPreviewTriggerRef,
   activePreviewKey,
   compact,
@@ -1216,6 +1302,7 @@ const NavItem = memo(function NavItem({
   onPreviewEnter: (target: SidebarPreviewTarget) => void;
   onPreviewLeave: () => void;
   onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
   activePreviewKey: string | null;
   compact?: boolean;
@@ -1248,6 +1335,7 @@ const NavItem = memo(function NavItem({
         onPreviewEnter={onPreviewEnter}
         onPreviewLeave={onPreviewLeave}
         onPreviewClick={onPreviewClick}
+        onPreviewContextMenu={onPreviewContextMenu}
         onPreviewTriggerRef={onPreviewTriggerRef}
         activePreviewKey={activePreviewKey}
         compact={compact}
@@ -1269,6 +1357,7 @@ const TagNavItem = memo(function TagNavItem({
   onPreviewEnter,
   onPreviewLeave,
   onPreviewClick,
+  onPreviewContextMenu,
   onPreviewTriggerRef,
   activePreviewKey,
   compact,
@@ -1294,6 +1383,7 @@ const TagNavItem = memo(function TagNavItem({
   onPreviewEnter: (target: SidebarPreviewTarget) => void;
   onPreviewLeave: () => void;
   onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
   activePreviewKey: string | null;
   compact?: boolean;
@@ -1400,6 +1490,7 @@ const TagNavItem = memo(function TagNavItem({
               onPreviewEnter={onPreviewEnter}
               onPreviewLeave={onPreviewLeave}
               onPreviewClick={onPreviewClick}
+              onPreviewContextMenu={onPreviewContextMenu}
               onPreviewTriggerRef={onPreviewTriggerRef}
               activePreviewKey={activePreviewKey}
               compact={compact}
@@ -1553,6 +1644,7 @@ function SidebarPreviewStrip({
   onPreviewEnter,
   onPreviewLeave,
   onPreviewClick,
+  onPreviewContextMenu,
   onPreviewTriggerRef,
   activePreviewKey,
   allowHoverPreview = false,
@@ -1563,6 +1655,7 @@ function SidebarPreviewStrip({
   onPreviewEnter: (target: SidebarPreviewTarget) => void;
   onPreviewLeave: () => void;
   onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
   activePreviewKey: string | null;
   allowHoverPreview?: boolean;
@@ -1611,6 +1704,15 @@ function SidebarPreviewStrip({
               event.preventDefault();
               event.stopPropagation();
               onPreviewClick({ key: previewKey, rowKey, slug: card.slug });
+            }}
+            onContextMenu={(event) => {
+              if (!card.slug || !canPreview || !onPreviewContextMenu) return;
+              event.preventDefault();
+              event.stopPropagation();
+              onPreviewContextMenu(
+                { key: previewKey, rowKey, slug: card.slug },
+                { x: event.clientX, y: event.clientY },
+              );
             }}
             onPointerDown={(event) => {
               if (canPreview) {

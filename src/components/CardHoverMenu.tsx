@@ -51,6 +51,21 @@ interface CardMoreMenuProps<TBlock extends LightBlock | IndexedBlock> extends Ca
   triggerVariant?: ComponentProps<typeof Button>["variant"];
 }
 
+interface CardPointMenuProps<TBlock extends LightBlock | IndexedBlock> extends CardMenuActionsProps<TBlock> {
+  x: number;
+  y: number;
+  openRequestSequence: number;
+  onOpenChange?: (open: boolean) => void;
+}
+
+interface CardMenuDropdownContentProps<TBlock extends LightBlock | IndexedBlock>
+  extends CardMenuActionsProps<TBlock> {
+  menuOpen: boolean;
+  onCloseAutoFocus?: ComponentProps<typeof DropdownMenuContent>["onCloseAutoFocus"];
+  onKeyDownCapture?: (event: ReactKeyboardEvent) => void;
+  onPointerDownOutside?: ComponentProps<typeof DropdownMenuContent>["onPointerDownOutside"];
+}
+
 type CardHoverMenuProps = CardMenuActionsProps<LightBlock>;
 type CardHoverMenuPropsWithState = CardHoverMenuProps & {
   openMoreMenuRequestSequence?: number;
@@ -89,21 +104,13 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
   topChromeInteraction = false,
   triggerVariant = "default",
 }: CardMoreMenuProps<TBlock>) {
-  const hasUrl = block.url != null && isSafeUrl(block.url);
-  const filePath = `${vaultPath}/${block.slug}.md`;
   const [menuOpen, setMenuOpen] = useState(false);
   const menuOpenRef = useRef(false);
-  const [connectSubmenuOpen, setConnectSubmenuOpen] = useState(false);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const lastOpenRequestSequenceRef = useRef(0);
-  const connectTriggerRef = useRef<HTMLDivElement>(null);
 
   const updateMenuOpen = useCallback((open: boolean) => {
     menuOpenRef.current = open;
     setMenuOpen(open);
-    if (!open) {
-      setConnectSubmenuOpen(false);
-    }
     onOpenChange?.(open);
   }, [onOpenChange]);
 
@@ -126,19 +133,6 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
     updateMenuOpen(!menuOpenRef.current);
   }, [openRequestSequence, updateMenuOpen]);
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    let cancelled = false;
-    void getBlock(block.slug).then((full) => {
-      if (!cancelled) {
-        setSelectedTags(full?.tags ?? []);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [block.slug, menuOpen]);
-
   return (
     <DropdownMenu
       open={menuOpen}
@@ -155,90 +149,237 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
           <MoreHorizontal className="size-4" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
+      <CardMenuDropdownContent
+        block={block}
+        vaultPath={vaultPath}
+        tags={tags}
+        currentTag={currentTag}
+        menuOpen={menuOpen}
+        onToggleTag={onToggleTag}
+        onCreateAndAssign={onCreateAndAssign}
+        onRequestRename={onRequestRename}
+        onRequestDelete={onRequestDelete}
         onCloseAutoFocus={topChromeInteraction ? topChromeTrigger.handleCloseAutoFocus : undefined}
         onKeyDownCapture={handleMenuKeyDownCapture}
-      >
-        <DropdownMenuSub open={connectSubmenuOpen} onOpenChange={setConnectSubmenuOpen}>
-          <DropdownMenuSubTrigger ref={connectTriggerRef}>
-            <MenuIconSlot>
-              <Plus className="size-3" />
-            </MenuIconSlot>
-            Connect
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent
-            widthRole="picker"
-            className={COLLECTION_PICKER_CONTENT_CLASS}
-            onKeyDownCapture={handleMenuKeyDownCapture}
-          >
-            <CollectionPicker
-              blockSlug={block.slug}
-              selectedTags={selectedTags}
-              tags={tags}
-              currentTag={currentTag}
-              onToggleTag={onToggleTag}
-              onCreateAndAssign={onCreateAndAssign}
-              stopKeyPropagation
-              onRequestClose={() => {
-                setConnectSubmenuOpen(false);
-                requestAnimationFrame(() => connectTriggerRef.current?.focus());
-              }}
-            />
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+      />
+    </DropdownMenu>
+  );
+}
 
-        {hasUrl && (
-          <DropdownMenuItem onSelect={() => openUrl(block.url!)}>
-            <MenuIconSlot>
-              <ExternalLink className="size-3" />
-            </MenuIconSlot>
-            Source
-          </DropdownMenuItem>
-        )}
+function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
+  block,
+  vaultPath,
+  tags,
+  currentTag,
+  menuOpen,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
+  onCloseAutoFocus,
+  onKeyDownCapture,
+  onPointerDownOutside,
+}: CardMenuDropdownContentProps<TBlock>) {
+  const hasUrl = block.url != null && isSafeUrl(block.url);
+  const filePath = `${vaultPath}/${block.slug}.md`;
+  const [connectSubmenuOpen, setConnectSubmenuOpen] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const connectTriggerRef = useRef<HTMLDivElement>(null);
 
-        <DropdownMenuSeparator />
+  useEffect(() => {
+    if (!menuOpen) {
+      setConnectSubmenuOpen(false);
+      return;
+    }
+    let cancelled = false;
+    void getBlock(block.slug).then((full) => {
+      if (!cancelled) {
+        setSelectedTags(full?.tags ?? []);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [block.slug, menuOpen]);
 
-        <DropdownMenuItem onSelect={() => revealItemInDir(filePath)}>
-          <MenuIconSlot />
-          Reveal in Finder
+  return (
+    <DropdownMenuContent
+      align="end"
+      onCloseAutoFocus={onCloseAutoFocus}
+      onKeyDownCapture={onKeyDownCapture}
+      onPointerDownOutside={onPointerDownOutside}
+    >
+      <DropdownMenuSub open={connectSubmenuOpen} onOpenChange={setConnectSubmenuOpen}>
+        <DropdownMenuSubTrigger ref={connectTriggerRef}>
+          <MenuIconSlot>
+            <Plus className="size-3" />
+          </MenuIconSlot>
+          Connect
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent
+          widthRole="picker"
+          className={COLLECTION_PICKER_CONTENT_CLASS}
+          onKeyDownCapture={onKeyDownCapture}
+        >
+          <CollectionPicker
+            blockSlug={block.slug}
+            selectedTags={selectedTags}
+            tags={tags}
+            currentTag={currentTag}
+            onToggleTag={onToggleTag}
+            onCreateAndAssign={onCreateAndAssign}
+            stopKeyPropagation
+            onRequestClose={() => {
+              setConnectSubmenuOpen(false);
+              requestAnimationFrame(() => connectTriggerRef.current?.focus());
+            }}
+          />
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+
+      {hasUrl && (
+        <DropdownMenuItem onSelect={() => openUrl(block.url!)}>
+          <MenuIconSlot>
+            <ExternalLink className="size-3" />
+          </MenuIconSlot>
+          Source
         </DropdownMenuItem>
+      )}
 
-        <DropdownMenuItem onSelect={() => navigator.clipboard.writeText(filePath)}>
-          <MenuIconSlot />
-          Copy Path
-        </DropdownMenuItem>
+      <DropdownMenuSeparator />
 
-        <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={() => revealItemInDir(filePath)}>
+        <MenuIconSlot />
+        Reveal in Finder
+      </DropdownMenuItem>
 
-        <DropdownMenuItem onSelect={() => onRequestRename(block)}>
-          <MenuIconSlot />
-          Rename…
-        </DropdownMenuItem>
+      <DropdownMenuItem onSelect={() => navigator.clipboard.writeText(filePath)}>
+        <MenuIconSlot />
+        Copy Path
+      </DropdownMenuItem>
 
-        {currentTag && selectedTags.includes(currentTag) && (
-          <DropdownMenuItem
-            variant="detach"
-            onSelect={() => onToggleTag(block.slug, currentTag, true)}
-          >
-            <MenuIconSlot>
-              <Unlink className="size-3" />
-            </MenuIconSlot>
-            Disconnect from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
-          </DropdownMenuItem>
-        )}
+      <DropdownMenuSeparator />
 
+      <DropdownMenuItem onSelect={() => onRequestRename(block)}>
+        <MenuIconSlot />
+        Rename…
+      </DropdownMenuItem>
+
+      {currentTag && selectedTags.includes(currentTag) && (
         <DropdownMenuItem
-          variant="destructive"
-          onSelect={() => onRequestDelete(block.slug)}
+          variant="detach"
+          onSelect={() => onToggleTag(block.slug, currentTag, true)}
         >
           <MenuIconSlot>
-            <Trash2 className="size-3" />
+            <Unlink className="size-3" />
           </MenuIconSlot>
-          Delete
+          Disconnect from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
         </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      )}
+
+      <DropdownMenuItem
+        variant="destructive"
+        onSelect={() => onRequestDelete(block.slug)}
+      >
+        <MenuIconSlot>
+          <Trash2 className="size-3" />
+        </MenuIconSlot>
+        Delete
+      </DropdownMenuItem>
+    </DropdownMenuContent>
+  );
+}
+
+export function CardPointMenu<TBlock extends LightBlock | IndexedBlock>({
+  x,
+  y,
+  openRequestSequence,
+  onOpenChange,
+  block,
+  vaultPath,
+  tags,
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
+}: CardPointMenuProps<TBlock>) {
+  const [menuOpen, setMenuOpen] = useState(true);
+
+  const updateMenuOpen = useCallback((open: boolean) => {
+    setMenuOpen(open);
+    onOpenChange?.(open);
+  }, [onOpenChange]);
+
+  useEffect(() => {
+    setMenuOpen(true);
+  }, [openRequestSequence]);
+
+  const handleDismissLayerClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    updateMenuOpen(false);
+  }, [updateMenuOpen]);
+
+  const handleDismissLayerContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    updateMenuOpen(false);
+  }, [updateMenuOpen]);
+
+  const stopDismissLayerPointer = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+  }, []);
+
+  return (
+    <>
+      {menuOpen ? (
+        <div
+          aria-hidden="true"
+          className="fixed inset-0 z-40 bg-transparent"
+          data-card-point-menu-dismiss-layer=""
+          onPointerDown={stopDismissLayerPointer}
+          onPointerUp={stopDismissLayerPointer}
+          onClick={handleDismissLayerClick}
+          onContextMenu={handleDismissLayerContextMenu}
+        />
+      ) : null}
+      <div
+        className="fixed z-50 size-px"
+        style={{ left: x, top: y }}
+        data-card-point-menu-anchor=""
+      >
+        <DropdownMenu open={menuOpen} onOpenChange={updateMenuOpen} modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-hidden="true"
+              tabIndex={-1}
+              className="size-px min-h-0 min-w-0 border-0 bg-transparent p-0 opacity-0"
+              data-card-point-menu-trigger=""
+            />
+          </DropdownMenuTrigger>
+          <CardMenuDropdownContent
+            block={block}
+            vaultPath={vaultPath}
+            tags={tags}
+            currentTag={currentTag}
+            menuOpen={menuOpen}
+            onToggleTag={onToggleTag}
+            onCreateAndAssign={onCreateAndAssign}
+            onRequestRename={onRequestRename}
+            onRequestDelete={onRequestDelete}
+            onCloseAutoFocus={(event) => event.preventDefault()}
+            onPointerDownOutside={(event) => {
+              const target = event.target;
+              if (target instanceof Element && target.closest("[data-card-point-menu-dismiss-layer]")) {
+                event.preventDefault();
+              }
+            }}
+          />
+        </DropdownMenu>
+      </div>
+    </>
   );
 }
 

@@ -57,11 +57,17 @@ import {
   type NativeWindowChromeSurfaceToken,
 } from "@/lib/nativeWindowChromeSurface";
 import { Input } from "@/components/ui/input";
-import { CardMoreMenu } from "@/components/CardHoverMenu";
+import { CardMoreMenu, CardPointMenu } from "@/components/CardHoverMenu";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 
 type DetailLinkMode = "all" | "linked";
 type MainViewMode = "grid" | "graph";
+type CardActionsMenuTarget = {
+  block: LightBlock | IndexedBlock;
+  x: number;
+  y: number;
+  sequence: number;
+};
 
 const DETAIL_LINK_MODE_OPTIONS: SegmentedControlOption<DetailLinkMode>[] = [
   { value: "all", label: "All" },
@@ -766,6 +772,8 @@ export function AppWithVault({
     useState<PendingCreateChannelDrop | null>(null);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
+  const [cardActionsMenuTarget, setCardActionsMenuTarget] =
+    useState<CardActionsMenuTarget | null>(null);
   const [selectedBlockAnchor, setSelectedBlockAnchor] = useState<string | null>(null);
   const [selectedBlockTags, setSelectedBlockTags] = useState<string[]>([]);
   const [detailLinkMode, setDetailLinkMode] = useState<DetailLinkMode>("all");
@@ -818,6 +826,7 @@ export function AppWithVault({
   const vaultStatsRequestIdRef = useRef(0);
   const vaultStatsFrameRef = useRef<number | null>(null);
   const routeSnapshotCacheRef = useRef<Map<string, GridSnapshot>>(new Map());
+  const cardActionsMenuSequenceRef = useRef(0);
   const lastRevalidatedRouteKeyRef = useRef<string | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
   const refreshInFlightRef = useRef(false);
@@ -865,9 +874,23 @@ export function AppWithVault({
     anchor: string | null = null,
   ) => {
     cancelPendingDetailClose();
+    setCardActionsMenuTarget(null);
     setSelectedBlockAnchor(anchor);
     setSelectedBlock(block);
   }, [cancelPendingDetailClose]);
+
+  const openCardActionsMenu = useCallback((
+    block: LightBlock | IndexedBlock,
+    point: { x: number; y: number },
+  ) => {
+    cardActionsMenuSequenceRef.current += 1;
+    setCardActionsMenuTarget({
+      block,
+      x: point.x,
+      y: point.y,
+      sequence: cardActionsMenuSequenceRef.current,
+    });
+  }, []);
 
   const applyGridSnapshot = useCallback((tag: string | undefined, grid: GridSnapshot) => {
     const routeKey = routeKeyFor(tag);
@@ -3091,6 +3114,8 @@ export function AppWithVault({
         onRenameTag={handleRenameTag}
         onCreateChannel={handleCreateChannel}
         onOpenBlock={openDetailBlock}
+        onOpenCardMenu={openCardActionsMenu}
+        hoverPreviewFrozen={cardActionsMenuTarget !== null}
         onToggleTag={handleToggleTag}
         onCreateAndAssign={handleCreateTagFromMenu}
         onRequestRename={setRenamingBlock}
@@ -3192,6 +3217,8 @@ export function AppWithVault({
                 loadingMoreBlocks={loadingMoreBlocks}
                 onLoadMoreBlocks={loadMoreBlocks}
                 onOpenBlock={openDetailBlock}
+                onOpenCardMenu={openCardActionsMenu}
+                hoverPreviewFrozen={cardActionsMenuTarget !== null}
                 onNavigateCollection={handleTopCollectionNavigate}
               />
             }
@@ -3303,6 +3330,26 @@ export function AppWithVault({
         onRequestRename={setRenamingBlock}
         onRequestDelete={requestDeleteBlock}
       />
+      {cardActionsMenuTarget ? (
+        <CardPointMenu
+          block={cardActionsMenuTarget.block}
+          vaultPath={vaultPath}
+          tags={orderedTags}
+          currentTag={currentTag}
+          x={cardActionsMenuTarget.x}
+          y={cardActionsMenuTarget.y}
+          openRequestSequence={cardActionsMenuTarget.sequence}
+          onToggleTag={handleToggleTag}
+          onCreateAndAssign={handleCreateTagFromMenu}
+          onRequestRename={setRenamingBlock}
+          onRequestDelete={requestDeleteBlock}
+          onOpenChange={(open) => {
+            if (!open) {
+              setCardActionsMenuTarget(null);
+            }
+          }}
+        />
+      ) : null}
     </div>{/* end body */}
 
       {!bottomActionBarHidden && (
@@ -3440,6 +3487,8 @@ interface RouteContext {
   loadingMoreBlocks: boolean;
   onLoadMoreBlocks: () => void;
   onOpenBlock: (block: LightBlock | IndexedBlock) => void;
+  onOpenCardMenu: (block: LightBlock | IndexedBlock, point: { x: number; y: number }) => void;
+  hoverPreviewFrozen: boolean;
   onNavigateCollection: (collectionRef?: string) => void;
 }
 
@@ -3463,7 +3512,9 @@ function AllBlocksPage() {
         thumbsRootPath={ctx.thumbsRootPath}
         loadedBlocks={ctx.blocks}
         thumbVersions={ctx.thumbVersions}
+        hoverPreviewFrozen={ctx.hoverPreviewFrozen}
         onOpenBlock={ctx.onOpenBlock}
+        onOpenCardMenu={ctx.onOpenCardMenu}
         onNavigateCollection={ctx.onNavigateCollection}
       />
     );
@@ -3481,7 +3532,9 @@ function ChannelPage() {
         thumbsRootPath={ctx.thumbsRootPath}
         loadedBlocks={ctx.blocks}
         thumbVersions={ctx.thumbVersions}
+        hoverPreviewFrozen={ctx.hoverPreviewFrozen}
         onOpenBlock={ctx.onOpenBlock}
+        onOpenCardMenu={ctx.onOpenCardMenu}
         onNavigateCollection={ctx.onNavigateCollection}
       />
     );

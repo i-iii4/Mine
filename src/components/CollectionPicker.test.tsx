@@ -1,7 +1,10 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { CollectionPicker } from "./CollectionPicker";
+import {
+  COLLECTION_PICKER_INLINE_SURFACE_CLASS,
+  CollectionPicker,
+} from "./CollectionPicker";
 import type { TagCount } from "@/types";
 
 function tag(tag: string, count: number): TagCount {
@@ -14,6 +17,13 @@ function rowTitles(container: HTMLElement): string[] {
 }
 
 describe("CollectionPicker", () => {
+  it("uses the feed card surface for inline picker shells", () => {
+    expect(COLLECTION_PICKER_INLINE_SURFACE_CLASS).toContain("bg-card");
+    expect(COLLECTION_PICKER_INLINE_SURFACE_CLASS).toContain("text-card-foreground");
+    expect(COLLECTION_PICKER_INLINE_SURFACE_CLASS).not.toContain("bg-popover");
+    expect(COLLECTION_PICKER_INLINE_SURFACE_CLASS).not.toContain("text-popover-foreground");
+  });
+
   it("keeps channel rows in sidebar order when connection state changes", () => {
     const onToggleTag = vi.fn();
     const { container } = render(

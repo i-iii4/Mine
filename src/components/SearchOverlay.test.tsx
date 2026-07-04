@@ -129,6 +129,16 @@ describe("SearchOverlay", () => {
     expect(input.selectionEnd).toBe("previous query".length);
   });
 
+  it("uses the feed card surface for the floating overlay", () => {
+    renderOverlay({ query: "previous query" });
+
+    expect(document.querySelector("[data-search-overlay]")).toHaveClass(
+      "bg-card",
+      "text-card-foreground",
+    );
+    expect(document.querySelector("[data-search-overlay]")).not.toHaveClass("bg-popover");
+  });
+
   it("loads recently added elements for an empty query without debounce", async () => {
     const today = new Date();
     const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);

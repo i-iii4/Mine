@@ -278,17 +278,19 @@ color: `oklch(from var(--surface) calc(l + var(--elevation-rest)) 0 0)`. `--surf
 | Уровень | Токен | Светлая (L) | Тёмная (L) | Назначение |
 |---|---|---|---|---|
 | L0 | `--background` | 1.0 | 0.14 | Фон страницы |
-| L1 | `--chrome` | 0.99 | 0.17 | App/top chrome между фоном и action bar |
+| L1 | `--card`, `--chrome` | 0.99 | 0.17 | Feed cards, hover previews, floating menu containers, App/top chrome |
 | L2 | `--accent` | 0.98 | 0.20 | Hover фон, action bar, фон карточки-статьи |
 | L3 | `--sidebar-accent`, `--active` | 0.965 | 0.23 | Sidebar surface, нажатие |
 | L4 | `--border` | 0.95 | 0.26 | Границы, разделители |
 
 **Шаг (тёмная):** равномерный 0.03 (см. «Архитектура цвета», категория 1). Светлая тема сжата у белого.
 
-**Примечание:** `--chrome` — отдельная роль app shell, не sidebar state.
-Токены `--muted`, `--secondary` имеют то же значение, что и `--accent` (для
-совместимости с shadcn). Для нижней панели и активных search surfaces
-используем `bg-accent`, для верхнего chrome — `bg-chrome`.
+**Примечание:** `--card` и `--chrome` делят один уровень поверхности, но роли
+разные: `--card` — контентные карточки, hover previews и floating menu
+containers; `--chrome` — app shell. Токены `--muted`, `--secondary` имеют то же
+значение, что и `--accent` (для совместимости с shadcn). Для нижней панели и
+активных search surfaces используем `bg-accent`, для верхнего chrome —
+`bg-chrome`.
 
 ### Заливки компонентов (component fills)
 
@@ -718,7 +720,7 @@ normal card interaction contract.
 
 Поиск по блокам (`Cmd+F`, [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md)) —
 модальная панель на Radix `Dialog`: backdrop `bg-black/50`, поверхность
-`rounded-1 border border-border bg-popover` с единой floating-тенью. Геометрия
+`rounded-1 border border-border bg-card text-card-foreground` с единой floating-тенью. Геометрия
 фиксированная (не дышит при наборе): ширина `min(960px, 100vw−4rem)`, высота
 `min(640px, 76vh)`, прижата к верхней зоне внимания (`top: 12vh`).
 
@@ -739,7 +741,8 @@ normal card interaction contract.
   mark»): различим на любом фоне строки, включая активную.
 - Превью справа (`w-80 border-l border-border p-4`, `flex flex-col gap-4`) —
   две выделенные зоны. Зона карточки: `ReadOnlyCardPreview` micro — единый
-  шаблон для всех типов, медиа внутри карточного поля `p-4` (без full-bleed);
+  шаблон для всех типов на той же поверхности, что feed cards (`bg-card`),
+  медиа внутри карточного поля `p-4` (без full-bleed);
   при поиске micro рендерит тот же row-model, что список (подсветка title,
   excerpt, `bg-search-mark`). Зона метаданных: язык metadata-card Detail
   (`rounded-1 border border-border bg-accent`, строки — общий `MetadataRow`):
@@ -842,7 +845,7 @@ they must never widen the dialog or overlap footer actions.
 
 `DropdownMenuTrigger > DropdownMenuContent > DropdownMenuItem`.
 
-Content: `rounded-1 border bg-popover p-1 text-popover-foreground`, тень — единая для всплывающих элементов (см. «Всплывающие элементы»).
+Content: `rounded-1 border bg-card p-1 text-card-foreground`, тень — единая для всплывающих элементов (см. «Всплывающие элементы»).
 Item: `rounded-1 px-2 py-1.5 text-base cursor-default`.
 Item hover/focus uses the active surface swatch: `focus:bg-active focus:text-accent-foreground`. Submenu trigger open state uses the same `bg-active`. Item `variant="destructive"`: красный текст (`text-destructive`), тот же hover/focus фон (`focus:bg-active`).
 Width is semantic, not local/ad-hoc. Product components must choose one of the
@@ -878,7 +881,7 @@ Content: `rounded-1 bg-foreground text-background px-3 py-1.5 text-sm`. Стре
 
 `ContextMenuTrigger > ContextMenuContent > ContextMenuItem`.
 
-Content: `rounded-1 border bg-popover p-1`, тень — единая для всплывающих элементов (см. «Всплывающие элементы»). Item: `rounded-1 px-2 py-1.5 text-base`. Item `variant="destructive"`: красный текст (`text-destructive`), стандартный ховер-фон (`focus:bg-accent`). Поддерживает: CheckboxItem, RadioItem, Sub (подменю), Label, Separator, Shortcut.
+Content: `rounded-1 border bg-card p-1 text-card-foreground`, тень — единая для всплывающих элементов (см. «Всплывающие элементы»). Item: `rounded-1 px-2 py-1.5 text-base`. Item `variant="destructive"`: красный текст (`text-destructive`), стандартный ховер-фон (`focus:bg-accent`). Поддерживает: CheckboxItem, RadioItem, Sub (подменю), Label, Separator, Shortcut.
 
 ### Card Hover Menu
 
@@ -1032,14 +1035,18 @@ near the first selected rendered Markdown block.
 Ordinary feed cards use `bg-card`, not direct `bg-background`. In light theme
 `--card = --chrome = oklch(0.99 0 0)`: a half-step surface that matches the top
 chrome level and separates cards from the white page quietly. In dark theme
-`--card` remains the page background (`oklch(0.1567 0 0)`), so existing dark
-card contrast does not change. Do not hardcode one-off card background classes;
-change the semantic token if the surface level changes.
+`--card = --chrome = oklch(0.17 0 0)`, one ladder step above page background.
+This makes card previews and floating UI visibly filled without becoming a
+strong component fill. Do not hardcode one-off card background classes; change
+the semantic token if the surface level changes.
+Runtime article cards add `feed-article-card`; read-only hover previews must
+carry the same class for article blocks, so their fill matches the actual feed
+card of that type.
 
 ### Hover Preview Surfaces
 
 Всплывающие preview-карточки используют ту же визуальную модель, что feed card
-preview при drag: `rounded-1` (3px), `border border-border`, `bg-background`,
+preview при drag: `rounded-1` (3px), `border border-border`, `bg-card`,
 утилитарная `shadow-lg`. Ordinary feed cards остаются на `--radius-card`.
 
 **Один владелец размера.** В media drag-превью (DragOverlay) геометрию задаёт
@@ -1085,7 +1092,7 @@ container/radius/spacing standard. Focus surface может отличаться
 
 ### Контейнер (Content)
 
-`rounded-1 border border-border bg-popover p-1`. Тень единая:
+`rounded-1 border border-border bg-card text-card-foreground p-1`. Тень единая:
 
 ```
 shadow-[0_4px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.4)]
@@ -1206,7 +1213,7 @@ primitives и те же состояния, что desktop UI:
 - channel picker: no clipper-only checkbox/search implementation. The clipper
   renders the same desktop `CollectionPicker` default menu layout inside an
   inline picker surface with the same visual tokens as floating picker content:
-  `bg-popover text-popover-foreground flex max-h-80 flex-col overflow-hidden
+  `bg-card text-card-foreground flex max-h-80 flex-col overflow-hidden
   rounded-1 border p-0 shadow-md`. Use
   `COLLECTION_PICKER_CONTENT_CLASS` / `COLLECTION_PICKER_INLINE_SURFACE_CLASS`
   from `CollectionPicker`; do not restate picker geometry in clipper code.
@@ -1740,7 +1747,7 @@ cards используют только integer `translate3d` + малые уг�
 Stack не вводит новые радиусы и не двигает реальные masonry cards; bottom
 action island скрыт во время block drag.
 
-Article-карточки в ленте используют дополнительную surface-заливку только в тёмной теме: `feed-article-card` применяет `background: var(--accent)` при `data-theme="dark"` или системной dark theme, если не выбран `data-theme="light"`. В светлой теме article-карточка остаётся на стандартном `bg-background`.
+Article-карточки в ленте используют дополнительную surface-заливку только в тёмной теме: `feed-article-card` применяет `background: var(--accent)` при `data-theme="dark"` или системной dark theme, если не выбран `data-theme="light"`. В светлой теме article-карточка остаётся на стандартном `bg-card`.
 
 Expanded image preview использует минималистичное разделение primary/secondary plane: фон страницы становится вторичным через `background: rgb(0 0 0 / 0.56)` и `backdrop-filter: saturate(0.55)` без blur; foreground image получает только утилитарное отделение `box-shadow: 0 24px 96px rgb(0 0 0 / 0.45)` и `outline: 1px solid rgb(255 255 255 / 0.08)`. Кнопка выхода из preview — не `X`, а inward-arrows `Minimize2` с действием `Collapse image preview`.
 

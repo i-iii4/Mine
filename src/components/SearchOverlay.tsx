@@ -450,7 +450,7 @@ export function SearchOverlay({
         className={cn(
           "left-[50%] top-[12vh] translate-y-0",
           "flex h-[min(640px,76vh)] w-[min(960px,calc(100vw-4rem))] max-w-none flex-col sm:max-w-none",
-          "gap-0 overflow-hidden bg-popover p-0",
+          "gap-0 overflow-hidden bg-card p-0 text-card-foreground",
           "shadow-[0_4px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.4)]",
         )}
         data-search-overlay

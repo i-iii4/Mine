@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CardHoverMenu, CardMoreMenu } from "./CardHoverMenu";
+import { CardHoverMenu, CardMoreMenu, CardPointMenu } from "./CardHoverMenu";
 import { getBlock } from "@/lib/commands";
 import type { LightBlock } from "@/types";
 
@@ -170,6 +170,64 @@ describe("CardHoverMenu", () => {
       expect(menuItem?.querySelector("[data-card-menu-icon-slot]")).toBeTruthy();
       expect(menuItem?.querySelector("svg")).toBeNull();
     }
+  });
+
+  it("opens the same card actions from a point anchor without a contextmenu event", async () => {
+    render(
+      <CardPointMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        x={144}
+        y={188}
+        openRequestSequence={1}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("Connect")).toBeInTheDocument();
+    expect(await screen.findByText("Rename…")).toBeInTheDocument();
+    expect(document.querySelector("[data-card-point-menu-anchor]")).toHaveStyle({
+      left: "144px",
+      top: "188px",
+    });
+    expect(document.querySelector("[data-slot='context-menu-content']")).not.toBeInTheDocument();
+  });
+
+  it("captures the first outside click on CardPointMenu before it reaches the app", async () => {
+    const onOpenChange = vi.fn();
+
+    render(
+      <CardPointMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        x={144}
+        y={188}
+        openRequestSequence={1}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenChange={onOpenChange}
+      />,
+    );
+
+    expect(await screen.findByText("Connect")).toBeInTheDocument();
+
+    const dismissLayer = document.querySelector("[data-card-point-menu-dismiss-layer]");
+    expect(dismissLayer).toBeInTheDocument();
+    fireEvent.pointerDown(dismissLayer!);
+    fireEvent.pointerUp(dismissLayer!);
+    fireEvent.click(dismissLayer!);
+
+    await waitFor(() => {
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+      expect(screen.queryByText("Connect")).not.toBeInTheDocument();
+    });
   });
 
   it("closes the overflow menu from Command-K inside the menu surface", async () => {

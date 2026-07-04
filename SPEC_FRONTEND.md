@@ -497,6 +497,18 @@ thumbnail. Выделение строки и outline thumbnail остаются
 trigger'а и не переносятся на popup. Cold open delay — `500ms`; если предыдущий
 preview был открыт в течение `800ms` warm window, следующий thumbnail открывает
 preview с `0ms` delay.
+Right/context click на thumbnail открывает app-level карточное меню
+(`CardPointMenu`) для конкретного блока из preview strip. Thumbnail обязан
+`preventDefault()` и `stopPropagation()` для `contextmenu`, чтобы событие не
+попало в `ContextMenuTrigger` строки канала. Right/context click по любой другой
+области строки канала продолжает открывать только меню управления каналом
+(`Rename` / `Delete`). Пока карточное меню открыто, sidebar thumbnail hover
+updates frozen так же, как в Graph View: текущий hover preview не заменяется
+другой карточкой и pending preview timers отменяются. Когда карточное меню
+закрывается, frozen preview сохраняется только если последняя позиция pointer
+всё ещё внутри исходного thumbnail trigger. Если pointer ушёл, preview
+закрывается на том же unfreeze transition; freeze не должен превращать hover
+preview в sticky card.
 Title text в row-mode не должен уходить в жёсткое ellipsis. Он использует тот
 же right-fade contract, что и preview strip: fade `24px` + `4px` прозрачный
 tail перед левой направляющей. Title slot остаётся responsive
@@ -650,8 +662,14 @@ Thumbnail отображается через `convertFileSrc(vaultPath + "/.are
 Feed card frame is a persistent `border border-border bg-card` surface.
 In light theme `--card` uses the same half-step surface as top chrome
 (`--chrome`, `oklch(0.99 0 0)`), so cards sit slightly above the page without
-becoming a stronger component fill. In dark theme `--card` remains equal to the
-page background (`oklch(0.1567 0 0)`) to preserve the existing dark feed.
+becoming a stronger component fill. In dark theme `--card` uses the same
+one-step surface as top chrome (`--chrome`, `oklch(0.17 0 0)`), so cards,
+hover previews and floating menu shells are visibly filled above the page
+background.
+Read-only hover previews in Sidebar, Search Overlay and Graph View reuse
+`ReadOnlyCardPreview` / `CardFrame`, so their outer fill remains the same
+surface as feed cards: base `bg-card`, plus the same `feed-article-card`
+class for runtime article cards.
 Hover does not change the card frame: no border recolor, outline, inset border,
 shadow, glow, transition, or extra overlay. The feed hover affordance is the
 card action controls. Feed keyboard focus is not Card state: Grid owns
@@ -691,6 +709,9 @@ text+media paragraphs remain block `<div>` wrappers to avoid invalid
   Правый клик (`CardTagMenu`) зеркалит этот контракт.
 - Overflow `…` menu uses the shared `DropdownMenu` focus surface: item
   hover/focus and open submenu trigger render `bg-active`, not `bg-accent`.
+- Overflow `…` dropdown and right-click context menu shells use the feed card
+  surface (`bg-card text-card-foreground`), not `bg-popover`, so floating lists
+  and hover preview cards sit on the same fill.
 - Overflow `…` menu uses floating width role `command`: content-sized with
   `12rem` minimum and `18.75rem` maximum. Its `Connect` submenu and the
   bottom-row standalone `Connect` dropdown use width role `picker` (`20rem`)
@@ -771,6 +792,9 @@ Image media expansion:
   footer/create action from `--floating-menu-available-height`. This is the
   invariant that prevents partial clipped channel rows in dropdown, context
   submenu and Clipper surfaces.
+- Inline picker shells use the same feed card surface as floating menu content:
+  `COLLECTION_PICKER_INLINE_SURFACE_CLASS` must include
+  `bg-card text-card-foreground`.
 - Порядок каналов всегда равен порядку `tags`, полученному из taxonomy/sidebar.
   `selectedTags`, recent tags, current route и optimistic membership changes не
   пересортировывают список; connected-канал после действия не прыгает наверх.

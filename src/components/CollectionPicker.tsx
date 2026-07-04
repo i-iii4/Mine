@@ -43,7 +43,7 @@ export const COLLECTION_PICKER_CONTENT_CLASS =
   "flex flex-col overflow-hidden p-0";
 
 export const COLLECTION_PICKER_INLINE_SURFACE_CLASS =
-  "bg-popover text-popover-foreground flex flex-col overflow-hidden rounded-1 border p-0 shadow-md";
+  "bg-card text-card-foreground flex flex-col overflow-hidden rounded-1 border p-0 shadow-md";
 
 function isPrintableKeyboardKey(event: ReactKeyboardEvent): boolean {
   return event.key.length === 1 && !event.metaKey && !event.altKey && !event.ctrlKey;

@@ -390,7 +390,7 @@ src-tauri/src/storage/graph.rs
 ```
 
 `GraphView` owns Canvas rendering, physics, image cache, sidebar-style hover
-preview, and existing Detail/collection navigation for M0.
+preview, shared card menu invocation, and collection navigation for M0.
 
 Future `GraphWithControls` owns:
 
@@ -433,6 +433,12 @@ card thumbnails, collection labels, pointer hit areas, hover and drag all live i
 the same Canvas/graph coordinate space. Collection labels must not be rendered as
 a DOM overlay above the canvas; that creates a second clock and causes visible
 parallax during pan/zoom.
+
+The force graph mounts only after `ResizeObserver` reports the real main-surface
+viewport. It must not render or run `zoomToFit` against a fallback `800x600`
+canvas and then resize into the app shell; that produces the cold-open state
+where the graph is fitted into the wrong rectangle and appears clipped into a
+corner.
 
 Canvas-native collection labels still follow the design-system
 `GraphCollectionLabel` contract from `src/components/GraphCollectionLabel.tsx`
@@ -562,17 +568,55 @@ Rules:
   color on hover;
 - after the configured delay, fetch the full block with `get_block`;
 - render `ReadOnlyCardPreview` with `previewMode="micro"` and width `240`;
+  its `CardFrame` keeps the same `bg-card` surface as feed cards and sidebar
+  hover previews;
 - position the preview from `graph2ScreenCoords(node.x, node.y)`, clamped to the
   viewport with the same gap/margin model as Sidebar;
 - close immediately on pointer leave;
-- collection hover has no preview in M0.
+- collection hover has no preview in M0;
+- when an app-level card actions menu is open, `App` passes
+  `hoverPreviewFrozen=true`; Graph View must keep the current hover preview and
+  collection hover state unchanged, cancel pending preview timers, and ignore
+  new `onNodeHover` enter/leave updates until the menu closes;
+- when `hoverPreviewFrozen` transitions from `true` back to `false`, Graph View
+  must call `d3ReheatSimulation()` on the next animation frame. Menu freeze is a
+  temporary interaction pause, not a new resting layout state; label collision,
+  charge, and link forces must resume immediately after the dropdown closes,
+  without requiring the user to drag a node;
+- freeze preserves the current card hover preview only while the menu is open.
+  On unfreeze, Graph View compares the latest pointer position to the original
+  card-node square. If the pointer is no longer inside that node, the preview
+  closes immediately; if it is still inside, normal hover state resumes.
 
-### Click
+### Click And Context Menu
 
-Block node click:
+Block node left click:
 
-1. open existing Detail for `slug`;
-2. close any open hover preview.
+1. close any open hover preview;
+2. resolve the `LightBlock` from the current route cache, falling back to
+   `get_block` only when the graph node is outside the loaded route window;
+3. call the existing app-level `onOpenBlock(block)` path, so Graph View opens
+   the same Detail surface as Grid, Sidebar, and Search Overlay.
+
+Block node right/context click:
+
+1. prevent the native WebView context menu on the graph surface;
+2. keep any currently open hover preview visible;
+3. resolve the block the same way as left click;
+4. call `onOpenCardMenu(block, { x, y })`;
+5. let `App` render `CardPointMenu`, a point-anchored wrapper over the shared
+   `CardMenuDropdownContent`/`CardMoreMenu` action contract.
+6. while that menu is open, freeze Graph View hover updates so moving across
+   other nodes does not replace or close the visible hover preview.
+
+Graph View must never dispatch synthetic `contextmenu` events from card nodes:
+cards are painted on Canvas, and WebView can route synthetic context menus to
+the system/page menu instead of Mine's app menu.
+
+The point menu must install a transparent dismiss layer below
+`DropdownMenuContent` and above the graph canvas. The first click or context
+click outside the dropdown closes the menu only; it must not reach the canvas,
+open another card, navigate a collection, or replace the frozen hover preview.
 
 Collection node click:
 
@@ -706,6 +750,10 @@ until keyboard selection and screen-reader status exist.
 - collection node hit-area metrics match pill width/height.
 - graph hover preview uses `ReadOnlyCardPreview` with `previewMode="micro"` and
   width `240`.
+- graph first mount passes the measured container width/height into
+  `ForceGraph2D`, not the old `800x600` fallback.
+- Graph View does not render a persistent node/link count badge over the canvas;
+  counts belong in diagnostics/devtools, not in the product surface.
 
 ### Browser Acceptance
 

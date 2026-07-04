@@ -96,7 +96,7 @@ selection невозможен — модальность забирает кл�
   backdrop `bg-black/50` (канон Dialog/AlertDialog), без крестика Dialog
   (`showCloseButton={false}` — закрытие через Esc/backdrop, у поиска свой
   clear).
-- Панель: `rounded-1 border border-border bg-popover`, тень единая для
+- Панель: `rounded-1 border border-border bg-card text-card-foreground`, тень единая для
   floating UI (`shadow-[0_4px_24px_rgba(0,0,0,0.12)]
   dark:shadow-[0_4px_24px_rgba(0,0,0,0.4)]`).
 - Геометрия: ширина `min(960px, calc(100vw - 4rem))`; высота **фиксированная**
@@ -186,9 +186,8 @@ selection невозможен — модальность забирает кл�
 блоков: медиа рендерится `GraphicSurface` с аспектом из манифеста **внутри
 карточного поля `p-4`** (никакого full-bleed — image-карточка получает те же
 отступы, что текстовые), затем title (clamp 2) / превью-текст (clamp 3) /
-автор. Собственная рамка `CardFrame` (`border rounded-1`, фон переопределён на
-`bg-accent`) и есть выделение зоны; от `border-l` панели её отделяет поле
-`p-4`.
+автор. Собственная рамка `CardFrame` (`border rounded-1 bg-card`) и есть
+выделение зоны; от `border-l` панели её отделяет поле `p-4`.
 
 При активном `search_match` micro-превью использует тот же row-model, что
 список (`deriveSearchResultRow`): подсветка title, excerpt первого совпадения

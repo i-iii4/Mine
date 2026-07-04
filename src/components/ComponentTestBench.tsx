@@ -549,14 +549,14 @@ function CoreComponentSection() {
           { prop: "clipper", value: "ряды 40 (controlSize)" },
         ]}
       >
-        <div className="w-80 overflow-hidden rounded-1 border border-border bg-popover">
+        <div className="w-80 overflow-hidden rounded-1 border border-border bg-card">
           <SearchMenuInput placeholder="Search collections..." />
           <SearchMenuAction active onPress={() => {}}>
             <span className="truncate">Beautiful web</span>
             <span className="ml-auto text-muted-foreground">30</span>
           </SearchMenuAction>
         </div>
-        <div className="w-80 overflow-hidden rounded-1 border border-border bg-popover">
+        <div className="w-80 overflow-hidden rounded-1 border border-border bg-card">
           <SearchMenuInput controlSize="clipper" placeholder="Search spaces..." />
           <SearchMenuAction rowSize="clipper" active onPress={() => {}}>
             <span className="truncate">Mine</span>
@@ -723,7 +723,7 @@ function FloatingUiSection() {
           { prop: "Overflow", value: "overflow-y-auto · min-h-0" },
         ]}
       >
-        <div className="w-72 rounded-1 border border-border bg-popover">
+        <div className="w-72 rounded-1 border border-border bg-card">
           <QuantizedMenuScrollArea rowCount={6} maxRows={4} innerClassName="p-1">
             {SAMPLE_TAGS.map((tag) => (
               <SearchMenuAction key={tag.tag} onPress={() => {}}>
@@ -733,7 +733,7 @@ function FloatingUiSection() {
             ))}
           </QuantizedMenuScrollArea>
         </div>
-        <div className="w-72 rounded-1 border border-border bg-popover">
+        <div className="w-72 rounded-1 border border-border bg-card">
           <QuantizedMenuScrollArea rowCount={6} rowSize="clipper" maxRows={4} innerClassName="p-1">
             {SAMPLE_TAGS.map((tag) => (
               <SearchMenuAction key={tag.tag} rowSize="clipper" onPress={() => {}}>

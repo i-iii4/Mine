@@ -57,6 +57,31 @@ describe("DropdownMenu", () => {
     );
   });
 
+  it("uses the feed card surface for floating menu content", () => {
+    render(
+      <DropdownMenu open modal={false}>
+        <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem>Action item</DropdownMenuItem>
+          <DropdownMenuSub open>
+            <DropdownMenuSubTrigger>Nested actions</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem>Nested item</DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+
+    const content = document.querySelector("[data-slot='dropdown-menu-content']");
+    const subContent = document.querySelector("[data-slot='dropdown-menu-sub-content']");
+
+    expect(content).toHaveClass("bg-card", "text-card-foreground");
+    expect(content).not.toHaveClass("bg-popover", "text-popover-foreground");
+    expect(subContent).toHaveClass("bg-card", "text-card-foreground");
+    expect(subContent).not.toHaveClass("bg-popover", "text-popover-foreground");
+  });
+
   it("marks menu width by semantic role", () => {
     render(
       <DropdownMenu open modal={false}>

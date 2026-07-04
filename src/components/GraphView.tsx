@@ -36,6 +36,11 @@ type GraphPreviewPosition = {
   left: number;
 };
 
+type GraphCardMenuPoint = {
+  x: number;
+  y: number;
+};
+
 type GraphPalette = {
   cardFill: string;
   linkDefault: string;
@@ -73,7 +78,9 @@ interface GraphViewProps {
   thumbsRootPath?: string;
   loadedBlocks: LightBlock[];
   thumbVersions: ReadonlyMap<string, number>;
+  hoverPreviewFrozen?: boolean;
   onOpenBlock: (block: LightBlock | IndexedBlock) => void;
+  onOpenCardMenu: (block: LightBlock | IndexedBlock, point: GraphCardMenuPoint) => void;
   onNavigateCollection: (collectionRef?: string) => void;
 }
 
@@ -124,14 +131,16 @@ export function GraphView({
   thumbsRootPath,
   loadedBlocks,
   thumbVersions,
+  hoverPreviewFrozen = false,
   onOpenBlock,
+  onOpenCardMenu,
   onNavigateCollection,
 }: GraphViewProps) {
   const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [size, setSize] = useState({ width: 800, height: 600 });
+  const [size, setSize] = useState({ width: 0, height: 0 });
   const [theme, setTheme] = useState<"light" | "dark">(() => readGraphTheme());
   const [hoverPreviewTarget, setHoverPreviewTarget] = useState<GraphPreviewTarget | null>(null);
   const [hoverPreviewBlock, setHoverPreviewBlock] = useState<IndexedBlock | null>(null);
@@ -147,8 +156,10 @@ export function GraphView({
   const loadSequenceRef = useRef(0);
   const previewOpenTimerRef = useRef<number | null>(null);
   const lastPreviewOpenedAtRef = useRef<number | null>(null);
+  const lastPointerPointRef = useRef<GraphCardMenuPoint | null>(null);
   const graphScaleRef = useRef(1);
   const collectionDragClickSuppressionRef = useRef<{ nodeId: string; until: number } | null>(null);
+  const previousHoverPreviewFrozenRef = useRef(hoverPreviewFrozen);
 
   const loadedBlocksBySlug = useMemo(() => {
     return new Map(loadedBlocks.map((block) => [block.slug, block]));
@@ -214,6 +225,23 @@ export function GraphView({
     };
   }, []);
 
+  useEffect(() => {
+    const recordPointerPoint = (event: Event) => {
+      const point = graphClientPointFromEvent(event);
+      if (point) {
+        lastPointerPointRef.current = point;
+      }
+    };
+    window.addEventListener("pointermove", recordPointerPoint, true);
+    window.addEventListener("pointerdown", recordPointerPoint, true);
+    window.addEventListener("contextmenu", recordPointerPoint, true);
+    return () => {
+      window.removeEventListener("pointermove", recordPointerPoint, true);
+      window.removeEventListener("pointerdown", recordPointerPoint, true);
+      window.removeEventListener("contextmenu", recordPointerPoint, true);
+    };
+  }, []);
+
   const graphData = useMemo<GraphCanvasData>(() => {
     if (!snapshot) return { nodes: [], links: [] };
     return {
@@ -245,7 +273,10 @@ export function GraphView({
     graphScaleRef.current = Number.isFinite(scale) && scale > 0 ? scale : 1;
   }, []);
 
+  const graphViewportReady = size.width > 0 && size.height > 0;
+
   useEffect(() => {
+    if (!graphViewportReady || graphData.nodes.length === 0) return;
     let frame = 0;
     const applyForces = () => {
       const graph = graphRef.current;
@@ -295,7 +326,7 @@ export function GraphView({
     };
     frame = requestAnimationFrame(applyForces);
     return () => cancelAnimationFrame(frame);
-  }, [graphData, syncGraphScale]);
+  }, [graphData, graphViewportReady, size.width, size.height, syncGraphScale]);
 
   const clearPreviewOpenTimer = useCallback(() => {
     if (previewOpenTimerRef.current === null) return;
@@ -319,6 +350,7 @@ export function GraphView({
   }, []);
 
   const schedulePreviewOpen = useCallback((node: GraphCanvasNode) => {
+    if (hoverPreviewFrozen) return;
     if (node.kind !== "card" || !node.slug) {
       closePreview();
       return;
@@ -339,11 +371,48 @@ export function GraphView({
       previewOpenTimerRef.current = null;
       openPreview(node);
     }, delay);
-  }, [clearPreviewOpenTimer, closePreview, openPreview]);
+  }, [clearPreviewOpenTimer, closePreview, hoverPreviewFrozen, openPreview]);
 
   useEffect(() => () => {
     clearPreviewOpenTimer();
   }, [clearPreviewOpenTimer]);
+
+  useEffect(() => {
+    if (hoverPreviewFrozen) {
+      clearPreviewOpenTimer();
+    }
+  }, [clearPreviewOpenTimer, hoverPreviewFrozen]);
+
+  const pointerIsInsidePreviewNode = useCallback((target: GraphPreviewTarget) => {
+    const point = lastPointerPointRef.current;
+    const graph = graphRef.current;
+    const container = containerRef.current;
+    const node = graphData.nodes.find((candidate) => candidate.id === target.nodeId);
+    if (!point || !graph || !container || !node || !hasNodePosition(node)) return false;
+
+    const containerRect = container.getBoundingClientRect();
+    const screenPoint = graph.graph2ScreenCoords(node.x, node.y);
+    const left = containerRect.left + screenPoint.x - CARD_THUMBNAIL_SIZE / 2;
+    const top = containerRect.top + screenPoint.y - CARD_THUMBNAIL_SIZE / 2;
+    return point.x >= left
+      && point.x <= left + CARD_THUMBNAIL_SIZE
+      && point.y >= top
+      && point.y <= top + CARD_THUMBNAIL_SIZE;
+  }, [graphData.nodes]);
+
+  useEffect(() => {
+    const wasFrozen = previousHoverPreviewFrozenRef.current;
+    previousHoverPreviewFrozenRef.current = hoverPreviewFrozen;
+    if (!wasFrozen || hoverPreviewFrozen) return undefined;
+
+    const frame = window.requestAnimationFrame(() => {
+      graphRef.current?.d3ReheatSimulation();
+    });
+    if (hoverPreviewTarget && !pointerIsInsidePreviewNode(hoverPreviewTarget)) {
+      closePreview();
+    }
+    return () => window.cancelAnimationFrame(frame);
+  }, [closePreview, hoverPreviewFrozen, hoverPreviewTarget, pointerIsInsidePreviewNode]);
 
   useEffect(() => {
     if (!hoverPreviewTarget) {
@@ -444,6 +513,27 @@ export function GraphView({
     [closePreview, loadedBlocksBySlug, onNavigateCollection, onOpenBlock],
   );
 
+  const handleNodeRightClick = useCallback(
+    async (node: GraphCanvasNode, event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (node.kind !== "card" || !node.slug) return;
+
+      const point = { x: event.clientX, y: event.clientY };
+      const loaded = loadedBlocksBySlug.get(node.slug);
+      if (loaded) {
+        onOpenCardMenu(loaded, point);
+        return;
+      }
+
+      const full = await getBlock(node.slug);
+      if (full) {
+        onOpenCardMenu(full, point);
+      }
+    },
+    [loadedBlocksBySlug, onOpenCardMenu],
+  );
+
   const suppressCollectionClickAfterDrag = useCallback((node: GraphCanvasNode) => {
     if (node.kind !== "collection") return;
     collectionDragClickSuppressionRef.current = {
@@ -497,6 +587,7 @@ export function GraphView({
     <div
       ref={containerRef}
       className="absolute inset-0 overflow-hidden bg-background"
+      onContextMenu={(event) => event.preventDefault()}
       data-graph-view=""
     >
       {error ? (
@@ -507,11 +598,6 @@ export function GraphView({
       {!error && graphData.nodes.length === 0 && !loading ? (
         <div className="absolute inset-0 grid place-items-center px-8 text-sm text-muted-foreground">
           No graph nodes
-        </div>
-      ) : null}
-      {snapshot ? (
-        <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded border border-border bg-background/80 px-2 py-1 text-xs text-muted-foreground">
-          {snapshot.nodes.length} nodes · {snapshot.links.length} links
         </div>
       ) : null}
       {vaultPath && hoverPreviewPosition && hoverPreviewBlock ? (
@@ -534,45 +620,49 @@ export function GraphView({
           />
         </div>
       ) : null}
-      <ForceGraph2D<GraphCanvasNode, GraphCanvasLink>
-        ref={graphRef}
-        graphData={graphData}
-        width={size.width}
-        height={size.height}
-        nodeId="id"
-        linkSource="source"
-        linkTarget="target"
-        nodeCanvasObject={nodeCanvasObject}
-        nodePointerAreaPaint={nodePointerAreaPaint}
-        nodeLabel={() => ""}
-        onNodeClick={handleNodeClick}
-        onNodeHover={(node) => {
-          if (!node) {
+      {graphViewportReady ? (
+        <ForceGraph2D<GraphCanvasNode, GraphCanvasLink>
+          ref={graphRef}
+          graphData={graphData}
+          width={size.width}
+          height={size.height}
+          nodeId="id"
+          linkSource="source"
+          linkTarget="target"
+          nodeCanvasObject={nodeCanvasObject}
+          nodePointerAreaPaint={nodePointerAreaPaint}
+          nodeLabel={() => ""}
+          onNodeClick={handleNodeClick}
+          onNodeRightClick={handleNodeRightClick}
+          onNodeHover={(node) => {
+            if (hoverPreviewFrozen) return;
+            if (!node) {
+              setHoveredCollectionId(null);
+              closePreview();
+              return;
+            }
+            if (node.kind === "collection") {
+              setHoveredCollectionId(node.id);
+              closePreview();
+              return;
+            }
             setHoveredCollectionId(null);
-            closePreview();
-            return;
-          }
-          if (node.kind === "collection") {
-            setHoveredCollectionId(node.id);
-            closePreview();
-            return;
-          }
-          setHoveredCollectionId(null);
-          schedulePreviewOpen(node);
-        }}
-        onNodeDrag={suppressCollectionClickAfterDrag}
-        onNodeDragEnd={suppressCollectionClickAfterDrag}
-        d3AlphaDecay={physics.alphaDecay}
-        d3VelocityDecay={physics.velocityDecay}
-        warmupTicks={physics.warmupTicks}
-        cooldownTime={physics.cooldownTime}
-        onZoom={(transform) => syncGraphScale(transform.k)}
-        onZoomEnd={(transform) => syncGraphScale(transform.k)}
-        backgroundColor="transparent"
-        linkDirectionalArrowLength={0}
-        linkColor={() => canvasTheme.linkDefault}
-        linkWidth={1}
-      />
+            schedulePreviewOpen(node);
+          }}
+          onNodeDrag={suppressCollectionClickAfterDrag}
+          onNodeDragEnd={suppressCollectionClickAfterDrag}
+          d3AlphaDecay={physics.alphaDecay}
+          d3VelocityDecay={physics.velocityDecay}
+          warmupTicks={physics.warmupTicks}
+          cooldownTime={physics.cooldownTime}
+          onZoom={(transform) => syncGraphScale(transform.k)}
+          onZoomEnd={(transform) => syncGraphScale(transform.k)}
+          backgroundColor="transparent"
+          linkDirectionalArrowLength={0}
+          linkColor={() => canvasTheme.linkDefault}
+          linkWidth={1}
+        />
+      ) : null}
     </div>
   );
 }
@@ -726,6 +816,11 @@ function computeGraphPreviewPosition(
       );
 
   return { top, left };
+}
+
+function graphClientPointFromEvent(event: Event): GraphCardMenuPoint | null {
+  if (!(event instanceof MouseEvent)) return null;
+  return { x: event.clientX, y: event.clientY };
 }
 
 function graphThumbnailUrl(thumbsRootPath: string, slug: string, thumbVersion: number): string {

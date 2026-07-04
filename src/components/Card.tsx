@@ -242,6 +242,7 @@ export function ReadOnlyCardPreview({
         : shadow === "md"
           ? "shadow-md"
           : "shadow-lg";
+  const isArticleFeedCard = getRuntimeCardKind(block) === "article";
 
   if (previewMode === "micro") {
     const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
@@ -275,7 +276,12 @@ export function ReadOnlyCardPreview({
 
     return (
       <CardFrame
-        className={cn("pointer-events-none rounded-1", shadowClassName, className)}
+        className={cn(
+          "pointer-events-none rounded-1",
+          isArticleFeedCard && "feed-article-card",
+          shadowClassName,
+          className,
+        )}
         style={{ width }}
       >
         <div className="p-4">
@@ -334,7 +340,12 @@ export function ReadOnlyCardPreview({
 
   return (
     <CardFrame
-      className={cn("pointer-events-none rounded-1", shadowClassName, className)}
+      className={cn(
+        "pointer-events-none rounded-1",
+        isArticleFeedCard && "feed-article-card",
+        shadowClassName,
+        className,
+      )}
       style={{ width }}
     >
       <CardContent

@@ -1,5 +1,141 @@
 # Devlog
 
+## 04.07.2026 — Graph unfreeze reheat and sidebar thumbnail card menu
+
+### Задача
+После закрытия `CardPointMenu` в Graph View физика collection labels и card
+nodes не должна оставаться в замороженном/resting состоянии до первого drag.
+В левом sidebar right click по thumbnail должен открывать карточное меню этого
+блока, а не меню всей строки канала.
+
+### Что сделано
+- `GraphView` отслеживает переход `hoverPreviewFrozen: true → false` и на
+  следующий animation frame вызывает `d3ReheatSimulation()`.
+- Разморозка Graph View больше не зависит от побочного эффекта drag gesture:
+  collision/charge/link forces возвращаются сразу после закрытия dropdown.
+- `Sidebar` получил app-level `onOpenCardMenu` и `hoverPreviewFrozen`, чтобы
+  thumbnail strip использовал тот же `CardPointMenu`, что Grid/Graph.
+- `contextmenu` на sidebar thumbnail делает `preventDefault()` /
+  `stopPropagation()` и открывает меню конкретной карточки.
+- `contextmenu` на остальной части строки канала оставлен прежним: `Rename` /
+  `Delete` для канала.
+- Sidebar и Graph View теперь закрывают frozen hover preview при закрытии
+  `CardPointMenu`, если последняя позиция pointer уже не находится над исходным
+  thumbnail/card node.
+- `SPEC_GRAPH_VIEW.md` и `SPEC_FRONTEND.md` синхронизированы с новым контрактом.
+
+### Проверки
+- `bunx vitest run src/components/GraphView.test.tsx src/components/Sidebar.test.tsx src/components/CardHoverMenu.test.tsx` — 50 tests
+- `bunx tsc -b --pretty false`
+- `bun run lint -- src/components/GraphView.tsx src/components/GraphView.test.tsx src/components/Sidebar.tsx src/components/Sidebar.test.tsx src/components/CardHoverMenu.tsx src/components/CardHoverMenu.test.tsx src/App.tsx`
+- `git diff --check`
+- `bun run tauri build --debug`
+- Fresh bundle opened: `target/debug/bundle/macos/Mine.app`, asset
+  `main-MHENtiID.js`, process `mine` PID `32643`
+
+## 04.07.2026 — Graph card menu freezes hover state
+
+### Задача
+Правый клик по graph card не должен сбрасывать уже открытый hover preview.
+Пока выпадающее card actions menu открыто, Graph View должен сохранять текущий
+экранный hover state и не показывать hover previews для других нод. Первый клик
+за пределами dropdown должен закрывать только меню, не проваливаясь в canvas.
+Дублирующий нижний badge с количеством nodes/links нужно убрать.
+
+### Что сделано
+- `GraphView` получил явный `hoverPreviewFrozen` prop от `App`.
+- `App` включает freeze, пока открыт app-level `CardPointMenu`.
+- Right/context click по card node больше не вызывает `closePreview()`, поэтому
+  открытый `ReadOnlyCardPreview` остаётся на экране под меню.
+- При freeze Graph View игнорирует новые `onNodeHover` enter/leave события и
+  отменяет pending hover timer без закрытия текущего preview.
+- `CardPointMenu` получил прозрачный dismiss-layer под `DropdownMenuContent`:
+  первый outside click/context click закрывает меню и не доходит до графа.
+- Из Graph View удалён нижний badge `nodes · links`.
+- `SPEC_GRAPH_VIEW.md` обновлён: right click сохраняет preview, меню замораживает
+  hover state до закрытия, outside click сначала сбрасывает меню.
+
+### Проверки
+- `bunx vitest run src/components/GraphView.test.tsx`
+- `bunx vitest run src/components/GraphView.test.tsx src/components/CardHoverMenu.test.tsx`
+- `bunx vitest run src/App.test.tsx -t "does not treat a pending uncached route as an authoritative empty grid"`
+- `bunx tsc -b --pretty false`
+- `bun run lint -- src/components/GraphView.tsx src/components/GraphView.test.tsx src/components/CardHoverMenu.tsx src/components/CardHoverMenu.test.tsx src/App.tsx`
+- `git diff --check`
+- `bun run tauri build --debug`
+- Fresh bundle opened: `target/debug/bundle/macos/Mine.app`, asset
+  `main-DyurADAz.js`, process `mine` PID `322`
+
+## 04.07.2026 — Graph card click contract and app-level card menu
+
+### Задача
+В Graph View нужно развести два действия: левый клик по карточке открывает
+заметку/Detail как в обычном гриде, правый клик открывает карточное меню
+действий без системного WebView context menu.
+
+### Что сделано
+- `GraphView` снова открывает существующий Detail по left click на card node
+  через app-level `onOpenBlock`.
+- Card node right/context click отдаёт наружу `onOpenCardMenu(block, point)`;
+  сам Graph View больше не владеет actions menu.
+- `App` рендерит общий `CardPointMenu` в точке right click и переиспользует
+  тот же DropdownMenu/action contract (`Connect`, `Source`, `Reveal`, `Rename`,
+  `Delete`), что и карточки в обычном режиме.
+- `CardPointMenu` теперь controlled напрямую и использует общую
+  `CardMenuDropdownContent`, а не открывает `CardMoreMenu` через toggle-sequence.
+- Graph View подавляет native context menu на canvas surface и не dispatch'ит
+  synthetic `contextmenu`, чтобы не открывать системное меню WebView.
+- Graph View больше не монтирует `ForceGraph2D` с fallback `800x600`; первый
+  render/`zoomToFit` ждёт реального размера main surface от `ResizeObserver`.
+- Collection node click оставлен прежним: навигация в коллекцию и сохранение
+  Graph View active.
+- `SPEC_GRAPH_VIEW.md` синхронизирован с новым click-контрактом.
+
+### Проверки
+- `bunx vitest run src/components/GraphView.test.tsx src/components/CardHoverMenu.test.tsx`
+- `bunx vitest run src/App.test.tsx src/components/GraphView.test.tsx src/components/CardHoverMenu.test.tsx`
+- `bunx tsc -b --pretty false`
+- `bun run lint -- src/components/GraphView.tsx src/components/GraphView.test.tsx src/components/CardHoverMenu.tsx src/components/CardHoverMenu.test.tsx src/App.tsx`
+- `git diff --check`
+- `bun run tauri build --debug`
+- Fresh bundle opened: `target/debug/bundle/macos/Mine.app`, asset
+  `main-BSEnNoiv.js`, process `mine` PID `32707`
+
+## 04.07.2026 — Hover previews and dropdown lists use feed card fill
+
+### Задача
+Привести всплывающие карточки по hover и все выпадающие списки к той же
+заливке, что и карточки на главной странице, без новых кастомных цветов.
+
+### Что сделано
+- `DropdownMenuContent` / `DropdownMenuSubContent` и `ContextMenuContent` /
+  `ContextMenuSubContent` переведены с `bg-popover text-popover-foreground` на
+  `bg-card text-card-foreground`.
+- `CollectionPicker` inline shell теперь использует тот же card-surface через
+  `COLLECTION_PICKER_INLINE_SURFACE_CLASS`.
+- `SearchOverlay` как floating search/list surface переведён на
+  `bg-card text-card-foreground`.
+- Hover-preview карточек в Sidebar и Graph View остаются на общем
+  `ReadOnlyCardPreview` / `CardFrame`; тестами зафиксировано, что внешний frame
+  использует `bg-card`.
+- Article hover-preview теперь также наследует `feed-article-card`, чтобы в
+  dark theme совпадать с фактической article-карточкой на главном экране.
+- Dark-theme `--card` поднят с page background (`oklch(0.14 0 0)`) до
+  top-chrome/card surface (`oklch(0.17 0 0)`), чтобы `bg-card` был не только
+  семантическим классом, но и реально видимой заливкой для preview и меню.
+- Дизайн-страница `ComponentTestBench`, `DESIGN_SYSTEM.md`,
+  `SPEC_FRONTEND.md`, `SPEC_SEARCH_OVERLAY.md` и `SPEC_GRAPH_VIEW.md`
+  синхронизированы с новым surface-контрактом.
+
+### Проверки
+- `bunx vitest run src/components/Card.test.tsx src/components/CollectionPicker.test.tsx src/components/SearchOverlay.test.tsx src/components/ui/dropdown-menu.test.tsx src/components/ui/context-menu.test.tsx`
+- `bunx vitest run src/styles/global.test.ts`
+- `bunx tsc -b --pretty false`
+- `git diff --check`
+- `bun run lint`
+- `NODE_OPTIONS=--max-old-space-size=6144 bun run build`
+- `bun run dev -- --host 127.0.0.1` поднят на `http://127.0.0.1:1420/`
+
 ## 03.07.2026 — Sidebar hover seam behind feature flag
 
 ### Задача

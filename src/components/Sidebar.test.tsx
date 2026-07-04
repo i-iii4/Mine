@@ -634,6 +634,122 @@ describe("Sidebar", () => {
     expect(container.querySelectorAll("[data-sidebar-preview-thumbnail]")).toHaveLength(1);
   });
 
+  it("opens the shared card menu from a thumbnail context click", async () => {
+    const onOpenCardMenu = vi.fn();
+    vi.mocked(invoke).mockResolvedValue(previewBlock("alpha-a"));
+    const previews = new Map([
+      ["alpha", [{
+        url: "asset://localhost/thumbs/alpha-a.jpg",
+        text: false,
+        hasThumb: true,
+        slug: "alpha-a",
+      }]],
+    ]);
+    const { container } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      channelPreviews: previews,
+      onOpenCardMenu,
+    });
+
+    const thumbnail = container.querySelector(
+      '[data-sidebar-preview-thumbnail="trigger"]',
+    ) as HTMLElement;
+    fireEvent.contextMenu(thumbnail, { clientX: 144, clientY: 188 });
+
+    await waitFor(() => {
+      expect(onOpenCardMenu).toHaveBeenCalledWith(
+        expect.objectContaining({ slug: "alpha-a" }),
+        { x: 144, y: 188 },
+      );
+    });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("keeps the channel context menu on non-thumbnail row context clicks", async () => {
+    const previews = new Map([
+      ["alpha", [{
+        url: "asset://localhost/thumbs/alpha-a.jpg",
+        text: false,
+        hasThumb: true,
+        slug: "alpha-a",
+      }]],
+    ]);
+    const { container } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      channelPreviews: previews,
+      onOpenCardMenu: vi.fn(),
+    });
+
+    const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
+    fireEvent.contextMenu(row, { clientX: 32, clientY: 48 });
+
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    expect(screen.getByText("Rename")).toBeInTheDocument();
+    expect(screen.getByText("Delete")).toBeInTheDocument();
+  });
+
+  it("closes a frozen thumbnail hover preview when the card menu closes away from the thumbnail", async () => {
+    vi.useFakeTimers();
+    vi.mocked(invoke).mockResolvedValue(previewBlock("alpha-a"));
+    const previews = new Map([
+      ["alpha", [{
+        url: "asset://localhost/thumbs/alpha-a.jpg",
+        text: false,
+        hasThumb: true,
+        slug: "alpha-a",
+      }]],
+    ]);
+    const props = {
+      ...defaultProps,
+      width: 600,
+      vaultPath: "/vault",
+      thumbsRootPath: "/vault/.arena/cache/thumbs",
+      channelPreviews: previews,
+      hoverPreviewFrozen: false,
+    };
+    const { container, rerender } = renderSidebar(props);
+
+    const thumbnail = container.querySelector(
+      '[data-sidebar-preview-thumbnail="trigger"]',
+    ) as HTMLElement;
+    Object.defineProperty(thumbnail, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 100,
+        y: 100,
+        left: 100,
+        top: 100,
+        right: 132,
+        bottom: 132,
+        width: 32,
+        height: 32,
+        toJSON: () => ({}),
+      }),
+    });
+
+    fireEvent.pointerEnter(thumbnail, { clientX: 110, clientY: 110 });
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
+
+    rerender(sidebarTree({ ...props, hoverPreviewFrozen: true }));
+    fireEvent.pointerLeave(thumbnail, { clientX: 500, clientY: 500 });
+    fireEvent.pointerMove(window, { clientX: 500, clientY: 500 });
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
+
+    await act(async () => {
+      rerender(sidebarTree({ ...props, hoverPreviewFrozen: false }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
+  });
+
   it("shows a non-interactive sidebar preview only while the thumbnail is hovered", async () => {
     vi.useFakeTimers();
     const compositeManifest = JSON.stringify({

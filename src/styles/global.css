@@ -586,7 +586,7 @@ body {
     --background: oklch(0.14 0 0);
     /* text-primary: shadcn neutral dark */
     --foreground: oklch(0.985 0 0);
-    --card: oklch(0.14 0 0);
+    --card: oklch(0.17 0 0);
     --card-foreground: oklch(0.985 0 0);
     --popover: oklch(0.14 0 0);
     --popover-foreground: oklch(0.985 0 0);
@@ -656,7 +656,7 @@ body {
   color-scheme: dark;
   --background: oklch(0.14 0 0);
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.14 0 0);
+  --card: oklch(0.17 0 0);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.14 0 0);
   --popover-foreground: oklch(0.985 0 0);

@@ -117,6 +117,35 @@ describe("Card", () => {
     expect(screen.getByText("by @fish_elysium")).toBeInTheDocument();
   });
 
+  it("uses the feed card surface for read-only hover previews", () => {
+    const { container } = render(
+      <ReadOnlyCardPreview
+        block={block()}
+        vaultPath={VAULT}
+        thumbsRootPath="/tmp/thumbs"
+        previewMode="micro"
+      />,
+    );
+
+    expect(container.querySelector("[data-feed-card-frame]")).toHaveClass("bg-card");
+  });
+
+  it("uses the article feed fill for read-only article hover previews", () => {
+    const { container } = render(
+      <ReadOnlyCardPreview
+        block={block({ block_type: "article", card_kind: "article" })}
+        vaultPath={VAULT}
+        thumbsRootPath="/tmp/thumbs"
+        previewMode="micro"
+      />,
+    );
+
+    expect(container.querySelector("[data-feed-card-frame]")).toHaveClass(
+      "bg-card",
+      "feed-article-card",
+    );
+  });
+
   it("micro preview renders the search excerpt with the highlighter mark", () => {
     render(
       <ReadOnlyCardPreview
