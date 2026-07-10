@@ -22,8 +22,8 @@ export const ActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
           "action-button group inline-flex h-6 shrink-0 cursor-pointer items-center rounded-1 p-[2px] font-mono text-sm",
           "select-none overflow-hidden outline-0",
           isSelected
-            ? "bg-component-fill-hover"
-            : "bg-transparent hover:bg-component-fill-hover",
+            ? "bg-active"
+            : "bg-transparent hover:bg-active",
           className,
         )}
       >

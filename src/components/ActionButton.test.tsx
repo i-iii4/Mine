@@ -11,7 +11,14 @@ describe("ActionButton", () => {
     );
 
     const button = screen.getByRole("button", { name: /Search elements/ });
-    expect(button).toHaveClass("h-6", "p-[2px]", "items-center");
+    expect(button).toHaveClass(
+      "h-6",
+      "p-[2px]",
+      "items-center",
+      "bg-transparent",
+      "hover:bg-active",
+    );
+    expect(button).not.toHaveClass("hover:bg-component-fill-hover");
 
     const hotkey = screen.getByText("⌘F");
     expect(hotkey).toHaveClass("inline-flex", "h-5", "items-center", "leading-none");
@@ -20,5 +27,13 @@ describe("ActionButton", () => {
     const label = screen.getByText("Search elements");
     expect(label).toHaveClass("inline-flex", "h-5", "items-center", "leading-none");
     expect(label).not.toHaveClass("py-[2px]");
+  });
+
+  it("uses the shared active surface for selected state", () => {
+    render(<ActionButton isSelected>Design</ActionButton>);
+
+    const button = screen.getByRole("button", { name: "Design" });
+    expect(button).toHaveClass("bg-active");
+    expect(button).not.toHaveClass("bg-component-fill-hover");
   });
 });

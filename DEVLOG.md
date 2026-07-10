@@ -1,5 +1,42 @@
 # Devlog
 
+## 10.07.2026 — Surface-relative active states and unified component fills
+
+### Задача
+Унифицировать hover/selected surfaces во всех частях desktop-интерфейса так,
+чтобы активный цвет зависел от структурной поверхности, а внешняя и внутренняя
+пули сохраняли одинаковую визуальную дистанцию в верхней панели, нижней панели,
+меню и карточках.
+
+### Что сделано
+- `--active` переведён с абсолютного цвета на relative OKLCH elevation от
+  ближайшей `--surface`: −0.035 в light theme и +0.09 в dark theme.
+- Структурные зоны `background`, `card`, `sidebar`, `popover`, `chrome` и
+  `accent` задают локальную поверхность; transient `bg-active` не создаёт новую
+  зону и не искажает вложенные component fills.
+- `SegmentedControl`, `ActionButton`, action-bar menu triggers, dropdown и
+  context menu используют единый `bg-active` для внешнего hover/selected state.
+- Неактивный текст `SegmentedControl` остаётся `text-muted-foreground` при
+  hover; выбранный segment использует `text-foreground`.
+- `--component-fill-inner` закреплён как точный алиас `--component-fill`:
+  внутренняя пуля составного control и default `Button` на одной поверхности
+  имеют одинаковый вычисленный цвет.
+- Hover обычной кнопки остаётся отдельным контрактом: фон не меняется, появляется
+  inset outline цвета `--component-fill-hover`.
+- Design-system test bench и документация синхронизированы с относительной
+  архитектурой цвета.
+
+### Проверки
+- `bun run test:frontend` — 72 test files, 641 tests
+- `bun run lint`
+- Computed-style проверка relative OKLCH в system Chrome для `background`,
+  `chrome` и `accent`: постоянный разрыв active → inner 0.025 в light theme и
+  0.06 в dark theme
+- `git diff --check`
+- `cargo tauri build --debug --bundles app`
+- Fresh bundle opened: `target/debug/bundle/macos/Mine.app`, process `mine` PID
+  `18399`
+
 ## 09.07.2026 — Grid surfaces, canonical View control and Clipper recovery
 
 ### Задача

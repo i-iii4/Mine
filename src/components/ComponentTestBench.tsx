@@ -115,7 +115,7 @@ const COLOR_TOKEN_GROUPS: readonly TokenGroup[] = [
       { token: "--secondary", use: "= accent (совместимость shadcn)" },
       { token: "--muted", use: "= accent (совместимость shadcn)" },
       { token: "--accent", use: "Hover-фон, action bar" },
-      { token: "--active", use: "Нажатие, активная строка" },
+      { token: "--active", use: "Relative hover/selected surface" },
       { token: "--border", use: "Границы и разделители" },
       { token: "--border-accent", use: "Индикатор навигации/наведения: seam строки, рамка карточки (контраст ~0.30 к фону)" },
       { token: "--search-mark", use: "Поисковый маркер: фон mark в карточках и Search Overlay (жёлтый текстовыделитель)" },
@@ -137,9 +137,9 @@ const COLOR_TOKEN_GROUPS: readonly TokenGroup[] = [
   {
     title: "Заливки компонентов",
     tokens: [
-      { token: "--component-fill", use: "Фон Button, обойма ActionButton" },
+      { token: "--component-fill", use: "Фон Button" },
       { token: "--component-fill-inner", use: "Внутренняя пуля ActionButton" },
-      { token: "--component-fill-hover", use: "Hover-обводка, selected" },
+      { token: "--component-fill-hover", use: "Hover-обводка Button" },
       { token: "--destructive", use: "Ошибки, безвозвратное удаление контента (Delete)" },
       { token: "--detach", use: "Разъединение без удаления контента (Disconnect, Remove from Element)" },
       { token: "--primary", use: "Checkbox checked, прогресс" },
@@ -471,8 +471,8 @@ function CoreComponentSection() {
           { prop: "Inner", value: "20 (h-5) · px-[1ch] · rounded-[2px]" },
           { prop: "Шрифт", value: "font-mono · 12px" },
           { prop: "Inner фон", value: "--component-fill-inner" },
-          { prop: "Default", value: "transparent → hover --component-fill-hover" },
-          { prop: "Selected", value: "--component-fill-hover" },
+          { prop: "Default", value: "transparent → hover --active" },
+          { prop: "Selected", value: "--active" },
         ]}
       >
         <ActionButton hotkey="⌘⇧N">New Collection</ActionButton>
@@ -492,6 +492,7 @@ function CoreComponentSection() {
           { prop: "Отступ", value: "root p-[2px] · item px-[1ch]" },
           { prop: "Выбран", value: "--component-fill-inner · text --foreground" },
           { prop: "Не выбран", value: "text --muted-foreground · hover без text-change" },
+          { prop: "Hover оболочки", value: "--active" },
         ]}
       >
         <SegmentedControl
@@ -571,7 +572,7 @@ function CoreComponentSection() {
           { prop: "topChrome", value: "rounded-0 · text --muted-foreground" },
           { prop: "clipperHeader", value: "24 (h-6) · rounded-1 · px-2 · chevron" },
           { prop: "actionBar", value: "24 (h-6) · p-[2px]" },
-          { prop: "Hover", value: "bg --active (chrome) / --component-fill-hover (bar)" },
+          { prop: "Hover", value: "bg --active" },
           { prop: "Открыт", value: "bg --active · text --foreground" },
         ]}
       >

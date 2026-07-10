@@ -50,7 +50,7 @@ export function SegmentedControl<T extends string>({
     <div
       role="group"
       className={cn(
-        "action-button inline-flex shrink-0 cursor-pointer items-center overflow-hidden rounded-1 bg-transparent p-[2px] text-muted-foreground outline-0 hover:bg-component-fill-hover",
+        "action-button inline-flex shrink-0 cursor-pointer items-center overflow-hidden rounded-1 bg-transparent p-[2px] text-muted-foreground outline-0 hover:bg-active",
         sizeClasses.root,
         className,
       )}

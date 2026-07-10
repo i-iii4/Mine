@@ -538,8 +538,8 @@ body {
      the zone surface in the elevation map after the theme blocks. */
   --elevation-rest: -0.06;
   --elevation-hover: -0.085;
-  /* surface +2 */
-  --active: oklch(0.965 0 0);
+  /* interactive hover/selected surface = zone surface + signed delta */
+  --active-elevation: -0.035;
   --hover-foreground: oklch(0.205 0 0);
   --primary-hover: oklch(0.4495 0 0);
   --primary-active: oklch(0.2178 0 0);
@@ -569,8 +569,6 @@ body {
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.3211 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  /* selected-bg: surface +2 */
-  --sidebar-accent: oklch(0.965 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.95 0 0);
   --sidebar-ring: oklch(0.5693 0 0);
@@ -605,8 +603,8 @@ body {
     /* surface +1 */
     --accent: oklch(0.2 0 0);
     --accent-foreground: oklch(0.985 0 0);
-    /* surface +2: L 0.23 (step 0.03 above accent) */
-    --active: oklch(0.23 0 0);
+    /* interactive hover/selected surface = zone surface + 3 ladder quanta */
+    --active-elevation: 0.09;
     /* border/lines: L 0.26 (top of the ladder) */
     --border: oklch(0.26 0 0);
     /* navigation/hover highlight — indicator scale, contrast ~0.30 to background */
@@ -639,8 +637,6 @@ body {
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: oklch(0.9189 0 0);
     --sidebar-primary-foreground: oklch(0.985 0 0);
-    /* selected-bg: surface +2 */
-    --sidebar-accent: oklch(0.23 0 0);
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(0.26 0 0);
     --sidebar-ring: oklch(0.6268 0 0);
@@ -672,7 +668,7 @@ body {
   --accent-foreground: oklch(0.985 0 0);
   --elevation-rest: 0.15;
   --elevation-hover: 0.18;
-  --active: oklch(0.23 0 0);
+  --active-elevation: 0.09;
   --hover-foreground: oklch(0.985 0 0);
   --primary-hover: oklch(0.8 0 0);
   --primary-active: oklch(0.7 0 0);
@@ -694,7 +690,6 @@ body {
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.9189 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.23 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.26 0 0);
   --sidebar-ring: oklch(0.6268 0 0);
@@ -722,7 +717,7 @@ body {
   --accent-foreground: oklch(0.205 0 0);
   --elevation-rest: -0.06;
   --elevation-hover: -0.085;
-  --active: oklch(0.965 0 0);
+  --active-elevation: -0.035;
   --hover-foreground: oklch(0.205 0 0);
   --primary-hover: oklch(0.4495 0 0);
   --primary-active: oklch(0.2178 0 0);
@@ -745,7 +740,6 @@ body {
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.3211 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.965 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.95 0 0);
   --sidebar-ring: oklch(0.5693 0 0);
@@ -796,12 +790,12 @@ body {
 /* ── Relative elevation (color architecture, category 3) ─────────────────────
    A button is a surface lifted a consistent ΔL above the background of its zone,
    not an absolute fill. Each zone exposes its own background through --surface;
-   the component-fill tokens are recomputed from it via OKLCH relative color, so
-   the same control reads equally "raised" on any surface and in either theme.
-   Lift magnitude lives in --elevation-rest / --elevation-hover (per theme, in
-   the blocks above). The rest→hover gap is one ladder quantum (0.03), so the old
-   three-step fill triad collapses to two levels and --component-fill-inner is
-   now an alias of --component-fill.
+   active and component-fill tokens are recomputed from it via OKLCH relative
+   color, so the same interaction reads equally "raised" on any surface and in
+   either theme. Lift magnitude lives in --active-elevation,
+   --elevation-rest and --elevation-hover (per theme, in the blocks above).
+   Transient active states do not become structural zones: their descendants
+   continue to derive from the nearest background/card/chrome/accent surface.
 
    Surface map: every button-hosting zone MUST appear here. Values point at the
    surface tokens directly, so there is no second scalar to drift out of sync.
@@ -815,9 +809,6 @@ body {
 .bg-accent,
 .bg-secondary,
 .bg-muted { --surface: var(--accent); }
-.bg-active,
-.bg-sidebar-accent { --surface: var(--active); }
-
 :root,
 .bg-background,
 .bg-card,
@@ -829,6 +820,8 @@ body {
 .bg-muted,
 .bg-active,
 .bg-sidebar-accent {
+  --active: oklch(from var(--surface) calc(l + var(--active-elevation)) 0 0);
+  --sidebar-accent: var(--active);
   --component-fill: oklch(from var(--surface) calc(l + var(--elevation-rest)) 0 0);
   --component-fill-inner: var(--component-fill);
   --component-fill-hover: oklch(from var(--surface) calc(l + var(--elevation-hover)) 0 0);

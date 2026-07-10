@@ -25,5 +25,7 @@ describe("ContextMenu", () => {
 
     expect(content).toHaveClass("bg-card", "text-card-foreground");
     expect(content).not.toHaveClass("bg-popover", "text-popover-foreground");
+    expect(screen.getByText("Action item")).toHaveClass("focus:bg-active");
+    expect(screen.getByText("Action item")).not.toHaveClass("focus:bg-accent");
   });
 });

@@ -41,7 +41,7 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
           surface === "clipperHeader" &&
             "inline-flex h-6 max-w-full items-center gap-1 overflow-hidden rounded-1 px-2 text-base text-foreground hover:bg-active data-[state=open]:bg-active",
           surface === "actionBar" &&
-            "action-button inline-flex h-6 shrink-0 items-center overflow-hidden rounded-1 p-[2px] font-mono text-sm hover:bg-component-fill-hover",
+            "action-button inline-flex h-6 shrink-0 items-center overflow-hidden rounded-1 p-[2px] font-mono text-sm hover:bg-active",
           className,
         )}
         {...props}

@@ -31,4 +31,18 @@ describe("MenuTextTrigger", () => {
     expect(icon).toBeTruthy();
     expect(icon).toHaveClass("group-data-[state=open]:rotate-90");
   });
+
+  it("uses the shared active surface in the action bar", () => {
+    render(
+      <MenuTextTrigger
+        label="Actions"
+        aria-label="Open actions"
+        surface="actionBar"
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Open actions" });
+    expect(trigger).toHaveClass("hover:bg-active");
+    expect(trigger).not.toHaveClass("hover:bg-component-fill-hover");
+  });
 });

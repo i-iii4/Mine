@@ -762,7 +762,7 @@ describe("AppWithVault", () => {
       "false",
     );
     expect(viewSwitcher?.querySelector("[data-main-view-mode-control]")).toHaveClass(
-      "text-tertiary-foreground",
+      "text-muted-foreground",
     );
   });
 

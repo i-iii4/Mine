@@ -23,7 +23,7 @@ describe("SegmentedControl", () => {
       "font-mono",
       "text-sm",
       "text-muted-foreground",
-      "hover:bg-component-fill-hover",
+      "hover:bg-active",
     );
     expect(control).not.toHaveClass("hover:outline-component-fill-hover");
     expect(screen.getByRole("button", { name: "All" })).toHaveClass(
@@ -103,7 +103,7 @@ describe("SegmentedControl", () => {
     expect(onChange).toHaveBeenCalledWith("link");
   });
 
-  it("allows secondary chrome to set the inactive text tone", () => {
+  it("uses the shared muted tone for inactive segments", () => {
     render(
       <SegmentedControl
         value="grid"
@@ -113,12 +113,11 @@ describe("SegmentedControl", () => {
         ]}
         onChange={vi.fn()}
         aria-label="View mode"
-        className="text-tertiary-foreground"
       />,
     );
 
     const control = screen.getByRole("group", { name: "View mode" });
-    expect(control).toHaveClass("text-tertiary-foreground");
+    expect(control).toHaveClass("text-muted-foreground");
     expect(screen.getByRole("button", { name: "Graph" })).toHaveClass("text-current");
   });
 
@@ -139,7 +138,7 @@ describe("SegmentedControl", () => {
     expect(inactive).toHaveClass("text-current");
     expect(inactive).not.toHaveClass("hover:text-foreground");
     expect(screen.getByRole("group", { name: "Collection filter" })).toHaveClass(
-      "hover:bg-component-fill-hover",
+      "hover:bg-active",
     );
   });
 });

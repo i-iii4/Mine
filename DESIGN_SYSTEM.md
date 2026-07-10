@@ -220,20 +220,29 @@ Selection, focus, навигация/hover — сигналы состояния
 просаживалась по заметности на ярких поверхностях. Relative elevation честнее:
 кнопка действительно приподнята над любым фоном, а не притворяется.
 
-**Величина lift выведена, не выбрана.** Квант системы один — 0.03 (категория 1),
+Интерактивная surface `--active` использует более слабый relative lift, чем
+внутренняя заливка компонента: `+0.09` в dark и `−0.035` в light. Поэтому hover
+строки меню, top-chrome trigger, внешняя пуля `SegmentedControl` и внешняя пуля
+`ActionButton` сохраняют одинаковое расстояние от локальной поверхности.
+Transient `bg-active` не объявляет новую `--surface`: вложенные component fills
+продолжают считаться от ближайшей структурной зоны.
+
+**Величина component lift выведена, не выбрана.** Квант системы один — 0.03 (категория 1),
 поэтому прежний внутренний шаг триады 0.05 убран как чужеродный. Lift покоя —
 минимальный кратный кванту подъём, при котором кнопка на самой тёмной зоне
 (`background` 0.14) встаёт **выше верхней линии-поверхности** (`border` 0.26):
 `0.14 + lift > 0.26 → lift = 0.15` (5 квантов). Hover на один квант выше — 0.18.
 Фальсификация: при lift 0.15 кнопка-пуля на `chrome` (0.17) даёт ровно 0.32 —
 сегодняшнее значение, то есть самые частые кнопки тулбара не сдвигаются. Якорь
-«выше accent 0.20» дал бы lift 0.09 и просадку пуль до 0.26, чего в UI нет, —
-реальность отвергает альтернативу. Состояний два (`active` не используется),
-поэтому и уровней lift два: третий токен `inner` схлопывается в `rest`
+«выше accent 0.20» дал бы component lift 0.09 и просадку внутренних пуль до
+0.26, чего в UI нет. Поэтому `0.09` принадлежит только слабой interactive
+surface `--active`; component levels остаются сильнее. Третий токен `inner`
+схлопывается в `rest`
 (`--component-fill-inner` теперь алиас `--component-fill`).
 
 | Уровень | Токен | Lift (тёмная) | Lift (светлая) |
 |---|---|---|---|
+| Hover/selected surface | `--active` (и `--sidebar-accent`) | +0.09 | −0.035 |
 | Покой | `--component-fill` (и `-inner`) | +0.15 | −0.06 |
 | Hover/selected | `--component-fill-hover` | +0.18 | −0.085 |
 
@@ -255,7 +264,7 @@ color: `oklch(from var(--surface) calc(l + var(--elevation-rest)) 0 0)`. `--surf
 |---|---|---|
 | Поверхности | равномерный шаг L (ladder) | абсолютное, по уровню |
 | Индикаторы | фиксированный контраст с фоном (+ light ×0.7) | выводится из контраста |
-| Над поверхностью | консистентный lift над фоном зоны (+0.15 / +0.18 ΔL) | относительное (реализовано) |
+| Над поверхностью | консистентный lift над фоном зоны (`active`, component fills) | относительное (реализовано) |
 
 ## Цвет текста
 
@@ -280,7 +289,6 @@ color: `oklch(from var(--surface) calc(l + var(--elevation-rest)) 0 0)`. `--surf
 | L0 | `--background` | 1.0 | 0.14 | Фон страницы |
 | L1 | `--card`, `--chrome` | 0.99 | 0.17 | Feed cards, hover previews, floating menu containers, App/top chrome |
 | L2 | `--accent` | 0.98 | 0.20 | Hover фон, action bar, фон карточки-статьи |
-| L3 | `--sidebar-accent`, `--active` | 0.965 | 0.23 | Sidebar surface, нажатие |
 | L4 | `--border` | 0.95 | 0.26 | Границы, разделители |
 
 **Шаг (тёмная):** равномерный 0.03 (см. «Архитектура цвета», категория 1). Светлая тема сжата у белого.
@@ -290,7 +298,8 @@ color: `oklch(from var(--surface) calc(l + var(--elevation-rest)) 0 0)`. `--surf
 containers; `--chrome` — app shell. Токены `--muted`, `--secondary` имеют то же
 значение, что и `--accent` (для совместимости с shadcn). Для нижней панели и
 активных search surfaces используем `bg-accent`, для верхнего chrome —
-`bg-chrome`.
+`bg-chrome`. `--active` и совместимый `--sidebar-accent` не принадлежат этой
+абсолютной шкале: они вычисляются от поверхности текущей зоны.
 
 ### Заливки компонентов (component fills)
 
@@ -300,6 +309,7 @@ relative elevation (категория 3). Конкретный L зависит
 
 | Токен | Lift | На `background` 0.14 | На `chrome` 0.17 | На `accent` 0.20 |
 |---|---|---|---|---|
+| `--active` (= `--sidebar-accent`) | +0.09 | 0.23 | 0.26 | 0.29 |
 | `--component-fill` (= `-inner`) | +0.15 | 0.29 | 0.32 | 0.35 |
 | `--component-fill-hover` | +0.18 | 0.32 | 0.35 | 0.38 |
 
@@ -398,13 +408,12 @@ between rows inside focus mode disables transition for that switch frame.
 
 ### Токены интерактивных состояний
 
-Поверхности:
+Интерактивные поверхности:
 
 | Токен | Светлая (oklch L) | Тёмная (oklch L) | Назначение |
 |---|---|---|---|
-| `--accent` | 0.98 | 0.20 | Ховер фон (поверхность +1) |
-| `--sidebar-accent` | 0.965 | 0.23 | Legacy/sidebar surface (+2), не для текущих row states |
-| `--active` | 0.965 | 0.23 | Нажатие (поверхность +2) |
+| `--active` | surface − 0.035 | surface + 0.09 | Hover/selected относительно локальной поверхности |
+| `--sidebar-accent` | `var(--active)` | `var(--active)` | Совместимый алиас |
 
 Заливки компонентов — производные от фона зоны (relative elevation, категория 3),
 абсолютных значений нет. Пример на `accent`-поверхности (ховер-фон): покой
@@ -429,6 +438,11 @@ between rows inside focus mode disables transition for that switch frame.
 Кнопки используют токены `--component-fill-*`, которые считаются от фона зоны
 (relative elevation, категория 3): на ярком фоне ярче, на тёмном темнее, lift
 одинаков.
+
+`--component-fill-inner` является семантическим алиасом
+`--component-fill`. Поэтому внутренняя пуля составных controls и обычная
+`Button` на одной структурной поверхности имеют строго одинаковый вычисленный
+цвет; различаться могут только геометрия и hover-контракт.
 
 Варианты (`variant`):
 
@@ -668,7 +682,12 @@ divider; в collapsed state search скрыт и `All / Connected` не ренд
 - Segmented control: `h-6 p-[2px] rounded-1 font-mono text-sm`, segments
   `h-5 px-[1ch] rounded-[2px]`; active segment
   `bg-component-fill-inner text-foreground`, inactive
-  `text-muted-foreground`.
+  `text-muted-foreground`. The outer pill stays transparent at rest and uses
+  `bg-active` on hover without changing inactive segment text. This is the same
+  hover surface as dropdown rows and top-chrome menu triggers; the stronger
+  `--component-fill-hover` is not used for the outer pill. Active segment fill
+  is exactly the default `Button` fill on the same structural surface because
+  `--component-fill-inner` aliases `--component-fill`.
 - `Collections:` label в этом режиме запрещён.
 - Текущая коллекция: штатный `TopCollectionSwitcher` в compact geometry
   (`px-3`, inner pill `h-6 px-2`). Это постоянный элемент right top chrome, а
@@ -1171,17 +1190,18 @@ container. Запрещено писать shadow-local самодельные d
 
 `rounded-1 px-2 py-1.5 text-base`. `DropdownMenu` использует
 `focus:bg-active`; `DropdownMenuSubTrigger[data-state=open]` использует тот же
-`bg-active`. `ContextMenu` и `Command` сохраняют `bg-accent`/selected
-поведение.
+`bg-active`. `ContextMenu` использует тот же relative `bg-active` для item,
+checkbox, radio и open submenu states. Все menu hover/focus surfaces выводятся
+от локального `bg-card`/`bg-accent`, а не получают абсолютный цвет.
 
 ### Деструктивные и detach-пункты
 
 `variant="destructive"`: текст красный (`text-destructive`) — действие
 безвозвратно удаляет контент. `variant="detach"`: текст оранжевый
 (`text-detach`) — действие разрывает связь, контент сохраняется (`Disconnect`,
-`Remove from Element`). Оба: фон при фокусе — стандартный
-DropdownMenu/ContextMenu focus surface (`focus:bg-active` для DropdownMenu,
-`focus:bg-accent` для ContextMenu), без цветного фона при наведении.
+`Remove from Element`). Оба используют единую relative
+DropdownMenu/ContextMenu focus surface `focus:bg-active`, без цветного фона при
+наведении.
 
 ## Web Clipper UI parity
 
@@ -1275,7 +1295,11 @@ Traffic-light reserve размечается как `data-traffic-light-reserve`
 Правая часть остаётся свободной для transient status text вроде `Syncing…`;
 глобальной Search-кнопки в нижней панели нет.
 
-Компонент `ActionButton` — двуслойная кнопка (две «пули»). Использует токены `--component-fill-*`, изолированные от поверхностей.
+Компонент `ActionButton` — двуслойная кнопка (две «пули»). Внешняя пуля
+использует общую интерактивную surface `--active`, внутренний label —
+`--component-fill-inner`. Внутренний label имеет тот же точный вычисленный цвет,
+что default `Button` на этой поверхности: `--component-fill-inner` является
+алиасом `--component-fill`.
 
 - Структура: `<div role="button">` (внешняя пуля) → `<span hotkey>` + `<span label>` (внутренняя пуля)
 - Внешняя пуля: `rounded-1` (3px), `h-6` (24px), `p-[2px]`, `overflow-hidden`
@@ -1294,8 +1318,8 @@ Traffic-light reserve размечается как `data-traffic-light-reserve`
 | Состояние | Внешняя пуля | Хоткей | Внутренняя пуля |
 |---|---|---|---|
 | Покой | `bg-transparent` | `text-foreground` | `bg-component-fill-inner text-foreground` |
-| Hover | `bg-component-fill-hover` | `text-foreground` | без изменений |
-| Selected | `bg-component-fill-hover` | `text-foreground` | без изменений |
+| Hover | `bg-active` | `text-foreground` | без изменений |
+| Selected | `bg-active` | `text-foreground` | без изменений |
 
 Кнопки:
 
@@ -1530,7 +1554,7 @@ React commit; запрещены промежуточные `calculating`, `rend
 использует `font-mono text-sm text-muted-foreground`. Selector повторяет
 ActionButton geometry: outer `h-6 p-[2px] rounded-1`, segments `h-5
 px-[1ch] rounded-[2px] text-muted-foreground`. Hover заливает только outer
-control через стандартный `hover:bg-component-fill-hover`. Неактивные segments
+control через общий `hover:bg-active`. Неактивные segments
 не меняют цвет текста на hover; активный segment использует
 `bg-component-fill-inner text-foreground`.
 

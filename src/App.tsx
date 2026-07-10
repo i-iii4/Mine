@@ -243,7 +243,6 @@ function MainSecondaryStatsRight({
           value={viewMode}
           onChange={onViewModeChange}
           entered
-          className="text-tertiary-foreground"
         />
       </div>
     </div>
