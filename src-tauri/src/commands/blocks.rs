@@ -1256,7 +1256,7 @@ fn extract_text_selection_inner(
 
     if let Some(updated) = patched_source.as_ref() {
         files::write_atomically(&source_path, updated.as_bytes())
-        .map_err(internal_text_selection_error)?;
+            .map_err(internal_text_selection_error)?;
         let reindex_result = (|| -> Result<(), TextSelectionExtractError> {
             let reparsed =
                 parse_markdown_document(&read_slug, updated, file_saved_at(&source_path)).map_err(
@@ -1693,7 +1693,8 @@ fn apply_merge_blocks(
 
     for write in reference_writes {
         let serialized = crate::domain::block::serialize_block(&write.block);
-        files::write_atomically(&write.path, serialized.as_bytes()).map_err(internal_merge_error)?;
+        files::write_atomically(&write.path, serialized.as_bytes())
+            .map_err(internal_merge_error)?;
         index::upsert_block(conn, &write.block, Some(vault.root()))
             .map_err(internal_merge_error)?;
     }

@@ -39,8 +39,8 @@ pub enum ResolveAction {
     /// deletion plus when the command returns.
     KeepOriginal,
     /// Keep the conflict version. Archive the original base file into
-    /// `.arena/conflicts-archive/` and rename the conflict file onto
-    /// the base slug.
+    /// the local derived `conflicts-archive/` and rename the conflict
+    /// file onto the base slug.
     KeepConflict,
     /// Dismiss the conflict without touching files. The user is
     /// expected to merge manually in Obsidian.
@@ -79,7 +79,7 @@ pub fn resolve_vault_conflict(
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     let vault_root = vs.vault.root().to_path_buf();
-    let derived_arena = vs.vault.derived_root().to_path_buf();
+    let derived_root = vs.vault.derived_root().to_path_buf();
 
     let conflict_exists = index::vault_conflict_exists(&vs.conn, &base_slug, &conflict_slug)
         .map_err(|e| CommandError::Internal(format!("vault_conflict_exists failed: {e:#}")))?;
@@ -112,7 +112,7 @@ pub fn resolve_vault_conflict(
             }
 
             if base_path.exists() {
-                let archive_dir = derived_arena.join("conflicts-archive");
+                let archive_dir = derived_root.join("conflicts-archive");
                 std::fs::create_dir_all(&archive_dir).map_err(|e| {
                     CommandError::Internal(format!(
                         "failed to create archive dir {}: {e}",

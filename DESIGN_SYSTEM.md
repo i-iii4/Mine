@@ -1043,6 +1043,12 @@ Runtime article cards add `feed-article-card`; read-only hover previews must
 carry the same class for article blocks, so their fill matches the actual feed
 card of that type.
 
+Feed graphic cards use the same generated thumbnail/poster source as the
+sidebar preview strip before falling back to the original media file. This keeps
+grid cards visually aligned with sidebar thumbnails and avoids source-image
+letterboxing, transparent gutters, or oversized originals becoming the default
+feed surface.
+
 ### Hover Preview Surfaces
 
 Всплывающие preview-карточки используют ту же визуальную модель, что feed card
@@ -1441,15 +1447,22 @@ bar сразу переходит в main surface, Detail controls уходят 
 compact Detail top chrome сохраняет отдельный `260ms` budget, потому что там
 анимируются элементы permanent top chrome.
 
-В main/Grid state второй top-bar level — тихая информационная строка, а не
-навигация и не toolbar. Она показывает статистику текущего пространства и
-текущего канала без кнопок, иконок, плашек, hover-состояний и внутренних
-вертикальных разделителей.
+В main browsing state второй top-bar level — тихая информационная строка, а не
+общий toolbar. Она показывает статистику текущего пространства и текущего
+канала; в content segment допускается только один shared compact
+`SegmentedControl` для режима `View: Grid / Graph`. Этот switcher использует
+тот же визуальный контракт, что `Collections: All / Connected` в expanded card
+chrome, и стоит сразу после счётчика текущей коллекции по левой оси content
+segment. Зазор между счётчиком и switcher равен spacing-only gap левой
+статистики (`gap-5`). Отдельные
+`ActionButton`-переключатели `Graph/Grid` в bottom action bar или top fallback
+запрещены.
 
 Левая часть использует компактный англоязычный metadata contract:
-`1 466 files    260 .md    1 204 media    4,8 GB`. `files` — полный
-физический счётчик файлов в source vault, включая Markdown, media, остальные
-файлы, скрытые и служебные файлы. Точка не рисуется отдельным separator:
+`1 464 files    260 .md    1 204 media    4,8 GB`. `files` — счётчик
+пользовательского content layer в source vault и должен равняться `.md + media`;
+скрытые и служебные файлы вроде `.mine/vault-id`, `.obsidian` и legacy `.arena`
+не входят. Точка не рисуется отдельным separator:
 она является частью label `.md`, как расширение файла; промежутки задаются
 layout gap. Правая часть пишет `cards` только для `Everything`; в конкретном
 канале строка получает уточнение `cards in channel`.
@@ -1457,7 +1470,8 @@ layout gap. Правая часть пишет `cards` только для `Ever
 Art direction: это ambient metadata, а не dashboard. Строка должна считываться
 как часть системного chrome: ровная, низкоконтрастная, без KPI-акцента и без
 визуального соревнования с карточками. Запрещены icons, badges, bold numbers,
-colored deltas, cards, pills, uppercase labels и отдельные hover/focus states.
+colored deltas, cards, pills, uppercase labels и любые hover/focus states кроме
+состояний единственного shared `SegmentedControl` для view-mode.
 
 Левый segment (`data-main-secondary-top-bar-sidebar-segment`) показывает
 статистику пространства и выравнивается с колонкой Sidebar: `px-8`, `h-full`,
@@ -1481,17 +1495,20 @@ Storage units — compact decimal units: `B`, `KB`, `MB`, `GB`, `TB`.
 (`4,8 GB`), дальше целое значение (`18 GB`).
 
 Правый segment (`data-main-secondary-top-bar-content-segment`) показывает
-количество карточек в текущем route scope и выравнивается по левой оси
-контентной области: `px-8`, `justify-start`, `font-mono text-sm
-text-tertiary-foreground leading-none`. Текст: `260 cards`. В `Everything`
-это количество всех карточек, в канале — количество карточек, прикреплённых к
-этому каналу. Search/filter state не меняет этот счётчик: это статистика
-канала, а не количество видимых результатов.
+количество элементов в текущем route scope у левой оси контентной области и
+держит `View: Grid / Graph` сразу справа от счётчика: `px-8`, `justify-start`,
+`gap-5`, `font-mono text-sm text-tertiary-foreground leading-none`.
+`View:` и неактивные segments наследуют тот же `text-tertiary-foreground`,
+что счётчик. Текст счётчика: `260 elements`. В `Everything` это количество
+всех элементов, в канале — количество элементов, прикреплённых к этому каналу.
+Search/filter state не меняет этот счётчик: это статистика канала, а не
+количество видимых результатов.
 
 Текстовый контракт правого segment:
 
-- `1 card`, otherwise `cards`
-- `0 cards` для пустого канала
+- `1 element`, otherwise `elements`
+- `1 element in collection`, otherwise `elements in collection` в канале
+- `0 elements` для пустого канала
 - никаких labels вроде `Cards:` или имени канала; контекст уже задан route
   title в permanent top chrome
 
@@ -1513,8 +1530,9 @@ React commit; запрещены промежуточные `calculating`, `rend
 использует `font-mono text-sm text-muted-foreground`. Selector повторяет
 ActionButton geometry: outer `h-6 p-[2px] rounded-1`, segments `h-5
 px-[1ch] rounded-[2px] text-muted-foreground`. Hover заливает только outer
-control через стандартный `hover:bg-component-fill-hover`; активный segment
-использует `bg-component-fill-inner text-foreground`.
+control через стандартный `hover:bg-component-fill-hover`. Неактивные segments
+не меняют цвет текста на hover; активный segment использует
+`bg-component-fill-inner text-foreground`.
 
 Если включён Compact Detail top menu, эта link-editor surface не рендерится:
 тот же `All / Connected` state показывается внутри permanent top chrome

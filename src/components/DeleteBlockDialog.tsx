@@ -8,7 +8,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { legacyThumbsRoot, mediaUrl, thumbnailUrl } from "@/lib/assets";
+import { fallbackThumbsRoot, mediaUrl, thumbnailUrl } from "@/lib/assets";
 import type { DeleteBlockMedia, DeleteBlockPlan } from "@/types";
 
 interface DeleteBlockDialogProps {
@@ -137,7 +137,7 @@ function DeleteMediaPreviewGrid({
   thumbsRootPath?: string;
   blockSlug: string;
 }) {
-  const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
+  const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
 
   return (
     <div className="grid max-h-56 grid-cols-4 gap-2 overflow-y-auto sm:grid-cols-5">

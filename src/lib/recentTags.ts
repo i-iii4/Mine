@@ -1,7 +1,8 @@
 // Recent tags: tracks most recently used collection refs for channel menus.
 // Stored in localStorage, max 10 entries, most recent first.
 
-const STORAGE_KEY = "arena:recentTags";
+const STORAGE_KEY = "mine:recentTags";
+const LEGACY_STORAGE_KEY = "arena:recentTags";
 const MAX_RECENT = 10;
 
 function normalizeCollectionRef(raw: string): string {
@@ -14,7 +15,13 @@ function normalizeCollectionRef(raw: string): string {
 
 export function getRecentTags(): string[] {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    const current = localStorage.getItem(STORAGE_KEY);
+    if (current) return JSON.parse(current);
+    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!legacy) return [];
+    localStorage.setItem(STORAGE_KEY, legacy);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    return JSON.parse(legacy);
   } catch {
     return [];
   }

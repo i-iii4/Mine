@@ -9,7 +9,8 @@ import { getDesignMode, useDesignMode } from "@/lib/designMode";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = "arena:sidebar";
+const STORAGE_KEY = "mine:sidebar";
+const LEGACY_STORAGE_KEY = "arena:sidebar";
 const MAX_WIDTH = SIDEBAR_MAX_WIDTH_PX;
 const CSS_VAR = "--sidebar-width";
 
@@ -29,7 +30,14 @@ function clamp(value: number, min: number, max: number): number {
 
 function loadPersisted(minWidth: number, defaultWidth: number): SidebarPersisted {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    let raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (raw) {
+        localStorage.setItem(STORAGE_KEY, raw);
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      }
+    }
     if (!raw) return { width: defaultWidth, collapsed: false };
     const parsed = JSON.parse(raw);
     if (typeof parsed.width !== "number" || typeof parsed.collapsed !== "boolean") {

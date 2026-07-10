@@ -43,7 +43,7 @@ const PREVIEW_FONT_SPEC = "400 12px 'Geist', system-ui, sans-serif";
  */
 const FONT_HASH: FontHash = "descriptor-preview-v2";
 
-const DB_NAME = "arena-font-metrics";
+const DB_NAME = "mine-font-metrics";
 const DB_VERSION = 2;
 const STORE_NAME = "wordWidths";
 const CACHE_KEY_VERSION = "v2";

@@ -78,7 +78,7 @@ import {
   previewAssetUrl,
   domainFromUrl,
   isSafeUrl,
-  legacyThumbsRoot,
+  fallbackThumbsRoot,
 } from "@/lib/assets";
 import { safeMarkdownUrl } from "@/lib/markdownUrl";
 import { cn } from "@/lib/utils";
@@ -581,7 +581,7 @@ function MetadataPanel({
     [displayBlock],
   );
   const relatedNotesKey = relatedNotes.join("\u0000");
-  const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
+  const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const [relatedNoteBlocks, setRelatedNoteBlocks] = useState<Map<string, IndexedBlock | null> | null>(null);
   const [hoveredRelatedNote, setHoveredRelatedNote] = useState<HoveredRelatedNote | null>(null);
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<HoverPreviewPosition | null>(null);
@@ -1121,7 +1121,7 @@ function BlockContent({
   ) => Promise<void>;
   onTextSelectionDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
 }) {
-  const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
+  const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const previewManifest = useMemo(
     () => normalizeFeedPreviewManifest((fullBlock ?? block).preview_manifest),
     [block, fullBlock],
@@ -2047,7 +2047,7 @@ function DeleteMediaAssetDialog({
   const [planError, setPlanError] = useState<string | null>(null);
   const previewSrc = vaultPath ? mediaUrl(vaultPath, asset.media_ref) : "";
   const references = plan?.referenced_by ?? [];
-  const resolvedThumbsRoot = vaultPath ? legacyThumbsRoot(vaultPath) : "";
+  const resolvedThumbsRoot = vaultPath ? fallbackThumbsRoot(vaultPath) : "";
 
   useEffect(() => {
     if (!open) {

@@ -111,8 +111,7 @@ pub fn forget_known_vault(
     };
     let mut cfg = load_config(&app);
     let current = known_vaults_from_config(&cfg);
-    if active.as_deref() == Some(path.as_str())
-        && current.iter().any(|existing| existing != &path)
+    if active.as_deref() == Some(path.as_str()) && current.iter().any(|existing| existing != &path)
     {
         return Err(CommandError::Internal(
             "cannot forget the active space while others exist — switch space first".into(),
@@ -182,8 +181,7 @@ pub(crate) fn scan_space_files(root: &Path) -> Result<SpaceStats, CommandError> 
         total_bytes: 0,
         element_count: None,
     };
-    let entries =
-        std::fs::read_dir(root).map_err(|e| CommandError::Internal(e.to_string()))?;
+    let entries = std::fs::read_dir(root).map_err(|e| CommandError::Internal(e.to_string()))?;
     for entry in entries.flatten() {
         let Ok(file_type) = entry.file_type() else {
             continue;
@@ -218,11 +216,9 @@ pub(crate) fn read_indexed_element_count(index_db: &Path) -> Option<u64> {
     if !index_db.is_file() {
         return None;
     }
-    let conn = rusqlite::Connection::open_with_flags(
-        index_db,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .ok()?;
+    let conn =
+        rusqlite::Connection::open_with_flags(index_db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .ok()?;
     conn.query_row(
         "SELECT count(*) FROM blocks WHERE card_kind != 'channel'",
         [],
@@ -235,37 +231,39 @@ pub(crate) fn read_indexed_element_count(index_db: &Path) -> Option<u64> {
 /// A path is a valid stats target only when the config already knows it —
 /// the webview must not be able to scan arbitrary directories over IPC.
 fn is_known_space(cfg: &serde_json::Value, path: &str) -> bool {
-    known_vaults_from_config(cfg).iter().any(|known| known == path)
+    known_vaults_from_config(cfg)
+        .iter()
+        .any(|known| known == path)
         || cfg.get("vault_path").and_then(|v| v.as_str()) == Some(path)
 }
 
 /// Read the space's vault-id without creating one (stats must not mutate a
 /// space that was never opened).
 fn existing_vault_id(root: &Path) -> Option<String> {
-    let raw = std::fs::read_to_string(root.join(".arena").join("vault-id")).ok()?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
+    for metadata_dir in [".mine", ".arena"] {
+        let Ok(raw) = std::fs::read_to_string(root.join(metadata_dir).join("vault-id")) else {
+            continue;
+        };
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
     }
-    Some(trimmed.to_string())
+    None
 }
 
 #[tauri::command]
 pub fn space_stats(app: AppHandle, path: String) -> Result<SpaceStats, CommandError> {
     let cfg = load_config(&app);
     if !is_known_space(&cfg, &path) {
-        return Err(CommandError::Internal(format!(
-            "not a known space: {path}"
-        )));
+        return Err(CommandError::Internal(format!("not a known space: {path}")));
     }
 
     let root = Path::new(&path);
     let mut stats = scan_space_files(root)?;
     stats.element_count = existing_vault_id(root)
         .and_then(|vault_id| derived_store_root(&app, &vault_id).ok())
-        .map(|derived| {
-            VaultLayout::with_derived_root(root.to_path_buf(), derived).index_db_path()
-        })
+        .map(|derived| VaultLayout::with_derived_root(root.to_path_buf(), derived).index_db_path())
         .and_then(|index_db| read_indexed_element_count(&index_db));
     Ok(stats)
 }
@@ -300,8 +298,7 @@ fn nfc(value: &str) -> String {
 fn referenced_media_file_names(vs: &VaultState) -> Result<BTreeSet<String>, CommandError> {
     let mut resolver = media_refs::MediaResolver::new(&vs.vault);
     let mut referenced: BTreeSet<String> = BTreeSet::new();
-    let blocks =
-        index::list_blocks(&vs.conn).map_err(|e| CommandError::Internal(e.to_string()))?;
+    let blocks = index::list_blocks(&vs.conn).map_err(|e| CommandError::Internal(e.to_string()))?;
     for block in blocks {
         for media in collect_delete_media_for_block(&vs.vault, &block, &mut resolver).values() {
             referenced.insert(nfc(&media.file_name));
@@ -318,8 +315,8 @@ fn scan_orphans(vs: &VaultState) -> Result<Vec<OrphanMedia>, CommandError> {
     let referenced = referenced_media_file_names(vs)?;
 
     let mut orphans = Vec::new();
-    let entries = std::fs::read_dir(vs.vault.root())
-        .map_err(|e| CommandError::Internal(e.to_string()))?;
+    let entries =
+        std::fs::read_dir(vs.vault.root()).map_err(|e| CommandError::Internal(e.to_string()))?;
     for entry in entries.flatten() {
         let Ok(file_type) = entry.file_type() else {
             continue;
@@ -563,10 +560,8 @@ mod tests {
     fn make_vault() -> (tempfile::TempDir, tempfile::TempDir, VaultState) {
         let root = tempfile::tempdir().expect("tempdir");
         let derived = tempfile::tempdir().expect("derived tempdir");
-        let vault = VaultLayout::with_derived_root(
-            root.path().to_path_buf(),
-            derived.path().to_path_buf(),
-        );
+        let vault =
+            VaultLayout::with_derived_root(root.path().to_path_buf(), derived.path().to_path_buf());
         let conn = db::open_or_create(&vault.index_db_path()).expect("open db");
         (root, derived, VaultState { vault, conn })
     }
@@ -582,9 +577,7 @@ mod tests {
     }
 
     fn write_block_with_media(vs: &VaultState, slug: &str, media: &str) {
-        let md = format!(
-            "---\ntype: image\nfile: {media}\nsaved_at: 2026-01-01T00:00:00Z\n---\n",
-        );
+        let md = format!("---\ntype: image\nfile: {media}\nsaved_at: 2026-01-01T00:00:00Z\n---\n",);
         index_markdown(vs, slug, &md);
     }
 
@@ -605,11 +598,15 @@ mod tests {
     fn inline_wikilink_reference_is_not_an_orphan() {
         let (_root, _derived, vs) = make_vault();
         write_media(&vs, "inline.png");
-        let md = "---\ntype: article\nsaved_at: 2026-01-01T00:00:00Z\n---\nText ![[inline.png]] more";
+        let md =
+            "---\ntype: article\nsaved_at: 2026-01-01T00:00:00Z\n---\nText ![[inline.png]] more";
         index_markdown(&vs, "note", md);
 
         let orphans = scan_orphans(&vs).expect("scan");
-        assert!(orphans.is_empty(), "inline-referenced media must not be orphan");
+        assert!(
+            orphans.is_empty(),
+            "inline-referenced media must not be orphan"
+        );
     }
 
     #[test]
@@ -617,8 +614,7 @@ mod tests {
         let (_root, _derived, vs) = make_vault();
         write_media(&vs, "photo.jpg");
 
-        let result =
-            promote_orphan_media_inner(&vs, vec!["photo.jpg".into()]).expect("promote");
+        let result = promote_orphan_media_inner(&vs, vec!["photo.jpg".into()]).expect("promote");
         assert_eq!(result.created.len(), 1);
         assert!(result.skipped.is_empty());
         let created = &result.created[0];
@@ -657,8 +653,7 @@ mod tests {
         )
         .expect("write");
 
-        let result =
-            promote_orphan_media_inner(&vs, vec!["clip.mp4".into()]).expect("promote");
+        let result = promote_orphan_media_inner(&vs, vec!["clip.mp4".into()]).expect("promote");
         assert_eq!(result.created.len(), 1);
         let created = &result.created[0];
         assert_ne!(created.slug, "clip");
@@ -676,11 +671,7 @@ mod tests {
 
         let result = delete_orphan_media_inner(
             &vs,
-            vec![
-                "keep.jpg".into(),
-                "gone.jpg".into(),
-                "../escape.jpg".into(),
-            ],
+            vec!["keep.jpg".into(), "gone.jpg".into(), "../escape.jpg".into()],
         )
         .expect("delete");
 
@@ -749,11 +740,8 @@ mod tests {
     fn reorder_accepts_only_a_permutation_of_known_spaces() {
         let current = vec!["/a".to_string(), "/b".to_string(), "/c".to_string()];
 
-        let ok = reordered_known_vaults(
-            &current,
-            vec!["/c".into(), "/a".into(), "/b".into()],
-        )
-        .expect("permutation accepted");
+        let ok = reordered_known_vaults(&current, vec!["/c".into(), "/a".into(), "/b".into()])
+            .expect("permutation accepted");
         assert_eq!(ok, vec!["/c", "/a", "/b"]);
 
         // Dropping, adding, or duplicating paths is rejected.
@@ -763,11 +751,9 @@ mod tests {
             vec!["/a".into(), "/b".into(), "/c".into(), "/d".into()],
         )
         .is_err());
-        assert!(reordered_known_vaults(
-            &current,
-            vec!["/a".into(), "/a".into(), "/c".into()],
-        )
-        .is_err());
+        assert!(
+            reordered_known_vaults(&current, vec!["/a".into(), "/a".into(), "/c".into()],).is_err()
+        );
     }
 
     #[test]

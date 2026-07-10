@@ -111,7 +111,7 @@ pub fn read_block_file(vault: &VaultLayout, path: &Path) -> Result<(String, Stri
 }
 
 /// Scan the vault for all .md files recursively.
-/// Ignores hidden/service directories (`.arena`, `.obsidian`, `.git`,
+/// Ignores hidden/service directories (`.mine`, `.obsidian`, `.git`,
 /// `.mine-migration-backup`) and non-.md files.
 /// Returns paths sorted alphabetically.
 pub fn scan_md_files(vault: &VaultLayout) -> Result<Vec<PathBuf>> {
@@ -530,7 +530,7 @@ mod tests {
         let vault = make_vault(dir.path());
 
         std::fs::write(vault.block_path("note"), "---\n---").unwrap();
-        std::fs::create_dir_all(vault.arena_dir()).unwrap();
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
 
         let paths = scan_md_files(&vault).unwrap();
         assert_eq!(paths.len(), 1);

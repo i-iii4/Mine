@@ -33,7 +33,12 @@ Tauri v2 · Rust · SQLite (rusqlite + FTS5) · React 19 · TypeScript · Tailwi
 bun install
 cargo tauri dev      # development build with HMR
 cargo tauri build    # production .app / .dmg
+bun run build:extension  # required Mine Clipper bundle → extension/dist
 ```
+
+`extension/dist/` is generated and ignored by Git. The desktop build does not
+build the browser extension; run `bun run build:extension` before loading the
+unpacked `extension/` directory in Chrome or Dia.
 
 Requires Rust (stable), Bun ≥ 1.2, and the Tauri CLI (`cargo install tauri-cli`).
 

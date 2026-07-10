@@ -1773,9 +1773,8 @@ mod tests {
         assert!(!plain.contains("![["));
         assert!(!plain.contains(".webp"));
         assert!(!plain.contains('#'));
-        assert!(plain.starts_with(
-            "Как искусственный интеллект повлияет на рынок труда Smith Collection"
-        ));
+        assert!(plain
+            .starts_with("Как искусственный интеллект повлияет на рынок труда Smith Collection"));
         assert!(plain.contains("Американский The Wall Street Journal провёл опрос."));
     }
 

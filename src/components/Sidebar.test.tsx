@@ -705,7 +705,7 @@ describe("Sidebar", () => {
       ...defaultProps,
       width: 600,
       vaultPath: "/vault",
-      thumbsRootPath: "/vault/.arena/cache/thumbs",
+      thumbsRootPath: "/vault/.mine/cache/thumbs",
       channelPreviews: previews,
       hoverPreviewFrozen: false,
     };
@@ -822,7 +822,7 @@ describe("Sidebar", () => {
       ...defaultProps,
       width: 600,
       vaultPath: "/vault",
-      thumbsRootPath: "/vault/.arena/cache/thumbs",
+      thumbsRootPath: "/vault/.mine/cache/thumbs",
       channelPreviews: previews,
     });
 
@@ -853,7 +853,7 @@ describe("Sidebar", () => {
     expect(hoverImages).toHaveLength(1);
     expect(hoverImages[0]).toHaveAttribute(
       "src",
-      "asset://localhost//vault/.arena/cache/thumbs/alpha-a.jpg?m=123",
+      "asset://localhost//vault/.mine/cache/thumbs/alpha-a.jpg?m=123",
     );
     expect(container.querySelector("[data-sidebar-thumbnail-hover-bridge]")).not.toBeInTheDocument();
     fireEvent.pointerLeave(container.querySelector("[data-sidebar-scroll]")!);
@@ -917,7 +917,7 @@ describe("Sidebar", () => {
       ...defaultProps,
       width: 600,
       vaultPath: "/vault",
-      thumbsRootPath: "/vault/.arena/cache/thumbs",
+      thumbsRootPath: "/vault/.mine/cache/thumbs",
       channelPreviews: previews,
       isDropDragging: true,
     });
@@ -956,7 +956,7 @@ describe("Sidebar", () => {
       ...defaultProps,
       width: 600,
       vaultPath: "/vault",
-      thumbsRootPath: "/vault/.arena/cache/thumbs",
+      thumbsRootPath: "/vault/.mine/cache/thumbs",
       channelPreviews: previews,
       isDropDragging: false,
     };
@@ -1054,7 +1054,7 @@ describe("Sidebar", () => {
       container.querySelector("[data-sidebar-link-mode-bar] span[aria-hidden='true']"),
     ).toHaveClass("detail-top-bar-line-enter");
     expect(screen.getByText("Collections:")).toHaveClass("text-muted-foreground");
-    expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("text-muted-foreground");
+    expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("text-current");
     expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-[var(--sidebar-nav-pad-top)]");
   });
 

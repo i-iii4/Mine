@@ -1,7 +1,7 @@
 // Events: vault file system event classification.
 //
 // Converts raw notify events into typed VaultEvents.
-// Filters out .arena/ directory and non-file events.
+// Filters out hidden/service directories and non-file events.
 //
 // Contract: SPEC_INTEGRATION.md#watcher/events
 
@@ -215,10 +215,10 @@ mod tests {
     // ── Filtering ────────────────────────────────────────────────────────
 
     #[test]
-    fn arena_dir_ignored() {
+    fn mine_metadata_dir_ignored() {
         let event = make_event(
             EventKind::Create(CreateKind::File),
-            vec![PathBuf::from("/vault/.arena/index.db")],
+            vec![PathBuf::from("/vault/.mine/vault-id")],
         );
         let result = classify_notify_event(&event, &vault());
         assert!(result.is_empty());

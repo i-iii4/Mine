@@ -14,7 +14,7 @@ Mine решает это: визуальный букмаркинг с лока�
 2. **Всё — Markdown.** Mine-authored blocks используют `.md` с frontmatter; обычные Obsidian `.md` без frontmatter читаются как implicit articles. Медиафайлы рядом. Runtime card kind выводится из Markdown body state и `type: channel`, а не из non-channel `type:` metadata
 3. **Коллекции — это Obsidian-страницы.** Membership хранится в `Mine Collections` как quoted wikilinks на collection pages; `tags` остаётся пользовательским Obsidian-полем
 4. **Плоская структура.** Все файлы в корне vault. Позже — изолированные проекты (отдельные vault'ы)
-5. **Индекс восстановим.** Удаление `.arena/index.db` не приводит к потере данных
+5. **Индекс восстановим.** Удаление local derived `index.db` не приводит к потере данных
 6. **Thumbnail / preview pipeline.** В feed/grid/sidebar показываются preview-артефакты из локального derived store, не оригиналы
 7. **Wikilinks.** Связи между блоками — через `[[wikilinks]]` в Obsidian-стиле
 
@@ -142,7 +142,7 @@ fallback only; new write paths do not create it.
 
 ```
 ~/Mine/                        ← source vault (выбирается пользователем)
-├── .arena/
+├── .mine/
 │   └── vault-id                     ← sync'ed идентификатор vault
 ├── sunset-tokyo.md                  ← метаданные изображения
 ├── sunset-tokyo.jpg                 ← само изображение
@@ -323,7 +323,7 @@ Frontend feed-video runtime теперь использует единый poste
 │  *.md + media files   │
 │  (flat structure)     │
 │                      │
-│  .arena/vault-id     │
+│  .mine/vault-id      │
               └──────────────────────┘
                           │
                           ▼
@@ -608,7 +608,10 @@ iOS UI contract:
   article/social block still opens as a one-image quick look in the left menu.
   Rich composite/gallery rendering stays in feed cards and the Related Notes
   hover preview.
-- Legacy vault compatibility: если в `.arena/cache/thumbs/` уже лежат `.jpg`, а `thumb_format/thumb_mtime` в SQLite ещё не заполнены, `open_vault()` запускает фоновый backfill metadata и после него шлёт `vault-changed`. Это восстанавливает sidebar previews без полного rebuild index.
+- Legacy vault compatibility: если в старом vault ещё лежат `.arena/cache/thumbs/`
+  или `.arena/index.db`, `open_vault()` использует их только как bootstrap source:
+  копирует данные в local derived store, мигрирует `.arena/vault-id` в
+  `.mine/vault-id`, затем удаляет известные legacy artifacts из source vault.
 - Startup backlog planner для Phase 2 (`list_pending_thumb_upgrades`) тоже
   больше не читает thumb-файлы на main thread. Он работает через отдельный
   SQLite connection в `spawn_blocking`, выбирает PNG placeholder rows и
@@ -632,7 +635,7 @@ Rust: копирует медиафайл в vault root
     │
     ├──► Создаёт .md файл с frontmatter (`type` hint, canonical `file` wikilink, Mine Collections, saved_at)
     │
-    ├──► Thumbnail Generator: превью → .arena/cache/thumbs/
+    ├──► Thumbnail Generator: превью → local derived store `cache/thumbs/`
     │
     └──► Indexer: парсит Markdown/frontmatter → derives card kind → SQLite (блок, collection refs, FTS)
     │
@@ -932,6 +935,15 @@ can render `preview_manifest.tiles`.
 | Vite-сборка: `extension/popup/main.tsx` → React + shadcn + `global.css` (chosen) | Один источник правды. Компоненты, токены, шрифты наследуются из основного приложения. Дрейф невозможен. |
 
 Rationale: расширение — проекция основного приложения в браузер. Различия только в адаптере (native messaging vs Tauri IPC) и layout (popup 360px vs fullscreen). Всё остальное — те же компоненты, те же токены, тот же шрифт. Стоимость: +200 КБ к размеру расширения (React + шрифты), ~100ms на hydration — незаметно для пользователя.
+
+`extension/dist/` является воспроизводимым build output и не хранится в Git,
+но входит в runtime contract unpacked extension: manifest ссылается на
+`dist/overlay.js`, а overlay загружает `dist/assets/popup.css` и fonts. Desktop
+pipeline (`bun run build`, `cargo tauri dev/build`) не владеет этим output;
+единственный canonical builder — `bun run build:extension`. Chromium не обязан
+автоматически восстановить unpacked extension после исчезновения bundle:
+сначала bundle пересобирается, затем каталог `extension/` повторно подключается
+через `Load unpacked`.
 
 ### 010: Нормализация тегов на границе чтения
 

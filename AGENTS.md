@@ -207,7 +207,7 @@ local-arena/
 
 ```
 ~/Mine/                            # Source vault — выбирается пользователем
-├── .arena/
+├── .mine/
 │   └── vault-id                   # Sync'ed идентификатор vault
 ├── sunset-tokyo.md                 # Метаданные (frontmatter + wikilinks)
 ├── sunset-tokyo.jpg                # Медиафайл
@@ -220,8 +220,8 @@ local-arena/
 ```
 ~/Library/Application Support/com.mine.app/vaults/<vault-id>/  # Local derived store
 ├── index.db
-├── thumbs/
 └── cache/
+    ├── thumbs/
     └── audio/                     # Article audio sidecars + .wav artifacts
 
 ~/Library/Application Support/com.mine.app/cache/fastembed/  # Local semantic model cache
@@ -251,12 +251,17 @@ local-arena/
 bun install                    # Установка JS-зависимостей
 cargo tauri dev                # Запуск в режиме разработки (Rust + Vite)
 cargo tauri build              # Сборка .dmg/.app
+bun run build:extension        # Обязательная отдельная сборка Mine Clipper → extension/dist
 bun run lint                   # Линтинг фронтенда
 bun run test                   # Полная проверка: Vitest + Rust workspace tests
 bun run test:feed-scroll       # Browser-level Grid scroll blank/performance acceptance (requires running dev server)
 bun run verify                 # Линтинг + полный test contract
 cargo clippy                   # Линтинг Rust
 ```
+
+`extension/dist/` не хранится в Git. Desktop-команды не собирают клиппер:
+перед `Load unpacked` в Chrome/Dia и после очистки build outputs всегда
+запускайте `bun run build:extension`.
 
 ## Code culture
 

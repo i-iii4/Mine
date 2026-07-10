@@ -106,8 +106,8 @@ fn run(vault_path: &Path, apply: bool) -> anyhow::Result<Report> {
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
-        // Skip hidden dotfiles like `.arena/…` (though read_dir already
-        // returns them only if they sit at vault root; `.arena` is a
+        // Skip hidden dotfiles like `.mine/…` (though read_dir already
+        // returns them only if they sit at vault root; `.mine` is a
         // directory and skipped above).
         if path
             .file_name()

@@ -1,7 +1,7 @@
 // Vault: path computation for the vault filesystem layout.
 //
 // Pure path logic: no filesystem access. Computes paths to blocks,
-// media files, arena directory, index DB, and thumbnails.
+// media files, Mine metadata directory, index DB, and thumbnails.
 // Also resolves slug conflicts given a set of existing slugs.
 //
 // Contract: SPEC_DOMAIN.md#domain/vault
@@ -34,7 +34,7 @@ pub struct VaultLayout {
 
 impl VaultLayout {
     pub fn new(root: PathBuf) -> Self {
-        let derived_root = root.join(".arena");
+        let derived_root = root.join(".mine");
         Self { root, derived_root }
     }
 
@@ -78,14 +78,24 @@ impl VaultLayout {
         self.root.join(format!("{}.{}", slug, ext))
     }
 
-    /// Path to the `.arena/` directory.
-    pub fn arena_dir(&self) -> PathBuf {
+    /// Path to the synced Mine metadata directory.
+    pub fn mine_dir(&self) -> PathBuf {
+        self.root.join(".mine")
+    }
+
+    /// Path to the legacy `.arena/` directory.
+    pub fn legacy_arena_dir(&self) -> PathBuf {
         self.root.join(".arena")
     }
 
-    /// Path to the synced vault identity marker: `.arena/vault-id`.
+    /// Path to the synced vault identity marker: `.mine/vault-id`.
     pub fn vault_id_path(&self) -> PathBuf {
-        self.arena_dir().join("vault-id")
+        self.mine_dir().join("vault-id")
+    }
+
+    /// Path to the legacy synced vault identity marker: `.arena/vault-id`.
+    pub fn legacy_vault_id_path(&self) -> PathBuf {
+        self.legacy_arena_dir().join("vault-id")
     }
 
     /// Root directory for local derived state (per-device cache/index).
@@ -95,7 +105,7 @@ impl VaultLayout {
 
     /// Path to the legacy SQLite index in the vault: `.arena/index.db`.
     pub fn legacy_index_db_path(&self) -> PathBuf {
-        self.arena_dir().join("index.db")
+        self.legacy_arena_dir().join("index.db")
     }
 
     /// Path to the SQLite index in the local derived store.
@@ -106,7 +116,7 @@ impl VaultLayout {
     /// Path to the legacy thumbnails directory inside the vault:
     /// `.arena/cache/thumbs`.
     pub fn legacy_thumbs_dir(&self) -> PathBuf {
-        self.arena_dir().join("cache").join("thumbs")
+        self.legacy_arena_dir().join("cache").join("thumbs")
     }
 
     /// Path to the thumbnails directory in the local derived store.
@@ -142,7 +152,9 @@ impl VaultLayout {
     /// distinct from the block's representative `<slug>.jpg`.
     pub fn media_thumb_path(&self, media_name: &str) -> PathBuf {
         // Drop the media extension; keep the rest verbatim (spaces, parens).
-        let stem = media_name.rsplit_once('.').map_or(media_name, |(stem, _)| stem);
+        let stem = media_name
+            .rsplit_once('.')
+            .map_or(media_name, |(stem, _)| stem);
         self.thumbs_dir().join(format!("{stem}.jpg"))
     }
 
@@ -432,22 +444,34 @@ mod tests {
     }
 
     #[test]
-    fn arena_dir() {
-        // V3
-        assert_eq!(layout().arena_dir(), PathBuf::from("/vault/.arena"));
+    fn mine_dir() {
+        assert_eq!(layout().mine_dir(), PathBuf::from("/vault/.mine"));
+    }
+
+    #[test]
+    fn legacy_arena_dir() {
+        assert_eq!(layout().legacy_arena_dir(), PathBuf::from("/vault/.arena"));
     }
 
     #[test]
     fn vault_id_path() {
         assert_eq!(
             layout().vault_id_path(),
+            PathBuf::from("/vault/.mine/vault-id")
+        );
+    }
+
+    #[test]
+    fn legacy_vault_id_path() {
+        assert_eq!(
+            layout().legacy_vault_id_path(),
             PathBuf::from("/vault/.arena/vault-id")
         );
     }
 
     #[test]
-    fn derived_root_defaults_to_arena_dir() {
-        assert_eq!(layout().derived_root(), Path::new("/vault/.arena"));
+    fn derived_root_defaults_to_mine_dir() {
+        assert_eq!(layout().derived_root(), Path::new("/vault/.mine"));
     }
 
     #[test]
@@ -462,7 +486,7 @@ mod tests {
     fn index_db_path() {
         assert_eq!(
             layout().index_db_path(),
-            PathBuf::from("/vault/.arena/index.db")
+            PathBuf::from("/vault/.mine/index.db")
         );
     }
 
@@ -470,7 +494,7 @@ mod tests {
     fn thumbs_dir() {
         assert_eq!(
             layout().thumbs_dir(),
-            PathBuf::from("/vault/.arena/cache/thumbs")
+            PathBuf::from("/vault/.mine/cache/thumbs")
         );
     }
 
@@ -486,7 +510,7 @@ mod tests {
     fn media_thumb_path_uses_media_stem() {
         assert_eq!(
             layout().media_thumb_path("clip (video 1).mp4"),
-            PathBuf::from("/vault/.arena/cache/thumbs/clip (video 1).jpg")
+            PathBuf::from("/vault/.mine/cache/thumbs/clip (video 1).jpg")
         );
     }
 
@@ -494,7 +518,7 @@ mod tests {
     fn audio_dir() {
         assert_eq!(
             layout().audio_dir(),
-            PathBuf::from("/vault/.arena/cache/audio")
+            PathBuf::from("/vault/.mine/cache/audio")
         );
     }
 
@@ -502,7 +526,7 @@ mod tests {
     fn article_audio_state_path() {
         assert_eq!(
             layout().article_audio_state_path("sunset-tokyo"),
-            PathBuf::from("/vault/.arena/cache/audio/sunset-tokyo.json")
+            PathBuf::from("/vault/.mine/cache/audio/sunset-tokyo.json")
         );
     }
 
@@ -510,16 +534,15 @@ mod tests {
     fn article_audio_asset_path() {
         assert_eq!(
             layout().article_audio_asset_path("sunset-tokyo", "aiff"),
-            PathBuf::from("/vault/.arena/cache/audio/sunset-tokyo.aiff")
+            PathBuf::from("/vault/.mine/cache/audio/sunset-tokyo.aiff")
         );
     }
 
     #[test]
     fn thumb_path() {
-        // V4
         assert_eq!(
             layout().thumb_path("sunset-tokyo"),
-            PathBuf::from("/vault/.arena/cache/thumbs/sunset-tokyo.jpg")
+            PathBuf::from("/vault/.mine/cache/thumbs/sunset-tokyo.jpg")
         );
     }
 

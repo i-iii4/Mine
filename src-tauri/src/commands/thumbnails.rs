@@ -495,8 +495,9 @@ mod tests {
     use crate::storage::{db, files, index, thumbnails};
 
     fn make_vault(path: &std::path::Path) -> VaultLayout {
-        std::fs::create_dir_all(path.join(".arena/cache/thumbs")).unwrap();
-        VaultLayout::new(path.to_path_buf())
+        let vault = VaultLayout::new(path.to_path_buf());
+        std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
+        vault
     }
 
     fn create_test_image(path: &std::path::Path, width: u32, height: u32) {
@@ -822,7 +823,10 @@ mod tests {
 
     #[test]
     fn percent_decode_header_roundtrips_spaces_and_bare_ascii() {
-        assert_eq!(percent_decode_header("x-slug", "a%20b%20c").unwrap(), "a b c");
+        assert_eq!(
+            percent_decode_header("x-slug", "a%20b%20c").unwrap(),
+            "a b c"
+        );
         assert_eq!(
             percent_decode_header("x-slug", "plain-ascii_slug").unwrap(),
             "plain-ascii_slug"

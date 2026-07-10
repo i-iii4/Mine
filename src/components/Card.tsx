@@ -8,7 +8,7 @@ import {
   thumbnailUrl,
   domainFromUrl,
   isSafeUrl,
-  legacyThumbsRoot,
+  fallbackThumbsRoot,
 } from "@/lib/assets";
 import {
   deriveCardLayoutDescriptor,
@@ -85,7 +85,7 @@ interface CardProps {
 }
 
 const CARD_FRAME_CLASS =
-  "group relative overflow-hidden border border-border rounded-[var(--radius-card)] bg-card";
+  "group relative overflow-hidden border border-border rounded-[var(--radius-card)] bg-card transition-colors hover:border-component-fill-hover focus-visible:border-component-fill-hover";
 
 interface CardFrameProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
@@ -120,7 +120,7 @@ function GraphicSurface({
   return (
     <div
       data-card-graphic-surface=""
-      className={cn("relative overflow-hidden bg-accent", className)}
+      className={cn("relative overflow-hidden bg-card", className)}
       {...props}
     >
       {children}
@@ -245,7 +245,7 @@ export function ReadOnlyCardPreview({
   const isArticleFeedCard = getRuntimeCardKind(block) === "article";
 
   if (previewMode === "micro") {
-    const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
+    const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
     const mtime = typeof block.thumb_mtime === "number" && block.thumb_mtime > 0
       ? `?m=${block.thumb_mtime}`
       : "";
@@ -602,7 +602,7 @@ export function CardContent({
   allowPlayback?: boolean;
   measurementMode?: boolean;
 }) {
-  const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
+  const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const descriptor = useMemo(() => deriveCardLayoutDescriptor(block), [block]);
   const previewManifest = useMemo(
     () => parsePreviewManifest(block),
@@ -743,12 +743,12 @@ function GalleryTiles({
       : { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr" };
 
   return (
-    <div className="absolute inset-0 grid gap-[2px] bg-accent" style={gridStyle}>
+    <div className="absolute inset-0 grid gap-[2px] bg-card" style={gridStyle}>
       {visibleItems.map((item, index) => {
         const tileStyle = count === 3 && index === 0 ? { gridRow: "1 / span 2" } : undefined;
 
         return (
-          <div key={`${item.sourcePath}-${index}`} className="relative overflow-hidden bg-accent" style={tileStyle}>
+          <div key={`${item.sourcePath}-${index}`} className="relative overflow-hidden bg-card" style={tileStyle}>
             {!measurementMode && !item.isVideo && (
               <GalleryTileImage
                 item={item}
@@ -776,7 +776,7 @@ function GalleryTiles({
             )}
             {!measurementMode && item.isVideoPoster && !item.isVideo && <PlayBadge />}
             {measurementMode && (
-              <div className="absolute inset-0 bg-accent" />
+              <div className="absolute inset-0 bg-card" />
             )}
           </div>
         );
@@ -804,29 +804,17 @@ const ImageCard = memo(function ImageCard({
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
 
-  // Preview source cascade, in order:
-  // 1. the actual media file in the vault (always present the moment
-  //    the .md is indexed — the clipper / native host writes the file
-  //    before the block row lands),
-  // 2. the cached thumbnail at <thumbs>/<slug>.jpg (may not exist yet
-  //    while background thumb-gen is still running),
-  // 3. a text fallback card with the title and an "image off" icon.
-  //
-  // Prior behaviour went straight to (2) and skipped to (3) on any
-  // error, so a block that landed faster than its thumb (common after
-  // clipper save) flashed the browser's broken-image icon or collapsed
-  // into the "image off" card even though its source was already on
-  // disk and visible in Finder. The cascade closes that gap without
-  // any loader state — the <img> element just walks through the
-  // candidate list via onError.
+  // Feed thumbnails should match the sidebar strip: generated preview first,
+  // source media only as fallback. Source-first looked correct for some photos
+  // but made transparent/letterboxed/oversized originals read as broken cards.
   const sources = useMemo(() => {
     return uniqueUrls([
-      resolveOptionalMediaReference(vaultPath, block.media_file),
       previewManifest?.primaryPreviewPath
         ? withThumbVersion(previewAssetUrl(thumbsRootPath, previewManifest.primaryPreviewPath), thumbVersion)
         : null,
-      resolveOptionalMediaReference(vaultPath, block.thumbnail),
       withThumbVersion(thumbnailUrl(thumbsRootPath, block.slug), thumbVersion),
+      resolveOptionalMediaReference(vaultPath, block.media_file),
+      resolveOptionalMediaReference(vaultPath, block.thumbnail),
     ]);
   }, [
     block.media_file,
@@ -838,26 +826,7 @@ const ImageCard = memo(function ImageCard({
     thumbVersion,
   ]);
 
-  // Warm, low-res base layer. The feed preloader
-  // (feedMediaCandidatesForBlock) decodes the block's derived thumbnail — the
-  // manifest primary preview when present, otherwise <slug>.jpg — ahead of the
-  // viewport. Painting that exact URL first is a decode-cache hit, so the card
-  // is never blank while the full-size original decodes on top of it. The
-  // original alone (rendered as the primary src below) is not part of feed
-  // readiness, which is why source-first cards used to "arrive" during scroll.
-  const baseThumbUrl = useMemo(
-    () =>
-      withThumbVersion(
-        previewManifest?.primaryPreviewPath
-          ? previewAssetUrl(thumbsRootPath, previewManifest.primaryPreviewPath)
-          : thumbnailUrl(thumbsRootPath, block.slug),
-        thumbVersion,
-      ),
-    [previewManifest?.primaryPreviewPath, thumbsRootPath, block.slug, thumbVersion],
-  );
-
   const [sourceIndex, setSourceIndex] = useState(0);
-  const [primaryLoaded, setPrimaryLoaded] = useState(false);
   const sourcesKey = sources.join("|");
 
   // Reset the cascade when the input set changes (new block, vault
@@ -867,7 +836,6 @@ const ImageCard = memo(function ImageCard({
   // and, in extreme cases, infinite loaders.
   useEffect(() => {
     setSourceIndex(0);
-    setPrimaryLoaded(false);
   }, [sourcesKey]);
 
   useEffect(() => {
@@ -882,7 +850,7 @@ const ImageCard = memo(function ImageCard({
 
   if (currentSrc === null) {
     return (
-      <div className="flex aspect-square items-center justify-center bg-accent">
+      <div className="flex aspect-square items-center justify-center bg-card">
         <div className="text-center">
           <ImageOff className="mx-auto size-6 text-muted-foreground/50" />
           <p className="mt-1 text-sm text-foreground">
@@ -901,56 +869,26 @@ const ImageCard = memo(function ImageCard({
     ? `${descriptor.primaryAspectRatio}`
     : "1";
 
-  // Two-phase render only makes sense while the primary src is the full-size
-  // original, distinct from the warmed thumbnail. Once the cascade falls
-  // through to the thumbnail itself (or a block with no distinct thumb), the
-  // base layer would duplicate the primary, so we drop it and show a single
-  // <img> — the pre-two-phase behavior.
-  const showBase = baseThumbUrl !== currentSrc;
-  const primaryVisible = primaryLoaded || !showBase;
-  // Unmount the base once the original has loaded: the base is an opaque
-  // background-image JPEG (Rust to_rgb8, no alpha), so leaving it mounted under a
-  // transparent PNG/WebP shows a cropped opaque thumbnail through the transparent
-  // areas instead of the card surface, and keeps a second decoded bitmap alive
-  // per card. The now-opaque, decoded original covers the same box in the same
-  // commit, so dropping the base underneath it is seamless.
-  const renderBase = showBase && !primaryLoaded;
-
   return (
     <GraphicSurface
       style={{ aspectRatio }}
     >
       {!measurementMode && (
-        <>
-          {renderBase && (
-            <div
-              data-card-image-base=""
-              aria-hidden="true"
-              className="absolute inset-0 bg-cover bg-center"
-              style={{ backgroundImage: `url("${baseThumbUrl}")` }}
-            />
-          )}
-          <img
-            // Keyed by src so React remounts the element when we fall
-            // through to the next candidate. Without the key the browser
-            // would reuse the failed request entry and never re-request.
-            key={currentSrc}
-            src={currentSrc}
-            alt={navigationLabel}
-            className={cn(
-              "absolute inset-0 h-full w-full object-cover transition-opacity duration-150",
-              primaryVisible ? "opacity-100" : "opacity-0",
-            )}
-            loading={imgLoading}
-            decoding="async"
-            draggable={false}
-            onLoad={() => setPrimaryLoaded(true)}
-            onError={() => {
-              setPrimaryLoaded(false);
-              setSourceIndex((i) => i + 1);
-            }}
-          />
-        </>
+        <img
+          // Keyed by src so React remounts the element when we fall through to
+          // the next candidate. Without the key the browser would reuse the
+          // failed request entry and never re-request.
+          key={currentSrc}
+          src={currentSrc}
+          alt={navigationLabel}
+          className="absolute inset-0 h-full w-full object-cover"
+          loading={imgLoading}
+          decoding="async"
+          draggable={false}
+          onError={() => {
+            setSourceIndex((i) => i + 1);
+          }}
+        />
       )}
     </GraphicSurface>
   );
@@ -1158,7 +1096,7 @@ const SocialCard = memo(function SocialCard({
               )
             )}
             {measurementMode && (
-              <div className={cn("absolute inset-0 bg-accent", absClass)} />
+              <div className={cn("absolute inset-0 bg-card", absClass)} />
             )}
             {(m.isVideo || m.isVideoPoster) && !shouldAutoplay && <PlayBadge />}
           </GraphicSurface>
@@ -1289,7 +1227,7 @@ const ArticleCard = memo(function ArticleCard({
                 loading={imgLoading}
               />
             ) : (
-              <div className="absolute inset-0 bg-accent" />
+              <div className="absolute inset-0 bg-card" />
             )
           ) : !measurementMode && (
             // Single-image article: render the real image via the same cascade
@@ -1411,7 +1349,7 @@ const VideoCard = memo(function VideoCard({
           loading={imgLoading}
         />
       ) : (
-        <div className="h-full w-full bg-accent" />
+        <div className="h-full w-full bg-card" />
       )}
       {!shouldAutoplay && <PlayBadge />}
     </GraphicSurface>

@@ -31,17 +31,19 @@ Goal: устранить две подтверждённые архитекту�
 
 ### Summary
 
-- Вводится sync'ed идентификатор vault: `.arena/vault-id`.
+- Вводится sync'ed идентификатор vault: `.mine/vault-id`.
 - Все derived данные переезжают в per-device app data store, keyed by `vault-id`.
 - Feed, sidebar и measurement-path используют только preview assets из local derived store.
 - `Detail` остаётся full-fidelity path и может открывать оригиналы.
-- Legacy `.arena/index.db` и legacy thumbs в vault игнорируются runtime и не удаляются автоматически в v1.
+- Legacy `.arena/vault-id`, `.arena/index.db` и `.arena/cache/thumbs`
+  используются только как migration source и очищаются из source vault после
+  переноса в `.mine` / local derived store.
 
 ### Architecture Changes To Record
 
 #### 1. Vault identity + derived store
 
-- `vault-id` хранится в `.arena/vault-id` и синхронизируется через iCloud вместе с vault.
+- `vault-id` хранится в `.mine/vault-id` и синхронизируется через iCloud вместе с vault.
 - `index.db`, preview cache, thumbnail cache, manifests и migration markers живут только в app data.
 - Перемещение vault не ломает identity.
 - Второй Mac открывает тот же vault через локальный rebuild derived store по тому же `vault-id`.
@@ -49,11 +51,12 @@ Goal: устранить две подтверждённые архитекту�
 
 #### 2. Migration semantics
 
-- При первом открытии legacy vault без `vault-id` файл создаётся автоматически.
+- При первом открытии legacy vault `.arena/vault-id` мигрирует в `.mine/vault-id`;
+  если id отсутствует, файл создаётся автоматически.
 - Если локальный derived store уже существует, UI открывается из snapshot, а sync идёт в фоне.
 - Если локальный derived store отсутствует, создаётся пустой local store и запускается rebuild в фоне.
 - Legacy `.arena/index.db` и `.arena/cache/thumbs` не участвуют в runtime path.
-- Legacy данные не удаляются автоматически в v1; это отдельный follow-up.
+- Известные legacy artifacts удаляются из source vault после bootstrap.
 
 #### 3. UX первой миграции
 
@@ -410,7 +413,8 @@ The target is one canonical post-migration format documented in
 
 - `vault-id` — sync'ed файл внутри vault.
 - Derived store — всегда per-device local.
-- Legacy `.arena/*` в v1 не удаляется автоматически.
+- Известные legacy `.arena/*` artifacts удаляются автоматически после bootstrap;
+  неизвестные legacy подпапки не трогаются.
 - Composite preview в v1 генерируется серверно в Rust.
 - Preview invalidation в v1 основан на `mtime_ns + size`.
 - Autoplay video в feed не входит в `Critical Path Reset v1`; он возвращается отдельной фазой только для dedicated `video` blocks и single-video previews.

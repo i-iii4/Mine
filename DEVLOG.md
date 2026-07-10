@@ -1,5 +1,93 @@
 # Devlog
 
+## 09.07.2026 — Grid surfaces, canonical View control and Clipper recovery
+
+### Задача
+Завершить визуальный контракт Grid/View controls и зафиксировать причину, по
+которой Mine Clipper исчез из Dia после потери generated bundle.
+
+### Что сделано
+- Grid image cards используют тот же derived thumbnail-first cascade, что
+  sidebar micro previews; source media остаётся fallback.
+- Graphic/gallery/measurement surfaces приведены к `bg-card`, а card frame
+  получил design-system hover/focus border.
+- Единственный `View: Grid / Graph` selector перенесён в secondary stats bar
+  сразу после количества элементов; старые дублирующие controls удалены.
+- Main count vocabulary приведён к `elements`, а selector наследует тот же
+  tertiary text tone, что соседняя статистика.
+- Shared `SegmentedControl` сохраняет outer hover fill, но не осветляет текст
+  неактивного segment; selected segment остаётся `text-foreground`.
+- Документация клиппера теперь явно разделяет desktop build и
+  `bun run build:extension`: `extension/dist/` обязателен для runtime, но
+  игнорируется Git и не создаётся Tauri build-командами.
+- Зафиксирован recovery path для Chrome/Dia: rebuild → `Load unpacked` →
+  enabled/service-worker check → pin; добавлен Dia native messaging manifest
+  path.
+- Mine Clipper `0.1.0` повторно подключён в Dia с прежним extension ID
+  `mfmocklgopobknfgeedgdlnchfohicii`, включён и закреплён.
+
+### Проверки
+- `bun run lint`
+- `bun run test:frontend` — 72 test files, 638 tests
+- `bun run build:extension` — popup, shared CSS/fonts и `overlay.js` собраны
+- `cargo fmt --all -- --check`
+- `cargo test --workspace --all-targets --locked` — 646 passed, 5 ignored
+- `cargo clippy --workspace --all-targets --locked` — завершён успешно с
+  существующими workspace warnings
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` — strict
+  mode блокируется существующими lint/MSRV warnings вне scope этой сессии
+- `git diff --check`
+
+## 05.07.2026 — Vault marker renamed to `.mine` and source stats cleaned
+
+### Задача
+Убрать исторический хвост `.arena/vault-id`, чтобы новые vault больше не
+создавали служебные файлы с названием Are.na, а счётчик `files` в интерфейсе
+показывал только пользовательский контент: `.md + media`.
+
+### Что сделано
+- Canonical source-vault marker перенесён в `.mine/vault-id`.
+- `open_vault()` и native host читают `.mine/vault-id`, мигрируют legacy
+  `.arena/vault-id` при первом открытии и создают новые vault сразу в `.mine`.
+- Known legacy artifacts `.arena/vault-id`, `.arena/index.db*`,
+  `.arena/cache`, `.arena/.DS_Store` удаляются после migration/bootstrap;
+  неизвестные legacy-папки не трогаются автоматически.
+- Runtime derived state остаётся вне source vault:
+  `~/Library/Application Support/com.mine.app/vaults/<vault-id>/`.
+- Source stats теперь считают content files: `.mine`, `.obsidian`, `.git`,
+  legacy `.arena` и hidden/service files исключены из `total_file_count`.
+- Frontend fallback thumbnail root, localStorage keys и IndexedDB font metrics
+  переименованы с `arena*` на `mine*` с legacy migration path.
+- `core-ffi` больше не создаёт `.arena/index.db`: iOS open path использует
+  `.mine/index.db` и копирует legacy `.arena/index.db` / `.arena/vault-id` при
+  наличии.
+- Web clipper `native-host` использует тот же `.mine/vault-id` contract,
+  чистит known legacy `.arena/*` artifacts после bootstrap и переустановлен в
+  `~/Library/Application Support/com.mine.app/clipper/native-host`.
+- Текущий vault очищен: удалены `.arena`, `.mine-migration-backup` и `.DS_Store`;
+  сохранён идентификатор в `.mine/vault-id`.
+- `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md`, `PLAN.md`, `SPEC_FRONTEND.md`,
+  `SPEC_STORAGE.md`, `SPEC_THUMBNAILS.md`, `SPEC_MOBILE.md`, `DESIGN_SYSTEM.md`
+  синхронизированы с новым контрактом.
+
+### Проверки
+- `cargo test -p mine ensure_vault_id -- --nocapture`
+- `cargo test -p mine cleanup_legacy_vault_artifacts -- --nocapture`
+- `cargo test -p mine source_stats_count_markdown_media_and_bytes_outside_service_dirs -- --nocapture`
+- `cargo test -p mine mine_metadata_dir_ignored -- --nocapture`
+- `bunx tsc -b --pretty false`
+- `bunx vitest run src/App.test.tsx src/components/Card.test.tsx src/components/Sidebar.test.tsx --reporter=dot` — 125 tests
+- `bun run lint -- src/App.tsx src/App.test.tsx src/components/Card.test.tsx src/components/Sidebar.test.tsx src/lib/assets.ts src/lib/recentTags.ts src/hooks/useSidebarResize.ts src/lib/fontMetrics.ts`
+- `cargo check -p mine-ffi`
+- `cargo build --release --bin native-host`
+- `git diff --check`
+- `cargo tauri build --debug`
+- Installed native-host protocol check: `list_channels` returned `ok: true`
+  and did not recreate `.arena`.
+- Installed native-host mtime: `Jul 5 12:54:58 2026`
+- Fresh bundle opened: `target/debug/bundle/macos/Mine.app`, asset
+  `main-CTejYI78.js`, process `mine` PID `65023`
+
 ## 04.07.2026 — Graph unfreeze reheat and sidebar thumbnail card menu
 
 ### Задача

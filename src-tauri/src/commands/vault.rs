@@ -72,10 +72,7 @@ pub fn select_vault(
     save_vault_path(&app, &path);
     // Broadcast the switch to every window: the main window re-mounts on this
     // even when the switch originated elsewhere (e.g. the settings window).
-    let _ = app.emit(
-        "vault-selected",
-        VaultChangedPayload { path: path.clone() },
-    );
+    let _ = app.emit("vault-selected", VaultChangedPayload { path: path.clone() });
     append_startup_trace(
         &app,
         "select_vault",
@@ -341,13 +338,13 @@ fn initialize_vault(
     let local_index_existed = vault.index_db_path().exists();
     let bootstrapped_thumbs_from_legacy = bootstrap_local_thumbs_from_legacy(&vault)?;
 
-    // Create the synced vault metadata dir and the local derived thumbs dir.
+    // Create the synced vault metadata dir and the local derived caches.
     std::fs::create_dir_all(vault.thumbs_dir())
         .map_err(|e| CommandError::Internal(format!("failed to create dirs: {e}")))?;
     std::fs::create_dir_all(vault.audio_dir())
         .map_err(|e| CommandError::Internal(format!("failed to create dirs: {e}")))?;
-    std::fs::create_dir_all(vault.arena_dir())
-        .map_err(|e| CommandError::Internal(format!("failed to create arena dir: {e}")))?;
+    std::fs::create_dir_all(vault.mine_dir())
+        .map_err(|e| CommandError::Internal(format!("failed to create Mine metadata dir: {e}")))?;
 
     let bootstrapped_from_legacy = if !local_index_existed {
         bootstrap_local_index_from_legacy(&vault)?
@@ -379,6 +376,7 @@ fn initialize_vault(
             ),
         );
     }
+    cleanup_legacy_vault_artifacts(&vault)?;
     let derived_store_ready = local_index_existed || bootstrapped_from_legacy;
     let migration_required = !derived_store_ready;
 
@@ -983,8 +981,8 @@ fn count_indexed_blocks(conn: &Connection) -> Result<usize, CommandError> {
 
 fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLayout, CommandError> {
     let base = VaultLayout::new(root.to_path_buf());
-    std::fs::create_dir_all(base.arena_dir())
-        .map_err(|e| CommandError::Internal(format!("failed to create arena dir: {e}")))?;
+    std::fs::create_dir_all(base.mine_dir())
+        .map_err(|e| CommandError::Internal(format!("failed to create Mine metadata dir: {e}")))?;
     let vault_id = ensure_vault_id(&base)?;
     let derived_root = derived_store_root(app, &vault_id)?;
     Ok(VaultLayout::with_derived_root(
@@ -998,6 +996,16 @@ fn ensure_vault_id(vault: &VaultLayout) -> Result<String, CommandError> {
     if let Ok(existing) = std::fs::read_to_string(&path) {
         let trimmed = existing.trim();
         if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    if let Ok(existing) = std::fs::read_to_string(vault.legacy_vault_id_path()) {
+        let trimmed = existing.trim();
+        if !trimmed.is_empty() {
+            std::fs::write(&path, format!("{trimmed}\n")).map_err(|e| {
+                CommandError::Internal(format!("failed to migrate vault-id to .mine: {e}"))
+            })?;
             return Ok(trimmed.to_string());
         }
     }
@@ -1134,6 +1142,68 @@ fn bootstrap_local_thumbs_from_legacy(vault: &VaultLayout) -> Result<bool, Comma
     }
 
     Ok(copied_any)
+}
+
+fn cleanup_legacy_vault_artifacts(vault: &VaultLayout) -> Result<(), CommandError> {
+    remove_file_if_exists(&vault.legacy_vault_id_path(), "legacy vault-id")?;
+    remove_file_if_exists(&vault.legacy_index_db_path(), "legacy index db")?;
+    for suffix in ["-wal", "-shm"] {
+        remove_file_if_exists(
+            &PathBuf::from(format!(
+                "{}{}",
+                vault.legacy_index_db_path().display(),
+                suffix
+            )),
+            "legacy sqlite sidecar",
+        )?;
+    }
+    remove_file_if_exists(
+        &vault.legacy_arena_dir().join(".DS_Store"),
+        "legacy metadata .DS_Store",
+    )?;
+    remove_dir_all_if_exists(&vault.legacy_arena_dir().join("cache"), "legacy cache")?;
+    remove_empty_dir_if_exists(&vault.legacy_arena_dir(), "legacy metadata dir")?;
+    Ok(())
+}
+
+fn remove_file_if_exists(path: &Path, label: &str) -> Result<(), CommandError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(CommandError::Internal(format!(
+            "failed to remove {label} {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+fn remove_dir_all_if_exists(path: &Path, label: &str) -> Result<(), CommandError> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(CommandError::Internal(format!(
+            "failed to remove {label} {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+fn remove_empty_dir_if_exists(path: &Path, label: &str) -> Result<(), CommandError> {
+    match std::fs::remove_dir(path) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(CommandError::Internal(format!(
+            "failed to remove empty {label} {}: {error}",
+            path.display()
+        ))),
+    }
 }
 
 // ─── Channel migration ──────────────────────────────────────────────────────
@@ -1280,7 +1350,7 @@ mod tests {
     fn ensure_vault_id_persists_value() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
-        std::fs::create_dir_all(vault.arena_dir()).unwrap();
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
 
         let first = ensure_vault_id(&vault).unwrap();
         let second = ensure_vault_id(&vault).unwrap();
@@ -1295,12 +1365,31 @@ mod tests {
     }
 
     #[test]
+    fn ensure_vault_id_migrates_legacy_arena_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
+        std::fs::create_dir_all(vault.legacy_arena_dir()).unwrap();
+        std::fs::write(vault.legacy_vault_id_path(), "legacy-id\n").unwrap();
+
+        let id = ensure_vault_id(&vault).unwrap();
+
+        assert_eq!(id, "legacy-id");
+        assert_eq!(
+            std::fs::read_to_string(vault.vault_id_path())
+                .unwrap()
+                .trim(),
+            "legacy-id"
+        );
+    }
+
+    #[test]
     fn bootstrap_local_index_from_legacy_copies_sqlite_files() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("vault");
         let derived = dir.path().join("derived");
         let vault = VaultLayout::with_derived_root(root.clone(), derived);
-        std::fs::create_dir_all(vault.arena_dir()).unwrap();
+        std::fs::create_dir_all(vault.legacy_arena_dir()).unwrap();
         std::fs::write(vault.legacy_index_db_path(), b"legacy-db").unwrap();
         std::fs::write(
             format!("{}-wal", vault.legacy_index_db_path().display()),
@@ -1346,5 +1435,30 @@ mod tests {
             b"3"
         );
         assert!(!bootstrap_local_thumbs_from_legacy(&vault).unwrap());
+    }
+
+    #[test]
+    fn cleanup_legacy_vault_artifacts_removes_known_files_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("vault");
+        let derived = dir.path().join("derived");
+        let vault = VaultLayout::with_derived_root(root.clone(), derived);
+        std::fs::create_dir_all(vault.legacy_thumbs_dir()).unwrap();
+        std::fs::create_dir_all(vault.legacy_arena_dir().join("conflicts-archive")).unwrap();
+        std::fs::write(vault.legacy_vault_id_path(), b"legacy-id").unwrap();
+        std::fs::write(vault.legacy_index_db_path(), b"db").unwrap();
+        std::fs::write(
+            PathBuf::from(format!("{}-wal", vault.legacy_index_db_path().display())),
+            b"wal",
+        )
+        .unwrap();
+        std::fs::write(vault.legacy_thumbs_dir().join("alpha.jpg"), b"jpg").unwrap();
+
+        cleanup_legacy_vault_artifacts(&vault).unwrap();
+
+        assert!(!vault.legacy_vault_id_path().exists());
+        assert!(!vault.legacy_index_db_path().exists());
+        assert!(!vault.legacy_arena_dir().join("cache").exists());
+        assert!(vault.legacy_arena_dir().join("conflicts-archive").exists());
     }
 }

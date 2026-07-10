@@ -50,7 +50,7 @@ export function SegmentedControl<T extends string>({
     <div
       role="group"
       className={cn(
-        "action-button inline-flex shrink-0 cursor-pointer items-center overflow-hidden rounded-1 bg-transparent p-[2px] outline-0 hover:bg-component-fill-hover",
+        "action-button inline-flex shrink-0 cursor-pointer items-center overflow-hidden rounded-1 bg-transparent p-[2px] text-muted-foreground outline-0 hover:bg-component-fill-hover",
         sizeClasses.root,
         className,
       )}
@@ -64,7 +64,7 @@ export function SegmentedControl<T extends string>({
           disabled={option.disabled}
           onClick={() => onChange(option.value)}
           className={cn(
-            "inline-flex shrink-0 items-center rounded-[2px] px-[1ch] leading-none text-muted-foreground hover:text-foreground focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
+            "inline-flex shrink-0 items-center rounded-[2px] px-[1ch] leading-none text-current focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
             sizeClasses.item,
             value === option.value && "bg-component-fill-inner text-foreground",
           )}

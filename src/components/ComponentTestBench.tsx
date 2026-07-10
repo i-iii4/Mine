@@ -491,7 +491,7 @@ function CoreComponentSection() {
           { prop: "Скругление", value: "root rounded-1 (3) · item rounded-[2px]" },
           { prop: "Отступ", value: "root p-[2px] · item px-[1ch]" },
           { prop: "Выбран", value: "--component-fill-inner · text --foreground" },
-          { prop: "Не выбран", value: "text --muted-foreground" },
+          { prop: "Не выбран", value: "text --muted-foreground · hover без text-change" },
         ]}
       >
         <SegmentedControl

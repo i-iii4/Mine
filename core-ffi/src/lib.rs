@@ -67,7 +67,18 @@ impl ArenaVault {
     /// Open (or create) a vault at the given path.
     #[uniffi::constructor]
     fn open(vault_path: String) -> Result<Self, ArenaError> {
-        let db_path = PathBuf::from(&vault_path).join(".arena").join("index.db");
+        let vault = VaultLayout::new(PathBuf::from(&vault_path));
+        std::fs::create_dir_all(vault.mine_dir())
+            .map_err(|e| ArenaError::Io { msg: e.to_string() })?;
+        if !vault.index_db_path().exists() && vault.legacy_index_db_path().exists() {
+            std::fs::copy(vault.legacy_index_db_path(), vault.index_db_path())
+                .map_err(|e| ArenaError::Io { msg: e.to_string() })?;
+        }
+        if !vault.vault_id_path().exists() && vault.legacy_vault_id_path().exists() {
+            std::fs::copy(vault.legacy_vault_id_path(), vault.vault_id_path())
+                .map_err(|e| ArenaError::Io { msg: e.to_string() })?;
+        }
+        let db_path = vault.index_db_path();
         let conn = db::open_or_create(&db_path)
             .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
         Ok(Self {

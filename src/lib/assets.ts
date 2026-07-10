@@ -4,8 +4,8 @@
 
 import { convertFileSrc } from "@tauri-apps/api/core";
 
-export function legacyThumbsRoot(vaultPath: string): string {
-  return `${vaultPath}/.arena/cache/thumbs`;
+export function fallbackThumbsRoot(vaultPath: string): string {
+  return `${vaultPath}/.mine/cache/thumbs`;
 }
 
 export function thumbnailUrl(thumbsRootPath: string, slug: string): string {

@@ -109,7 +109,7 @@ Pipeline обязан удовлетворять **каждому** из эти�
 │       └─ Rust writes vault.thumb_path(slug) → emit "thumb:updated"   │
 │                                                                      │
 │  Sidebar (virtualized, window of visible channels):                  │
-│   └─ <img src={asset://vault/.arena/cache/thumbs/<slug>.jpg}>        │
+│   └─ <img src={asset://<derived>/cache/thumbs/<slug>.jpg}>           │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -146,11 +146,10 @@ reload the feed for a card outside the current feed»).
 ### File layout
 
 ```
-<vault-root>/
-├── .arena/
-│   └── cache/
-│       └── thumbs/
-│           └── <slug>.jpg     # Thumb file, always .jpg extension
+~/Library/Application Support/com.mine.app/vaults/<vault-id>/
+└── cache/
+    └── thumbs/
+        └── <slug>.jpg         # Thumb file, always .jpg extension
 ```
 
 Thumb file extension **всегда** `.jpg` независимо от actual content. App
@@ -748,7 +747,7 @@ This guarantees: after startup, every block has a thumb file (text placeholder m
 
 ### Self-healing scenarios
 
-**Case 1: User manually deletes thumb file from `.arena/cache/thumbs/`**
+**Case 1: User manually deletes thumb file from the local derived `cache/thumbs/`**
 - Next `full_scan` finds missing thumb → `is_thumb_fresh = false` → Phase 1 regenerates
 - If still placeholder → Phase 2 upgrades
 

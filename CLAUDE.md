@@ -188,16 +188,22 @@ local-arena/
 
 ```
 ~/Mine/                       # Vault — выбирается пользователем
-├── .arena/                         # Служебные данные
-│   ├── index.db                    # SQLite: FTS5, кэш тегов, каналы
-│   └── cache/
-│       └── thumbs/                 # Thumbnails 240px
+├── .mine/
+│   └── vault-id                    # Sync'ed идентификатор vault
 ├── sunset-tokyo.md                 # Метаданные (frontmatter + wikilinks)
 ├── sunset-tokyo.jpg                # Медиафайл
 ├── stripe-homepage.md              # Ссылка (frontmatter, тело пустое)
 ├── stripe-og.png                   # Миниатюра ссылки
 ├── crdt-article.md                 # Статья (frontmatter + текст)
 └── ...                             # Всё плоско в корне vault
+```
+
+```
+~/Library/Application Support/com.mine.app/vaults/<vault-id>/  # Local derived store
+├── index.db
+└── cache/
+    ├── thumbs/
+    └── audio/
 ```
 
 Коллекции = `.md` файлы с `type: channel` (метаданные в frontmatter: position, color, icon). Блок = `.md` файл + опциональный медиафайл. Collection membership — через `Mine Collections` с quoted Obsidian wikilinks, например `- "[[Красивый веб]]"`; `tags` остаётся пользовательским Obsidian-полем.
@@ -224,9 +230,14 @@ local-arena/
 bun install                    # Установка JS-зависимостей
 cargo tauri dev                # Запуск в режиме разработки (Rust + Vite)
 cargo tauri build              # Сборка .dmg/.app
+bun run build:extension        # Обязательная отдельная сборка Mine Clipper → extension/dist
 bun run lint                   # Линтинг фронтенда
 cargo clippy                   # Линтинг Rust
 ```
+
+`extension/dist/` не хранится в Git. Desktop-команды не собирают клиппер:
+перед `Load unpacked` в Chrome/Dia и после очистки build outputs всегда
+запускайте `bun run build:extension`.
 
 ## Operational launch rule
 

@@ -6,7 +6,8 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 
 Браузерное расширение для сохранения контента из веба в Mine vault. Работает автономно через native messaging — не требует запущенного приложения.
 
-Поддерживаемые браузеры: Chrome (Manifest V3), Safari (через xcrun safari-web-extension-converter).
+Поддерживаемые браузеры: Chromium/Manifest V3 (Chrome, Dia), Safari (через
+`xcrun safari-web-extension-converter`).
 
 Popup UI and native messaging request names still use the existing clip-type
 vocabulary (`link`, `article`, `image`, `video`, `file`, `screenshot`) because
@@ -57,8 +58,14 @@ contract: non-empty body → `article`, empty body → `media`, `type: channel` 
          └────────┬─────────┘
                   │
          ┌────────▼─────────┐
-         │  Vault (FS)      │
-         │  .arena/index.db │
+         │ Source vault     │
+         │ .mine/vault-id   │
+         │ .md + media      │
+         └────────┬─────────┘
+                  │
+         ┌────────▼─────────┐
+         │ Local derived    │
+         │ index.db + cache │
          └──────────────────┘
 ```
 
@@ -485,6 +492,32 @@ bun run build:extension   # Собирает popup → extension/dist/ + коп�
 ```
 
 Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` + бандл.
+
+`extension/dist/` — обязательный runtime bundle, но не source artifact: он
+исключён из Git общим правилом `dist/` и всегда воспроизводится из исходников.
+Обычные `bun run build`, `cargo tauri dev` и `cargo tauri build` собирают
+desktop-приложение и **не** создают bundle клиппера. Поэтому перед первым
+`Load unpacked`, после clean checkout/clone или после удаления build outputs
+обязательно выполнить `bun run build:extension`.
+
+Минимальный loadable contract:
+
+- `extension/dist/index.html` существует;
+- `extension/dist/overlay.js` существует, потому что он указан в
+  `content_scripts` manifest;
+- `extension/dist/assets/popup.css` и Geist fonts существуют, потому что их
+  загружает Shadow DOM overlay.
+
+Если `extension/dist/` отсутствует, Chromium не может загрузить unpacked
+extension: запись может перейти в broken state или исчезнуть из списка
+расширений. Повторная сборка возвращает файлы, но не переустанавливает удалённое
+расширение автоматически. Recovery contract:
+
+1. `bun run build:extension`.
+2. Открыть `chrome://extensions/` или `dia://extensions/`.
+3. Включить Developer mode и выбрать `Load unpacked` → каталог `extension/`.
+4. Проверить `Mine Clipper`, version `0.1.0`, enabled state и service worker.
+5. В Dia закрепить Mine Clipper через `Extensions → Pin Extensions…`.
 
 Алиас `@/` указывает на `src/` основного приложения — все компоненты `@/components/ui/*`, утилиты `@/lib/utils`, токены `@/styles/global.css` импортируются напрямую. Tauri-модули исключены через `optimizeDeps.exclude`.
 
@@ -1032,9 +1065,16 @@ not infer cards from user media that lacks Markdown.
 manifest для актуального клиппера не должен ссылаться на него: при обновлении
 native host source of truth — `com.mine.app/clipper/native-host`.
 
-### Manifest (Chrome)
+### Manifest (Chromium)
 
-Файл: `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.localarena.clipper.json`
+Файлы:
+
+- Chrome: `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.localarena.clipper.json`
+- Dia: `~/Library/Application Support/Dia/User Data/NativeMessagingHosts/com.localarena.clipper.json`
+
+Оба manifest используют один protocol name и один установленный native-host
+binary. `allowed_origins` обязан содержать фактический ID unpacked extension;
+для текущего checkout это `mfmocklgopobknfgeedgdlnchfohicii`.
 
 ```json
 {

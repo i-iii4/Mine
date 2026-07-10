@@ -130,8 +130,9 @@ pub fn fetch_validated_get(
                 bail!("request to {current} failed with HTTP {status}");
             }
             Err(err) => {
-                return Err(anyhow::Error::new(err)
-                    .context(format!("transport error fetching {current}")));
+                return Err(
+                    anyhow::Error::new(err).context(format!("transport error fetching {current}"))
+                );
             }
         }
     }

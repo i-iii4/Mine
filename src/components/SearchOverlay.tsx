@@ -31,7 +31,7 @@ import {
   formatMetadataCardKind,
   METADATA_VALUE_BASE_CLASSES,
 } from "@/components/MetadataRow";
-import { domainFromUrl, isSafeUrl, legacyThumbsRoot } from "@/lib/assets";
+import { domainFromUrl, isSafeUrl, fallbackThumbsRoot } from "@/lib/assets";
 import { listGridBlocks } from "@/lib/commands";
 import { normalizeSurfaceSearchQuery } from "@/lib/searchQuery";
 import { groupByRecency } from "@/lib/recencyBuckets";
@@ -232,7 +232,7 @@ export function SearchOverlay({
   }, [open]);
 
   const resolvedThumbsRoot = useMemo(
-    () => thumbsRootPath ?? legacyThumbsRoot(vaultPath),
+    () => thumbsRootPath ?? fallbackThumbsRoot(vaultPath),
     [thumbsRootPath, vaultPath],
   );
 

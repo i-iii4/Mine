@@ -17,13 +17,24 @@ describe("SegmentedControl", () => {
     );
 
     const control = screen.getByRole("group", { name: "Channel filter" });
-    expect(control).toHaveClass("h-6", "p-[2px]", "font-mono", "text-sm");
+    expect(control).toHaveClass(
+      "h-6",
+      "p-[2px]",
+      "font-mono",
+      "text-sm",
+      "text-muted-foreground",
+      "hover:bg-component-fill-hover",
+    );
+    expect(control).not.toHaveClass("hover:outline-component-fill-hover");
     expect(screen.getByRole("button", { name: "All" })).toHaveClass(
       "h-5",
       "bg-component-fill-inner",
     );
     expect(screen.getByRole("button", { name: "Connected" })).not.toHaveClass(
       "bg-component-fill-inner",
+    );
+    expect(screen.getByRole("button", { name: "Connected" })).not.toHaveClass(
+      "hover:text-foreground",
     );
   });
 
@@ -90,5 +101,45 @@ describe("SegmentedControl", () => {
     fireEvent.click(screen.getByRole("button", { name: "Link" }));
 
     expect(onChange).toHaveBeenCalledWith("link");
+  });
+
+  it("allows secondary chrome to set the inactive text tone", () => {
+    render(
+      <SegmentedControl
+        value="grid"
+        options={[
+          { value: "grid", label: "Grid" },
+          { value: "graph", label: "Graph" },
+        ]}
+        onChange={vi.fn()}
+        aria-label="View mode"
+        className="text-tertiary-foreground"
+      />,
+    );
+
+    const control = screen.getByRole("group", { name: "View mode" });
+    expect(control).toHaveClass("text-tertiary-foreground");
+    expect(screen.getByRole("button", { name: "Graph" })).toHaveClass("text-current");
+  });
+
+  it("keeps inactive segment text stable on hover", () => {
+    render(
+      <SegmentedControl
+        value="all"
+        options={[
+          { value: "all", label: "All" },
+          { value: "linked", label: "Connected" },
+        ]}
+        onChange={vi.fn()}
+        aria-label="Collection filter"
+      />,
+    );
+
+    const inactive = screen.getByRole("button", { name: "Connected" });
+    expect(inactive).toHaveClass("text-current");
+    expect(inactive).not.toHaveClass("hover:text-foreground");
+    expect(screen.getByRole("group", { name: "Collection filter" })).toHaveClass(
+      "hover:bg-component-fill-hover",
+    );
   });
 });

@@ -1349,7 +1349,10 @@ mod tests {
             .map(|b| b.slug)
             .collect();
         assert!(slugs.contains(&"keep".to_string()));
-        assert!(!slugs.contains(&"gone".to_string()), "orphan should be removed");
+        assert!(
+            !slugs.contains(&"gone".to_string()),
+            "orphan should be removed"
+        );
     }
 
     #[test]

@@ -1385,8 +1385,18 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
     let mut resolver = media_refs::MediaResolver::new(vault);
     let mut updated = 0usize;
 
-    for (slug, raw_type, url, media_file, thumbnail, width, height, body, raw_thumb_format, body_hash) in
-        rows
+    for (
+        slug,
+        raw_type,
+        url,
+        media_file,
+        thumbnail,
+        width,
+        height,
+        body,
+        raw_thumb_format,
+        body_hash,
+    ) in rows
     {
         let block_type = BlockType::from_str(&raw_type)
             .with_context(|| format!("unknown block_type in media index backfill: {raw_type}"))?;
@@ -3782,12 +3792,7 @@ mod tests {
         );
         // The same small file with known, in-limit dimensions is standard.
         assert_eq!(
-            feed_autoplay_profile_for_source(
-                Some(vault.root()),
-                "clip.mov",
-                Some(1280),
-                Some(720)
-            ),
+            feed_autoplay_profile_for_source(Some(vault.root()), "clip.mov", Some(1280), Some(720)),
             Some(FeedPlaybackProfile::Standard)
         );
     }
@@ -3806,12 +3811,7 @@ mod tests {
         // 200 MiB with known in-limit dimensions is a valid heavy clip.
         write_sparse("big.mp4", 200 * 1024 * 1024);
         assert_eq!(
-            feed_autoplay_profile_for_source(
-                Some(vault.root()),
-                "big.mp4",
-                Some(1920),
-                Some(1080)
-            ),
+            feed_autoplay_profile_for_source(Some(vault.root()), "big.mp4", Some(1920), Some(1080)),
             Some(FeedPlaybackProfile::Heavy)
         );
 
@@ -4212,9 +4212,11 @@ mod tests {
 
         // The body_hash backfill would have captured in its snapshot.
         let snapshot_hash: Option<String> = conn
-            .query_row("SELECT body_hash FROM blocks WHERE slug = 'racy'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT body_hash FROM blocks WHERE slug = 'racy'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(snapshot_hash.is_some());
 
@@ -4240,9 +4242,11 @@ mod tests {
         assert_eq!(changed, 0);
 
         let media_urls: Option<String> = conn
-            .query_row("SELECT media_urls FROM blocks WHERE slug = 'racy'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT media_urls FROM blocks WHERE slug = 'racy'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(media_urls.as_deref(), Some("fresh"));
 

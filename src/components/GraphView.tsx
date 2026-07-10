@@ -7,7 +7,7 @@ import ForceGraph2D, {
 } from "react-force-graph-2d";
 import { getBlock, listGraphSnapshot } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
-import { legacyThumbsRoot, thumbnailUrl } from "@/lib/assets";
+import { fallbackThumbsRoot, thumbnailUrl } from "@/lib/assets";
 import { parsePreviewManifest } from "@/lib/cardLayout";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import { ReadOnlyCardPreview } from "./Card";
@@ -136,7 +136,7 @@ export function GraphView({
   onOpenCardMenu,
   onNavigateCollection,
 }: GraphViewProps) {
-  const resolvedThumbsRoot = thumbsRootPath ?? legacyThumbsRoot(vaultPath);
+  const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

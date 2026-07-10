@@ -378,8 +378,11 @@ describe("Card", () => {
     expect(card).toHaveStyle({
       minHeight: `${CARD_HOVER_ACTION_MIN_HEIGHT}px`,
     });
-    expect(card).not.toHaveClass("hover:border-component-fill-hover");
-    expect(card).not.toHaveClass("transition-colors");
+    expect(card).toHaveClass(
+      "hover:border-component-fill-hover",
+      "focus-visible:border-component-fill-hover",
+      "transition-colors",
+    );
   });
 
   it("publishes the selected drag group on the draggable card", () => {
@@ -458,6 +461,7 @@ describe("Card", () => {
 
     const graphicSurface = container.querySelector("[data-card-graphic-surface]");
     expect(graphicSurface).toBeInTheDocument();
+    expect(graphicSurface).toHaveClass("bg-card");
     expect(graphicSurface?.querySelector("img")).toBeInTheDocument();
     expect(screen.getByRole("button")).not.toHaveAttribute("data-feed-card-focused");
 
@@ -481,12 +485,10 @@ describe("Card", () => {
 
   // ── Image card ────────────────────────────────────────────────────────
 
-  it("prefers the source media file over the cached thumbnail", () => {
-    // Source-first cascade: the vault-side media file is always on disk
-    // by the time a block is indexed, while the thumb may still be in
-    // background generation. Using source first avoids the
-    // broken-image flash that used to appear between save and
-    // thumb-ready.
+  it("prefers the generated thumbnail over the source media file", () => {
+    // Feed cards should visually match the sidebar strip: the generated
+    // thumbnail/poster is the first visual surface, while the original media is
+    // only a fallback for missing derived previews.
     const b = block({
       block_type: "image",
       media_file: "sunset.jpg",
@@ -494,50 +496,46 @@ describe("Card", () => {
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     expect(screen.getByRole("button")).not.toHaveClass("feed-article-card");
     const img = screen.getByRole("img");
-    expect(img).toHaveAttribute("src", expect.stringContaining("sunset.jpg"));
+    expect(img).toHaveAttribute(
+      "src",
+      expect.stringContaining("/.mine/cache/thumbs/test-block.jpg"),
+    );
     expect(img).toHaveAttribute("draggable", "false");
-    expect(img).not.toHaveAttribute("src", expect.stringContaining("/.arena/cache/thumbs/"));
+    expect(img).not.toHaveAttribute("src", expect.stringContaining("sunset.jpg"));
   });
 
-  it("renders image cards in two phases: warmed thumbnail base under a fading original", () => {
-    // The feed preloader decodes the derived thumbnail ahead of the viewport,
-    // so the base layer paints it instantly (decode-cache hit) while the
-    // full-size original loads on top and fades in once decoded.
+  it("renders image cards as a single generated thumbnail surface", () => {
     const b = block({ block_type: "image", title: "Sunset", media_file: "sunset.jpg" });
     const { container } = render(
       <Card block={b} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} />,
     );
 
-    const base = container.querySelector("[data-card-image-base]");
-    expect(base).toBeInTheDocument();
-    expect(base?.getAttribute("style")).toContain("/tmp/thumbs/test-block.jpg");
+    expect(container.querySelector("[data-card-image-base]")).not.toBeInTheDocument();
 
     const img = screen.getByRole("img");
-    expect(img.getAttribute("src")).toContain("sunset.jpg");
-    expect(img).toHaveClass("opacity-0");
-
-    fireEvent.load(img);
-    expect(img).toHaveClass("opacity-100");
+    expect(img.getAttribute("src")).toContain("/tmp/thumbs/test-block.jpg");
+    expect(img).toHaveClass("object-cover");
+    expect(img.className).not.toContain("opacity-");
   });
 
-  it("unmounts the image base layer once the original has loaded", () => {
-    // The base is an opaque JPEG background (Rust to_rgb8, no alpha). Leaving it
-    // mounted under a transparent PNG/WebP shows a cropped opaque thumbnail
-    // through the transparent areas and keeps a second decoded bitmap alive, so
-    // it must be dropped once the original is on screen.
+  it("falls through to the original image when the generated thumbnail fails", () => {
     const b = block({ block_type: "image", title: "Sunset", media_file: "sunset.jpg" });
     const { container } = render(
       <Card block={b} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} />,
     );
 
-    expect(container.querySelector("[data-card-image-base]")).toBeInTheDocument();
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "src",
+      expect.stringContaining("/tmp/thumbs/test-block.jpg"),
+    );
 
-    fireEvent.load(screen.getByRole("img"));
+    fireEvent.error(screen.getByRole("img"));
 
+    expect(screen.getByRole("img")).toHaveAttribute("src", expect.stringContaining("sunset.jpg"));
     expect(container.querySelector("[data-card-image-base]")).not.toBeInTheDocument();
   });
 
-  it("falls through to the cached thumbnail when the source media load fails", () => {
+  it("falls through from cached thumbnail to source media when the thumbnail load fails", () => {
     const b = block({
       block_type: "image",
       media_file: "sunset.jpg",
@@ -548,7 +546,7 @@ describe("Card", () => {
     const fallback = screen.getByRole("img");
     expect(fallback).toHaveAttribute(
       "src",
-      expect.stringContaining("/.arena/cache/thumbs/test-block.jpg"),
+      expect.stringContaining("sunset.jpg"),
     );
   });
 
@@ -1049,7 +1047,7 @@ describe("Card", () => {
     fireEvent.error(img!);
     expect(img).toHaveAttribute(
       "src",
-      expect.stringContaining(`${VAULT}/.arena/cache/thumbs/test-block.jpg`),
+      expect.stringContaining(`${VAULT}/.mine/cache/thumbs/test-block.jpg`),
     );
   });
 
@@ -1150,7 +1148,7 @@ describe("Card", () => {
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     expect(screen.getByRole("img")).toHaveAttribute(
       "src",
-      expect.stringContaining("photo.jpg"),
+      expect.stringContaining("/.mine/cache/thumbs/test-block.jpg"),
     );
     expect(screen.queryByText("Photo")).not.toBeInTheDocument();
   });

@@ -271,14 +271,15 @@ fn load_known_vaults() -> Vec<String> {
 
 fn resolve_native_vault_layout(root: PathBuf) -> Result<VaultLayout, String> {
     let base = VaultLayout::new(root.clone());
-    std::fs::create_dir_all(base.arena_dir())
-        .map_err(|e| format!("failed to create arena dir: {e}"))?;
+    std::fs::create_dir_all(base.mine_dir())
+        .map_err(|e| format!("failed to create Mine metadata dir: {e}"))?;
 
     let vault_id = ensure_native_vault_id(&base)?;
     let derived_root = native_app_data_dir()?.join("vaults").join(vault_id);
     let layout = VaultLayout::with_derived_root(root, derived_root);
 
     bootstrap_native_index_from_legacy(&layout)?;
+    cleanup_native_legacy_vault_artifacts(&layout)?;
     Ok(layout)
 }
 
@@ -292,6 +293,15 @@ fn ensure_native_vault_id(vault: &VaultLayout) -> Result<String, String> {
     if let Ok(existing) = std::fs::read_to_string(&path) {
         let trimmed = existing.trim();
         if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    if let Ok(existing) = std::fs::read_to_string(vault.legacy_vault_id_path()) {
+        let trimmed = existing.trim();
+        if !trimmed.is_empty() {
+            std::fs::write(&path, format!("{trimmed}\n"))
+                .map_err(|e| format!("failed to migrate vault-id to .mine: {e}"))?;
             return Ok(trimmed.to_string());
         }
     }
@@ -350,6 +360,68 @@ fn bootstrap_native_index_from_legacy(vault: &VaultLayout) -> Result<(), String>
     std::fs::copy(&source, &target)
         .map_err(|e| format!("failed to bootstrap local index from legacy: {e}"))?;
     Ok(())
+}
+
+fn cleanup_native_legacy_vault_artifacts(vault: &VaultLayout) -> Result<(), String> {
+    remove_native_file_if_exists(&vault.legacy_vault_id_path(), "legacy vault-id")?;
+    remove_native_file_if_exists(&vault.legacy_index_db_path(), "legacy index db")?;
+    for suffix in ["-wal", "-shm"] {
+        remove_native_file_if_exists(
+            &PathBuf::from(format!(
+                "{}{}",
+                vault.legacy_index_db_path().display(),
+                suffix
+            )),
+            "legacy sqlite sidecar",
+        )?;
+    }
+    remove_native_file_if_exists(
+        &vault.legacy_arena_dir().join(".DS_Store"),
+        "legacy metadata .DS_Store",
+    )?;
+    remove_native_dir_all_if_exists(&vault.legacy_arena_dir().join("cache"), "legacy cache")?;
+    remove_native_empty_dir_if_exists(&vault.legacy_arena_dir(), "legacy metadata dir")?;
+    Ok(())
+}
+
+fn remove_native_file_if_exists(path: &Path, label: &str) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "failed to remove {label} {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn remove_native_dir_all_if_exists(path: &Path, label: &str) -> Result<(), String> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "failed to remove {label} {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn remove_native_empty_dir_if_exists(path: &Path, label: &str) -> Result<(), String> {
+    match std::fs::remove_dir(path) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "failed to remove empty {label} {}: {error}",
+            path.display()
+        )),
+    }
 }
 
 // ─── Action handlers ────────────────────────────────────────────────────────

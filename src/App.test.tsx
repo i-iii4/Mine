@@ -193,6 +193,12 @@ vi.mock("@/components/Grid", () => ({
   ),
 }));
 
+vi.mock("@/components/GraphView", () => ({
+  GraphView: ({ currentCollection }: { currentCollection?: string }) => (
+    <div data-testid="graph-view">{currentCollection ?? "__all__"}</div>
+  ),
+}));
+
 vi.mock("@/components/Detail", () => ({
   Detail: ({
     block,
@@ -457,7 +463,7 @@ describe("AppWithVault", () => {
       total_blocks: 2,
     });
     commandMocks.getVaultStats.mockImplementation(async (currentCollection = null) => ({
-      totalFileCount: 1466,
+      totalFileCount: 1464,
       markdownFileCount: 260,
       mediaFileCount: 1204,
       sourceBytes: 4_800_000_000,
@@ -723,13 +729,13 @@ describe("AppWithVault", () => {
     expect(sidebarSegment).toHaveStyle({ width: "var(--sidebar-width)" });
     expect(sidebarSegment).toHaveClass("border-r", "border-sidebar-border");
     expect(contentSegment).toHaveClass("flex-1");
-    expect(sidebarSegment).toHaveTextContent("1 466 files260 .md1 204 media4,8 GB");
+    expect(sidebarSegment).toHaveTextContent("1 464 files260 .md1 204 media4,8 GB");
     expect(contentSegment).toHaveTextContent("2 elements");
     expect(sidebarSegment?.querySelector("[data-main-secondary-stats-left] > div")).toHaveClass(
       "gap-5",
     );
     expect(sidebarSegment?.querySelector("[data-main-secondary-stat-atom='files']")).toHaveTextContent(
-      "1 466 files",
+      "1 464 files",
     );
     expect(sidebarSegment?.querySelector("[data-main-secondary-stat-atom='markdown']")).toHaveTextContent(
       "260 .md",
@@ -738,9 +744,54 @@ describe("AppWithVault", () => {
       "text-tertiary-foreground",
     );
     expect(contentSegment?.querySelector("[data-main-secondary-stats-right]")).toHaveClass(
+      "gap-5",
       "justify-start",
       "text-tertiary-foreground",
     );
+    const viewSwitcher = contentSegment?.querySelector("[data-main-view-mode-switcher]") as HTMLElement | null;
+    expect(viewSwitcher).not.toHaveClass("ml-auto");
+    expect(viewSwitcher).toHaveClass("gap-2");
+    expect(viewSwitcher).toHaveTextContent("View:GridGraph");
+    expect(viewSwitcher?.firstElementChild).toHaveClass("text-tertiary-foreground");
+    expect(within(viewSwitcher!).getByRole("button", { name: "Grid" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(within(viewSwitcher!).getByRole("button", { name: "Graph" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(viewSwitcher?.querySelector("[data-main-view-mode-control]")).toHaveClass(
+      "text-tertiary-foreground",
+    );
+  });
+
+  it("switches the main view through the secondary segmented control", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const viewSwitcher = document.querySelector("[data-main-view-mode-switcher]") as HTMLElement;
+    fireEvent.click(within(viewSwitcher).getByRole("button", { name: "Graph" }));
+
+    expect(localStorage.getItem("mine.mainViewMode")).toBe("graph");
+    expect(await screen.findByTestId("graph-view")).toHaveTextContent("__all__");
+    expect(screen.queryByTestId("grid")).not.toBeInTheDocument();
+    expect(within(viewSwitcher).getByRole("button", { name: "Graph" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.click(within(viewSwitcher).getByRole("button", { name: "Grid" }));
+
+    expect(localStorage.getItem("mine.mainViewMode")).toBe("grid");
+    expect(await screen.findByTestId("grid")).toHaveTextContent("__all__:2");
   });
 
   it("renders default chrome surfaces", async () => {
@@ -824,6 +875,9 @@ describe("AppWithVault", () => {
       "[data-top-chrome-settings-fallback]",
     ) as HTMLElement | null;
     expect(topSettingsFallback).toBeInTheDocument();
+    expect(within(topSettingsFallback!).queryByRole("button", { name: "Graph" })).not.toBeInTheDocument();
+    expect(within(topSettingsFallback!).queryByRole("button", { name: "Grid" })).not.toBeInTheDocument();
+    expect(document.querySelector("[data-main-view-mode-switcher]")).toBeInTheDocument();
     fireEvent.click(
       within(topSettingsFallback!).getByRole("button", { name: /Settings/ }),
     );

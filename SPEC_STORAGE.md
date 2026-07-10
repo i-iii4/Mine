@@ -403,13 +403,17 @@ scan_source_vault_file_stats(vault: &VaultLayout) -> Result<SourceVaultFileStats
 - `media_file_count` считает физические source assets, которые не являются
   `.md` файлами: images, video, audio, PDF/other local files. Derived artifacts
   приложения не входят.
+- `total_file_count` считает тот же пользовательский content layer, что
+  `markdown_file_count + media_file_count`; hidden/service/build директории не
+  входят, чтобы main UI не смешивал source content и служебные файлы.
 - `source_bytes` — сумма byte size всех файлов, вошедших в
   `markdown_file_count` и `media_file_count`. Это размер source vault, не
   `Application Support`, не thumbnails, не semantic model cache и не
   audio/cache.
 - Hidden/service directories исключаются тем же правилом, что `scan_md_files`:
-  `.arena/`, `.obsidian/`, `.trash/`, `.git/`, `node_modules/`, `target/`,
-  `__pycache__/`.
+  `.mine/`, `.obsidian/`, `.trash/`, `.git/`, `node_modules/`, `target/`,
+  `__pycache__/`; legacy `.arena/` также исключается и используется только как
+  migration source.
 - Symlink traversal за пределы vault запрещён. Symlink-файлы внутри vault можно
   считать как сам symlink metadata entry, но нельзя следовать наружу и
   прибавлять внешний каталог.
@@ -475,8 +479,9 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
 ### Поведение scan_md_files
 
 - Возвращает пути всех `.md` файлов в vault recursively.
-- Игнорирует hidden/service/build директории: `.arena/`, `.obsidian/`,
-  `.trash/`, `.git/`, `node_modules/`, `target/`, `__pycache__/`.
+- Игнорирует hidden/service/build директории: `.mine/`, `.obsidian/`,
+  `.trash/`, `.git/`, `node_modules/`, `target/`, `__pycache__/`; legacy
+  `.arena/` также игнорируется.
 - Игнорирует файлы, не являющиеся `.md`
 - NFC-normalizes filename boundary перед возвратом в indexing/watcher pipeline
 

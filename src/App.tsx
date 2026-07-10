@@ -74,6 +74,11 @@ const DETAIL_LINK_MODE_OPTIONS: SegmentedControlOption<DetailLinkMode>[] = [
   { value: "linked", label: "Connected" },
 ];
 
+const MAIN_VIEW_MODE_OPTIONS: SegmentedControlOption<MainViewMode>[] = [
+  { value: "grid", label: "Grid" },
+  { value: "graph", label: "Graph" },
+];
+
 const MAIN_VIEW_MODE_STORAGE_KEY = "mine.mainViewMode";
 
 function getStoredMainViewMode(): MainViewMode {
@@ -208,20 +213,39 @@ function MainSecondaryStatsLeft({
   );
 }
 
-function MainSecondaryStatsRight({ stats }: { stats: VaultStats | null }) {
+function MainSecondaryStatsRight({
+  stats,
+  viewMode,
+  onViewModeChange,
+}: {
+  stats: VaultStats | null;
+  viewMode: MainViewMode;
+  onViewModeChange: (value: MainViewMode) => void;
+}) {
   const inChannel = Boolean(stats?.currentCollection);
   const cardCount = stats ? formatCardCount(stats.currentCollectionCardCount, inChannel) : "";
 
   return (
     <div
       data-main-secondary-stats-right=""
-      className="flex h-full min-w-0 items-center justify-start overflow-hidden px-[var(--main-secondary-pad-x)] font-mono text-sm leading-none text-tertiary-foreground"
+      className="flex h-full min-w-0 items-center justify-start gap-5 overflow-hidden px-[var(--main-secondary-pad-x)] font-mono text-sm leading-none text-tertiary-foreground"
     >
       {stats && (
-        <span className="truncate whitespace-nowrap" title={cardCount}>
+        <span className="min-w-0 truncate whitespace-nowrap" title={cardCount}>
           {cardCount}
         </span>
       )}
+      <div className="flex shrink-0 items-center gap-2" data-main-view-mode-switcher="">
+        <span className="shrink-0 font-mono text-sm text-tertiary-foreground">
+          View:
+        </span>
+        <MainViewModeSwitch
+          value={viewMode}
+          onChange={onViewModeChange}
+          entered
+          className="text-tertiary-foreground"
+        />
+      </div>
     </div>
   );
 }
@@ -235,6 +259,8 @@ function MainSecondaryTopBar({
   detailEntered,
   detailLinkMode,
   onDetailLinkModeChange,
+  viewMode,
+  onViewModeChange,
   vaultPath,
   tags,
   currentTag,
@@ -253,6 +279,8 @@ function MainSecondaryTopBar({
   detailEntered?: boolean;
   detailLinkMode: DetailLinkMode;
   onDetailLinkModeChange: (value: DetailLinkMode) => void;
+  viewMode: MainViewMode;
+  onViewModeChange: (value: MainViewMode) => void;
   vaultPath: string;
   tags: TagCount[];
   currentTag?: string;
@@ -337,7 +365,11 @@ function MainSecondaryTopBar({
           data-entered={mainLayerEntered ? "true" : "false"}
           data-main-secondary-main-layer=""
         >
-          <MainSecondaryStatsRight stats={stats} />
+          <MainSecondaryStatsRight
+            stats={stats}
+            viewMode={viewMode}
+            onViewModeChange={onViewModeChange}
+          />
         </div>
         {detailBlock && (
           <div
@@ -528,6 +560,30 @@ function CompactDetailLinkModeSwitch({
       aria-label="Collection filter"
       data-entered={entered === undefined ? undefined : entered ? "true" : "false"}
       data-compact-detail-link-mode-control=""
+      className={className}
+    />
+  );
+}
+
+function MainViewModeSwitch({
+  value,
+  onChange,
+  entered,
+  className,
+}: {
+  value: MainViewMode;
+  onChange: (value: MainViewMode) => void;
+  entered?: boolean;
+  className?: string;
+}) {
+  return (
+    <SegmentedControl
+      value={value}
+      options={MAIN_VIEW_MODE_OPTIONS}
+      onChange={onChange}
+      aria-label="View mode"
+      data-entered={entered === undefined ? undefined : entered ? "true" : "false"}
+      data-main-view-mode-control=""
       className={className}
     />
   );
@@ -1785,9 +1841,9 @@ export function AppWithVault({
     });
   }, []);
 
-  const toggleMainViewMode = useCallback(() => {
+  const handleMainViewModeChange = useCallback((next: MainViewMode) => {
     setMainViewMode((current) => {
-      const next = current === "graph" ? "grid" : "graph";
+      if (current === next) return current;
       persistMainViewMode(next);
       return next;
     });
@@ -3057,9 +3113,6 @@ export function AppWithVault({
               className="ml-2 mr-8 flex shrink-0 items-center gap-2"
               data-top-chrome-settings-fallback=""
             >
-              <ActionButton onClick={toggleMainViewMode} isSelected={mainViewMode === "graph"}>
-                {mainViewMode === "graph" ? "Grid" : "Graph"}
-              </ActionButton>
               <ActionButton hotkey="⌘," onClick={handleOpenSettings}>
                 Settings
               </ActionButton>
@@ -3078,6 +3131,8 @@ export function AppWithVault({
           detailEntered={compactDetailChromeEntered}
           detailLinkMode={detailLinkMode}
           onDetailLinkModeChange={setDetailLinkMode}
+          viewMode={mainViewMode}
+          onViewModeChange={handleMainViewModeChange}
           vaultPath={vaultPath}
           tags={orderedTags}
           currentTag={currentTag}
@@ -3368,12 +3423,6 @@ export function AppWithVault({
             isSelected={designSystemOpen}
           >
             Design
-          </ActionButton>
-          <ActionButton
-            onClick={toggleMainViewMode}
-            isSelected={mainViewMode === "graph"}
-          >
-            {mainViewMode === "graph" ? "Grid" : "Graph"}
           </ActionButton>
           <div className="flex-1" />
           {isSyncing && (

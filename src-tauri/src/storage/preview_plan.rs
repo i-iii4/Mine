@@ -33,7 +33,9 @@ pub fn primary_preview_path(slug: &str) -> String {
 /// goes into `FeedPreviewTile.preview_path` and is resolved on the frontend
 /// via `previewAssetUrl(thumbsRoot, value)`.
 pub fn media_poster_path(media_name: &str) -> String {
-    let stem = media_name.rsplit_once('.').map_or(media_name, |(stem, _)| stem);
+    let stem = media_name
+        .rsplit_once('.')
+        .map_or(media_name, |(stem, _)| stem);
     format!("{stem}.jpg")
 }
 
@@ -249,10 +251,7 @@ pub fn collect_article_preview_images(
 /// posters line up 1:1 with the tiles the card renders. A video file cannot be
 /// drawn into an `<img>`, so each such tile needs a `<media-stem>.jpg` poster,
 /// distinct from the block's representative `<slug>.jpg`.
-pub fn collect_gallery_video_posters(
-    block: &Block,
-    vault: &VaultLayout,
-) -> Vec<(String, PathBuf)> {
+pub fn collect_gallery_video_posters(block: &Block, vault: &VaultLayout) -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
     let mut tile_count = 0usize;
     for reference in iter_inline_media_references(&block.body) {
@@ -289,7 +288,10 @@ mod tests {
 
     #[test]
     fn media_poster_path_swaps_extension_for_jpg() {
-        assert_eq!(media_poster_path("clip (video 1).mp4"), "clip (video 1).jpg");
+        assert_eq!(
+            media_poster_path("clip (video 1).mp4"),
+            "clip (video 1).jpg"
+        );
         // Only the final extension is replaced.
         assert_eq!(media_poster_path("a.b.mov"), "a.b.jpg");
         // No extension → append .jpg.
@@ -307,7 +309,10 @@ mod tests {
     #[test]
     fn media_ext_lower_strips_query_and_lowercases() {
         assert_eq!(media_ext_lower("photo.JPG").as_deref(), Some("jpg"));
-        assert_eq!(media_ext_lower("clip.MP4?name=large").as_deref(), Some("mp4"));
+        assert_eq!(
+            media_ext_lower("clip.MP4?name=large").as_deref(),
+            Some("mp4")
+        );
         assert_eq!(media_ext_lower("noext"), None);
     }
 

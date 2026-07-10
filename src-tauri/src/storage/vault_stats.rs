@@ -1,6 +1,6 @@
 // Vault statistics read model for the main secondary statistics bar.
 //
-// Counts physical source-vault files and route-scoped indexed cards. This
+// Counts source-vault content files and route-scoped indexed cards. This
 // module is storage-only: no Tauri state, no UI formatting, no event emission.
 
 use std::path::Path;
@@ -105,14 +105,13 @@ fn scan_source_vault_file_stats_inner(
         }
 
         if file_type.is_file() || file_type.is_symlink() {
-            stats.total_file_count += 1;
-
             if !include_in_source_breakdown || hidden_file_name(&path) {
                 continue;
             }
 
             let metadata = std::fs::symlink_metadata(&path)
                 .with_context(|| format!("failed to read metadata: {}", path.display()))?;
+            stats.total_file_count += 1;
             if is_markdown_path(&path) {
                 stats.markdown_file_count += 1;
             } else {
@@ -191,12 +190,12 @@ mod tests {
         std::fs::write(vault.root().join(".hidden"), [0_u8; 3]).unwrap();
         std::fs::create_dir(vault.root().join("Nested")).unwrap();
         std::fs::write(vault.root().join("Nested").join("B.MD"), b"nested").unwrap();
-        std::fs::create_dir(vault.root().join(".arena")).unwrap();
-        std::fs::write(vault.root().join(".arena").join("derived.jpg"), [0_u8; 100]).unwrap();
+        std::fs::create_dir(vault.root().join(".mine")).unwrap();
+        std::fs::write(vault.root().join(".mine").join("derived.jpg"), [0_u8; 100]).unwrap();
 
         let stats = scan_source_vault_file_stats(&vault).unwrap();
 
-        assert_eq!(stats.total_file_count, 5);
+        assert_eq!(stats.total_file_count, 3);
         assert_eq!(stats.markdown_file_count, 2);
         assert_eq!(stats.media_file_count, 1);
         assert_eq!(stats.source_bytes, 4 + 7 + 6);

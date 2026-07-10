@@ -41,7 +41,7 @@ import {
   type LayoutGenerationKey,
 } from "@/lib/layoutGeneration";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
-import { legacyThumbsRoot } from "@/lib/assets";
+import { fallbackThumbsRoot } from "@/lib/assets";
 import {
   computeFeedScrollReadinessWindows,
   sampleFeedScrollSignal,
@@ -1081,7 +1081,7 @@ export function Grid({
     };
   }, []);
   const resolvedThumbsRootPath = useMemo(
-    () => thumbsRootPath ?? legacyThumbsRoot(vaultPath),
+    () => thumbsRootPath ?? fallbackThumbsRoot(vaultPath),
     [thumbsRootPath, vaultPath],
   );
 

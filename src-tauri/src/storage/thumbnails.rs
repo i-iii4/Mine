@@ -1306,8 +1306,9 @@ mod tests {
     // ─── Tests for generate_for_block cascade ──────────────────────────────
 
     fn make_vault(root: &Path) -> VaultLayout {
-        std::fs::create_dir_all(root.join(".arena/cache/thumbs")).unwrap();
-        VaultLayout::new(root.to_path_buf())
+        let vault = VaultLayout::new(root.to_path_buf());
+        std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
+        vault
     }
 
     fn make_article(slug: &str, body: &str) -> Block {

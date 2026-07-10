@@ -193,6 +193,7 @@ fn should_skip_dir(vault_path: &Path, path: &Path, name: &str) -> bool {
         return true;
     }
     path == vault_path.join(".mine-migration-backup")
+        || path == vault_path.join(".mine")
         || path == vault_path.join(".arena")
         || path == vault_path.join(".git")
 }

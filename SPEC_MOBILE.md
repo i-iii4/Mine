@@ -88,7 +88,8 @@ fn parse_and_save_block(vault_path: String, slug: String, content: String) -> Re
 
 Swift вызывает:
 ```swift
-let blocks = try listBlocksLight(dbPath: vaultPath + "/.arena/index.db")
+let vault = try ArenaVault.open(vaultPath: vaultPath)
+let blocks = try vault.listBlocks()
 ```
 
 ## Синхронизация: iCloud Drive + CloudKit Push

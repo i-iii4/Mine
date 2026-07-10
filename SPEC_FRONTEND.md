@@ -538,36 +538,45 @@ Connected`, content segment показывает title/filename, `CardMoreMenu` 
 Sidebar и Detail body не должны рендерить свои дополнительные top overlays в
 этот момент; иначе получается третий слой chrome под вторым bar.
 
-В main/Grid state этот второй bar рендерит `MainSecondaryStatsBar`, а не
-toolbar. Левый segment (`data-main-secondary-top-bar-sidebar-segment`) получает
-space-level stats из `VaultStats`: total source file count, Markdown file count,
-media file count и source vault byte size. `totalFileCount` — полный физический
-счётчик файлов внутри source vault: он включает Markdown, media, остальные
-файлы, скрытые и служебные файлы, включая service dirs. Правый segment
-(`data-main-secondary-top-bar-content-segment`) получает
+В main browsing state этот второй bar рендерит `MainSecondaryStatsBar`, а не
+общий toolbar. Левый segment (`data-main-secondary-top-bar-sidebar-segment`)
+получает space-level stats из `VaultStats`: total source content file count,
+Markdown file count, media file count и source vault byte size.
+`totalFileCount` — счётчик пользовательского content layer внутри source vault:
+он равен `markdownFileCount + mediaFileCount` и исключает hidden/service
+директории вроде `.mine/`, `.obsidian/`, `.git/` и legacy `.arena/`. Правый
+segment (`data-main-secondary-top-bar-content-segment`) получает
 `currentCollectionCardCount`: в `Everything` это все non-channel карточки, в
 канале — карточки, прикреплённые к этому каналу. Active Grid search не меняет
 этот счётчик.
+
+Тот же правый segment держит единственный main view-mode switcher:
+`View:` + shared compact `SegmentedControl` с options `Grid / Graph`.
+Переключатель стоит сразу после route count по левой оси content segment через
+`gap-5`, использует тот же UI-контракт, что `Collections: All / Connected` в
+expanded card chrome, и пишет выбранный режим в `mine.mainViewMode`. Старые
+`ActionButton`-переключатели `Graph/Grid` в bottom action bar или top fallback
+не рендерятся.
 
 Форматирование принадлежит frontend helper layer, а не JSX inline logic:
 
 - `formatFileCount(totalFileCount)` returns `1 file`, otherwise `files`
 - `formatMarkdownCount(markdownFileCount)` returns compact `.md`
 - `formatMediaCount(mediaFileCount)` returns compact `media`
-- `formatCardCount(currentCollectionCardCount, inChannel)` returns `1 card` /
-  `cards` in `Everything`, and `1 card in channel` / `cards in channel` in
-  concrete channel routes
+- `formatCardCount(currentCollectionCardCount, inChannel)` returns `1 element` /
+  `elements` in `Everything`, and `1 element in collection` /
+  `elements in collection` in concrete collection routes
 - `formatStorageBytes(sourceBytes)` with decimal units `B`, `KB`, `MB`, `GB`,
   `TB`
 
 Числа форматируются через `Intl.NumberFormat("ru-RU")`; storage size показывает
 один десятичный знак только для значений меньше `10` в выбранной единице.
-Строка левого segment: `1 466 files    260 .md    1 204 media    4,8 GB`.
+Строка левого segment: `1 464 files    260 .md    1 204 media    4,8 GB`.
 Dot не является отдельным separator atom: она является частью label `.md`,
 как расширение файла. Разделение между группами делается layout gap, а не
-серией символов-разделителей. Строка правого segment: `260 cards` в
-`Everything` или `260 cards in channel` в канале, выровнена по левой оси
-content segment.
+серией символов-разделителей. Строка element count внутри правого segment:
+`260 elements` в `Everything` или `260 elements in collection` в коллекции;
+`View: Grid / Graph` стоит сразу после неё по той же левой оси.
 
 Realtime behavior: `MainSecondaryStatsBar` resolves all data through
 `getVaultStats(currentCollection)`. It loads once after vault open, refreshes on
@@ -655,7 +664,9 @@ handle ставит `body.sidebar-resizing`, вызывает `preventDefault()`
 | `media` | Resolved `media_file` / thumbnail / extension-specific affordance; no synthetic title |
 | `channel` | Not rendered in feed/grid as a normal card |
 
-Thumbnail отображается через `convertFileSrc(vaultPath + "/.arena/cache/thumbs/" + slug + ".jpg")`.
+Thumbnail отображается через `convertFileSrc(thumbsRootPath + "/" + slug + ".jpg")`,
+где `thumbsRootPath` приходит из `open_vault()` и указывает на local derived
+store, а не на source vault.
 
 Медиафайлы (для media-карточек без thumbnail): `convertFileSrc(vaultPath + "/" + media_file)`.
 
@@ -1411,7 +1422,7 @@ Tauri WebView не может загружать файлы напрямую п�
 ```typescript
 import { convertFileSrc } from "@tauri-apps/api/core";
 
-const thumbUrl = convertFileSrc(vaultPath + "/.arena/cache/thumbs/" + slug + ".jpg");
+const thumbUrl = convertFileSrc(thumbsRootPath + "/" + slug + ".jpg");
 const mediaUrl = convertFileSrc(vaultPath + "/" + mediaFile);
 ```
 
