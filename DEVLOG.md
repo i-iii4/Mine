@@ -25,6 +25,8 @@
   path.
 - Mine Clipper `0.1.0` повторно подключён в Dia с прежним extension ID
   `mfmocklgopobknfgeedgdlnchfohicii`, включён и закреплён.
+- Canonical Git remote в `CLAUDE.md` / `AGENTS.md` синхронизирован с
+  фактическим `https://github.com/i-iii4/Mine.git`.
 
 ### Проверки
 - `bun run lint`

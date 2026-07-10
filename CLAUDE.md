@@ -210,7 +210,7 @@ local-arena/
 
 ## Git
 
-- `origin` — https://github.com/i-iii4/local-arena (private)
+- `origin` — https://github.com/i-iii4/Mine.git (private)
 - Main branch: `main`
 
 ## Environment
