@@ -42,6 +42,14 @@ browser-upgrade media между watcher и command path.
 - `SIGINT` cleanup acceptance — exit 130, no Vite/Playwright processes remained
 - `git diff --check`
 
+### Публикация
+- `db9beb6` — `Complete freshness and semantic preview remediation`.
+- Ветка `audit-remediation` обновлена в `origin` вместе с этой
+  documentation sync; `main` не затронут.
+- A5 не выдаётся за завершённую: после push остаются
+  disposable-space switch/restart automation и ручная проверка
+  исходного `Тест`.
+
 ## 11.07.2026 — Post-push desktop acceptance checkpoint
 
 ### Результат

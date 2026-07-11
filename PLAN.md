@@ -52,6 +52,7 @@ debug `Mine.app`.
 
 #### Automated remediation checkpoint — 11.07.2026
 
+- Implementation checkpoint: `db9beb6` on `audit-remediation`.
 - Exact-shape regression coverage for `ai-2027-3.md` proves that a fresh source
   projection is `block_type = link`, `card_kind = link`, with an asset-free text
   manifest on both first and unchanged second reconciliation.
