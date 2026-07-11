@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
@@ -139,11 +139,13 @@ describe("SpacesSection", () => {
     renderSpaces();
     await screen.findByText("Archive");
 
-    window.dispatchEvent(
-      new CustomEvent("vault-selected", {
-        detail: { payload: { path: "/Users/me/Archive" } },
-      }),
-    );
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("vault-selected", {
+          detail: { payload: { path: "/Users/me/Archive" } },
+        }),
+      );
+    });
 
     await waitFor(() => {
       expect(spaceRowOf("Archive")).toHaveAttribute("aria-current", "true");

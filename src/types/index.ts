@@ -137,6 +137,7 @@ export interface FeedPlaybackDescriptor {
 }
 
 export interface GridSnapshot {
+  generation: number;
   blocks: LightBlock[];
   total_blocks: number;
   has_more: boolean;

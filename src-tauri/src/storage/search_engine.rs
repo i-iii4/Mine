@@ -232,8 +232,18 @@ fn grid_search_sql(
                     b.thumbnail, b.saved_at, b.width, b.height, b.author,
                     CASE WHEN b.card_kind = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
                     b.preview_text, b.first_image, b.media_urls, b.media_dimensions,
-                    CASE WHEN b.preview_state = 'ready' THEN b.preview_manifest END,
-                    CASE WHEN b.preview_state = 'ready' THEN b.feed_playback END,
+                    CASE WHEN b.preview_state = 'ready'
+                              AND b.preview_source_stamp = (
+                                  SELECT source.source_stamp FROM source_index_state source
+                                  WHERE source.slug = b.slug
+                              )
+                         THEN b.preview_manifest END,
+                    CASE WHEN b.preview_state = 'ready'
+                              AND b.preview_source_stamp = (
+                                  SELECT source.source_stamp FROM source_index_state source
+                                  WHERE source.slug = b.slug
+                              )
+                         THEN b.feed_playback END,
                     b.description, b.body
              FROM blocks b
              JOIN blocks_fts ON blocks_fts.rowid = b.id",
@@ -1072,8 +1082,18 @@ fn load_light_block_by_slug(conn: &Connection, slug: &str) -> Result<Option<Ligh
                 thumbnail, saved_at, width, height, author,
                 CASE WHEN card_kind = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
                 preview_text, first_image, media_urls, media_dimensions,
-                CASE WHEN preview_state = 'ready' THEN preview_manifest END,
-                CASE WHEN preview_state = 'ready' THEN feed_playback END
+                CASE WHEN preview_state = 'ready'
+                          AND preview_source_stamp = (
+                              SELECT source.source_stamp FROM source_index_state source
+                              WHERE source.slug = blocks.slug
+                          )
+                     THEN preview_manifest END,
+                CASE WHEN preview_state = 'ready'
+                          AND preview_source_stamp = (
+                              SELECT source.source_stamp FROM source_index_state source
+                              WHERE source.slug = blocks.slug
+                          )
+                     THEN feed_playback END
          FROM blocks
          WHERE slug = ?2 AND card_kind != 'channel'",
     )?;
@@ -1943,7 +1963,15 @@ mod tests {
         assert_eq!(stale[0].preview_manifest, None);
 
         conn.execute(
-            "UPDATE blocks SET preview_state = 'ready' WHERE slug = 'preview-ready'",
+            "INSERT INTO source_index_state (slug, source_kind, source_stamp)
+             VALUES ('preview-ready', 'block', 'source-v1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE blocks
+             SET preview_state = 'ready', preview_source_stamp = 'source-v1'
+             WHERE slug = 'preview-ready'",
             [],
         )
         .unwrap();

@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
-import { AppWithVault } from "./App";
+import { App, AppWithVault } from "./App";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { SEARCH_OVERLAY_RECENT_LIMIT, SEARCH_OVERLAY_RESULT_LIMIT } from "@/components/SearchOverlay";
 
@@ -27,7 +27,17 @@ function isSearchOverlayQuery(limit: number, query?: string): boolean {
   );
 }
 
+function gridSnapshot(
+  blocks: LightBlock[],
+  total = blocks.length,
+  hasMore = false,
+  generation = 1,
+): GridSnapshot {
+  return { generation, blocks, total_blocks: total, has_more: hasMore };
+}
+
 const commandMocks = vi.hoisted(() => ({
+  getVaultPath: vi.fn<() => Promise<string | null>>(),
   openVault: vi.fn<(path: string) => Promise<VaultOpenResult>>(),
   startVaultSync: vi.fn<() => Promise<boolean>>(),
   sweepVaultThumbnails: vi.fn<() => Promise<number>>(),
@@ -55,7 +65,7 @@ const sidebarResizeState = vi.hoisted(() => ({
 const clipboardWriteText = vi.fn<(text: string) => Promise<void>>();
 
 vi.mock("@/lib/commands", () => ({
-  getVaultPath: vi.fn(),
+  getVaultPath: commandMocks.getVaultPath,
   openVault: commandMocks.openVault,
   selectVault: vi.fn(),
   startVaultSync: commandMocks.startVaultSync,
@@ -400,12 +410,13 @@ describe("AppWithVault", () => {
     const betaBlocks = [allBlocks[1]!];
 
     const snapshots = new Map<string, GridSnapshot>([
-      ["__all__", { blocks: allBlocks, total_blocks: 2, has_more: false }],
-      ["alpha", { blocks: alphaBlocks, total_blocks: 2, has_more: false }],
-      ["beta", { blocks: betaBlocks, total_blocks: 2, has_more: false }],
+      ["__all__", gridSnapshot(allBlocks, 2)],
+      ["alpha", gridSnapshot(alphaBlocks, 2)],
+      ["beta", gridSnapshot(betaBlocks, 2)],
     ]);
 
     commandMocks.openVault.mockResolvedValue(vaultOpenResult());
+    commandMocks.getVaultPath.mockResolvedValue(null);
     commandMocks.startVaultSync.mockResolvedValue(true);
     commandMocks.sweepVaultThumbnails.mockResolvedValue(0);
     commandMocks.createChannel.mockImplementation(async (tag: string) => ({
@@ -476,6 +487,82 @@ describe("AppWithVault", () => {
     }));
   });
 
+  it("keeps only the latest vault mounted during rapid A to B switching", async () => {
+    const firstA = deferred<VaultOpenResult>();
+    const firstB = deferred<VaultOpenResult>();
+    const secondA = deferred<VaultOpenResult>();
+    const secondB = deferred<VaultOpenResult>();
+    const pendingOpens = [firstA, firstB, secondA, secondB];
+    commandMocks.getVaultPath.mockResolvedValue("/spaces/A");
+    commandMocks.openVault.mockImplementation(async () => {
+      const pending = pendingOpens.shift();
+      if (!pending) throw new Error("unexpected openVault call");
+      return pending.promise;
+    });
+    const latest = block(90, "latest-space-b");
+    commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([latest]));
+    commandMocks.listTaxonomySnapshot.mockResolvedValue({
+      tags: [],
+      channels: [],
+      total_blocks: 1,
+    });
+
+    render(<App />);
+    await waitFor(() => {
+      expect(commandMocks.openVault).toHaveBeenNthCalledWith(1, "/spaces/A");
+    });
+
+    fireEvent(
+      window,
+      new CustomEvent("vault-selected", {
+        detail: { payload: { path: "/spaces/B" } },
+      }),
+    );
+    await waitFor(() => {
+      expect(commandMocks.openVault).toHaveBeenNthCalledWith(2, "/spaces/B");
+    });
+    fireEvent(
+      window,
+      new CustomEvent("vault-selected", {
+        detail: { payload: { path: "/spaces/A" } },
+      }),
+    );
+    await waitFor(() => {
+      expect(commandMocks.openVault).toHaveBeenNthCalledWith(3, "/spaces/A");
+    });
+    fireEvent(
+      window,
+      new CustomEvent("vault-selected", {
+        detail: { payload: { path: "/spaces/B" } },
+      }),
+    );
+    await waitFor(() => {
+      expect(commandMocks.openVault).toHaveBeenNthCalledWith(4, "/spaces/B");
+    });
+
+    await act(async () => {
+      secondB.resolve(vaultOpenResult({ indexed: 1 }));
+      await secondB.promise;
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("grid-title-latest-space-b")).toHaveTextContent(
+        "latest-space-b",
+      );
+    });
+
+    await act(async () => {
+      firstA.resolve(vaultOpenResult());
+      firstB.resolve(vaultOpenResult());
+      secondA.resolve(vaultOpenResult());
+      await Promise.all([firstA.promise, firstB.promise, secondA.promise]);
+    });
+
+    expect(screen.getByTestId("grid-title-latest-space-b")).toBeInTheDocument();
+    expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(1);
+    expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
+  });
+
   it("reserves the app minimum from max sidebar plus right pane minimum", async () => {
     const { container } = render(
       <MemoryRouter initialEntries={["/"]}>
@@ -501,12 +588,12 @@ describe("AppWithVault", () => {
     const warmPage = deferred<GridSnapshot>();
     commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
       if (isSearchOverlayQuery(limit, query)) {
-        return { blocks: [], total_blocks: 0, has_more: false };
+        return gridSnapshot([]);
       }
       expect(tag).toBeUndefined();
       expect(limit).toBe(200);
       if (offset === 0) {
-        return { blocks: [first], total_blocks: 2, has_more: true };
+        return gridSnapshot([first], 2, true);
       }
       expect(offset).toBe(1);
       return warmPage.promise;
@@ -525,8 +612,43 @@ describe("AppWithVault", () => {
       expect(commandMocks.listGridBlocks).toHaveBeenCalledWith(undefined, 1, 200);
     });
 
-    warmPage.resolve({ blocks: [second], total_blocks: 2, has_more: false });
+    warmPage.resolve(gridSnapshot([second], 2));
     await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+  });
+
+  it("restarts from offset zero instead of mixing pagination generations", async () => {
+    const first = block(20, "generation-one");
+    const second = block(21, "generation-two");
+    const newerPage = deferred<GridSnapshot>();
+    let firstPageReads = 0;
+    commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
+      if (isSearchOverlayQuery(limit, query)) return gridSnapshot([]);
+      expect(tag).toBeUndefined();
+      expect(limit).toBe(200);
+      if (offset === 1) return newerPage.promise;
+      expect(offset).toBe(0);
+      firstPageReads += 1;
+      return firstPageReads === 1
+        ? gridSnapshot([first], 2, true, 1)
+        : gridSnapshot([first, second], 2, false, 2);
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(commandMocks.listGridBlocks).toHaveBeenCalledWith(undefined, 1, 200);
+    });
+
+    newerPage.resolve(gridSnapshot([second], 2, false, 2));
+
+    await waitFor(() => {
+      expect(firstPageReads).toBe(2);
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
   });
@@ -627,18 +749,18 @@ describe("AppWithVault", () => {
     const alphaDeferred = deferred<GridSnapshot>();
     commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
       if (isSearchOverlayQuery(limit, query)) {
-        return { blocks: [], total_blocks: 0, has_more: false };
+        return gridSnapshot([]);
       }
       expect(offset).toBe(0);
       expect(limit).toBe(200);
       expect(query).toBeUndefined();
       if ((tag ?? "__all__") === "__all__") {
-        return { blocks: [], total_blocks: 0, has_more: false };
+        return gridSnapshot([]);
       }
       if (tag === "alpha") {
         return alphaDeferred.promise;
       }
-      return { blocks: [], total_blocks: 0, has_more: false };
+      return gridSnapshot([]);
     });
 
     render(
@@ -659,11 +781,7 @@ describe("AppWithVault", () => {
     });
     expect(screen.getByTestId("grid-route-ready")).toHaveTextContent("false");
 
-    alphaDeferred.resolve({
-      blocks: [block(1, "alpha-block")],
-      total_blocks: 1,
-      has_more: false,
-    });
+    alphaDeferred.resolve(gridSnapshot([block(1, "alpha-block")]));
 
     await waitFor(() => {
       expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
@@ -673,11 +791,13 @@ describe("AppWithVault", () => {
 
   it("loads the current route when navigation happens before the initial grid resolves", async () => {
     const allSnapshot: GridSnapshot = {
+      generation: 1,
       blocks: [block(1, "alpha-block"), block(2, "beta-block")],
       total_blocks: 2,
       has_more: false,
     };
     const alphaSnapshot: GridSnapshot = {
+      generation: 1,
       blocks: [block(1, "alpha-block")],
       total_blocks: 1,
       has_more: false,
@@ -686,7 +806,7 @@ describe("AppWithVault", () => {
 
     commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
       if (isSearchOverlayQuery(limit, query)) {
-        return { blocks: [], total_blocks: 0, has_more: false };
+        return gridSnapshot([]);
       }
       expect(offset).toBe(0);
       expect(limit).toBe(200);
@@ -935,11 +1055,13 @@ describe("AppWithVault", () => {
     // the main window re-reads the key (test setup bridges Tauri events
     // onto window CustomEvents, detail carries the Tauri event envelope).
     localStorage.setItem("mine.bottomActionBarHidden", "true");
-    window.dispatchEvent(
-      new CustomEvent("settings-changed", {
-        detail: { payload: { key: "mine.bottomActionBarHidden" } },
-      }),
-    );
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("settings-changed", {
+          detail: { payload: { key: "mine.bottomActionBarHidden" } },
+        }),
+      );
+    });
 
     await waitFor(() => {
       expect(document.querySelector("[data-bottom-action-bar]")).not.toBeInTheDocument();
@@ -1067,15 +1189,17 @@ describe("AppWithVault", () => {
     expect(screen.getByRole("combobox")).toHaveFocus();
     // Opening with an empty query issues exactly one recent-mode request
     // (limit 20, no query) and leaves the grid itself alone.
-    expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(
-      gridCallsBeforeSearchToggle + 1,
-    );
-    expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith(
-      undefined,
-      0,
-      20,
-      undefined,
-    );
+    await waitFor(() => {
+      expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(
+        gridCallsBeforeSearchToggle + 1,
+      );
+      expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith(
+        undefined,
+        0,
+        20,
+        undefined,
+      );
+    });
     expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
   });
 
@@ -1125,9 +1249,9 @@ describe("AppWithVault", () => {
     commandMocks.listGridBlocks.mockImplementation(async (tag, _offset, _limit, query) => {
       if (query) {
         expect(tag).toBeUndefined();
-        return { blocks: [matched], total_blocks: 1, has_more: false };
+        return gridSnapshot([matched]);
       }
-      return { blocks: gridBlocks, total_blocks: 2, has_more: false };
+      return gridSnapshot(gridBlocks, 2);
     });
     commandMocks.getBlock.mockImplementation(async (slug: string) =>
       indexedBlock(7, slug, "Found card"),
@@ -1845,6 +1969,7 @@ describe("AppWithVault", () => {
   it("updates the open detail when block:renamed arrives", async () => {
     let renamed = false;
     commandMocks.listGridBlocks.mockImplementation(async () => ({
+      generation: 1,
       blocks: renamed
         ? [{ ...block(1, "Renamed Alpha"), title: "Renamed Alpha" }]
         : [{ ...block(1, "alpha-block"), title: "Alpha Title" }],
@@ -1896,6 +2021,7 @@ describe("AppWithVault", () => {
 
   it("bumps only the affected card's thumb version on thumb:updated without reloading the feed", async () => {
     commandMocks.listGridBlocks.mockImplementation(async () => ({
+      generation: 1,
       blocks: [block(1, "wide-clip")],
       total_blocks: 1,
       has_more: false,
@@ -1937,6 +2063,7 @@ describe("AppWithVault", () => {
 
   it("does not bump the thumb version or reload the feed for a card outside the current feed", async () => {
     commandMocks.listGridBlocks.mockImplementation(async () => ({
+      generation: 1,
       blocks: [block(1, "visible-card")],
       total_blocks: 1,
       has_more: false,

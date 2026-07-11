@@ -10,6 +10,7 @@
     "test:frontend": "vitest run",
     "test:feed-scroll": "node scripts/feed-scroll-audit.mjs",
     "test:graph": "node scripts/graph-view-audit.mjs",
+    "test:cold-space": "node scripts/cold-space-browser-audit.mjs",
     "test:browser": "node scripts/browser-audits.mjs",
     "test:rust": "cargo test --workspace --all-targets --locked",
     "test:watch": "vitest",

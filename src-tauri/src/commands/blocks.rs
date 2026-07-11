@@ -25,15 +25,10 @@ use crate::domain::markdown::{
 use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultLayout};
 use crate::storage::index::IndexedBlock;
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
-use crate::storage::{article_audio, db, files, index, media_refs, thumbnails};
+use crate::storage::{article_audio, db, files, index, media_refs, projection, thumbnails};
 use crate::util::append_startup_trace;
 
-#[derive(Debug, Serialize)]
-pub struct GridSnapshot {
-    pub blocks: Vec<index::LightBlock>,
-    pub total_blocks: usize,
-    pub has_more: bool,
-}
+pub use crate::storage::projection::GridSnapshot;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RenameBlockResult {
@@ -354,18 +349,13 @@ pub async fn list_grid_blocks(
             } else {
                 db::open_read_only(&db_path)?
             };
-            let (blocks, has_more) = index::list_grid_blocks_with_query(
+            Ok(projection::read_grid_snapshot(
                 &conn,
                 current_tag_for_task.as_deref(),
                 page_offset,
                 page_limit,
                 query_for_task.as_deref(),
-            )?;
-            Ok(GridSnapshot {
-                blocks,
-                total_blocks: index::count_grid_blocks(&conn)?,
-                has_more,
-            })
+            )?)
         })
         .await
         .map_err(|e| CommandError::Internal(format!("list_grid_blocks task join failed: {e}")))??;
@@ -373,7 +363,8 @@ pub async fn list_grid_blocks(
         &app,
         "list_grid_blocks",
         &format!(
-            "done blocks={} total={} has_more={}",
+            "done generation={} blocks={} total={} has_more={}",
+            snapshot.generation,
             snapshot.blocks.len(),
             snapshot.total_blocks,
             snapshot.has_more

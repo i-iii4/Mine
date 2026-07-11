@@ -1,5 +1,129 @@
 # Devlog
 
+## 11.07.2026 — Persisted projection generations and true cold-space E2E
+
+### Задача
+Исправить завышенный статус A5.5: связать index, preview readiness и UI одним
+persisted generation, а browser acceptance перевести с вручную созданных
+`LightBlock` на настоящий путь source vault -> SQLite -> Rust DTO -> Grid.
+
+### Что сделано
+- Добавлен `storage::projection`. SQLite хранит монотонный
+  `projection_state.generation`; триггеры повышают его внутри транзакций
+  `blocks`, `channels`, `block_tags` и `source_index_state`. Это отдельная
+  read-model identity, не in-memory generation `FreshnessCoordinator`.
+- Production `GridSnapshot` перенесён из command-слоя в storage и получил
+  `generation`. `generation`, rows, total и `has_more` читаются одной SQLite
+  snapshot-транзакцией; Grid и Search используют один envelope.
+- Route-facing manifest/feed playback публикуются только при `ready` и точном
+  совпадении `preview_source_stamp` с текущим source stamp. Last-good/legacy
+  manifest может храниться в SQLite, но не смешивается с новой source-проекцией.
+- `App.tsx` принимает Grid generations только монотонно. Более старый cached или
+  async ответ не заменяет новый; page другого generation не append'ится, а
+  вызывает reload с offset zero. Добавлен frontend regression на этот сценарий.
+- `cold-space-audit` умеет создать приватно-безопасный временный vault и
+  сериализовать first/settled production `GridSnapshot`. Browser runner сначала
+  строит два fresh derived store через Rust, затем Vite отдаёт JSON и только
+  cycle-1 derived assets. Source assets остаются запрещены.
+- `/__cold-space-audit` больше не содержит handwritten `LightBlock`. Playwright
+  проверяет Rust generation, first/settled/deep Grid, metadata-only link,
+  пустые surfaces, browser warnings и source requests.
+- Исправлена историческая migration-мелочь: `card_kind` backfill теперь
+  выполняется только когда колонка действительно добавлена, поэтому обычный
+  reopen SQLite не создаёт ложное новое поколение.
+
+### Evidence
+- Sanitized E2E: `181 Markdown = 180 content + 1 collection`; first generation
+  `362`, settled `542`; first manifests `0`, settled `120 ready + 60 typed
+  browser_decode_required`; blank cards `0`, source requests `0`, browser
+  warnings `0`.
+- Untouched `/Users/i_iii/Desktop/Тест`: `294 Markdown = 256 content + 38
+  collections`, unsupported `0`; generation `592 -> 848`; first manifests `0`,
+  settled manifests `215`; `41 browser_decode_required`; `ai-2027-3` остаётся
+  link с ready preview. Два cold cycles и read-only reopen совпали, source
+  fingerprint не изменился.
+
+### Проверки
+- `bun run verify`: ESLint; 72 frontend files / 664 tests; Rust workspace 720
+  passed, 5 ignored; Feed desktop/narrow, Graph dark/light и Rust-produced
+  cold-space first/settled/deep browser gates passed.
+- Focused projection, preview-stamp, Search envelope, schema-reopen и pagination
+  generation tests passed.
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked`
+  и `git diff --check` — см. финальную проверку сессии.
+
+### Статус
+- A5.5 и A5.6 теперь DONE по сквозному evidence, а не по двум раздельным
+  половинам.
+- A5/R5 остаются MANUAL QA только для финального визуального desktop open и
+  полного app restart реального `Тест`.
+- A7 остаётся отдельным следующим архитектурным блоком; декомпозиция крупных
+  модулей в этот срез не включалась.
+
+## 11.07.2026 — Cold-space acceptance automation and remote-link semantic repair
+
+### Задача
+Закрыть остаточный cold-space риск: проверить fresh derived store, cache reset,
+reopen, rapid space switching и реальный `Тест`; отдельно убрать warning-шум из
+frontend tests, не смешивая работу с декомпозицией крупных модулей.
+
+### Что сделано
+- Добавлен `storage::cold_space_audit` и CLI `cold-space-audit`. Audit принимает
+  source vault и отдельную пустую derived-папку, fingerprint'ит source, строит
+  два независимых cold-цикла и сравнивает first/settled/read-only reopened
+  semantic snapshots. Source и derived roots обязаны быть disjoint.
+- Каждый Markdown получает ровно одну typed classification: content,
+  collection или unsupported. Audit отвергает stale extra rows, пустые Grid
+  fallbacks, metadata-only URLs с media semantics, `ready` без manifest и любые
+  non-ready contract errors кроме `missing_source`/`browser_decode_required`.
+- Sanitized fixture покрывает root/nested notes, channel, ordinary empty note,
+  metadata-only link и legacy remote video, локальный PNG, missing source и
+  browser-owned WebP decode.
+- Первый real-space прогон нашёл четыре URL-only `type: video` карточки с
+  `card_kind = media` и `invalid_manifest`. Приоритет runtime semantics исправлен
+  на `body -> owned file -> URL -> legacy type`; remote video без owned file
+  теперь является link. `MEDIA_INDEX_VERSION = 5` чинит и warmed stores без
+  rewrite пользовательского Markdown.
+- Grid ordering получил явный tie-breaker `saved_at DESC`, затем
+  case-insensitive/binary slug, поэтому pagination и cache rebuild не зависят
+  от SQLite insertion order.
+- Добавлен `/__cold-space-audit` и Playwright gate первого, settled и глубокого
+  viewport: без пустых карточек, faux graphic surface у metadata links и source
+  media requests. Общий browser runner теперь запускает Feed, Graph и cold-space.
+- Frontend regression `A -> B -> A -> B` разрешает obsolete open promises после
+  финального B и доказывает, что в DOM публикуется только последняя keyed vault
+  subtree.
+- Test harness получил ожидаемые JSDOM Canvas/media adapters; unsupported
+  Worker fallback больше не логируется как warning. Реальные `act(...)` gaps в
+  Spaces/App tests исправлены, startup `console.info` скрыт только в Vitest.
+- Oversized `Grid.tsx`, `GraphView.tsx` и `commands/state.rs` не рефакторились в
+  acceptance-срезе. Их responsibility-based decomposition записана отдельной
+  Phase A7.
+
+### Real-space evidence
+- Source: `/Users/i_iii/Desktop/Тест`, только чтение.
+- `294 Markdown = 256 content + 38 collections`, unsupported `0`.
+- Settled: `215 ready`, `41 browser_decode_required`, `invalid_manifest = 0`.
+- Runtime kinds: `142 article`, `52 link`, `62 media`.
+- `ai-2027-3`, `design-talk-2026`, `tokyo-walk`: runtime `link`, preview `ready`.
+- Два независимых derived cycles совпали; settled равен reopened; source
+  fingerprint не изменился.
+
+### Проверки
+- `bun run verify` — ESLint; 72 frontend files / 663 tests; Rust 717 passed,
+  5 ignored; Feed desktop/narrow, Graph dark/light и cold-space first/settled/
+  deep browser gates passed.
+- `cargo clippy --workspace --all-targets --locked` — passed с существующим
+  warning baseline; новых предупреждений из cold-space кода нет.
+- `cargo fmt --all -- --check`
+- `git diff --check`
+
+### Статус
+- A5.1, A5.2, A5.5 и A5.6 — DONE.
+- A5 переведена из ACTIVE в MANUAL QA: остаётся один визуальный desktop open
+  реального `Тест` и повтор после полного restart.
+- A7 — следующий отдельный архитектурный блок; в эту сессию не начат.
+
 ## 11.07.2026 — Last-good freshness, semantic links and verification gate
 
 ### Задача

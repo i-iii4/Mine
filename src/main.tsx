@@ -58,7 +58,15 @@ const feedScrollAuditRoute =
   import.meta.env.DEV && window.location.pathname === "/__feed-scroll-audit";
 const graphAuditRoute =
   import.meta.env.DEV && window.location.pathname === "/__graph-audit";
-const auditRoute = feedScrollAuditRoute ? "feed" : graphAuditRoute ? "graph" : null;
+const coldSpaceAuditRoute =
+  import.meta.env.DEV && window.location.pathname === "/__cold-space-audit";
+const auditRoute = feedScrollAuditRoute
+  ? "feed"
+  : graphAuditRoute
+    ? "graph"
+    : coldSpaceAuditRoute
+      ? "cold-space"
+      : null;
 
 type AuditTauriWindow = Window & {
   __TAURI_INTERNALS__?: {
@@ -79,6 +87,9 @@ function installAuditTauriMocks() {
       const assetIndex = Number(graphCardMatch[1]) % 6;
       return `/feed-scroll-audit/audit-${assetIndex}.svg`;
     }
+    if (auditRoute === "cold-space") {
+      return `/__cold-space-asset?path=${encodeURIComponent(normalizedPath)}`;
+    }
     return `${protocol}://localhost/${encodeURIComponent(normalizedPath)}`;
   };
 }
@@ -94,12 +105,16 @@ function Root() {
       installAuditTauriMocks();
       const module = auditRoute === "feed"
         ? await import("./dev/FeedScrollAuditRoute")
-        : await import("./dev/GraphAuditRoute");
+        : auditRoute === "graph"
+          ? await import("./dev/GraphAuditRoute")
+          : await import("./dev/ColdSpaceAuditRoute");
       if (!cancelled) {
         setAuditRoute(() => (
           "FeedScrollAuditRoute" in module
             ? module.FeedScrollAuditRoute
-            : module.GraphAuditRoute
+            : "GraphAuditRoute" in module
+              ? module.GraphAuditRoute
+              : module.ColdSpaceAuditRoute
         ));
       }
     })();

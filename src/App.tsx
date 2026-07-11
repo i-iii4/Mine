@@ -806,6 +806,7 @@ export function AppWithVault({
   const [totalBlocks, setTotalBlocks] = useState(0);
   const [gridSnapshotIdentity, setGridSnapshotIdentity] = useState<{
     routeKey: string;
+    generation: number;
   } | null>(null);
   const [vaultStats, setVaultStats] = useState<VaultStats | null>(null);
   const [hasMoreBlocks, setHasMoreBlocks] = useState(false);
@@ -881,6 +882,7 @@ export function AppWithVault({
   const vaultStatsRequestIdRef = useRef(0);
   const vaultStatsFrameRef = useRef<number | null>(null);
   const routeSnapshotCacheRef = useRef<Map<string, GridSnapshot>>(new Map());
+  const gridGenerationRef = useRef<number | null>(null);
   const warmRoutePageBufferRef = useRef<Set<string>>(new Set());
   const paginationRequestRef = useRef<object | null>(null);
   const cardActionsMenuSequenceRef = useRef(0);
@@ -949,17 +951,23 @@ export function AppWithVault({
     });
   }, []);
 
-  const applyGridSnapshot = useCallback((tag: string | undefined, grid: GridSnapshot) => {
+  const applyGridSnapshot = useCallback((tag: string | undefined, grid: GridSnapshot): boolean => {
+    const acceptedGeneration = gridGenerationRef.current;
+    if (acceptedGeneration !== null && grid.generation < acceptedGeneration) {
+      return false;
+    }
+    gridGenerationRef.current = grid.generation;
     const routeKey = routeKeyFor(tag);
     routeSnapshotCacheRef.current.set(routeKey, grid);
     // Preserve object identity for blocks whose content did not change so a
     // no-op refresh does not invalidate the grid's downstream memos or remount
     // any cards.
     setBlocks((prev) => reconcileBlocks(prev, grid.blocks));
-    setGridSnapshotIdentity({ routeKey });
+    setGridSnapshotIdentity({ routeKey, generation: grid.generation });
     setTotalBlocks(grid.total_blocks);
     setHasMoreBlocks(grid.has_more);
     setLoadingMoreBlocks(false);
+    return true;
   }, [routeKeyFor]);
 
   const invalidateRouteSnapshots = useCallback(() => {
@@ -1170,7 +1178,9 @@ export function AppWithVault({
       ) {
         return;
       }
-      applyGridSnapshot(tagAtStart, grid);
+      if (!applyGridSnapshot(tagAtStart, grid)) {
+        return;
+      }
       setLoadError(null);
       window.dispatchEvent(new Event("vault-refreshed"));
       console.info("[startup] loadGrid:done", {
@@ -1409,6 +1419,7 @@ export function AppWithVault({
     const tagAtStart = currentTagRef.current;
     const offsetAtStart = blocksRef.current.length;
     const routeLoadRequestIdAtStart = loadRequestIdRef.current;
+    const generationAtStart = gridGenerationRef.current;
     setLoadingMoreBlocks(true);
     try {
       const grid = await fetchGridBlocks(tagAtStart, offsetAtStart, GRID_PAGE_SIZE);
@@ -1419,11 +1430,28 @@ export function AppWithVault({
       ) {
         return;
       }
+      const acceptedGeneration = gridGenerationRef.current;
+      if (
+        generationAtStart === null
+        || acceptedGeneration !== generationAtStart
+        || grid.generation !== generationAtStart
+      ) {
+        if (grid.generation > (acceptedGeneration ?? -1)) {
+          invalidateRouteSnapshots();
+          void loadGridSnapshotRef.current({
+            tag: tagAtStart,
+            invalidateCachedRoutes: true,
+            preserveLoadedRange: true,
+          });
+        }
+        return;
+      }
       setBlocks((prev) => {
         const seen = new Set(prev.map((block) => block.id));
         const appended = grid.blocks.filter((block) => !seen.has(block.id));
         const nextBlocks = appended.length > 0 ? [...prev, ...appended] : prev;
         routeSnapshotCacheRef.current.set(routeKeyFor(tagAtStart), {
+          generation: grid.generation,
           blocks: nextBlocks,
           total_blocks: grid.total_blocks,
           has_more: grid.has_more,
@@ -1454,7 +1482,7 @@ export function AppWithVault({
         setLoadingMoreBlocks(false);
       }
     }
-  }, [hasMoreBlocks, routeKeyFor]);
+  }, [hasMoreBlocks, invalidateRouteSnapshots, routeKeyFor]);
 
   // Paint the first page immediately, then warm exactly one additional page
   // for the active route. Subsequent pages remain demand-driven by Grid's

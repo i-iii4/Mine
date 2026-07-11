@@ -335,6 +335,53 @@ prevent a false `fresh` state.
 - The report exposes counters and elapsed time so these budgets are assertions,
   not comments.
 
+## storage/projection — committed generation contract
+
+`FreshnessCoordinator::generation` identifies reconciliation work. It is not a
+read-model identity and must never be used by the frontend as one. SQLite owns a
+separate persisted `projection_generation` that identifies the exact committed
+state visible to route reads.
+
+```rust
+struct GridSnapshot {
+    generation: u64,
+    blocks: Vec<LightBlock>,
+    total_blocks: usize,
+    has_more: bool,
+}
+
+fn read_grid_snapshot(
+    conn: &Connection,
+    tag: Option<&str>,
+    offset: usize,
+    limit: usize,
+    query: Option<&str>,
+) -> Result<GridSnapshot>;
+```
+
+Rules:
+
+- `blocks`, `channels`, `block_tags`, `source_index_state` and every
+  preview/thumbnail column stored on a block are projection inputs.
+  Insert/update/delete advances one monotonic SQLite generation inside the same
+  transaction as that write. Multiple row writes in one source transaction may
+  advance it more than once; only ordering and atomic visibility are semantic.
+- A route snapshot reads `generation`, rows, count and pagination state inside
+  one SQLite transaction. A concurrent writer is therefore observed either
+  entirely before or entirely after the snapshot, never between its fields.
+- A preview manifest is route-visible only when `preview_state = ready` and
+  `preview_source_stamp` equals the current `source_index_state.source_stamp`
+  for that slug. A legacy/nonmatching manifest remains stored for diagnosis or
+  recovery but the route publishes the card's type-correct fallback.
+- Progressive preview batches are separate committed generations. The UI may
+  replace generation `N` with `N + 1`; it must not merge rows/pages from two
+  different generations or apply an older response after a newer one.
+- Generation zero is a valid empty/new database snapshot. Generation identity
+  is scoped to one vault-derived database; changing vault remounts the frontend
+  owner and resets its accepted generation.
+- Search and unfiltered Grid use the same `GridSnapshot` envelope and preview
+  publication predicate.
+
 ## storage/derived_preview — completion contract
 
 Status: implemented in Phase A3. A single app-level background worker drains a
@@ -418,6 +465,52 @@ Budgets:
   equals the stamp it generated from; a compare-before-publish guard prevents an
   old encode from overwriting a newer invalidation.
 
+## storage/cold_space_audit — disposable acceptance contract
+
+Cold-space acceptance must exercise the same storage primitives as production
+without writing to the source vault or trusting an existing local cache.
+
+```rust
+fn run_cold_space_audit(
+    source_root: &Path,
+    derived_base: &Path,
+    cycles: usize,
+) -> Result<ColdSpaceAuditReport>;
+```
+
+- `cycles >= 2`; one fresh store cannot prove cache-reset stability.
+- `derived_base` must already exist, be empty and be neither inside
+  `source_root` nor an ancestor of it. Each cycle owns a fresh
+  `<derived_base>/cycle-N` store.
+- Every source Markdown is classified exactly once as content, collection or a
+  typed unsupported input. The audit rejects missing and stale extra
+  projections instead of hiding them in aggregate counts.
+- A cycle records three semantic snapshots: immediately after source
+  reconciliation, after derived-preview completion, and after closing and
+  reopening SQLite read-only.
+- Each semantic snapshot also contains the exact production `GridSnapshot`
+  DTO, including its persisted projection generation. This DTO is the fixture
+  consumed by browser acceptance; tests must not recreate `LightBlock` rows in
+  TypeScript.
+- Snapshots include deterministic Grid order, source/projection counts,
+  runtime card kinds, preview state/manifests and semantic/fallback violations;
+  they exclude volatile row ids and timestamps.
+- Grid pagination orders by `saved_at DESC`, then case-insensitive and binary
+  slug ascending as deterministic tie-breakers. Rebuilds cannot depend on
+  SQLite row insertion order when source timestamps are equal.
+- Reopened state must equal settled state. Independent cold cycles must have
+  equal first and settled snapshots, proving restart and derived-cache reset
+  stability.
+- Source file path, size and modification-time fingerprints are captured before
+  and after every cycle. Any mutation fails the audit.
+- Browser-decode-required and missing-source previews are typed non-ready
+  outcomes, not audit infrastructure failures. Their cards still need a
+  deterministic type-correct first-frame fallback.
+- The browser gate creates a real temporary source vault, builds an empty
+  derived SQLite store through Rust, serializes the production IPC DTO and
+  renders that payload in Grid. This single path covers source files -> parser
+  -> SQLite -> Rust serialization -> frontend DTO -> Grid.
+
 ## storage/source_mutation — atomicity contract
 
 Compound user mutations are planned and committed through one storage-owned
@@ -460,10 +553,15 @@ otherwise ambiguous. During indexing:
 
 1. `type: channel` derives `card_kind = channel`.
 2. Any other block with non-empty body derives `article`.
-3. An empty-body block with canonical `file`, or legacy `image`/`video`/`file`
-   metadata, derives `media` even when its source asset is temporarily missing.
+3. An empty-body block with canonical `file` derives `media` even when its
+   source asset is temporarily missing.
 4. An empty-body block with URL/link metadata and no owned media derives `link`.
-5. Any remaining ordinary/foreign Markdown derives `article`, including an
+   This URL evidence takes precedence over a legacy `type: image | video |
+   file` hint: a remote video bookmark is still a link card unless Mine owns a
+   local `file`.
+5. Without body, owned file or URL, a legacy `type: image | video | file` hint
+   derives `media` for compatibility.
+6. Any remaining ordinary/foreign Markdown derives `article`, including an
    empty note; absence of body is not evidence of media ownership.
 
 The physical `block_type` column keeps the parsed legacy/source type

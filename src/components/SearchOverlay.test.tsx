@@ -93,7 +93,7 @@ function snapshot(
   total = blocks.length,
   hasMore = false,
 ): GridSnapshot {
-  return { blocks, total_blocks: total, has_more: hasMore };
+  return { generation: 1, blocks, total_blocks: total, has_more: hasMore };
 }
 
 function renderOverlay(props: Partial<Parameters<typeof SearchOverlay>[0]> = {}) {

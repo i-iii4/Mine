@@ -121,6 +121,14 @@ fn create_schema(conn: &Connection) -> Result<()> {
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS projection_state (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            generation INTEGER NOT NULL DEFAULT 0
+        );
+
+        INSERT OR IGNORE INTO projection_state (singleton, generation)
+        VALUES (1, 0);
+
         CREATE INDEX IF NOT EXISTS idx_blocks_saved_at ON blocks(saved_at DESC);
         CREATE INDEX IF NOT EXISTS idx_blocks_type ON blocks(block_type);
 
@@ -287,18 +295,21 @@ fn create_schema(conn: &Connection) -> Result<()> {
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )",
         )?;
-        let _ = conn
-            .execute_batch("ALTER TABLE blocks ADD COLUMN card_kind TEXT NOT NULL DEFAULT 'media'");
-        let _ = conn.execute_batch(
-            "UPDATE blocks
-            SET card_kind = CASE
-                WHEN block_type = 'channel' THEN 'channel'
-                WHEN trim(coalesce(body, '')) != '' THEN 'article'
-                WHEN media_file IS NOT NULL OR block_type IN ('image', 'video', 'file') THEN 'media'
-                WHEN url IS NOT NULL OR block_type = 'link' THEN 'link'
-                ELSE 'article'
-            END",
-        );
+        let card_kind_added = conn
+            .execute_batch("ALTER TABLE blocks ADD COLUMN card_kind TEXT NOT NULL DEFAULT 'media'")
+            .is_ok();
+        if card_kind_added {
+            conn.execute_batch(
+                "UPDATE blocks
+                SET card_kind = CASE
+                    WHEN block_type = 'channel' THEN 'channel'
+                    WHEN trim(coalesce(body, '')) != '' THEN 'article'
+                    WHEN media_file IS NOT NULL OR block_type IN ('image', 'video', 'file') THEN 'media'
+                    WHEN url IS NOT NULL OR block_type = 'link' THEN 'link'
+                    ELSE 'article'
+                END",
+            )?;
+        }
         let _ = conn
             .execute_batch("CREATE INDEX IF NOT EXISTS idx_blocks_card_kind ON blocks(card_kind)");
 
@@ -330,6 +341,96 @@ fn create_schema(conn: &Connection) -> Result<()> {
                 new.body
             );
         END;",
+        )?;
+
+        // Projection generation is advanced by SQLite itself, inside the same
+        // transaction as every route-visible block/channel mutation. This
+        // covers command, watcher, reconcile and preview-worker writers without
+        // relying on each caller to remember a separate bookkeeping write.
+        conn.execute_batch(
+            "CREATE TRIGGER IF NOT EXISTS projection_blocks_ai
+            AFTER INSERT ON blocks BEGIN
+                UPDATE projection_state
+                SET generation = generation + 1
+                WHERE singleton = 1;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS projection_blocks_au
+            AFTER UPDATE ON blocks BEGIN
+                UPDATE projection_state
+                SET generation = generation + 1
+                WHERE singleton = 1;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS projection_blocks_ad
+            AFTER DELETE ON blocks BEGIN
+                UPDATE projection_state
+                SET generation = generation + 1
+                WHERE singleton = 1;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS projection_channels_ai
+            AFTER INSERT ON channels BEGIN
+                UPDATE projection_state
+                SET generation = generation + 1
+                WHERE singleton = 1;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS projection_channels_au
+            AFTER UPDATE ON channels BEGIN
+                UPDATE projection_state
+                SET generation = generation + 1
+                WHERE singleton = 1;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS projection_channels_ad
+            AFTER DELETE ON channels BEGIN
+                UPDATE projection_state
+                SET generation = generation + 1
+                WHERE singleton = 1;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS projection_source_state_ai
+            AFTER INSERT ON source_index_state BEGIN
+                UPDATE projection_state
+                SET generation = generation + 1
+                WHERE singleton = 1;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS projection_source_state_au
+            AFTER UPDATE ON source_index_state BEGIN
+                UPDATE projection_state
+                SET generation = generation + 1
+                WHERE singleton = 1;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS projection_source_state_ad
+            AFTER DELETE ON source_index_state BEGIN
+                UPDATE projection_state
+                SET generation = generation + 1
+                WHERE singleton = 1;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS projection_block_tags_ai
+            AFTER INSERT ON block_tags BEGIN
+                UPDATE projection_state
+                SET generation = generation + 1
+                WHERE singleton = 1;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS projection_block_tags_au
+            AFTER UPDATE ON block_tags BEGIN
+                UPDATE projection_state
+                SET generation = generation + 1
+                WHERE singleton = 1;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS projection_block_tags_ad
+            AFTER DELETE ON block_tags BEGIN
+                UPDATE projection_state
+                SET generation = generation + 1
+                WHERE singleton = 1;
+            END;",
         )?;
 
         // Migration: add body_hash column. SHA-256 over the block body, used by
@@ -668,6 +769,26 @@ mod tests {
         let conn = open_memory().unwrap();
         create_schema(&conn).unwrap();
         create_schema(&conn).unwrap();
+    }
+
+    #[test]
+    fn reopening_schema_does_not_advance_projection_generation() {
+        let conn = open_memory().unwrap();
+        conn.execute(
+            "INSERT INTO blocks (
+                slug, block_type, saved_at, body, graph_link_index_version
+             ) VALUES ('stable', 'article', '2026-07-11T00:00:00Z', 'body', 1)",
+            [],
+        )
+        .unwrap();
+        let before = crate::storage::projection::current_generation(&conn).unwrap();
+
+        create_schema(&conn).unwrap();
+
+        assert_eq!(
+            crate::storage::projection::current_generation(&conn).unwrap(),
+            before
+        );
     }
 
     #[test]

@@ -942,6 +942,11 @@ Image media expansion:
 - Space selector показывает текущую папку, открывает searchable dropdown
   известных vaults и заменяет старый bottom-bar vault switcher.
   `Cmd+Shift+O` продолжает открывать native folder picker.
+- Every `vault-selected` event replaces the mounted vault subtree by source
+  path identity. During rapid `A -> B -> A -> B` switching, promises and events
+  from an unmounted subtree cannot publish cards, taxonomy, preview updates or
+  readiness into the final subtree. The final visible Grid must contain only
+  the latest selected space even when earlier IPC responses resolve later.
 - Space selector подстраивается под имя текущей папки, но ограничен половиной
   доступной ширины после traffic-light зоны (`max-w-[50%]`). Имя папки режется
   end ellipsis. Root trigger остаётся прозрачным, использует `px-3` и не
@@ -1092,6 +1097,16 @@ Image media expansion:
   overflow menus.
 - Main/Grid search вызывает route-facing `list_grid_blocks` с query, получает
   тот же `GridSnapshot`, но отфильтрованный и отсортированный по релевантности.
+- `GridSnapshot.generation` is the persisted SQLite projection generation, not
+  a request counter or layout key. `App` accepts generations monotonically for
+  the mounted vault. An older route/cache response cannot replace a newer one.
+- Pagination may append only when its generation equals the currently rendered
+  route generation. A newer page response invalidates the old route snapshot
+  and restarts from offset zero; an older page response is discarded.
+- Grid receives `blocks`, `total_blocks`, `has_more` and `generation` as one
+  atomic IPC envelope. Preview batches update Grid only through a newer full
+  snapshot; UI code never patches a ready manifest into rows from another
+  generation.
   Frontend не знает, какой backend дал результат: FTS5, alias/transliteration,
   fuzzy или semantic. Разница видна только через `search_match.kind`.
 - Article-derived feed cards в search mode получают optional `search_match`,

@@ -33,7 +33,7 @@ use crate::storage::search_engine;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-const MEDIA_INDEX_VERSION: i64 = 4;
+const MEDIA_INDEX_VERSION: i64 = 5;
 const COLLECTION_INDEX_VERSION: i64 = 1;
 pub const PREVIEW_SCHEMA_VERSION: i64 = 2;
 
@@ -2105,7 +2105,8 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
         "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
                 thumbnail, saved_at, width, height, author,
                 SUBSTR(body, 1, ?1), preview_text, first_image, media_urls, media_dimensions, preview_manifest, feed_playback
-         FROM blocks ORDER BY saved_at DESC",
+         FROM blocks
+         ORDER BY saved_at DESC, slug COLLATE NOCASE ASC, slug ASC",
     )?;
 
     let blocks: Vec<LightBlock> = stmt
@@ -2146,12 +2147,22 @@ pub fn list_grid_blocks_with_query(
                     b.thumbnail, b.saved_at, b.width, b.height, b.author,
                     CASE WHEN b.card_kind = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
                     b.preview_text, b.first_image, b.media_urls, b.media_dimensions,
-                    CASE WHEN b.preview_state = 'ready' THEN b.preview_manifest END,
-                    CASE WHEN b.preview_state = 'ready' THEN b.feed_playback END
+                    CASE WHEN b.preview_state = 'ready'
+                              AND b.preview_source_stamp = (
+                                  SELECT source.source_stamp FROM source_index_state source
+                                  WHERE source.slug = b.slug
+                              )
+                         THEN b.preview_manifest END,
+                    CASE WHEN b.preview_state = 'ready'
+                              AND b.preview_source_stamp = (
+                                  SELECT source.source_stamp FROM source_index_state source
+                                  WHERE source.slug = b.slug
+                              )
+                         THEN b.feed_playback END
              FROM blocks b
              INNER JOIN block_tags bt ON bt.block_id = b.id
              WHERE b.card_kind != 'channel' AND bt.tag = ?2
-             ORDER BY b.saved_at DESC
+             ORDER BY b.saved_at DESC, b.slug COLLATE NOCASE ASC, b.slug ASC
              LIMIT ?3 OFFSET ?4"
         }
         None => {
@@ -2159,11 +2170,21 @@ pub fn list_grid_blocks_with_query(
                     thumbnail, saved_at, width, height, author,
                     CASE WHEN card_kind = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
                     preview_text, first_image, media_urls, media_dimensions,
-                    CASE WHEN preview_state = 'ready' THEN preview_manifest END,
-                    CASE WHEN preview_state = 'ready' THEN feed_playback END
+                    CASE WHEN preview_state = 'ready'
+                              AND preview_source_stamp = (
+                                  SELECT source.source_stamp FROM source_index_state source
+                                  WHERE source.slug = blocks.slug
+                              )
+                         THEN preview_manifest END,
+                    CASE WHEN preview_state = 'ready'
+                              AND preview_source_stamp = (
+                                  SELECT source.source_stamp FROM source_index_state source
+                                  WHERE source.slug = blocks.slug
+                              )
+                         THEN feed_playback END
              FROM blocks
              WHERE card_kind != 'channel'
-             ORDER BY saved_at DESC
+             ORDER BY saved_at DESC, slug COLLATE NOCASE ASC, slug ASC
              LIMIT ?2 OFFSET ?3"
         }
     };
@@ -3518,7 +3539,15 @@ mod tests {
         assert_eq!(stale[0].feed_playback, None);
 
         conn.execute(
-            "UPDATE blocks SET preview_state = 'ready' WHERE slug = 'ready-gate'",
+            "INSERT INTO source_index_state (slug, source_kind, source_stamp)
+             VALUES ('ready-gate', 'block', 'source-v1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE blocks
+             SET preview_state = 'ready', preview_source_stamp = 'source-v1'
+             WHERE slug = 'ready-gate'",
             [],
         )
         .unwrap();
@@ -4175,6 +4204,37 @@ mod tests {
     }
 
     #[test]
+    fn list_grid_blocks_breaks_saved_at_ties_by_slug() {
+        let conn = test_conn();
+        for slug in ["Zulu", "alpha", "Beta"] {
+            upsert_block(
+                &conn,
+                &make_block_full(
+                    slug,
+                    "article",
+                    Some(slug),
+                    "2026-01-01T00:00:00Z",
+                    &[],
+                    "body",
+                ),
+                None,
+            )
+            .unwrap();
+        }
+
+        let (blocks, has_more) = list_grid_blocks(&conn, None, 0, 20).unwrap();
+
+        assert!(!has_more);
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|block| block.slug.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "Beta", "Zulu"]
+        );
+    }
+
+    #[test]
     fn sync_thumb_metadata_and_preview_queries_use_db_columns() {
         let conn = test_conn();
         upsert_block(&conn, &make_block("design-a", &["design"]), None).unwrap();
@@ -4357,19 +4417,19 @@ mod tests {
     }
 
     #[test]
-    fn backfill_media_index_repairs_legacy_metadata_only_link_semantics() {
+    fn backfill_media_index_repairs_legacy_metadata_only_remote_video_semantics() {
         let dir = tempfile::tempdir().unwrap();
         let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
         let mut block = make_block_full(
-            "ai-2027-3",
-            "link",
-            Some("AI 2027"),
+            "design-talk-2026",
+            "video",
+            Some("The Future of Design Tools"),
             "2026-03-12T19:19:25Z",
             &[],
             "",
         );
-        block.frontmatter.url = Some("https://ai-2027.com/race".to_string());
+        block.frontmatter.url = Some("https://youtube.com/watch?v=example1".to_string());
         upsert_block(&conn, &block, Some(vault.root())).unwrap();
         conn.execute(
             "UPDATE blocks
@@ -4378,7 +4438,7 @@ mod tests {
                  preview_schema_version = 1,
                  media_index_version = ?2
              WHERE slug = ?1",
-            params!["ai-2027-3", MEDIA_INDEX_VERSION - 1],
+            params!["design-talk-2026", MEDIA_INDEX_VERSION - 1],
         )
         .unwrap();
 
@@ -4393,7 +4453,7 @@ mod tests {
         ) = conn
             .query_row(
                 "SELECT card_kind, preview_state, preview_manifest, preview_schema_version, media_index_version
-                 FROM blocks WHERE slug = 'ai-2027-3'",
+                 FROM blocks WHERE slug = 'design-talk-2026'",
                 [],
                 |row| {
                     Ok((

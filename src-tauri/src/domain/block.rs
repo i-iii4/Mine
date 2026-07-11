@@ -397,14 +397,16 @@ pub fn derive_card_kind(block: &Block) -> CardKind {
         CardKind::Channel
     } else if !block.body.trim().is_empty() {
         CardKind::Article
-    } else if block.frontmatter.file.is_some()
-        || matches!(
-            block.frontmatter.block_type,
-            BlockType::Image | BlockType::Video | BlockType::File
-        )
-    {
+    } else if block.frontmatter.file.is_some() {
         CardKind::Media
-    } else if block.frontmatter.url.is_some() || block.frontmatter.block_type == BlockType::Link {
+    } else if block.frontmatter.url.is_some() {
+        CardKind::Link
+    } else if matches!(
+        block.frontmatter.block_type,
+        BlockType::Image | BlockType::Video | BlockType::File
+    ) {
+        CardKind::Media
+    } else if block.frontmatter.block_type == BlockType::Link {
         CardKind::Link
     } else {
         CardKind::Article
@@ -1726,6 +1728,18 @@ mod tests {
             body: String::new(),
         };
         assert_eq!(derive_card_kind(&link), CardKind::Link);
+
+        let metadata_only_video = Block {
+            slug: "metadata-video".to_string(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Video,
+                url: Some("https://example.com/watch".to_string()),
+                file: None,
+                ..media.frontmatter.clone()
+            },
+            body: String::new(),
+        };
+        assert_eq!(derive_card_kind(&metadata_only_video), CardKind::Link);
 
         let empty_note = Block {
             slug: "empty-note".to_string(),

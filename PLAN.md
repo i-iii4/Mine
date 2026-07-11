@@ -33,21 +33,42 @@ Status vocabulary:
 | A2. Watcher/storage consistency | DONE | Watcher recovery, lock order, atomic source writes, rollback-safe compound mutations | Injected watcher/write failures recover without partial source/index state or deadlock |
 | A3. Derived preview completion | DONE | Semantic `CardKind::Link`, recipe-backed readiness, one preview planner | Metadata-only links stay links; `ready` agrees with card semantics; watcher and commands cannot select different sources |
 | A4. Graph View M1 | DONE | Wikilink/related edges, scopes, controls/search, selection/a11y, truncation and Canvas acceptance | Full edge model, stable interactions, keyboard navigation and dark/light Playwright pixel/performance gates pass |
-| A5. Cold-space semantic acceptance | ACTIVE | Fresh-derived-store space switch, legacy card projection audit, semantic preview readiness | Every source Markdown is classified, first-open Grid has no blank cards, metadata-only links retain link semantics, and reopen/switch results are stable |
-| A6. Verification gate hardening | DONE | Self-starting browser audit runner wired into `bun run verify` | A clean shell runs Feed and Graph gates without a prestarted server and always tears the server down |
+| A5. Cold-space semantic acceptance | MANUAL QA | Fresh-derived-store space switch, legacy card projection audit, semantic preview readiness | Automated source/projection, first-frame, rapid-switch, reopen and cache-reset contracts pass; only final desktop visual open/restart remains |
+| A6. Verification gate hardening | DONE | Self-starting browser audit runner wired into `bun run verify` | A clean shell runs Feed, Graph and cold-space gates without a prestarted server and always tears the server down |
+| A7. Structural decomposition | ACTIVE | Split oversized Grid, Graph and command-state orchestration at existing ownership boundaries | Composition roots no longer own unrelated state machines; extracted modules have focused tests and the full behavior contract stays unchanged |
 
 Production distribution is `DEFERRED` by explicit product decision and is not
 part of local desktop completion. Current acceptance ends at a locally built
 debug `Mine.app`.
 
-### Phase A5 — Cold-space semantic acceptance [ACTIVE]
+### Phase A5 — Cold-space semantic acceptance [MANUAL QA]
+
+#### Automated acceptance closure — 11.07.2026
+
+- Added a storage-owned cold-space audit plus CLI. It fingerprints source
+  files, requires a disjoint empty derived base, builds two independent cache
+  cycles and compares first, settled and read-only reopened snapshots.
+- Sanitized coverage includes root/nested notes, collection pages,
+  metadata-only link/video bookmarks, missing media and browser-owned decode.
+- The untouched source `/Users/i_iii/Desktop/Тест` passed read-only audit:
+  `294 Markdown = 256 content + 38 collections`, zero unsupported sources,
+  `215 ready` previews and `41 browser_decode_required`; no invalid manifest or
+  source mutation remained. Both cold cycles and reopen were identical.
+- The first real run exposed four URL-only legacy `type: video` rows projected
+  as media. URL-without-owned-file now derives `link`; media-index v5 repairs
+  warmed derived stores without rewriting Markdown.
+- The cold-space Playwright route passes first/settled/deep blankness and source
+  request checks. Frontend rapid `A -> B -> A -> B` coverage proves obsolete
+  open promises cannot publish into the final keyed vault subtree.
+- All implementation/automation work is complete. A5 remains `MANUAL QA` only
+  for one final visual open and full desktop restart against the real space.
 
 #### Acceptance checkpoint — 11.07.2026
 
 - После push `5a7daae` текущая desktop-сборка в целом принята как рабочая и
   визуально стабильная на уже прогретом пространстве.
 - Новых frontend-блокеров в этом acceptance checkpoint не обнаружено.
-- A5 остаётся активной: общая положительная оценка не закрывает ранее
+- At this checkpoint A5 remained active: the positive warm-space result did not close
   воспроизведённые first-open blank cards и semantic preview failure в `Тест`.
 
 #### Automated remediation checkpoint — 11.07.2026
@@ -59,10 +80,13 @@ debug `Mine.app`.
 - Legacy backfill coverage proves that the former `card_kind = media`,
   `preview_state = ready`, schema-v1 row migrates to `link` and becomes `stale`
   until semantic validation republishes it.
+- Media-index v5 extends that repair to metadata-only legacy
+  `type: image | video | file` bookmarks with a URL and no owned local file;
+  the URL wins and the runtime card remains `link`.
 - Feed browser acceptance now mixes metadata-only links into deep fast scroll
   and asserts that their DOM contains title/domain but no graphic surface.
-- A5 remains active only for the full sanitized-space inventory/switch/restart
-  automation and untouched real-space manual acceptance in A5.1/A5.2/A5.5-A5.7.
+- At this checkpoint A5 still required full sanitized-space
+  inventory/switch/restart automation and untouched real-space acceptance.
 
 #### Confirmed boundary — 10.07.2026
 
@@ -81,13 +105,13 @@ debug `Mine.app`.
 
 | # | Task | Status |
 |---|---|---|
-| A5.1 | Build a sanitized cold-space fixture from `Тест`: root cards, nested library cards, collections, metadata-only links, missing assets and browser-decode fallback; assign a fresh vault id without modifying the user's source space | ACTIVE |
-| A5.2 | Add a source-to-projection audit: every `.md` must be classified exactly once as content, collection or typed unsupported input; report source/index/preview counts at first snapshot and settled state | ACTIVE |
+| A5.1 | Build a sanitized cold-space fixture from `Тест`: root cards, nested library cards, collections, metadata-only links, missing assets and browser-decode fallback; assign a fresh vault id without modifying the user's source space | DONE |
+| A5.2 | Add a source-to-projection audit: every `.md` must be classified exactly once as content, collection or typed unsupported input; report source/index/preview counts at first snapshot and settled state | DONE |
 | A5.3 | Define and implement the compatibility rule for metadata-only links: `url` plus link metadata and no media must render as a link/text card, never as a media card | DONE |
 | A5.4 | Tighten preview readiness: `ready` must mean the manifest and artifact are usable for the projected card semantics; an existence-backed text placeholder cannot satisfy a visual media preview | DONE |
-| A5.5 | Make first-open publication coherent: every visible row has either its correct derived preview or a type-correct fallback; progressive preview batches cannot publish blank card surfaces | ACTIVE |
-| A5.6 | Add automated cold-open and rapid `Mine -> Test -> Mine -> Test` acceptance, including current-vault worker cancellation, first-frame blank detection and settled-state equality | ACTIVE |
-| A5.7 | Run manual acceptance on the untouched real `Тест` space, then repeat after restart and after clearing only a disposable clone's derived store | MANUAL QA |
+| A5.5 | Make first-open publication coherent: every visible row has either its correct derived preview or a type-correct fallback; one persisted projection generation must cover SQLite rows, preview readiness and the IPC/Grid snapshot | DONE |
+| A5.6 | Add automated cold-open and rapid `Mine -> Test -> Mine -> Test` acceptance, including current-vault worker cancellation, first-frame blank detection and settled-state equality; the browser gate must consume a Rust-produced cold-vault `GridSnapshot`, not handwritten `LightBlock` data | DONE |
+| A5.7 | Untouched `Тест` read-only audit and disposable cache reset are complete; perform final visual desktop open and full app restart | MANUAL QA |
 
 #### Definition of Done
 
@@ -116,8 +140,31 @@ debug `Mine.app`.
 | R1 | Last-good freshness state machine | DONE | Per-file errors are diagnostic, readable snapshots still serve, clean searches perform zero scans, dirty work coalesces |
 | R2 | Runtime link semantics | DONE | `CardKind::Link` is end-to-end; metadata-only links never mount a media shell |
 | R3 | Shared preview recipe | DONE | One pure source-selection planner drives watcher and thumbnail commands; readiness validates the resulting manifest semantics |
-| R4 | Self-contained browser verification | DONE | `bun run verify` starts one audit server and runs both Feed and Graph gates |
-| R5 | Cold-space acceptance and closure | ACTIVE | Full disposable-space switch/restart automation plus untouched real `Тест` manual pass; A5 can become DONE |
+| R4 | Self-contained browser verification | DONE | `bun run verify` starts one audit server and runs Feed, Graph and Rust-produced cold-space gates |
+| R5 | Cold-space acceptance and closure | MANUAL QA | Persisted projection generations and real vault -> SQLite -> Rust IPC DTO -> Grid browser gate pass; untouched `Тест` storage audit remains stable; only final desktop visual open/restart remains |
+
+### Phase A7 — Structural decomposition [ACTIVE, after A5 acceptance]
+
+This is a maintainability boundary, not a current product regression. It must
+not be mixed into cold-space behavioral remediation.
+
+| # | Task | Status |
+|---|---|---|
+| A7.1 | Write responsibility maps and dependency rules for `Grid.tsx`, `GraphView.tsx` and `commands/state.rs`; identify existing pure helpers/hooks before moving code | ACTIVE |
+| A7.2 | Extract `FreshnessCoordinator`, preview-work queue and thumbnail-sweep coordinator from `commands/state.rs`; keep `AppState` as composition and shared ownership only | ACTIVE |
+| A7.3 | Split Graph controller, force configuration, Canvas painter/hit geometry and interaction state from `GraphView.tsx` without changing the `GraphSnapshot` or UX contract | ACTIVE |
+| A7.4 | Split Grid viewport/readiness orchestration, selection/keyboard controller and render shell from `Grid.tsx`, reusing existing pure layout modules instead of creating a second state model | ACTIVE |
+
+Definition of Done:
+
+- extraction commits are behavior-preserving and independently reviewable;
+- no cyclic frontend/backend module dependencies are introduced;
+- the three composition roots describe ownership at a glance and do not retain
+  duplicated helper/state-machine implementations;
+- focused unit tests move with each owner; Feed/Graph/cold-space browser gates
+  and full Rust/frontend verification remain green after every slice;
+- success is judged by responsibility boundaries, not an arbitrary line-count
+  target.
 
 ### Audited disposition of former open markers
 

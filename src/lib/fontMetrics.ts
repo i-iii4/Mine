@@ -405,7 +405,12 @@ export async function fetchWordWidths(
   try {
     await ensureWorkerReady();
   } catch (err) {
-    console.warn("[fontMetrics] worker init failed, returning partial cache", err);
+    // Worker/OffscreenCanvas absence is an expected capability fallback in
+    // JSDOM and older WebViews. Unexpected initialization failures still stay
+    // visible because they can indicate a broken font asset or worker bundle.
+    if (typeof Worker !== "undefined" && typeof OffscreenCanvas !== "undefined") {
+      console.warn("[fontMetrics] worker init failed, returning partial cache", err);
+    }
     return cached;
   }
 

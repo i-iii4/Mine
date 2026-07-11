@@ -70,7 +70,7 @@
 | Defuddle | Извлечение статей + Markdown-конвертация + YouTube-транскрипты (content script) |
 | @virtuoso.dev/masonry | Виртуализированная masonry-сетка (Chrome/Firefox fallback) |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
-| Playwright + pngjs | Browser-level acceptance для feed scroll: DOM diagnostics + screenshot blankness/performance checks |
+| Playwright + pngjs | Browser-level Feed, Graph и cold-space acceptance: DOM/Canvas diagnostics + screenshot blankness/performance checks |
 | AVFoundation + native Swift helper | Генерация article audio renditions на desktop |
 | SwiftUI | iOS UI-фреймворк (нативный, без WebView) |
 | UniFFI (Mozilla) | FFI-генератор: Rust → Swift bindings |
@@ -84,7 +84,8 @@ local-arena/
 ├── src-tauri/                  # Rust-бэкенд (Tauri)
 │   ├── src/
 │   │   ├── bin/
-│   │   │   └── native_host.rs  # Native messaging host для веб-клиппера (stdin/stdout JSON)
+│   │   │   ├── native_host.rs  # Native messaging host для веб-клиппера (stdin/stdout JSON)
+│   │   │   └── cold_space_audit.rs # Read-only source + disposable derived acceptance CLI
 │   │   ├── main.rs             # Только инициализация Tauri
 │   │   ├── domain/             # Чистая бизнес-логика (без Tauri, без SQLite)
 │   │   │   ├── mod.rs
@@ -98,8 +99,10 @@ local-arena/
 │   │   ├── storage/            # Персистентность (SQLite, FS)
 │   │   │   ├── mod.rs
 │   │   │   ├── article_audio.rs # Local derived audio state + sidecar persistence
+│   │   │   ├── cold_space_audit.rs # Cold/reopen/cache-reset projection acceptance
 │   │   │   ├── db.rs           # Connection pool, migrations
 │   │   │   ├── index.rs        # Frontmatter → SQLite indexing
+│   │   │   ├── projection.rs   # Persisted generation + atomic GridSnapshot reads
 │   │   │   ├── files.rs        # File operations (copy, move, delete, derived artifact rename)
 │   │   │   ├── graph.rs        # GraphSnapshot projection for Graph View
 │   │   │   └── thumbnails.rs   # Thumbnail generation + cache
@@ -257,9 +260,11 @@ bun run lint                   # Линтинг фронтенда
 bun run test                   # Полная проверка: Vitest + Rust workspace tests
 bun run test:feed-scroll       # Browser-level Grid scroll blank/performance acceptance (requires running dev server)
 bun run test:graph             # Browser-level Graph Canvas acceptance (requires running dev server)
-bun run test:browser           # Сам поднимает Vite и запускает оба browser gates
+bun run test:cold-space        # Browser cold first/settled/deep Grid acceptance (requires running dev server)
+bun run test:browser           # Сам поднимает Vite и запускает все browser gates
 bun run verify:core            # Линтинг + frontend/Rust tests
-bun run verify                 # Полный contract, включая Feed и Graph browser gates
+bun run verify                 # Полный contract, включая Feed, Graph и cold-space browser gates
+cargo run -p mine --bin cold-space-audit -- <source> <empty-derived-dir> 2
 cargo clippy                   # Линтинг Rust
 ```
 

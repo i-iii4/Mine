@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
 
 const HOST = "127.0.0.1";
@@ -80,6 +83,21 @@ function runAudit(script, env, onChildChange) {
   });
 }
 
+function runCommand(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: "inherit",
+    });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${command} failed with code=${code ?? "null"} signal=${signal ?? "none"}`));
+    });
+  });
+}
+
 async function stopProcess(child) {
   if (!child) return;
   if (child.exitCode !== null || child.signalCode !== null) return;
@@ -103,6 +121,29 @@ async function stopProcess(child) {
 }
 
 async function main() {
+  const coldSpaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mine-cold-space-browser-"));
+  const coldSource = path.join(coldSpaceRoot, "source");
+  const coldDerived = path.join(coldSpaceRoot, "derived");
+  const coldPayload = path.join(coldSpaceRoot, "snapshot.json");
+  fs.mkdirSync(coldSource);
+  fs.mkdirSync(coldDerived);
+  await runCommand("cargo", [
+    "run",
+    "-p",
+    "mine",
+    "--bin",
+    "cold-space-audit",
+    "--locked",
+    "--",
+    coldSource,
+    coldDerived,
+    "2",
+    "--fixture-count",
+    "180",
+    "--browser-output",
+    coldPayload,
+  ]);
+
   const port = await reserveFreePort();
   const origin = `http://${HOST}:${port}`;
   const logs = [];
@@ -111,7 +152,13 @@ async function main() {
     ["run", "dev", "--", "--host", HOST, "--port", String(port), "--strictPort"],
     {
       cwd: process.cwd(),
-      env: process.env,
+      env: {
+        ...process.env,
+        MINE_COLD_SPACE_SNAPSHOT_PATH: coldPayload,
+        MINE_COLD_SPACE_ASSET_ROOT: fs.realpathSync(
+          path.join(coldDerived, "cycle-1", "cache", "thumbs"),
+        ),
+      },
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -133,6 +180,7 @@ async function main() {
     shuttingDown = true;
     const exitCode = signal === "SIGINT" ? 130 : 143;
     void Promise.all([stopProcess(activeAudit), stopProcess(server)]).finally(() => {
+      fs.rmSync(coldSpaceRoot, { recursive: true, force: true });
       process.exit(exitCode);
     });
   };
@@ -149,11 +197,15 @@ async function main() {
     await runAudit("scripts/graph-view-audit.mjs", {
       MINE_GRAPH_AUDIT_URL: `${origin}/__graph-audit`,
     }, onAuditChildChange);
+    await runAudit("scripts/cold-space-browser-audit.mjs", {
+      MINE_COLD_SPACE_AUDIT_URL: `${origin}/__cold-space-audit`,
+    }, onAuditChildChange);
   } finally {
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", terminate);
     await stopProcess(activeAudit);
     await stopProcess(server);
+    fs.rmSync(coldSpaceRoot, { recursive: true, force: true });
   }
 }
 

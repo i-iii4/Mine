@@ -73,7 +73,8 @@ local-arena/
 ├── src-tauri/                  # Rust-бэкенд (Tauri)
 │   ├── src/
 │   │   ├── bin/
-│   │   │   └── native_host.rs  # Native messaging host для веб-клиппера (stdin/stdout JSON)
+│   │   │   ├── native_host.rs  # Native messaging host для веб-клиппера (stdin/stdout JSON)
+│   │   │   └── cold_space_audit.rs # Read-only source + disposable derived acceptance CLI
 │   │   ├── main.rs             # Только инициализация Tauri
 │   │   ├── domain/             # Чистая бизнес-логика (без Tauri, без SQLite)
 │   │   │   ├── mod.rs
@@ -85,7 +86,9 @@ local-arena/
 │   │   ├── storage/            # Персистентность (SQLite, FS)
 │   │   │   ├── mod.rs
 │   │   │   ├── db.rs           # Connection pool, migrations
+│   │   │   ├── cold_space_audit.rs # Cold/reopen/cache-reset projection acceptance
 │   │   │   ├── index.rs        # Frontmatter → SQLite indexing
+│   │   │   ├── projection.rs   # Persisted generation + atomic GridSnapshot reads
 │   │   │   ├── files.rs        # File operations (copy, move, delete)
 │   │   │   ├── graph.rs        # GraphSnapshot projection for Graph View
 │   │   │   └── thumbnails.rs   # Thumbnail generation + cache
@@ -132,11 +135,12 @@ local-arena/
 │   │   └── useSidebarResize.ts # Хук ресайза сайдбара (pointer events + persist)
 │   ├── types/                  # TypeScript-типы (ручные, без specta)
 │   ├── lib/                    # commands.ts (IPC), assets.ts, utils.ts (cn()), recentTags.ts
-│   ├── dev/                    # Dev-only browser acceptance routes: FeedScrollAuditRoute, GraphAuditRoute
+│   ├── dev/                    # Dev-only Feed, Graph and ColdSpace acceptance routes
 │   └── styles/                 # Глобальные стили
 ├── scripts/
 │   ├── feed-scroll-audit.mjs   # Playwright Grid scroll/source-request acceptance
-│   └── graph-view-audit.mjs    # Dark/light Canvas pixel/interaction/performance acceptance
+│   ├── graph-view-audit.mjs    # Dark/light Canvas pixel/interaction/performance acceptance
+│   └── cold-space-browser-audit.mjs # First/settled/deep cold Grid acceptance
 ├── extension/                  # Chrome/Safari веб-клиппер
 │   ├── background.js           # Service worker: контекстное меню, native messaging
 │   ├── content.js              # Content script: метаданные, Defuddle, Twitter/Instagram парсеры
@@ -239,9 +243,11 @@ bun run lint                   # Линтинг фронтенда
 bun run test                   # Полная проверка: Vitest + Rust workspace tests
 bun run test:feed-scroll       # Browser Grid acceptance (requires running dev server)
 bun run test:graph             # Browser Graph Canvas acceptance (requires running dev server)
-bun run test:browser           # Сам поднимает Vite и запускает оба browser gates
+bun run test:cold-space        # Browser cold first/settled/deep Grid acceptance (requires running dev server)
+bun run test:browser           # Сам поднимает Vite и запускает все browser gates
 bun run verify:core            # Линтинг + frontend/Rust tests
-bun run verify                 # Полный contract, включая Feed и Graph browser gates
+bun run verify                 # Полный contract, включая Feed, Graph и cold-space browser gates
+cargo run -p mine --bin cold-space-audit -- <source> <empty-derived-dir> 2
 cargo clippy                   # Линтинг Rust
 ```
 

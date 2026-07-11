@@ -494,6 +494,17 @@ iOS UI contract:
   paint.
 - Переключение vault не делает `window.location.reload()`. `App.tsx` remount'ит `AppWithVault` по `key={vaultPath}`, сбрасывает локальное состояние и игнорирует stale async-ответы через `vaultPathRef + requestId`.
 - `App.tsx` держит per-route snapshot cache (`tag -> GridSnapshot`). Повторный переход в уже посещённый канал сначала применяет локальный snapshot синхронно, а taxonomy (`list_tags` / `list_channels`) не перезапрашивается на чистом route switch. Это убирает лишний IPC round-trip и второй `list_grid_blocks` на старте после `setTags/setChannels`.
+- Каждый `GridSnapshot` несёт persisted SQLite `generation`. Триггеры на
+  `blocks`, `channels`, `block_tags` и `source_index_state` повышают generation
+  внутри той же транзакции, где меняется index, preview readiness или route
+  membership. `storage::projection::read_grid_snapshot` читает generation,
+  rows, total и pagination state одной SQLite snapshot-транзакцией. App
+  применяет поколения только монотонно; pagination другого generation не
+  добавляется к текущей ленте, а запускает reload с offset zero.
+- Route-facing preview публикуется только при `preview_state = ready` и точном
+  совпадении `preview_source_stamp` с текущим `source_index_state.source_stamp`.
+  Поэтому сохранённый legacy/last-good manifest может оставаться в SQLite, но
+  не попадёт в Grid/Search от другого source generation.
 - `App.tsx` также держит route/query identity последнего применённого
   `GridSnapshot`. Empty channel UI в Grid разрешён только когда эта identity
   совпадает с текущим route/search state. `blocks.length === 0` сам по себе не
@@ -1391,6 +1402,36 @@ Detail-aware conditional centering and an `aria-live` status. Initial
 updates Canvas dimensions without reheating or refitting. `bun run test:graph`
 is the dark/light real-browser pixel, hover, resize, request and interaction
 performance gate.
+
+### 029: Cold-space acceptance separates source truth from disposable derived state
+
+| Approach | Problem |
+|---|---|
+| Validate only the already-open user space | A warm cache can hide stale card kinds, missing rows and invalid preview manifests |
+| Delete the real Application Support cache | Destructive, hard to reproduce and unsafe while the user is working |
+| Copy the whole user vault into the repository | Duplicates private media, changes filesystem metadata and quickly becomes stale |
+| Read the real source through isolated derived roots plus a sanitized browser fixture (chosen) | Exercises production storage primitives without source writes, while deterministic UI cases remain versioned and fast |
+
+Rationale: a source vault and its SQLite/preview projection have different
+ownership. `storage::cold_space_audit` fingerprints the source, builds two
+independent derived stores, classifies every Markdown exactly once, and compares
+first, settled and read-only reopened semantic snapshots. The CLI accepts an
+explicit empty derived directory outside the source and retains both cycles for
+inspection. It rejects stale extra rows, metadata-only URL cards projected as
+media, empty fallbacks and non-ready preview errors outside the allowed
+missing-source/browser-decode boundary.
+
+The common browser runner creates a temporary sanitized source vault, asks the
+Rust `cold-space-audit` binary to build two empty derived stores, and serves the
+binary's serialized production `GridSnapshot` DTO plus cycle-1 derived JPEGs to
+the dev-only `/__cold-space-audit` route. There are no handwritten
+`LightBlock`s in the browser fixture. Its Playwright gate therefore covers one
+path from real Markdown through parser, SQLite, Rust serialization and the
+frontend DTO into first/settled/deep Grid viewports; it rejects blank cards,
+source-vault media requests, semantic media shells and non-advancing projection
+generations. `App.test.tsx` additionally proves obsolete `A -> B -> A -> B`
+opens cannot publish and pagination cannot combine two generations. The common
+`bun run test:browser` runner owns Feed, Graph and cold-space gates.
 
 ## Dependencies
 
