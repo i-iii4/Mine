@@ -15,10 +15,11 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::state::{schedule_preview_reconcile, AppState};
 use crate::domain::block::{
-    compute_body_hash, derive_card_kind, iter_inline_media_references, parse_block,
-    parse_markdown_document, Block, BlockType, CardKind, DateTime,
+    compute_body_hash, derive_card_kind, parse_block, parse_markdown_document, Block, BlockType,
+    CardKind, DateTime,
 };
 use crate::domain::vault::VaultLayout;
+use crate::storage::preview_plan::{resolve_upgrade_media, PreviewUpgradeInput};
 #[cfg(test)]
 use crate::storage::reconcile;
 use crate::storage::{article_audio, db, files, index, thumbnails};
@@ -318,10 +319,19 @@ fn spawn_thumb_jobs_worker(
                             )
                         {
                             if let Some(ref app) = app {
+                                let upgrade = metadata_conn.as_ref().and_then(|conn| {
+                                    index::get_pending_thumb_upgrade_block(
+                                        conn,
+                                        &job.block.slug,
+                                    )
+                                    .ok()
+                                    .flatten()
+                                });
                                 emit_thumb_events(
                                     app,
                                     &vault,
                                     &job.block,
+                                    upgrade.as_ref(),
                                     thumbnails::ThumbSource::Text,
                                 );
                             }
@@ -354,7 +364,21 @@ fn spawn_thumb_jobs_worker(
                         generated += 1;
                         if is_active_vault() {
                             if let Some(ref app) = app {
-                                emit_thumb_events(app, &vault, &job.block, source);
+                                let upgrade = metadata_conn.as_ref().and_then(|conn| {
+                                    index::get_pending_thumb_upgrade_block(
+                                        conn,
+                                        &job.block.slug,
+                                    )
+                                    .ok()
+                                    .flatten()
+                                });
+                                emit_thumb_events(
+                                    app,
+                                    &vault,
+                                    &job.block,
+                                    upgrade.as_ref(),
+                                    source,
+                                );
                             }
                         }
                     }
@@ -478,7 +502,16 @@ pub fn index_md_file(
                 thumbnails::ThumbDiskState::Png
             ) {
                 if let Some(app) = app {
-                    emit_thumb_events(app, vault, &job.block, thumbnails::ThumbSource::Text);
+                    let upgrade = index::get_pending_thumb_upgrade_block(conn, &job.block.slug)
+                        .ok()
+                        .flatten();
+                    emit_thumb_events(
+                        app,
+                        vault,
+                        &job.block,
+                        upgrade.as_ref(),
+                        thumbnails::ThumbSource::Text,
+                    );
                 }
             }
             return Ok(true);
@@ -496,7 +529,7 @@ pub fn index_md_file(
             .name(format!("thumb-{}", &slug))
             .spawn(move || {
                 let source = thumbnails::generate_for_block(&job.block, &vault);
-                match db::open_or_create(&vault.index_db_path()) {
+                let upgrade = match db::open_or_create(&vault.index_db_path()) {
                     Ok(conn) => {
                         if let Err(e) = index::sync_thumb_metadata(
                             &conn,
@@ -506,13 +539,17 @@ pub fn index_md_file(
                         ) {
                             log::warn!("thumb thread: sync metadata failed for {}: {e:#}", slug);
                         }
+                        index::get_pending_thumb_upgrade_block(&conn, &slug)
+                            .ok()
+                            .flatten()
                     }
                     Err(e) => {
-                        log::warn!("thumb thread: open metadata db failed for {}: {e:#}", slug)
+                        log::warn!("thumb thread: open metadata db failed for {}: {e:#}", slug);
+                        None
                     }
-                }
+                };
                 if let Some(app) = app_clone {
-                    emit_thumb_events(&app, &vault, &job.block, source);
+                    emit_thumb_events(&app, &vault, &job.block, upgrade.as_ref(), source);
                 }
             })
             .ok();
@@ -528,6 +565,7 @@ fn emit_thumb_events(
     app: &AppHandle,
     vault: &VaultLayout,
     block: &Block,
+    upgrade_block: Option<&index::PendingThumbUpgradeBlock>,
     source: thumbnails::ThumbSource,
 ) {
     // `None` means the cascade decided not to write any thumb (non-article
@@ -546,7 +584,18 @@ fn emit_thumb_events(
     // Block <slug>.jpg upgrade — only when Phase 1 wrote a text placeholder.
     // A real JPEG thumb from Rust decode is already the final result.
     let slug_upgrade = if source == thumbnails::ThumbSource::Text {
-        resolve_upgrade_media_for_block(vault, block)
+        upgrade_block.and_then(|indexed| {
+            resolve_upgrade_media(
+                vault,
+                PreviewUpgradeInput {
+                    slug: &indexed.slug,
+                    media_file: indexed.media_file.as_deref(),
+                    thumbnail: indexed.thumbnail.as_deref(),
+                    media_urls: indexed.media_urls.as_deref(),
+                    first_image: indexed.first_image.as_deref(),
+                },
+            )
+        })
     } else {
         None
     };
@@ -556,7 +605,12 @@ fn emit_thumb_events(
     }
 
     let (media_path, kind) = slug_upgrade
-        .map(|(path, kind)| (path.to_string_lossy().into_owned(), kind.to_string()))
+        .map(|media| {
+            (
+                media.path.to_string_lossy().into_owned(),
+                media.kind.as_str().to_string(),
+            )
+        })
         .unwrap_or_default();
     let _ = app.emit(
         "thumb:upgrade-requested",
@@ -567,72 +621,6 @@ fn emit_thumb_events(
             tile_posters: Vec::new(),
         },
     );
-}
-
-/// Mirror of `commands::thumbnails::resolve_upgrade_media` but working
-/// off a full `Block` (the version we have after parse). Priority matches
-/// `generate_for_block`'s cascade so the Phase 2 upgrade replaces the
-/// placeholder with the same media Rust would have used.
-fn resolve_upgrade_media_for_block(
-    vault: &VaultLayout,
-    block: &Block,
-) -> Option<(PathBuf, &'static str)> {
-    // 1. frontmatter.file — use filename from frontmatter directly
-    if let Some(ref file_name) = block.frontmatter.file {
-        let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
-        if let Some(media_path) =
-            crate::storage::media_refs::resolve_indexed_media(vault, &block.slug, file_name)
-        {
-            if thumbnails::is_image_ext(&ext) {
-                return Some((media_path, "image"));
-            }
-            if thumbnails::is_video_ext(&ext) {
-                return Some((media_path, "video"));
-            }
-        }
-    }
-
-    // 2. frontmatter.thumbnail
-    if let Some(ref thumb_file) = block.frontmatter.thumbnail {
-        let ext = thumb_file.rsplit('.').next().unwrap_or("").to_lowercase();
-        if thumbnails::is_image_ext(&ext) {
-            if let Some(media_path) =
-                crate::storage::media_refs::resolve_indexed_media(vault, &block.slug, thumb_file)
-            {
-                return Some((media_path, "image"));
-            }
-        }
-    }
-
-    // 3. First embedded body media in markdown order.
-    for reference in iter_inline_media_references(&block.body) {
-        if reference.source.is_empty()
-            || reference.source.starts_with("http://")
-            || reference.source.starts_with("https://")
-        {
-            continue;
-        }
-        let ext = reference
-            .source
-            .rsplit('.')
-            .next()
-            .unwrap_or("")
-            .to_lowercase();
-        let media_kind = if thumbnails::is_image_ext(&ext) {
-            "image"
-        } else if thumbnails::is_video_ext(&ext) {
-            "video"
-        } else {
-            continue;
-        };
-        if let Some(media_path) =
-            crate::storage::media_refs::resolve_inline_media(vault, &block.slug, &reference)
-        {
-            return Some((media_path, media_kind));
-        }
-    }
-
-    None
 }
 
 // ─── Internal ───────────────────────────────────────────────────────────────
@@ -1572,7 +1560,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_upgrade_media_for_block_reads_wikilink_image() {
+    fn shared_upgrade_planner_reads_indexed_wikilink_image() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
 
@@ -1590,13 +1578,24 @@ mod tests {
         let (slug, content) = files::read_block_file(&vault, &path).unwrap();
         let block = parse_block(&slug, &content).unwrap();
 
-        let (media_path, kind) = resolve_upgrade_media_for_block(&vault, &block).unwrap();
-        assert_eq!(kind, "image");
-        assert_eq!(media_path, vault.root().join(image_name));
+        let media_urls = serde_json::to_string(&vec![image_name]).unwrap();
+        let media = resolve_upgrade_media(
+            &vault,
+            PreviewUpgradeInput {
+                slug: &block.slug,
+                media_file: block.frontmatter.file.as_deref(),
+                thumbnail: block.frontmatter.thumbnail.as_deref(),
+                media_urls: Some(&media_urls),
+                first_image: Some(image_name),
+            },
+        )
+        .unwrap();
+        assert_eq!(media.kind.as_str(), "image");
+        assert_eq!(media.path, vault.root().join(image_name));
     }
 
     #[test]
-    fn resolve_upgrade_media_for_block_preserves_video_first_body_order() {
+    fn shared_upgrade_planner_preserves_video_first_index_order() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
 
@@ -1614,9 +1613,20 @@ mod tests {
         let (slug, content) = files::read_block_file(&vault, &path).unwrap();
         let block = parse_block(&slug, &content).unwrap();
 
-        let (media_path, kind) = resolve_upgrade_media_for_block(&vault, &block).unwrap();
-        assert_eq!(kind, "video");
-        assert_eq!(media_path, vault.root().join("clip.mp4"));
+        let media_urls = serde_json::to_string(&vec!["clip.mp4", "later.jpg"]).unwrap();
+        let media = resolve_upgrade_media(
+            &vault,
+            PreviewUpgradeInput {
+                slug: &block.slug,
+                media_file: block.frontmatter.file.as_deref(),
+                thumbnail: block.frontmatter.thumbnail.as_deref(),
+                media_urls: Some(&media_urls),
+                first_image: Some("later.jpg"),
+            },
+        )
+        .unwrap();
+        assert_eq!(media.kind.as_str(), "video");
+        assert_eq!(media.path, vault.root().join("clip.mp4"));
     }
 
     // ── helpers ──────────────────────────────────────────────────────────

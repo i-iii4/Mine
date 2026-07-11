@@ -808,6 +808,12 @@ run, first paint was about `380..459 ms`, backend-materialized search
 `132..150 ms`, image requests were deduplicated to `6`, hover changed `0` Canvas
 pixels, pan/zoom p95 was about `9 ms`, and no long task was observed.
 
+`bun run verify` must include this gate through a self-contained browser-audit
+runner. The runner starts one Vite server on a free localhost port, waits for
+readiness, runs both Feed and Graph audits against that server, and tears it down
+on success, failure and process signal. A prestarted development server is not a
+verification prerequisite.
+
 ### M1 performance budgets
 
 - Backend snapshot for a returned graph of at most 1,000 nodes and 5,000 links:

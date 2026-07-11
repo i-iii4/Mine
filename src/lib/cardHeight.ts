@@ -394,6 +394,9 @@ export function computeFeedPlaybackSurfaceEnvelope(
       return null;
     }
 
+    case "link":
+      return null;
+
     case "channel":
       return null;
 
@@ -452,6 +455,13 @@ export function computeCardHeight(
           return computeSocialHeight(block, columnWidth, wordWidths);
         }
         return computeArticleHeight(block, columnWidth, wordWidths);
+
+      case "link":
+        return descriptor.primaryAspectRatio !== null
+          ? Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT)
+            + LINK_FOOTER_HEIGHT
+            + CARD_BORDER_HEIGHT
+          : CARD_HOVER_ACTION_MIN_HEIGHT;
 
       case "channel":
         return computeArticleHeight(block, columnWidth, wordWidths);

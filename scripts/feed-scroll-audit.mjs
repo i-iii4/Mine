@@ -355,6 +355,15 @@ async function runViewportAudit(browser, viewport) {
   await installPerformanceProbe(page);
   await waitForViewportPaint(page);
 
+  const metadataLink = page.locator(
+    '[data-feed-grid-item-slug^="feed-scroll-audit-link-"]',
+  ).first();
+  await metadataLink.waitFor({ state: "visible" });
+  const metadataLinkProbe = {
+    graphicSurfaceCount: await metadataLink.locator("[data-card-graphic-surface]").count(),
+    text: (await metadataLink.textContent()) ?? "",
+  };
+
   const initialMetrics = await readViewportMetrics(page);
   const maxScrollTop = Math.max(
     0,
@@ -363,6 +372,13 @@ async function runViewportAudit(browser, viewport) {
   const positions = plannedScrollPositions(maxScrollTop);
   const failures = [];
   const samples = [];
+
+  if (metadataLinkProbe.graphicSurfaceCount !== 0) {
+    failures.push("metadata-only link mounted a faux graphic surface");
+  }
+  if (!metadataLinkProbe.text.includes("AI 2027 link")) {
+    failures.push("metadata-only link did not render its link title");
+  }
 
   for (const top of positions) {
     await resetPerformanceProbe(page);
@@ -495,6 +511,7 @@ async function runViewportAudit(browser, viewport) {
   return {
     viewport: viewport.name,
     maxScrollTop,
+    metadataLinkProbe,
     samples,
     consoleWarnings,
     forbiddenSourceRequests,

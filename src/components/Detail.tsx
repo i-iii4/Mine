@@ -1223,6 +1223,59 @@ function BlockContent({
       );
     }
 
+    case "link": {
+      if (descriptor.variant === "link" && previewManifest?.kind !== "text") {
+        const src = detailPreviewImageSource({
+          block,
+          previewManifest,
+          vaultPath,
+          thumbsRootPath: resolvedThumbsRoot,
+        });
+        return (
+          <div>
+            <div className="aspect-video bg-accent">
+              <img
+                src={src}
+                alt=""
+                className="h-full w-full object-contain"
+                draggable={false}
+                onError={(event) => {
+                  event.currentTarget.style.display = "none";
+                }}
+              />
+            </div>
+            <div className="py-4">
+              {displayTitle && (
+                <h2 className="text-lg font-semibold text-foreground">
+                  {displayTitle}
+                </h2>
+              )}
+              {description && (
+                <p className="mt-2 text-base text-muted-foreground">
+                  {description}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="py-4">
+          {displayTitle && (
+            <h2 className="text-lg font-semibold text-foreground">
+              {displayTitle}
+            </h2>
+          )}
+          {description && (
+            <p className="mt-2 text-base text-muted-foreground">
+              {description}
+            </p>
+          )}
+        </div>
+      );
+    }
+
     case "media": {
       if (descriptor.variant === "image") {
         const src = detailPreviewImageSource({

@@ -44,13 +44,29 @@ export interface ContentCardSlots {
 
 export function getRuntimeCardKind(block: LightBlock): LightBlock["card_kind"] {
   const maybeKind = (block as Partial<LightBlock>).card_kind;
-  if (maybeKind === "article" || maybeKind === "media" || maybeKind === "channel") {
+  if (
+    maybeKind === "article"
+    || maybeKind === "media"
+    || maybeKind === "link"
+    || maybeKind === "channel"
+  ) {
     return maybeKind;
   }
   if (block.block_type === "channel") {
     return "channel";
   }
-  return block.body.trim() ? "article" : "media";
+  if (block.body.trim()) {
+    return "article";
+  }
+  if (
+    block.media_file
+    || block.block_type === "image"
+    || block.block_type === "video"
+    || block.block_type === "file"
+  ) {
+    return "media";
+  }
+  return block.url || block.block_type === "link" ? "link" : "article";
 }
 
 function stripMarkdown(text: string): string {
@@ -326,6 +342,41 @@ function deriveArticleCardLayoutDescriptor(
   };
 }
 
+function deriveLinkCardLayoutDescriptor(
+  titleText: string,
+  previewManifest: ReturnType<typeof parsePreviewManifest>,
+  indexedPreviewText: string,
+): CardLayoutDescriptor {
+  const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
+  const hasVisualPreview = previewManifest?.kind !== undefined
+    && previewManifest.kind !== "text"
+    && previewManifest.primaryPreviewPath !== null;
+  if (hasVisualPreview) {
+    return {
+      variant: "link",
+      titleText,
+      previewText: indexedPreviewText,
+      authorText: "",
+      primaryAspectRatio:
+        aspectRatioFromDimensions(previewManifest.width, previewManifest.height) ?? (16 / 9),
+      mediaItems,
+      visibleMediaCount: mediaItems.length,
+      totalMediaCount: mediaItems.length + previewManifest.overflowCount,
+    };
+  }
+
+  return {
+    variant: "link",
+    titleText,
+    previewText: indexedPreviewText,
+    authorText: "",
+    primaryAspectRatio: null,
+    mediaItems: [],
+    visibleMediaCount: 0,
+    totalMediaCount: 0,
+  };
+}
+
 export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescriptor {
   const titleText = getDisplayTitle(block) ?? "";
   const authorText = block.author ?? "";
@@ -336,6 +387,13 @@ export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescrip
   switch (cardKind) {
     case "media":
       return deriveMediaCardLayoutDescriptor(block, titleText, previewManifest);
+
+    case "link":
+      return deriveLinkCardLayoutDescriptor(
+        titleText,
+        previewManifest,
+        indexedPreviewText,
+      );
 
     case "channel":
       return {

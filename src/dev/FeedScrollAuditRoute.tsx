@@ -62,19 +62,31 @@ function makeAuditPreviewManifest(index: number): string | null {
 
 function makeAuditBlock(index: number): LightBlock {
   const id = 100_000 + index;
-  const body = auditBodies[index % auditBodies.length];
-  const previewManifest = makeAuditPreviewManifest(index);
+  const metadataOnlyLink = index % 23 === 0;
+  const body = metadataOnlyLink ? "" : auditBodies[index % auditBodies.length];
+  const previewManifest = metadataOnlyLink
+    ? JSON.stringify({
+        kind: "text",
+        primary_preview_path: null,
+        width: null,
+        height: null,
+        tiles: [],
+        overflow_count: 0,
+      })
+    : makeAuditPreviewManifest(index);
   const repeatedBody = Array.from(
     { length: 1 + (index % 4) },
     (_, partIndex) => `${body} Segment ${partIndex + 1}.`,
-  ).join(" ");
+  ).join(" ").trim();
 
   return {
     id,
-    slug: `feed-scroll-audit-${id}`,
-    card_kind: "article",
-    block_type: "article",
-    title: `Feed scroll audit ${index + 1}`,
+    slug: metadataOnlyLink
+      ? `feed-scroll-audit-link-${id}`
+      : `feed-scroll-audit-${id}`,
+    card_kind: metadataOnlyLink ? "link" : "article",
+    block_type: metadataOnlyLink ? "link" : "article",
+    title: metadataOnlyLink ? `AI 2027 link ${index + 1}` : `Feed scroll audit ${index + 1}`,
     content_heading: null,
     display_title: null,
     fallback_label: null,
@@ -86,10 +98,10 @@ function makeAuditBlock(index: number): LightBlock {
     height: null,
     author: index % 3 === 0 ? "Mine audit" : null,
     body: repeatedBody,
-    preview_text: repeatedBody,
-    first_image: previewManifest ? AUDIT_SOURCE_ASSETS[index % AUDIT_SOURCE_ASSETS.length]! : null,
-    media_urls: previewManifest ? JSON.stringify(AUDIT_SOURCE_ASSETS.slice(0, 2)) : null,
-    media_dimensions: previewManifest
+    preview_text: metadataOnlyLink ? null : repeatedBody,
+    first_image: !metadataOnlyLink && previewManifest ? AUDIT_SOURCE_ASSETS[index % AUDIT_SOURCE_ASSETS.length]! : null,
+    media_urls: !metadataOnlyLink && previewManifest ? JSON.stringify(AUDIT_SOURCE_ASSETS.slice(0, 2)) : null,
+    media_dimensions: !metadataOnlyLink && previewManifest
       ? JSON.stringify(Object.fromEntries(AUDIT_SOURCE_ASSETS.map((asset) => [asset, [960, 960]])))
       : null,
     preview_manifest: previewManifest,

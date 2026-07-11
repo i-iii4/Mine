@@ -210,6 +210,7 @@ fn record_watcher_error(
         .unwrap_or_else(|error| error.into_inner())
         .record_error(Instant::now());
     let path = vault.root().to_string_lossy().into_owned();
+    app.state::<AppState>().freshness.mark_dirty(&path);
     let _ = app.emit(
         "watcher-error",
         WatcherErrorPayload {

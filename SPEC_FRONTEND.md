@@ -17,7 +17,7 @@ interface IndexedBlock {
   id: number;
   slug: string;
   block_type: "image" | "article" | "link" | "video" | "file" | "channel"; // legacy frontmatter.type
-  card_kind: "article" | "media" | "channel"; // derived runtime/card kind
+  card_kind: "article" | "media" | "link" | "channel"; // derived runtime/card kind
   title: string | null; // legacy frontmatter.title; not canonical for new writes
   content_heading: string | null; // first body H1, if present
   display_title: string | null; // first body H1, then legacy title; null for untitled cards
@@ -662,6 +662,7 @@ handle ставит `body.sidebar-resizing`, вызывает `preventDefault()`
 |---|---|
 | `article` | Body preview, optional body-derived media preview, display title if present |
 | `media` | Resolved `media_file` / thumbnail / extension-specific affordance; no synthetic title |
+| `link` | Compact title/domain card without a graphic shell unless a ready image preview exists |
 | `channel` | Not rendered in feed/grid as a normal card |
 
 Thumbnail отображается через `convertFileSrc(thumbsRootPath + "/" + slug + ".jpg")`,

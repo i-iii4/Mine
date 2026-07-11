@@ -93,7 +93,8 @@ fn try_parse_filter(token: &str) -> Option<SearchFilter> {
 fn parse_card_kind_filter(value: &str) -> Option<CardKind> {
     match value {
         "article" => Some(CardKind::Article),
-        "media" | "image" | "link" | "video" | "file" => Some(CardKind::Media),
+        "media" | "image" | "video" | "file" => Some(CardKind::Media),
+        "link" => Some(CardKind::Link),
         "channel" => Some(CardKind::Channel),
         _ => None,
     }
@@ -195,7 +196,7 @@ mod tests {
         for (input, expected) in [
             ("type:media", CardKind::Media),
             ("type:image", CardKind::Media),
-            ("type:link", CardKind::Media),
+            ("type:link", CardKind::Link),
             ("type:video", CardKind::Media),
             ("type:file", CardKind::Media),
             ("type:article", CardKind::Article),

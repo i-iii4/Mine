@@ -294,7 +294,9 @@ fn create_schema(conn: &Connection) -> Result<()> {
             SET card_kind = CASE
                 WHEN block_type = 'channel' THEN 'channel'
                 WHEN trim(coalesce(body, '')) != '' THEN 'article'
-                ELSE 'media'
+                WHEN media_file IS NOT NULL OR block_type IN ('image', 'video', 'file') THEN 'media'
+                WHEN url IS NOT NULL OR block_type = 'link' THEN 'link'
+                ELSE 'article'
             END",
         );
         let _ = conn

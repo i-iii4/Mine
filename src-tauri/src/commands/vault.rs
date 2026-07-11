@@ -514,6 +514,10 @@ fn initialize_vault(
 
     let thumbs_root = vault.thumbs_dir().to_string_lossy().into_owned();
     *vault_state = Some(VaultState { conn, vault });
+    // Switching away can miss watcher events for this vault. Every selection
+    // therefore invalidates the in-memory clean generation; the existing local
+    // snapshot remains readable while one background pass catches up.
+    state.freshness.mark_dirty(path);
     append_startup_trace(
         app,
         "initialize_vault",
@@ -832,6 +836,7 @@ fn thumbs_done_cb(app: AppHandle, path: String) -> Box<dyn FnOnce() + Send> {
 fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandError> {
     append_startup_trace(&app, "start_vault_sync", &format!("request path={path}"));
     let app_state = app.state::<AppState>();
+    app_state.freshness.mark_dirty(&path);
     if !app_state.try_start_sync(&path)? {
         append_startup_trace(
             &app,

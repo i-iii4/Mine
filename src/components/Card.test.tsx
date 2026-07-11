@@ -16,6 +16,8 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["card_kind"] {
   return blockType === "article"
     ? "article"
+    : blockType === "link"
+      ? "link"
     : blockType === "channel"
       ? "channel"
       : "media";

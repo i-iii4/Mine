@@ -11,6 +11,8 @@ import type { WordWidths } from "@/types/fontMetrics";
 function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["card_kind"] {
   return blockType === "article"
     ? "article"
+    : blockType === "link"
+      ? "link"
     : blockType === "channel"
       ? "channel"
       : "media";
@@ -111,9 +113,35 @@ describe("computeCardHeight — video / link / file", () => {
   });
 
   it("link adds footer height to thumbnail", () => {
-    const block = makeBlock({ block_type: "link", url: "https://example.com" });
+    const block = makeBlock({
+      block_type: "link",
+      url: "https://example.com",
+      preview_manifest: JSON.stringify({
+        kind: "image",
+        primary_preview_path: "link.jpg",
+        width: 1600,
+        height: 900,
+        tiles: [],
+        overflow_count: 0,
+      }),
+    });
     const expected = Math.round(318 * 9 / 16) + 76 + CARD_BORDER;
     expect(computeCardHeight(block, 320, null)).toBe(expected);
+  });
+
+  it("metadata-only link uses text-card geometry", () => {
+    const link = makeBlock({
+      block_type: "link",
+      card_kind: "link",
+      title: "AI 2027",
+      url: "https://ai-2027.com/race",
+    });
+    const article = makeBlock({
+      block_type: "article",
+      card_kind: "article",
+      title: "AI 2027",
+    });
+    expect(computeCardHeight(link, 320, null)).toBe(computeCardHeight(article, 320, null));
   });
 
   it("file always returns fixed height + border", () => {

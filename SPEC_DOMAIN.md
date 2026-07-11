@@ -249,7 +249,7 @@ enum SearchMatchKind {
 }
 
 enum SearchFilter {
-    Type(CardKind),                  // type:media / type:article / type:channel
+    Type(CardKind),                  // type:media / type:article / type:link / type:channel
     Tag(String),                     // tag:design
 }
 ```

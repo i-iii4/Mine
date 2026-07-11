@@ -2,7 +2,7 @@
 // Manually maintained until specta type generation is set up (Phase 7).
 
 export type BlockType = "image" | "article" | "link" | "video" | "file" | "channel";
-export type CardKind = "article" | "media" | "channel";
+export type CardKind = "article" | "media" | "link" | "channel";
 export type ThumbFormat = "jpeg" | "png";
 
 export interface IndexedBlock {

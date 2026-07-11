@@ -129,27 +129,31 @@ route-facing snapshots.
 
 ## commands/freshness coordinator
 
-Status: implemented in Phase A1. The coordinator owns one reconciliation
-generation per vault, exposes typed degraded/failure results and emits one
-`vault-freshness-changed` diagnostic event for each leader generation.
+Status: implemented in Phase A1. The coordinator preserves a readable last-good
+snapshot, coalesces dirty work and avoids inventory on clean sequential reads.
 
 ```rust
-enum VaultFreshnessState {
-    Fresh { generation: u64 },
-    Reconciling { previous_generation: u64 },
-    Degraded { generation: u64, error_count: usize },
+enum FreshnessRouteAction {
+    AwaitFirstGeneration,
+    SpawnBackground,
+    ReadCommitted,
 }
 
-struct VaultFreshnessSnapshot {
-    vault_path: String,
-    state: VaultFreshnessState,
-    last_report: Option<ReconcileReportSummary>,
+struct FreshnessEntry {
+    running: bool,
+    scheduled: bool,
+    dirty: bool,
+    generation: u64,
+    last_completed_at: Option<Instant>,
+    last_result: Option<Result<ReconcileReport, String>>,
 }
 ```
 
-The coordinator owns one in-flight `VaultReconciler` pass per vault. Calls that
-arrive while it is running join the same generation and wait for the same
-result. They must not queue another inventory scan immediately afterward.
+The coordinator owns one in-flight `VaultReconciler` pass per vault. `dirty`
+persists even while no pass is running. Concurrent callers join one generation;
+sequential callers on a clean generation take a lock-only fast path and perform
+no filesystem inventory. A bounded periodic safety audit exists only to catch a
+missed watcher event and never blocks a readable route snapshot.
 
 ### Route-facing read sequence
 
@@ -158,15 +162,23 @@ The following commands use one shared helper before their final query:
 `search`, `get_block`, `get_vault_stats`, and `list_graph_snapshot`.
 
 1. Capture vault identity/path without retaining `vault_state` mutex ownership.
-2. Join or start reconciliation on a dedicated writable SQLite connection.
-3. On `fresh`, open/read the committed generation and return the final snapshot.
-4. On `degraded`, return a typed freshness error alongside any explicitly
-   provisional cached frontend snapshot; never label stale data as fresh.
+2. If no committed local snapshot exists, join the first reconciliation until a
+   readable snapshot is committed.
+3. If a snapshot exists, read it immediately. `dirty` and expired-safety-audit
+   states start or join one background generation; a degraded report remains
+   readable until that bounded retry opportunity.
+4. A per-file error publishes `degraded` diagnostics but does not turn Grid,
+   Search, Detail, Sidebar or Graph into command errors. The affected changed
+   file keeps its last-good row; a new unreadable file is omitted until fixed.
+5. A fatal reconciliation error still permits a read attempt against the last
+   committed SQLite snapshot. Only failure to open/query that snapshot blocks
+   the route command.
 
-The frontend may paint a route-cache snapshot immediately during
-`reconciling`, but it is provisional. Completion emits
-`vault-freshness-changed`; Grid, Search, Detail, Sidebar and Graph replace the
-provisional data from their existing route commands.
+The frontend paints the committed route snapshot immediately during
+`reconciling`. Completion emits `vault-freshness-changed`; Grid, Search, Detail,
+Sidebar and Graph rerun their current read once for the new generation. After
+the first committed generation, search keystrokes never wait for an inventory
+walk.
 
 ### Lock order
 
@@ -181,11 +193,15 @@ provisional data from their existing route commands.
 
 ### Performance and observability
 
-- One route burst maps to one reconciliation generation.
-- Provisional cache paint is not delayed by reconciliation.
+- One dirty period maps to one reconciliation generation.
+- A clean route read performs zero filesystem calls and zero SQLite writes.
+- One hundred sequential searches within a clean generation trigger zero new
+  inventory passes.
+- Safety-audit expiry schedules background work; it is not a blocking TTL gate.
+- Last-good snapshot paint is not delayed by reconciliation.
 - Final refresh emits once per generation, not once per changed file.
 - Development diagnostics expose generation, joined callers, inventory count,
-  parsed count, write count, errors and elapsed time.
+  parsed count, write count, errors, fast-path hits and elapsed time.
 
 ---
 

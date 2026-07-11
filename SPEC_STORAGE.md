@@ -26,7 +26,7 @@ CREATE TABLE blocks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     slug TEXT UNIQUE NOT NULL,
     block_type TEXT NOT NULL, -- legacy frontmatter.type
-    card_kind TEXT NOT NULL DEFAULT 'media', -- derived runtime card kind: article/media/channel
+    card_kind TEXT NOT NULL DEFAULT 'media', -- derived runtime kind: article/media/link/channel
     title TEXT, -- legacy frontmatter.title only; new writes do not synthesize it
     description TEXT,
     url TEXT,
@@ -161,7 +161,7 @@ struct IndexedBlock {
     id: i64,
     slug: String,
     block_type: BlockType, // legacy frontmatter.type
-    card_kind: RuntimeCardKind, // derived source of truth for feed/detail/search
+    card_kind: CardKind, // derived source of truth for feed/detail/search
     title: Option<String>, // legacy frontmatter.title
     content_heading: Option<String>, // first body H1
     display_title: Option<String>, // content_heading, then legacy title
@@ -190,7 +190,7 @@ struct LightBlock {
     id: i64,
     slug: String,
     block_type: BlockType, // legacy frontmatter.type
-    card_kind: RuntimeCardKind, // derived source of truth for feed/detail/search
+    card_kind: CardKind, // derived source of truth for feed/detail/search
     title: Option<String>, // legacy frontmatter.title
     content_heading: Option<String>,
     display_title: Option<String>,
@@ -291,9 +291,10 @@ fn reconcile_vault(
   dependencies and updates index/search projection in the same transaction.
 - A missing `.md` removes the corresponding block/channel row and rebuildable
   derived artifacts. User media is never deleted by reconciliation.
-- A malformed file does not make the report `fresh`: the last-good row may be
-  retained for recovery, but the report carries a typed file error and the
-  coordinator publishes `degraded`.
+- A malformed file does not make the report `fresh`: the last-good row is
+  retained for recovery, the report carries a typed file error and the
+  coordinator publishes `degraded`. This report is diagnostic and must not
+  prevent unrelated route rows from being returned.
 
 ### Error contract
 
@@ -325,6 +326,9 @@ prevent a false `fresh` state.
   writes.
 - Eight concurrent route-facing reads for one vault produce one inventory pass,
   not eight passes.
+- One hundred sequential route reads on a clean coordinator generation produce
+  zero additional inventory passes. A safety audit may run in the background,
+  but no search keystroke waits for it.
 - Release benchmark on the reference Apple Silicon machine: 10,000 unchanged
   Markdown entries complete in at most 500 ms; 100 changed notes in at most
   2,000 ms, excluding asynchronous thumbnail encoding.
@@ -372,8 +376,14 @@ fn reconcile_all_previews(
 
 Rules:
 
-- `Ready` means every referenced `primary_preview_path`/tile preview exists,
-  stays inside the derived cache and matches the current `source_stamp`.
+- `Ready` means the manifest is semantically valid for the current `card_kind`,
+  every required `primary_preview_path`/tile preview exists, stays inside the
+  derived cache, is decodable by the receiving surface and matches the current
+  `source_stamp`.
+- `text` is a valid asset-free feed recipe for `article`, `link` and nonvisual
+  file cards. It does not mount a bitmap panel. Visual image/video media cannot
+  become `Ready` from a text placeholder; it remains a typed missing/failed
+  state until its image/video/composite artifact exists.
 - Missing cache files and changed dependency stamps transition to `Stale` and
   schedule regeneration; they never leave a manifest that lies about files.
 - Source reindex marks the row `Stale` but preserves the previous
@@ -444,16 +454,26 @@ enum SourceMutationError {
 
 ### Runtime/card kind derivation
 
-Storage must not use `frontmatter.type` as the read-model source of truth for
-feed/detail/search. During indexing:
+Storage derives a semantic presentation kind from document evidence. Legacy
+`frontmatter.type` is a compatibility hint only when the document shape is
+otherwise ambiguous. During indexing:
 
 1. `type: channel` derives `card_kind = channel`.
 2. Any other block with non-empty body derives `article`.
-3. Any other block with empty body derives `media`.
+3. An empty-body block with canonical `file`, or legacy `image`/`video`/`file`
+   metadata, derives `media` even when its source asset is temporarily missing.
+4. An empty-body block with URL/link metadata and no owned media derives `link`.
+5. Any remaining ordinary/foreign Markdown derives `article`, including an
+   empty note; absence of body is not evidence of media ownership.
 
 The physical `block_type` column keeps the parsed legacy/source type
 (`image`, `link`, `video`, `file`, `article`, `channel`) for compatibility and
-diagnostics. Normal UI read models use `card_kind`, not `block_type`.
+diagnostics. Normal UI read models use `card_kind = article | media | link |
+channel`, not `block_type`.
+
+`card_kind` and preview kind are orthogonal: a link may have an image preview,
+but remains a link. A link without a derived image renders its textual card and
+Detail metadata without a faux media panel.
 
 ### Функции
 
@@ -811,7 +831,7 @@ is_video_ext(ext: &str) -> bool
 - Возвращает (width, height) результата
 - Если изображение меньше max_size — сохраняет как есть (без увеличения)
 
-### Поведение — generate_text_thumbnail (статьи и media placeholder)
+### Поведение — generate_text_thumbnail (micro previews and text content)
 
 - Создаёт PNG 480x480 с прозрачным фоном для theme-adaptive rendering
 - Рисует заголовок (шрифт 1.3x, цвет #333) и тело статьи (шрифт 24px, цвет #505050)
@@ -840,11 +860,18 @@ is_video_ext(ext: &str) -> bool
 5. Later body media fallback:
    - usable article images → composite или single-image thumbnail
    - first local video → `generate_video_thumbnail` (с fallback к text при ошибке)
-6. Media-bearing blocks whose source exists but cannot be decoded by Rust
-   (AVIF, HEIC, VP8X WebP, unsupported video) → `generate_text_thumbnail` with
-   `display_title` or `fallback_label`. Empty-body media clips intentionally do
-   not synthesize `frontmatter.title`, so `fallback_label` is required.
-7. Runtime card kind is `article` → `generate_text_thumbnail` (всегда успешно)
+6. Media-bearing blocks whose source cannot be decoded by Rust remain typed
+   `browser_decode_required`/failed for the feed recipe. A text micro-preview may
+   still exist for Sidebar diagnostics, but cannot satisfy media readiness.
+7. Runtime card kind is `article` or `link` → text recipe; an optional micro
+   thumbnail may be generated for compact Sidebar surfaces.
+
+`storage::preview_plan::resolve_upgrade_media` owns browser-upgrade source
+selection. Watcher and `list_pending_thumb_upgrades` pass the same indexed
+`PreviewUpgradeInput` (`media_file`, `thumbnail`, ordered `media_urls`, then
+legacy `first_image`) and cannot maintain independent cascades. Derived-preview
+reconciliation separately validates `card_kind + block_type + media_file`
+against the persisted manifest before it may publish `Ready`.
 
 Для inline video `preview_manifest.tiles[].preview_path` не должен указывать
 на derived `<video-stem>.jpg`, пока такой per-video thumbnail реально не

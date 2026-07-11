@@ -29,11 +29,12 @@ Status vocabulary:
 | Phase | Status | Deliverable | Definition of Done |
 |---|---|---|---|
 | A0. Baseline reconciliation | DONE | Audited every former open marker and aligned `PLAN` plus core specs | Every residual has code/test evidence; Graph tests are described accurately; APIs, errors and budgets are specified |
-| A1. Vault freshness | DONE | `VaultReconciler`, persisted `source_stamp`, coalesced route catch-up | Direct create/edit/delete is reflected in Grid/Search/Detail/Sidebar/Graph without restart; concurrent reads share one metadata pass; unchanged files are not read |
+| A1. Vault freshness | DONE | Last-good route reads, persistent clean/dirty state, non-blocking safety audit | One bad file never blocks Grid/Search/Detail; clean reads scan nothing; sequential search does not repeat inventory; missed events still converge |
 | A2. Watcher/storage consistency | DONE | Watcher recovery, lock order, atomic source writes, rollback-safe compound mutations | Injected watcher/write failures recover without partial source/index state or deadlock |
-| A3. Derived preview completion | DONE | Existence-backed manifests, legacy backfill, source-stamp invalidation, feed profiling | Grid reads derived assets only; cache deletion and dependency changes self-heal; large-vault browser gate passes |
+| A3. Derived preview completion | DONE | Semantic `CardKind::Link`, recipe-backed readiness, one preview planner | Metadata-only links stay links; `ready` agrees with card semantics; watcher and commands cannot select different sources |
 | A4. Graph View M1 | DONE | Wikilink/related edges, scopes, controls/search, selection/a11y, truncation and Canvas acceptance | Full edge model, stable interactions, keyboard navigation and dark/light Playwright pixel/performance gates pass |
 | A5. Cold-space semantic acceptance | ACTIVE | Fresh-derived-store space switch, legacy card projection audit, semantic preview readiness | Every source Markdown is classified, first-open Grid has no blank cards, metadata-only links retain link semantics, and reopen/switch results are stable |
+| A6. Verification gate hardening | DONE | Self-starting browser audit runner wired into `bun run verify` | A clean shell runs Feed and Graph gates without a prestarted server and always tears the server down |
 
 Production distribution is `DEFERRED` by explicit product decision and is not
 part of local desktop completion. Current acceptance ends at a locally built
@@ -48,6 +49,19 @@ debug `Mine.app`.
 - Новых frontend-блокеров в этом acceptance checkpoint не обнаружено.
 - A5 остаётся активной: общая положительная оценка не закрывает ранее
   воспроизведённые first-open blank cards и semantic preview failure в `Тест`.
+
+#### Automated remediation checkpoint — 11.07.2026
+
+- Exact-shape regression coverage for `ai-2027-3.md` proves that a fresh source
+  projection is `block_type = link`, `card_kind = link`, with an asset-free text
+  manifest on both first and unchanged second reconciliation.
+- Legacy backfill coverage proves that the former `card_kind = media`,
+  `preview_state = ready`, schema-v1 row migrates to `link` and becomes `stale`
+  until semantic validation republishes it.
+- Feed browser acceptance now mixes metadata-only links into deep fast scroll
+  and asserts that their DOM contains title/domain but no graphic surface.
+- A5 remains active only for the full sanitized-space inventory/switch/restart
+  automation and untouched real-space manual acceptance in A5.1/A5.2/A5.5-A5.7.
 
 #### Confirmed boundary — 10.07.2026
 
@@ -68,8 +82,8 @@ debug `Mine.app`.
 |---|---|---|
 | A5.1 | Build a sanitized cold-space fixture from `Тест`: root cards, nested library cards, collections, metadata-only links, missing assets and browser-decode fallback; assign a fresh vault id without modifying the user's source space | ACTIVE |
 | A5.2 | Add a source-to-projection audit: every `.md` must be classified exactly once as content, collection or typed unsupported input; report source/index/preview counts at first snapshot and settled state | ACTIVE |
-| A5.3 | Define and implement the compatibility rule for metadata-only links: `url` plus link metadata and no media must render as a link/text card, never as a media card | ACTIVE |
-| A5.4 | Tighten preview readiness: `ready` must mean the manifest and artifact are usable for the projected card semantics; an existence-backed text placeholder cannot satisfy a media preview | ACTIVE |
+| A5.3 | Define and implement the compatibility rule for metadata-only links: `url` plus link metadata and no media must render as a link/text card, never as a media card | DONE |
+| A5.4 | Tighten preview readiness: `ready` must mean the manifest and artifact are usable for the projected card semantics; an existence-backed text placeholder cannot satisfy a visual media preview | DONE |
 | A5.5 | Make first-open publication coherent: every visible row has either its correct derived preview or a type-correct fallback; progressive preview batches cannot publish blank card surfaces | ACTIVE |
 | A5.6 | Add automated cold-open and rapid `Mine -> Test -> Mine -> Test` acceptance, including current-vault worker cancellation, first-frame blank detection and settled-state equality | ACTIVE |
 | A5.7 | Run manual acceptance on the untouched real `Тест` space, then repeat after restart and after clearing only a disposable clone's derived store | MANUAL QA |
@@ -92,6 +106,17 @@ debug `Mine.app`.
   ordering, card kinds and preview manifests.
 - Automated frontend/Rust tests, `bun run test:feed-scroll`, the cold-space
   browser gate, and real-space manual acceptance all pass.
+
+### Remediation sequence — 11.07.2026
+
+| # | Slice | Status | Definition of Done |
+|---|---|---|---|
+| R0 | Contract/status correction | DONE | A1/A3/A6 reflect current evidence; integration/storage/graph specs define the target behavior |
+| R1 | Last-good freshness state machine | DONE | Per-file errors are diagnostic, readable snapshots still serve, clean searches perform zero scans, dirty work coalesces |
+| R2 | Runtime link semantics | DONE | `CardKind::Link` is end-to-end; metadata-only links never mount a media shell |
+| R3 | Shared preview recipe | DONE | One pure source-selection planner drives watcher and thumbnail commands; readiness validates the resulting manifest semantics |
+| R4 | Self-contained browser verification | DONE | `bun run verify` starts one audit server and runs both Feed and Graph gates |
+| R5 | Cold-space acceptance and closure | ACTIVE | Full disposable-space switch/restart automation plus untouched real `Тест` manual pass; A5 can become DONE |
 
 ### Audited disposition of former open markers
 

@@ -66,7 +66,9 @@ export function blockHasExactDeterministicHeight(
   block: LightBlock,
   wordWidthsMap: ReadonlyMap<number, unknown>,
 ): boolean {
-  return block.card_kind === "media" || wordWidthsMap.has(block.id);
+  return block.card_kind === "media"
+    || block.card_kind === "link"
+    || wordWidthsMap.has(block.id);
 }
 
 /**

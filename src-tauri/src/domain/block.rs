@@ -124,13 +124,14 @@ impl BlockType {
 /// Runtime card category derived from the Markdown document shape.
 ///
 /// `type` remains legacy source metadata in frontmatter. Feed/detail rendering
-/// should use this derived category instead: bodyful notes are articles,
-/// bodyless notes are media shells, and collection pages are channels.
+/// should use this derived category instead. Body shape remains primary, while
+/// ownership metadata distinguishes bodyless media from metadata-only links.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CardKind {
     Article,
     Media,
+    Link,
     Channel,
 }
 
@@ -139,6 +140,7 @@ impl CardKind {
         match self {
             Self::Article => "article",
             Self::Media => "media",
+            Self::Link => "link",
             Self::Channel => "channel",
         }
     }
@@ -147,6 +149,7 @@ impl CardKind {
         match s {
             "article" => Some(Self::Article),
             "media" => Some(Self::Media),
+            "link" => Some(Self::Link),
             "channel" => Some(Self::Channel),
             _ => None,
         }
@@ -392,8 +395,17 @@ pub fn parse_markdown_document(
 pub fn derive_card_kind(block: &Block) -> CardKind {
     if block.frontmatter.block_type == BlockType::Channel {
         CardKind::Channel
-    } else if block.body.trim().is_empty() {
+    } else if !block.body.trim().is_empty() {
+        CardKind::Article
+    } else if block.frontmatter.file.is_some()
+        || matches!(
+            block.frontmatter.block_type,
+            BlockType::Image | BlockType::Video | BlockType::File
+        )
+    {
         CardKind::Media
+    } else if block.frontmatter.url.is_some() || block.frontmatter.block_type == BlockType::Link {
+        CardKind::Link
     } else {
         CardKind::Article
     }
@@ -1702,6 +1714,30 @@ mod tests {
             body: "![[photo.png]]".to_string(),
         };
         assert_eq!(derive_card_kind(&article), CardKind::Article);
+
+        let link = Block {
+            slug: "ai-2027".to_string(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Link,
+                url: Some("https://ai-2027.com/race".to_string()),
+                file: None,
+                ..media.frontmatter.clone()
+            },
+            body: String::new(),
+        };
+        assert_eq!(derive_card_kind(&link), CardKind::Link);
+
+        let empty_note = Block {
+            slug: "empty-note".to_string(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Article,
+                url: None,
+                file: None,
+                ..media.frontmatter
+            },
+            body: String::new(),
+        };
+        assert_eq!(derive_card_kind(&empty_note), CardKind::Article);
     }
 
     #[test]

@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::state::{schedule_preview_reconcile, AppState, CommandError};
 use crate::domain::vault::validate_slug;
+use crate::storage::preview_plan::{resolve_upgrade_media, PreviewUpgradeInput};
 use crate::storage::{db, files, index, thumbnails};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -332,8 +333,18 @@ pub async fn list_pending_thumb_upgrades(
             for block in &blocks {
                 // Block <slug>.jpg upgrade — only when the current thumb is not
                 // already a real JPEG.
-                let slug_upgrade = resolve_upgrade_media(&vault, block)
-                    .filter(|_| needs_browser_thumb_upgrade(&vault, block));
+                let slug_upgrade = resolve_upgrade_media(
+                    &vault,
+                    PreviewUpgradeInput {
+                        slug: &block.slug,
+                        media_file: block.media_file.as_deref(),
+                        thumbnail: block.thumbnail.as_deref(),
+                        media_urls: block.media_urls.as_deref(),
+                        first_image: block.first_image.as_deref(),
+                    },
+                )
+                .map(|media| (media.path, media.kind.as_str()))
+                .filter(|_| needs_browser_thumb_upgrade(&vault, block));
                 // Per-video gallery tile posters that are still missing. These
                 // are independent of the block thumb: a block can have a real
                 // <slug>.jpg yet still be missing its tile posters.
@@ -374,71 +385,6 @@ fn needs_browser_thumb_upgrade(
         thumbnails::thumb_disk_state(&vault.thumb_path(&block.slug)),
         thumbnails::ThumbDiskState::Jpeg
     )
-}
-
-/// Resolve which media file should replace a text placeholder for `block`.
-/// Mirrors the cascade priority in `storage::thumbnails::generate_for_block`,
-/// so Phase 2 upgrades the same source Rust would have used if it had a
-/// capable decoder. Returns `None` for pure-text blocks (nothing to upgrade).
-fn resolve_upgrade_media(
-    vault: &crate::domain::vault::VaultLayout,
-    block: &index::PendingThumbUpgradeBlock,
-) -> Option<(PathBuf, &'static str)> {
-    // 1. frontmatter.file — explicit media for image/video blocks
-    if let Some(ref file_name) = block.media_file {
-        let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
-        if let Some(media_path) = resolve_block_reference(vault, &block.slug, file_name) {
-            if thumbnails::is_image_ext(&ext) {
-                return Some((media_path, "image"));
-            }
-            if thumbnails::is_video_ext(&ext) {
-                return Some((media_path, "video"));
-            }
-        }
-    }
-
-    // 2. frontmatter.thumbnail — video poster / OG image for link blocks
-    if let Some(ref thumb_file) = block.thumbnail {
-        let ext = thumb_file.rsplit('.').next().unwrap_or("").to_lowercase();
-        if thumbnails::is_image_ext(&ext) {
-            if let Some(media_path) = resolve_block_reference(vault, &block.slug, thumb_file) {
-                return Some((media_path, "image"));
-            }
-        }
-    }
-
-    // 3. First local media from indexed media_urls in markdown order —
-    //    article branch. Video-first social posts must upgrade the same
-    //    source that the feed playback uses, even when later images exist.
-    if let Some(ref media_urls) = block.media_urls {
-        if let Ok(urls) = serde_json::from_str::<Vec<String>>(media_urls) {
-            for url in urls {
-                let ext = url.rsplit('.').next().unwrap_or("").to_lowercase();
-                if thumbnails::is_image_ext(&ext) {
-                    if let Some(media_path) = resolve_block_reference(vault, &block.slug, &url) {
-                        return Some((media_path, "image"));
-                    }
-                }
-                if thumbnails::is_video_ext(&ext) {
-                    if let Some(media_path) = resolve_block_reference(vault, &block.slug, &url) {
-                        return Some((media_path, "video"));
-                    }
-                }
-            }
-        }
-    }
-
-    // 4. Legacy indexes may only have first_image populated.
-    if let Some(ref first_image) = block.first_image {
-        let ext = first_image.rsplit('.').next().unwrap_or("").to_lowercase();
-        if thumbnails::is_image_ext(&ext) {
-            if let Some(media_path) = resolve_block_reference(vault, &block.slug, first_image) {
-                return Some((media_path, "image"));
-            }
-        }
-    }
-
-    None
 }
 
 /// Resolve every derived tile still missing for `block`. Rust handles formats
@@ -537,6 +483,22 @@ mod tests {
         }
     }
 
+    fn resolve_target_upgrade(
+        vault: &VaultLayout,
+        target: &index::PendingThumbUpgradeBlock,
+    ) -> Option<crate::storage::preview_plan::ResolvedPreviewMedia> {
+        resolve_upgrade_media(
+            vault,
+            PreviewUpgradeInput {
+                slug: &target.slug,
+                media_file: target.media_file.as_deref(),
+                thumbnail: target.thumbnail.as_deref(),
+                media_urls: target.media_urls.as_deref(),
+                first_image: target.first_image.as_deref(),
+            },
+        )
+    }
+
     // ── resolve_upgrade_media ────────────────────────────────────────────
 
     #[test]
@@ -556,10 +518,9 @@ mod tests {
             media_urls: Some(r#"["artx-img0.webp"]"#.into()),
             preview_manifest: None,
         };
-        let resolved = resolve_upgrade_media(&vault, &target);
-        let (path, kind) = resolved.expect("must resolve");
-        assert_eq!(kind, "image");
-        assert_eq!(path, webp);
+        let media = resolve_target_upgrade(&vault, &target).expect("must resolve");
+        assert_eq!(media.kind.as_str(), "image");
+        assert_eq!(media.path, webp);
     }
 
     #[test]
@@ -575,7 +536,7 @@ mod tests {
             preview_manifest: None,
         };
 
-        assert!(resolve_upgrade_media(&vault, &target).is_none());
+        assert!(resolve_target_upgrade(&vault, &target).is_none());
     }
 
     #[test]
@@ -591,7 +552,7 @@ mod tests {
             preview_manifest: None,
         };
 
-        assert!(resolve_upgrade_media(&vault, &target).is_none());
+        assert!(resolve_target_upgrade(&vault, &target).is_none());
     }
 
     // ── integration: full cascade + DB-backed pending detection ─────────
@@ -623,9 +584,9 @@ mod tests {
         // Phase B startup enumeration must pick it up
         let light = index::list_pending_thumb_upgrade_blocks(&conn).unwrap();
         let target = light.iter().find(|b| b.slug == "art").unwrap();
-        let (path, kind) = resolve_upgrade_media(&vault, target).unwrap();
-        assert_eq!(kind, "image");
-        assert_eq!(path, webp);
+        let media = resolve_target_upgrade(&vault, target).unwrap();
+        assert_eq!(media.kind.as_str(), "image");
+        assert_eq!(media.path, webp);
         assert!(needs_browser_thumb_upgrade(&vault, target));
     }
 
@@ -647,9 +608,9 @@ mod tests {
         let light = index::list_pending_thumb_upgrade_blocks(&conn).unwrap();
         let target = light.iter().find(|b| b.slug == "clip").unwrap();
 
-        let (path, kind) = resolve_upgrade_media(&vault, target).unwrap();
-        assert_eq!(kind, "video");
-        assert_eq!(path, video);
+        let media = resolve_target_upgrade(&vault, target).unwrap();
+        assert_eq!(media.kind.as_str(), "video");
+        assert_eq!(media.path, video);
     }
 
     #[test]
@@ -671,9 +632,9 @@ mod tests {
             preview_manifest: None,
         };
 
-        let (path, kind) = resolve_upgrade_media(&vault, &block).unwrap();
-        assert_eq!(kind, "video");
-        assert_eq!(path, video);
+        let media = resolve_target_upgrade(&vault, &block).unwrap();
+        assert_eq!(media.kind.as_str(), "video");
+        assert_eq!(media.path, video);
     }
 
     #[test]
@@ -767,10 +728,10 @@ mod tests {
             .iter()
             .find(|candidate| candidate.slug == "poster")
             .unwrap();
-        let (path, kind) = resolve_upgrade_media(&vault, target).unwrap();
+        let media = resolve_target_upgrade(&vault, target).unwrap();
 
-        assert_eq!(kind, "image");
-        assert_eq!(path, dir.path().join("poster.avif"));
+        assert_eq!(media.kind.as_str(), "image");
+        assert_eq!(media.path, dir.path().join("poster.avif"));
         assert!(needs_browser_thumb_upgrade(&vault, target));
     }
 

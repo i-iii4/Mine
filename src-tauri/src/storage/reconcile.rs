@@ -724,6 +724,50 @@ mod tests {
     }
 
     #[test]
+    fn cold_metadata_only_link_has_stable_link_projection() {
+        let (_dir, vault, conn) = setup();
+        std::fs::write(
+            vault.block_path("ai-2027-3"),
+            "---\ntype: link\ntitle: AI 2027\nurl: https://ai-2027.com/race\nsaved_at: 2026-03-12T19:19:25Z\nsource: web-clipper\n---",
+        )
+        .unwrap();
+
+        let first = reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(first.upserted, vec!["ai-2027-3"]);
+        assert_eq!(first.content_reads, 1);
+
+        let first_projection = index::get_block(&conn, "ai-2027-3").unwrap().unwrap();
+        assert_eq!(
+            first_projection.block_type,
+            crate::domain::block::BlockType::Link
+        );
+        assert_eq!(
+            first_projection.card_kind,
+            crate::domain::block::CardKind::Link
+        );
+        let first_manifest: index::FeedPreviewManifest =
+            serde_json::from_str(first_projection.preview_manifest.as_deref().unwrap()).unwrap();
+        assert_eq!(first_manifest.kind, index::FeedPreviewKind::Text);
+        assert!(first_manifest.primary_preview_path.is_none());
+        assert!(first_manifest.tiles.is_empty());
+
+        let grid = index::list_grid_blocks(&conn, None, 0, 20).unwrap().0;
+        assert_eq!(grid.len(), 1);
+        assert_eq!(grid[0].card_kind, crate::domain::block::CardKind::Link);
+
+        let second = reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(second.unchanged, 1);
+        assert_eq!(second.content_reads, 0);
+        assert_eq!(second.database_writes, 0);
+        let second_projection = index::get_block(&conn, "ai-2027-3").unwrap().unwrap();
+        assert_eq!(second_projection.card_kind, first_projection.card_kind);
+        assert_eq!(
+            second_projection.preview_manifest,
+            first_projection.preview_manifest
+        );
+    }
+
+    #[test]
     fn one_index_failure_keeps_valid_sources_and_reports_degraded() {
         let (_dir, vault, conn) = setup();
         write_note(&vault, "Good", "valid body");

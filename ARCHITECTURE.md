@@ -177,12 +177,11 @@ watcher пропустил событие или native host сохранял cl
   derived read models. Они ускоряют UI, но не решают, существует ли карточка.
 - Watcher — accelerator, а не гарантия correctness. Потерянное notify-событие
   не может делать `.md` невидимым.
-- Route-facing read commands (`list_grid_blocks`, `list_tags`,
-  `list_channels`, `list_channel_previews`, `search_blocks`, `get_block`) должны
-  проходить read-time catch-up: upsert missing/changed `.md` files and remove
-  rows whose source `.md` disappeared before returning a final snapshot.
-- Startup may render a cached skeleton/snapshot provisionally, but any final
-  empty state or final route data must be reconciled with the source vault.
+- The first route generation waits for one committed source reconciliation.
+  Later route reads use the last-good SQLite snapshot immediately; a persistent
+  dirty marker or 30-second safety expiry claims one background catch-up.
+- Per-file failures retain old valid rows and publish degraded diagnostics; one
+  bad Markdown file cannot reject unrelated Grid/Search/Detail data.
 - Clipper/native-host direct SQLite upsert is only an optimization for faster
   feedback. The main app must still recover visibility from Markdown files alone.
 
@@ -211,6 +210,9 @@ watcher пропустил событие или native host сохранял cl
   `.md` inventory before returning final data, so a stale index cannot hide
   Markdown files;
 - feed/grid/sidebar используют preview-first pipeline;
+- runtime presentation uses `card_kind = article | media | link | channel`.
+  Metadata-only links remain compact link cards and never inherit a media shell;
+  visual media cannot become preview-ready from a text placeholder.
 - `Detail` остаётся full-fidelity path и может открывать оригиналы;
 - async asset protocol override убирает синхронный `asset://` hotspot с main thread WebView для оставшихся asset-paths;
 - multi-image article/social card preview описывается `preview_manifest` как
@@ -506,6 +508,10 @@ iOS UI contract:
   large-vault truncation и query materialization; Canvas владеет одним слоем
   paint/hit-test/physics, controls/search/selection и Detail используют тот же
   snapshot state. Полный контракт: [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
+- `bun run verify` является self-contained gate: один orchestration script
+  резервирует свободный localhost port, поднимает Vite, запускает Feed и Graph
+  Playwright audits, затем завершает audit/server process groups при success,
+  failure, `SIGINT` или `SIGTERM`.
 - `Grid.tsx` использует собственный windowed masonry renderer: карточки позиционируются абсолютно, контейнер получает вычисленную `totalHeight`, в DOM остаются только видимые элементы плюс overscan.
 - Геометрия карточки больше не должна выводиться из независимых эвристик в `Card.tsx` и `cardHeight.ts`. Введён общий descriptor-driven слой (`src/lib/cardLayout.ts`): variant карточки, preview text и media geometry вычисляются один раз и затем используются и для рендера, и для расчёта высоты.
 - Контентные карточки больше не кодируют spacing через variant-specific `mt-*` ветки. Введён slot-based contract: frame карточки задаёт общий inset, media идёт первой, а текстовые слоты живут единым text-stack ниже (`media -> display title/preview -> author`). Внутренние gap'ы появляются только между реально существующими соседними слотами. Это устраняет phantom top gap и сохраняет системный отступ под media.
@@ -609,6 +615,8 @@ iOS UI contract:
   <slug>.jpg`, media predicates, лимит видимых rich preview tiles
   (`PREVIEW_TILE_LIMIT = 4`), micro-preview лимит
   (`MICRO_PREVIEW_IMAGE_LIMIT = 1`) и порядок сканирования inline media.
+  `resolve_upgrade_media` additionally owns the exact indexed source priority
+  shared by watcher and thumbnail command paths.
   `<slug>.jpg` — быстрый representative asset для sidebar/Related Notes, не
   baked composite; rich gallery/composite semantics живут в `preview_manifest`.
 - Полный `IndexedBlock` тоже отдаёт `thumb_format` / `thumb_mtime`. Поэтому
@@ -748,7 +756,7 @@ CREATE TABLE blocks (
     id INTEGER PRIMARY KEY,
     path TEXT UNIQUE NOT NULL,           -- относительный путь .md от vault root
     block_type TEXT NOT NULL,            -- legacy frontmatter.type
-    card_kind TEXT NOT NULL,             -- derived card kind: article, media, channel
+    card_kind TEXT NOT NULL,             -- derived card kind: article, media, link, channel
     title TEXT,                          -- legacy frontmatter.title fallback
     description TEXT,
     url TEXT,                            -- source URL (для ссылок и статей)
@@ -1086,13 +1094,15 @@ the happy-path upload step.
 | Approach | Problem |
 |---|---|
 | Trust current SQLite snapshot and rely on watcher/background `full_scan` | A valid Markdown file can exist in the vault but remain invisible in the UI until a later scan, which breaks the Obsidian-like contract |
-| Synchronous full vault scan before every route read | Correct but too expensive for large vaults and defeats the startup/performance reset |
-| **Bounded read-time catch-up before route reads** (chosen) | Adds small filesystem IO to read paths, but preserves correctness: missing/changed/deleted `.md` files are reconciled before final route data is returned |
+| Synchronous full vault scan before every route read | Correct but too expensive for large vaults and makes every search keystroke inventory 10,000 files |
+| **First-generation catch-up + persistent dirty stale-while-revalidate** (chosen) | The first committed snapshot establishes correctness; clean reads scan nothing, while watcher errors, vault selection and safety expiry coalesce one background reconciliation without rejecting last-good data |
 
 Rationale: Local Arena's primary contract is "the app is a window into the
 Markdown vault". The derived index may be stale, absent, or rebuilt; user-visible
 truth must still come from source-vault files. The watcher and native-host direct
-upsert remain performance optimizations only.
+upsert remain performance optimizations only. A bounded background safety audit
+provides convergence when notify misses an event without turning route latency
+into O(vault size).
 
 ### 017: Grid group selection uses layout positions, not DOM state
 

@@ -7,7 +7,6 @@
 
 use notify::RecommendedWatcher;
 use rusqlite::Connection;
-use serde::ser::SerializeStruct;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -17,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use thiserror::Error;
 
 use crate::domain::vault::VaultLayout;
-use crate::storage::reconcile::{ReconcileFileError, ReconcileReport};
+use crate::storage::reconcile::ReconcileReport;
 use crate::storage::{db, derived_preview, reconcile};
 use crate::util::{append_startup_trace, SingleInstanceGuard};
 
@@ -91,13 +90,41 @@ pub struct FreshnessCoordinator {
     changed: Condvar,
 }
 
-#[derive(Default)]
 struct FreshnessEntry {
     running: bool,
+    scheduled: bool,
     dirty: bool,
     generation: u64,
     joined_callers: usize,
+    fast_path_hits: usize,
+    last_completed_at: Option<Instant>,
     last_result: Option<Result<ReconcileReport, String>>,
+}
+
+impl Default for FreshnessEntry {
+    fn default() -> Self {
+        Self {
+            running: false,
+            scheduled: false,
+            dirty: true,
+            generation: 0,
+            joined_callers: 0,
+            fast_path_hits: 0,
+            last_completed_at: None,
+            last_result: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreshnessRouteAction {
+    /// No completed generation exists yet, so the first route waits for one
+    /// usable committed snapshot.
+    AwaitFirstGeneration,
+    /// A last-good snapshot exists and one background generation was claimed.
+    SpawnBackground,
+    /// A clean/degraded committed generation can be read immediately.
+    ReadCommitted,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +132,7 @@ pub struct FreshnessOutcome {
     pub vault_path: String,
     pub generation: u64,
     pub joined_callers: usize,
+    pub fast_path_hits: usize,
     pub ran_reconcile: bool,
     pub result: Result<ReconcileReport, String>,
 }
@@ -120,7 +148,10 @@ struct VaultFreshnessChangedPayload {
     database_writes: usize,
     error_count: usize,
     elapsed_ms: u64,
+    fast_path_hits: usize,
 }
+
+const FRESHNESS_SAFETY_AUDIT_INTERVAL: Duration = Duration::from_secs(30);
 
 pub struct SweepGuard {
     state: Arc<Mutex<ThumbnailSweepState>>,
@@ -507,9 +538,36 @@ fn publish_preview_report(
 }
 
 impl FreshnessCoordinator {
-    /// Join or start the single route-facing reconciliation generation for a
-    /// vault. Waiting callers receive the completed leader result and do not
-    /// enqueue another inventory pass.
+    /// Decide whether a route can read the committed snapshot immediately or
+    /// needs to await/schedule reconciliation. Safety-audit expiry never blocks
+    /// a snapshot that has already completed at least one generation.
+    pub fn route_action(&self, vault_path: &str) -> FreshnessRouteAction {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let entry = state.entry(vault_path.to_string()).or_default();
+
+        if entry.last_result.is_none() {
+            return FreshnessRouteAction::AwaitFirstGeneration;
+        }
+        if entry.running || entry.scheduled {
+            entry.fast_path_hits = entry.fast_path_hits.saturating_add(1);
+            return FreshnessRouteAction::ReadCommitted;
+        }
+
+        let safety_audit_due = entry.last_completed_at.map_or(true, |completed| {
+            completed.elapsed() >= FRESHNESS_SAFETY_AUDIT_INTERVAL
+        });
+        if entry.dirty || safety_audit_due {
+            entry.scheduled = true;
+            return FreshnessRouteAction::SpawnBackground;
+        }
+
+        entry.fast_path_hits = entry.fast_path_hits.saturating_add(1);
+        FreshnessRouteAction::ReadCommitted
+    }
+
+    /// Join or start one reconciliation generation. A completed clean or
+    /// degraded generation is reused until an explicit dirty marker or safety
+    /// audit claims another pass.
     pub fn reconcile(&self, vault: &VaultLayout) -> FreshnessOutcome {
         let vault_path = vault.root().to_string_lossy().into_owned();
         self.run(vault_path, || {
@@ -520,6 +578,18 @@ impl FreshnessCoordinator {
                         .map_err(|error| format!("filesystem reconciliation failed: {error:#}"))
                 })
         })
+    }
+
+    /// Execute a generation previously claimed by `route_action`.
+    pub fn reconcile_scheduled(&self, vault: &VaultLayout) -> FreshnessOutcome {
+        let vault_path = vault.root().to_string_lossy().into_owned();
+        {
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            let entry = state.entry(vault_path).or_default();
+            entry.scheduled = false;
+            entry.dirty = true;
+        }
+        self.reconcile(vault)
     }
 
     fn run(
@@ -549,11 +619,27 @@ impl FreshnessCoordinator {
                 vault_path,
                 generation: completed.generation,
                 joined_callers: completed.joined_callers,
+                fast_path_hits: completed.fast_path_hits,
                 ran_reconcile: false,
                 result: completed.last_result.clone().unwrap_or_else(|| {
                     Err("freshness generation completed without a result".to_string())
                 }),
             };
+        }
+
+        entry.scheduled = false;
+        if !entry.dirty {
+            if let Some(result) = entry.last_result.clone() {
+                entry.fast_path_hits = entry.fast_path_hits.saturating_add(1);
+                return FreshnessOutcome {
+                    vault_path,
+                    generation: entry.generation,
+                    joined_callers: 0,
+                    fast_path_hits: entry.fast_path_hits,
+                    ran_reconcile: false,
+                    result,
+                };
+            }
         }
 
         entry.running = true;
@@ -579,12 +665,15 @@ impl FreshnessCoordinator {
             .get_mut(&vault_path)
             .expect("freshness entry remains present while leader is running");
         entry.running = false;
+        entry.scheduled = false;
         entry.generation = entry.generation.saturating_add(1);
+        entry.last_completed_at = Some(Instant::now());
         entry.last_result = Some(result.clone());
         let outcome = FreshnessOutcome {
             vault_path,
             generation: entry.generation,
             joined_callers: entry.joined_callers,
+            fast_path_hits: entry.fast_path_hits,
             ran_reconcile: true,
             result,
         };
@@ -606,6 +695,13 @@ impl FreshnessCoordinator {
         entry.dirty = true;
         true
     }
+
+    /// Persist a dirty marker while no generation is running. The next route
+    /// serves last-good data and schedules one background pass.
+    pub fn mark_dirty(&self, vault_path: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.entry(vault_path.to_string()).or_default().dirty = true;
+    }
 }
 
 pub fn current_vault_layout(state: &AppState) -> Result<VaultLayout, CommandError> {
@@ -617,31 +713,60 @@ pub fn current_vault_layout(state: &AppState) -> Result<VaultLayout, CommandErro
     Ok(vs.vault.clone())
 }
 
-/// Await the coalesced filesystem reconciliation generation used by final
-/// route snapshots. The AppState vault mutex is never held across this await.
-pub async fn ensure_vault_fresh(
-    app: &AppHandle,
-    vault: VaultLayout,
-) -> Result<ReconcileReport, CommandError> {
-    let preview_vault = vault.clone();
-    let app_for_task = app.clone();
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
-        app_for_task.state::<AppState>().freshness.reconcile(&vault)
-    })
-    .await
-    .map_err(|error| {
-        CommandError::Internal(format!(
-            "freshness reconciliation task join failed: {error}"
-        ))
-    })?;
+/// Ensure route reads have at least one committed generation, then use
+/// stale-while-revalidate for later dirty/safety-audit generations. A readable
+/// last-good SQLite snapshot is never rejected because one source file failed.
+pub async fn ensure_vault_fresh(app: &AppHandle, vault: VaultLayout) -> Result<(), CommandError> {
+    let vault_path = vault.root().to_string_lossy().into_owned();
+    match app.state::<AppState>().freshness.route_action(&vault_path) {
+        FreshnessRouteAction::ReadCommitted => Ok(()),
+        FreshnessRouteAction::SpawnBackground => {
+            let app_for_task = app.clone();
+            let preview_vault = vault.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let outcome = app_for_task
+                    .state::<AppState>()
+                    .freshness
+                    .reconcile_scheduled(&vault);
+                publish_freshness_outcome(&app_for_task, preview_vault, outcome);
+            });
+            Ok(())
+        }
+        FreshnessRouteAction::AwaitFirstGeneration => {
+            let app_for_task = app.clone();
+            let preview_vault = vault.clone();
+            match tauri::async_runtime::spawn_blocking(move || {
+                app_for_task.state::<AppState>().freshness.reconcile(&vault)
+            })
+            .await
+            {
+                Ok(outcome) => publish_freshness_outcome(app, preview_vault, outcome),
+                Err(error) => {
+                    let message = format!("freshness reconciliation task join failed: {error}");
+                    log::warn!("{message}");
+                    append_startup_trace(
+                        app,
+                        "vault_freshness",
+                        &format!("state=failed {message}"),
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
+}
 
+fn publish_freshness_outcome(
+    app: &AppHandle,
+    preview_vault: VaultLayout,
+    outcome: FreshnessOutcome,
+) {
     match outcome.result {
         Ok(report) => {
-            if outcome.ran_reconcile
-                && (!report.upserted.is_empty()
-                    || !report.dependency_changed.is_empty()
-                    || !report.removed.is_empty())
-            {
+            let changed = !report.upserted.is_empty()
+                || !report.dependency_changed.is_empty()
+                || !report.removed.is_empty();
+            if outcome.ran_reconcile && changed {
                 let changed_slugs = report
                     .upserted
                     .iter()
@@ -650,7 +775,7 @@ pub async fn ensure_vault_fresh(
                     .collect::<BTreeSet<_>>();
                 if let Err(error) = schedule_preview_reconcile(
                     app,
-                    preview_vault,
+                    preview_vault.clone(),
                     changed_slugs,
                     !report.removed.is_empty(),
                 ) {
@@ -667,10 +792,11 @@ pub async fn ensure_vault_fresh(
                     app,
                     "vault_freshness",
                     &format!(
-                        "state={} generation={} joined={} inventory={} reads={} writes={} errors={} elapsed_ms={}",
+                        "state={} generation={} joined={} fast_path_hits={} inventory={} reads={} writes={} errors={} elapsed_ms={}",
                         state,
                         outcome.generation,
                         outcome.joined_callers,
+                        outcome.fast_path_hits,
                         report.inventory_markdown,
                         report.content_reads,
                         report.database_writes,
@@ -690,18 +816,24 @@ pub async fn ensure_vault_fresh(
                         database_writes: report.database_writes,
                         error_count: report.errors.len(),
                         elapsed_ms: report.elapsed_ms,
+                        fast_path_hits: outcome.fast_path_hits,
                     },
                 );
             }
-            if report.is_fresh() {
-                Ok(report)
-            } else {
-                Err(CommandError::FreshnessDegraded {
-                    vault_path: outcome.vault_path,
-                    generation: outcome.generation,
-                    error_count: report.errors.len(),
-                    errors: report.errors,
-                })
+            if !report.is_fresh() {
+                log::warn!(
+                    "vault freshness degraded for {}: {} source error(s); serving last-good snapshot",
+                    outcome.vault_path,
+                    report.errors.len()
+                );
+            }
+            if outcome.ran_reconcile && changed {
+                let _ = app.emit(
+                    "vault-changed",
+                    DerivedPreviewVaultChangedPayload {
+                        path: outcome.vault_path,
+                    },
+                );
             }
         }
         Err(message) => {
@@ -726,13 +858,15 @@ pub async fn ensure_vault_fresh(
                         database_writes: 0,
                         error_count: 1,
                         elapsed_ms: 0,
+                        fast_path_hits: outcome.fast_path_hits,
                     },
                 );
             }
-            Err(CommandError::FreshnessFailed {
-                vault_path: outcome.vault_path,
-                message,
-            })
+            log::warn!(
+                "vault freshness failed for {}: {}; attempting last-good snapshot",
+                outcome.vault_path,
+                message
+            );
         }
     }
 }
@@ -745,17 +879,6 @@ pub enum CommandError {
 
     #[error("{0}")]
     Internal(String),
-
-    #[error("vault freshness failed for {vault_path}: {message}")]
-    FreshnessFailed { vault_path: String, message: String },
-
-    #[error("vault freshness is degraded for {vault_path} ({error_count} source errors)")]
-    FreshnessDegraded {
-        vault_path: String,
-        generation: u64,
-        error_count: usize,
-        errors: Vec<ReconcileFileError>,
-    },
 }
 
 impl Serialize for CommandError {
@@ -763,33 +886,7 @@ impl Serialize for CommandError {
     where
         S: serde::Serializer,
     {
-        match self {
-            Self::FreshnessFailed {
-                vault_path,
-                message,
-            } => {
-                let mut value = serializer.serialize_struct("CommandError", 3)?;
-                value.serialize_field("kind", "freshness_failed")?;
-                value.serialize_field("vault_path", vault_path)?;
-                value.serialize_field("message", message)?;
-                value.end()
-            }
-            Self::FreshnessDegraded {
-                vault_path,
-                generation,
-                error_count,
-                errors,
-            } => {
-                let mut value = serializer.serialize_struct("CommandError", 5)?;
-                value.serialize_field("kind", "freshness_degraded")?;
-                value.serialize_field("vault_path", vault_path)?;
-                value.serialize_field("generation", generation)?;
-                value.serialize_field("error_count", error_count)?;
-                value.serialize_field("errors", errors)?;
-                value.end()
-            }
-            Self::NoVault | Self::Internal(_) => serializer.serialize_str(&self.to_string()),
-        }
+        serializer.serialize_str(&self.to_string())
     }
 }
 
@@ -809,10 +906,10 @@ pub fn now_iso8601() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppState, FreshnessCoordinator, VaultState};
+    use super::{AppState, FreshnessCoordinator, FreshnessRouteAction, VaultState};
     use crate::domain::vault::VaultLayout;
     use crate::storage::db;
-    use crate::storage::reconcile::ReconcileReport;
+    use crate::storage::reconcile::{ReconcileFileError, ReconcileFileErrorKind, ReconcileReport};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Condvar, Mutex};
 
@@ -956,6 +1053,133 @@ mod tests {
         assert!(outcomes
             .iter()
             .all(|outcome| outcome.result.as_ref().unwrap().inventory_markdown == 1));
+    }
+
+    #[test]
+    fn freshness_coordinator_reuses_clean_generation_for_sequential_reads() {
+        let coordinator = FreshnessCoordinator::default();
+        let vault_path = "/tmp/sequential-vault".to_string();
+        let task_runs = AtomicUsize::new(0);
+
+        let first = coordinator.run(vault_path.clone(), || {
+            task_runs.fetch_add(1, Ordering::SeqCst);
+            Ok(ReconcileReport {
+                inventory_markdown: 10_000,
+                unchanged: 10_000,
+                upserted: Vec::new(),
+                removed: Vec::new(),
+                dependency_changed: Vec::new(),
+                errors: Vec::new(),
+                content_reads: 0,
+                database_writes: 0,
+                elapsed_ms: 100,
+            })
+        });
+        assert!(first.ran_reconcile);
+
+        for _ in 0..100 {
+            let outcome = coordinator.run(vault_path.clone(), || {
+                task_runs.fetch_add(1, Ordering::SeqCst);
+                unreachable!("clean sequential route must not run inventory")
+            });
+            assert!(!outcome.ran_reconcile);
+            assert_eq!(outcome.generation, 1);
+        }
+
+        assert_eq!(task_runs.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            coordinator.route_action(&vault_path),
+            FreshnessRouteAction::ReadCommitted
+        );
+    }
+
+    #[test]
+    fn degraded_generation_is_readable_and_does_not_retry_each_route() {
+        let coordinator = FreshnessCoordinator::default();
+        let vault_path = "/tmp/degraded-vault".to_string();
+        let task_runs = AtomicUsize::new(0);
+        let first = coordinator.run(vault_path.clone(), || {
+            task_runs.fetch_add(1, Ordering::SeqCst);
+            Ok(ReconcileReport {
+                inventory_markdown: 2,
+                unchanged: 1,
+                upserted: Vec::new(),
+                removed: Vec::new(),
+                dependency_changed: Vec::new(),
+                errors: vec![ReconcileFileError {
+                    path: "broken.md".to_string(),
+                    kind: ReconcileFileErrorKind::Parse,
+                    message: "broken fixture".to_string(),
+                }],
+                content_reads: 1,
+                database_writes: 0,
+                elapsed_ms: 1,
+            })
+        });
+        assert!(!first.result.as_ref().unwrap().is_fresh());
+
+        let cached = coordinator.run(vault_path.clone(), || {
+            task_runs.fetch_add(1, Ordering::SeqCst);
+            unreachable!("degraded last-good generation must be cached")
+        });
+        assert!(!cached.ran_reconcile);
+        assert_eq!(cached.result.unwrap().errors.len(), 1);
+        assert_eq!(task_runs.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            coordinator.route_action(&vault_path),
+            FreshnessRouteAction::ReadCommitted
+        );
+    }
+
+    #[test]
+    fn dirty_committed_generation_claims_one_background_pass() {
+        let coordinator = FreshnessCoordinator::default();
+        let vault_path = "/tmp/background-vault".to_string();
+        let task_runs = AtomicUsize::new(0);
+        let report = || ReconcileReport {
+            inventory_markdown: 1,
+            unchanged: 1,
+            upserted: Vec::new(),
+            removed: Vec::new(),
+            dependency_changed: Vec::new(),
+            errors: Vec::new(),
+            content_reads: 0,
+            database_writes: 0,
+            elapsed_ms: 1,
+        };
+
+        coordinator.run(vault_path.clone(), || {
+            task_runs.fetch_add(1, Ordering::SeqCst);
+            Ok(report())
+        });
+        coordinator.mark_dirty(&vault_path);
+        assert_eq!(
+            coordinator.route_action(&vault_path),
+            FreshnessRouteAction::SpawnBackground
+        );
+        assert_eq!(
+            coordinator.route_action(&vault_path),
+            FreshnessRouteAction::ReadCommitted
+        );
+
+        let source = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::with_derived_root(
+            source.path().to_path_buf(),
+            source.path().join("derived"),
+        );
+        let actual_path = vault.root().to_string_lossy().into_owned();
+        coordinator.run(actual_path.clone(), || Ok(report()));
+        coordinator.mark_dirty(&actual_path);
+        assert_eq!(
+            coordinator.route_action(&actual_path),
+            FreshnessRouteAction::SpawnBackground
+        );
+        let outcome = coordinator.reconcile_scheduled(&vault);
+        assert!(outcome.ran_reconcile);
+        assert_eq!(
+            coordinator.route_action(&actual_path),
+            FreshnessRouteAction::ReadCommitted
+        );
     }
 
     #[test]

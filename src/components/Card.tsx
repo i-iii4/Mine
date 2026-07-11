@@ -554,7 +554,7 @@ export const CardSkeleton = memo(function CardSkeleton({
   const hasMedia =
     descriptor.variant === "image" ||
     descriptor.variant === "video" ||
-    descriptor.variant === "link" ||
+    (descriptor.variant === "link" && descriptor.primaryAspectRatio !== null) ||
     descriptor.variant === "article-media" ||
     descriptor.variant === "social-single-media" ||
     descriptor.variant === "social-media-grid";

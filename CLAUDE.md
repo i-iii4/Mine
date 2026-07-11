@@ -239,7 +239,9 @@ bun run lint                   # Линтинг фронтенда
 bun run test                   # Полная проверка: Vitest + Rust workspace tests
 bun run test:feed-scroll       # Browser Grid acceptance (requires running dev server)
 bun run test:graph             # Browser Graph Canvas acceptance (requires running dev server)
-bun run verify                 # Линтинг + полный test contract
+bun run test:browser           # Сам поднимает Vite и запускает оба browser gates
+bun run verify:core            # Линтинг + frontend/Rust tests
+bun run verify                 # Полный contract, включая Feed и Graph browser gates
 cargo clippy                   # Линтинг Rust
 ```
 

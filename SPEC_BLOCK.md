@@ -50,18 +50,22 @@ enum BlockType {
 Runtime/card kind:
 
 ```rust
-enum RuntimeCardKind {
+enum CardKind {
     Article, // body после frontmatter непустой
-    Media,   // body пустой
+    Media,   // owned visual/file media
+    Link,    // metadata-only URL/link without owned media
     Channel, // collection document (`type: channel`)
 }
 ```
 
 Derivation:
 
-1. `frontmatter.type == channel` → `RuntimeCardKind::Channel`.
-2. Otherwise non-empty body → `RuntimeCardKind::Article`.
-3. Otherwise empty body → `RuntimeCardKind::Media`.
+1. `frontmatter.type == channel` → `CardKind::Channel`.
+2. Otherwise non-empty body → `CardKind::Article`.
+3. Otherwise canonical `file` or legacy `image`/`video`/`file` metadata →
+   `CardKind::Media`.
+4. Otherwise URL/link metadata → `CardKind::Link`.
+5. Otherwise → `CardKind::Article`; an empty ordinary note is not media.
 
 Legacy `type: image/link/video/file/article` may still guide import/write
 validation and migration, but feed/detail/search must consume the derived
@@ -209,12 +213,12 @@ fn serialize_frontmatter(frontmatter: &Frontmatter) -> String
   alt text, or URL metadata
 - Порядок полей: type, legacy title (only when present), description, url, file, thumbnail, Mine Collections, Mine Related Notes, Mine Source Media, saved_at, source, width, height, author
 
-### derive_runtime_card_kind
+### derive_card_kind
 
 Derives the read-model card kind used by feed/detail/search.
 
 ```rust
-fn derive_runtime_card_kind(frontmatter: &Frontmatter, body: &str) -> RuntimeCardKind
+fn derive_card_kind(block: &Block) -> CardKind
 ```
 
 Rules:
@@ -222,7 +226,9 @@ Rules:
 - `type: channel` always derives `channel`.
 - Any non-empty body derives `article`, even if legacy/source `type` says
   `image`, `video`, `file`, or `link`.
-- Empty body derives `media`.
+- Empty body with owned file/media evidence derives `media`.
+- Empty body with URL/link metadata and no owned media derives `link`.
+- Any remaining empty ordinary note derives `article`.
 - The function does not rewrite frontmatter.
 
 ### Display title

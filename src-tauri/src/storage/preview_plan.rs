@@ -113,6 +113,59 @@ pub struct ResolvedPreviewMedia {
     pub kind: PreviewMediaKind,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PreviewUpgradeInput<'a> {
+    pub slug: &'a str,
+    pub media_file: Option<&'a str>,
+    pub thumbnail: Option<&'a str>,
+    pub media_urls: Option<&'a str>,
+    pub first_image: Option<&'a str>,
+}
+
+/// Resolve the one source that a browser decoder should use when Rust could
+/// only produce a placeholder. Both watcher and command paths pass the same
+/// indexed projection here, so source priority cannot drift between them.
+pub fn resolve_upgrade_media(
+    vault: &VaultLayout,
+    input: PreviewUpgradeInput<'_>,
+) -> Option<ResolvedPreviewMedia> {
+    let mut candidates = Vec::<String>::new();
+    if let Some(source) = input.media_file {
+        candidates.push(source.to_string());
+    }
+    if let Some(source) = input.thumbnail {
+        candidates.push(source.to_string());
+    }
+    if let Some(raw_urls) = input.media_urls {
+        if let Ok(urls) = serde_json::from_str::<Vec<String>>(raw_urls) {
+            candidates.extend(urls);
+        }
+    }
+    if let Some(source) = input.first_image {
+        candidates.push(source.to_string());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for source in candidates {
+        if !seen.insert(source.clone()) || is_remote_media(&source) {
+            continue;
+        }
+        let ext = media_ext_lower(&source).unwrap_or_default();
+        let kind = if is_image_ext(&ext) {
+            PreviewMediaKind::Image
+        } else if is_video_ext(&ext) {
+            PreviewMediaKind::Video
+        } else {
+            continue;
+        };
+        let Some(path) = media_refs::resolve_indexed_media(vault, input.slug, &source) else {
+            continue;
+        };
+        return Some(ResolvedPreviewMedia { source, path, kind });
+    }
+    None
+}
+
 pub fn find_local_media(body: &str, ext_predicate: fn(&str) -> bool, limit: usize) -> Vec<String> {
     if limit == 0 {
         return Vec::new();

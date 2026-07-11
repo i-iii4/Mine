@@ -33,9 +33,9 @@ use crate::storage::search_engine;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-const MEDIA_INDEX_VERSION: i64 = 3;
+const MEDIA_INDEX_VERSION: i64 = 4;
 const COLLECTION_INDEX_VERSION: i64 = 1;
-pub const PREVIEW_SCHEMA_VERSION: i64 = 1;
+pub const PREVIEW_SCHEMA_VERSION: i64 = 2;
 
 /// A block as read from the database index.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -200,6 +200,17 @@ pub enum FeedPreviewKind {
     Image,
     VideoPoster,
     Composite,
+}
+
+impl FeedPreviewKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Image => "image",
+            Self::VideoPoster => "video_poster",
+            Self::Composite => "composite",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -593,6 +604,41 @@ fn serialize_feed_preview_manifest(
             tiles: Vec::new(),
             overflow_count: 0,
         },
+        CardKind::Link => {
+            let visual_source = block
+                .frontmatter
+                .thumbnail
+                .as_deref()
+                .filter(|source| is_image_media(source));
+            if let Some(source) = visual_source {
+                let (preview_width, preview_height) =
+                    dimensions_for_src(&dims, Some(source), width, height);
+                FeedPreviewManifest {
+                    kind: FeedPreviewKind::Image,
+                    primary_preview_path: Some(primary_preview_path(&block.slug)),
+                    width: preview_width,
+                    height: preview_height,
+                    tiles: vec![FeedPreviewTile {
+                        source_path: source.to_string(),
+                        preview_path: None,
+                        width: preview_width,
+                        height: preview_height,
+                        is_video: false,
+                        is_video_poster: false,
+                    }],
+                    overflow_count: 0,
+                }
+            } else {
+                FeedPreviewManifest {
+                    kind: FeedPreviewKind::Text,
+                    primary_preview_path: None,
+                    width: None,
+                    height: None,
+                    tiles: Vec::new(),
+                    overflow_count: 0,
+                }
+            }
+        }
         CardKind::Article => {
             if is_social_url(block.frontmatter.url.as_deref()) {
                 let mut tiles = extract_social_preview_tiles(&block.body, &dims, media_urls);
@@ -898,7 +944,7 @@ fn serialize_feed_playback(
                 tile.height.or(manifest.height),
             )
         }
-        CardKind::Channel => return None,
+        CardKind::Link | CardKind::Channel => return None,
     };
 
     let container = autoplay_container_for_source(&source_path)?;
@@ -1375,10 +1421,7 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
          FROM blocks
          WHERE slug != ''
            AND card_kind != 'channel'
-           AND (media_index_version IS NULL OR media_index_version < ?1)
-           AND (media_file IS NOT NULL
-                OR thumbnail IS NOT NULL
-                OR body LIKE '%![%')",
+           AND (media_index_version IS NULL OR media_index_version < ?1)",
     )?;
 
     let rows = stmt
@@ -1473,6 +1516,7 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
         // the row's body_hash no longer matches the snapshot, so skip it and
         // leave the fresh data (and its version stamp) in place. `IS` matches
         // NULL == NULL so legacy rows with no stored hash still backfill.
+        let card_kind = derive_card_kind(&block);
         updated += conn.execute(
             "UPDATE blocks
              SET first_image = ?2,
@@ -1484,7 +1528,8 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
                  preview_error_kind = NULL,
                  feed_playback = ?6,
                  media_index_version = ?7,
-                 preview_schema_version = ?9
+                 card_kind = ?9,
+                 preview_schema_version = ?10
              WHERE slug = ?1 AND body_hash IS ?8",
             params![
                 slug,
@@ -1495,6 +1540,7 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
                 feed_playback,
                 MEDIA_INDEX_VERSION,
                 body_hash,
+                card_kind.as_str(),
                 PREVIEW_SCHEMA_VERSION,
             ],
         )?;
@@ -2265,6 +2311,30 @@ pub fn list_pending_thumb_upgrade_blocks(
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(blocks)
+}
+
+pub fn get_pending_thumb_upgrade_block(
+    conn: &Connection,
+    slug: &str,
+) -> Result<Option<PendingThumbUpgradeBlock>> {
+    conn.query_row(
+        "SELECT slug, media_file, thumbnail, first_image, media_urls, preview_manifest
+         FROM blocks
+         WHERE slug = ?1 AND card_kind != 'channel'",
+        [slug],
+        |row| {
+            Ok(PendingThumbUpgradeBlock {
+                slug: row.get(0)?,
+                media_file: row.get(1)?,
+                thumbnail: row.get(2)?,
+                first_image: row.get(3)?,
+                media_urls: row.get(4)?,
+                preview_manifest: row.get(5)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
 }
 
 /// Get a single block by slug. Returns None if not found.
@@ -4284,6 +4354,66 @@ mod tests {
         assert_eq!(manifest.tiles[0].width, Some(388));
         assert_eq!(manifest.tiles[0].height, Some(340));
         assert_eq!(media_index_version, Some(MEDIA_INDEX_VERSION));
+    }
+
+    #[test]
+    fn backfill_media_index_repairs_legacy_metadata_only_link_semantics() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "ai-2027-3",
+            "link",
+            Some("AI 2027"),
+            "2026-03-12T19:19:25Z",
+            &[],
+            "",
+        );
+        block.frontmatter.url = Some("https://ai-2027.com/race".to_string());
+        upsert_block(&conn, &block, Some(vault.root())).unwrap();
+        conn.execute(
+            "UPDATE blocks
+             SET card_kind = 'media',
+                 preview_state = 'ready',
+                 preview_schema_version = 1,
+                 media_index_version = ?2
+             WHERE slug = ?1",
+            params!["ai-2027-3", MEDIA_INDEX_VERSION - 1],
+        )
+        .unwrap();
+
+        assert_eq!(backfill_media_index(&conn, &vault).unwrap(), 1);
+
+        let (card_kind, preview_state, preview_manifest, preview_schema_version, media_index_version): (
+            String,
+            String,
+            String,
+            i64,
+            i64,
+        ) = conn
+            .query_row(
+                "SELECT card_kind, preview_state, preview_manifest, preview_schema_version, media_index_version
+                 FROM blocks WHERE slug = 'ai-2027-3'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        let manifest: FeedPreviewManifest = serde_json::from_str(&preview_manifest).unwrap();
+        assert_eq!(card_kind, "link");
+        assert_eq!(preview_state, "stale");
+        assert_eq!(manifest.kind, FeedPreviewKind::Text);
+        assert!(manifest.primary_preview_path.is_none());
+        assert!(manifest.tiles.is_empty());
+        assert_eq!(preview_schema_version, PREVIEW_SCHEMA_VERSION);
+        assert_eq!(media_index_version, MEDIA_INDEX_VERSION);
     }
 
     #[test]

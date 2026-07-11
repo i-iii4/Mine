@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
-use crate::domain::block::{parse_markdown_document, Block, DateTime};
+use crate::domain::block::{parse_markdown_document, Block, BlockType, CardKind, DateTime};
 use crate::domain::vault::VaultLayout;
 use crate::storage::index::{self, FeedPreviewKind, FeedPreviewManifest};
 use crate::storage::preview_plan::{is_image_media, is_video_media};
@@ -94,6 +94,10 @@ struct PreviewRecord {
     manifest: Option<String>,
     state: String,
     source_stamp: Option<String>,
+    block_type: BlockType,
+    card_kind: CardKind,
+    media_file: Option<String>,
+    schema_version: i64,
 }
 
 pub fn reconcile_all_previews(
@@ -232,6 +236,23 @@ pub fn reconcile_preview_for_slug(
         )
         .map(Some);
     };
+    if record.schema_version != index::PREVIEW_SCHEMA_VERSION {
+        return mark_non_ready(
+            conn,
+            slug,
+            &record,
+            DerivedPreviewState::Stale,
+            Some(&source_stamp),
+            PreviewErrorKind::InvalidManifest,
+            true,
+            format!(
+                "preview schema {} is stale; expected {}",
+                record.schema_version,
+                index::PREVIEW_SCHEMA_VERSION
+            ),
+        )
+        .map(Some);
+    }
     let Some(raw_manifest) = record.manifest.as_deref() else {
         return mark_non_ready(
             conn,
@@ -261,6 +282,28 @@ pub fn reconcile_preview_for_slug(
             .map(Some);
         }
     };
+    if !manifest_matches_card_kind(
+        record.block_type,
+        record.card_kind,
+        record.media_file.as_deref(),
+        manifest.kind,
+    ) {
+        return mark_non_ready(
+            conn,
+            slug,
+            &record,
+            DerivedPreviewState::Failed,
+            Some(&source_stamp),
+            PreviewErrorKind::InvalidManifest,
+            false,
+            format!(
+                "preview kind '{}' is incompatible with card kind '{}'",
+                manifest.kind.as_str(),
+                record.card_kind.as_str()
+            ),
+        )
+        .map(Some);
+    }
     let expected = match expected_preview_paths(vault, &manifest) {
         Ok(expected) => expected,
         Err(error) => {
@@ -476,7 +519,7 @@ pub fn reconcile_preview_for_slug(
 
 fn load_preview_record(conn: &Connection, slug: &str) -> Result<Option<PreviewRecord>> {
     conn.query_row(
-        "SELECT preview_manifest, preview_state, preview_source_stamp
+        "SELECT preview_manifest, preview_state, preview_source_stamp, block_type, card_kind, media_file, preview_schema_version
          FROM blocks WHERE slug = ?1",
         [slug],
         |row| {
@@ -484,11 +527,34 @@ fn load_preview_record(conn: &Connection, slug: &str) -> Result<Option<PreviewRe
                 manifest: row.get(0)?,
                 state: row.get(1)?,
                 source_stamp: row.get(2)?,
+                block_type: index::parse_block_type_row(row, 3)?,
+                card_kind: index::parse_card_kind_row(row, 4)?,
+                media_file: row.get(5)?,
+                schema_version: row.get(6)?,
             })
         },
     )
     .optional()
     .map_err(Into::into)
+}
+
+fn manifest_matches_card_kind(
+    block_type: BlockType,
+    card_kind: CardKind,
+    media_file: Option<&str>,
+    preview_kind: FeedPreviewKind,
+) -> bool {
+    match card_kind {
+        CardKind::Media => {
+            let visual_media = matches!(block_type, BlockType::Image | BlockType::Video)
+                || media_file
+                    .is_some_and(|source| is_image_media(source) || is_video_media(source));
+            preview_kind != FeedPreviewKind::Text || !visual_media
+        }
+        CardKind::Article => true,
+        CardKind::Link => matches!(preview_kind, FeedPreviewKind::Text | FeedPreviewKind::Image),
+        CardKind::Channel => preview_kind == FeedPreviewKind::Text,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -752,6 +818,15 @@ mod tests {
         block
     }
 
+    fn link_block(slug: &str) -> Block {
+        let mut block = image_block(slug, "unused.txt");
+        block.frontmatter.block_type = BlockType::Link;
+        block.frontmatter.file = None;
+        block.frontmatter.url = Some("https://example.com".to_string());
+        block.body.clear();
+        block
+    }
+
     #[test]
     fn full_reconcile_publishes_bounded_progress_batches() {
         let (_source, vault, conn) = setup();
@@ -797,6 +872,86 @@ mod tests {
             )
             .unwrap();
         assert_eq!(state, "ready");
+    }
+
+    #[test]
+    fn metadata_only_link_is_ready_without_bitmap_artifact() {
+        let (_source, vault, conn) = setup();
+        let block = link_block("AI 2027");
+        files::write_block_file(&vault, &block).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let outcome = reconcile_preview_for_slug(&conn, &vault, "AI 2027")
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome.state, DerivedPreviewState::Ready);
+        assert!(!vault.thumb_path("AI 2027").exists());
+
+        let (card_kind, manifest): (String, String) = conn
+            .query_row(
+                "SELECT card_kind, preview_manifest FROM blocks WHERE slug = 'AI 2027'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(card_kind, "link");
+        assert_eq!(
+            serde_json::from_str::<FeedPreviewManifest>(&manifest)
+                .unwrap()
+                .kind,
+            FeedPreviewKind::Text
+        );
+    }
+
+    #[test]
+    fn media_row_rejects_text_manifest_even_when_placeholder_exists() {
+        let (_source, vault, conn) = setup();
+        let block = image_block("Broken media", "missing.png");
+        files::write_block_file(&vault, &block).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let text_manifest = serde_json::to_string(&FeedPreviewManifest {
+            kind: FeedPreviewKind::Text,
+            primary_preview_path: None,
+            width: None,
+            height: None,
+            tiles: Vec::new(),
+            overflow_count: 0,
+        })
+        .unwrap();
+        conn.execute(
+            "UPDATE blocks
+             SET preview_manifest = ?1,
+                 preview_state = 'ready',
+                 preview_schema_version = ?2
+             WHERE slug = 'Broken media'",
+            params![text_manifest, index::PREVIEW_SCHEMA_VERSION],
+        )
+        .unwrap();
+
+        let outcome = reconcile_preview_for_slug(&conn, &vault, "Broken media")
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome.state, DerivedPreviewState::Failed);
+        assert_eq!(
+            outcome.failure.unwrap().error_kind,
+            PreviewErrorKind::InvalidManifest
+        );
+    }
+
+    #[test]
+    fn nonvisual_file_accepts_text_manifest_without_bitmap_artifact() {
+        let (_source, vault, conn) = setup();
+        let mut block = image_block("Document", "document.pdf");
+        block.frontmatter.block_type = BlockType::File;
+        files::write_block_file(&vault, &block).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let outcome = reconcile_preview_for_slug(&conn, &vault, "Document")
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome.state, DerivedPreviewState::Ready);
+        assert!(outcome.failure.is_none());
+        assert!(!vault.thumb_path("Document").exists());
     }
 
     #[test]

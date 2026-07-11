@@ -58,6 +58,8 @@ vi.mock("@/lib/commands", () => ({
 function cardKindForBlockType(blockType: IndexedBlock["block_type"]): IndexedBlock["card_kind"] {
   return blockType === "article"
     ? "article"
+    : blockType === "link"
+      ? "link"
     : blockType === "channel"
       ? "channel"
       : "media";
@@ -1154,6 +1156,46 @@ describe("Detail", () => {
     const image = container.querySelector("img");
     expect(image).toHaveAttribute("src", "asset://localhost//tmp/test-vault/photo.jpg");
     expect(container.querySelector("[data-article-body]")).toBeNull();
+  });
+
+  it("renders metadata-only link without a faux media panel", () => {
+    const b = block({
+      card_kind: "link",
+      block_type: "link",
+      title: "AI 2027",
+      url: "https://ai-2027.com/race",
+      media_file: null,
+      thumbnail: null,
+      body: "",
+      preview_manifest: JSON.stringify({
+        kind: "text",
+        primary_preview_path: null,
+        width: null,
+        height: null,
+        tiles: [],
+        overflow_count: 0,
+      }),
+    });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector(".aspect-video")).toBeNull();
+    expect(screen.getAllByText("AI 2027").length).toBeGreaterThan(0);
+    expect(screen.getByText("Link")).toBeInTheDocument();
   });
 
   it("shows the standard overflow menu trigger on image media surfaces", async () => {

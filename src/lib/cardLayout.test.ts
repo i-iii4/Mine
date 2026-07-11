@@ -5,6 +5,8 @@ import { deriveCardLayoutDescriptor, deriveContentCardSlots } from "./cardLayout
 function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["card_kind"] {
   return blockType === "article"
     ? "article"
+    : blockType === "link"
+      ? "link"
     : blockType === "channel"
       ? "channel"
       : "media";
@@ -36,6 +38,41 @@ function makeBlock(
 }
 
 describe("deriveCardLayoutDescriptor", () => {
+  it("renders metadata-only links as text cards without a faux media surface", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "link",
+        card_kind: "link",
+        title: "AI 2027",
+        url: "https://ai-2027.com/race",
+      }),
+    );
+    expect(descriptor.variant).toBe("link");
+    expect(descriptor.primaryAspectRatio).toBeNull();
+    expect(descriptor.titleText).toBe("AI 2027");
+  });
+
+  it("keeps a thumbnail-bearing link semantically link while using its image preview", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "link",
+        card_kind: "link",
+        title: "Previewed link",
+        url: "https://example.com/story",
+        preview_manifest: JSON.stringify({
+          kind: "image",
+          primary_preview_path: "story.jpg",
+          width: 1200,
+          height: 630,
+          tiles: [],
+          overflow_count: 0,
+        }),
+      }),
+    );
+    expect(descriptor.variant).toBe("link");
+    expect(descriptor.primaryAspectRatio).toBeCloseTo(1200 / 630);
+  });
+
   it("classifies image blocks with exact ratio", () => {
     const descriptor = deriveCardLayoutDescriptor(
       makeBlock({ block_type: "image", width: 1600, height: 900 }),

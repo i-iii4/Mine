@@ -1,5 +1,47 @@
 # Devlog
 
+## 11.07.2026 — Last-good freshness, semantic links and verification gate
+
+### Задача
+Закрыть пять замечаний повторного архитектурного аудита: route failures на
+одном плохом файле, повторный inventory на каждом поиске, ложную preview
+readiness metadata-only links, отдельный Graph gate и дублирование выбора
+browser-upgrade media между watcher и command path.
+
+### Что сделано
+- Freshness coordinator получил persistent dirty/scheduled state, last-good
+  route reads, один blocking first generation и background safety audit. Clean
+  sequential reads выполняют lock-only fast path; per-file/fatal reconcile
+  diagnostics больше не отвергают читаемый SQLite snapshot.
+- Добавлен end-to-end `CardKind::Link`. Empty-body URL/link без owned media
+  рендерится компактно в Grid и Detail; старые `media` projections исправляются
+  versioned media-index backfill без изменения Markdown.
+- `preview_state = ready` теперь проверяет schema, card semantics, manifest и
+  artifacts. Text recipe допустим для article/link и невизуальных файлов, но не
+  для image/video media.
+- Watcher и thumbnail command используют один
+  `preview_plan::resolve_upgrade_media` с одинаковой indexed source priority.
+- `bun run verify` теперь сам поднимает Vite на свободном порту, запускает Feed
+  и Graph Playwright gates и гарантированно завершает все process groups.
+- Feed audit включает metadata-only links и прямо запрещает faux graphic surface.
+- Exact-shape cold regression для `ai-2027-3.md` проверяет fresh projection,
+  unchanged second pass и миграцию старой ошибочной строки.
+
+### Статус
+- A1, A3 и A6 закрыты автоматическими проверками.
+- A5 остаётся активной для полного sanitized-space inventory/switch/restart
+  acceptance и ручной проверки исходного пространства `Тест`.
+
+### Проверки
+- `bun run lint`
+- `bun run test:frontend` — 72 files, 662 tests
+- `cargo test --workspace --all-targets --locked` — 713 passed, 5 ignored
+- `cargo clippy --workspace --all-targets --locked` — passed with the existing
+  workspace warning baseline; новое MSRV-отклонение устранено
+- `bun run test:browser` — Feed desktop/narrow + Graph dark/light passed
+- `SIGINT` cleanup acceptance — exit 130, no Vite/Playwright processes remained
+- `git diff --check`
+
 ## 11.07.2026 — Post-push desktop acceptance checkpoint
 
 ### Результат
