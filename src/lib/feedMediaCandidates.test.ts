@@ -28,7 +28,7 @@ function block(overrides: Partial<LightBlock> = {}): LightBlock {
 }
 
 describe("feedMediaCandidatesForBlock", () => {
-  it("returns poster, primary, tile and thumbnail candidates in feed order", () => {
+  it("returns only manifest-backed poster, primary and tile candidates", () => {
     const candidates = feedMediaCandidatesForBlock({
       thumbsRootPath: "/thumbs",
       block: block({
@@ -76,14 +76,12 @@ describe("feedMediaCandidatesForBlock", () => {
       "primary-preview",
       "tile-preview",
       "tile-preview",
-      "thumbnail",
     ]);
     expect(candidates.map((candidate) => candidate.url)).toEqual([
       "asset://localhost//thumbs/poster.jpg",
       "asset://localhost//thumbs/primary.jpg",
       "asset://localhost//thumbs/tile-a.jpg",
       "asset://localhost//thumbs/tile-b.jpg",
-      "asset://localhost//thumbs/alpha.jpg",
     ]);
   });
 
@@ -113,12 +111,7 @@ describe("feedMediaCandidatesForBlock", () => {
       }),
     });
 
-    expect(candidates).toHaveLength(1);
-    expect(candidates[0]).toMatchObject({
-      role: "thumbnail",
-      source: "derived",
-      url: "asset://localhost//thumbs/alpha.jpg",
-    });
+    expect(candidates).toHaveLength(0);
     expect(candidates.some((candidate) => candidate.url.includes("original-heavy"))).toBe(false);
     expect(candidates.some((candidate) => candidate.url.includes("raw-inline"))).toBe(false);
     expect(candidates.some((candidate) => candidate.url.includes("remote.example"))).toBe(false);
@@ -159,7 +152,6 @@ describe("feedMediaCandidatesForBlock", () => {
 
     expect(candidates.map((candidate) => candidate.url)).toEqual([
       "asset://localhost//thumbs/poster.jpg",
-      "asset://localhost//thumbs/alpha.jpg",
     ]);
   });
 });
@@ -187,7 +179,7 @@ describe("feedMediaCandidatesForBlock memoization", () => {
     const target = block({ preview_manifest: null });
 
     const first = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/thumbs" });
-    expect(first.map((candidate) => candidate.role)).toEqual(["thumbnail"]);
+    expect(first).toEqual([]);
 
     target.preview_manifest = JSON.stringify({
       kind: "image",
@@ -200,11 +192,20 @@ describe("feedMediaCandidatesForBlock memoization", () => {
     const second = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/thumbs" });
 
     expect(second).not.toBe(first);
-    expect(second.map((candidate) => candidate.role)).toEqual(["primary-preview", "thumbnail"]);
+    expect(second.map((candidate) => candidate.role)).toEqual(["primary-preview"]);
   });
 
   it("recomputes when thumbsRootPath changes for the same block", () => {
-    const target = block();
+    const target = block({
+      preview_manifest: JSON.stringify({
+        kind: "image",
+        primary_preview_path: "alpha.jpg",
+        width: 100,
+        height: 100,
+        tiles: [],
+        overflow_count: 0,
+      }),
+    });
 
     const first = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/thumbs" });
     const second = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/other" });
@@ -214,15 +215,24 @@ describe("feedMediaCandidatesForBlock memoization", () => {
     expect(second[0]?.url).toBe("asset://localhost//other/alpha.jpg");
   });
 
-  it("recomputes when slug changes on a reused block object", () => {
-    const target = block({ slug: "alpha" });
+  it("does not recompute when only the source slug changes", () => {
+    const target = block({
+      slug: "alpha",
+      preview_manifest: JSON.stringify({
+        kind: "image",
+        primary_preview_path: "stable-preview.jpg",
+        width: 100,
+        height: 100,
+        tiles: [],
+        overflow_count: 0,
+      }),
+    });
 
     const first = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/thumbs" });
     target.slug = "beta";
     const second = feedMediaCandidatesForBlock({ block: target, thumbsRootPath: "/thumbs" });
 
-    expect(second).not.toBe(first);
-    expect(first[0]?.url).toBe("asset://localhost//thumbs/alpha.jpg");
-    expect(second[0]?.url).toBe("asset://localhost//thumbs/beta.jpg");
+    expect(second).toBe(first);
+    expect(second[0]?.url).toBe("asset://localhost//thumbs/stable-preview.jpg");
   });
 });

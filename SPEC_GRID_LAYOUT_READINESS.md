@@ -117,8 +117,9 @@ The `visibleItems` runtime has two update paths:
 - ordinary scroll uses a RAF-coalesced diff and updates React only when the
   mounted item set actually changes;
 - deep/flick scroll that jumps outside the currently mounted item set uses a
-  bounded synchronous commit before paint, so the scrollport cannot display a
-  fully empty viewport.
+  bounded synchronous emergency-window commit before paint, so the scrollport
+  cannot display a fully empty viewport. The emergency window is viewport plus
+  `128px`; regular adaptive overscan is restored on the next animation frame.
 
 The anti-blank path must use Grid's measured `viewportHeight` from
 ResizeObserver as the authoritative fallback when `scrollElement.clientHeight`
@@ -270,12 +271,14 @@ bun run test:feed-scroll
 ```
 
 The test opens the route through Playwright, runs desktop and narrow viewport
-profiles, performs deterministic deep scroll jumps, then fails if any sampled
-viewport has:
+profiles, performs deterministic deep scroll jumps, samples immediately inside
+the scroll dispatch and again on the first animation frame before waiting for
+settle, then fails if any sampled viewport has:
 
 - `viewport.blankViewportRisk === true`;
 - zero mounted `[data-feed-grid-item]` elements intersecting the scrollport;
 - zero live cards in the scrollport;
+- zero immediate or first-frame live cards in the scrollport;
 - a near-blank screenshot according to the pixel-dominance check;
 - mounted `GridItem` count above the DOM budget;
 - viewport settle, frame-gap or long-task samples above the scroll budget.

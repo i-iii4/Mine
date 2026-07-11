@@ -6,12 +6,16 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::state::{AppState, CommandError};
+use crate::domain::block::parse_markdown_document;
 use crate::domain::vault::validate_slug;
-use crate::storage::index;
-use crate::watcher::handler;
+use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
+use crate::storage::{files, index};
+
+const CONFLICT_MUTATION_WATCHER_SUPPRESSION_MS: u64 = 1500;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,15 +96,12 @@ pub fn resolve_vault_conflict(
     let base_path: PathBuf = vault_root.join(format!("{base_slug}.md"));
     let conflict_path: PathBuf = vault_root.join(format!("{conflict_slug}.md"));
 
-    match action {
+    let mut writes = Vec::new();
+    let mut promoted = None;
+    match &action {
         ResolveAction::KeepOriginal => {
             if conflict_path.exists() {
-                std::fs::remove_file(&conflict_path).map_err(|e| {
-                    CommandError::Internal(format!(
-                        "failed to delete conflict file {}: {e}",
-                        conflict_path.display()
-                    ))
-                })?;
+                writes.push(SourceFileWrite::delete(conflict_path.clone()));
             }
         }
         ResolveAction::KeepConflict => {
@@ -111,34 +112,38 @@ pub fn resolve_vault_conflict(
                 )));
             }
 
+            let (_, conflict_content) = files::read_block_file(&vs.vault, &conflict_path)?;
+            promoted = Some(
+                parse_markdown_document(
+                    &base_slug,
+                    &conflict_content,
+                    file_saved_at(&conflict_path),
+                )
+                .map_err(|error| CommandError::Internal(error.to_string()))?,
+            );
             if base_path.exists() {
                 let archive_dir = derived_root.join("conflicts-archive");
-                std::fs::create_dir_all(&archive_dir).map_err(|e| {
-                    CommandError::Internal(format!(
-                        "failed to create archive dir {}: {e}",
-                        archive_dir.display()
-                    ))
-                })?;
                 let archive_name = archive_filename(&base_slug);
                 let archive_path = archive_dir.join(archive_name);
-                std::fs::rename(&base_path, &archive_path).map_err(|e| {
+                let base_content = std::fs::read(&base_path).map_err(|error| {
                     CommandError::Internal(format!(
-                        "failed to archive original {}: {e}",
+                        "failed to read conflict base {}: {error}",
                         base_path.display()
                     ))
                 })?;
+                writes.push(SourceFileWrite::create(archive_path, base_content));
+                writes.push(SourceFileWrite::replace(
+                    base_path.clone(),
+                    conflict_content.into_bytes(),
+                ));
+                writes.push(SourceFileWrite::delete(conflict_path.clone()));
+            } else {
+                writes.push(SourceFileWrite::rename_with_bytes(
+                    conflict_path.clone(),
+                    base_path.clone(),
+                    conflict_content.into_bytes(),
+                ));
             }
-
-            std::fs::rename(&conflict_path, &base_path).map_err(|e| {
-                CommandError::Internal(format!(
-                    "failed to promote conflict file to {}: {e}",
-                    base_path.display()
-                ))
-            })?;
-
-            // Re-index the promoted file so the block picks up the new
-            // body without waiting for the watcher.
-            let _ = handler::index_md_file(&vs.conn, &vs.vault, &base_path, Some(&app));
         }
         ResolveAction::DismissForManualMerge => {
             // User will reconcile in Obsidian. We only clear the DB
@@ -147,8 +152,37 @@ pub fn resolve_vault_conflict(
         }
     }
 
-    index::clear_vault_conflict(&vs.conn, &base_slug, &conflict_slug)
-        .map_err(|e| CommandError::Internal(format!("clear_vault_conflict failed: {e:#}")))?;
+    state.suppress_paths(
+        [base_path.clone(), conflict_path.clone()],
+        Duration::from_millis(CONFLICT_MUTATION_WATCHER_SUPPRESSION_MS),
+    )?;
+    let staged = StagedSourceMutation::stage(writes)
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    staged
+        .commit_with_index(&vs.conn, "resolve_vault_conflict", |index_conn| {
+            match action {
+                ResolveAction::KeepOriginal => {
+                    index::remove_block(index_conn, &conflict_slug)?;
+                }
+                ResolveAction::KeepConflict => {
+                    let promoted = promoted
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("promoted conflict projection missing"))?;
+                    index::upsert_block_with_diagnostics(
+                        index_conn,
+                        &promoted.block,
+                        Some(vs.vault.root()),
+                        Some(promoted.origin.as_str()),
+                        promoted.index_warning.as_deref(),
+                    )?;
+                    index::remove_block(index_conn, &conflict_slug)?;
+                }
+                ResolveAction::DismissForManualMerge => {}
+            }
+            index::clear_vault_conflict(index_conn, &base_slug, &conflict_slug)?;
+            Ok(())
+        })
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
 
     // Notify listeners so any open sidebar banner / dialog refreshes.
     let _ = app.emit(
@@ -171,6 +205,15 @@ fn archive_filename(base_slug: &str) -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     format!("{base_slug} (archived {ts}).md")
+}
+
+fn file_saved_at(path: &std::path::Path) -> crate::domain::block::DateTime {
+    let time = std::fs::metadata(path)
+        .ok()
+        .and_then(|metadata| metadata.created().ok().or_else(|| metadata.modified().ok()))
+        .unwrap_or_else(std::time::SystemTime::now);
+    crate::domain::block::DateTime::new(&crate::util::system_time_to_iso8601(time))
+        .unwrap_or_else(|_| crate::domain::block::DateTime::new("1970-01-01T00:00:00Z").unwrap())
 }
 
 #[cfg(test)]

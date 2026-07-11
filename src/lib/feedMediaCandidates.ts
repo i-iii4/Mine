@@ -1,13 +1,12 @@
 import type { LightBlock } from "@/types";
-import { previewAssetUrl, thumbnailUrl } from "@/lib/assets";
+import { previewAssetUrl } from "@/lib/assets";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
 import { normalizeFeedPreviewManifest } from "@/lib/feedPreview";
 
 export type FeedMediaCandidateRole =
   | "primary-preview"
   | "tile-preview"
-  | "poster-preview"
-  | "thumbnail";
+  | "poster-preview";
 
 export interface FeedMediaCandidate {
   url: string;
@@ -30,9 +29,6 @@ function pushUniqueCandidate(
 interface FeedMediaCandidateCacheEntry {
   previewManifest: string | null;
   feedPlayback: string | null;
-  slug: string;
-  width: number | null;
-  height: number | null;
   thumbsRootPath: string;
   candidates: readonly FeedMediaCandidate[];
 }
@@ -60,9 +56,6 @@ export function feedMediaCandidatesForBlock({
     cached &&
     cached.previewManifest === block.preview_manifest &&
     cached.feedPlayback === block.feed_playback &&
-    cached.slug === block.slug &&
-    cached.width === block.width &&
-    cached.height === block.height &&
     cached.thumbsRootPath === thumbsRootPath
   ) {
     return cached.candidates;
@@ -72,9 +65,6 @@ export function feedMediaCandidatesForBlock({
   candidateCache.set(block, {
     previewManifest: block.preview_manifest,
     feedPlayback: block.feed_playback,
-    slug: block.slug,
-    width: block.width,
-    height: block.height,
     thumbsRootPath,
     candidates,
   });
@@ -135,14 +125,6 @@ function computeFeedMediaCandidates(
       );
     }
   }
-
-  pushUniqueCandidate(candidates, seen, {
-    url: thumbnailUrl(thumbsRootPath, block.slug),
-    role: "thumbnail",
-    source: "derived",
-    width: block.width,
-    height: block.height,
-  });
 
   return candidates;
 }

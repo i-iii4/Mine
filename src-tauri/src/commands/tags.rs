@@ -2,16 +2,15 @@
 //
 // Contract: SPEC_INTEGRATION.md#commands/tags
 
-use std::path::PathBuf;
-
 use rusqlite::Connection;
 use tauri::{AppHandle, State};
 
-use crate::commands::state::{current_vault_layout, AppState, CommandError};
+use crate::commands::state::{current_vault_layout, ensure_vault_fresh, AppState, CommandError};
 use crate::domain::block::{parse_markdown_document, DateTime};
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::domain::vault::{validate_slug, VaultLayout};
 use crate::storage::index::{IndexedBlock, TagCount};
+use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
 use crate::storage::{db, files, index};
 use crate::util::append_startup_trace;
 
@@ -24,7 +23,9 @@ pub async fn list_tags(
     state: State<'_, AppState>,
 ) -> Result<Vec<TagCount>, CommandError> {
     append_startup_trace(&app, "list_tags", "start");
-    let db_path = current_vault_layout(&state)?.index_db_path();
+    let vault = current_vault_layout(&state)?;
+    ensure_vault_fresh(&app, vault.clone()).await?;
+    let db_path = vault.index_db_path();
     let tags =
         tauri::async_runtime::spawn_blocking(move || -> Result<Vec<TagCount>, CommandError> {
             let conn = db::open_read_only(&db_path)?;
@@ -67,13 +68,13 @@ pub fn add_tag(state: State<'_, AppState>, slug: String, tag: String) -> Result<
 
     let content = patch_collections_frontmatter(&content, &block.frontmatter.tags)
         .map_err(CommandError::Internal)?;
-    std::fs::write(&path, content)
-        .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
-    index::upsert_block_with_diagnostics(
+    commit_block_rewrite(
         &vs.conn,
+        &vs.vault,
+        &path,
+        content.as_bytes(),
         &block,
-        Some(vs.vault.root()),
-        Some(parsed.origin.as_str()),
+        parsed.origin.as_str(),
         parsed.index_warning.as_deref(),
     )?;
 
@@ -109,92 +110,89 @@ pub fn remove_tag(
 
     let content = patch_collections_frontmatter(&content, &block.frontmatter.tags)
         .map_err(CommandError::Internal)?;
-    std::fs::write(&path, content)
-        .map_err(|e| CommandError::Internal(format!("failed to write: {}", e)))?;
-    index::upsert_block_with_diagnostics(
+    commit_block_rewrite(
         &vs.conn,
+        &vs.vault,
+        &path,
+        content.as_bytes(),
         &block,
-        Some(vs.vault.root()),
-        Some(parsed.origin.as_str()),
+        parsed.origin.as_str(),
         parsed.index_warning.as_deref(),
     )?;
 
     Ok(())
 }
 
-/// Apply a frontmatter collection rewrite to every affected block with
-/// all-or-nothing semantics. Original bytes are backed up first; on any
-/// failure every already-written file is restored and re-indexed from the
-/// restored bytes, so a partial failure cannot leave the vault half-renamed.
+fn commit_block_rewrite(
+    conn: &Connection,
+    vault: &VaultLayout,
+    path: &std::path::Path,
+    content: &[u8],
+    block: &crate::domain::block::Block,
+    origin: &str,
+    index_warning: Option<&str>,
+) -> Result<(), CommandError> {
+    let staged = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
+        path.to_path_buf(),
+        content.to_vec(),
+    )])
+    .map_err(|error| CommandError::Internal(error.to_string()))?;
+    staged
+        .commit_with_index(conn, "rewrite_block_collections", |index_conn| {
+            index::upsert_block_with_diagnostics(
+                index_conn,
+                block,
+                Some(vault.root()),
+                Some(origin),
+                index_warning,
+            )
+            .map(|_| ())
+        })
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    Ok(())
+}
+
+/// Apply a frontmatter collection rewrite through one staged source batch and
+/// one SQLite transaction.
 fn rewrite_collection_membership(
     conn: &Connection,
     vault: &VaultLayout,
     affected: &[IndexedBlock],
     mut transform: impl FnMut(&mut Vec<String>),
 ) -> Result<(), CommandError> {
-    // Phase 1: read and back up original bytes for every affected file.
-    let mut backups: Vec<(PathBuf, String)> = Vec::with_capacity(affected.len());
+    let mut writes = Vec::with_capacity(affected.len());
+    let mut prepared = Vec::with_capacity(affected.len());
     for indexed_block in affected {
         let path = vault.block_path(&indexed_block.slug);
         let (_, content) = files::read_block_file(vault, &path)?;
-        backups.push((path, content));
+        let parsed = parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path))
+            .map_err(|e| CommandError::Internal(e.to_string()))?;
+        let mut block = parsed.block;
+        transform(&mut block.frontmatter.tags);
+        files::normalize_block_media_refs_for_index(vault, &mut block);
+        let serialized = patch_collections_frontmatter(&content, &block.frontmatter.tags)
+            .map_err(CommandError::Internal)?;
+        writes.push(SourceFileWrite::replace(path, serialized.into_bytes()));
+        prepared.push((block, parsed.origin, parsed.index_warning));
     }
 
-    // Phase 2: rewrite each file; roll all of them back on the first failure.
-    for (i, indexed_block) in affected.iter().enumerate() {
-        let (path, content) = &backups[i];
-        let result = (|| -> Result<(), CommandError> {
-            let parsed = parse_markdown_document(&indexed_block.slug, content, file_saved_at(path))
-                .map_err(|e| CommandError::Internal(e.to_string()))?;
-            let mut block = parsed.block;
-            transform(&mut block.frontmatter.tags);
-            files::normalize_block_media_refs_for_index(vault, &mut block);
-            let serialized = patch_collections_frontmatter(content, &block.frontmatter.tags)
-                .map_err(CommandError::Internal)?;
-            files::write_atomically(path, serialized.as_bytes())
-                .map_err(|e| CommandError::Internal(format!("failed to write: {e}")))?;
-            index::upsert_block_with_diagnostics(
-                conn,
-                &block,
-                Some(vault.root()),
-                Some(parsed.origin.as_str()),
-                parsed.index_warning.as_deref(),
-            )?;
+    let staged = StagedSourceMutation::stage(writes)
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    staged
+        .commit_with_index(conn, "rewrite_collection_membership", |index_conn| {
+            for (block, origin, index_warning) in &prepared {
+                index::upsert_block_with_diagnostics(
+                    index_conn,
+                    block,
+                    Some(vault.root()),
+                    Some(origin.as_str()),
+                    index_warning.as_deref(),
+                )?;
+            }
             Ok(())
-        })();
-        if let Err(e) = result {
-            restore_collection_backups(conn, vault, &backups[..=i]);
-            return Err(e);
-        }
-    }
+        })
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
     Ok(())
-}
-
-/// Restore original `.md` bytes and re-index from them. Best-effort: a restore
-/// failure on one file is skipped so the remaining files still recover. Shared
-/// with `rename_channel`, which backs up block files before its DB transaction.
-pub(crate) fn restore_collection_backups(
-    conn: &Connection,
-    vault: &VaultLayout,
-    backups: &[(PathBuf, String)],
-) {
-    for (path, content) in backups {
-        if files::write_atomically(path, content.as_bytes()).is_err() {
-            continue;
-        }
-        let Some(slug) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if let Ok(parsed) = parse_markdown_document(slug, content, file_saved_at(path)) {
-            let _ = index::upsert_block_with_diagnostics(
-                conn,
-                &parsed.block,
-                Some(vault.root()),
-                Some(parsed.origin.as_str()),
-                parsed.index_warning.as_deref(),
-            );
-        }
-    }
 }
 
 /// Rename a tag in ALL blocks: find blocks with old_tag, replace with new_tag
@@ -274,6 +272,7 @@ pub(crate) fn patch_collections_frontmatter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::db;
 
     #[test]
     fn patch_collections_frontmatter_inserts_minimal_frontmatter_for_foreign_markdown() {
@@ -367,5 +366,93 @@ mod tests {
         let input = "---\ntype: article\n\tbad\n---\nBody";
         let err = patch_collections_frontmatter(input, &["new".to_string()]).unwrap_err();
         assert!(err.contains("malformed frontmatter"));
+    }
+
+    #[test]
+    fn block_rewrite_restores_source_when_index_update_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let path = vault.block_path("Note");
+        let original = "---\ntype: article\nsaved_at: 2026-07-10T00:00:00Z\nMine Collections:\n  - \"[[Old]]\"\n---\nBody";
+        std::fs::write(&path, original).unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let original_parsed =
+            parse_markdown_document("Note", original, file_saved_at(&path)).unwrap();
+        index::upsert_block(&conn, &original_parsed.block, Some(vault.root())).unwrap();
+        let rewritten = patch_collections_frontmatter(original, &["New".to_string()]).unwrap();
+        let rewritten_parsed =
+            parse_markdown_document("Note", &rewritten, file_saved_at(&path)).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_tag_update
+             BEFORE UPDATE ON blocks
+             WHEN new.slug = 'Note'
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected tag index failure');
+             END;",
+        )
+        .unwrap();
+
+        let result = commit_block_rewrite(
+            &conn,
+            &vault,
+            &path,
+            rewritten.as_bytes(),
+            &rewritten_parsed.block,
+            rewritten_parsed.origin.as_str(),
+            rewritten_parsed.index_warning.as_deref(),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert_eq!(
+            index::get_block(&conn, "Note").unwrap().unwrap().tags,
+            vec!["Old"]
+        );
+    }
+
+    #[test]
+    fn bulk_collection_rewrite_rolls_back_every_file_and_index_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let source = |slug: &str| {
+            format!(
+                "---\ntype: article\nsaved_at: 2026-07-10T00:00:00Z\nMine Collections:\n  - \"[[Old]]\"\n---\n{slug} body"
+            )
+        };
+        for slug in ["A", "B"] {
+            let content = source(slug);
+            let path = vault.block_path(slug);
+            std::fs::write(&path, &content).unwrap();
+            let parsed = parse_markdown_document(slug, &content, file_saved_at(&path)).unwrap();
+            index::upsert_block(&conn, &parsed.block, Some(vault.root())).unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TRIGGER reject_second_bulk_update
+             BEFORE UPDATE ON blocks
+             WHEN new.slug = 'B'
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected bulk index failure');
+             END;",
+        )
+        .unwrap();
+        let affected = index::list_blocks_by_tag(&conn, "Old").unwrap();
+
+        let result = rewrite_collection_membership(&conn, &vault, &affected, |tags| {
+            tags.clear();
+            tags.push("New".to_string());
+        });
+
+        assert!(result.is_err());
+        for slug in ["A", "B"] {
+            assert_eq!(
+                std::fs::read_to_string(vault.block_path(slug)).unwrap(),
+                source(slug)
+            );
+            assert_eq!(
+                index::get_block(&conn, slug).unwrap().unwrap().tags,
+                vec!["Old"]
+            );
+        }
     }
 }

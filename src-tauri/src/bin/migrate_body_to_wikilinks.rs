@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use mine_lib::domain::markdown::convert_markdown_images_to_wikilinks;
+use mine_lib::storage::files;
 
 fn usage() {
     eprintln!(
@@ -140,7 +141,7 @@ fn run(vault_path: &Path, apply: bool) -> anyhow::Result<Report> {
         println!("~ {}", path.display());
 
         if apply {
-            std::fs::write(&path, rebuilt)?;
+            files::write_atomically(&path, rebuilt.as_bytes())?;
         }
     }
 

@@ -4,17 +4,21 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Duration;
 use tauri::{AppHandle, State};
 
-use crate::commands::state::{current_vault_layout, AppState, CommandError};
-use crate::commands::tags::{patch_collections_frontmatter, restore_collection_backups};
+use crate::commands::state::{current_vault_layout, ensure_vault_fresh, AppState, CommandError};
+use crate::commands::tags::patch_collections_frontmatter;
 use crate::domain::block::{
-    parse_block, parse_markdown_document, serialize_block, Block, BlockType, DateTime, Frontmatter,
+    parse_markdown_document, serialize_block, Block, BlockType, DateTime, Frontmatter,
 };
 use crate::domain::channel::Channel;
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
+use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
 use crate::storage::{db, files, index};
 use crate::util::append_startup_trace;
+
+const SOURCE_MUTATION_WATCHER_SUPPRESSION_MS: u64 = 1500;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -61,7 +65,9 @@ pub async fn list_channels(
     state: State<'_, AppState>,
 ) -> Result<Vec<ChannelDto>, CommandError> {
     append_startup_trace(&app, "list_channels", "start");
-    let db_path = current_vault_layout(&state)?.index_db_path();
+    let vault = current_vault_layout(&state)?;
+    ensure_vault_fresh(&app, vault.clone()).await?;
+    let db_path = vault.index_db_path();
     let dtos =
         tauri::async_runtime::spawn_blocking(move || -> Result<Vec<ChannelDto>, CommandError> {
             let conn = db::open_read_only(&db_path)?;
@@ -80,7 +86,9 @@ pub async fn list_taxonomy_snapshot(
     state: State<'_, AppState>,
 ) -> Result<TaxonomySnapshot, CommandError> {
     append_startup_trace(&app, "list_taxonomy_snapshot", "start");
-    let db_path = current_vault_layout(&state)?.index_db_path();
+    let vault = current_vault_layout(&state)?;
+    ensure_vault_fresh(&app, vault.clone()).await?;
+    let db_path = vault.index_db_path();
     let snapshot =
         tauri::async_runtime::spawn_blocking(move || -> Result<TaxonomySnapshot, CommandError> {
             let conn = db::open_read_only(&db_path)?;
@@ -137,12 +145,18 @@ pub fn create_channel(
     }
     channel.position = index::next_channel_position(&vs.conn)?;
 
-    // Write channel .md file (source of truth)
     let block = channel_to_block(&channel);
-    files::write_block_file(&vs.vault, &block)?;
-
-    // Index immediately (don't wait for watcher)
-    index::upsert_channel(&vs.conn, &channel)?;
+    let path = vs.vault.block_path(&channel.tag);
+    let staged = StagedSourceMutation::stage(vec![SourceFileWrite::create(
+        path,
+        serialize_block(&block).into_bytes(),
+    )])
+    .map_err(source_mutation_command_error)?;
+    staged
+        .commit_with_index(&vs.conn, "create_channel", |index_conn| {
+            index::upsert_channel(index_conn, &channel)
+        })
+        .map_err(source_mutation_command_error)?;
 
     // Get block count for this tag
     let tags = index::get_all_tags(&vs.conn)?;
@@ -175,59 +189,57 @@ pub fn reorder_channels(
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
-    // Find tags that don't have channel entries yet
     let existing = index::list_channels(&vs.conn)?;
-    let existing_tags: std::collections::HashSet<&str> =
-        existing.iter().map(|c| c.tag.as_str()).collect();
-
+    let existing_by_tag = existing
+        .into_iter()
+        .map(|channel| (channel.tag.clone(), channel))
+        .collect::<HashMap<_, _>>();
     let now = crate::commands::state::now_iso8601();
-    for item in &items {
+    let mut seen = std::collections::HashSet::new();
+    let mut planned_channels = Vec::with_capacity(items.len());
+    let mut writes = Vec::with_capacity(items.len());
+    for item in items {
         let tag = normalize_collection_ref(&item.tag);
         if tag.is_empty() {
             continue;
         }
         validate_collection_ref(&tag).map_err(CommandError::Internal)?;
-        if !existing_tags.contains(tag.as_str()) {
+        if !seen.insert(tag.clone()) {
+            return Err(CommandError::Internal(format!(
+                "duplicate collection in reorder: {tag}"
+            )));
+        }
+        let mut channel = if let Some(existing) = existing_by_tag.get(&tag) {
+            existing.clone()
+        } else {
             let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
-            let channel =
-                Channel::new(&tag, dt).map_err(|e| CommandError::Internal(e.to_string()))?;
-            // Write .md file for new channel
-            let block = channel_to_block(&channel);
-            files::write_block_file(&vs.vault, &block)?;
-            index::upsert_channel(&vs.conn, &channel)?;
-        }
+            Channel::new(&tag, dt).map_err(|e| CommandError::Internal(e.to_string()))?
+        };
+        channel.position = item.position;
+        let path = vs.vault.block_path(&tag);
+        let bytes = serialize_block(&channel_to_block(&channel)).into_bytes();
+        writes.push(if path.exists() {
+            SourceFileWrite::replace(path, bytes)
+        } else {
+            SourceFileWrite::create(path, bytes)
+        });
+        planned_channels.push(channel);
     }
 
-    let positions: Vec<(String, u32)> = items
-        .into_iter()
-        .filter_map(|item| {
-            let tag = normalize_collection_ref(&item.tag);
-            (!tag.is_empty()).then_some((tag, item.position))
-        })
-        .collect();
-    for (tag, _) in &positions {
-        validate_collection_ref(tag).map_err(CommandError::Internal)?;
-    }
-
-    index::update_channel_positions(&vs.conn, &positions)?;
-
-    // Update position in .md files
-    for (tag, pos) in &positions {
-        let md_path = vs.vault.block_path(tag);
-        if md_path.exists() {
-            if let Ok((slug, content)) = files::read_block_file(&vs.vault, &md_path) {
-                if let Ok(mut block) = parse_block(&slug, &content) {
-                    if block.frontmatter.block_type == BlockType::Channel {
-                        block.frontmatter.position = Some(*pos);
-                        let serialized = serialize_block(&block);
-                        let _ = files::write_atomically(&md_path, serialized.as_bytes());
-                    }
-                }
+    let staged = StagedSourceMutation::stage(writes).map_err(source_mutation_command_error)?;
+    staged
+        .commit_with_index(&vs.conn, "reorder_channels", |index_conn| {
+            for channel in &planned_channels {
+                index::upsert_channel(index_conn, channel)?;
             }
-        }
-    }
-
+            Ok(())
+        })
+        .map_err(source_mutation_command_error)?;
     Ok(())
+}
+
+fn source_mutation_command_error(error: SourceMutationError) -> CommandError {
+    CommandError::Internal(error.to_string())
 }
 
 /// Rename a channel: update the tag in all blocks' frontmatter files,
@@ -284,42 +296,17 @@ pub fn rename_channel(
         .find(|c| c.tag == normalized_old)
         .ok_or_else(|| CommandError::Internal(format!("channel '{}' not found", old_tag)))?;
 
-    // Wrap DB operations in a transaction to prevent partial renames
-    vs.conn
-        .execute("BEGIN", [])
-        .map_err(|e| CommandError::Internal(e.to_string()))?;
-
-    // Update all blocks that have the old tag. Back up original bytes first so
-    // a mid-loop failure restores the .md files too, not just the DB rows — a
-    // DB ROLLBACK alone would leave the vault half-renamed.
     let affected_blocks = index::list_blocks_by_tag(&vs.conn, &normalized_old)?;
-    let mut backups: Vec<(std::path::PathBuf, String)> = Vec::new();
+    let mut writes = Vec::with_capacity(affected_blocks.len() + 1);
+    let mut prepared_blocks = Vec::with_capacity(affected_blocks.len());
     for indexed_block in &affected_blocks {
         if indexed_block.slug.is_empty() {
             continue;
         }
         let path = vs.vault.block_path(&indexed_block.slug);
-        let content = match files::read_block_file(&vs.vault, &path) {
-            Ok((_, c)) => c,
-            Err(e) => {
-                vs.conn.execute("ROLLBACK", []).ok();
-                restore_collection_backups(&vs.conn, &vs.vault, &backups);
-                return Err(CommandError::Internal(format!(
-                    "failed to read {}: {}",
-                    indexed_block.slug, e
-                )));
-            }
-        };
-        backups.push((path.clone(), content.clone()));
-        let parsed =
-            match parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path)) {
-                Ok(parsed) => parsed,
-                Err(e) => {
-                    vs.conn.execute("ROLLBACK", []).ok();
-                    restore_collection_backups(&vs.conn, &vs.vault, &backups);
-                    return Err(CommandError::Internal(e.to_string()));
-                }
-            };
+        let (_, content) = files::read_block_file(&vs.vault, &path)?;
+        let parsed = parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path))
+            .map_err(|error| CommandError::Internal(error.to_string()))?;
         let mut block = parsed.block;
 
         // Replace old collection ref with new collection ref.
@@ -329,30 +316,10 @@ pub fn rename_channel(
         }
         files::normalize_block_media_refs_for_index(&vs.vault, &mut block);
 
-        let serialized = match patch_collections_frontmatter(&content, &block.frontmatter.tags) {
-            Ok(serialized) => serialized,
-            Err(e) => {
-                vs.conn.execute("ROLLBACK", []).ok();
-                restore_collection_backups(&vs.conn, &vs.vault, &backups);
-                return Err(CommandError::Internal(e));
-            }
-        };
-        if let Err(e) = files::write_atomically(&path, serialized.as_bytes()) {
-            vs.conn.execute("ROLLBACK", []).ok();
-            restore_collection_backups(&vs.conn, &vs.vault, &backups);
-            return Err(CommandError::Internal(format!("failed to write: {}", e)));
-        }
-        if let Err(e) = index::upsert_block_with_diagnostics(
-            &vs.conn,
-            &block,
-            Some(vs.vault.root()),
-            Some(parsed.origin.as_str()),
-            parsed.index_warning.as_deref(),
-        ) {
-            vs.conn.execute("ROLLBACK", []).ok();
-            restore_collection_backups(&vs.conn, &vs.vault, &backups);
-            return Err(e.into());
-        }
+        let serialized = patch_collections_frontmatter(&content, &block.frontmatter.tags)
+            .map_err(CommandError::Internal)?;
+        writes.push(SourceFileWrite::replace(path, serialized.into_bytes()));
+        prepared_blocks.push((block, parsed.origin, parsed.index_warning));
     }
 
     // Create new channel with same metadata
@@ -365,35 +332,37 @@ pub fn rename_channel(
         created_at: existing.created_at.clone(),
     };
 
-    // Write new channel .md. On any failure below, roll the DB transaction
-    // back and restore the block files; the old channel page is deleted only
-    // after a durable COMMIT so a failure never destroys it.
     let new_block = channel_to_block(&new_channel);
     let old_path = vs.vault.block_path(&normalized_old);
-    if let Err(e) = files::write_block_file(&vs.vault, &new_block) {
-        vs.conn.execute("ROLLBACK", []).ok();
-        restore_collection_backups(&vs.conn, &vs.vault, &backups);
-        return Err(e.into());
-    }
+    let new_path = vs.vault.block_path(&normalized_new);
+    let page_bytes = serialize_block(&new_block).into_bytes();
+    writes.push(if old_path.exists() {
+        SourceFileWrite::rename_with_bytes(old_path.clone(), new_path, page_bytes)
+    } else {
+        SourceFileWrite::create(new_path, page_bytes)
+    });
 
-    if let Err(e) = index::upsert_channel(&vs.conn, &new_channel) {
-        vs.conn.execute("ROLLBACK", []).ok();
-        restore_collection_backups(&vs.conn, &vs.vault, &backups);
-        return Err(e.into());
-    }
-    if let Err(e) = index::remove_channel(&vs.conn, &normalized_old) {
-        vs.conn.execute("ROLLBACK", []).ok();
-        restore_collection_backups(&vs.conn, &vs.vault, &backups);
-        return Err(e.into());
-    }
-
-    vs.conn
-        .execute("COMMIT", [])
-        .map_err(|e| CommandError::Internal(e.to_string()))?;
-
-    if old_path.exists() {
-        let _ = std::fs::remove_file(&old_path);
-    }
+    state.suppress_paths(
+        std::iter::once(old_path).chain(writes.iter().map(|write| write.path.clone())),
+        Duration::from_millis(SOURCE_MUTATION_WATCHER_SUPPRESSION_MS),
+    )?;
+    let staged = StagedSourceMutation::stage(writes).map_err(source_mutation_command_error)?;
+    staged
+        .commit_with_index(&vs.conn, "rename_channel", |index_conn| {
+            for (block, origin, index_warning) in &prepared_blocks {
+                index::upsert_block_with_diagnostics(
+                    index_conn,
+                    block,
+                    Some(vs.vault.root()),
+                    Some(origin.as_str()),
+                    index_warning.as_deref(),
+                )?;
+            }
+            index::upsert_channel(index_conn, &new_channel)?;
+            index::remove_channel(index_conn, &normalized_old)?;
+            Ok(())
+        })
+        .map_err(source_mutation_command_error)?;
 
     let tags = index::get_all_tags(&vs.conn)?;
     let count = tags
@@ -438,10 +407,13 @@ pub struct PreviewItem {
 /// Max `limit` thumbnails per channel.
 #[tauri::command]
 pub async fn list_channel_previews(
+    app: AppHandle,
     state: State<'_, AppState>,
     limit: usize,
 ) -> Result<HashMap<String, Vec<PreviewItem>>, CommandError> {
-    let db_path = current_vault_layout(&state)?.index_db_path();
+    let vault = current_vault_layout(&state)?;
+    ensure_vault_fresh(&app, vault.clone()).await?;
+    let db_path = vault.index_db_path();
     tauri::async_runtime::spawn_blocking(
         move || -> Result<HashMap<String, Vec<PreviewItem>>, CommandError> {
             let conn = db::open_read_only(&db_path)?;
@@ -488,7 +460,6 @@ pub fn delete_channel(state: State<'_, AppState>, tag: String) -> Result<bool, C
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
-    // Delete .md file
     let tag = normalize_collection_ref(&tag);
     if tag.is_empty() {
         return Err(CommandError::Internal("collection ref is empty".into()));
@@ -496,23 +467,17 @@ pub fn delete_channel(state: State<'_, AppState>, tag: String) -> Result<bool, C
     validate_collection_ref(&tag).map_err(CommandError::Internal)?;
 
     let md_path = vs.vault.block_path(&tag);
-    if md_path.exists() {
-        let trashed = {
-            #[cfg(not(target_os = "ios"))]
-            {
-                trash::delete(&md_path).is_ok()
-            }
-            #[cfg(target_os = "ios")]
-            {
-                false
-            }
-        };
-        if !trashed {
-            let _ = std::fs::remove_file(&md_path);
-        }
-    }
-
-    Ok(index::remove_channel(&vs.conn, &tag)?)
+    let writes = if md_path.exists() {
+        vec![SourceFileWrite::delete(md_path)]
+    } else {
+        Vec::new()
+    };
+    let staged = StagedSourceMutation::stage(writes).map_err(source_mutation_command_error)?;
+    staged
+        .commit_with_index(&vs.conn, "delete_channel", |index_conn| {
+            index::remove_channel(index_conn, &tag)
+        })
+        .map_err(source_mutation_command_error)
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -557,4 +522,51 @@ fn load_channels(conn: &rusqlite::Connection) -> anyhow::Result<Vec<ChannelDto>>
             ChannelDto::from_channel(ch, count)
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channel_page_rename_never_overwrites_disk_only_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_path = dir.path().join("Old.md");
+        let new_path = dir.path().join("New.md");
+        std::fs::write(&old_path, b"old page").unwrap();
+        std::fs::write(&new_path, b"disk-only target").unwrap();
+
+        let result = StagedSourceMutation::stage(vec![SourceFileWrite::rename_with_bytes(
+            old_path.clone(),
+            new_path.clone(),
+            b"new page".to_vec(),
+        )]);
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&old_path).unwrap(), b"old page");
+        assert_eq!(std::fs::read(&new_path).unwrap(), b"disk-only target");
+    }
+
+    #[test]
+    fn channel_page_rename_can_be_rolled_back_after_index_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_path = dir.path().join("Old.md");
+        let new_path = dir.path().join("New.md");
+        std::fs::write(&old_path, b"old page").unwrap();
+
+        let staged = StagedSourceMutation::stage(vec![SourceFileWrite::rename_with_bytes(
+            old_path.clone(),
+            new_path.clone(),
+            b"new page".to_vec(),
+        )])
+        .unwrap();
+        staged
+            .commit()
+            .unwrap()
+            .rollback("injected index failure")
+            .unwrap();
+
+        assert_eq!(std::fs::read(&old_path).unwrap(), b"old page");
+        assert!(!new_path.exists());
+    }
 }

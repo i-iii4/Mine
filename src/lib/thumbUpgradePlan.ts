@@ -2,7 +2,7 @@
 //
 // One upgrade request (from the startup backlog enumeration or a live
 // `thumb:upgrade-requested` event) can carry a block-level media asset —
-// an image or a video — and/or a set of per-tile video posters for a
+// an image or a video — and/or a set of per-tile derived previews for a
 // gallery block. An empty `mediaPath` means only tile posters are missing.
 //
 // Splitting this expansion out of the hook keeps the routing — which media
@@ -17,14 +17,15 @@ export interface ThumbUpgradeInput {
   /** Empty when only tile posters are missing (block thumb already a JPEG). */
   mediaPath: string;
   kind: "image" | "video";
-  /** Per-video gallery tile posters; absent for non-gallery blocks. */
+  /** Gallery tile previews; absent for non-gallery blocks. */
   tilePosters?: TilePosterUpgrade[];
 }
 
 export type ThumbUpgradeAction =
   | { kind: "image"; key: string; slug: string; mediaPath: string }
   | { kind: "video"; key: string; slug: string; mediaPath: string }
-  | { kind: "tile"; key: string; slug: string; tile: TilePosterUpgrade };
+  | { kind: "tile-image"; key: string; slug: string; tile: TilePosterUpgrade }
+  | { kind: "tile-video"; key: string; slug: string; tile: TilePosterUpgrade };
 
 /** Dedup key for a block's own thumb (image or video decode to the same
  *  destination — a block has a single kind, so these never collide). */
@@ -32,7 +33,7 @@ export function blockThumbKey(slug: string): string {
   return `thumb:${slug}`;
 }
 
-/** Dedup key for one gallery video tile's poster. */
+/** Dedup key for one gallery tile preview. */
 export function tilePosterKey(posterName: string): string {
   return `tile:${posterName}`;
 }
@@ -53,7 +54,7 @@ export function planThumbUpgrade(input: ThumbUpgradeInput): ThumbUpgradeAction[]
 
   for (const tile of input.tilePosters ?? []) {
     actions.push({
-      kind: "tile",
+      kind: tile.kind === "image" ? "tile-image" : "tile-video",
       key: tilePosterKey(tile.posterName),
       slug: input.slug,
       tile,

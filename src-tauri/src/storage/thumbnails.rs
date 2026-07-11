@@ -15,11 +15,11 @@ use std::sync::LazyLock;
 
 use crate::domain::block::{derive_title_fields, strip_first_markdown_h1, Block};
 use crate::domain::vault::VaultLayout;
-use crate::storage::media_refs;
 use crate::storage::preview_plan::{
     self, media_ext_lower, PreviewMediaKind, MICRO_PREVIEW_IMAGE_LIMIT, PREVIEW_TILE_LIMIT,
 };
 pub use crate::storage::preview_plan::{is_image_ext, is_video_ext};
+use crate::storage::{files, media_refs};
 
 /// Default max side for thumbnails: 640px covers masonry columns up to
 /// ~320px CSS at 2x Retina. Real columns run 220-304+ CSS px, and portrait
@@ -52,13 +52,21 @@ where
     }
 
     let file_name = dest.file_name().and_then(|n| n.to_str()).unwrap_or("thumb");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     let tmp = dest.with_file_name(format!(
-        "{file_name}.tmp.{}.{}",
+        "{file_name}.tmp.{}.{}.{}",
         std::process::id(),
+        nonce,
         TMP_SEQ.fetch_add(1, Ordering::Relaxed)
     ));
 
-    let file = std::fs::File::create(&tmp)
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
         .with_context(|| format!("failed to create temp thumb: {}", tmp.display()))?;
     let mut writer = std::io::BufWriter::new(file);
 
@@ -83,13 +91,17 @@ where
     }
     drop(file);
 
-    std::fs::rename(&tmp, dest).with_context(|| {
+    if let Err(error) = std::fs::rename(&tmp, dest).with_context(|| {
         format!(
             "failed to rename temp thumb {} -> {}",
             tmp.display(),
             dest.display()
         )
-    })?;
+    }) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    files::sync_parent_directory(dest)?;
     Ok(())
 }
 
@@ -1133,6 +1145,7 @@ mod tests {
     use super::*;
     use crate::domain::block::BlockType;
     use ab_glyph::Font;
+    use std::io::Write as _;
 
     /// Create a solid-color test image of given dimensions.
     fn create_test_image_with_color(path: &Path, width: u32, height: u32, color: [u8; 3]) {
@@ -1142,6 +1155,29 @@ mod tests {
 
     fn create_test_image(path: &Path, width: u32, height: u32) {
         create_test_image_with_color(path, width, height, [100, 150, 200]);
+    }
+
+    #[test]
+    fn atomic_thumb_write_failure_preserves_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("thumb.jpg");
+        std::fs::write(&dest, b"complete-old-thumb").unwrap();
+
+        let error = write_thumb_atomically(&dest, |writer| {
+            writer.write_all(b"partial-new-thumb")?;
+            anyhow::bail!("injected encoder failure")
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("injected encoder failure"));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"complete-old-thumb");
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp.")
+        }));
     }
 
     #[test]

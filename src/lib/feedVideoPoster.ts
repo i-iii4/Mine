@@ -1,16 +1,14 @@
 import type { CardLayoutMediaItem } from "@/lib/cardLayout";
 import type { NormalizedFeedPreviewManifest } from "@/lib/feedPreview";
 import type { NormalizedFeedPlaybackDescriptor } from "@/lib/feedPlayback";
-import { previewAssetUrl, thumbnailUrl } from "@/lib/assets";
+import { previewAssetUrl } from "@/lib/assets";
 
 export function buildFeedVideoPosterCandidates({
-  slug,
   thumbsRootPath,
   previewManifest,
   playback,
   primaryMedia,
 }: {
-  slug: string;
   thumbsRootPath: string;
   previewManifest: NormalizedFeedPreviewManifest | null;
   playback: NormalizedFeedPlaybackDescriptor | null;
@@ -40,7 +38,5 @@ export function buildFeedVideoPosterCandidates({
       ? previewAssetUrl(thumbsRootPath, primaryMedia.previewPath)
       : null,
   );
-  push(thumbnailUrl(thumbsRootPath, slug));
-
   return candidates;
 }

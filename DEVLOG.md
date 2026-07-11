@@ -1,5 +1,63 @@
 # Devlog
 
+## 10.07.2026 — Architecture remediation A0–A4 and cold-space follow-up
+
+### Задача
+Закрыть audited desktop architecture sequence: filesystem-first route catch-up,
+watcher/storage consistency, derived previews, Graph View M1 и регресс быстрого
+скролла Grid; затем проверить результат на реальных пространствах перед push.
+
+### Что сделано
+- Добавлен coalesced `VaultReconciler`: route-facing reads догоняют прямые
+  create/edit/delete в source vault даже при пропущенном watcher event.
+- Source mutations переведены на staged same-directory writes, fsync, atomic
+  rename и rollback-safe compound operations; watcher получил recovery и
+  current-vault cancellation.
+- Derived preview pipeline получил persisted source stamps, existence-backed
+  manifests, legacy backfill, progressive publication пакетами по 24 строки и
+  единый per-vault coordinator для preview/thumb workers.
+- Concurrent SQLite schema/bootstrap paths сериализованы; добавлена
+  многопоточная regression-проверка открытия одного derived store.
+- Graph View доведён до M1: wikilink/related edges, scopes, graph-local search,
+  selection/keyboard contract, stable Canvas interactions и browser acceptance.
+- Grid сначала публикует ограниченный usable snapshot, прогревает следующую
+  страницу и использует first-frame emergency window с расширением overscan на
+  следующем кадре; browser audit теперь проверяет immediate/first-frame blankness.
+- Архитектурные документы и спецификации синхронизированы с A0–A4.
+
+### Реальная проверка
+- Прогретое пространство `Mine` работает стабильно; существенных frontend-
+  регрессий в текущем прогоне не обнаружено.
+- В `Тест` settled inventory сходится полностью: 294 source Markdown = 256
+  content blocks + 38 collections.
+- На первом открытии `Тест` всё ещё встречаются пустые карточки. Это выделено в
+  новую активную Phase A5, а не скрыто под завершённым A3.
+- Эталонный остаточный кейс — `/Users/i_iii/Desktop/Тест/ai-2027-3.md`: source
+  является metadata-only link, но read model проецирует его как media и считает
+  480x480 text placeholder готовым preview. План требует type-correct fallback и
+  semantic, а не только filesystem, проверку `preview_state = ready`.
+
+### Последующая проверка — Phase A5
+- Создать sanitized clone `Тест` с новым vault id и пустым derived store, не
+  изменяя пользовательское пространство.
+- Сверить source -> content/collection projection на первом и settled snapshot.
+- Автоматизировать cold-open и быстрый `Mine -> Test -> Mine -> Test`, включая
+  отсутствие blank frames, отмену obsolete workers и стабильность после restart.
+- Проверить metadata-only links, missing/invalid assets и browser-decode fallback;
+  завершить реальным ручным прогоном исходного `Тест`.
+
+### Проверки
+- `bun run lint`
+- `bun run test:frontend` — 72 test files, 658 tests
+- `cargo test --workspace --all-targets --locked`
+- `cargo clippy --workspace --all-targets --locked` — завершён с существующими
+  workspace warnings; strict `-D warnings` ими по-прежнему блокируется
+- `cargo fmt --all -- --check`
+- `bun run test:feed-scroll` — desktop и narrow browser acceptance passed
+- `git diff --check`
+- `cargo tauri build --debug --bundles app`
+- Fresh bundle: `target/debug/bundle/macos/Mine.app`
+
 ## 10.07.2026 — Surface-relative active states and unified component fills
 
 ### Задача

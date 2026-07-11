@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::domain::vault::VaultLayout;
+use crate::storage::files;
 
 const PENDING_UPLOADS_DIR: &str = "pending_uploads";
 const MANIFEST_FILE: &str = "manifest.json";
@@ -246,7 +247,7 @@ fn dedupe_final_filename(vault_root: &Path, uploaded: &str, final_stem: &str) ->
 fn write_manifest(dir: &Path, manifest: &PendingUploadManifest) -> Result<()> {
     let manifest_path = dir.join(MANIFEST_FILE);
     let raw = serde_json::to_vec_pretty(manifest)?;
-    std::fs::write(&manifest_path, raw).with_context(|| {
+    files::write_atomically(&manifest_path, &raw).with_context(|| {
         format!(
             "failed to write pending manifest {}",
             manifest_path.display()
@@ -255,28 +256,11 @@ fn write_manifest(dir: &Path, manifest: &PendingUploadManifest) -> Result<()> {
 }
 
 fn write_create_new(path: &Path, bytes: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    std::io::Write::write_all(&mut file, bytes)?;
-    Ok(())
+    files::write_new_atomically(path, bytes)
 }
 
 fn copy_create_new(src: &Path, dest: &Path) -> Result<()> {
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut input = std::fs::File::open(src)?;
-    let mut output = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(dest)?;
-    std::io::copy(&mut input, &mut output)?;
-    Ok(())
+    files::copy_new_atomically(src, dest)
 }
 
 #[cfg(test)]

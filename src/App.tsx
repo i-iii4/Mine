@@ -881,6 +881,8 @@ export function AppWithVault({
   const vaultStatsRequestIdRef = useRef(0);
   const vaultStatsFrameRef = useRef<number | null>(null);
   const routeSnapshotCacheRef = useRef<Map<string, GridSnapshot>>(new Map());
+  const warmRoutePageBufferRef = useRef<Set<string>>(new Set());
+  const paginationRequestRef = useRef<object | null>(null);
   const cardActionsMenuSequenceRef = useRef(0);
   const lastRevalidatedRouteKeyRef = useRef<string | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
@@ -962,6 +964,7 @@ export function AppWithVault({
 
   const invalidateRouteSnapshots = useCallback(() => {
     routeSnapshotCacheRef.current.clear();
+    warmRoutePageBufferRef.current.clear();
     lastRevalidatedRouteKeyRef.current = null;
   }, []);
 
@@ -1099,9 +1102,13 @@ export function AppWithVault({
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const invalidateRoutesForTags = useCallback((affectedTags: readonly string[]) => {
-    routeSnapshotCacheRef.current.delete(routeKeyFor(undefined));
+    const allRouteKey = routeKeyFor(undefined);
+    routeSnapshotCacheRef.current.delete(allRouteKey);
+    warmRoutePageBufferRef.current.delete(allRouteKey);
     for (const tag of affectedTags) {
-      routeSnapshotCacheRef.current.delete(routeKeyFor(tag));
+      const routeKey = routeKeyFor(tag);
+      routeSnapshotCacheRef.current.delete(routeKey);
+      warmRoutePageBufferRef.current.delete(routeKey);
     }
     lastRevalidatedRouteKeyRef.current = null;
   }, [routeKeyFor]);
@@ -1125,6 +1132,8 @@ export function AppWithVault({
     preserveLoadedRange?: boolean;
   } = {}) => {
     const requestId = ++loadRequestIdRef.current;
+    paginationRequestRef.current = null;
+    setLoadingMoreBlocks(false);
     const pathAtStart = vaultPathRef.current;
     const tagAtStart = tag;
     const routeKey = routeKeyFor(tagAtStart);
@@ -1393,16 +1402,20 @@ export function AppWithVault({
   }, [invalidateRouteSnapshots, loadGridSnapshot, loadPreviews, loadTaxonomySnapshotState, loadVaultStats]);
 
   const loadMoreBlocks = useCallback(async () => {
-    if (loadingMoreBlocks || !hasMoreBlocks) return;
+    if (paginationRequestRef.current || !hasMoreBlocks) return;
+    const requestToken = {};
+    paginationRequestRef.current = requestToken;
     const pathAtStart = vaultPathRef.current;
     const tagAtStart = currentTagRef.current;
     const offsetAtStart = blocksRef.current.length;
+    const routeLoadRequestIdAtStart = loadRequestIdRef.current;
     setLoadingMoreBlocks(true);
     try {
       const grid = await fetchGridBlocks(tagAtStart, offsetAtStart, GRID_PAGE_SIZE);
       if (
         vaultPathRef.current !== pathAtStart
         || currentTagRef.current !== tagAtStart
+        || loadRequestIdRef.current !== routeLoadRequestIdAtStart
       ) {
         return;
       }
@@ -1424,19 +1437,53 @@ export function AppWithVault({
       if (
         vaultPathRef.current === pathAtStart
         && currentTagRef.current === tagAtStart
+        && loadRequestIdRef.current === routeLoadRequestIdAtStart
       ) {
         console.error("[LOAD_MORE] FAILED:", msg, err);
         setLoadError(msg);
       }
     } finally {
+      if (paginationRequestRef.current === requestToken) {
+        paginationRequestRef.current = null;
+      }
       if (
         vaultPathRef.current === pathAtStart
         && currentTagRef.current === tagAtStart
+        && loadRequestIdRef.current === routeLoadRequestIdAtStart
       ) {
         setLoadingMoreBlocks(false);
       }
     }
-  }, [hasMoreBlocks, loadingMoreBlocks, routeKeyFor]);
+  }, [hasMoreBlocks, routeKeyFor]);
+
+  // Paint the first page immediately, then warm exactly one additional page
+  // for the active route. Subsequent pages remain demand-driven by Grid's
+  // adaptive runway, so startup stays fast without exposing page boundaries
+  // during a native trackpad flick.
+  useEffect(() => {
+    if (
+      !vaultReady
+      || mainViewMode !== "grid"
+      || !gridRouteSnapshotReady
+      || blocks.length === 0
+      || !hasMoreBlocks
+    ) {
+      return;
+    }
+    const routeKey = routeKeyFor(currentTag);
+    if (warmRoutePageBufferRef.current.has(routeKey)) return;
+    warmRoutePageBufferRef.current.add(routeKey);
+    void loadMoreBlocks();
+  }, [
+    blocks.length,
+    currentTag,
+    gridRouteSnapshotReady,
+    hasMoreBlocks,
+    loadMoreBlocks,
+    mainViewMode,
+    routeKeyFor,
+    vaultReady,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1555,13 +1602,10 @@ export function AppWithVault({
     void loadVaultStatsRef.current(currentTag);
   }, [currentTag, vaultReady]);
 
-  // Passive thumb sweep on window focus / visibility changes.
-  // Covers the gap where `notify` on iCloud Drive does not reliably
-  // deliver Modify events: when the user returns to Mine after editing
-  // an image elsewhere (or after iCloud syncs a file from another
-  // device), we re-verify the thumb cache against current media mtimes
-  // and regenerate only what is actually stale. Throttled to at most
-  // once every 10 seconds so a flurry of focus events does not pile up.
+  // Filesystem catch-up plus passive thumb sweep on focus/visibility.
+  // The route refresh joins VaultReconciler before querying, so missed notify
+  // events cannot leave Grid/Sidebar stale when the user returns to Mine.
+  // Throttled to avoid turning a flurry of focus events into repeated scans.
   useEffect(() => {
     if (!vaultReady) {
       return;
@@ -1569,10 +1613,16 @@ export function AppWithVault({
     let lastRun = 0;
     const MIN_INTERVAL_MS = 10_000;
     const run = () => {
+      if (isSyncing) return;
       const now = Date.now();
       if (now - lastRun < MIN_INTERVAL_MS) return;
       if (document.visibilityState !== "visible") return;
       lastRun = now;
+      scheduleRefresh(
+        { grid: true, taxonomy: true, previews: true },
+        0,
+        { force: true },
+      );
       void sweepVaultThumbnails().catch((err) => {
         console.warn("[THUMB_SWEEP] failed:", err);
       });
@@ -1585,7 +1635,7 @@ export function AppWithVault({
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [vaultReady]);
+  }, [isSyncing, scheduleRefresh, vaultReady]);
 
   useEffect(() => {
     if (!vaultReady) {
@@ -3253,6 +3303,7 @@ export function AppWithVault({
                 scrollToTop={scrollToTopSignal}
                 blockDragActive={activeDragBlocks.length > 0}
                 detailOpen={Boolean(renderedDetailBlock)}
+                selectedBlockSlug={renderedDetailBlock?.slug ?? null}
                 keyboardNavigationDisabled={gridKeyboardNavigationDisabled}
                 restoreFocusSlug={gridFocusRestore?.slug ?? null}
                 restoreFocusSequence={gridFocusRestore?.sequence ?? 0}
@@ -3516,6 +3567,7 @@ interface RouteContext {
   scrollToTop: number;
   blockDragActive: boolean;
   detailOpen: boolean;
+  selectedBlockSlug: string | null;
   keyboardNavigationDisabled: boolean;
   restoreFocusSlug: string | null;
   restoreFocusSequence: number;
@@ -3561,6 +3613,8 @@ function AllBlocksPage() {
         loadedBlocks={ctx.blocks}
         thumbVersions={ctx.thumbVersions}
         hoverPreviewFrozen={ctx.hoverPreviewFrozen}
+        selectedSlug={ctx.selectedBlockSlug}
+        detailOpen={ctx.detailOpen}
         onOpenBlock={ctx.onOpenBlock}
         onOpenCardMenu={ctx.onOpenCardMenu}
         onNavigateCollection={ctx.onNavigateCollection}
@@ -3581,6 +3635,8 @@ function ChannelPage() {
         loadedBlocks={ctx.blocks}
         thumbVersions={ctx.thumbVersions}
         hoverPreviewFrozen={ctx.hoverPreviewFrozen}
+        selectedSlug={ctx.selectedBlockSlug}
+        detailOpen={ctx.detailOpen}
         onOpenBlock={ctx.onOpenBlock}
         onOpenCardMenu={ctx.onOpenCardMenu}
         onNavigateCollection={ctx.onNavigateCollection}

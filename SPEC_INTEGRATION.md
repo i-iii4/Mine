@@ -1,8 +1,13 @@
 # SPEC: integration layer (watcher + commands)
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md)
 
 Связующий слой: file watcher отслеживает изменения в vault, Tauri commands предоставляют API для фронтенда. Оркестрация файл → парсинг → индексация → thumbnail.
+
+Status: Phase A2 implemented. Watcher remains the low-latency invalidation
+source; `VaultReconciler` is the correctness boundary, watcher recovery replaces
+a failed native watcher, and compound source/index mutations use the
+storage-owned staged commit/rollback contract from [SPEC_STORAGE.md](SPEC_STORAGE.md).
 
 ---
 
@@ -30,7 +35,9 @@ classify_notify_event(event: &notify::Event, vault: &VaultLayout) -> Vec<VaultEv
 ### Поведение classify_notify_event
 
 - Принимает сырое событие `notify::Event`
-- Игнорирует пути внутри `.arena/`
+- Игнорирует все hidden/service directories (`.mine`, `.obsidian`, `.git`,
+  legacy `.arena`, `.mine-migration-backup`) и build/vendor directories such as
+  `node_modules`, `target`, `__pycache__`
 - Игнорирует директории
 - `.md` файлы → `BlockChanged` / `BlockDeleted`
 - Остальные файлы → `MediaChanged` / `MediaDeleted`
@@ -62,12 +69,18 @@ handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) -> Resu
 
 ### Поведение full_scan
 
-- Вызывает `storage::files::scan_md_files` для получения всех `.md`
-- Для каждого файла: `read_block_file` → `parse_block` → `upsert_block` + collect `ThumbJob`
-- Thumbnails генерируются в фоновом потоке через `storage::thumbnails::generate_for_block` (unified cascade)
-- Ошибки парсинга отдельных файлов логируются, не прерывают сканирование
-- Возвращает `ScanResult { indexed, errors }`
-- После completion background thumb gen вызывает `on_thumbs_done` callback (notify frontend to refresh previews)
+- Production startup/route catch-up uses `VaultReconciler`; legacy
+  `full_scan`/`incremental_scan` wrappers remain test-only compatibility helpers
+  and delegate to the same reconciler rather than implementing a second scan.
+- Reconciliation performs a metadata inventory, reads/parses only changed or
+  missing-stamp Markdown, commits source-index changes transactionally and
+  returns `ScanResult { indexed, errors }` from the typed report.
+- Classic thumbnails and existence-backed derived previews are scheduled after
+  the committed index generation; preview encoding is never part of the source
+  transaction.
+- Startup, rebuild and focus recovery use the same thumbnail-sweep coordinator.
+  Same-vault requests coalesce, the latest switched vault replaces obsolete
+  pending work, and a running sweep checks active-vault identity between jobs.
 
 ### Поведение index_md_file
 
@@ -85,6 +98,23 @@ handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) -> Resu
 - `MediaDeleted` → удаление thumbnail
 - External rename `.md` файла проходит через pending-remove queue + `body_hash` match (подробности в [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md)): при match handler вызывает `storage::index::rename_slug`, переносит derived artifacts и эмитит `block:renamed { old_slug, new_slug }`. Другие `.md` файлы и source media не переписываются.
 
+Watcher is a low-latency invalidation source, not the correctness boundary.
+Missing/coalesced platform events are repaired by `VaultReconciler` before final
+route-facing snapshots.
+
+### Watcher recovery
+
+- Native watcher errors emit `watcher-error` with vault path, consecutive error
+  count and a stable error kind; errors are never log-only.
+- Three consecutive callback/handler errors within 30 seconds schedule one
+  coalesced reconciliation pass.
+- A successful watcher event or reconciliation resets the consecutive counter.
+- Recovery first completes one coalesced reconciliation, then starts a
+  replacement native watcher and atomically swaps the single `AppState.watcher`
+  slot. Dropping the previous handle stops it; no two watcher slots remain
+  active.
+- `watcher-error` and recovery events never contain source content.
+
 ### Tauri events (frontend subscribers)
 
 Все события эмитятся через `tauri::Manager::emit`. Frontend subscribers в `src/hooks/useChannelPreviewsEvents.ts` и `src/hooks/useThumbnailUpgrade.ts`.
@@ -96,6 +126,66 @@ handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) -> Resu
 | `block:renamed` | `{ old_slug: string, new_slug: string }` | watcher external rename path и `rename_block_file` |
 | `thumb:updated` | `{ slug: string }` | `save_thumb` command и фоновая генерация |
 | `thumb:upgrade-requested` | `{ slug: string, media_path: string, kind: "image" \| "video" }` | `index_md_file` когда Rust cascade дал text placeholder для block с embedded media |
+
+## commands/freshness coordinator
+
+Status: implemented in Phase A1. The coordinator owns one reconciliation
+generation per vault, exposes typed degraded/failure results and emits one
+`vault-freshness-changed` diagnostic event for each leader generation.
+
+```rust
+enum VaultFreshnessState {
+    Fresh { generation: u64 },
+    Reconciling { previous_generation: u64 },
+    Degraded { generation: u64, error_count: usize },
+}
+
+struct VaultFreshnessSnapshot {
+    vault_path: String,
+    state: VaultFreshnessState,
+    last_report: Option<ReconcileReportSummary>,
+}
+```
+
+The coordinator owns one in-flight `VaultReconciler` pass per vault. Calls that
+arrive while it is running join the same generation and wait for the same
+result. They must not queue another inventory scan immediately afterward.
+
+### Route-facing read sequence
+
+The following commands use one shared helper before their final query:
+`list_grid_blocks`, `list_tags`, `list_channels`, `list_channel_previews`,
+`search`, `get_block`, `get_vault_stats`, and `list_graph_snapshot`.
+
+1. Capture vault identity/path without retaining `vault_state` mutex ownership.
+2. Join or start reconciliation on a dedicated writable SQLite connection.
+3. On `fresh`, open/read the committed generation and return the final snapshot.
+4. On `degraded`, return a typed freshness error alongside any explicitly
+   provisional cached frontend snapshot; never label stale data as fresh.
+
+The frontend may paint a route-cache snapshot immediately during
+`reconciling`, but it is provisional. Completion emits
+`vault-freshness-changed`; Grid, Search, Detail, Sidebar and Graph replace the
+provisional data from their existing route commands.
+
+### Lock order
+
+- Never wait for reconciliation while holding `vault_state`, `watcher`,
+  `sync_tracker`, `suppressed_paths` or thumbnail sweep locks.
+- Coordinator state is acquired only to join/start/finish a generation; no
+  filesystem or SQLite work runs while that mutex is held.
+- Reconciliation uses a dedicated DB connection and owns its SQLite transaction
+  only after all AppState locks are released.
+- Command-driven source writes finish/roll back before publishing dirty state;
+  watcher suppression is registered before the first filesystem mutation.
+
+### Performance and observability
+
+- One route burst maps to one reconciliation generation.
+- Provisional cache paint is not delayed by reconciliation.
+- Final refresh emits once per generation, not once per changed file.
+- Development diagnostics expose generation, joined callers, inventory count,
+  parsed count, write count, errors and elapsed time.
 
 ---
 
@@ -134,18 +224,27 @@ enum CommandError {
 ## commands/vault
 
 ```rust
-#[tauri::command] select_vault(state, path: String) -> Result<ScanResult, CommandError>
+#[tauri::command] select_vault(app, state, path: String) -> Result<VaultOpenResult, CommandError>
 #[tauri::command] get_vault_path(state) -> Result<Option<String>, CommandError>
 ```
 
 ### Поведение select_vault
 
-1. Создать `VaultLayout` из `path`
-2. Создать `.arena/cache/thumbs/` директории
-3. Открыть/создать БД (`storage::db::open_or_create`)
-4. Полное сканирование (`watcher::handler::full_scan`)
-5. Обновить `AppState.vault_state`
-6. Вернуть `ScanResult`
+1. Resolve `.mine/vault-id`, migrate known legacy `.arena` identity once and
+   remove known legacy derived artifacts from the source vault.
+2. Create/open the per-device derived store under Application Support
+   (`index.db`, `cache/thumbs`, `cache/audio`), never inside the source vault.
+3. Expand asset scope, open the local SQLite snapshot and start exactly one
+   native watcher.
+4. Publish `VaultState` and return `VaultOpenResult` immediately with cached
+   counts plus `sync_in_progress`/migration state.
+5. Schedule background reconciliation, classic thumbnail sweep and derived
+   preview work through their shared app-level coordinators. Dirty events
+   arriving during sync coalesce into another pass; switching vaults cancels
+   the previous vault between jobs and suppresses its stale completion events.
+6. Emit `vault-sync-started` / `vault-sync-finished`; route-facing commands also
+   join `ensure_vault_fresh`, so a missed startup event cannot leave stale final
+   reads.
 
 ---
 

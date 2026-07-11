@@ -481,7 +481,15 @@ iOS UI contract:
 
 - `App.tsx` больше не хранит в памяти весь корпус `LightBlock` ради клиентской фильтрации. Горячий путь — `list_grid_blocks(current_tag)`: backend сразу отдаёт карточки текущего маршрута, исключает channel-документы и не передаёт per-block tag arrays. Полные теги блока догружаются через `get_block(slug)` только когда открыт hover/context menu или Detail.
 - Surface Search расширяет тот же route-facing read model: `Cmd+F` передаёт `query` в `list_grid_blocks`, backend фильтрует текущий route и возвращает `GridSnapshot` с relevance ordering и optional match excerpts. Non-empty Grid search проходит через `storage::search_engine`: SQLite FTS5 lexical/alias retrieval, searchable metadata chunks (`author`, `url` без видимого highlight), chunk-based fuzzy matching, local multilingual `fastembed` semantic vectors и deterministic fusion/rerank. Single-token Latin queries are strict, bypass semantic embedding work and do not inject semantic-only cards without a visible match; semantic-only retrieval is reserved for Cyrillic cross-language and multi-token semantic queries. Отдельной Search route/palette нет; `Shift+Cmd+F` фильтрует только sidebar taxonomy. Полный контракт: [SPEC_SEARCH.md](SPEC_SEARCH.md).
-- Открытие vault двухфазное: `select_vault` / `get_vault_path` поднимают SQLite, watcher и последний индексированный snapshot сразу, а `full_scan()` уходит в фоновый поток. Фронтенд слушает `vault-sync-started` / `vault-sync-finished` и обновляет snapshot после завершения синхронизации, не блокируя первый usable paint.
+- Открытие vault двухфазное: `select_vault` / `get_vault_path` поднимают SQLite,
+  watcher и последний индексированный snapshot сразу, а единый
+  `VaultReconciler` выполняет коалесцированный metadata-first catch-up в фоне.
+  Persisted `source_stamp` сравнивает `mtime_ns + size` Markdown и media
+  dependencies: неизменённые файлы не читаются, create/edit/delete восстанавливаются
+  даже после пропущенного watcher event. Grid, Search, Detail, Sidebar и Graph
+  проходят через `ensure_vault_fresh`; provisional cached snapshot заменяется
+  fresh snapshot после committed reconciliation без блокировки первого usable
+  paint.
 - Переключение vault не делает `window.location.reload()`. `App.tsx` remount'ит `AppWithVault` по `key={vaultPath}`, сбрасывает локальное состояние и игнорирует stale async-ответы через `vaultPathRef + requestId`.
 - `App.tsx` держит per-route snapshot cache (`tag -> GridSnapshot`). Повторный переход в уже посещённый канал сначала применяет локальный snapshot синхронно, а taxonomy (`list_tags` / `list_channels`) не перезапрашивается на чистом route switch. Это убирает лишний IPC round-trip и второй `list_grid_blocks` на старте после `setTags/setChannels`.
 - `App.tsx` также держит route/query identity последнего применённого
@@ -490,13 +498,14 @@ iOS UI contract:
   является доказательством пустого канала: во время быстрого uncached route
   switch это может быть pending state предыдущего snapshot.
 - Graph View добавляет отдельный route-facing read model `GraphSnapshot` вместо
-  попытки строить связи из `LightBlock[]` на фронтенде. Snapshot собирается из
-  SQLite и отдаёт typed nodes/links для Canvas force-directed renderer. M0
-  реализует карточки и коллекции через `block_tags`/`channels`; `wikilinks`,
-  `related_notes` и unresolved nodes остаются следующим срезом. Это специальный
-  display surface: визуально живёт рядом с Grid, но backend-owned projection
-  обязателен, потому что связи не входят в обычный карточечный список. Полный
-  контракт: [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
+  попытки строить связи из `LightBlock[]` на фронтенде. M1 projection собирает
+  из SQLite card/collection/unresolved nodes и
+  collection-membership/wikilink/related-note edges, сохраняет provenance,
+  direction и duplicate count, а adjacency map обслуживает `current_route`,
+  `library` и 1/2-hop `ego` scopes без O(V x E) обхода. Backend также владеет
+  large-vault truncation и query materialization; Canvas владеет одним слоем
+  paint/hit-test/physics, controls/search/selection и Detail используют тот же
+  snapshot state. Полный контракт: [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
 - `Grid.tsx` использует собственный windowed masonry renderer: карточки позиционируются абсолютно, контейнер получает вычисленную `totalHeight`, в DOM остаются только видимые элементы плюс overscan.
 - Геометрия карточки больше не должна выводиться из независимых эвристик в `Card.tsx` и `cardHeight.ts`. Введён общий descriptor-driven слой (`src/lib/cardLayout.ts`): variant карточки, preview text и media geometry вычисляются один раз и затем используются и для рендера, и для расчёта высоты.
 - Контентные карточки больше не кодируют spacing через variant-specific `mt-*` ветки. Введён slot-based contract: frame карточки задаёт общий inset, media идёт первой, а текстовые слоты живут единым text-stack ниже (`media -> display title/preview -> author`). Внутренние gap'ы появляются только между реально существующими соседними слотами. Это устраняет phantom top gap и сохраняет системный отступ под media.
@@ -537,8 +546,12 @@ iOS UI contract:
   canvas feel by DOM inflation: a velocity-aware bounded render runway, a near
   image priority window and a wider preview-only media preload/decode window
   driven by viewport height and scroll velocity. `useGridScroll` keeps normal
-  scroll RAF-coalesced, but has a bounded anti-blank sync commit when a native
-  flick/jump would otherwise leave the real viewport with zero mounted items.
+  scroll RAF-coalesced, but has a two-stage anti-blank commit when a native
+  flick/jump would otherwise leave the real viewport with zero mounted items:
+  viewport + `128px` mounts synchronously, then regular adaptive overscan is
+  restored on the next frame. App paints the first 200-row snapshot immediately,
+  warms one page in background and requests later pages with a multi-screen
+  item runway, so pagination does not become visible loader choreography.
   Full contract:
   [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md).
 - **CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`, картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки картинки — нет layout shift.
@@ -1358,10 +1371,16 @@ micro preview used by Sidebar thumbnails after the shared sidebar hover delay,
 without changing graph node/link styling. Full contract:
 [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
 
-M0 note: the first implementation uses `card` nodes as 32px derived-thumbnail
-squares and `collection` nodes as label pills, with only
-`collection_membership` links. Detail-aware centering and wikilink/related-note
-edges are intentionally deferred.
+M1 implementation keeps card thumbnails and collection pills in the same Canvas
+coordinate system, uses rectangular collection collision with a 2px screen-space
+gap, and keeps hover visual-only. It adds directed wikilink/related-note edges,
+optional unresolved targets, route/library/ego scopes, edge toggles, local plus
+backend-materialized search, one pointer/keyboard selected-node state,
+Detail-aware conditional centering and an `aria-live` status. Initial
+`zoomToFit` waits for measured dimensions and 18 engine ticks; later resize
+updates Canvas dimensions without reheating or refitting. `bun run test:graph`
+is the dark/light real-browser pixel, hover, resize, request and interaction
+performance gate.
 
 ## Dependencies
 

@@ -22,6 +22,7 @@ use mine_lib::domain::collection::{
     MINE_COLLECTIONS_FIELD,
 };
 use mine_lib::domain::tag::normalize_tag;
+use mine_lib::storage::files;
 use mine_lib::util::now_iso8601;
 use serde_yaml::Value;
 
@@ -160,7 +161,7 @@ fn run(vault_path: &Path, apply: bool) -> anyhow::Result<Report> {
 
         for change in &report.file_changes {
             backup_file(vault_path, &backup_root, &change.path)?;
-            std::fs::write(&change.path, &change.rewritten)
+            files::write_atomically(&change.path, change.rewritten.as_bytes())
                 .with_context(|| format!("failed to write {}", change.path.display()))?;
         }
 

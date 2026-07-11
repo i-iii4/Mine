@@ -50,8 +50,6 @@ function roleRank(role: FeedMediaCandidateRole): number {
       return 0;
     case "tile-preview":
       return 1;
-    case "thumbnail":
-      return 2;
   }
 }
 

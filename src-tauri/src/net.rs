@@ -140,8 +140,9 @@ pub fn fetch_validated_get(
 }
 
 /// GET `url` and stream the body to `dest`, revalidating redirects and capping
-/// the body at [`MAX_MEDIA_BYTES`]. A partial file is removed on any error,
-/// including the over-size case, so callers never observe a truncated download.
+/// the body at [`MAX_MEDIA_BYTES`]. Bytes are streamed into a same-directory
+/// temp file, fsynced, then atomically linked under the final create-new name;
+/// callers never observe a partial download.
 pub fn download_validated_to_file(
     url: &str,
     dest: &Path,
@@ -152,26 +153,61 @@ pub fn download_validated_to_file(
     // take(MAX + 1) so an exactly-MAX body is not silently truncated: a read of
     // MAX + 1 bytes proves the body exceeds the cap.
     let mut reader = resp.into_reader().take(MAX_MEDIA_BYTES + 1);
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    let parent = dest
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("download destination has no parent: {}", dest.display()))?;
+    std::fs::create_dir_all(parent)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let file_name = dest
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("download");
+    let tmp = dest.with_file_name(format!("{file_name}.tmp.{}.{}", std::process::id(), nonce));
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(dest)
-        .with_context(|| format!("failed to create {}", dest.display()))?;
+        .open(&tmp)
+        .with_context(|| format!("failed to create {}", tmp.display()))?;
     match std::io::copy(&mut reader, &mut file) {
         Ok(written) if written > MAX_MEDIA_BYTES => {
             drop(file);
-            let _ = std::fs::remove_file(dest);
+            let _ = std::fs::remove_file(&tmp);
             bail!("media body exceeds {MAX_MEDIA_BYTES} bytes: {url}");
         }
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            if let Err(error) = file
+                .sync_all()
+                .with_context(|| format!("failed to fsync download {}", tmp.display()))
+            {
+                drop(file);
+                let _ = std::fs::remove_file(&tmp);
+                return Err(error);
+            }
+            drop(file);
+            if let Err(error) = std::fs::hard_link(&tmp, dest).with_context(|| {
+                format!(
+                    "failed to publish download {} -> {}",
+                    tmp.display(),
+                    dest.display()
+                )
+            }) {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(error);
+            }
+            let _ = std::fs::remove_file(&tmp);
+            std::fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .with_context(|| format!("failed to fsync directory {}", parent.display()))?;
+            Ok(())
+        }
         Err(error) => {
             drop(file);
-            let _ = std::fs::remove_file(dest);
+            let _ = std::fs::remove_file(&tmp);
             Err(anyhow::Error::from(error)
-                .context(format!("failed to write download to {}", dest.display())))
+                .context(format!("failed to write download to {}", tmp.display())))
         }
     }
 }

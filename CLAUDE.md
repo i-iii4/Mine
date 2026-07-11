@@ -119,7 +119,7 @@ local-arena/
 │   │   └── *Section.tsx        # AppearanceSection, SpacesSection, OrphansSection
 │   ├── components/
 │   │   ├── Grid.tsx            # Virtualized masonry grid — scroll-based windowing, direction-aware overscan, priority loading
-│   │   ├── GraphView.tsx       # Canvas force-directed graph: card thumbnails + collection labels
+│   │   ├── GraphView.tsx       # Graph M1: Canvas nodes/edges, scopes/search, selection/a11y
 │   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
 │   │   ├── Detail.tsx          # Lightbox: просмотр, коллекции, навигация стрелками
@@ -132,7 +132,11 @@ local-arena/
 │   │   └── useSidebarResize.ts # Хук ресайза сайдбара (pointer events + persist)
 │   ├── types/                  # TypeScript-типы (ручные, без specta)
 │   ├── lib/                    # commands.ts (IPC), assets.ts, utils.ts (cn()), recentTags.ts
+│   ├── dev/                    # Dev-only browser acceptance routes: FeedScrollAuditRoute, GraphAuditRoute
 │   └── styles/                 # Глобальные стили
+├── scripts/
+│   ├── feed-scroll-audit.mjs   # Playwright Grid scroll/source-request acceptance
+│   └── graph-view-audit.mjs    # Dark/light Canvas pixel/interaction/performance acceptance
 ├── extension/                  # Chrome/Safari веб-клиппер
 │   ├── background.js           # Service worker: контекстное меню, native messaging
 │   ├── content.js              # Content script: метаданные, Defuddle, Twitter/Instagram парсеры
@@ -232,6 +236,10 @@ cargo tauri dev                # Запуск в режиме разработк
 cargo tauri build              # Сборка .dmg/.app
 bun run build:extension        # Обязательная отдельная сборка Mine Clipper → extension/dist
 bun run lint                   # Линтинг фронтенда
+bun run test                   # Полная проверка: Vitest + Rust workspace tests
+bun run test:feed-scroll       # Browser Grid acceptance (requires running dev server)
+bun run test:graph             # Browser Graph Canvas acceptance (requires running dev server)
+bun run verify                 # Линтинг + полный test contract
 cargo clippy                   # Линтинг Rust
 ```
 

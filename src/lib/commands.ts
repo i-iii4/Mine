@@ -6,6 +6,8 @@ import type {
   IndexedBlock,
   GridSnapshot,
   GraphSnapshot,
+  GraphOptions,
+  GraphScope,
   LightBlock,
   DeleteBlockPlan,
   RenameBlockError,
@@ -101,9 +103,10 @@ export const listGridBlocks = (
     query: query ?? null,
   });
 
-export const listGraphSnapshot = (current_collection?: string) =>
+export const listGraphSnapshot = (scope: GraphScope, options: GraphOptions) =>
   invoke<GraphSnapshot>("list_graph_snapshot", {
-    current_collection: current_collection ?? null,
+    scope,
+    options,
   });
 
 export const getBlock = (slug: string) =>
@@ -321,10 +324,10 @@ export const importArenaChannels = (channels: ImportChannelRequest[]) =>
 
 // Thumbnails (Phase 2 pipeline — see SPEC_THUMBNAILS.md)
 export interface TilePosterUpgrade {
-  /** Destination poster filename (`<media-stem>.jpg`) = the tile's previewPath. */
+  /** Destination derived filename = the tile's previewPath. */
   posterName: string;
   mediaPath: string;
-  kind: "video";
+  kind: "image" | "video";
 }
 
 export interface ThumbUpgradeRequest {
@@ -332,7 +335,7 @@ export interface ThumbUpgradeRequest {
   /** Empty when only tile posters are missing (block thumb already a JPEG). */
   mediaPath: string;
   kind: "image" | "video";
-  /** Per-video gallery tile posters to generate for this block. */
+  /** Derived gallery tiles requiring the browser decoder. */
   tilePosters: TilePosterUpgrade[];
 }
 
@@ -347,8 +350,8 @@ export const saveThumb = (slug: string, bytes: Uint8Array) =>
     headers: { "x-slug": encodeURIComponent(slug) },
   });
 
-/** Write a decoded JPEG poster for one gallery video tile. `posterName` is the
- *  tile's previewPath (`<media-stem>.jpg`); `slug` owns the card to refresh. */
+/** Write a decoded JPEG for one gallery tile. `posterName` is the tile's
+ *  previewPath; `slug` owns the card to refresh. */
 export const saveTilePoster = (posterName: string, slug: string, bytes: Uint8Array) =>
   invoke<void>("save_tile_poster", bytes, {
     headers: {

@@ -1,6 +1,6 @@
 # SPEC: storage layer
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md)
 
 Персистентный слой: SQLite-индекс, файловые операции, thumbnail-генерация.
 Зависит от domain/ для типов. Не зависит от commands/ и watcher/.
@@ -79,6 +79,14 @@ CREATE TABLE wikilinks (
     target_slug TEXT NOT NULL,
     PRIMARY KEY (source_id, target_slug)
 );
+
+-- Filesystem freshness state shared by cards and collection pages.
+CREATE TABLE source_index_state (
+    slug TEXT PRIMARY KEY,
+    source_kind TEXT NOT NULL, -- block | channel
+    source_stamp TEXT NOT NULL, -- JSON SourceStamp
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 ```
 
 FTS5 синхронизируется через триггеры (INSERT/DELETE/UPDATE на blocks) и
@@ -86,6 +94,11 @@ FTS5 синхронизируется через триггеры (INSERT/DELETE
 rebuildable derived stores для alias/transliteration и semantic chunks/
 embeddings в local app data store; пользовательские `.md` файлы не
 переписываются ради поиска.
+Every read-write `open_or_create` runs schema/trigger migration inside one
+`BEGIN IMMEDIATE` transaction. Concurrent startup workers or native-host/app
+connections wait on SQLite's busy timeout instead of interleaving
+`DROP TRIGGER` / `CREATE TRIGGER`; a failed migration rolls back before the
+connection is returned.
 `title` in the physical schema is legacy metadata. The body column carries
 Markdown H1 text, so search still sees new content headings without storing a
 generated `frontmatter.title`.
@@ -133,6 +146,7 @@ CREATE TABLE search_embeddings (
 
 - `PRAGMA journal_mode = WAL;` — параллельные чтения
 - `PRAGMA foreign_keys = ON;` — каскадное удаление
+- `PRAGMA busy_timeout = 5000;` — bounded wait вместо immediate SQLITE_BUSY
 
 ---
 
@@ -211,6 +225,222 @@ columns (`first_image`, `media_urls`, `media_dimensions`, `preview_manifest`,
 rebuilds those cached columns from `body` and `media_file` without rewriting
 source Markdown. Bulk backfill uses a cached basename resolver so vault-wide
 attachment lookup is built once per pass, not once per note.
+
+## storage/reconcile — filesystem-first visibility
+
+Status: implemented in Phase A1 and consumed by Phase A3. Route-facing final
+reads join the coalesced reconciler before querying SQLite; the same persisted
+source stamps drive derived-preview invalidation.
+
+`VaultReconciler` is the only storage primitive allowed to claim that the local
+derived index reflects the current source vault. It compares a metadata-only
+filesystem inventory with persisted `SourceStamp` values and performs an
+incremental transaction. `full_scan` and route catch-up must delegate to this
+primitive instead of maintaining two reconciliation algorithms.
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct FileStamp {
+    size: u64,
+    mtime_ns: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct DependencyStamp {
+    vault_relative_path: String,
+    file: Option<FileStamp>, // None means the referenced file is missing
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SourceStamp {
+    markdown: FileStamp,
+    dependencies: Vec<DependencyStamp>, // sorted, unique, vault-relative
+}
+
+struct ReconcileReport {
+    inventory_markdown: usize,
+    unchanged: usize,
+    upserted: Vec<String>,
+    removed: Vec<String>,
+    dependency_changed: Vec<String>,
+    errors: Vec<ReconcileFileError>,
+    content_reads: usize,
+    database_writes: usize,
+    elapsed_ms: u64,
+}
+
+fn reconcile_vault(
+    conn: &Connection,
+    vault: &VaultLayout,
+) -> Result<ReconcileReport, ReconcileError>;
+```
+
+### Source stamp rules
+
+- Markdown stamp is `mtime_ns + size`; content hashing is not part of the warm
+  inventory path.
+- Dependencies are every resolved local source asset that can affect card
+  projection or derived previews: canonical `file`, thumbnail source, body
+  embeds and ordered `media_urls` sources.
+- Dependency paths are normalized vault-relative paths. Absolute paths,
+  symlink escapes and service directories are rejected.
+- An unchanged Markdown stamp permits dependency comparison without reading or
+  parsing Markdown because the previous dependency list is persisted inside
+  `source_stamp`.
+- A changed/missing stamp reparses only that source file, recomputes its
+  dependencies and updates index/search projection in the same transaction.
+- A missing `.md` removes the corresponding block/channel row and rebuildable
+  derived artifacts. User media is never deleted by reconciliation.
+- A malformed file does not make the report `fresh`: the last-good row may be
+  retained for recovery, but the report carries a typed file error and the
+  coordinator publishes `degraded`.
+
+### Error contract
+
+```rust
+enum ReconcileError {
+    Inventory { path: PathBuf, source: anyhow::Error },
+    State { source: anyhow::Error },
+    Commit { source: anyhow::Error },
+}
+
+enum ReconcileFileErrorKind {
+    Metadata,
+    Read,
+    Parse,
+    Index,
+    DependencyOutsideVault,
+}
+```
+
+Fatal inventory/database errors roll back the pass. Per-file errors are
+collected, do not prevent unrelated valid files from being reconciled, and
+prevent a false `fresh` state.
+
+### Performance budgets
+
+- Complexity: `O(N + D)` metadata calls for `N` Markdown files and persisted
+  dependency entries, and `O(delta)` content reads/parses/upserts.
+- An unchanged pass performs zero Markdown/media content reads and zero SQLite
+  writes.
+- Eight concurrent route-facing reads for one vault produce one inventory pass,
+  not eight passes.
+- Release benchmark on the reference Apple Silicon machine: 10,000 unchanged
+  Markdown entries complete in at most 500 ms; 100 changed notes in at most
+  2,000 ms, excluding asynchronous thumbnail encoding.
+- The report exposes counters and elapsed time so these budgets are assertions,
+  not comments.
+
+## storage/derived_preview — completion contract
+
+Status: implemented in Phase A3. A single app-level background worker drains a
+multi-vault coalescing queue; a full-vault request supersedes queued per-slug
+work for that vault, while changes arriving during a pass are drained before the
+worker exits.
+
+The feed never infers readiness from a non-null `preview_manifest` alone. Every
+manifest has an explicit derived state validated against the local cache.
+
+```rust
+enum DerivedPreviewState {
+    Missing,
+    Stale,
+    Ready,
+    Failed,
+}
+
+struct PreviewReconcileReport {
+    checked: usize,
+    ready: usize,
+    regenerated: usize,
+    changed_slugs: Vec<String>,
+    failed: Vec<PreviewFailure>,
+    cancelled: bool,
+}
+
+fn reconcile_preview_for_slug(
+    conn: &Connection,
+    vault: &VaultLayout,
+    slug: &str,
+) -> Result<Option<PreviewReconcileOutcome>>;
+
+fn reconcile_all_previews(
+    conn: &Connection,
+    vault: &VaultLayout,
+) -> Result<PreviewReconcileReport>;
+```
+
+Rules:
+
+- `Ready` means every referenced `primary_preview_path`/tile preview exists,
+  stays inside the derived cache and matches the current `source_stamp`.
+- Missing cache files and changed dependency stamps transition to `Stale` and
+  schedule regeneration; they never leave a manifest that lies about files.
+- Source reindex marks the row `Stale` but preserves the previous
+  `preview_source_stamp` until the new preview publishes. This lets the worker
+  distinguish an actual dependency change from a legacy row whose stamp was
+  never recorded.
+- A legacy row with `preview_source_stamp = NULL` may adopt already-valid JPEG
+  artifacts and stamp them without source decoding. A missing first tile for a
+  non-composite single-media manifest may be materialized atomically from its
+  valid primary preview.
+- Backfill is resumable and idempotent. It updates SQLite only after all files
+  for one manifest are durably renamed into place.
+- Encoding failures preserve the last complete manifest when safe, publish a
+  typed retryable/non-retryable error and never expose partial files.
+- Grid/Card/measurement code consumes only `Ready` derived paths. Original
+  source assets remain Detail-only.
+
+Budgets:
+
+- One app-level worker owns preview generation. It processes only the current
+  vault, cancels obsolete work between blocks after a vault switch, and
+  coalesces full-vault/per-slug requests rather than spawning competing
+  decoders/writers.
+- Full-pass batches are bounded to `24` blocks and yield between batches.
+  Changed slugs are published to the frontend after each completed batch; UI
+  readiness never waits for an entire large-vault pass.
+- A warm validation pass performs metadata checks only and schedules zero
+  decodes for `Ready` rows.
+- Feed browser acceptance permits zero source-vault image/video requests during
+  fast scroll; all requests must resolve inside the derived cache.
+- A stale worker may publish `Ready` only if the persisted source stamp still
+  equals the stamp it generated from; a compare-before-publish guard prevents an
+  old encode from overwriting a newer invalidation.
+
+## storage/source_mutation — atomicity contract
+
+Compound user mutations are planned and committed through one storage-owned
+boundary. Commands validate IPC and emit events; they do not sequence raw file
+and SQL writes themselves.
+
+```rust
+enum SourceMutationKind {
+    Create,
+    Rewrite,
+    Rename,
+    Delete,
+    ImportBlock,
+}
+
+enum SourceMutationError {
+    Validate { path: PathBuf, reason: String },
+    Stage { path: PathBuf, source: io::Error },
+    CommitFile { path: PathBuf, source: io::Error },
+    CommitIndex { operation: &'static str, source: rusqlite::Error },
+    Rollback { original: Box<SourceMutationError>, failures: Vec<PathBuf> },
+}
+```
+
+- New/replacement files use same-directory temp + file `fsync` + atomic rename;
+  create-new additionally rejects an occupied destination before commit.
+- Multi-file operations stage every new byte sequence before the first visible
+  rename and retain byte backups until the SQLite transaction commits.
+- A failure restores old source bytes and the previous index generation. If
+  rollback itself is incomplete, the operation returns `Rollback` and forces
+  freshness state to `degraded` so reconciliation runs before further reads.
+- Derived artifacts are never part of the source transaction and may be
+  regenerated after commit.
 
 ### Runtime/card kind derivation
 

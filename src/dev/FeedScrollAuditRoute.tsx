@@ -22,6 +22,10 @@ const AUDIT_MEDIA_ASSETS = [
   "/feed-scroll-audit/audit-4.svg",
   "/feed-scroll-audit/audit-5.svg",
 ];
+const AUDIT_SOURCE_ASSETS = Array.from(
+  { length: AUDIT_MEDIA_ASSETS.length },
+  (_, index) => `/__mine_forbidden_source__/original-${index}.png`,
+);
 
 const auditBodies = [
   "A compact article card with enough text to exercise normal feed wrapping and line-height measurement.",
@@ -35,10 +39,10 @@ function makeAuditPreviewManifest(index: number): string | null {
   if (index % 3 === 1) return null;
   const tileCount = index % 4 === 0 ? 4 : 2;
   const tiles = Array.from({ length: tileCount }, (_, tileIndex) => {
-    const asset = AUDIT_MEDIA_ASSETS[(index + tileIndex) % AUDIT_MEDIA_ASSETS.length]!;
+    const assetIndex = (index + tileIndex) % AUDIT_MEDIA_ASSETS.length;
     return {
-      source_path: asset,
-      preview_path: asset,
+      source_path: AUDIT_SOURCE_ASSETS[assetIndex]!,
+      preview_path: AUDIT_MEDIA_ASSETS[assetIndex]!,
       width: 960,
       height: 960,
       is_video: false,
@@ -83,10 +87,10 @@ function makeAuditBlock(index: number): LightBlock {
     author: index % 3 === 0 ? "Mine audit" : null,
     body: repeatedBody,
     preview_text: repeatedBody,
-    first_image: previewManifest ? AUDIT_MEDIA_ASSETS[index % AUDIT_MEDIA_ASSETS.length]! : null,
-    media_urls: previewManifest ? JSON.stringify(AUDIT_MEDIA_ASSETS.slice(0, 2)) : null,
+    first_image: previewManifest ? AUDIT_SOURCE_ASSETS[index % AUDIT_SOURCE_ASSETS.length]! : null,
+    media_urls: previewManifest ? JSON.stringify(AUDIT_SOURCE_ASSETS.slice(0, 2)) : null,
     media_dimensions: previewManifest
-      ? JSON.stringify(Object.fromEntries(AUDIT_MEDIA_ASSETS.map((asset) => [asset, [960, 960]])))
+      ? JSON.stringify(Object.fromEntries(AUDIT_SOURCE_ASSETS.map((asset) => [asset, [960, 960]])))
       : null,
     preview_manifest: previewManifest,
     feed_playback: null,

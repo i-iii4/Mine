@@ -32,6 +32,12 @@ import type { MasonryPosition } from "@/lib/masonryLayout";
 export interface UseGridScrollOptions {
   /** Compute the currently-visible items given the current scrollTop. */
   getVisibleItems: (scrollTop: number) => MasonryPosition[];
+  /**
+   * Compute the smallest window that can fill the real viewport immediately
+   * after a native jump. The regular overscan window is restored on the next
+   * animation frame, after the viewport is no longer blank.
+   */
+  getEmergencyVisibleItems?: (scrollTop: number) => MasonryPosition[];
   /** Reset the scroll visibility snapshot when route/layout scope changes. */
   resetKey?: string;
   /**
@@ -86,7 +92,12 @@ function resolveViewportHeight(element: HTMLElement, measuredViewportHeight?: nu
  */
 export function useGridScroll(
   scrollElementRef: React.RefObject<HTMLElement | null>,
-  { getVisibleItems, resetKey, viewportHeight }: UseGridScrollOptions,
+  {
+    getVisibleItems,
+    getEmergencyVisibleItems = getVisibleItems,
+    resetKey,
+    viewportHeight,
+  }: UseGridScrollOptions,
 ): MasonryPosition[] {
   const scrollTopRef = useRef(0);
   // Opaque tick state: bumped by the scroll handler when the visible set
@@ -100,11 +111,17 @@ export function useGridScroll(
   // so the scroll handler always sees the latest version without needing
   // to re-bind the native event listener.
   const getVisibleItemsRef = useRef(getVisibleItems);
+  const getEmergencyVisibleItemsRef = useRef(getEmergencyVisibleItems);
+  const emergencyVisibleItemsRef = useRef<MasonryPosition[] | null>(null);
   const viewportHeightRef = useRef(viewportHeight);
 
   useEffect(() => {
     getVisibleItemsRef.current = getVisibleItems;
   }, [getVisibleItems]);
+
+  useEffect(() => {
+    getEmergencyVisibleItemsRef.current = getEmergencyVisibleItems;
+  }, [getEmergencyVisibleItems]);
 
   useEffect(() => {
     viewportHeightRef.current = viewportHeight;
@@ -139,7 +156,8 @@ export function useGridScroll(
     // by useMemo. Scroll-driven updates come in via scrollTick which is
     // bumped by the scroll handler when the visible set changes.
     void scrollTick;
-    const items = getVisibleItems(scrollTopRef.current);
+    const items = emergencyVisibleItemsRef.current ?? getVisibleItems(scrollTopRef.current);
+    emergencyVisibleItemsRef.current = null;
     lastVisibleRef.current = items;
     return items;
   }, [getVisibleItems, scrollTick]);
@@ -164,12 +182,20 @@ export function useGridScroll(
           cancelAnimationFrame(rafId);
           rafId = null;
         }
-        const next = getVisibleItemsRef.current(scrollTopRef.current);
+        const next = getEmergencyVisibleItemsRef.current(scrollTopRef.current);
         if (!samePositions(next, lastVisibleRef.current)) {
+          emergencyVisibleItemsRef.current = next;
           flushSync(() => {
             setScrollTick((t) => t + 1);
           });
         }
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          const expanded = getVisibleItemsRef.current(scrollTopRef.current);
+          if (!samePositions(expanded, lastVisibleRef.current)) {
+            setScrollTick((t) => t + 1);
+          }
+        });
         return;
       }
 

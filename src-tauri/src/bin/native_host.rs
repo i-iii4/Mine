@@ -12,7 +12,9 @@
 // Contract: SPEC_CLIPPER.md
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{self, Read, Write};
+#[cfg(not(test))]
+use std::io::Write;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -300,15 +302,15 @@ fn ensure_native_vault_id(vault: &VaultLayout) -> Result<String, String> {
     if let Ok(existing) = std::fs::read_to_string(vault.legacy_vault_id_path()) {
         let trimmed = existing.trim();
         if !trimmed.is_empty() {
-            std::fs::write(&path, format!("{trimmed}\n"))
-                .map_err(|e| format!("failed to migrate vault-id to .mine: {e}"))?;
+            files::write_atomically(&path, format!("{trimmed}\n").as_bytes())
+                .map_err(|e| format!("failed to migrate vault-id to .mine: {e:#}"))?;
             return Ok(trimmed.to_string());
         }
     }
 
     let new_id = generate_native_vault_id()?;
-    std::fs::write(&path, format!("{new_id}\n"))
-        .map_err(|e| format!("failed to write vault-id: {e}"))?;
+    files::write_atomically(&path, format!("{new_id}\n").as_bytes())
+        .map_err(|e| format!("failed to write vault-id: {e:#}"))?;
     Ok(new_id)
 }
 
@@ -1097,15 +1099,7 @@ fn decode_data_url(data_url: &str) -> anyhow::Result<(Vec<u8>, String)> {
 }
 
 fn write_new_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    file.write_all(bytes)?;
-    Ok(())
+    files::write_new_atomically(path, bytes)
 }
 
 fn ext_from_url(url: &str) -> &str {

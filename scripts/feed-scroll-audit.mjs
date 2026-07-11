@@ -208,6 +208,42 @@ async function readViewportMetrics(page) {
   });
 }
 
+async function jumpAndReadImmediateViewport(page, top) {
+  return page.locator("[data-grid-scroll]").evaluate((element, nextTop) => {
+    element.scrollTop = nextTop;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+
+    const scrollRect = element.getBoundingClientRect();
+    const itemNodes = Array.from(
+      element.querySelectorAll("[data-feed-grid-item]"),
+    ).filter((node) => node instanceof HTMLElement);
+    let domViewportItemCount = 0;
+    let liveDomViewportItemCount = 0;
+
+    for (const node of itemNodes) {
+      const rect = node.getBoundingClientRect();
+      const overlaps =
+        rect.bottom >= scrollRect.top &&
+        rect.top <= scrollRect.bottom &&
+        rect.right >= scrollRect.left &&
+        rect.left <= scrollRect.right;
+      if (!overlaps) continue;
+      domViewportItemCount += 1;
+      if (node.getAttribute("data-feed-grid-item-live") === "true") {
+        liveDomViewportItemCount += 1;
+      }
+    }
+
+    return {
+      scrollTop: element.scrollTop,
+      domViewportItemCount,
+      liveDomViewportItemCount,
+      blankViewportRisk:
+        window.__MINE_FEED_SCROLL_DEBUG__?.viewport?.blankViewportRisk ?? null,
+    };
+  }, top);
+}
+
 async function readHeightDriftMetrics(page) {
   return page.evaluate(() => {
     const report = window.__MINE_FEED_SCROLL_DEBUG__?.heightDrift;
@@ -298,9 +334,15 @@ async function runViewportAudit(browser, viewport) {
     deviceScaleFactor: 1,
   });
   const consoleWarnings = [];
+  const forbiddenSourceRequests = [];
   page.on("console", (message) => {
     if (message.type() === "warning" || message.type() === "error") {
       consoleWarnings.push(message.text());
+    }
+  });
+  page.on("request", (request) => {
+    if (request.url().includes("__mine_forbidden_source__")) {
+      forbiddenSourceRequests.push(request.url());
     }
   });
 
@@ -324,15 +366,18 @@ async function runViewportAudit(browser, viewport) {
 
   for (const top of positions) {
     await resetPerformanceProbe(page);
-    await page.locator("[data-grid-scroll]").evaluate((element, nextTop) => {
-      element.scrollTop = nextTop;
-      element.dispatchEvent(new Event("scroll", { bubbles: true }));
-    }, top);
+    const immediateMetrics = await jumpAndReadImmediateViewport(page, top);
+    await waitForAnimationFrames(page, 1);
+    const firstFrameMetrics = await readViewportMetrics(page);
+    const performanceSample = await readPerformanceProbe(page);
+    const firstFramePixels = await screenshotViewport(page);
     await waitForViewportPaint(page);
     await waitForAnimationFrames(page, 2);
 
-    const performanceSample = await readPerformanceProbe(page);
     const metrics = await readViewportMetrics(page);
+    const forbiddenDomSources = await page.locator(
+      '[data-grid-scroll] img[src*="__mine_forbidden_source__"], [data-grid-scroll] video[src*="__mine_forbidden_source__"]',
+    ).count();
     const pixels = await screenshotViewport(page);
     await page.waitForFunction(
       () => typeof window.__MINE_REQUEST_HEIGHT_DRIFT_AUDIT__ === "function",
@@ -343,6 +388,11 @@ async function runViewportAudit(browser, viewport) {
     samples.push({
       requestedTop: top,
       scrollTop: Math.round(metrics.scrollTop),
+      immediateDomViewportItemCount: immediateMetrics.domViewportItemCount,
+      immediateLiveDomViewportItemCount: immediateMetrics.liveDomViewportItemCount,
+      firstFrameDomViewportItemCount: firstFrameMetrics.domViewportItemCount,
+      firstFrameLiveDomViewportItemCount: firstFrameMetrics.liveDomViewportItemCount,
+      firstFrameVisiblePixelRatio: Number(firstFramePixels.visiblePixelRatio.toFixed(4)),
       mountedDomItemCount: metrics.mountedDomItemCount,
       domViewportItemCount: metrics.domViewportItemCount,
       liveDomViewportItemCount: metrics.liveDomViewportItemCount,
@@ -356,8 +406,26 @@ async function runViewportAudit(browser, viewport) {
       maxLongTaskMs: Number(performanceSample.maxLongTaskMs.toFixed(1)),
       heightDrift,
       reason: metrics.debugViewport?.reason ?? "missing-debug",
+      forbiddenDomSources,
     });
 
+    if (immediateMetrics.domViewportItemCount === 0) {
+      failures.push(`native scroll exposed an empty DOM viewport at ${top}`);
+    }
+    if (immediateMetrics.liveDomViewportItemCount === 0) {
+      failures.push(`native scroll exposed no live cards at ${top}`);
+    }
+    if (firstFrameMetrics.domViewportItemCount === 0) {
+      failures.push(`first animation frame has no mounted cards at ${top}`);
+    }
+    if (firstFrameMetrics.liveDomViewportItemCount === 0) {
+      failures.push(`first animation frame has no live cards at ${top}`);
+    }
+    if (firstFramePixels.visiblePixelRatio < MIN_VISIBLE_PIXEL_RATIO) {
+      failures.push(
+        `first animation frame is visually blank at ${top}: visiblePixelRatio=${firstFramePixels.visiblePixelRatio.toFixed(4)}`,
+      );
+    }
     if (metrics.debugViewport?.blankViewportRisk) {
       failures.push(`blank viewport risk at ${top}: ${metrics.debugViewport.reason}`);
     }
@@ -392,6 +460,9 @@ async function runViewportAudit(browser, viewport) {
         `long task exceeded budget at ${top}: maxLongTaskMs=${performanceSample.maxLongTaskMs.toFixed(1)}, max=${MAX_LONG_TASK_MS}`,
       );
     }
+    if (forbiddenDomSources > 0) {
+      failures.push(`source media entered the rendered Grid DOM at ${top}`);
+    }
     if (!heightDrift) {
       failures.push(`missing height drift report at ${top}`);
     } else if (heightDrift.status !== "ok") {
@@ -415,12 +486,18 @@ async function runViewportAudit(browser, viewport) {
   if (consoleWarnings.length > 0) {
     failures.push(`unexpected browser warnings/errors: ${consoleWarnings.slice(0, 5).join(" | ")}`);
   }
+  if (forbiddenSourceRequests.length > 0) {
+    failures.push(
+      `Grid requested source media: ${forbiddenSourceRequests.slice(0, 5).join(" | ")}`,
+    );
+  }
 
   return {
     viewport: viewport.name,
     maxScrollTop,
     samples,
     consoleWarnings,
+    forbiddenSourceRequests,
     failures,
   };
 }

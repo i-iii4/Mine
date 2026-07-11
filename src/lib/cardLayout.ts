@@ -107,53 +107,6 @@ function aspectRatioFromDimensions(width: number | null | undefined, height: num
   return width / height;
 }
 
-function extractArticlePreviewImageCount(block: LightBlock): number {
-  if (!block.media_urls) return block.first_image && isLocalImageFile(block.first_image) ? 1 : 0;
-  try {
-    const urls: string[] = JSON.parse(block.media_urls);
-    const count = urls.filter((src) => isLocalImageFile(src)).length;
-    return count > 0 ? count : block.first_image && isLocalImageFile(block.first_image) ? 1 : 0;
-  } catch {
-    return block.first_image && isLocalImageFile(block.first_image) ? 1 : 0;
-  }
-}
-
-function extractArticlePreviewMedia(block: LightBlock): CardLayoutMediaItem[] {
-  const dims = parseMediaDimensions(block);
-
-  if (block.media_urls) {
-    try {
-      const urls: string[] = JSON.parse(block.media_urls);
-      const imageItems = urls
-        .filter((src) => isLocalImageFile(src))
-        .map((src) => ({
-          sourcePath: src,
-          previewPath: null,
-          aspectRatio: parseAspectRatio(dims, src),
-          isVideo: false,
-          isVideoPoster: false,
-        }));
-      if (imageItems.length > 0) {
-        return imageItems;
-      }
-    } catch {
-      // ignore malformed JSON
-    }
-  }
-
-  if (block.first_image && isLocalImageFile(block.first_image)) {
-    return [{
-      sourcePath: block.first_image,
-      previewPath: null,
-      aspectRatio: parseAspectRatio(dims, block.first_image),
-      isVideo: false,
-      isVideoPoster: false,
-    }];
-  }
-
-  return [];
-}
-
 function parseAspectRatio(
   dims: ReturnType<typeof parseMediaDimensions>,
   filename: string | null | undefined,
@@ -163,51 +116,6 @@ function parseAspectRatio(
   if (!entry) return null;
   const [w, h] = entry;
   return w > 0 && h > 0 ? w / h : null;
-}
-
-function extractSocialMedia(block: LightBlock): CardLayoutMediaItem[] {
-  const firstSection = block.body.split(/^---+$/m)[0] ?? block.body;
-  const dims = parseMediaDimensions(block);
-  const media: CardLayoutMediaItem[] = [];
-  const lines = firstSection.split("\n");
-  let nextIsVideoPoster = false;
-
-  for (const line of lines) {
-    if (line.trim() === "<!-- tweet-video -->") {
-      nextIsVideoPoster = true;
-      continue;
-    }
-    const imgMatch = line.match(/^!\[.*?\]\((.+?)\)$/);
-    if (!imgMatch?.[1]) continue;
-    const src = imgMatch[1];
-    media.push({
-      sourcePath: src,
-      previewPath: null,
-      aspectRatio: parseAspectRatio(dims, src),
-      isVideo: isVideoFile(src) || nextIsVideoPoster,
-      isVideoPoster: nextIsVideoPoster,
-    });
-    nextIsVideoPoster = false;
-  }
-
-  if (block.media_urls) {
-    try {
-      const urls: string[] = JSON.parse(block.media_urls);
-      if (urls.length > media.length) {
-        return urls.map((src) => ({
-          sourcePath: src,
-          previewPath: null,
-          aspectRatio: parseAspectRatio(dims, src),
-          isVideo: isVideoFile(src),
-          isVideoPoster: false,
-        }));
-      }
-    } catch {
-      // ignore malformed JSON
-    }
-  }
-
-  return media;
 }
 
 function mediaItemsFromManifestTiles(
@@ -237,23 +145,12 @@ function mediaFileAspectRatio(block: LightBlock): number | null {
 }
 
 function mediaItemsFromMediaMetadata(
-  block: LightBlock,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
 ): CardLayoutMediaItem[] {
   if (previewManifest) {
     return mediaItemsFromManifestTiles(previewManifest.tiles);
   }
-  if (!block.media_file) {
-    return [];
-  }
-  const isVideo = isVideoFile(block.media_file);
-  return [{
-    sourcePath: block.media_file,
-    previewPath: null,
-    aspectRatio: mediaFileAspectRatio(block),
-    isVideo,
-    isVideoPoster: isVideo,
-  }];
+  return [];
 }
 
 function hasVideoMediaSignal(
@@ -287,7 +184,7 @@ function deriveMediaCardLayoutDescriptor(
   titleText: string,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
 ): CardLayoutDescriptor {
-  const mediaItems = mediaItemsFromMediaMetadata(block, previewManifest);
+  const mediaItems = mediaItemsFromMediaMetadata(previewManifest);
 
   if (hasVideoMediaSignal(block, previewManifest, mediaItems)) {
     return {
@@ -369,7 +266,7 @@ function deriveArticleCardLayoutDescriptor(
 ): CardLayoutDescriptor {
   if (isSocialUrl(block.url)) {
     const previewText = indexedPreviewText || stripMarkdown((block.body.split(/^---+$/m)[0] ?? block.body).trim());
-    const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : extractSocialMedia(block);
+    const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
     if (mediaItems.length === 0) {
       return {
         variant: "social-text",
@@ -409,24 +306,14 @@ function deriveArticleCardLayoutDescriptor(
     };
   }
 
-  const firstImage = block.first_image ?? null;
-  const imageCount = previewManifest
-    ? previewManifest.tiles.length + previewManifest.overflowCount
-    : extractArticlePreviewImageCount(block);
-  const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : extractArticlePreviewMedia(block);
+  const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
   const totalMediaCount = previewManifest
     ? mediaItems.length + previewManifest.overflowCount
-    : imageCount;
-  const hasVisualPreview = previewManifest
-    ? previewManifest.kind !== "text"
-    : imageCount > 0 || !!block.thumbnail || !!block.media_file;
-  const primaryAspectRatio = previewManifest
-    ? (previewManifest.kind === "composite"
-      ? galleryAspectRatio(Math.min(4, totalMediaCount))
-      : aspectRatioFromDimensions(previewManifest.width, previewManifest.height) ?? (16 / 9))
-    : (imageCount >= 2
-      ? galleryAspectRatio(Math.min(4, totalMediaCount))
-      : parseAspectRatio(parseMediaDimensions(block), firstImage) ?? (16 / 9));
+    : 0;
+  const hasVisualPreview = previewManifest?.kind !== undefined && previewManifest.kind !== "text";
+  const primaryAspectRatio = previewManifest?.kind === "composite"
+    ? galleryAspectRatio(Math.min(4, totalMediaCount))
+    : aspectRatioFromDimensions(previewManifest?.width, previewManifest?.height) ?? (16 / 9);
   return {
     variant: hasVisualPreview ? "article-media" : "article-text",
     titleText,
@@ -434,7 +321,7 @@ function deriveArticleCardLayoutDescriptor(
     authorText,
     primaryAspectRatio,
     mediaItems,
-    visibleMediaCount: previewManifest ? mediaItems.length : imageCount,
+    visibleMediaCount: mediaItems.length,
     totalMediaCount,
   };
 }

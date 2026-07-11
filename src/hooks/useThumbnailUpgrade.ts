@@ -40,8 +40,19 @@ interface ThumbUpgradeRequestedEvent {
   slug: string;
   mediaPath: string;
   kind: "image" | "video";
-  /** Per-video gallery tile posters; absent for non-gallery blocks. */
+  /** Derived gallery tiles requiring browser decoding. */
   tilePosters?: TilePosterUpgrade[];
+}
+
+type PendingImageWrite =
+  | { key: string; slug: string; target: "thumb" }
+  | { key: string; slug: string; target: "tile"; posterName: string };
+
+interface BufferedImageRequest {
+  key: string;
+  slug: string;
+  assetUrl: string;
+  target: PendingImageWrite;
 }
 
 // ─── Tuning constants ────────────────────────────────────────────────────────
@@ -207,7 +218,7 @@ function extractVideoFrame(url: string, maxSize: number): Promise<ArrayBuffer> {
  */
 export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): void {
   const workerRef = useRef<Worker | null>(null);
-  const pendingRef = useRef<Map<string, { slug: string }>>(new Map());
+  const pendingRef = useRef<Map<string, PendingImageWrite>>(new Map());
   const nextIdRef = useRef(0);
 
   useEffect(() => {
@@ -216,12 +227,12 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
     let cancelled = false;
     let worker: Worker | null = null;
 
-    // Dedup for the image (worker) path, keyed by slug. Cleared when the
+    // Dedup for the image (worker) path, keyed by destination. Cleared when the
     // worker replies. The video/tile dedup lives inside `videoQueue`.
     const imageInFlight = new Set<string>();
     // Image requests that arrived while the worker was still spawning; drained
     // once it is ready so an event in that window is never dropped.
-    const preWorkerImages: { slug: string; assetUrl: string }[] = [];
+    const preWorkerImages: BufferedImageRequest[] = [];
 
     const videoQueue = new DecodeQueue({
       concurrency: VIDEO_DECODE_CONCURRENCY,
@@ -233,29 +244,29 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
       },
     });
 
-    function postImageToWorker(slug: string, assetUrl: string) {
+    function postImageToWorker(request: BufferedImageRequest) {
       const w = workerRef.current;
       if (!w) return;
       const id = `${nextIdRef.current++}`;
-      pendingRef.current.set(id, { slug });
+      pendingRef.current.set(id, request.target);
       const req: ThumbWorkerRequest = {
         id,
-        slug,
-        assetUrl,
+        slug: request.slug,
+        assetUrl: request.assetUrl,
         kind: "image",
         targetSize: THUMB_UPGRADE_TARGET_PX,
       };
       w.postMessage(req);
     }
 
-    function enqueueImage(slug: string, assetUrl: string) {
-      if (imageInFlight.has(slug)) return;
-      imageInFlight.add(slug);
+    function enqueueImage(request: BufferedImageRequest) {
+      if (imageInFlight.has(request.key)) return;
+      imageInFlight.add(request.key);
       if (!workerRef.current) {
-        preWorkerImages.push({ slug, assetUrl });
+        preWorkerImages.push(request);
         return;
       }
-      postImageToWorker(slug, assetUrl);
+      postImageToWorker(request);
     }
 
     function enqueueVideo(key: string, slug: string, assetUrl: string) {
@@ -267,7 +278,7 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
       });
     }
 
-    function enqueueTilePoster(key: string, slug: string, tile: TilePosterUpgrade) {
+    function enqueueVideoTile(key: string, slug: string, tile: TilePosterUpgrade) {
       videoQueue.enqueue(key, async () => {
         const bytes = await extractVideoFrame(convertFileSrc(tile.mediaPath), THUMB_UPGRADE_TARGET_PX);
         if (cancelled) return;
@@ -280,13 +291,31 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
       for (const action of planThumbUpgrade(input)) {
         switch (action.kind) {
           case "image":
-            enqueueImage(action.slug, convertFileSrc(action.mediaPath));
+            enqueueImage({
+              key: action.key,
+              slug: action.slug,
+              assetUrl: convertFileSrc(action.mediaPath),
+              target: { key: action.key, slug: action.slug, target: "thumb" },
+            });
             break;
           case "video":
             enqueueVideo(action.key, action.slug, convertFileSrc(action.mediaPath));
             break;
-          case "tile":
-            enqueueTilePoster(action.key, action.slug, action.tile);
+          case "tile-image":
+            enqueueImage({
+              key: action.key,
+              slug: action.slug,
+              assetUrl: convertFileSrc(action.tile.mediaPath),
+              target: {
+                key: action.key,
+                slug: action.slug,
+                target: "tile",
+                posterName: action.tile.posterName,
+              },
+            });
+            break;
+          case "tile-video":
+            enqueueVideoTile(action.key, action.slug, action.tile);
             break;
         }
       }
@@ -317,16 +346,21 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
         const msg = event.data;
         const entry = pendingRef.current.get(msg.id);
         pendingRef.current.delete(msg.id);
-        if (entry) imageInFlight.delete(entry.slug);
+        if (!entry) return;
+        imageInFlight.delete(entry.key);
         if (!msg.ok) {
           console.warn(`[thumb upgrade] ${msg.slug} failed: ${msg.error}`);
           return;
         }
         try {
-          await saveThumb(msg.slug, new Uint8Array(msg.bytes));
+          if (entry.target === "tile") {
+            await saveTilePoster(entry.posterName, entry.slug, new Uint8Array(msg.bytes));
+          } else {
+            await saveThumb(msg.slug, new Uint8Array(msg.bytes));
+          }
           onUpgraded?.();
         } catch (err) {
-          console.warn(`[thumb upgrade] save_thumb ${msg.slug} failed:`, err);
+          console.warn(`[thumb upgrade] save ${msg.slug} failed:`, err);
         }
       };
 
@@ -336,7 +370,7 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
 
       // Drain image requests buffered while the worker was spawning.
       for (const buffered of preWorkerImages) {
-        postImageToWorker(buffered.slug, buffered.assetUrl);
+        postImageToWorker(buffered);
       }
       preWorkerImages.length = 0;
 
@@ -348,6 +382,9 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
       "thumb:upgrade-requested",
       (event) => dispatch(event.payload),
     );
+    const unlistenPendingPromise = listen("derived-preview-pending", () => {
+      void enumeratePending();
+    });
 
     // Close the listen race: an event fired between the startup enumeration
     // and the subscription becoming active would otherwise be lost. Once the
@@ -360,6 +397,7 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
     return () => {
       cancelled = true;
       unlistenPromise.then((fn) => fn());
+      unlistenPendingPromise.then((fn) => fn());
       videoQueue.dispose();
       // Cancel in-flight worker work, then terminate. The worker tears down
       // its fetch AbortControllers on "cancel"; terminate() is the hard stop

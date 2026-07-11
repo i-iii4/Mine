@@ -58,7 +58,7 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.primaryAspectRatio).toBeCloseTo(2880 / 980);
   });
 
-  it("classifies article with first image as article-media", () => {
+  it("keeps legacy first-image metadata text-only until a ready manifest arrives", () => {
     const descriptor = deriveCardLayoutDescriptor(
       makeBlock({
         block_type: "article",
@@ -67,8 +67,8 @@ describe("deriveCardLayoutDescriptor", () => {
         media_dimensions: "{\"cover.jpg\":[800,600]}",
       }),
     );
-    expect(descriptor.variant).toBe("article-media");
-    expect(descriptor.primaryAspectRatio).toBeCloseTo(800 / 600);
+    expect(descriptor.variant).toBe("article-text");
+    expect(descriptor.mediaItems).toEqual([]);
   });
 
   it("uses indexed preview_text instead of raw body for article previews", () => {
@@ -83,7 +83,7 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.previewText).toBe("Raw heading Raw markdown task…");
   });
 
-  it("reserves square geometry for article composite previews with 3+ items", () => {
+  it("does not derive a composite from source metadata without a ready manifest", () => {
     const descriptor = deriveCardLayoutDescriptor(
       makeBlock({
         block_type: "article",
@@ -93,12 +93,11 @@ describe("deriveCardLayoutDescriptor", () => {
         media_dimensions: "{\"a.jpg\":[800,600],\"b.jpg\":[600,800],\"c.jpg\":[900,900]}",
       }),
     );
-    expect(descriptor.variant).toBe("article-media");
-    expect(descriptor.visibleMediaCount).toBe(3);
-    expect(descriptor.primaryAspectRatio).toBe(1);
+    expect(descriptor.variant).toBe("article-text");
+    expect(descriptor.visibleMediaCount).toBe(0);
   });
 
-  it("uses a 2:1 wrapper for article galleries with exactly two items", () => {
+  it("does not derive a two-item gallery from source metadata", () => {
     const descriptor = deriveCardLayoutDescriptor(
       makeBlock({
         block_type: "article",
@@ -108,12 +107,11 @@ describe("deriveCardLayoutDescriptor", () => {
         media_dimensions: "{\"a.jpg\":[800,600],\"b.jpg\":[600,800]}",
       }),
     );
-    expect(descriptor.variant).toBe("article-media");
-    expect(descriptor.visibleMediaCount).toBe(2);
-    expect(descriptor.primaryAspectRatio).toBe(2);
+    expect(descriptor.variant).toBe("article-text");
+    expect(descriptor.visibleMediaCount).toBe(0);
   });
 
-  it("builds legacy article gallery items from media_urls when preview_manifest is missing", () => {
+  it("never exposes legacy media_urls as Grid media items", () => {
     const descriptor = deriveCardLayoutDescriptor(
       makeBlock({
         block_type: "article",
@@ -123,13 +121,10 @@ describe("deriveCardLayoutDescriptor", () => {
         media_dimensions: "{\"a.webp\":[1960,1307],\"b.webp\":[1960,1307]}",
       }),
     );
-    expect(descriptor.variant).toBe("article-media");
-    expect(descriptor.mediaItems).toHaveLength(2);
-    expect(descriptor.mediaItems[0]?.sourcePath).toBe("a.webp");
-    expect(descriptor.mediaItems[1]?.sourcePath).toBe("b.webp");
-    expect(descriptor.visibleMediaCount).toBe(2);
-    expect(descriptor.totalMediaCount).toBe(2);
-    expect(descriptor.primaryAspectRatio).toBe(2);
+    expect(descriptor.variant).toBe("article-text");
+    expect(descriptor.mediaItems).toEqual([]);
+    expect(descriptor.visibleMediaCount).toBe(0);
+    expect(descriptor.totalMediaCount).toBe(0);
   });
 
   it("prefers preview_manifest for article composite previews", () => {
@@ -187,6 +182,14 @@ describe("deriveCardLayoutDescriptor", () => {
         body: "hello\n![](photo.jpg)",
         media_urls: "[\"photo.jpg\"]",
         media_dimensions: "{\"photo.jpg\":[1200,800]}",
+        preview_manifest: JSON.stringify({
+          kind: "image",
+          primary_preview_path: "test.jpg",
+          width: 1200,
+          height: 800,
+          tiles: [{ source_path: "photo.jpg", preview_path: "test.preview-1.jpg", width: 1200, height: 800, is_video: false, is_video_poster: false }],
+          overflow_count: 0,
+        }),
       }),
     );
     expect(descriptor.variant).toBe("social-single-media");
@@ -201,6 +204,18 @@ describe("deriveCardLayoutDescriptor", () => {
         url: "https://instagram.com/p/1",
         body: "hello\n![](a.jpg)\n![](b.jpg)\n![](c.jpg)",
         media_urls: "[\"a.jpg\",\"b.jpg\",\"c.jpg\"]",
+        preview_manifest: JSON.stringify({
+          kind: "composite",
+          primary_preview_path: "test.jpg",
+          width: 1,
+          height: 1,
+          tiles: [
+            { source_path: "a.jpg", preview_path: "test.preview-1.jpg", width: 1, height: 1, is_video: false, is_video_poster: false },
+            { source_path: "b.jpg", preview_path: "test.preview-2.jpg", width: 1, height: 1, is_video: false, is_video_poster: false },
+            { source_path: "c.jpg", preview_path: "test.preview-3.jpg", width: 1, height: 1, is_video: false, is_video_poster: false },
+          ],
+          overflow_count: 0,
+        }),
       }),
     );
     expect(descriptor.variant).toBe("social-media-grid");
@@ -214,6 +229,17 @@ describe("deriveCardLayoutDescriptor", () => {
         url: "https://instagram.com/p/1",
         body: "hello\n![](a.jpg)\n![](b.jpg)",
         media_urls: "[\"a.jpg\",\"b.jpg\"]",
+        preview_manifest: JSON.stringify({
+          kind: "composite",
+          primary_preview_path: "test.jpg",
+          width: 1,
+          height: 1,
+          tiles: [
+            { source_path: "a.jpg", preview_path: "test.preview-1.jpg", width: 1, height: 1, is_video: false, is_video_poster: false },
+            { source_path: "b.jpg", preview_path: "test.preview-2.jpg", width: 1, height: 1, is_video: false, is_video_poster: false },
+          ],
+          overflow_count: 0,
+        }),
       }),
     );
     expect(descriptor.variant).toBe("social-media-grid");
@@ -229,6 +255,17 @@ describe("deriveCardLayoutDescriptor", () => {
         author: "@artist",
         body: "![](a.jpg)\n![](b.jpg)",
         media_urls: "[\"a.jpg\",\"b.jpg\"]",
+        preview_manifest: JSON.stringify({
+          kind: "composite",
+          primary_preview_path: "test.jpg",
+          width: 1,
+          height: 1,
+          tiles: [
+            { source_path: "a.jpg", preview_path: "test.preview-1.jpg", width: 1, height: 1, is_video: false, is_video_poster: false },
+            { source_path: "b.jpg", preview_path: "test.preview-2.jpg", width: 1, height: 1, is_video: false, is_video_poster: false },
+          ],
+          overflow_count: 0,
+        }),
       }),
     );
     const slots = deriveContentCardSlots(descriptor);
@@ -317,7 +354,7 @@ describe("deriveCardLayoutDescriptor", () => {
         media_file: "photo.jpg",
       }),
     );
-    expect(descriptor.variant).toBe("article-media");
+    expect(descriptor.variant).toBe("article-text");
     expect(descriptor.previewText).toBe("");
   });
 

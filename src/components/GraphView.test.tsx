@@ -1,6 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GraphNode, GraphSnapshot, IndexedBlock, LightBlock } from "@/types";
+import type {
+  GraphNode,
+  GraphOptions,
+  GraphScope,
+  GraphSnapshot,
+  IndexedBlock,
+  LightBlock,
+} from "@/types";
 import { GraphView } from "./GraphView";
 
 type MockGraphNode = GraphNode & {
@@ -17,6 +24,13 @@ type MockGraphProps = {
   onNodeClick?: (node: MockGraphNode, event: MouseEvent) => void;
   onNodeRightClick?: (node: MockGraphNode, event: MouseEvent) => void;
   onNodeHover?: (node: MockGraphNode | null) => void;
+  onBackgroundClick?: () => void;
+  onEngineTick?: () => void;
+  nodeCanvasObject?: (
+    node: MockGraphNode,
+    context: CanvasRenderingContext2D,
+    globalScale: number,
+  ) => void;
 };
 
 type MockGraphHandle = {
@@ -25,6 +39,7 @@ type MockGraphHandle = {
   zoom: () => number;
   d3ReheatSimulation: () => void;
   graph2ScreenCoords: (x: number, y: number) => { x: number; y: number };
+  centerAt: (x: number, y: number, duration?: number) => void;
 };
 
 type MockForceAccessor = {
@@ -34,13 +49,17 @@ type MockForceAccessor = {
 };
 
 const commandMocks = vi.hoisted(() => ({
-  listGraphSnapshot: vi.fn<() => Promise<GraphSnapshot>>(),
+  listGraphSnapshot: vi.fn<(
+    scope: GraphScope,
+    options: GraphOptions,
+  ) => Promise<GraphSnapshot>>(),
   getBlock: vi.fn<(slug: string) => Promise<IndexedBlock | null>>(),
 }));
 
 const graphMethodMocks = vi.hoisted(() => ({
   zoomToFit: vi.fn(),
   d3ReheatSimulation: vi.fn(),
+  centerAt: vi.fn(),
 }));
 
 vi.mock("@/lib/commands", () => ({
@@ -74,6 +93,9 @@ vi.mock("react-force-graph-2d", async () => {
       onNodeClick,
       onNodeRightClick,
       onNodeHover,
+      onBackgroundClick,
+      onEngineTick,
+      nodeCanvasObject,
     }, ref) {
       React.useImperativeHandle(ref, () => ({
         d3Force: () => forceAccessor,
@@ -81,6 +103,7 @@ vi.mock("react-force-graph-2d", async () => {
         zoom: () => 1,
         d3ReheatSimulation: graphMethodMocks.d3ReheatSimulation,
         graph2ScreenCoords: (x: number, y: number) => ({ x, y }),
+        centerAt: graphMethodMocks.centerAt,
       }));
 
       (graphData?.nodes ?? []).forEach((node, index) => {
@@ -94,9 +117,22 @@ vi.mock("react-force-graph-2d", async () => {
           "data-testid": "force-graph",
           "data-width": String(width),
           "data-height": String(height),
+          onClick: (event: React.MouseEvent) => {
+            if (event.target === event.currentTarget) onBackgroundClick?.();
+          },
         },
-        (graphData?.nodes ?? []).map((node) =>
-          React.createElement(
+        React.createElement(
+          "button",
+          {
+            type: "button",
+            "data-testid": "graph-engine-tick",
+            onClick: () => onEngineTick?.(),
+          },
+          "tick engine",
+        ),
+        (graphData?.nodes ?? []).map((node) => {
+          const paintAlpha = paintNodeAlpha(node, nodeCanvasObject);
+          return React.createElement(
             "button",
             {
               key: node.id,
@@ -125,16 +161,63 @@ vi.mock("react-force-graph-2d", async () => {
               },
               onMouseEnter: () => onNodeHover?.(node),
               onMouseLeave: () => onNodeHover?.(null),
+              "data-paint-alpha": String(paintAlpha),
             },
             node.label,
-          ),
-        ),
+          );
+        }),
       );
     },
   );
 
   return { default: MockForceGraph2D };
 });
+
+function paintNodeAlpha(
+  node: MockGraphNode,
+  paint: MockGraphProps["nodeCanvasObject"],
+): number {
+  if (!paint) return 1;
+  let paintedAlpha = 1;
+  const alphaStack: number[] = [];
+  const context = {
+    globalAlpha: 1,
+    filter: "none",
+    fillStyle: "",
+    strokeStyle: "",
+    lineWidth: 1,
+    font: "",
+    textAlign: "start",
+    textBaseline: "alphabetic",
+    save() {
+      alphaStack.push(this.globalAlpha);
+    },
+    restore() {
+      this.globalAlpha = alphaStack.pop() ?? 1;
+    },
+    beginPath() {},
+    rect() {},
+    moveTo() {},
+    lineTo() {},
+    arcTo() {},
+    arc() {},
+    closePath() {},
+    clip() {},
+    fill() {
+      paintedAlpha = this.globalAlpha;
+    },
+    stroke() {},
+    fillRect() {
+      paintedAlpha = this.globalAlpha;
+    },
+    strokeRect() {},
+    translate() {},
+    scale() {},
+    fillText() {},
+  } as unknown as CanvasRenderingContext2D;
+  paint(node, context, 1);
+  return paintedAlpha;
+}
 
 function makeBlock(overrides: Partial<LightBlock> = {}): LightBlock {
   return {
@@ -177,13 +260,45 @@ function makeSnapshot(node: GraphNode): GraphSnapshot {
   return makeSnapshotFromNodes([node]);
 }
 
-function makeSnapshotFromNodes(nodes: GraphNode[]): GraphSnapshot {
+function makeSnapshotFromNodes(
+  nodes: GraphNode[],
+  overrides: Partial<GraphSnapshot> = {},
+): GraphSnapshot {
   return {
     nodes,
     links: [],
     total_cards: nodes.filter((node) => node.kind === "card").length,
     total_collections: nodes.filter((node) => node.kind === "collection").length,
     current_collection: null,
+    truncated: false,
+    truncation_reason: null,
+    can_materialize_full: false,
+    visible_nodes: nodes.length,
+    visible_links: 0,
+    total_nodes: nodes.length,
+    total_links: 0,
+    ...overrides,
+  };
+}
+
+function graphCardNode(
+  slug: string,
+  label: string,
+  position: { x?: number; y?: number } = {},
+): MockGraphNode {
+  return {
+    id: `card:${slug}`,
+    kind: "card",
+    label,
+    slug,
+    collection_ref: null,
+    unresolved_ref: null,
+    card_kind: "article",
+    block_type: "article",
+    thumbnail: null,
+    preview_manifest: null,
+    degree: 1,
+    ...position,
   };
 }
 
@@ -277,6 +392,7 @@ describe("GraphView", () => {
     commandMocks.getBlock.mockReset();
     graphMethodMocks.zoomToFit.mockReset();
     graphMethodMocks.d3ReheatSimulation.mockReset();
+    graphMethodMocks.centerAt.mockReset();
   });
 
   it("opens the block on card node left click", async () => {
@@ -287,6 +403,7 @@ describe("GraphView", () => {
       label: "Alpha card",
       slug: block.slug,
       collection_ref: null,
+      unresolved_ref: null,
       card_kind: "article",
       block_type: "article",
       thumbnail: null,
@@ -314,6 +431,7 @@ describe("GraphView", () => {
       label: "Alpha card",
       slug: block.slug,
       collection_ref: null,
+      unresolved_ref: null,
       card_kind: "article",
       block_type: "article",
       thumbnail: null,
@@ -341,6 +459,7 @@ describe("GraphView", () => {
       label: "Alpha card",
       slug: block.slug,
       collection_ref: null,
+      unresolved_ref: null,
       card_kind: "article",
       block_type: "article",
       thumbnail: null,
@@ -376,6 +495,7 @@ describe("GraphView", () => {
         label: "Alpha card",
         slug: alpha.slug,
         collection_ref: null,
+        unresolved_ref: null,
         card_kind: "article",
         block_type: "article",
         thumbnail: null,
@@ -388,6 +508,7 @@ describe("GraphView", () => {
         label: "Beta card",
         slug: beta.slug,
         collection_ref: null,
+        unresolved_ref: null,
         card_kind: "article",
         block_type: "article",
         thumbnail: null,
@@ -408,7 +529,6 @@ describe("GraphView", () => {
     fireEvent.mouseEnter(alphaNode);
 
     await waitFor(() => {
-      expect(commandMocks.getBlock).toHaveBeenCalledWith(alpha.slug);
       expect(container.querySelector("[data-graph-card-hover-preview]")).toBeInTheDocument();
     });
 
@@ -427,6 +547,7 @@ describe("GraphView", () => {
       label: "Alpha card",
       slug: block.slug,
       collection_ref: null,
+      unresolved_ref: null,
       card_kind: "article",
       block_type: "article",
       thumbnail: null,
@@ -463,6 +584,7 @@ describe("GraphView", () => {
       label: "Alpha card",
       slug: block.slug,
       collection_ref: null,
+      unresolved_ref: null,
       card_kind: "article",
       block_type: "article",
       thumbnail: null,
@@ -498,6 +620,7 @@ describe("GraphView", () => {
       label: "Design",
       slug: null,
       collection_ref: "Design",
+      unresolved_ref: null,
       card_kind: null,
       block_type: null,
       thumbnail: null,
@@ -513,6 +636,23 @@ describe("GraphView", () => {
     expect(screen.queryByText(/nodes ·/)).not.toBeInTheDocument();
   });
 
+  it("fits only after the configured simulation ticks instead of the pre-layout frame", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+    expect(graphMethodMocks.zoomToFit).not.toHaveBeenCalled();
+
+    const tick = screen.getByTestId("graph-engine-tick");
+    for (let index = 0; index < 17; index += 1) fireEvent.click(tick);
+    expect(graphMethodMocks.zoomToFit).not.toHaveBeenCalled();
+    fireEvent.click(tick);
+
+    expect(graphMethodMocks.zoomToFit).toHaveBeenCalledWith(250, 40);
+  });
+
   it("keeps collection node left click as graph navigation", async () => {
     commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshot({
       id: "collection:design",
@@ -520,6 +660,7 @@ describe("GraphView", () => {
       label: "Design",
       slug: null,
       collection_ref: "Design",
+      unresolved_ref: null,
       card_kind: null,
       block_type: null,
       thumbnail: null,
@@ -534,5 +675,197 @@ describe("GraphView", () => {
 
     expect(onNavigateCollection).toHaveBeenCalledWith("Design");
     expect(commandMocks.getBlock).not.toHaveBeenCalled();
+  });
+
+  it("requests the library projection with the complete default option contract", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+
+    renderGraph();
+
+    await screen.findByRole("button", { name: "Alpha card" });
+    expect(commandMocks.listGraphSnapshot).toHaveBeenCalledWith(
+      {
+        kind: "library",
+        collection_ref: null,
+        center_slug: null,
+        hops: 1,
+      },
+      {
+        include_collections: true,
+        include_wikilinks: true,
+        include_related_notes: true,
+        include_unresolved: false,
+        materialize_large_library: false,
+        query: null,
+      },
+    );
+  });
+
+  it("keeps Ego available from the shared pointer selection after Detail activation", async () => {
+    const block = makeBlock();
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode(block.slug, "Alpha card")),
+    );
+    renderGraph({ loadedBlocks: [block] });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha card" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ego" }));
+
+    await waitFor(() => {
+      expect(commandMocks.listGraphSnapshot).toHaveBeenLastCalledWith(
+        {
+          kind: "ego",
+          collection_ref: null,
+          center_slug: "alpha-card",
+          hops: 1,
+        },
+        expect.any(Object),
+      );
+    });
+  });
+
+  it("keeps a one-character graph query pending without an empty result state or IPC", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+
+    const search = screen.getByRole("searchbox", { name: "Search graph" });
+    fireEvent.change(search, { target: { value: "a" } });
+
+    expect(search).toHaveAttribute("data-graph-search-state", "pending");
+    expect(screen.queryByText("No graph matches")).not.toBeInTheDocument();
+    await new Promise((resolve) => window.setTimeout(resolve, 160));
+    expect(commandMocks.listGraphSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("dims non-matches locally without reloading an untruncated snapshot", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([
+      graphCardNode("alpha-card", "Alpha card"),
+      graphCardNode("beta-card", "Beta card"),
+    ]));
+    renderGraph();
+    const alpha = await screen.findByRole("button", { name: "Alpha card" });
+    const beta = screen.getByRole("button", { name: "Beta card" });
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search graph" }), {
+      target: { value: "alpha" },
+    });
+
+    await waitFor(() => {
+      expect(alpha).toHaveAttribute("data-paint-alpha", "1");
+      expect(beta).toHaveAttribute("data-paint-alpha", "0.15");
+    });
+    expect(commandMocks.listGraphSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("materializes search through the backend only for a truncated snapshot", async () => {
+    const overview = makeSnapshotFromNodes([], {
+      truncated: true,
+      truncation_reason: "large_library",
+      can_materialize_full: false,
+      total_nodes: 8_000,
+      total_links: 12_000,
+    });
+    const materialized = makeSnapshot(graphCardNode("alpha-card", "Alpha card"));
+    commandMocks.listGraphSnapshot.mockImplementation(async (_scope, options) => (
+      options.query ? { ...materialized, truncated: true } : overview
+    ));
+    renderGraph();
+    await screen.findByText("No graph nodes");
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search graph" }), {
+      target: { value: "alpha" },
+    });
+
+    await waitFor(() => {
+      expect(commandMocks.listGraphSnapshot).toHaveBeenLastCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ query: "alpha" }),
+      );
+    });
+    expect(await screen.findByRole("button", { name: "Alpha card" })).toBeInTheDocument();
+  });
+
+  it("reloads the projection when an edge type is toggled", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Graph filters" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Wikilinks" }));
+
+    await waitFor(() => {
+      expect(commandMocks.listGraphSnapshot).toHaveBeenLastCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ include_wikilinks: false }),
+      );
+    });
+  });
+
+  it("shares one selected node between arrow navigation, status and Enter activation", async () => {
+    const alpha = makeBlock({ slug: "alpha-card", title: "Alpha card" });
+    const beta = makeBlock({ id: 2, slug: "beta-card", title: "Beta card" });
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([
+      graphCardNode(alpha.slug, "Alpha card", { x: 100, y: 100 }),
+      graphCardNode(beta.slug, "Beta card", { x: 200, y: 100 }),
+    ]));
+    const { onOpenBlock } = renderGraph({ loadedBlocks: [alpha, beta] });
+    await screen.findByRole("button", { name: "Alpha card" });
+    const surface = document.querySelector<HTMLElement>("[data-graph-keyboard-surface]");
+    expect(surface).not.toBeNull();
+
+    fireEvent.keyDown(surface!, { key: "ArrowRight" });
+    expect(screen.getByText("Alpha card, 1 neighbor")).toBeInTheDocument();
+    fireEvent.keyDown(surface!, { key: "ArrowRight" });
+    expect(screen.getByText("Beta card, 1 neighbor")).toBeInTheDocument();
+    fireEvent.keyDown(surface!, { key: "Enter" });
+
+    await waitFor(() => expect(onOpenBlock).toHaveBeenCalledWith(beta));
+  });
+
+  it("offers explicit full materialization only when the backend says it is available", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([], {
+      truncated: true,
+      truncation_reason: "large_library",
+      can_materialize_full: true,
+      total_nodes: 2_000,
+    }));
+    renderGraph();
+    const showAll = await screen.findByRole("button", { name: "Show all" });
+
+    fireEvent.click(showAll);
+
+    await waitFor(() => {
+      expect(commandMocks.listGraphSnapshot).toHaveBeenLastCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ materialize_large_library: true }),
+      );
+    });
+  });
+
+  it("centers an externally selected node only after Detail closes and only when offscreen", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshot(
+      graphCardNode("alpha-card", "Alpha card", { x: 2_000, y: 100 }),
+    ));
+    const { rerenderGraph } = renderGraph({
+      selectedSlug: "alpha-card",
+      detailOpen: true,
+    });
+    await screen.findByRole("button", { name: "Alpha card" });
+    expect(graphMethodMocks.centerAt).not.toHaveBeenCalled();
+
+    rerenderGraph({ selectedSlug: "alpha-card", detailOpen: false });
+
+    await waitFor(() => {
+      expect(graphMethodMocks.centerAt).toHaveBeenCalledWith(2_000, 100, 400);
+    });
   });
 });

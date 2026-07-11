@@ -12,7 +12,8 @@ use std::collections::HashSet;
 use crate::domain::block::{suggest_slug, Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::VaultLayout;
 use crate::import::arena_api::{self, ArenaBlock};
-use crate::storage::{files, index, thumbnails};
+use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
+use crate::storage::{index, thumbnails};
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -114,13 +115,19 @@ fn import_single_block(
     // Generate unique slug (check DB + session-local set)
     let raw_slug = suggest_slug(title.as_deref(), url.as_deref());
     let slug = {
-        if !session_slugs.contains(&raw_slug) && !index::slug_exists(conn, &raw_slug)? {
+        if !session_slugs.contains(&raw_slug)
+            && !index::slug_exists(conn, &raw_slug)?
+            && !vault.block_path(&raw_slug).exists()
+        {
             raw_slug
         } else {
             let mut found = None;
             for n in 2..=1000u32 {
                 let candidate = format!("{}-{}", raw_slug, n);
-                if !session_slugs.contains(&candidate) && !index::slug_exists(conn, &candidate)? {
+                if !session_slugs.contains(&candidate)
+                    && !index::slug_exists(conn, &candidate)?
+                    && !vault.block_path(&candidate).exists()
+                {
                     found = Some(candidate);
                     break;
                 }
@@ -136,29 +143,15 @@ fn import_single_block(
     session_slugs.insert(slug.clone());
 
     // Download media file if applicable
-    let (media_file, media_ext) = download_media(vault, &slug, arena_block)?;
+    let (media_file, media_ext, media_bytes) = download_media(&slug, arena_block)?;
 
     // Download thumbnail for links
     let thumbnail = if block_type == BlockType::Link {
-        download_thumbnail(vault, &slug, arena_block)?
+        download_thumbnail(&slug, arena_block)?
     } else {
-        None
+        (None, None)
     };
-
-    // Generate local thumbnail for images
-    if block_type == BlockType::Image {
-        if let Some(ref ext) = media_ext {
-            let media_path = vault.media_path(&slug, ext);
-            if media_path.exists() {
-                let thumb_path = vault.thumb_path(&slug);
-                let _ = thumbnails::generate_thumbnail(
-                    &media_path,
-                    &thumb_path,
-                    thumbnails::DEFAULT_MAX_SIZE,
-                );
-            }
-        }
-    }
+    let (thumbnail, thumbnail_bytes) = thumbnail;
 
     // Parse saved_at
     let saved_at_str = normalize_datetime(&arena_block.created_at);
@@ -192,10 +185,33 @@ fn import_single_block(
     };
 
     // Write .md file
-    files::write_block_file(vault, &block)?;
+    let mut writes = Vec::with_capacity(3);
+    if let (Some(filename), Some(bytes)) = (block.frontmatter.file.as_ref(), media_bytes) {
+        writes.push(SourceFileWrite::create(vault.root().join(filename), bytes));
+    }
+    if let (Some(filename), Some(bytes)) = (block.frontmatter.thumbnail.as_ref(), thumbnail_bytes) {
+        writes.push(SourceFileWrite::create(vault.root().join(filename), bytes));
+    }
+    writes.push(SourceFileWrite::create(
+        vault.block_path(&block.slug),
+        crate::domain::block::serialize_block(&block).into_bytes(),
+    ));
+    let staged = StagedSourceMutation::stage(writes)?;
+    staged.commit_with_index(conn, "import_block", |index_conn| {
+        index::upsert_block(index_conn, &block, Some(vault.root())).map(|_| ())
+    })?;
 
-    // Index
-    index::upsert_block(conn, &block, Some(vault.root()))?;
+    if block_type == BlockType::Image {
+        if let Some(ref ext) = media_ext {
+            let media_path = vault.media_path(&slug, ext);
+            let thumb_path = vault.thumb_path(&slug);
+            let _ = thumbnails::generate_thumbnail(
+                &media_path,
+                &thumb_path,
+                thumbnails::DEFAULT_MAX_SIZE,
+            );
+        }
+    }
 
     Ok(())
 }
@@ -215,10 +231,9 @@ fn map_block_type(arena_class: &str) -> BlockType {
 /// Download the main media file (image or attachment).
 /// Returns (file_name, extension) if successful.
 fn download_media(
-    vault: &VaultLayout,
     slug: &str,
     arena_block: &ArenaBlock,
-) -> Result<(Option<String>, Option<String>)> {
+) -> Result<(Option<String>, Option<String>, Option<Vec<u8>>)> {
     let (url, fallback_ext) = match arena_block.class.as_str() {
         "Image" => {
             let img_url = arena_block
@@ -228,35 +243,30 @@ fn download_media(
                 .map(|v| v.url.as_str());
             match img_url {
                 Some(u) => (u.to_string(), arena_api::ext_from_url(u)),
-                None => return Ok((None, None)),
+                None => return Ok((None, None, None)),
             }
         }
         "Attachment" => {
             let att_url = arena_block.attachment.as_ref().map(|a| a.url.as_str());
             match att_url {
                 Some(u) => (u.to_string(), arena_api::ext_from_url(u)),
-                None => return Ok((None, None)),
+                None => return Ok((None, None, None)),
             }
         }
-        _ => return Ok((None, None)),
+        _ => return Ok((None, None, None)),
     };
 
     let bytes = arena_api::download_file(&url)?;
     let ext = &fallback_ext;
-    let dest = vault.media_path(slug, ext);
-    std::fs::write(&dest, &bytes)
-        .with_context(|| format!("failed to write media file: {}", dest.display()))?;
-
     let file_name = format!("{}.{}", slug, ext);
-    Ok((Some(file_name), Some(ext.clone())))
+    Ok((Some(file_name), Some(ext.clone()), Some(bytes)))
 }
 
 /// Download thumbnail for link blocks from Are.na's thumb image.
 fn download_thumbnail(
-    vault: &VaultLayout,
     slug: &str,
     arena_block: &ArenaBlock,
-) -> Result<Option<String>> {
+) -> Result<(Option<String>, Option<Vec<u8>>)> {
     let thumb_url = arena_block
         .image
         .as_ref()
@@ -265,21 +275,18 @@ fn download_thumbnail(
 
     let url = match thumb_url {
         Some(u) => u,
-        None => return Ok(None),
+        None => return Ok((None, None)),
     };
 
     match arena_api::download_file(url) {
         Ok(bytes) => {
             let ext = arena_api::ext_from_url(url);
             let thumb_name = format!("{}-thumb.{}", slug, ext);
-            let dest = vault.root().join(&thumb_name);
-            std::fs::write(&dest, &bytes)
-                .with_context(|| format!("failed to write thumbnail: {}", dest.display()))?;
-            Ok(Some(thumb_name))
+            Ok((Some(thumb_name), Some(bytes)))
         }
         Err(e) => {
             log::warn!("failed to download thumbnail for {}: {:#}", slug, e);
-            Ok(None)
+            Ok((None, None))
         }
     }
 }

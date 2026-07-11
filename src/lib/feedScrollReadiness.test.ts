@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeFeedScrollReadinessWindows,
   sampleFeedScrollSignal,
+  shouldPrefetchNextFeedPage,
 } from "./feedScrollReadiness";
 
 describe("computeFeedScrollReadinessWindows", () => {
@@ -126,6 +127,37 @@ describe("computeFeedScrollReadinessWindows", () => {
       expect(windows.priorityBeforePx).toBeGreaterThanOrEqual(vh * 0.5);
       expect(windows.preloadBeforePx).toBeGreaterThanOrEqual(vh * 0.5);
     }
+  });
+});
+
+describe("shouldPrefetchNextFeedPage", () => {
+  it("keeps a multi-screen item runway ahead of the visible range", () => {
+    expect(shouldPrefetchNextFeedPage({
+      loadedItemCount: 200,
+      maxVisibleIndex: 80,
+      visibleItemCount: 20,
+    })).toBe(false);
+    expect(shouldPrefetchNextFeedPage({
+      loadedItemCount: 200,
+      maxVisibleIndex: 103,
+      visibleItemCount: 20,
+    })).toBe(true);
+  });
+
+  it("expands the runway for unusually dense viewports", () => {
+    expect(shouldPrefetchNextFeedPage({
+      loadedItemCount: 300,
+      maxVisibleIndex: 99,
+      visibleItemCount: 50,
+    })).toBe(true);
+  });
+
+  it("does not request a page before Grid has a visible range", () => {
+    expect(shouldPrefetchNextFeedPage({
+      loadedItemCount: 200,
+      maxVisibleIndex: -1,
+      visibleItemCount: 0,
+    })).toBe(false);
   });
 });
 

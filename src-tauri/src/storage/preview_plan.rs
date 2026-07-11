@@ -28,6 +28,13 @@ pub fn primary_preview_path(slug: &str) -> String {
     format!("{slug}.jpg")
 }
 
+/// Stable derived-cache path for one visible feed tile. The block slug and
+/// tile ordinal make the key collision-free even when two source files in
+/// different folders share the same basename.
+pub fn tile_preview_path(slug: &str, index: usize) -> String {
+    format!("{slug}.preview-{}.jpg", index.saturating_add(1))
+}
+
 /// Preview-path value for a per-media tile poster: the media filename with its
 /// extension swapped for `.jpg`. Mirrors `Vault::media_thumb_path`; the value
 /// goes into `FeedPreviewTile.preview_path` and is resolved on the frontend
@@ -284,6 +291,14 @@ mod tests {
     #[test]
     fn primary_preview_path_is_slug_jpg() {
         assert_eq!(primary_preview_path("Sunset Tokyo"), "Sunset Tokyo.jpg");
+    }
+
+    #[test]
+    fn tile_preview_path_is_scoped_to_slug_and_ordinal() {
+        assert_eq!(
+            tile_preview_path("Library/Sunset Tokyo", 1),
+            "Library/Sunset Tokyo.preview-2.jpg"
+        );
     }
 
     #[test]

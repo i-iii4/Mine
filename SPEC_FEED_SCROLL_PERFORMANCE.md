@@ -189,19 +189,37 @@ separate anti-blank invariant:
 
 ```ts
 if (!currentMountedItemsIntersect(realScrollTop, viewportHeight)) {
-  flushSync(commitVisibleItemsFor(realScrollTop))
+  flushSync(commitEmergencyViewportFor(realScrollTop))
+  requestAnimationFrame(expandToRegularRenderWindow)
 }
 ```
 
 This path is allowed only when the current viewport would have zero mounted
 items. Normal scroll still uses the cheap RAF diff and does not set React state
-on every scroll pixel. The sync commit is bounded by the current render window;
-it must never expand into whole-route DOM mounting.
+on every scroll pixel. The synchronous stage mounts only the real viewport plus
+`128px` on each side. The next animation frame expands to regular adaptive
+overscan after the screen is already populated; a deep jump therefore does not
+synchronously mount dozens of offscreen cards or whole-route DOM.
 
 `viewportHeight` comes from the real scroll element when available, but the
 hook must fall back to Grid's ResizeObserver-measured viewport height. A
 transient or test-environment `clientHeight === 0` must not disable the
 anti-blank invariant.
+
+### Paged Snapshot Runway
+
+Grid pagination is part of scroll readiness, not a loader-at-the-bottom UX.
+The first `200` rows paint immediately, then App warms exactly one additional
+page for the active route in the background. Later pages are requested when the
+remaining loaded runway reaches:
+
+```ts
+Math.max(96, visibleItemCount * 4)
+```
+
+Only one pagination request may be in flight. Vault/route generation guards
+discard stale responses. This keeps page boundaries outside the visible scroll
+path without reverting to an unbounded whole-vault payload.
 
 ### Scroll anchor at the feed head
 
@@ -500,10 +518,12 @@ bun run test:feed-scroll
 ```
 
 It opens the dev-only `/__feed-scroll-audit` route, performs deterministic deep
-scroll jumps in Playwright and fails on blank viewport, skeleton-only viewport,
-browser asset errors, near-blank screenshot samples, DOM-window inflation,
-slow viewport settle, large frame gaps, long tasks or Phase 11 height-drift
-budget failures. The route includes text-only and media-heavy synthetic cards
+scroll jumps in Playwright and samples the DOM synchronously in the native
+scroll handler plus the first following animation frame before any settle wait.
+It fails on blank viewport, skeleton-only viewport, browser asset errors,
+near-blank screenshot samples, DOM-window inflation, slow viewport settle,
+large frame gaps, long tasks or Phase 11 height-drift budget failures. The route
+includes text-only and media-heavy synthetic cards
 with deterministic local preview assets. It requests the height-drift audit only
 after the scroll performance sample is recorded, so diagnostic measurement is
 not counted as scroll settle time. This command verifies the Grid
@@ -518,6 +538,8 @@ Functional:
 
 - Fast scroll through `Everything` shows materially fewer blank/late media
   states.
+- Pagination boundaries remain invisible: first paint is not blocked by page
+  two, and fast scroll cannot catch the loaded tail before the next page starts.
 - DOM node count remains bounded by the render window, not by the media preload
   window.
 - Image decode concurrency never exceeds `4`.

@@ -1,15 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   findPreviewTileForSource,
+  normalizeDetailPreviewManifest,
   normalizeFeedPreviewManifest,
 } from "./feedPreview";
 
 describe("feedPreview", () => {
-  it("leaves preview path null when the backend did not provide one", () => {
-    // Contract: if preview_path is absent the source file IS the preview.
-    // The consumer falls back to asset://vault/<source> rather than
-    // attempting a synthetic thumbs/<stem>.jpg URL that often 404s for
-    // inline media like `<slug> (image N).jpg`.
+  it("rejects a tile when the backend did not provide a derived path", () => {
     const manifest = normalizeFeedPreviewManifest(
       JSON.stringify({
         kind: "composite",
@@ -29,11 +26,10 @@ describe("feedPreview", () => {
       }),
     );
 
-    expect(manifest?.tiles[0]?.sourcePath).toBe("article-img0.webp");
-    expect(manifest?.tiles[0]?.previewPath).toBeNull();
+    expect(manifest?.tiles).toEqual([]);
   });
 
-  it("falls back to primary_preview_path for video poster tiles without their own preview", () => {
+  it("does not substitute the primary preview for a missing tile", () => {
     const manifest = normalizeFeedPreviewManifest(
       JSON.stringify({
         kind: "video_poster",
@@ -53,10 +49,33 @@ describe("feedPreview", () => {
       }),
     );
 
-    expect(manifest?.tiles[0]?.previewPath).toBe("clip-poster.jpg");
+    expect(manifest?.tiles).toEqual([]);
   });
 
-  it("normalizes legacy synthetic tile preview paths to source fallback", () => {
+  it("preserves source-only legacy tiles for the full-fidelity Detail path", () => {
+    const manifest = normalizeDetailPreviewManifest(
+      JSON.stringify({
+        kind: "image",
+        primary_preview_path: "note.jpg",
+        tiles: [{
+          source_path: "Library/images/01.jpg",
+          preview_path: null,
+          width: 800,
+          height: 600,
+          is_video: false,
+          is_video_poster: false,
+        }],
+        overflow_count: 0,
+      }),
+    );
+
+    expect(manifest?.tiles[0]).toMatchObject({
+      sourcePath: "Library/images/01.jpg",
+      previewPath: null,
+    });
+  });
+
+  it("treats an explicit derived tile path as backend-authoritative", () => {
     const manifest = normalizeFeedPreviewManifest(
       JSON.stringify({
         kind: "image",
@@ -79,7 +98,7 @@ describe("feedPreview", () => {
 
     const tile = findPreviewTileForSource(manifest, "Title%20%28image%201%29.jpg");
     expect(tile?.sourcePath).toBe("Title (image 1).jpg");
-    expect(tile?.previewPath).toBeNull();
+    expect(tile?.previewPath).toBe("Title (image 1).jpg");
   });
 
   it("matches a bare Obsidian embed name to one resolved backend tile", () => {
@@ -92,7 +111,7 @@ describe("feedPreview", () => {
         tiles: [
           {
             source_path: "Библиотека/images/images/01.jpg",
-            preview_path: null,
+            preview_path: "Азбука.preview-1.jpg",
             width: 800,
             height: 600,
             is_video: false,
@@ -117,11 +136,13 @@ describe("feedPreview", () => {
         tiles: [
           {
             source_path: "A/photo.jpg",
+            preview_path: "note.preview-1.jpg",
             is_video: false,
             is_video_poster: false,
           },
           {
             source_path: "B/photo.jpg",
+            preview_path: "note.preview-2.jpg",
             is_video: false,
             is_video_poster: false,
           },

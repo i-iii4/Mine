@@ -142,8 +142,25 @@ export interface GridSnapshot {
   has_more: boolean;
 }
 
-export type GraphNodeKind = "card" | "collection";
-export type GraphLinkKind = "collection_membership";
+export type GraphNodeKind = "card" | "collection" | "unresolved";
+export type GraphLinkKind = "collection_membership" | "wikilink" | "related_note";
+export type GraphScopeKind = "current_route" | "library" | "ego";
+
+export interface GraphScope {
+  kind: GraphScopeKind;
+  collection_ref: string | null;
+  center_slug: string | null;
+  hops: 1 | 2;
+}
+
+export interface GraphOptions {
+  include_collections: boolean;
+  include_wikilinks: boolean;
+  include_related_notes: boolean;
+  include_unresolved: boolean;
+  materialize_large_library: boolean;
+  query: string | null;
+}
 
 export interface GraphNode {
   id: string;
@@ -151,6 +168,7 @@ export interface GraphNode {
   label: string;
   slug: string | null;
   collection_ref: string | null;
+  unresolved_ref: string | null;
   card_kind: CardKind | null;
   block_type: BlockType | null;
   thumbnail: string | null;
@@ -163,6 +181,9 @@ export interface GraphLink {
   kind: GraphLinkKind;
   source: string;
   target: string;
+  directed: boolean;
+  count: number;
+  target_ref: string | null;
 }
 
 export interface GraphSnapshot {
@@ -171,6 +192,13 @@ export interface GraphSnapshot {
   total_cards: number;
   total_collections: number;
   current_collection: string | null;
+  truncated: boolean;
+  truncation_reason: "large_library" | null;
+  can_materialize_full: boolean;
+  visible_nodes: number;
+  visible_links: number;
+  total_nodes: number;
+  total_links: number;
 }
 
 export interface RenameBlockResult {

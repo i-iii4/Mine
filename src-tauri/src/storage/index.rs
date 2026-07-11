@@ -20,13 +20,14 @@ use crate::domain::block::{
 use crate::domain::channel::Channel;
 use crate::domain::search::{SearchFilter, SearchQuery};
 use crate::domain::vault::{validate_slug, VaultLayout};
+use crate::storage::db;
 use crate::storage::media_dimensions::{
     build_media_dimensions_json, build_media_dimensions_json_from_sources,
 };
 use crate::storage::media_refs;
 use crate::storage::preview_plan::{
     is_image_media, is_remote_media, is_video_media, local_media_items, media_ext_lower,
-    media_poster_path, primary_preview_path, PREVIEW_TILE_LIMIT,
+    primary_preview_path, tile_preview_path, PREVIEW_TILE_LIMIT,
 };
 use crate::storage::search_engine;
 
@@ -34,6 +35,7 @@ use crate::storage::search_engine;
 
 const MEDIA_INDEX_VERSION: i64 = 3;
 const COLLECTION_INDEX_VERSION: i64 = 1;
+pub const PREVIEW_SCHEMA_VERSION: i64 = 1;
 
 /// A block as read from the database index.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -413,10 +415,9 @@ fn media_tile(
     let dims_entry = dims.get(src).copied();
     FeedPreviewTile {
         source_path: src.to_string(),
-        // Video tiles point at their own generated poster frame (a video file
-        // cannot be drawn into an <img>); image tiles render the real source
-        // directly on the frontend, so they carry no preview path.
-        preview_path: is_video.then(|| media_poster_path(src)),
+        // Every visual tile receives its final derived path after the manifest
+        // shape is known. Grid never falls back to `source_path`.
+        preview_path: None,
         width: dims_entry.map(|[w, _]| w),
         height: dims_entry.map(|[_, h]| h),
         is_video,
@@ -535,46 +536,42 @@ fn serialize_feed_preview_manifest(
     let dims = parse_media_dimensions_json(media_dimensions);
     let card_kind = derive_card_kind(block);
 
-    let manifest = match card_kind {
+    let mut manifest = match card_kind {
         CardKind::Media => {
-            let (preview_width, preview_height) =
-                dimensions_for_src(&dims, block.frontmatter.file.as_deref(), width, height);
-
-            if block
+            let visual_source = block
                 .frontmatter
                 .file
                 .as_deref()
-                .is_some_and(is_video_media)
-            {
-                FeedPreviewManifest {
-                    kind: FeedPreviewKind::VideoPoster,
-                    primary_preview_path: Some(primary_preview_path(&block.slug)),
-                    width: preview_width,
-                    height: preview_height,
-                    tiles: block
+                .filter(|source| is_image_media(source) || is_video_media(source))
+                .or_else(|| {
+                    block
                         .frontmatter
-                        .file
+                        .thumbnail
                         .as_deref()
-                        .map(|src| {
-                            vec![FeedPreviewTile {
-                                source_path: src.to_string(),
-                                preview_path: Some(primary_preview_path(&block.slug)),
-                                width: preview_width,
-                                height: preview_height,
-                                is_video: true,
-                                is_video_poster: true,
-                            }]
-                        })
-                        .unwrap_or_default(),
-                    overflow_count: 0,
-                }
-            } else if block.frontmatter.file.is_some() || block.frontmatter.thumbnail.is_some() {
+                        .filter(|source| is_image_media(source))
+                });
+            let (preview_width, preview_height) =
+                dimensions_for_src(&dims, visual_source, width, height);
+
+            if let Some(source) = visual_source {
+                let is_video = is_video_media(source);
                 FeedPreviewManifest {
-                    kind: FeedPreviewKind::Image,
+                    kind: if is_video {
+                        FeedPreviewKind::VideoPoster
+                    } else {
+                        FeedPreviewKind::Image
+                    },
                     primary_preview_path: Some(primary_preview_path(&block.slug)),
                     width: preview_width,
                     height: preview_height,
-                    tiles: Vec::new(),
+                    tiles: vec![FeedPreviewTile {
+                        source_path: source.to_string(),
+                        preview_path: None,
+                        width: preview_width,
+                        height: preview_height,
+                        is_video,
+                        is_video_poster: is_video,
+                    }],
                     overflow_count: 0,
                 }
             } else {
@@ -695,6 +692,10 @@ fn serialize_feed_preview_manifest(
             }
         }
     };
+
+    for (index, tile) in manifest.tiles.iter_mut().enumerate() {
+        tile.preview_path = Some(tile_preview_path(&block.slug, index));
+    }
 
     serde_json::to_string(&manifest).ok()
 }
@@ -1132,8 +1133,8 @@ fn upsert_block_inner(
         "INSERT INTO blocks (slug, block_type, card_kind, title, content_heading, display_title, fallback_label, description, url, media_file,
             thumbnail, saved_at, source, width, height, author, body, first_image,
             media_urls, media_dimensions, preview_manifest, feed_playback, related_notes, preview_text, preview_text_cap,
-            body_hash, origin, index_warning, media_index_version, collection_index_version)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)
+            body_hash, origin, index_warning, media_index_version, collection_index_version, graph_link_index_version, preview_schema_version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)
          ON CONFLICT(slug) DO UPDATE SET
             block_type = excluded.block_type,
             card_kind = excluded.card_kind,
@@ -1155,6 +1156,9 @@ fn upsert_block_inner(
             media_urls = excluded.media_urls,
             media_dimensions = excluded.media_dimensions,
             preview_manifest = excluded.preview_manifest,
+            preview_state = 'stale',
+            preview_source_stamp = blocks.preview_source_stamp,
+            preview_error_kind = NULL,
             feed_playback = excluded.feed_playback,
             related_notes = excluded.related_notes,
             preview_text = excluded.preview_text,
@@ -1164,6 +1168,8 @@ fn upsert_block_inner(
             index_warning = excluded.index_warning,
             media_index_version = excluded.media_index_version,
             collection_index_version = excluded.collection_index_version,
+            graph_link_index_version = excluded.graph_link_index_version,
+            preview_schema_version = excluded.preview_schema_version,
             indexed_at = datetime('now')",
         params![
             block.slug,
@@ -1196,6 +1202,8 @@ fn upsert_block_inner(
             index_warning,
             MEDIA_INDEX_VERSION,
             COLLECTION_INDEX_VERSION,
+            db::GRAPH_LINK_INDEX_VERSION,
+            PREVIEW_SCHEMA_VERSION,
         ],
     )
     .context("failed to upsert block")?;
@@ -1219,21 +1227,30 @@ fn upsert_block_inner(
         .context("failed to insert tag")?;
     }
 
-    // Replace wikilinks: delete old, insert new.
+    // Replace body wikilinks and related-note provenance independently. The
+    // graph read model needs their edge kinds; combining them in one table
+    // loses that distinction when both target the same note.
     conn.execute("DELETE FROM wikilinks WHERE source_id = ?1", [block_id])
         .context("failed to delete old wikilinks")?;
-    let mut links = extract_wikilinks(&block.body);
-    for note in &block.frontmatter.related_notes {
-        if !links.contains(note) {
-            links.push(note.clone());
-        }
-    }
-    for link in &links {
+    conn.execute(
+        "DELETE FROM related_note_links WHERE source_id = ?1",
+        [block_id],
+    )
+    .context("failed to delete old related-note links")?;
+    for link in extract_wikilinks(&block.body) {
         conn.execute(
             "INSERT OR IGNORE INTO wikilinks (source_id, target_slug) VALUES (?1, ?2)",
             params![block_id, link],
         )
         .context("failed to insert wikilink")?;
+    }
+    for note in &block.frontmatter.related_notes {
+        conn.execute(
+            "INSERT OR IGNORE INTO related_note_links (source_id, target_slug)
+             VALUES (?1, ?2)",
+            params![block_id, note],
+        )
+        .context("failed to insert related-note link")?;
     }
 
     Ok(block_id)
@@ -1462,8 +1479,12 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
                  media_urls = ?3,
                  media_dimensions = ?4,
                  preview_manifest = ?5,
+                 preview_state = 'stale',
+                 preview_source_stamp = NULL,
+                 preview_error_kind = NULL,
                  feed_playback = ?6,
-                 media_index_version = ?7
+                 media_index_version = ?7,
+                 preview_schema_version = ?9
              WHERE slug = ?1 AND body_hash IS ?8",
             params![
                 slug,
@@ -1474,6 +1495,7 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
                 feed_playback,
                 MEDIA_INDEX_VERSION,
                 body_hash,
+                PREVIEW_SCHEMA_VERSION,
             ],
         )?;
     }
@@ -1573,11 +1595,11 @@ pub fn backfill_missing_preview_manifest(conn: &Connection) -> Result<usize> {
          FROM blocks
          WHERE slug != ''
            AND card_kind != 'channel'
-           AND preview_manifest IS NULL",
+           AND (preview_manifest IS NULL OR preview_schema_version != ?1)",
     )?;
 
     let rows = stmt
-        .query_map([], |row| {
+        .query_map([PREVIEW_SCHEMA_VERSION], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -1627,10 +1649,14 @@ pub fn backfill_missing_preview_manifest(conn: &Connection) -> Result<usize> {
 
         updated += conn.execute(
             "UPDATE blocks
-             SET preview_manifest = ?2
+             SET preview_manifest = ?2,
+                 preview_state = 'stale',
+                 preview_source_stamp = NULL,
+                 preview_error_kind = NULL,
+                 preview_schema_version = ?3
              WHERE slug = ?1
-               AND preview_manifest IS NULL",
-            params![slug, preview_manifest],
+               AND (preview_manifest IS NULL OR preview_schema_version != ?3)",
+            params![slug, preview_manifest, PREVIEW_SCHEMA_VERSION],
         )?;
     }
 
@@ -2073,7 +2099,9 @@ pub fn list_grid_blocks_with_query(
             "SELECT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.url, b.media_file,
                     b.thumbnail, b.saved_at, b.width, b.height, b.author,
                     CASE WHEN b.card_kind = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
-                    b.preview_text, b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest, b.feed_playback
+                    b.preview_text, b.first_image, b.media_urls, b.media_dimensions,
+                    CASE WHEN b.preview_state = 'ready' THEN b.preview_manifest END,
+                    CASE WHEN b.preview_state = 'ready' THEN b.feed_playback END
              FROM blocks b
              INNER JOIN block_tags bt ON bt.block_id = b.id
              WHERE b.card_kind != 'channel' AND bt.tag = ?2
@@ -2084,7 +2112,9 @@ pub fn list_grid_blocks_with_query(
             "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
                     thumbnail, saved_at, width, height, author,
                     CASE WHEN card_kind = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
-                    preview_text, first_image, media_urls, media_dimensions, preview_manifest, feed_playback
+                    preview_text, first_image, media_urls, media_dimensions,
+                    CASE WHEN preview_state = 'ready' THEN preview_manifest END,
+                    CASE WHEN preview_state = 'ready' THEN feed_playback END
              FROM blocks
              WHERE card_kind != 'channel'
              ORDER BY saved_at DESC
@@ -2555,10 +2585,15 @@ fn load_bidirectional_related_notes(
 ) -> Result<Vec<String>> {
     let normalized_target = normalized_wikilink_target_sql("w.target_slug");
     let sql = format!(
-        "SELECT slug
+        "WITH all_links AS (
+             SELECT source_id, target_slug FROM wikilinks
+             UNION ALL
+             SELECT source_id, target_slug FROM related_note_links
+         )
+         SELECT slug
          FROM (
              SELECT tb.slug AS slug, tb.saved_at AS saved_at
-             FROM wikilinks w
+             FROM all_links w
              JOIN blocks tb
                ON tb.slug = {normalized_target}
              WHERE w.source_id = ?1
@@ -2568,7 +2603,7 @@ fn load_bidirectional_related_notes(
              UNION
 
              SELECT sb.slug AS slug, sb.saved_at AS saved_at
-             FROM wikilinks w
+             FROM all_links w
              JOIN blocks sb
                ON sb.id = w.source_id
              WHERE {normalized_target} = ?2
@@ -2842,7 +2877,7 @@ mod tests {
     }
 
     #[test]
-    fn upsert_indexes_related_notes_as_wikilinks() {
+    fn upsert_preserves_wikilink_and_related_note_provenance() {
         let conn = test_conn();
         let mut block = make_block_full(
             "extracted",
@@ -2870,7 +2905,7 @@ mod tests {
         let got = get_block(&conn, "extracted").unwrap().unwrap();
         assert!(got.related_notes.is_empty());
 
-        let targets = conn
+        let wikilink_targets = conn
             .prepare(
                 "SELECT target_slug FROM wikilinks
                  JOIN blocks ON blocks.id = wikilinks.source_id
@@ -2882,7 +2917,20 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(targets, vec!["Source Article", "extracted.jpg"]);
+        assert_eq!(wikilink_targets, vec!["extracted.jpg"]);
+        let related_targets = conn
+            .prepare(
+                "SELECT target_slug FROM related_note_links
+                 JOIN blocks ON blocks.id = related_note_links.source_id
+                 WHERE blocks.slug = ?1
+                 ORDER BY target_slug",
+            )
+            .unwrap()
+            .query_map(["extracted"], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(related_targets, vec!["Source Article"]);
     }
 
     // ── remove_block ─────────────────────────────────────────────────────
@@ -3381,6 +3429,34 @@ mod tests {
     }
 
     #[test]
+    fn list_grid_blocks_exposes_previews_only_after_ready_state() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "ready-gate",
+            "image",
+            Some("Ready gate"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.file = Some("photo.jpg".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+
+        let (stale, _) = list_grid_blocks(&conn, None, 0, 20).unwrap();
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].preview_manifest, None);
+        assert_eq!(stale[0].feed_playback, None);
+
+        conn.execute(
+            "UPDATE blocks SET preview_state = 'ready' WHERE slug = 'ready-gate'",
+            [],
+        )
+        .unwrap();
+        let (ready, _) = list_grid_blocks(&conn, None, 0, 20).unwrap();
+        assert!(ready[0].preview_manifest.is_some());
+    }
+
+    #[test]
     fn list_grid_blocks_with_query_filters_route_and_returns_match_excerpt() {
         let conn = test_conn();
         upsert_block(
@@ -3605,13 +3681,14 @@ mod tests {
         assert_eq!(manifest.tiles.len(), 1);
         assert!(manifest.tiles[0].is_video);
         assert!(manifest.tiles[0].is_video_poster);
-        // Video tiles carry their own per-video poster path (a video cannot be
-        // drawn into an <img>); the poster is generated as `<media-stem>.jpg`.
-        assert_eq!(manifest.tiles[0].preview_path.as_deref(), Some("clip.jpg"));
+        assert_eq!(
+            manifest.tiles[0].preview_path.as_deref(),
+            Some("tweet-video.preview-1.jpg")
+        );
     }
 
     #[test]
-    fn social_gallery_assigns_poster_path_to_video_tiles_only() {
+    fn social_gallery_assigns_unique_derived_path_to_every_tile() {
         let conn = test_conn();
         let mut block = make_block_full(
             "ig-mixed",
@@ -3629,11 +3706,18 @@ mod tests {
             serde_json::from_str(light[0].preview_manifest.as_deref().unwrap()).unwrap();
         assert_eq!(manifest.kind, FeedPreviewKind::Composite);
         assert_eq!(manifest.tiles.len(), 3);
-        // Each video tile gets its own poster; the image tile has none and
-        // renders its real source on the frontend.
-        assert_eq!(manifest.tiles[0].preview_path.as_deref(), Some("one.jpg"));
-        assert_eq!(manifest.tiles[1].preview_path, None);
-        assert_eq!(manifest.tiles[2].preview_path.as_deref(), Some("three.jpg"));
+        assert_eq!(
+            manifest.tiles[0].preview_path.as_deref(),
+            Some("ig-mixed.preview-1.jpg")
+        );
+        assert_eq!(
+            manifest.tiles[1].preview_path.as_deref(),
+            Some("ig-mixed.preview-2.jpg")
+        );
+        assert_eq!(
+            manifest.tiles[2].preview_path.as_deref(),
+            Some("ig-mixed.preview-3.jpg")
+        );
     }
 
     #[test]
@@ -3660,15 +3744,23 @@ mod tests {
         assert_eq!(manifest.tiles.len(), 3);
         assert_eq!(manifest.tiles[0].source_path, "a.mp4");
         assert!(manifest.tiles[0].is_video);
-        assert_eq!(manifest.tiles[0].preview_path.as_deref(), Some("a.jpg"));
-        // Second section: image tile renders its own source, no poster.
+        assert_eq!(
+            manifest.tiles[0].preview_path.as_deref(),
+            Some("merged-social.preview-1.jpg")
+        );
         assert_eq!(manifest.tiles[1].source_path, "b.jpg");
         assert!(!manifest.tiles[1].is_video);
-        assert_eq!(manifest.tiles[1].preview_path, None);
+        assert_eq!(
+            manifest.tiles[1].preview_path.as_deref(),
+            Some("merged-social.preview-2.jpg")
+        );
         // Third section: the video that a first-section scan used to drop.
         assert_eq!(manifest.tiles[2].source_path, "c.mp4");
         assert!(manifest.tiles[2].is_video);
-        assert_eq!(manifest.tiles[2].preview_path.as_deref(), Some("c.jpg"));
+        assert_eq!(
+            manifest.tiles[2].preview_path.as_deref(),
+            Some("merged-social.preview-3.jpg")
+        );
     }
 
     #[test]
@@ -3844,10 +3936,10 @@ mod tests {
         assert_eq!(tiles.len(), 2);
         assert_eq!(tiles[0].source_path, "vid1.mp4");
         assert!(tiles[0].is_video);
-        assert_eq!(tiles[0].preview_path.as_deref(), Some("vid1.jpg"));
+        assert_eq!(tiles[0].preview_path, None);
         assert_eq!(tiles[1].source_path, "vid2.mp4");
         assert!(tiles[1].is_video);
-        assert_eq!(tiles[1].preview_path.as_deref(), Some("vid2.jpg"));
+        assert_eq!(tiles[1].preview_path, None);
     }
 
     #[test]
@@ -3913,8 +4005,10 @@ mod tests {
             serde_json::from_str(light[0].preview_manifest.as_deref().unwrap()).unwrap();
         assert_eq!(manifest.tiles.len(), 2);
         assert!(manifest.tiles[0].is_video);
-        // Video tile carries its own per-video poster path.
-        assert_eq!(manifest.tiles[0].preview_path.as_deref(), Some("clip.jpg"));
+        assert_eq!(
+            manifest.tiles[0].preview_path.as_deref(),
+            Some("tweet-gallery.preview-1.jpg")
+        );
         assert_eq!(light[0].feed_playback, None);
     }
 

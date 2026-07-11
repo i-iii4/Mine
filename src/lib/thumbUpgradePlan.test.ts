@@ -7,8 +7,12 @@ import {
 } from "./thumbUpgradePlan";
 import type { TilePosterUpgrade } from "@/lib/commands";
 
-function tile(posterName: string, mediaPath: string): TilePosterUpgrade {
-  return { posterName, mediaPath, kind: "video" };
+function tile(
+  posterName: string,
+  mediaPath: string,
+  kind: TilePosterUpgrade["kind"] = "video",
+): TilePosterUpgrade {
+  return { posterName, mediaPath, kind };
 }
 
 describe("planThumbUpgrade", () => {
@@ -35,7 +39,10 @@ describe("planThumbUpgrade", () => {
   });
 
   it("emits only tile actions when the block media path is empty", () => {
-    const posters = [tile("a.jpg", "/vault/a.mp4"), tile("b.jpg", "/vault/b.mp4")];
+    const posters = [
+      tile("a.jpg", "/vault/a.mp4"),
+      tile("b.jpg", "/vault/b.avif", "image"),
+    ];
     const input: ThumbUpgradeInput = {
       slug: "gallery",
       mediaPath: "",
@@ -43,8 +50,8 @@ describe("planThumbUpgrade", () => {
       tilePosters: posters,
     };
     expect(planThumbUpgrade(input)).toEqual([
-      { kind: "tile", key: tilePosterKey("a.jpg"), slug: "gallery", tile: posters[0] },
-      { kind: "tile", key: tilePosterKey("b.jpg"), slug: "gallery", tile: posters[1] },
+      { kind: "tile-video", key: tilePosterKey("a.jpg"), slug: "gallery", tile: posters[0] },
+      { kind: "tile-image", key: tilePosterKey("b.jpg"), slug: "gallery", tile: posters[1] },
     ]);
   });
 
@@ -58,7 +65,7 @@ describe("planThumbUpgrade", () => {
     };
     expect(planThumbUpgrade(input)).toEqual([
       { kind: "video", key: blockThumbKey("mixed"), slug: "mixed", mediaPath: "/vault/mixed.mp4" },
-      { kind: "tile", key: tilePosterKey("t.jpg"), slug: "mixed", tile: posters[0] },
+      { kind: "tile-video", key: tilePosterKey("t.jpg"), slug: "mixed", tile: posters[0] },
     ]);
   });
 

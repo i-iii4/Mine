@@ -8,6 +8,135 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 **Это не MVP.** Каждый модуль реализуется в финальном качестве.
 
+## Canonical active plan — audited 10.07.2026
+
+This section is the source of truth for unfinished desktop architecture. Older
+phase tables below remain implementation history; their status cells use words
+instead of unchecked boxes so historical/manual/deferred work cannot be mistaken
+for the active critical path.
+
+Status vocabulary:
+
+- `ACTIVE` — missing contract or test is confirmed in the current code;
+- `DONE` — current code/tests prove the old item was completed;
+- `SUPERSEDED` — the old solution is invalid under the current architecture;
+- `FEATURE BACKLOG` — product feature, not unfinished platform architecture;
+- `MANUAL QA` — implementation exists; only real-vault/user acceptance remains;
+- `DEFERRED` — explicitly outside the current Definition of Done.
+
+### Active architecture sequence
+
+| Phase | Status | Deliverable | Definition of Done |
+|---|---|---|---|
+| A0. Baseline reconciliation | DONE | Audited every former open marker and aligned `PLAN` plus core specs | Every residual has code/test evidence; Graph tests are described accurately; APIs, errors and budgets are specified |
+| A1. Vault freshness | DONE | `VaultReconciler`, persisted `source_stamp`, coalesced route catch-up | Direct create/edit/delete is reflected in Grid/Search/Detail/Sidebar/Graph without restart; concurrent reads share one metadata pass; unchanged files are not read |
+| A2. Watcher/storage consistency | DONE | Watcher recovery, lock order, atomic source writes, rollback-safe compound mutations | Injected watcher/write failures recover without partial source/index state or deadlock |
+| A3. Derived preview completion | DONE | Existence-backed manifests, legacy backfill, source-stamp invalidation, feed profiling | Grid reads derived assets only; cache deletion and dependency changes self-heal; large-vault browser gate passes |
+| A4. Graph View M1 | DONE | Wikilink/related edges, scopes, controls/search, selection/a11y, truncation and Canvas acceptance | Full edge model, stable interactions, keyboard navigation and dark/light Playwright pixel/performance gates pass |
+| A5. Cold-space semantic acceptance | ACTIVE | Fresh-derived-store space switch, legacy card projection audit, semantic preview readiness | Every source Markdown is classified, first-open Grid has no blank cards, metadata-only links retain link semantics, and reopen/switch results are stable |
+
+Production distribution is `DEFERRED` by explicit product decision and is not
+part of local desktop completion. Current acceptance ends at a locally built
+debug `Mine.app`.
+
+### Phase A5 — Cold-space semantic acceptance [ACTIVE]
+
+#### Confirmed boundary — 10.07.2026
+
+- A warmed `Mine` space is visually stable in the current debug build.
+- On first opening the separate `Тест` space, Grid can still expose intermittent
+  blank cards while its local derived store is being prepared.
+- Once settled, source/index inventory is complete: 294 Markdown files project
+  to 256 content blocks and 38 collections. The remaining regression is not a
+  silent inventory loss.
+- `ai-2027-3.md` is a reproducible semantic failure: source frontmatter says
+  `type: link` and contains a URL but no body/media; the index currently stores
+  `block_type = link`, `card_kind = media`, and a `ready` text preview. This
+  renders a large dark placeholder as if it were real media.
+
+#### Work plan
+
+| # | Task | Status |
+|---|---|---|
+| A5.1 | Build a sanitized cold-space fixture from `Тест`: root cards, nested library cards, collections, metadata-only links, missing assets and browser-decode fallback; assign a fresh vault id without modifying the user's source space | ACTIVE |
+| A5.2 | Add a source-to-projection audit: every `.md` must be classified exactly once as content, collection or typed unsupported input; report source/index/preview counts at first snapshot and settled state | ACTIVE |
+| A5.3 | Define and implement the compatibility rule for metadata-only links: `url` plus link metadata and no media must render as a link/text card, never as a media card | ACTIVE |
+| A5.4 | Tighten preview readiness: `ready` must mean the manifest and artifact are usable for the projected card semantics; an existence-backed text placeholder cannot satisfy a media preview | ACTIVE |
+| A5.5 | Make first-open publication coherent: every visible row has either its correct derived preview or a type-correct fallback; progressive preview batches cannot publish blank card surfaces | ACTIVE |
+| A5.6 | Add automated cold-open and rapid `Mine -> Test -> Mine -> Test` acceptance, including current-vault worker cancellation, first-frame blank detection and settled-state equality | ACTIVE |
+| A5.7 | Run manual acceptance on the untouched real `Тест` space, then repeat after restart and after clearing only a disposable clone's derived store | MANUAL QA |
+
+#### Definition of Done
+
+- The fixture starts with no local derived store; no existing user cache is used
+  to make the test pass.
+- At first usable snapshot and after background completion, every source
+  Markdown has one explicit classification and no stale extra projection exists.
+- Grid never shows an empty card frame during first open or rapid scroll. A
+  pending preview uses a deterministic fallback matching the card's real type.
+- `ai-2027-3.md` appears as a link card, Detail reports link semantics, the
+  source action remains available, and no faux media panel is mounted.
+- A row cannot be `preview_state = ready` when its manifest/artifact contradicts
+  the projected card kind or cannot be decoded by the receiving surface.
+- Rapid space switching publishes no results from obsolete workers and causes no
+  cross-space preview contamination.
+- Two consecutive opens and a full app restart produce the same card count,
+  ordering, card kinds and preview manifests.
+- Automated frontend/Rust tests, `bun run test:feed-scroll`, the cold-space
+  browser gate, and real-space manual acceptance all pass.
+
+### Audited disposition of former open markers
+
+This table accounts for every unchecked/partial marker that existed before the
+10.07.2026 audit. `ACTIVE` entries name the concrete missing boundary; manual
+checks and feature requests are kept separate from architecture.
+
+| Former items | Disposition | Current evidence or missing boundary |
+|---|---|---|
+| `C2`, `C3`, `C4`, `24.1–24.5` | DONE A1–A3 | Route catch-up, watcher recovery, persisted dependency stamps and existence-backed preview manifests are implemented |
+| `C5` | MANUAL QA | `feed_playback` state machine and automated coverage exist; real-vault autoplay/failure acceptance remains |
+| `C7`, `C8.6`, `C8.7` | DONE / SUPERSEDED | C8 and production Phase 11 replaced hidden DOM measurement with deterministic layout; browser feed-scroll gate exists |
+| `MC6` | MANUAL QA | Migration CLI/tests and canonical writers exist; only before/after real-vault inspection remains |
+| `MC7` | DONE | Parser/index membership uses canonical `Mine Collections`; legacy `tags` is migration input only |
+| `7.6` | DEFERRED | Signing/notarization capability unavailable; see `SPEC_DISTRIBUTION.md` status |
+| `7.26` | FEATURE BACKLOG | Inline media has action frame/full preview, but not the old delayed extracted-card hover-preview contract |
+| `7.27` | FEATURE BACKLOG (partial) | TCP guard suppresses a second process; focus/raise of the primary window is absent |
+| `9.4.1` | DONE | Listed async App handlers have explicit `try/catch` paths |
+| `9.4.3` | SUPERSEDED | `ChannelPage` consumes server-filtered route snapshots; no client filter remains |
+| `9.4.4` | CODE CLEANUP | `snapToCursor` still casts the dnd activator event without a client-coordinate guard |
+| `9.5.1–9.5.4` | DONE | `isSafeUrl`, `safeMarkdownUrl`, React rendering and scoped manifest matches replace the audited unsafe paths |
+| `9.6.1–9.6.3` | DONE | Collection rewrites back up/restore source bytes; channel rename also owns a DB transaction |
+| `9.6.4` | DONE A2 | `rebuild_index` delegates to the non-destructive reconciler and preserves last-good rows on injected per-file failure |
+| `9.6.5` | SUPERSEDED | Are.na import intentionally commits independent blocks and reports per-block recoverable errors |
+| `9.7.1`, `9.7.5`, `9.7.7`, `9.7.8`, `9.7.10–9.7.12` | DONE | SQL slug lookup, missing-delete tolerance, file-first delete, transactional full scan, memoized cards, busy timeout and type index exist |
+| `9.7.3`, `9.7.4` | SUPERSEDED | Route-specific projections and Hybrid Search replaced the audited channel/FTS hot paths |
+| `9.7.6` | ACTIVE hardening | Local source image decode has no explicit byte/pixel admission limit before `image::open` |
+| `9.7.9` | ACTIVE performance | `collect_blocks` still creates one unbounded SQL `IN` list instead of bounded batches |
+| `9.8.1–9.8.3` | DONE | Native callback timers are cleared; popup/content/native requests have bounded timeouts |
+| `9.8.4` | DONE A2 | Create and replacement paths use staged same-directory writes, fsync and atomic rename through `source_mutation` |
+| `9.8.5` | DONE for audited paths | Old request-path unwraps were removed; remaining constant-header parses and poisoned-lock expectations require separate cleanup policy |
+| `9.8.6`, `9.8.8` | SUPERSEDED | URL safety is enforced at render/fetch boundaries; current clipper uses overlay/Vite entries rather than legacy popup paths |
+| `9.8.7` | FEATURE BACKLOG | MIME-derived extension refinement is not required for current identity/storage correctness |
+| `9.8.9`, `9.8.10` | DONE | Every redirect hop uses `net::validate_fetch_url`; native channel input uses `validate_collection_ref` |
+| `9.8.11` | SECURITY BACKLOG | Clipper still installs broad http/https content scripts instead of pure on-demand injection |
+| `9.9.1` | ACTIVE hardening | Tauri runner still ends with `.expect(...)` instead of returning/reporting startup failure |
+| `9.9.2`, `9.9.3`, `9.9.9` | DONE | Listener cleanup and atomic thumbnail temp/fsync/rename paths exist |
+| `9.9.4`, `9.9.6`, `9.9.7` | DONE A2 | Watcher errors are typed/recoverable, lock order is documented/tested, and import releases the vault mutex before network/file work |
+| `9.9.5` | FEATURE BACKLOG | Import error taxonomy is independent of A1–A4 |
+| `9.10.1–9.10.3`, `9.10.5`, `9.10.10`, `9.10.11` | DONE / SUPERSEDED | Old helpers/legacy popup are gone or intentionally split by semantic role; ImportDialog is mounted by App |
+| `9.10.4`, `9.10.12` | CODE CLEANUP | No correctness contract depends on these dedup/removal tasks |
+| `9.10.6` | SECURITY BACKLOG | `style-src 'unsafe-inline'` remains required by current styling/runtime and needs a dedicated CSP migration |
+| `9.10.7`, `9.10.8` | DONE A2 boundary | Compound source/index writes use `storage::source_mutation`; commands retain only validation, orchestration and event publication |
+| `9.11.1`, `9.11.2`, `9.11.4`, `9.11.7` | DONE | Blocks/tags/files/thumbnails contain direct unit and failure coverage |
+| `9.11.3`, `9.11.5`, `9.11.6` | ACTIVE test gaps | Channel command internals, mocked Are.na pagination/errors and watcher lifecycle/debounce lack direct tests |
+| `9.12.1–9.12.6` | DONE by A0 | Core specs/schema/IPC/docs are reconciled in this audit pass |
+| `9.13.13` | ACTIVE test gaps | Channel internals, bulk collection rollback and redirect integration still need focused tests |
+| `11.7` | SUPERSEDED | Current top chrome/action surfaces are governed by `DESIGN_SYSTEM.md`, not the old toolbar placeholder |
+| `11.8`, `12.7.1`, `12.7.2`, `12.11`, `21.7`, `22.7`, `23.7`, `25.8`, `26.12`, `27.8` | MANUAL QA | Implementations/automated checks exist; these rows are real-vault or visual acceptance only |
+| `12.5.4` | DEFERRED | iOS/Safari work is outside the active desktop scope |
+| `26.6.1–26.6.4` | FEATURE BACKLOG | Atomic batch delete parity is a product feature, not a prerequisite for A1–A4 |
+| `30.3–30.7` | DONE A4 | M1 edge/scoping/search/a11y contracts and real-browser dark/light Canvas budgets pass |
+
 ## Стратегия: вертикальные срезы с эталонным модулем
 
 Каждый модуль проходит полный цикл:
@@ -17,7 +146,7 @@ SPEC → TEST (красные) → CODE (зелёные) → VERIFY → COMMIT
 
 Фаза 1 создаёт **эталонный модуль** (`domain/block`) — образец качества для всех остальных. Уроки из каждого модуля влияют на спецификацию следующего.
 
-## Current Top Priority — Critical Path Reset v1 [IN PROGRESS]
+## Critical Path Reset v1 [COMPLETED]
 
 Goal: устранить две подтверждённые архитектурные причины текущей неработоспособности:
 1. derived state (`index.db`, thumbs, preview cache) живёт внутри iCloud vault;
@@ -114,12 +243,12 @@ Goal: устранить две подтверждённые архитекту�
 | # | Phase | Status | Deliverables |
 |---|-------|--------|--------------|
 | C1 | Derived Store Migration | [x] | `vault-id`, local app-data store, startup/open against local index, first-run migration UX |
-| C2 | Feed Preview Pipeline | [~] | `FeedPreviewManifest`, composite previews, feed/detail split, removal of originals from grid path |
-| C3 | Measurement + Invalidation Hardening | [~] | media-free measurement, `source_stamp` invalidation, acceptance profiling |
-| C4 | Residual Risks / Follow-up | [ ] | filesystem-first route catch-up, watcher hardening beyond current catch-up, remaining frontend boot optimization, optional async/custom asset path for Detail/original flows, remaining windowing bugs |
-| C5 | Feed Video Phase | [~] | explicit `feed_playback` contract, tiered `standard/heavy` autoplay policy, poster-first `FeedVideoSurface`, single-active autoplay, preview-only galleries |
+| C2 | Feed Preview Pipeline | DONE | Existence-backed `FeedPreviewManifest`, unique derived tiles, feed/detail split and zero original-source requests in Grid acceptance |
+| C3 | Measurement + Invalidation Hardening | DONE | Media-free deterministic measurement, persisted dependency stamps and derived-preview invalidation |
+| C4 | Residual Risks / Follow-up | DONE for A1–A3 | Filesystem catch-up, watcher recovery, rollback-safe source writes and browser profiling gates are complete; optional Detail asset optimization remains backlog |
+| C5 | Feed Video Phase | MANUAL QA | explicit `feed_playback` contract, tiered `standard/heavy` autoplay policy, poster-first `FeedVideoSurface`, single-active autoplay, preview-only galleries |
 | C6 | Identity Assets | [x] | Redaction 100 Italic `m`, platform-specific app icons, toolbar circle icon, Instagram overlay glyph/button contract |
-| C7 | Feed Scroll Readiness | [~] | adaptive render/priority/preload windows, preview-only decode scheduler, bounded concurrency/LRU, development diagnostics; implemented but insufficient for perfect fast scroll |
+| C7 | Feed Scroll Readiness | DONE / SUPERSEDED BY C8 | adaptive render/priority/preload windows, preview-only decode scheduler, bounded concurrency/LRU, development diagnostics; implemented but insufficient for perfect fast scroll |
 | C8 | Grid Layout Readiness / Viewport-first Measurement | [x] | viewport-first measurement scheduler, non-contiguous live measured islands, layout diagnostics, automated browser scroll audit; real Everything acceptance passed |
 
 ### Current progress snapshot
@@ -129,20 +258,18 @@ Goal: устранить две подтверждённые архитекту�
   - `index.db` и thumbs cache переехали в per-device app data store;
   - startup/open работает против local derived store, а не против SQLite внутри iCloud vault;
   - первый migration UX path заложен.
-- `C2` выполнен частично:
-  - введён `FeedPreviewManifest`;
-  - query/read path переведён на local preview-first contract;
-  - image/article/social feed-path больше не должен читать оригиналы как основной runtime path;
-  - user-visible multi-image fallback regression закрыт: gallery tiles больше не дублируют один block-level thumb при missing `preview_manifest` / missing tile preview assets;
-  - legacy article rows без `preview_manifest`, но с `media_urls`, больше не деградируют в пустой серый gallery shell: runtime собирает fallback tiles напрямую из source images;
-  - tile preview pipeline на storage-слое всё ещё не доведён до полного existence-backed состояния для legacy rows, поэтому `C2` остаётся partial.
-- `C3` выполнен частично:
-  - route/layout invalidation и resize bucket handling усилены;
-  - sync IPC и asset-serving main-thread hotspots из trace/sample выведены из critical path;
-  - generation-safe masonry rewrite внедрён: `layoutGenerationKey`, generation-aware height/layout cache, `committed` prefix и skeleton-only provisional mode;
-  - на живом `Mine` подтверждено, что системная обрезка низа и white-tail underflow больше не воспроизводятся;
-  - app-level native selection suppression добавлен для chrome/feed/sidebar/media surfaces, при этом Detail article prose сохраняет системное выделение для extraction/`Cmd+C`;
-  - оставшийся scope `C3` — filesystem-first route catch-up, `source_stamp` invalidation и финальный profiling gate, а не height correctness.
+- `C2` завершён:
+  - Grid/Card/preloader принимают только `preview_state = ready` и derived cache paths;
+  - каждый tile имеет собственный preview artifact, а missing/stale cache переводит
+    manifest в regeneration, не в source fallback;
+  - Detail использует отдельный full-fidelity parser и по-прежнему может открывать
+    оригиналы;
+  - `bun run test:feed-scroll` подтверждает ноль source-vault media requests.
+- `C3` завершён:
+  - deterministic descriptor/layout path не монтирует media для измерения;
+  - `source_stamp` покрывает Markdown и media dependencies;
+  - stale worker не может опубликовать manifest после изменения stamp;
+  - cache deletion/dependency changes планируют resumable preview regeneration.
 - `C5` выполнен частично:
   - введён explicit backend-derived `feed_playback` contract для desktop feed autoplay;
   - galleries больше не монтируют live video вообще и остаются preview-only;
@@ -159,7 +286,9 @@ Goal: устранить две подтверждённые архитекту�
     - все committed `standard` clips autoplay'ят одновременно, если их playback surface покрыта expanded autoplay window (`viewport ± 50%` высоты экрана) минимум на `50%`;
     - `heavy` clips autoplay'ят пулом `FEED_HEAVY_MAX_ACTIVE` (= 2) с детерминированным tie-break и гистерезисом `0.1`, который не переносится через границу `inViewport`;
     - autoplay больше не сбрасывается на всём `measuring`; уже committed prefix может продолжать и начинать playback, пока нижняя часть grid ещё догоняет layout;
-  - `C5` остаётся `[~]` до ручной приёмки пользователем: autoplay dedicated video, autoplay single-video previews, preview-only multi-media, no blank square on failures.
+  - `C5` имеет статус `MANUAL QA`: autoplay dedicated video, autoplay
+    single-video previews, preview-only multi-media и отсутствие blank square
+    при failures требуют ручной приёмки пользователем.
 - `C6` завершён:
   - product mark зафиксирован как строчная `m` из Redaction 100 Italic;
   - iOS app icon использует square white source под системную mask;
@@ -234,8 +363,8 @@ Non-goals:
 | C8.3 | Regression harness: simulate deep fast-scroll / scroll jump into an initially unmeasured area and assert the viewport is prioritized before prefix catch-up | [x] |
 | C8.4 | Measurement scheduler: prioritize missing visible items, then near-forward window, then backward/prefix background, with bounded batch size and no scroll-pixel React fan-out | [x] |
 | C8.5 | Live-render gate rewrite: decouple “has exact measured height” from strict contiguous prefix so exact-measured viewport items can render as live cards even when earlier gaps remain provisional | [x] |
-| C8.6 | Layout stability contract: keep provisional positions deterministic and apply any exact-height corrections without visible scroll feedback loops during active scroll | [~] |
-| C8.7 | Height-readiness hardening: reduce hidden DOM dependency by deriving deterministic preview/text heights where possible and persisting reusable measurements by generation bucket | [~] |
+| C8.6 | Layout stability contract: keep provisional positions deterministic and apply any exact-height corrections without visible scroll feedback loops during active scroll | DONE — superseded by Phase 11 deterministic layout |
+| C8.7 | Height-readiness hardening: reduce hidden DOM dependency by deriving deterministic preview/text heights where possible and persisting reusable measurements by generation bucket | DONE — production hidden DOM measurement removed |
 | C8.8 | Integrate with C7: media preloader remains preview-only and bounded, with shared diagnostics so layout backlog is not masked as media backlog | [x] |
 | C8.9 | Acceptance on real `Everything`: aggressive trackpad scroll down/up and deep jump cannot produce a blank/white viewport; no whole-route DOM inflation; diagnostics confirm viewport-first measurement | [x] |
 | C8.10 | Documentation + verification: update SPEC/ARCHITECTURE/AUDIT/DEVLOG/PLAN and run focused Grid/readiness tests plus full frontend suite | [x] |
@@ -245,8 +374,9 @@ Non-goals:
 | C8.14 | Convert blank-risk warning into a failing deep-scroll regression and fix `useGridScroll` so anti-blank detection falls back to measured ResizeObserver viewport height when `clientHeight` is unavailable | [x] |
 | C8.15 | Browser acceptance harness: dev-only `/__feed-scroll-audit` route plus `bun run test:feed-scroll` Playwright gate for blank viewport, skeleton-only viewport and near-blank screenshot samples | [x] |
 | C8.16 | Performance hardening: extend browser scroll gate with DOM/settle/frame/long-task budgets and retune Grid to a viewport-near render window while keeping wider media preload | [x] |
+| C8.17 | Regression hardening: cancel obsolete preview/thumb workers, serialize concurrent SQLite schema init, publish preview readiness in 24-row batches, warm one pagination page ahead, and split anti-blank into emergency first-frame commit plus deferred overscan expansion | [x] |
 
-### Phase 24 — Filesystem-first visibility [PLANNED]
+### Phase 24 — Filesystem-first visibility [COMPLETED]
 
 Goal: любой `.md` файл в source vault отображается в приложении как карточка без
 ручного rebuild, независимо от того, как он появился: Obsidian/Finder,
@@ -254,11 +384,11 @@ web-clipper при закрытом desktop UI, iCloud sync или внешни�
 
 | # | Task | Status |
 |---|------|--------|
-| 24.1 | Backend catch-up primitive: compare source-vault `.md` inventory with local SQLite and upsert missing/changed files | [ ] |
-| 24.2 | Delete stale index rows when the corresponding source `.md` no longer exists | [ ] |
-| 24.3 | Call catch-up before final route-facing reads: `list_grid_blocks`, `list_tags`, `list_channels`, `list_channel_previews`, `search_blocks`, `get_block` | [ ] |
-| 24.4 | Preserve fast startup by allowing provisional cached snapshots only until catch-up completes | [ ] |
-| 24.5 | Tests: create `.md` directly on disk and assert grid/list/search/detail visibility without restart/rebuild; include missed-watcher regression | [ ] |
+| 24.1 | Backend catch-up primitive: compare source-vault `.md` inventory with local SQLite and upsert missing/changed files | DONE |
+| 24.2 | Delete stale index rows when the corresponding source `.md` no longer exists | DONE |
+| 24.3 | Call catch-up before final route-facing reads: `list_grid_blocks`, `list_tags`, `list_channels`, `list_channel_previews`, `search_blocks`, `get_block` | DONE |
+| 24.4 | Preserve fast startup by allowing provisional cached snapshots only until catch-up completes | DONE |
+| 24.5 | Tests: create `.md` directly on disk and assert grid/list/search/detail visibility without restart/rebuild; include missed-watcher regression | DONE |
 
 ### Feed & video optimization — 02.07.2026 [COMPLETED]
 
@@ -365,8 +495,8 @@ The target is one canonical post-migration format documented in
 | MC3 | Backup + apply migration | [x] | `--apply` creates timestamped byte backups, rewrites card membership, and safely renames root collection pages |
 | MC4 | Runtime write-path switch | [x] | Clipper/app/drag/checkbox/inline extraction write only canonical wikilinks |
 | MC5 | Storage/frontend semantic switch | [x] | `CollectionRef` replaces normalized tag semantics while legacy physical names remain in DB/API |
-| MC6 | Rebuild + verification | [ ] | Compare counts/order before/after, inspect Obsidian graph, verify no write path emits legacy format |
-| MC7 | Legacy fallback removal | [ ] | Remove normal runtime dependency on `tags`/raw values as collection membership; keep diagnostics/re-run migration affordance |
+| MC6 | Rebuild + verification | MANUAL QA | Compare counts/order before/after, inspect Obsidian graph, verify no write path emits legacy format |
+| MC7 | Legacy fallback removal | DONE | Runtime membership uses canonical wikilinks; legacy fields remain migration diagnostics only |
 
 ### Current known blocker before phase completion
 
@@ -529,7 +659,7 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.3 | Пересборка индекса из файлов (rebuild_index команда) | [x] |
 | 7.4 | Автообновление (Tauri updater) | отложено — требует ручной генерации ключей |
 | 7.5 | Иконка (SVG → icns/ico/png), нативное macOS-меню, About | [x] |
-| 7.6 | Сборка .dmg, подпись, нотаризация | [ ] |
+| 7.6 | Сборка .dmg, подпись, нотаризация | DEFERRED — outside current DoD |
 | 7.7 | Исправление drag-and-drop: rename_all = "snake_case" для create_block (Tauri v2 camelCase по умолчанию) | [x] |
 | 7.8 | Исправление сброса прокрутки Grid: blocksFingerprint вместо ссылки на массив + отображение ошибок в DropZone | [x] |
 | 7.9 | Бэкенд: команда rename_channel (обновление тега во всех .md + индексе) | [x] |
@@ -558,8 +688,8 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.24.7 | Sidebar link-editor close: remove row actions immediately on `detailChromeClosing`; only top chrome uses closing snapshot | [x] |
 | 7.24.8 | Sidebar row focus-mode: default `text-foreground`, hover/focus dims non-focused labels/counts to `muted-foreground` and thumbnail strips to `0.9`, with animated enter/exit and instant row switching | [x] |
 | 7.25 | Detail related-notes hover preview: row-key positioning, 3px preview radius, viewport-aware side/up placement, read-only quick-look card, shared hover timing | [x] |
-| 7.26 | Detail inline-image hover preview: image wrapper hover outline + resolver `image src/mediaRef -> extracted media block` + below/above interactive preview | [ ] |
-| 7.27 | Single-instance guard для desktop app: повторный запуск должен фокусировать существующее окно, а не создавать вторую инстанцию | [ ] |
+| 7.26 | Detail inline-image hover preview: image wrapper hover outline + resolver `image src/mediaRef -> extracted media block` + below/above interactive preview | FEATURE BACKLOG |
+| 7.27 | Single-instance guard для desktop app: повторный запуск должен фокусировать существующее окно, а не создавать вторую инстанцию | FEATURE BACKLOG — duplicate suppressed, focus/raise missing |
 | 7.28 | Sidebar resize handle: suppress native WebKit text selection from `pointerdown`, before drag threshold | [x] |
 | 7.29 | Sidebar ordinary rows: remove hover ellipsis action that replaced counts; keep Rename/Delete in row ContextMenu | [x] |
 
@@ -631,10 +761,10 @@ Goal: довести проект до продакшен-качества по 
 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
-| 9.4.1 | try/catch на все 9 async-функций (loadData, handleRenameTag, handleDeleteTagFromAll, handleCreateChannel, handleReorderTag, handleCardDrop, handleToggleTag, handleCreateTagFromMenu, handleDeleteBlock) | HIGH-11 | [~] частично — `loadData` и vault sync path закрыты |
+| 9.4.1 | try/catch на все 9 async-функций (loadData, handleRenameTag, handleDeleteTagFromAll, handleCreateChannel, handleReorderTag, handleCardDrop, handleToggleTag, handleCreateTagFromMenu, handleDeleteBlock) | HIGH-11 | DONE |
 | 9.4.2 | `useMemo` на channelPreviews — убрать двойной O(N) цикл | HIGH-12 | [x] решено сменой архитектуры: server-derived previews + SQL top-N |
-| 9.4.3 | `useMemo` на фильтрацию ChannelPage | HIGH-13 | [ ] |
-| 9.4.4 | `instanceof PointerEvent` вместо `as` cast | MED-12 | [ ] |
+| 9.4.3 | `useMemo` на фильтрацию ChannelPage | HIGH-13 | SUPERSEDED — backend route projection |
+| 9.4.4 | `instanceof PointerEvent` вместо `as` cast | MED-12 | CODE CLEANUP |
 | 9.4.5 | Открытие vault по snapshot без блокирующего `full_scan()`, фоновые `vault-sync-*` events, switch без `window.location.reload()` | PERF-2 | [x] |
 | 9.4.6 | Guard против stale async-ответов при switch vault (`vaultPathRef` + request id) | PERF-3 | [x] |
 | 9.4.7 | Per-route `GridSnapshot` cache + skip duplicate startup fetch на route effect | PERF-5 | [x] |
@@ -643,53 +773,53 @@ Goal: довести проект до продакшен-качества по 
 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
-| 9.5.1 | Проверка протокола (http/https) перед `href` в Detail.tsx:171 | MED-8 | [ ] |
-| 9.5.2 | Валидация URL в markdown-ссылках Detail.tsx:356—365 | MED-9 | [ ] |
-| 9.5.3 | Валидация og:image в popup.js:276 | MED-17 | [ ] |
-| 9.5.4 | `<all_urls>` → `["https://*", "http://*"]` в manifest.json | — | [ ] |
+| 9.5.1 | Проверка протокола (http/https) перед `href` в Detail.tsx:171 | MED-8 | DONE — `isSafeUrl` |
+| 9.5.2 | Валидация URL в markdown-ссылках Detail.tsx:356—365 | MED-9 | DONE — `safeMarkdownUrl` |
+| 9.5.3 | Валидация og:image в popup.js:276 | MED-17 | DONE — React/render boundary, no HTML injection |
+| 9.5.4 | `<all_urls>` → `["https://*", "http://*"]` в manifest.json | — | DONE — scoped manifest matches |
 
 #### 9.6 — Транзакции в составных операциях [PENDING]
 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
-| 9.6.1 | Обернуть rename_tag в транзакцию | HIGH-16 | [ ] |
-| 9.6.2 | Обернуть delete_tag_from_all в транзакцию | HIGH-16 | [ ] |
-| 9.6.3 | Обернуть rename_channel (3 шага) в транзакцию | HIGH-17 | [ ] |
-| 9.6.4 | Обернуть rebuild_index в транзакцию | HIGH-18 | [ ] |
-| 9.6.5 | Обернуть import_channel в транзакцию | — | [ ] |
+| 9.6.1 | Обернуть rename_tag в транзакцию | HIGH-16 | DONE — source backup/restore rollback |
+| 9.6.2 | Обернуть delete_tag_from_all в транзакцию | HIGH-16 | DONE — source backup/restore rollback |
+| 9.6.3 | Обернуть rename_channel (3 шага) в транзакцию | HIGH-17 | DONE — DB transaction + source rollback |
+| 9.6.4 | Обернуть rebuild_index в транзакцию | HIGH-18 | DONE — non-destructive reconciler preserves last-good projection |
+| 9.6.5 | Обернуть import_channel в транзакцию | — | SUPERSEDED — per-block recoverable import contract |
 
 #### 9.7 — Производительность бэкенда [PENDING]
 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
-| 9.7.1 | SQL-запрос для проверки slug вместо загрузки всех блоков | HIGH-14, CRIT-12 | [ ] |
+| 9.7.1 | SQL-запрос для проверки slug вместо загрузки всех блоков | HIGH-14, CRIT-12 | DONE |
 | 9.7.2 | HashMap вместо линейного поиска в list_channels | HIGH-15 | [x] |
-| 9.7.3 | Убрать дублирующие вызовы get_all_tags в channels.rs | HIGH-15 | [ ] |
-| 9.7.4 | FTS5: `tokenize='unicode61 remove_diacritics 0'` для кириллицы | MED-2 | [ ] |
-| 9.7.5 | TOCTOU в `delete_block_files()`: ловить `ErrorKind::NotFound` | MED-4 | [ ] |
-| 9.7.6 | Лимит на размер изображения перед `image::open()` | MED-5 | [ ] |
-| 9.7.7 | Исправить порядок удаления в delete_block (файлы → индекс) | MED-18 | [ ] |
-| 9.7.8 | Одна транзакция на весь `full_scan` вместо 10K отдельных | HIGH-27 | [ ] |
-| 9.7.9 | Батчинг IN-запроса тегов по 500-900 | HIGH-28 | [ ] |
-| 9.7.10 | `React.memo` на Card + `useCallback` на обработчики | HIGH-26 | [ ] |
-| 9.7.11 | `PRAGMA busy_timeout = 5000` в apply_pragmas | MED-31 | [ ] |
-| 9.7.12 | Индекс на `block_type` | MED-37 | [ ] |
+| 9.7.3 | Убрать дублирующие вызовы get_all_tags в channels.rs | HIGH-15 | SUPERSEDED — route-specific projections |
+| 9.7.4 | FTS5: `tokenize='unicode61 remove_diacritics 0'` для кириллицы | MED-2 | SUPERSEDED — Hybrid Search contract |
+| 9.7.5 | TOCTOU в `delete_block_files()`: ловить `ErrorKind::NotFound` | MED-4 | DONE — missing delete is idempotent |
+| 9.7.6 | Лимит на размер изображения перед `image::open()` | MED-5 | ACTIVE hardening |
+| 9.7.7 | Исправить порядок удаления в delete_block (файлы → индекс) | MED-18 | DONE |
+| 9.7.8 | Одна транзакция на весь `full_scan` вместо 10K отдельных | HIGH-27 | DONE |
+| 9.7.9 | Батчинг IN-запроса тегов по 500-900 | HIGH-28 | ACTIVE performance |
+| 9.7.10 | `React.memo` на Card + `useCallback` на обработчики | HIGH-26 | DONE |
+| 9.7.11 | `PRAGMA busy_timeout = 5000` в apply_pragmas | MED-31 | DONE |
+| 9.7.12 | Индекс на `block_type` | MED-37 | DONE |
 
 #### 9.8 — Веб-клиппер: надёжность [PENDING]
 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
-| 9.8.1 | Очистка таймеров при onDisconnect в background.js | CRIT-7 | [ ] |
-| 9.8.2 | Таймауты на промисы в popup.js (getContextMenuData, extractMetadata, articlePromise) | — | [ ] |
-| 9.8.3 | HTTP-таймауты `.timeout(Duration::from_secs(30))` в native_host | MED-6, HIGH-24 | [ ] |
-| 9.8.4 | Атомарная запись файлов (write-to-temp → rename) в native_host | MED-7 | [ ] |
-| 9.8.5 | `unwrap()` → Result в native_host.rs:384, 441 | — | [ ] |
-| 9.8.6 | Валидация URL в content.js перед формированием markdown-ссылок | MED-9 | [ ] |
-| 9.8.7 | ext_from_url(): определять MIME из Content-Type заголовков | MED-19 | [ ] |
-| 9.8.8 | Сломанная ссылка popup в контекстном меню: `popup.html` → `dist/index.html` | HIGH-29 | [ ] |
-| 9.8.9 | SSRF: валидация схемы (https only) + запрет приватных IP в download_file | HIGH-21 | [ ] |
-| 9.8.10 | Валидация тега в native host create_channel | MED-35 | [ ] |
-| 9.8.11 | `<all_urls>` → `chrome.scripting.executeScript()` по требованию | MED-34 | [ ] |
+| 9.8.1 | Очистка таймеров при onDisconnect в background.js | CRIT-7 | DONE |
+| 9.8.2 | Таймауты на промисы в popup.js (getContextMenuData, extractMetadata, articlePromise) | — | DONE |
+| 9.8.3 | HTTP-таймауты `.timeout(Duration::from_secs(30))` в native_host | MED-6, HIGH-24 | DONE |
+| 9.8.4 | Атомарная запись файлов (write-to-temp → rename) в native_host | MED-7 | DONE — staged source mutation contract |
+| 9.8.5 | `unwrap()` → Result в native_host.rs:384, 441 | — | DONE for audited request paths |
+| 9.8.6 | Валидация URL в content.js перед формированием markdown-ссылок | MED-9 | SUPERSEDED — render/fetch boundary validation |
+| 9.8.7 | ext_from_url(): определять MIME из Content-Type заголовков | MED-19 | FEATURE BACKLOG |
+| 9.8.8 | Сломанная ссылка popup в контекстном меню: `popup.html` → `dist/index.html` | HIGH-29 | SUPERSEDED — overlay/Vite entry |
+| 9.8.9 | SSRF: валидация схемы (https only) + запрет приватных IP в download_file | HIGH-21 | DONE — every redirect hop validated |
+| 9.8.10 | Валидация тега в native host create_channel | MED-35 | DONE |
+| 9.8.11 | `<all_urls>` → `chrome.scripting.executeScript()` по требованию | MED-34 | SECURITY BACKLOG |
 | 9.8.12 | X long-form article extraction: typed `extractXLongformArticle()` before tweet/thread fallback, strict no image-only article save, fixtures for article/tweet/thread/media/selection paths | — | [x] |
 | 9.8.13 | X quote tweet extraction: separate top-level thread selection from per-tweet content parsing, keep quoted text/media inside parent tweet body, add lazy Defuddle injection to avoid always-on Temml warnings | — | [x] |
 
@@ -697,55 +827,55 @@ Goal: довести проект до продакшен-качества по 
 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
-| 9.9.1 | `.expect()` → `Result` в `lib.rs:95` — ошибка запуска Tauri | HIGH-10 | [ ] |
-| 9.9.2 | Утечка слушателя в ImportDialog: паттерн `isMounted` | HIGH-6 | [ ] |
-| 9.9.3 | Неочищенные промис-хэндлеры в DropZone.tsx | HIGH-19 | [ ] |
-| 9.9.4 | Восстановление watcher: `watcher-error` событие, full_scan при накоплении | MED-10 | [ ] |
-| 9.9.5 | Разделить ошибки импорта: recoverable vs fatal | MED-11 | [ ] |
-| 9.9.6 | Deadlock risk: задокументировать порядок блокировки мьютексов или объединить state | HIGH-22 | [ ] |
-| 9.9.7 | Mutex на время импорта: разбить на короткие блокировки | HIGH-23 | [ ] |
+| 9.9.1 | `.expect()` → `Result` в `lib.rs:95` — ошибка запуска Tauri | HIGH-10 | ACTIVE hardening |
+| 9.9.2 | Утечка слушателя в ImportDialog: паттерн `isMounted` | HIGH-6 | DONE — effect cleanup |
+| 9.9.3 | Неочищенные промис-хэндлеры в DropZone.tsx | HIGH-19 | DONE — unlisten cleanup |
+| 9.9.4 | Восстановление watcher: `watcher-error` событие, full_scan при накоплении | MED-10 | DONE — coalesced reconcile + watcher replacement |
+| 9.9.5 | Разделить ошибки импорта: recoverable vs fatal | MED-11 | FEATURE BACKLOG |
+| 9.9.6 | Deadlock risk: задокументировать порядок блокировки мьютексов или объединить state | HIGH-22 | DONE |
+| 9.9.7 | Mutex на время импорта: разбить на короткие блокировки | HIGH-23 | DONE |
 | 9.9.8 | Утечка таймера в legacy Search.tsx: obsolete after removing frontend Search surface | MED-27 | [x] |
-| 9.9.9 | Гонка записи thumbnail: атомарная запись (temp + rename) | MED-32 | [ ] |
+| 9.9.9 | Гонка записи thumbnail: атомарная запись (temp + rename) | MED-32 | DONE |
 
 #### 9.10 — Рефакторинг [PENDING]
 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
-| 9.10.1 | Вынести `titleFromTag()` в `lib/utils.ts` — убрать дублирование из 3 файлов | MED-13 | [ ] |
-| 9.10.2 | Вынести `is_image_ext()` в `util.rs` — убрать дублирование Rust | MED-1 | [ ] |
-| 9.10.3 | Заменить хардкод-цвета на семантические токены | HIGH-9 | [ ] |
-| 9.10.4 | Извлечь повторяющийся CSS-класс метаданных в `@layer components` | — | [ ] |
-| 9.10.5 | Убрать dead code в arena_api.rs | — | [ ] |
-| 9.10.6 | `unsafe-inline` убрать из CSP (если не сломает shadcn) | MED-15 | [ ] |
-| 9.10.7 | Вынести бизнес-логику из commands/ в domain-сервисы | MED-21 | [ ] |
-| 9.10.8 | Прямой `std::fs::write` в commands/ → storage::files | MED-22 | [ ] |
+| 9.10.1 | Вынести `titleFromTag()` в `lib/utils.ts` — убрать дублирование из 3 файлов | MED-13 | DONE — helper removed with old UI |
+| 9.10.2 | Вынести `is_image_ext()` в `util.rs` — убрать дублирование Rust | MED-1 | SUPERSEDED — predicates intentionally have different semantic scopes |
+| 9.10.3 | Заменить хардкод-цвета на семантические токены | HIGH-9 | DONE — design-system tokens |
+| 9.10.4 | Извлечь повторяющийся CSS-класс метаданных в `@layer components` | — | CODE CLEANUP |
+| 9.10.5 | Убрать dead code в arena_api.rs | — | SUPERSEDED — importer module remains live |
+| 9.10.6 | `unsafe-inline` убрать из CSP (если не сломает shadcn) | MED-15 | SECURITY BACKLOG |
+| 9.10.7 | Вынести бизнес-логику из commands/ в domain-сервисы | MED-21 | DONE for compound source/index mutation boundary |
+| 9.10.8 | Прямой `std::fs::write` в commands/ → storage::files | MED-22 | DONE for production command paths |
 | 9.10.9 | Удалить закомментированный DropZone или включить | MED-26 | [x] |
-| 9.10.10 | Подключить ImportDialog (добавить триггер) или убрать | MED-25 | [ ] |
-| 9.10.11 | Удалить `popup/_legacy/` | MED-38 | [ ] |
-| 9.10.12 | Удалить неиспользуемые экспорты из commands.ts | MED-39 | [ ] |
+| 9.10.10 | Подключить ImportDialog (добавить триггер) или убрать | MED-25 | DONE — mounted by App |
+| 9.10.11 | Удалить `popup/_legacy/` | MED-38 | DONE |
+| 9.10.12 | Удалить неиспользуемые экспорты из commands.ts | MED-39 | CODE CLEANUP |
 
 #### 9.11 — Тесты: критические пробелы [PENDING]
 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
-| 9.11.1 | Тесты commands/blocks.rs: create, delete, list, error paths | — | [ ] |
-| 9.11.2 | Тесты commands/tags.rs: add, remove, rename, delete_from_all | — | [ ] |
-| 9.11.3 | Тесты commands/channels.rs: list, create, delete, reorder, rename | — | [ ] |
-| 9.11.4 | Тесты storage/files.rs: delete (orphaned media), copy (конфликты) | — | [ ] |
-| 9.11.5 | Тесты arena_api.rs: мок HTTP, пагинация, ошибки | — | [ ] |
-| 9.11.6 | Тесты watcher/watch.rs: запуск/остановка, debounce | — | [ ] |
-| 9.11.7 | Тесты storage/thumbnails.rs: повреждённые/большие изображения | — | [ ] |
+| 9.11.1 | Тесты commands/blocks.rs: create, delete, list, error paths | — | DONE — 35 direct tests |
+| 9.11.2 | Тесты commands/tags.rs: add, remove, rename, delete_from_all | — | DONE — 8 direct tests |
+| 9.11.3 | Тесты commands/channels.rs: list, create, delete, reorder, rename | — | ACTIVE test gap |
+| 9.11.4 | Тесты storage/files.rs: delete (orphaned media), copy (конфликты) | — | DONE — 10 direct tests |
+| 9.11.5 | Тесты arena_api.rs: мок HTTP, пагинация, ошибки | — | ACTIVE test gap |
+| 9.11.6 | Тесты watcher/watch.rs: запуск/остановка, debounce | — | ACTIVE test gap |
+| 9.11.7 | Тесты storage/thumbnails.rs: повреждённые/большие изображения | — | DONE — 32 direct tests |
 
 #### 9.12 — Документация [PENDING]
 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
-| 9.12.1 | Обновить SPEC_INTEGRATION.md: добавить 6 недокументированных команд | DOC-1, HIGH-30 | [ ] |
-| 9.12.2 | Обновить DEVLOG.md: запись о повторном аудите и исправлениях | — | [ ] |
-| 9.12.3 | ARCHITECTURE.md: SQLite-схема (8+ расхождений с кодом) | HIGH-30 | [ ] |
-| 9.12.4 | SPEC_DOMAIN.md: thumb_path `.webp` → `.jpg` | MED-36 | [ ] |
-| 9.12.5 | SPEC_STORAGE.md: IndexedBlock — добавить поля source, width, height, author, body | — | [ ] |
-| 9.12.6 | SPEC_FRONTEND.md: обновить IPC layer (13 → 20 команд), Grid (virtual → chunked) | — | [ ] |
+| 9.12.1 | Обновить SPEC_INTEGRATION.md: добавить 6 недокументированных команд | DOC-1, HIGH-30 | DONE by A0 audit |
+| 9.12.2 | Обновить DEVLOG.md: запись о повторном аудите и исправлениях | — | DONE by A0 audit |
+| 9.12.3 | ARCHITECTURE.md: SQLite-схема (8+ расхождений с кодом) | HIGH-30 | DONE by later schema documentation; A0 adds freshness delta |
+| 9.12.4 | SPEC_DOMAIN.md: thumb_path `.webp` → `.jpg` | MED-36 | DONE |
+| 9.12.5 | SPEC_STORAGE.md: IndexedBlock — добавить поля source, width, height, author, body | — | DONE |
+| 9.12.6 | SPEC_FRONTEND.md: обновить IPC layer (13 → 20 команд), Grid (virtual → chunked) | — | DONE / superseded by current route contracts |
 
 #### Порядок выполнения
 
@@ -783,7 +913,7 @@ Goal: довести проект до продакшен-качества по 
 | 9.13.10 | FTS-триггер `blocks_au` с `UPDATE OF`-гардом (нет лишнего FTS-rebuild при sync thumb-метаданных) | [x] |
 | 9.13.11 | Гигиена: удалены debug-логи, мёртвый код (`transliterate`/`normalize_slug`), обоснованы prod `unwrap`, закрыты пустые `catch`, удалены мёртвые npm-deps | [x] |
 | 9.13.12 | Grid per-frame re-render и `GRID_TOP_INSET_PX` coord — задокументированы как осознанные residuals в SPEC_FEED_SCROLL_PERFORMANCE | [x] |
-| 9.13.13 | Тесты: preview_plan.rs (6 unit), `serialize_response` echo `_messageId` (CRIT-7 proof) — сделано. Остаются: channels.rs commands (нужен extract-internal рефактор под State), bulk-tag rollback, SSRF redirect integration (нужен mock HTTP-сервер) | [~] |
+| 9.13.13 | Тесты: preview_plan.rs (6 unit), `serialize_response` echo `_messageId` (CRIT-7 proof) — сделано. Остаются: channels.rs commands (нужен extract-internal рефактор под State), bulk-tag rollback, SSRF redirect integration (нужен mock HTTP-сервер) | ACTIVE test gaps |
 
 ### Phase 10 — UX: навигация, сайдбар, устойчивость [COMPLETED]
 
@@ -813,8 +943,8 @@ Goal: табличный вид сайдбара (название + превь�
 | 11.4 | Направляющие между строками (`border-b`) | [x] |
 | 11.5 | Сохранение классического вида Sidebar/ChannelIcon как `.classic.tsx` | [x] |
 | 11.6 | Убрана нижняя панель сайдбара (Import, Search) | [x] |
-| 11.7 | Наполнение тулбара (действия без глобального Search) | [ ] |
-| 11.8 | Финальная калибровка отступов и типографики | [ ] |
+| 11.7 | Наполнение тулбара (действия без глобального Search) | SUPERSEDED — current top-chrome contract |
+| 11.8 | Финальная калибровка отступов и типографики | MANUAL QA |
 | 11.9 | Текстовые миниатюры статей: `generate_text_thumbnail()` (ab_glyph + imageproc, Noto Sans 28KB embedded) | [x] |
 | 11.10 | Оптимизация миниатюр: O1 — пропуск свежих (mtime), O2 — LazyLock для шрифта, O3 — фоновая генерация в full_scan | [x] |
 | 11.11 | Снятие фильтра BlockType в `list_channel_previews` — статьи появляются в сайдбаре | [x] |
@@ -875,7 +1005,7 @@ Goal: расширение собирается через Vite, использ�
 | 12.5.1 | Safari manifest обновлён: `dist/index.html` | [x] |
 | 12.5.2 | Собранный dist копируется в Safari Resources через `build:extension` скрипт | [x] |
 | 12.5.3 | Старый popup Safari перемещён в `_legacy/` | [x] |
-| 12.5.4 | Пересборка Xcode-проекта с новым попапом | [ ] |
+| 12.5.4 | Пересборка Xcode-проекта с новым попапом | DEFERRED — iOS/Safari outside active scope |
 
 #### 12.6 — Миграция логики
 
@@ -890,8 +1020,8 @@ Goal: расширение собирается через Vite, использ�
 
 | # | Task | Status |
 |---|------|--------|
-| 12.7.1 | Визуальное сравнение: попап расширения vs основное приложение (шрифты, цвета, отступы) | [ ] |
-| 12.7.2 | Проверка на `about:blank`, PDF, `chrome://` — popup должен работать | [ ] |
+| 12.7.1 | Визуальное сравнение: попап расширения vs основное приложение (шрифты, цвета, отступы) | MANUAL QA |
+| 12.7.2 | Проверка на `about:blank`, PDF, `chrome://` — popup должен работать | MANUAL QA |
 | 12.7.3 | Проверка размера расширения: ~270 КБ gzip (React + шрифты + Tailwind) | [x] |
 | 12.7.4 | `bun run lint` — расширение проходит те же правила ESLint | [x] |
 | 12.7.5 | Обновить SPEC_CLIPPER.md: новая архитектура сборки | [x] |
@@ -1038,7 +1168,7 @@ SPEC: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) — полная архитект
 | 12.8 | Phase C: виртуализация Sidebar — CSS `content-visibility: auto` + `contain-intrinsic-size` на TagNavItem, отключение при drag | [x] |
 | 12.9 | Phase D (deferred): удаление `openh264`, `mp4` crates — заблокировано, worker video decode stub'нут | [-] |
 | 12.10 | Cache-bust fix: `list_channel_previews` возвращает `mtime` per thumb, frontend использует `?m=<mtime>` вместо raw URL | [x] |
-| 12.11 | Manual QA: visual regression на representative vault | [ ] |
+| 12.11 | Manual QA: visual regression на representative vault | MANUAL QA |
 | 12.12 | Startup safety: `list_pending_thumb_upgrades` через SQLite + `spawn_blocking`, без file peek'ов на UI thread | [x] |
 | 12.13 | Legacy vault compatibility: backfill `thumb_format/thumb_mtime` из существующих `.jpg` при `open_vault()` | [x] |
 
@@ -1175,7 +1305,7 @@ Goal: убрать `Native host timeout` на статьях с многими i
 | 21.4 | Detail drag payload | [x] | `type: "inline_media"`, local image-only activation, media drag overlay |
 | 21.5 | Sidebar drop routing | [x] | Drop `inline_media` on collection target calls extraction command, not the card connect path |
 | 21.6 | Metadata UI | [x] | `RELATED NOTES` in Detail metadata with links to source notes |
-| 21.7 | Manual QA | [ ] | Real vault extraction, Obsidian source check, source article unchanged, rename source note updates relation |
+| 21.7 | Manual QA | MANUAL QA | Real vault extraction, Obsidian source check, source article unchanged, rename source note updates relation |
 
 ### Phase 22 — Display Title / Body H1 Contract
 
@@ -1194,7 +1324,7 @@ Specification: [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md).
 | 22.4 | Write-path switch | [x] | New link/article/video page clips write real page heading as body H1; tweet/selection/media/file paths do not synthesize `title:` or H1 |
 | 22.5 | Rename and derived artifacts | [x] | Filename rename no longer rewrites `frontmatter.title` or body H1; text thumbnails and article-audio use derived display-title/speakable content |
 | 22.6 | Compatibility and migration boundary | [x] | Existing `frontmatter.title` remains read fallback; no automatic vault-wide rewrite |
-| 22.7 | Manual QA | [ ] | Fresh clipper save paths + old vault fallback behavior on a real Obsidian vault |
+| 22.7 | Manual QA | MANUAL QA | Fresh clipper save paths + old vault fallback behavior on a real Obsidian vault |
 
 ### Phase 23 — Media Contract / Derived Card Kind [COMPLETE]
 
@@ -1208,7 +1338,7 @@ Goal: demote non-channel `type` to compatibility metadata and make feed/detail c
 | 23.4 | Existing content migration boundary | [x] | Migration rewrites frontmatter `file` only; body bytes are unchanged, so singleton embed bodies become article |
 | 23.5 | Inline-media extraction output | [x] | New extraction creates empty-body media-card with canonical `file` wikilink instead of singleton embed body |
 | 23.6 | Clipper/native-host contract | [x] | Popup creation modes mostly unchanged; native-host writer is authoritative for canonical `file` wikilinks |
-| 23.7 | Manual QA | [ ] | Real-vault migration + fresh clipper media save + existing singleton embed body behavior |
+| 23.7 | Manual QA | MANUAL QA | Real-vault migration + fresh clipper media save + existing singleton embed body behavior |
 
 ### Phase 25 — Media Asset Actions
 
@@ -1227,7 +1357,7 @@ Specification: [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md).
 | 25.5 | Media rename command | [x] | Rename physical media file, rewrite media refs across parseable Markdown, keep card slugs/titles unchanged |
 | 25.6 | Media delete command | [x] | Prepare referenced-card plan, show exact media preview in confirmation, delete media file, remove parseable refs, keep `.md` cards/notes |
 | 25.7 | Reveal/Copy Path/Copy | [x] | Finder/path/native clipboard actions resolve the media file, not source card `.md` |
-| 25.8 | Tests + manual QA | [ ] | Automated Rust/frontend coverage is in place; real-vault manual QA for frontmatter media and inline media parity remains |
+| 25.8 | Tests + manual QA | MANUAL QA | Automated Rust/frontend coverage is in place; real-vault manual QA for frontmatter media and inline media parity remains |
 
 ### Phase 26 — Grid Group Selection / Batch Card Actions
 
@@ -1246,16 +1376,16 @@ contract: [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md).
 | 26.4 | Bottom action island | [x] | Main-pane-centered `h-8` opaque island, `bottom-s3`, clear button, Detail-top-bar-style muted Russian selected-card count, direct Button actions `Connect`, text-only collection-scoped `Disconnect`, red text-only `Delete`, horizontal overflow |
 | 26.5 | Batch Connect | [x] | `BatchCollectionPicker` reuses `CollectionPicker` row/input/action styling; binary all/not-all states, sidebar-order rows, optimistic state without row reordering or partial count labels |
 | 26.6 | Batch Disconnect/Delete v1 | [x] | Disconnect selected cards from current collection; conservative batch destructive confirmation for Delete |
-| 26.6.1 | Batch delete backend plan | [ ] | Add `prepare_delete_blocks(slugs)` with aggregate `DeleteBlocksPlan`: selected `.md` files, deduped `unused_media` after deleting the whole selected set, and `shared_media` kept by non-selected refs |
-| 26.6.2 | Batch delete backend commit | [ ] | Add `delete_blocks(slugs, delete_unused_media)` as one command; validate/rebuild plan at commit, delete selected cards plus optional eligible unused media, never delete shared media |
-| 26.6.3 | Batch delete dialog parity | [ ] | Replace v1 copy with single-delete-equivalent dialog: card count, optional unused-media previews, `Keep media` and `Delete media` actions, shared media kept |
-| 26.6.4 | Batch delete tests | [ ] | Rust and frontend coverage for media shared only inside selection, media shared with unselected cards, stale plan validation, viewport preservation and selection clear |
+| 26.6.1 | Batch delete backend plan | FEATURE BACKLOG | Add `prepare_delete_blocks(slugs)` with aggregate `DeleteBlocksPlan`: selected `.md` files, deduped `unused_media` after deleting the whole selected set, and `shared_media` kept by non-selected refs |
+| 26.6.2 | Batch delete backend commit | FEATURE BACKLOG | Add `delete_blocks(slugs, delete_unused_media)` as one command; validate/rebuild plan at commit, delete selected cards plus optional eligible unused media, never delete shared media |
+| 26.6.3 | Batch delete dialog parity | FEATURE BACKLOG | Replace v1 copy with single-delete-equivalent dialog: card count, optional unused-media previews, `Keep media` and `Delete media` actions, shared media kept |
+| 26.6.4 | Batch delete tests | FEATURE BACKLOG | Rust and frontend coverage for media shared only inside selection, media shared with unselected cards, stale plan validation, viewport preservation and selection clear |
 | 26.7 | Group drag-to-channel | [x] | Dragging a selected card drags the selected slug set, renders a capped macOS-style flocking stack of real frozen card previews, and connects all dragged cards on channel/create-channel drop |
 | 26.8 | Batch Merge SPEC | [x] | `SPEC_CARD_MERGE.md` defines the reorder dialog, shared card-reference rows, one backend `merge_blocks` command, Markdown section composition, media reuse and many-to-one relationship preservation |
 | 26.9 | Batch Merge UI | [x] | Added `Merge` to the bottom action island and focused-card batch menu, extracted shared `CardReferenceRow` from Detail related notes, and built the reorder-first merge dialog |
 | 26.10 | Batch Merge backend | [x] | Added `merge_blocks(ordered_slugs)` as one filesystem transaction-like command: compose new article `.md`, rewrite external refs to the merged slug, delete source `.md` files, preserve media binaries, refresh index/thumbs and rollback partial apply failures |
 | 26.11 | Batch Merge tests | [x] | Rust/frontend coverage for ordering, mixed card kinds, collection/related-note union, incoming relation rewrite, media reuse, failure rollback, viewport preservation and dialog state |
-| 26.12 | Tests + manual QA | [ ] | Automated modifier selection, range geometry, action-bar, group drag payload and stack preview coverage is in place; real-vault manual QA for dark/light frame and batch actions remains |
+| 26.12 | Tests + manual QA | MANUAL QA | Automated modifier selection, range geometry, action-bar, group drag payload and stack preview coverage is in place; real-vault manual QA for dark/light frame and batch actions remains |
 
 ### Phase 27 — Surface Search
 
@@ -1274,7 +1404,7 @@ Specification: [SPEC_SEARCH.md](SPEC_SEARCH.md).
 | 27.5 | Card highlighting | [x] | Article title/body match rendering with design-system mark token and stable masonry measurement in search mode |
 | 27.6 | Right collection switcher | [x] | Right top chrome shows the current Grid route collection and opens a searchable destination dropdown ordered like Sidebar; active/current rows are omitted; fixed `Create channel` opens a separate dialog; space/collection/sidebar search inputs keep focus while arrows move `aria-activedescendant`; floating menu widths are documented as semantic roles (`command`, `selector`, `picker`) |
 | 27.7 | Optional Compact Detail top menu | [x] | Settings flag moves Detail controls into permanent top chrome when Detail is open: `All / Connected` lives only in expanded Sidebar/search segment, the right segment keeps a persistent clickable collection switcher plus animated card title, overflow and close; compact geometry is stable before/after Detail so collection labels do not jump; all compact chrome controls use the shared click-vs-window-drag threshold |
-| 27.8 | Tests + manual QA | [ ] | Automated backend/frontend coverage is in place; real-vault dark/light QA remains |
+| 27.8 | Tests + manual QA | MANUAL QA | Automated backend/frontend coverage is in place; real-vault dark/light QA remains |
 | 27.9 | Recent empty state | [x] | Пустой query в Search Overlay показывает 20 последних добавленных (`saved_at DESC`, тот же `list_grid_blocks` без запроса, без debounce), сгруппированных в динамические датные секции (`recencyBuckets.ts`: Today/Yesterday/Past 7 days/Past 30 days/месяцы/годы, локальная полночь); счётчик скрыт; плоская клавиатурная навигация поверх секций; решения Р-13…Р-16 в SPEC_SEARCH_OVERLAY § Recent-режим |
 
 ### Phase 28 — Hybrid Search
@@ -1324,13 +1454,13 @@ Specification: [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
 
 | # | Slice | Status | Scope |
 |---|---|---|---|
-| 30.1 | Longevity extraction + SPEC | [x] | Studied `/Users/i_iii/Проекты/longevity-landscape` Graph View and documented the transferable Canvas/d3-force renderer, backend graph snapshot, physics, UX, large-vault policy and tests |
-| 30.2 | Dependencies + DTOs | [x] | Added `react-force-graph-2d`, `d3-force`, `@types/d3-force`; introduced M0 Rust/TS `GraphSnapshot`, `card`/`collection` node types and `collection_membership` links |
-| 30.3 | Backend graph snapshot | [~] | Added `storage::graph` and `commands::graph` over `blocks`, `channels`, `block_tags`; M0 scopes Everything/current collection and keeps neighbor collections for scoped cards. Wikilinks/related notes/unresolved nodes remain follow-up |
-| 30.4 | Canvas renderer | [~] | Added `GraphView` with custom Canvas card thumbnails, collection label nodes, hit areas, stable links, sidebar-timed card hover preview and ResizeObserver. Dedicated graph config extraction remains follow-up |
-| 30.5 | Controls + Detail integration | [~] | M0 opens block Detail and switches collection routes. Scope/edge toggles, graph-local search, selected-node sync and conditional centering remain follow-up |
-| 30.6 | Display mode wiring | [~] | M0 exposes Graph/Grid toggle in bottom action bar and top fallback, persists mode in `localStorage`, preserves route changes and refreshes on `vault-refreshed`. Settings layout integration remains follow-up |
-| 30.7 | Verification | [~] | Added Rust graph read-model tests, `tsc`, lint, production build and real-vault count sanity check. Frontend interaction tests and Playwright canvas nonblank/resize/Detail-centering checks remain follow-up |
+| 30.1 | Longevity extraction + SPEC | DONE A4 | Studied `/Users/i_iii/Проекты/longevity-landscape` Graph View and documented the transferable Canvas/d3-force renderer, backend graph snapshot, physics, UX, large-vault policy and tests |
+| 30.2 | Dependencies + DTOs | DONE A4 | Added `react-force-graph-2d`, `d3-force`, `@types/d3-force`; M1 Rust/TS DTOs cover card/collection/unresolved nodes, typed links, scopes, options and truncation state |
+| 30.3 | Backend graph snapshot | DONE A4 | Typed card/collection/unresolved nodes; membership/wikilink/related edges with provenance, dedupe and adjacency; route/library/ego scopes and large-vault materialization |
+| 30.4 | Canvas renderer | DONE A4 | Screen-fixed derived thumbnails and labels, same-layer hit testing/physics, delayed stable fit, image-cache invalidation and camera-only resize/zoom |
+| 30.5 | Controls + Detail integration | DONE A4 | Scope and edge controls, local/truncated search, one selected-node state, conditional centering, shared hover/menu behavior and keyboard/a11y model |
+| 30.6 | Display mode wiring | DONE A4 | Canonical secondary-bar Grid/Graph selector, persisted mode, route preservation and `vault-refreshed` projection reload |
+| 30.7 | Verification | DONE A4 | Rust provenance/scope/threshold tests, 18 GraphView interaction tests and dark/light Playwright Canvas pixel/resize/hover/request/performance gates |
 
 ### Backlog
 

@@ -8,14 +8,13 @@
 
 use serde::Serialize;
 use std::borrow::Cow;
-use std::io::Write;
 use std::path::PathBuf;
 use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Emitter, State};
 
-use crate::commands::state::{AppState, CommandError};
+use crate::commands::state::{schedule_preview_reconcile, AppState, CommandError};
 use crate::domain::vault::validate_slug;
-use crate::storage::{db, index, thumbnails};
+use crate::storage::{db, files, index, thumbnails};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -53,7 +52,7 @@ pub struct TilePosterUpgrade {
     pub poster_name: String,
     #[serde(rename = "mediaPath")]
     pub media_path: String,
-    /// Always `"video"` today (image tiles render their source directly).
+    /// `"image"` or `"video"`, selecting the browser decoder branch.
     pub kind: String,
 }
 
@@ -92,43 +91,32 @@ pub fn save_thumb(
     let bytes = request_jpeg_bytes(&request)?;
     validate_thumb_write_request(&slug, &bytes)?;
 
-    let (thumb_path, db_path, vault_root) = {
+    let vault = {
         let vault_state = state
             .vault_state
             .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-        let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-        (
-            vs.vault.thumb_path(&slug),
-            vs.vault.index_db_path(),
-            vs.vault.root().to_path_buf(),
-        )
+        vault_state
+            .as_ref()
+            .ok_or(CommandError::NoVault)?
+            .vault
+            .clone()
     };
+    let thumb_path = vault.thumb_path(&slug);
 
     if let Some(parent) = thumb_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| CommandError::Internal(format!("create thumbs dir: {}", e)))?;
     }
 
-    // Atomic write: temp file in the same directory, then rename.
-    // Same-directory rename is atomic on every filesystem we care about,
-    // so the cache never observes a partial file.
-    let tmp_path = thumb_path.with_extension("jpg.tmp");
-    {
-        let mut f = std::fs::File::create(&tmp_path)
-            .map_err(|e| CommandError::Internal(format!("create tmp thumb: {}", e)))?;
-        f.write_all(&bytes)
-            .map_err(|e| CommandError::Internal(format!("write tmp thumb: {}", e)))?;
-        f.sync_all()
-            .map_err(|e| CommandError::Internal(format!("sync tmp thumb: {}", e)))?;
-    }
-    std::fs::rename(&tmp_path, &thumb_path)
-        .map_err(|e| CommandError::Internal(format!("rename tmp thumb: {}", e)))?;
+    files::write_atomically(&thumb_path, &bytes)
+        .map_err(|e| CommandError::Internal(format!("write decoded thumb: {e:#}")))?;
 
-    let conn = db::open_or_create(&db_path)
+    let conn = db::open_or_create(&vault.index_db_path())
         .map_err(|e| CommandError::Internal(format!("open thumb metadata db: {e:#}")))?;
-    index::sync_thumb_metadata(&conn, &slug, &thumb_path, Some(&vault_root))
+    index::sync_thumb_metadata(&conn, &slug, &thumb_path, Some(vault.root()))
         .map_err(|e| CommandError::Internal(format!("sync_thumb_metadata: {e:#}")))?;
+    schedule_preview_reconcile(&app, vault, [slug.clone()], false)?;
 
     // save_thumb always writes JPEG — never a text placeholder.
     let _ = app.emit(
@@ -220,8 +208,9 @@ pub fn save_tile_poster(
     let slug = decode_header(&request, "x-slug")?;
     let bytes = request_jpeg_bytes(&request)?;
     validate_tile_poster_request(&poster_name, &bytes)?;
+    validate_slug(&slug).map_err(|error| CommandError::Internal(error.to_string()))?;
 
-    let thumbs_dir = {
+    let vault = {
         let vault_state = state
             .vault_state
             .lock()
@@ -230,25 +219,20 @@ pub fn save_tile_poster(
             .as_ref()
             .ok_or(CommandError::NoVault)?
             .vault
-            .thumbs_dir()
+            .clone()
     };
+    let thumbs_dir = vault.thumbs_dir();
+    let conn = db::open_or_create(&vault.index_db_path())
+        .map_err(|error| CommandError::Internal(format!("open preview metadata db: {error:#}")))?;
+    validate_tile_destination(&conn, &slug, &poster_name)?;
 
     std::fs::create_dir_all(&thumbs_dir)
         .map_err(|e| CommandError::Internal(format!("create thumbs dir: {e}")))?;
     let dest = thumbs_dir.join(&poster_name);
 
-    // Atomic write: same-directory temp file then rename.
-    let tmp_path = dest.with_extension("jpg.tmp");
-    {
-        let mut f = std::fs::File::create(&tmp_path)
-            .map_err(|e| CommandError::Internal(format!("create tmp tile poster: {e}")))?;
-        f.write_all(&bytes)
-            .map_err(|e| CommandError::Internal(format!("write tmp tile poster: {e}")))?;
-        f.sync_all()
-            .map_err(|e| CommandError::Internal(format!("sync tmp tile poster: {e}")))?;
-    }
-    std::fs::rename(&tmp_path, &dest)
-        .map_err(|e| CommandError::Internal(format!("rename tmp tile poster: {e}")))?;
+    files::write_atomically(&dest, &bytes)
+        .map_err(|e| CommandError::Internal(format!("write decoded tile poster: {e:#}")))?;
+    schedule_preview_reconcile(&app, vault, [slug.clone()], false)?;
 
     // The tile lives inside the block's card; refresh it.
     let _ = app.emit(
@@ -258,6 +242,31 @@ pub fn save_tile_poster(
             is_text: false,
         },
     );
+    Ok(())
+}
+
+fn validate_tile_destination(
+    conn: &rusqlite::Connection,
+    slug: &str,
+    poster_name: &str,
+) -> Result<(), CommandError> {
+    let block = index::get_block(conn, slug)
+        .map_err(|error| CommandError::Internal(format!("load preview owner: {error:#}")))?
+        .ok_or_else(|| CommandError::Internal(format!("preview owner not found: {slug}")))?;
+    let manifest = block
+        .preview_manifest
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<index::FeedPreviewManifest>(raw).ok())
+        .ok_or_else(|| CommandError::Internal(format!("preview manifest missing for {slug}")))?;
+    if !manifest
+        .tiles
+        .iter()
+        .any(|tile| tile.preview_path.as_deref() == Some(poster_name))
+    {
+        return Err(CommandError::Internal(format!(
+            "preview destination {poster_name:?} does not belong to {slug:?}"
+        )));
+    }
     Ok(())
 }
 
@@ -432,11 +441,9 @@ fn resolve_upgrade_media(
     None
 }
 
-/// Resolve per-video gallery tile posters still missing for `block`. For each
-/// video tile in the block's preview manifest whose `<media-stem>.jpg` poster
-/// is not yet a real JPEG, return the destination poster name and the resolved
-/// source video path for the browser to decode. Image tiles are skipped — they
-/// render their real source directly.
+/// Resolve every derived tile still missing for `block`. Rust handles formats
+/// supported by the `image` crate and common videos first; this queue is the
+/// decoder-independent fallback for any image or video still absent.
 fn resolve_tile_posters(
     vault: &crate::domain::vault::VaultLayout,
     block: &index::PendingThumbUpgradeBlock,
@@ -450,15 +457,9 @@ fn resolve_tile_posters(
 
     let mut out = Vec::new();
     for tile in &manifest.tiles {
-        if !tile.is_video {
+        let Some(poster_name) = tile.preview_path.clone() else {
             continue;
-        }
-        // Derive the poster name from the source rather than `tile.preview_path`
-        // so existing gallery blocks resolve too: their manifest predates
-        // per-video posters and carries `preview_path: null`, but the backend
-        // always names a video poster `<media-stem>.jpg`, matching the frontend.
-        let poster_name = crate::storage::preview_plan::media_poster_path(&tile.source_path);
-        // Skip posters already on disk as a real JPEG.
+        };
         let poster_path = vault.thumbs_dir().join(&poster_name);
         if matches!(
             thumbnails::thumb_disk_state(&poster_path),
@@ -470,7 +471,7 @@ fn resolve_tile_posters(
             out.push(TilePosterUpgrade {
                 poster_name,
                 media_path: media_path.to_string_lossy().into_owned(),
-                kind: "video".into(),
+                kind: if tile.is_video { "video" } else { "image" }.into(),
             });
         }
     }
@@ -870,20 +871,32 @@ mod tests {
     }
 
     #[test]
-    fn resolve_tile_posters_returns_video_tiles_missing_posters() {
+    fn validate_tile_destination_requires_manifest_ownership() {
+        let conn = db::open_memory().unwrap();
+        let block = make_article("Gallery", "![](photo.jpg)");
+        index::upsert_block(&conn, &block, None).unwrap();
+
+        assert!(validate_tile_destination(&conn, "Gallery", "Gallery.preview-1.jpg").is_ok());
+        assert!(validate_tile_destination(&conn, "Gallery", "Other.preview-1.jpg").is_err());
+        assert!(validate_tile_destination(&conn, "Missing", "Gallery.preview-1.jpg").is_err());
+    }
+
+    #[test]
+    fn resolve_tile_posters_returns_every_missing_derived_tile() {
         let dir = tempfile::tempdir().unwrap();
         let vault = make_vault(dir.path());
         std::fs::write(dir.path().join("clip-a.mp4"), b"fake").unwrap();
         std::fs::write(dir.path().join("clip-b.mp4"), b"fake").unwrap();
+        std::fs::write(dir.path().join("still.jpg"), b"fake").unwrap();
 
         let manifest = serde_json::json!({
             "kind": "composite",
             "primary_preview_path": "g.jpg",
             "width": 1, "height": 1,
             "tiles": [
-                {"source_path": "clip-a.mp4", "preview_path": "clip-a.jpg", "width": 800, "height": 600, "is_video": true, "is_video_poster": false},
-                {"source_path": "still.jpg", "preview_path": null, "width": 800, "height": 600, "is_video": false, "is_video_poster": false},
-                {"source_path": "clip-b.mp4", "preview_path": "clip-b.jpg", "width": 800, "height": 600, "is_video": true, "is_video_poster": false}
+                {"source_path": "clip-a.mp4", "preview_path": "g.preview-1.jpg", "width": 800, "height": 600, "is_video": true, "is_video_poster": false},
+                {"source_path": "still.jpg", "preview_path": "g.preview-2.jpg", "width": 800, "height": 600, "is_video": false, "is_video_poster": false},
+                {"source_path": "clip-b.mp4", "preview_path": "g.preview-3.jpg", "width": 800, "height": 600, "is_video": true, "is_video_poster": false}
             ],
             "overflow_count": 0
         })
@@ -899,11 +912,13 @@ mod tests {
         };
 
         let posters = resolve_tile_posters(&vault, &block);
-        // Only the two video tiles; the image tile is skipped.
-        assert_eq!(posters.len(), 2);
-        assert_eq!(posters[0].poster_name, "clip-a.jpg");
-        assert_eq!(posters[1].poster_name, "clip-b.jpg");
-        assert!(posters.iter().all(|p| p.kind == "video"));
+        assert_eq!(posters.len(), 3);
+        assert_eq!(posters[0].poster_name, "g.preview-1.jpg");
+        assert_eq!(posters[0].kind, "video");
+        assert_eq!(posters[1].poster_name, "g.preview-2.jpg");
+        assert_eq!(posters[1].kind, "image");
+        assert_eq!(posters[2].poster_name, "g.preview-3.jpg");
+        assert_eq!(posters[2].kind, "video");
     }
 
     #[test]
@@ -912,14 +927,14 @@ mod tests {
         let vault = make_vault(dir.path());
         std::fs::write(dir.path().join("clip-a.mp4"), b"fake").unwrap();
         // Poster already on disk as a real JPEG.
-        create_test_image(&vault.thumbs_dir().join("clip-a.jpg"), 80, 60);
+        create_test_image(&vault.thumbs_dir().join("g.preview-1.jpg"), 80, 60);
 
         let manifest = serde_json::json!({
             "kind": "video_poster",
             "primary_preview_path": "g.jpg",
             "width": 1, "height": 1,
             "tiles": [
-                {"source_path": "clip-a.mp4", "preview_path": "clip-a.jpg", "width": 800, "height": 600, "is_video": true, "is_video_poster": false}
+                {"source_path": "clip-a.mp4", "preview_path": "g.preview-1.jpg", "width": 800, "height": 600, "is_video": true, "is_video_poster": false}
             ],
             "overflow_count": 0
         })

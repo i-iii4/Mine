@@ -45,6 +45,7 @@ import { fallbackThumbsRoot } from "@/lib/assets";
 import {
   computeFeedScrollReadinessWindows,
   sampleFeedScrollSignal,
+  shouldPrefetchNextFeedPage,
   type FeedScrollSignal,
   type FeedScrollSignalSample,
 } from "@/lib/feedScrollReadiness";
@@ -86,6 +87,7 @@ const GRID_TOP_INSET_DEFAULT = 32;
 const GRID_TOP_INSET_ALT = 16;
 const MEASUREMENT_BATCH_SIZE = 24;
 const INITIAL_COMMIT_BLOCKS = 48;
+const EMERGENCY_RENDER_OVERSCAN_PX = 128;
 const FEED_AUTOPLAY_MIN_VISIBLE_FRACTION = 0.5;
 const FEED_AUTOPLAY_VIEWPORT_MARGIN_RATIO = 0.5;
 // Heavy autoplay clips play direct-from-disk, so a small bounded pool can run at
@@ -1239,8 +1241,23 @@ export function Grid({
     ],
   );
 
+  const getEmergencyVisibleItems = useCallback(
+    (scrollTop: number): MasonryPosition[] => {
+      if (viewportHeight <= 0) return [];
+      return getVisibleItemsFromIndex(
+        visibilityIndex,
+        scrollTop,
+        viewportHeight,
+        EMERGENCY_RENDER_OVERSCAN_PX,
+        EMERGENCY_RENDER_OVERSCAN_PX,
+      );
+    },
+    [visibilityIndex, viewportHeight],
+  );
+
   const visibleItems = useGridScroll(parentRef, {
     getVisibleItems,
+    getEmergencyVisibleItems,
     resetKey: generationKey,
     viewportHeight,
   });
@@ -2083,10 +2100,21 @@ export function Grid({
     if (!hasMoreBlocks || loadingMoreBlocks || !onLoadMoreBlocks) {
       return;
     }
-    if (maxVisibleIndex >= blocks.length - 24) {
+    if (shouldPrefetchNextFeedPage({
+      loadedItemCount: blocks.length,
+      maxVisibleIndex,
+      visibleItemCount: visibleItems.length,
+    })) {
       onLoadMoreBlocks();
     }
-  }, [blocks.length, hasMoreBlocks, loadingMoreBlocks, maxVisibleIndex, onLoadMoreBlocks]);
+  }, [
+    blocks.length,
+    hasMoreBlocks,
+    loadingMoreBlocks,
+    maxVisibleIndex,
+    onLoadMoreBlocks,
+    visibleItems.length,
+  ]);
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {

@@ -88,7 +88,7 @@ import { collectionRefLabel } from "@/lib/collections";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import {
   findPreviewTileForSource,
-  normalizeFeedPreviewManifest,
+  normalizeDetailPreviewManifest,
 } from "@/lib/feedPreview";
 import { deriveCardLayoutDescriptor } from "@/lib/cardLayout";
 import {
@@ -1067,7 +1067,7 @@ function detailPreviewImageSource({
   thumbsRootPath,
 }: {
   block: LightBlock | IndexedBlock;
-  previewManifest: ReturnType<typeof normalizeFeedPreviewManifest>;
+  previewManifest: ReturnType<typeof normalizeDetailPreviewManifest>;
   vaultPath: string;
   thumbsRootPath: string;
 }): string {
@@ -1123,7 +1123,7 @@ function BlockContent({
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const previewManifest = useMemo(
-    () => normalizeFeedPreviewManifest((fullBlock ?? block).preview_manifest),
+    () => normalizeDetailPreviewManifest((fullBlock ?? block).preview_manifest),
     [block, fullBlock],
   );
   const descriptor = useMemo(
@@ -1299,8 +1299,8 @@ function BlockContent({
       if (descriptor.variant === "video") {
         const embedUrl = block.url ? youtubeEmbedUrl(block.url) : null;
         const videoSourcePath =
-          descriptor.mediaItems.find((item) => item.isVideo)?.sourcePath ??
-          null;
+          descriptor.mediaItems.find((item) => item.isVideo)?.sourcePath
+          ?? block.media_file;
         const localSrc = resolveDetailMediaReference(vaultPath, videoSourcePath);
         return (
           <div className="flex min-h-full flex-col">
@@ -2373,7 +2373,7 @@ function ArticleBody({
   body: string;
   vaultPath: string;
   thumbsRootPath: string;
-  previewManifest: ReturnType<typeof normalizeFeedPreviewManifest>;
+  previewManifest: ReturnType<typeof normalizeDetailPreviewManifest>;
   sourceSlug?: string;
   sourceBodyHash?: string | null;
   scrollAnchor?: string | null;

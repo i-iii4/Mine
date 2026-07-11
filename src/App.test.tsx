@@ -30,6 +30,7 @@ function isSearchOverlayQuery(limit: number, query?: string): boolean {
 const commandMocks = vi.hoisted(() => ({
   openVault: vi.fn<(path: string) => Promise<VaultOpenResult>>(),
   startVaultSync: vi.fn<() => Promise<boolean>>(),
+  sweepVaultThumbnails: vi.fn<() => Promise<number>>(),
   listGridBlocks: vi.fn<(tag?: string, offset?: number, limit?: number, query?: string) => Promise<GridSnapshot>>(),
   listTaxonomySnapshot: vi.fn<() => Promise<TaxonomySnapshot>>(),
   getVaultStats: vi.fn<(currentCollection?: string | null) => Promise<VaultStats>>(),
@@ -58,6 +59,7 @@ vi.mock("@/lib/commands", () => ({
   openVault: commandMocks.openVault,
   selectVault: vi.fn(),
   startVaultSync: commandMocks.startVaultSync,
+  sweepVaultThumbnails: commandMocks.sweepVaultThumbnails,
   listGridBlocks: commandMocks.listGridBlocks,
   listTaxonomySnapshot: commandMocks.listTaxonomySnapshot,
   getVaultStats: commandMocks.getVaultStats,
@@ -405,6 +407,7 @@ describe("AppWithVault", () => {
 
     commandMocks.openVault.mockResolvedValue(vaultOpenResult());
     commandMocks.startVaultSync.mockResolvedValue(true);
+    commandMocks.sweepVaultThumbnails.mockResolvedValue(0);
     commandMocks.createChannel.mockImplementation(async (tag: string) => ({
       tag,
       description: null,
@@ -492,6 +495,42 @@ describe("AppWithVault", () => {
     });
   });
 
+  it("paints the first grid page before warming one background page", async () => {
+    const first = block(10, "first-page");
+    const second = block(11, "warm-page");
+    const warmPage = deferred<GridSnapshot>();
+    commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
+      if (isSearchOverlayQuery(limit, query)) {
+        return { blocks: [], total_blocks: 0, has_more: false };
+      }
+      expect(tag).toBeUndefined();
+      expect(limit).toBe(200);
+      if (offset === 0) {
+        return { blocks: [first], total_blocks: 2, has_more: true };
+      }
+      expect(offset).toBe(1);
+      return warmPage.promise;
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
+    });
+    await waitFor(() => {
+      expect(commandMocks.listGridBlocks).toHaveBeenCalledWith(undefined, 1, 200);
+    });
+
+    warmPage.resolve({ blocks: [second], total_blocks: 2, has_more: false });
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+  });
+
   it("does not restart vault sync or taxonomy fetch on route change", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -549,6 +588,41 @@ describe("AppWithVault", () => {
     expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(4, undefined, 0, 200);
   });
 
+  it("does not start a focus thumbnail sweep while startup sync is running", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
+    });
+    fireEvent.focus(window);
+    expect(commandMocks.sweepVaultThumbnails).not.toHaveBeenCalled();
+
+    fireEvent(
+      window,
+      new CustomEvent("vault-sync-finished", {
+        detail: {
+          payload: {
+            path: "/vault",
+            indexed: 0,
+            errors: 0,
+            error: null,
+          },
+        },
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid-route-ready")).toHaveTextContent("true");
+    });
+    fireEvent.focus(window);
+    await waitFor(() => {
+      expect(commandMocks.sweepVaultThumbnails).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("does not treat a pending uncached route as an authoritative empty grid", async () => {
     const alphaDeferred = deferred<GridSnapshot>();
     commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
@@ -575,8 +649,8 @@ describe("AppWithVault", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:0");
+      expect(screen.getByTestId("grid-route-ready")).toHaveTextContent("true");
     });
-    expect(screen.getByTestId("grid-route-ready")).toHaveTextContent("true");
 
     fireEvent.click(await screen.findByRole("link", { name: "alpha" }));
 

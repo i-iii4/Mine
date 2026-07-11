@@ -7,16 +7,19 @@
 
 use notify::RecommendedWatcher;
 use rusqlite::Connection;
+use serde::ser::SerializeStruct;
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager};
 use thiserror::Error;
 
 use crate::domain::vault::VaultLayout;
-use crate::util::SingleInstanceGuard;
+use crate::storage::reconcile::{ReconcileFileError, ReconcileReport};
+use crate::storage::{db, derived_preview, reconcile};
+use crate::util::{append_startup_trace, SingleInstanceGuard};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -46,31 +49,90 @@ pub struct AppState {
     /// such as in-app rename. Prevents the watcher from racing the command's
     /// own source-of-truth update path.
     pub suppressed_paths: Mutex<HashMap<PathBuf, Instant>>,
-    /// Serialize thumb-cache sweeps so the IPC command cannot spawn a
-    /// second worker while the previous one is still walking the vault.
-    /// The 10-second frontend throttle is a soft guard; this is the
-    /// hard guard at the command boundary. Held as `Arc<AtomicBool>`
-    /// so a `SweepGuard` can RAII-release it from whatever owns the
-    /// final `FnOnce` — including the background thread's done-cb or
-    /// a dropped closure if spawn itself failed.
-    pub sweep_in_progress: Arc<AtomicBool>,
+    /// Serializes classic thumbnail sweeps across startup/focus callers.
+    /// A request for the running vault is coalesced; after a vault switch the
+    /// newest active vault is retained as one pending pass.
+    thumbnail_sweeps: ThumbnailSweepCoordinator,
+    /// Coalesces route-facing filesystem reconciliation. The coordinator never
+    /// performs filesystem or SQLite work while its internal mutex is held.
+    pub freshness: FreshnessCoordinator,
+    /// One background derived-preview worker per app. New source changes are
+    /// queued while it runs; no filesystem or SQLite work occurs under this
+    /// mutex.
+    preview_queue: Mutex<PreviewWorkQueue>,
 }
 
-/// RAII token for the `sweep_in_progress` flag.
-///
-/// Obtained via `AppState::try_start_sweep()` — which performs the
-/// compare_exchange so only one caller at a time holds the flag — and
-/// released automatically on Drop. Moving the guard into the thumb
-/// worker's on-done closure ensures the flag is cleared both when the
-/// worker finishes normally *and* when the closure is dropped without
-/// firing (e.g. `thread::spawn` failed and nothing ever invoked it).
+#[derive(Default)]
+struct PreviewWorkQueue {
+    running: bool,
+    pending: BTreeMap<String, QueuedPreviewWork>,
+}
+
+struct QueuedPreviewWork {
+    vault: VaultLayout,
+    full_scan: bool,
+    pending_slugs: BTreeSet<String>,
+}
+
+#[derive(Default)]
+struct ThumbnailSweepState {
+    running_vault: Option<PathBuf>,
+    pending_vault: Option<VaultLayout>,
+}
+
+#[derive(Default)]
+struct ThumbnailSweepCoordinator {
+    state: Arc<Mutex<ThumbnailSweepState>>,
+}
+
+#[derive(Default)]
+pub struct FreshnessCoordinator {
+    state: Mutex<HashMap<String, FreshnessEntry>>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct FreshnessEntry {
+    running: bool,
+    dirty: bool,
+    generation: u64,
+    joined_callers: usize,
+    last_result: Option<Result<ReconcileReport, String>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FreshnessOutcome {
+    pub vault_path: String,
+    pub generation: u64,
+    pub joined_callers: usize,
+    pub ran_reconcile: bool,
+    pub result: Result<ReconcileReport, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct VaultFreshnessChangedPayload {
+    vault_path: String,
+    generation: u64,
+    state: &'static str,
+    joined_callers: usize,
+    inventory_markdown: usize,
+    content_reads: usize,
+    database_writes: usize,
+    error_count: usize,
+    elapsed_ms: u64,
+}
+
 pub struct SweepGuard {
-    flag: Arc<AtomicBool>,
+    state: Arc<Mutex<ThumbnailSweepState>>,
+    vault_root: PathBuf,
 }
 
 impl Drop for SweepGuard {
     fn drop(&mut self) {
-        self.flag.store(false, Ordering::Release);
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.running_vault.as_deref() == Some(self.vault_root.as_path()) {
+            state.running_vault = None;
+        }
     }
 }
 
@@ -82,24 +144,65 @@ impl AppState {
             instance_guard: Mutex::new(None),
             sync_tracker: Mutex::new(SyncTracker::default()),
             suppressed_paths: Mutex::new(HashMap::new()),
-            sweep_in_progress: Arc::new(AtomicBool::new(false)),
+            thumbnail_sweeps: ThumbnailSweepCoordinator::default(),
+            freshness: FreshnessCoordinator::default(),
+            preview_queue: Mutex::new(PreviewWorkQueue::default()),
         }
     }
 
-    /// Acquire the sweep flag. Returns `None` if a sweep is already
-    /// running; callers should skip the redundant work in that case.
-    pub fn try_start_sweep(&self) -> Option<SweepGuard> {
-        match self.sweep_in_progress.compare_exchange(
-            false,
-            true,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => Some(SweepGuard {
-                flag: Arc::clone(&self.sweep_in_progress),
-            }),
-            Err(_) => None,
+    /// Begin one classic thumbnail sweep. Same-vault requests coalesce; a
+    /// different active vault becomes the single pending pass.
+    pub fn try_start_sweep(&self, vault: &VaultLayout) -> Option<SweepGuard> {
+        let mut state = self
+            .thumbnail_sweeps
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(running) = state.running_vault.as_deref() {
+            if running != vault.root() {
+                state.pending_vault = Some(vault.clone());
+            }
+            return None;
         }
+        state.pending_vault = None;
+        state.running_vault = Some(vault.root().to_path_buf());
+        Some(SweepGuard {
+            state: Arc::clone(&self.thumbnail_sweeps.state),
+            vault_root: vault.root().to_path_buf(),
+        })
+    }
+
+    pub fn take_pending_sweep(&self) -> Option<VaultLayout> {
+        let mut state = self
+            .thumbnail_sweeps
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if state.running_vault.is_some() {
+            return None;
+        }
+        state.pending_vault.take()
+    }
+
+    /// True only while `root` is the vault currently owned by the app shell.
+    /// Background workers use this as a cancellation boundary so a vault
+    /// switch cannot leave old preview/thumbnail work consuming CPU or
+    /// publishing slug-only events into the new screen.
+    pub fn is_current_vault(&self, root: &Path) -> bool {
+        self.vault_state
+            .lock()
+            .map(|slot| {
+                slot.as_ref()
+                    .is_some_and(|state| state.vault.root() == root)
+            })
+            .unwrap_or(false)
+    }
+
+    fn current_vault_path(&self) -> Option<String> {
+        self.vault_state.lock().ok().and_then(|slot| {
+            slot.as_ref()
+                .map(|state| state.vault.root().to_string_lossy().into_owned())
+        })
     }
 
     pub fn set_instance_guard(&self, guard: SingleInstanceGuard) -> Result<(), CommandError> {
@@ -192,6 +295,319 @@ impl AppState {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct DerivedPreviewChangedPayload {
+    path: String,
+    checked: usize,
+    ready: usize,
+    regenerated: usize,
+    failed: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DerivedPreviewThumbPayload {
+    slug: String,
+    is_text: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DerivedPreviewVaultChangedPayload {
+    path: String,
+}
+
+/// Queue a bounded background preview reconciliation pass. A full pass
+/// supersedes queued slugs; incremental requests arriving during a run are
+/// drained by the same worker before it exits.
+pub fn schedule_preview_reconcile<I>(
+    app: &AppHandle,
+    vault: VaultLayout,
+    slugs: I,
+    full_scan: bool,
+) -> Result<(), CommandError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let state = app.state::<AppState>();
+    if !state.is_current_vault(vault.root()) {
+        return Ok(());
+    }
+    let vault_path = vault.root().to_string_lossy().into_owned();
+    let should_spawn = {
+        let mut queue = state
+            .preview_queue
+            .lock()
+            .map_err(|_| CommandError::Internal("preview queue mutex poisoned".into()))?;
+        // Mine has one active vault. Pending work for a previous vault is
+        // obsolete after a switch and must never sit ahead of the visible
+        // vault in the single-worker queue.
+        queue.pending.retain(|path, _| path == &vault_path);
+        let work = queue
+            .pending
+            .entry(vault_path)
+            .or_insert_with(|| QueuedPreviewWork {
+                vault,
+                full_scan: false,
+                pending_slugs: BTreeSet::new(),
+            });
+        if full_scan {
+            work.full_scan = true;
+            work.pending_slugs.clear();
+        } else if !work.full_scan {
+            work.pending_slugs.extend(slugs);
+        }
+        if queue.running {
+            false
+        } else {
+            queue.running = true;
+            true
+        }
+    };
+    if !should_spawn {
+        return Ok(());
+    }
+
+    let app_for_worker = app.clone();
+    let spawn = std::thread::Builder::new()
+        .name("derived-preview-reconcile".to_string())
+        .spawn(move || preview_worker_loop(app_for_worker));
+    if let Err(error) = spawn {
+        let mut queue = state
+            .preview_queue
+            .lock()
+            .map_err(|_| CommandError::Internal("preview queue mutex poisoned".into()))?;
+        queue.running = false;
+        return Err(CommandError::Internal(format!(
+            "failed to spawn derived preview worker: {error}"
+        )));
+    }
+    Ok(())
+}
+
+fn preview_worker_loop(app: AppHandle) {
+    loop {
+        let work = {
+            let state = app.state::<AppState>();
+            let Some(active_path) = state.current_vault_path() else {
+                let mut queue = state
+                    .preview_queue
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                queue.pending.clear();
+                queue.running = false;
+                return;
+            };
+            let mut queue = state
+                .preview_queue
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            queue.pending.retain(|path, _| path == &active_path);
+            let Some(queued) = queue.pending.remove(&active_path) else {
+                queue.running = false;
+                return;
+            };
+            (active_path, queued)
+        };
+
+        log::info!("derived preview reconciliation started for {}", work.0);
+        let active_root = work.1.vault.root().to_path_buf();
+        let result = db::open_or_create(&work.1.vault.index_db_path()).and_then(|conn| {
+            let mut should_continue = || app.state::<AppState>().is_current_vault(&active_root);
+            if work.1.full_scan {
+                let mut publish_batch = |report: &derived_preview::PreviewReconcileReport| {
+                    if !report.cancelled && app.state::<AppState>().is_current_vault(&active_root) {
+                        publish_preview_report(&app, &work.0, report);
+                    }
+                };
+                derived_preview::reconcile_all_previews_with_progress(
+                    &conn,
+                    &work.1.vault,
+                    &mut should_continue,
+                    &mut publish_batch,
+                )
+            } else {
+                derived_preview::reconcile_preview_slugs_while(
+                    &conn,
+                    &work.1.vault,
+                    work.1.pending_slugs.iter().map(String::as_str),
+                    &mut should_continue,
+                )
+            }
+        });
+        match result {
+            Ok(report) => {
+                if report.cancelled
+                    || !app
+                        .state::<AppState>()
+                        .is_current_vault(work.1.vault.root())
+                {
+                    log::info!(
+                        "derived preview reconciliation cancelled for {} after {} blocks",
+                        work.0,
+                        report.checked
+                    );
+                    continue;
+                }
+                if !work.1.full_scan {
+                    publish_preview_report(&app, &work.0, &report);
+                }
+                log::info!(
+                    "derived preview reconciliation finished for {}: checked={} ready={} regenerated={} failed={}",
+                    work.0,
+                    report.checked,
+                    report.ready,
+                    report.regenerated,
+                    report.failed.len()
+                );
+            }
+            Err(error) => {
+                log::warn!(
+                    "derived preview reconciliation failed for {}: {error:#}",
+                    work.0
+                );
+            }
+        }
+    }
+}
+
+fn publish_preview_report(
+    app: &AppHandle,
+    path: &str,
+    report: &derived_preview::PreviewReconcileReport,
+) {
+    for slug in &report.changed_slugs {
+        let _ = app.emit(
+            "thumb:updated",
+            DerivedPreviewThumbPayload {
+                slug: slug.clone(),
+                is_text: false,
+            },
+        );
+    }
+    let _ = app.emit(
+        "derived-preview-changed",
+        DerivedPreviewChangedPayload {
+            path: path.to_string(),
+            checked: report.checked,
+            ready: report.ready,
+            regenerated: report.regenerated,
+            failed: report.failed.len(),
+        },
+    );
+    if !report.failed.is_empty() {
+        let _ = app.emit("derived-preview-pending", ());
+    }
+    if !report.changed_slugs.is_empty() {
+        let _ = app.emit(
+            "vault-changed",
+            DerivedPreviewVaultChangedPayload {
+                path: path.to_string(),
+            },
+        );
+    }
+}
+
+impl FreshnessCoordinator {
+    /// Join or start the single route-facing reconciliation generation for a
+    /// vault. Waiting callers receive the completed leader result and do not
+    /// enqueue another inventory pass.
+    pub fn reconcile(&self, vault: &VaultLayout) -> FreshnessOutcome {
+        let vault_path = vault.root().to_string_lossy().into_owned();
+        self.run(vault_path, || {
+            db::open_or_create(&vault.index_db_path())
+                .map_err(|error| format!("failed to open freshness database: {error:#}"))
+                .and_then(|conn| {
+                    reconcile::reconcile_vault(&conn, vault)
+                        .map_err(|error| format!("filesystem reconciliation failed: {error:#}"))
+                })
+        })
+    }
+
+    fn run(
+        &self,
+        vault_path: String,
+        task: impl Fn() -> Result<ReconcileReport, String>,
+    ) -> FreshnessOutcome {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let entry = state.entry(vault_path.clone()).or_default();
+
+        if entry.running {
+            let generation = entry.generation;
+            entry.joined_callers = entry.joined_callers.saturating_add(1);
+            while state
+                .get(&vault_path)
+                .is_some_and(|current| current.running && current.generation == generation)
+            {
+                state = self
+                    .changed
+                    .wait(state)
+                    .unwrap_or_else(|error| error.into_inner());
+            }
+            let completed = state
+                .get(&vault_path)
+                .expect("freshness entry remains present after reconciliation");
+            return FreshnessOutcome {
+                vault_path,
+                generation: completed.generation,
+                joined_callers: completed.joined_callers,
+                ran_reconcile: false,
+                result: completed.last_result.clone().unwrap_or_else(|| {
+                    Err("freshness generation completed without a result".to_string())
+                }),
+            };
+        }
+
+        entry.running = true;
+        entry.dirty = false;
+        entry.joined_callers = 0;
+        drop(state);
+
+        let (result, mut state) = loop {
+            let result = task();
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            let entry = state
+                .get_mut(&vault_path)
+                .expect("freshness entry remains present while leader is running");
+            if entry.dirty {
+                entry.dirty = false;
+                drop(state);
+                continue;
+            }
+            break (result, state);
+        };
+
+        let entry = state
+            .get_mut(&vault_path)
+            .expect("freshness entry remains present while leader is running");
+        entry.running = false;
+        entry.generation = entry.generation.saturating_add(1);
+        entry.last_result = Some(result.clone());
+        let outcome = FreshnessOutcome {
+            vault_path,
+            generation: entry.generation,
+            joined_callers: entry.joined_callers,
+            ran_reconcile: true,
+            result,
+        };
+        self.changed.notify_all();
+        outcome
+    }
+
+    /// Mark the running generation dirty so its leader performs another
+    /// delta-pass before publishing. Returns true when the watcher should skip
+    /// its parallel per-event write because the generation now owns recovery.
+    pub fn mark_dirty_if_running(&self, vault_path: &str) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let Some(entry) = state.get_mut(vault_path) else {
+            return false;
+        };
+        if !entry.running {
+            return false;
+        }
+        entry.dirty = true;
+        true
+    }
+}
+
 pub fn current_vault_layout(state: &AppState) -> Result<VaultLayout, CommandError> {
     let vault_state = state
         .vault_state
@@ -199,6 +615,126 @@ pub fn current_vault_layout(state: &AppState) -> Result<VaultLayout, CommandErro
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     Ok(vs.vault.clone())
+}
+
+/// Await the coalesced filesystem reconciliation generation used by final
+/// route snapshots. The AppState vault mutex is never held across this await.
+pub async fn ensure_vault_fresh(
+    app: &AppHandle,
+    vault: VaultLayout,
+) -> Result<ReconcileReport, CommandError> {
+    let preview_vault = vault.clone();
+    let app_for_task = app.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        app_for_task.state::<AppState>().freshness.reconcile(&vault)
+    })
+    .await
+    .map_err(|error| {
+        CommandError::Internal(format!(
+            "freshness reconciliation task join failed: {error}"
+        ))
+    })?;
+
+    match outcome.result {
+        Ok(report) => {
+            if outcome.ran_reconcile
+                && (!report.upserted.is_empty()
+                    || !report.dependency_changed.is_empty()
+                    || !report.removed.is_empty())
+            {
+                let changed_slugs = report
+                    .upserted
+                    .iter()
+                    .chain(&report.dependency_changed)
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                if let Err(error) = schedule_preview_reconcile(
+                    app,
+                    preview_vault,
+                    changed_slugs,
+                    !report.removed.is_empty(),
+                ) {
+                    log::warn!("failed to schedule derived preview reconciliation: {error}");
+                }
+            }
+            let state = if report.is_fresh() {
+                "fresh"
+            } else {
+                "degraded"
+            };
+            if outcome.ran_reconcile {
+                append_startup_trace(
+                    app,
+                    "vault_freshness",
+                    &format!(
+                        "state={} generation={} joined={} inventory={} reads={} writes={} errors={} elapsed_ms={}",
+                        state,
+                        outcome.generation,
+                        outcome.joined_callers,
+                        report.inventory_markdown,
+                        report.content_reads,
+                        report.database_writes,
+                        report.errors.len(),
+                        report.elapsed_ms,
+                    ),
+                );
+                let _ = app.emit(
+                    "vault-freshness-changed",
+                    VaultFreshnessChangedPayload {
+                        vault_path: outcome.vault_path.clone(),
+                        generation: outcome.generation,
+                        state,
+                        joined_callers: outcome.joined_callers,
+                        inventory_markdown: report.inventory_markdown,
+                        content_reads: report.content_reads,
+                        database_writes: report.database_writes,
+                        error_count: report.errors.len(),
+                        elapsed_ms: report.elapsed_ms,
+                    },
+                );
+            }
+            if report.is_fresh() {
+                Ok(report)
+            } else {
+                Err(CommandError::FreshnessDegraded {
+                    vault_path: outcome.vault_path,
+                    generation: outcome.generation,
+                    error_count: report.errors.len(),
+                    errors: report.errors,
+                })
+            }
+        }
+        Err(message) => {
+            if outcome.ran_reconcile {
+                append_startup_trace(
+                    app,
+                    "vault_freshness",
+                    &format!(
+                        "state=failed generation={} joined={} error={}",
+                        outcome.generation, outcome.joined_callers, message
+                    ),
+                );
+                let _ = app.emit(
+                    "vault-freshness-changed",
+                    VaultFreshnessChangedPayload {
+                        vault_path: outcome.vault_path.clone(),
+                        generation: outcome.generation,
+                        state: "failed",
+                        joined_callers: outcome.joined_callers,
+                        inventory_markdown: 0,
+                        content_reads: 0,
+                        database_writes: 0,
+                        error_count: 1,
+                        elapsed_ms: 0,
+                    },
+                );
+            }
+            Err(CommandError::FreshnessFailed {
+                vault_path: outcome.vault_path,
+                message,
+            })
+        }
+    }
 }
 
 /// Error type for Tauri commands. Serialized as a string for the frontend.
@@ -209,6 +745,17 @@ pub enum CommandError {
 
     #[error("{0}")]
     Internal(String),
+
+    #[error("vault freshness failed for {vault_path}: {message}")]
+    FreshnessFailed { vault_path: String, message: String },
+
+    #[error("vault freshness is degraded for {vault_path} ({error_count} source errors)")]
+    FreshnessDegraded {
+        vault_path: String,
+        generation: u64,
+        error_count: usize,
+        errors: Vec<ReconcileFileError>,
+    },
 }
 
 impl Serialize for CommandError {
@@ -216,7 +763,33 @@ impl Serialize for CommandError {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        match self {
+            Self::FreshnessFailed {
+                vault_path,
+                message,
+            } => {
+                let mut value = serializer.serialize_struct("CommandError", 3)?;
+                value.serialize_field("kind", "freshness_failed")?;
+                value.serialize_field("vault_path", vault_path)?;
+                value.serialize_field("message", message)?;
+                value.end()
+            }
+            Self::FreshnessDegraded {
+                vault_path,
+                generation,
+                error_count,
+                errors,
+            } => {
+                let mut value = serializer.serialize_struct("CommandError", 5)?;
+                value.serialize_field("kind", "freshness_degraded")?;
+                value.serialize_field("vault_path", vault_path)?;
+                value.serialize_field("generation", generation)?;
+                value.serialize_field("error_count", error_count)?;
+                value.serialize_field("errors", errors)?;
+                value.end()
+            }
+            Self::NoVault | Self::Internal(_) => serializer.serialize_str(&self.to_string()),
+        }
     }
 }
 
@@ -236,7 +809,12 @@ pub fn now_iso8601() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::AppState;
+    use super::{AppState, FreshnessCoordinator, VaultState};
+    use crate::domain::vault::VaultLayout;
+    use crate::storage::db;
+    use crate::storage::reconcile::ReconcileReport;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Condvar, Mutex};
 
     #[test]
     fn sync_tracker_repeats_when_marked_dirty() {
@@ -269,5 +847,165 @@ mod tests {
         assert!(state.is_path_suppressed(&path));
         std::thread::sleep(std::time::Duration::from_millis(10));
         assert!(!state.is_path_suppressed(&path));
+    }
+
+    #[test]
+    fn background_work_matches_only_the_current_vault() {
+        let state = AppState::new();
+        let source = tempfile::tempdir().unwrap();
+        let derived = source.path().join("derived");
+        let vault = VaultLayout::with_derived_root(source.path().to_path_buf(), derived);
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        *state.vault_state.lock().unwrap() = Some(VaultState {
+            conn,
+            vault: vault.clone(),
+        });
+
+        assert!(state.is_current_vault(vault.root()));
+        assert!(!state.is_current_vault(&source.path().join("other")));
+    }
+
+    #[test]
+    fn thumbnail_sweeps_coalesce_same_vault_and_queue_latest_switch() {
+        let state = AppState::new();
+        let first_source = tempfile::tempdir().unwrap();
+        let second_source = tempfile::tempdir().unwrap();
+        let first = VaultLayout::with_derived_root(
+            first_source.path().to_path_buf(),
+            first_source.path().join("derived"),
+        );
+        let second = VaultLayout::with_derived_root(
+            second_source.path().to_path_buf(),
+            second_source.path().join("derived"),
+        );
+
+        let first_guard = state.try_start_sweep(&first).unwrap();
+        assert!(state.try_start_sweep(&first).is_none());
+        assert!(state.take_pending_sweep().is_none());
+        assert!(state.try_start_sweep(&second).is_none());
+        drop(first_guard);
+
+        let pending = state.take_pending_sweep().unwrap();
+        assert_eq!(pending.root(), second.root());
+        assert!(state.try_start_sweep(&second).is_some());
+    }
+
+    #[test]
+    fn freshness_coordinator_coalesces_concurrent_callers() {
+        let coordinator = Arc::new(FreshnessCoordinator::default());
+        let vault_path = "/tmp/coalesced-vault".to_string();
+        let task_runs = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let mut callers = Vec::new();
+        for _ in 0..8 {
+            let coordinator = Arc::clone(&coordinator);
+            let path = vault_path.clone();
+            let task_runs = Arc::clone(&task_runs);
+            let gate = Arc::clone(&gate);
+            callers.push(std::thread::spawn(move || {
+                coordinator.run(path, || {
+                    task_runs.fetch_add(1, Ordering::SeqCst);
+                    let (open, changed) = &*gate;
+                    let mut open = open.lock().unwrap();
+                    while !*open {
+                        open = changed.wait(open).unwrap();
+                    }
+                    Ok(ReconcileReport {
+                        inventory_markdown: 1,
+                        unchanged: 1,
+                        upserted: Vec::new(),
+                        removed: Vec::new(),
+                        dependency_changed: Vec::new(),
+                        errors: Vec::new(),
+                        content_reads: 0,
+                        database_writes: 0,
+                        elapsed_ms: 1,
+                    })
+                })
+            }));
+        }
+
+        while coordinator
+            .state
+            .lock()
+            .unwrap()
+            .get(&vault_path)
+            .is_none_or(|entry| entry.joined_callers != 7)
+        {
+            std::thread::yield_now();
+        }
+        {
+            let (open, changed) = &*gate;
+            *open.lock().unwrap() = true;
+            changed.notify_all();
+        }
+        let outcomes = callers
+            .into_iter()
+            .map(|caller| caller.join().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(task_runs.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| outcome.ran_reconcile)
+                .count(),
+            1
+        );
+        assert!(outcomes.iter().all(|outcome| outcome.generation == 1));
+        assert!(outcomes
+            .iter()
+            .all(|outcome| outcome.result.as_ref().unwrap().inventory_markdown == 1));
+    }
+
+    #[test]
+    fn dirty_running_generation_reconciles_again_before_publish() {
+        let coordinator = Arc::new(FreshnessCoordinator::default());
+        let vault_path = "/tmp/dirty-vault".to_string();
+        let task_runs = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let worker_coordinator = Arc::clone(&coordinator);
+        let worker_path = vault_path.clone();
+        let worker_runs = Arc::clone(&task_runs);
+        let worker_gate = Arc::clone(&gate);
+        let worker = std::thread::spawn(move || {
+            worker_coordinator.run(worker_path, || {
+                let run = worker_runs.fetch_add(1, Ordering::SeqCst);
+                if run == 0 {
+                    let (open, changed) = &*worker_gate;
+                    let mut open = open.lock().unwrap();
+                    while !*open {
+                        open = changed.wait(open).unwrap();
+                    }
+                }
+                Ok(ReconcileReport {
+                    inventory_markdown: run + 1,
+                    unchanged: 0,
+                    upserted: Vec::new(),
+                    removed: Vec::new(),
+                    dependency_changed: Vec::new(),
+                    errors: Vec::new(),
+                    content_reads: 0,
+                    database_writes: 0,
+                    elapsed_ms: 1,
+                })
+            })
+        });
+
+        while task_runs.load(Ordering::SeqCst) != 1 {
+            std::thread::yield_now();
+        }
+        assert!(coordinator.mark_dirty_if_running(&vault_path));
+        {
+            let (open, changed) = &*gate;
+            *open.lock().unwrap() = true;
+            changed.notify_all();
+        }
+        let outcome = worker.join().unwrap();
+
+        assert_eq!(task_runs.load(Ordering::SeqCst), 2);
+        assert_eq!(outcome.generation, 1);
+        assert_eq!(outcome.result.unwrap().inventory_markdown, 2);
+        assert!(!coordinator.mark_dirty_if_running(&vault_path));
     }
 }

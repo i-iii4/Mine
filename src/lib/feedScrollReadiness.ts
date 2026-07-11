@@ -35,6 +35,8 @@ export const FEED_RENDER_RUNWAY_MAX_FORWARD_PX = 1800;
 // different renderAfterPx, which re-creates the getVisibleItems callback and
 // forces a redundant Grid re-render even when the visible set is unchanged.
 export const FEED_SCROLL_WINDOW_VELOCITY_QUANTUM_PX = 200;
+export const FEED_PAGE_PREFETCH_MIN_REMAINING_ITEMS = 96;
+export const FEED_PAGE_PREFETCH_VISIBLE_MULTIPLIER = 4;
 // Backward render runway floor as a fraction of the viewport. It guarantees the
 // window behind the scroll cursor never drops below the linger contract
 // (SPEC_FEED_VIDEO.md: keep already-committed cards mounted when the scroll
@@ -74,6 +76,24 @@ function orientWindow(
   return direction === "backward"
     ? { beforePx: forwardPx, afterPx: backwardPx }
     : { beforePx: backwardPx, afterPx: forwardPx };
+}
+
+export function shouldPrefetchNextFeedPage({
+  loadedItemCount,
+  maxVisibleIndex,
+  visibleItemCount,
+}: {
+  loadedItemCount: number;
+  maxVisibleIndex: number;
+  visibleItemCount: number;
+}): boolean {
+  if (loadedItemCount <= 0 || maxVisibleIndex < 0) return false;
+  const remainingItemRunway = Math.max(
+    FEED_PAGE_PREFETCH_MIN_REMAINING_ITEMS,
+    Math.max(0, visibleItemCount) * FEED_PAGE_PREFETCH_VISIBLE_MULTIPLIER,
+  );
+  const remainingLoadedItems = loadedItemCount - 1 - maxVisibleIndex;
+  return remainingLoadedItems <= remainingItemRunway;
 }
 
 export function computeFeedScrollReadinessWindows({

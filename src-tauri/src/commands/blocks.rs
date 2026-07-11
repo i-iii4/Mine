@@ -2,7 +2,7 @@
 //
 // Contract: SPEC_INTEGRATION.md#commands/blocks
 
-use anyhow::{bail, Context};
+use anyhow::bail;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 use thiserror::Error;
 
-use crate::commands::state::{current_vault_layout, AppState, CommandError};
+use crate::commands::state::{current_vault_layout, ensure_vault_fresh, AppState, CommandError};
 use crate::domain::block::{
     compute_body_hash, derive_card_kind, derive_title_fields, iter_inline_media_references,
     parse_markdown_document, suggest_slug, Block, BlockType, CardKind, DateTime, Frontmatter,
@@ -24,6 +24,7 @@ use crate::domain::markdown::{
 };
 use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultLayout};
 use crate::storage::index::IndexedBlock;
+use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
 use crate::storage::{article_audio, db, files, index, media_refs, thumbnails};
 use crate::util::append_startup_trace;
 
@@ -279,14 +280,12 @@ struct FileRename {
 struct MergeSourceBlock {
     path: PathBuf,
     block: Block,
-    content: String,
 }
 
 #[derive(Debug)]
 struct MergeReferenceWrite {
     path: PathBuf,
     block: Block,
-    content: String,
 }
 
 #[derive(Debug)]
@@ -338,10 +337,7 @@ pub async fn list_grid_blocks(
         ),
     );
     let vault = current_vault_layout(&state)?;
-    if !vault.index_db_path().exists() {
-        append_startup_trace(&app, "list_grid_blocks", "no_vault");
-        return Err(CommandError::NoVault);
-    }
+    ensure_vault_fresh(&app, vault.clone()).await?;
     let page_offset = offset.unwrap_or(0);
     let page_limit = limit.unwrap_or(200).max(1);
     let db_path = vault.index_db_path();
@@ -388,17 +384,21 @@ pub async fn list_grid_blocks(
 
 /// Get a single block by slug.
 #[tauri::command]
-pub fn get_block(
+pub async fn get_block(
+    app: AppHandle,
     state: State<'_, AppState>,
     slug: String,
 ) -> Result<Option<IndexedBlock>, CommandError> {
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    Ok(index::get_block(&vs.conn, &slug)?)
+    let vault = current_vault_layout(&state)?;
+    ensure_vault_fresh(&app, vault.clone()).await?;
+    let db_path = vault.index_db_path();
+    tauri::async_runtime::spawn_blocking(move || -> Result<Option<IndexedBlock>, CommandError> {
+        let conn = db::open_read_only(&db_path)?;
+        Ok(index::get_block(&conn, &slug)?)
+    })
+    .await
+    .map_err(|error| CommandError::Internal(format!("get_block task join failed: {error}")))?
 }
 
 /// Create a new block: generate slug, write .md, copy media, index.
@@ -1158,7 +1158,6 @@ fn extract_text_selection_inner(
             message: format!("failed to parse source block: {e}"),
         })?;
     let source_origin = parsed.origin.clone();
-    let source_index_warning = parsed.index_warning.clone();
     let source_block = parsed.block;
     let source_card_kind = derive_card_kind(&source_block);
     if source_card_kind != CardKind::Article {
@@ -1254,48 +1253,50 @@ fn extract_text_selection_inner(
         body: selected_text.to_string(),
     };
 
-    if let Some(updated) = patched_source.as_ref() {
-        files::write_atomically(&source_path, updated.as_bytes())
-            .map_err(internal_text_selection_error)?;
-        let reindex_result = (|| -> Result<(), TextSelectionExtractError> {
-            let reparsed =
-                parse_markdown_document(&read_slug, updated, file_saved_at(&source_path)).map_err(
-                    |e| TextSelectionExtractError::Internal {
-                        message: format!("failed to parse patched source block: {e}"),
-                    },
-                )?;
-            index::upsert_block_with_diagnostics(
-                conn,
-                &reparsed.block,
-                Some(vault.root()),
-                Some(&reparsed.origin),
-                reparsed.index_warning.as_deref(),
-            )
-            .map_err(internal_text_selection_error)?;
-            Ok(())
-        })();
-        if let Err(error) = reindex_result {
-            let _ = files::write_atomically(&source_path, content.as_bytes());
-            return Err(error);
-        }
+    let patched_parsed = patched_source
+        .as_ref()
+        .map(|updated| {
+            parse_markdown_document(&read_slug, updated, file_saved_at(&source_path)).map_err(|e| {
+                TextSelectionExtractError::Internal {
+                    message: format!("failed to parse patched source block: {e}"),
+                }
+            })
+        })
+        .transpose()?;
+    let mut writes = Vec::with_capacity(2);
+    if let Some(updated) = patched_source {
+        writes.push(SourceFileWrite::replace(source_path, updated.into_bytes()));
     }
-
-    match files::persist_new_reference_block(conn, vault, &block) {
-        Ok(indexed) => Ok(indexed),
-        Err(error) => {
-            if patched_source.is_some() {
-                let _ = files::write_atomically(&source_path, content.as_bytes());
-                let _ = index::upsert_block_with_diagnostics(
-                    conn,
-                    &source_block,
+    writes.push(SourceFileWrite::create(
+        vault.block_path(&block.slug),
+        crate::domain::block::serialize_block(&block).into_bytes(),
+    ));
+    let staged = StagedSourceMutation::stage(writes).map_err(internal_text_selection_error)?;
+    let indexed = staged
+        .commit_with_index(conn, "extract_text_selection", |index_conn| {
+            if let Some(reparsed) = patched_parsed.as_ref() {
+                index::upsert_block_with_diagnostics(
+                    index_conn,
+                    &reparsed.block,
                     Some(vault.root()),
-                    Some(&source_origin),
-                    source_index_warning.as_deref(),
-                );
+                    Some(&reparsed.origin),
+                    reparsed.index_warning.as_deref(),
+                )?;
             }
-            Err(internal_text_selection_error(error))
-        }
-    }
+            index::upsert_block(index_conn, &block, Some(vault.root()))?;
+            index::get_block(index_conn, &block.slug)?.ok_or_else(|| {
+                anyhow::anyhow!("extracted text block missing after transactional create")
+            })
+        })
+        .map_err(internal_text_selection_error)?;
+    let _ = thumbnails::generate_for_block(&block, vault);
+    let _ = index::sync_thumb_metadata(
+        conn,
+        &block.slug,
+        &vault.thumb_path(&block.slug),
+        Some(vault.root()),
+    );
+    Ok(indexed)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1329,7 +1330,6 @@ fn delete_text_selection_inner(
             message: format!("failed to parse source block: {e}"),
         })?;
     let source_origin = parsed.origin.clone();
-    let source_index_warning = parsed.index_warning.clone();
     let source_block = parsed.block;
     let source_card_kind = derive_card_kind(&source_block);
     if source_card_kind != CardKind::Article {
@@ -1384,46 +1384,40 @@ fn delete_text_selection_inner(
 
     let mut updated = content.clone();
     updated.replace_range(content_start..content_end, "");
-    files::write_atomically(&source_path, updated.as_bytes())
-        .map_err(internal_text_selection_error)?;
-
-    let reindex_result = (|| -> Result<IndexedBlock, TextSelectionExtractError> {
-        let reparsed = parse_markdown_document(&read_slug, &updated, file_saved_at(&source_path))
-            .map_err(|e| TextSelectionExtractError::Internal {
+    let reparsed = parse_markdown_document(&read_slug, &updated, file_saved_at(&source_path))
+        .map_err(|e| TextSelectionExtractError::Internal {
             message: format!("failed to parse patched source block: {e}"),
         })?;
-        index::upsert_block_with_diagnostics(
-            conn,
-            &reparsed.block,
-            Some(vault.root()),
-            Some(&reparsed.origin),
-            reparsed.index_warning.as_deref(),
-        )
-        .map_err(internal_text_selection_error)?;
-        index::get_block(conn, &reparsed.block.slug)
-            .map_err(internal_text_selection_error)?
-            .ok_or_else(|| TextSelectionExtractError::Internal {
-                message: format!(
-                    "source block '{}' missing after deletion",
-                    reparsed.block.slug
-                ),
-            })
-    })();
-
-    match reindex_result {
-        Ok(indexed) => Ok(indexed),
-        Err(error) => {
-            let _ = files::write_atomically(&source_path, content.as_bytes());
-            let _ = index::upsert_block_with_diagnostics(
-                conn,
-                &source_block,
+    let staged = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
+        source_path,
+        updated.into_bytes(),
+    )])
+    .map_err(internal_text_selection_error)?;
+    let indexed = staged
+        .commit_with_index(conn, "delete_text_selection", |index_conn| {
+            index::upsert_block_with_diagnostics(
+                index_conn,
+                &reparsed.block,
                 Some(vault.root()),
-                Some(&source_origin),
-                source_index_warning.as_deref(),
-            );
-            Err(error)
-        }
-    }
+                Some(&reparsed.origin),
+                reparsed.index_warning.as_deref(),
+            )?;
+            index::get_block(index_conn, &reparsed.block.slug)?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "source block '{}' missing after text deletion",
+                    reparsed.block.slug
+                )
+            })
+        })
+        .map_err(internal_text_selection_error)?;
+    let _ = thumbnails::generate_for_block(&reparsed.block, vault);
+    let _ = index::sync_thumb_metadata(
+        conn,
+        &reparsed.block.slug,
+        &vault.thumb_path(&reparsed.block.slug),
+        Some(vault.root()),
+    );
+    Ok(indexed)
 }
 
 /// Rename a block's backing `.md` file while keeping filename-derived identity.
@@ -1490,16 +1484,26 @@ pub fn delete_block(
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
-    validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
-    let plan = build_delete_block_plan(&vs.conn, &vs.vault, &slug)?;
+    delete_block_inner(&state, &vs.conn, &vs.vault, &slug, delete_unused_media)
+}
 
-    let media_paths: Vec<PathBuf> = match delete_unused_media {
+fn delete_block_inner(
+    state: &AppState,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    slug: &str,
+    delete_unused_media: Option<bool>,
+) -> Result<bool, CommandError> {
+    validate_slug(slug).map_err(|e| CommandError::Internal(e.to_string()))?;
+    let plan = build_delete_block_plan(conn, vault, slug)?;
+
+    let media_paths: BTreeSet<PathBuf> = match delete_unused_media {
         Some(true) => plan
             .unused_media
             .iter()
             .map(|media| media.absolute_path.clone())
             .collect(),
-        Some(false) => Vec::new(),
+        Some(false) => BTreeSet::new(),
         None => plan
             .unused_media
             .iter()
@@ -1508,10 +1512,35 @@ pub fn delete_block(
             .collect(),
     };
 
-    files::delete_block_files_with_media_paths(&vs.vault, &slug, &media_paths)?;
+    let markdown_path = vault.block_path(slug);
+    let mut source_paths = BTreeSet::from([markdown_path]);
+    source_paths.extend(media_paths);
+    state.suppress_paths(
+        source_paths.iter().cloned(),
+        Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+    )?;
 
-    let removed = index::remove_block(&vs.conn, &slug)?;
-    if let Err(e) = article_audio::delete_all_artifacts(&vs.vault, &slug) {
+    let staged = StagedSourceMutation::stage(
+        source_paths
+            .iter()
+            .filter(|path| path.exists())
+            .cloned()
+            .map(SourceFileWrite::delete)
+            .collect(),
+    )
+    .map_err(|error| CommandError::Internal(error.to_string()))?;
+
+    let removed = staged
+        .commit_with_index(conn, "delete_block", |index_conn| {
+            index::remove_block(index_conn, slug)
+        })
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+
+    let thumb_path = vault.thumb_path(slug);
+    if thumb_path.exists() {
+        let _ = std::fs::remove_file(&thumb_path);
+    }
+    if let Err(e) = article_audio::delete_all_artifacts(vault, slug) {
         log::warn!("failed to delete article audio for {slug}: {e:#}");
     }
 
@@ -1654,14 +1683,7 @@ fn merge_blocks_inner(
         )
         .map_err(internal_merge_error)?;
 
-    let indexed = match apply_merge_blocks(conn, vault, &merged_block, &sources, &reference_writes)
-    {
-        Ok(indexed) => indexed,
-        Err(error) => {
-            rollback_merge_blocks(conn, vault, &merged_block, &sources, &reference_writes);
-            return Err(error);
-        }
-    };
+    let indexed = apply_merge_blocks(conn, vault, &merged_block, &sources, &reference_writes)?;
     let merged_slug = indexed.slug.clone();
 
     Ok(MergeBlocksMutation {
@@ -1681,8 +1703,37 @@ fn apply_merge_blocks(
     sources: &[MergeSourceBlock],
     reference_writes: &[MergeReferenceWrite],
 ) -> Result<IndexedBlock, MergeBlocksError> {
-    files::write_new_block_file(vault, merged_block).map_err(internal_merge_error)?;
-    index::upsert_block(conn, merged_block, Some(vault.root())).map_err(internal_merge_error)?;
+    let mut writes = Vec::with_capacity(1 + reference_writes.len() + sources.len());
+    writes.push(SourceFileWrite::create(
+        vault.block_path(&merged_block.slug),
+        crate::domain::block::serialize_block(merged_block).into_bytes(),
+    ));
+    writes.extend(reference_writes.iter().map(|write| {
+        SourceFileWrite::replace(
+            write.path.clone(),
+            crate::domain::block::serialize_block(&write.block).into_bytes(),
+        )
+    }));
+    writes.extend(
+        sources
+            .iter()
+            .map(|source| SourceFileWrite::delete(source.path.clone())),
+    );
+    let staged = StagedSourceMutation::stage(writes).map_err(internal_merge_error)?;
+    let indexed = staged
+        .commit_with_index(conn, "merge_blocks", |index_conn| {
+            index::upsert_block(index_conn, merged_block, Some(vault.root()))?;
+            for write in reference_writes {
+                index::upsert_block(index_conn, &write.block, Some(vault.root()))?;
+            }
+            for source in sources {
+                index::remove_block(index_conn, &source.block.slug)?;
+            }
+            index::get_block(index_conn, &merged_block.slug)?.ok_or_else(|| {
+                anyhow::anyhow!("merged block '{}' missing from index", merged_block.slug)
+            })
+        })
+        .map_err(internal_merge_error)?;
 
     let thumb_path = vault.thumb_path(&merged_block.slug);
     let thumb_source = thumbnails::generate_for_block(merged_block, vault);
@@ -1692,29 +1743,23 @@ fn apply_merge_blocks(
     let _ = index::sync_thumb_metadata(conn, &merged_block.slug, &thumb_path, Some(vault.root()));
 
     for write in reference_writes {
-        let serialized = crate::domain::block::serialize_block(&write.block);
-        files::write_atomically(&write.path, serialized.as_bytes())
-            .map_err(internal_merge_error)?;
-        index::upsert_block(conn, &write.block, Some(vault.root()))
-            .map_err(internal_merge_error)?;
+        let reference_thumb = vault.thumb_path(&write.block.slug);
+        let source = thumbnails::generate_for_block(&write.block, vault);
+        if matches!(source, thumbnails::ThumbSource::None) && reference_thumb.exists() {
+            let _ = std::fs::remove_file(&reference_thumb);
+        }
+        let _ = index::sync_thumb_metadata(
+            conn,
+            &write.block.slug,
+            &reference_thumb,
+            Some(vault.root()),
+        );
     }
-
     for source in sources {
-        files::delete_user_file(&source.path).map_err(internal_merge_error)?;
         let source_thumb_path = vault.thumb_path(&source.block.slug);
         if source_thumb_path.exists() {
             let _ = std::fs::remove_file(source_thumb_path);
         }
-        index::remove_block(conn, &source.block.slug).map_err(internal_merge_error)?;
-    }
-
-    let indexed = index::get_block(conn, &merged_block.slug)
-        .map_err(internal_merge_error)?
-        .ok_or_else(|| MergeBlocksError::Internal {
-            message: format!("merged block '{}' missing from index", merged_block.slug),
-        })?;
-
-    for source in sources {
         if let Err(e) = article_audio::delete_all_artifacts(vault, &source.block.slug) {
             log::warn!(
                 "failed to delete article audio for merged source {}: {e:#}",
@@ -1724,92 +1769,6 @@ fn apply_merge_blocks(
     }
 
     Ok(indexed)
-}
-
-fn rollback_merge_blocks(
-    conn: &rusqlite::Connection,
-    vault: &VaultLayout,
-    merged_block: &Block,
-    sources: &[MergeSourceBlock],
-    reference_writes: &[MergeReferenceWrite],
-) {
-    let merged_path = vault.block_path(&merged_block.slug);
-    if merged_path.exists() {
-        if let Err(error) = std::fs::remove_file(&merged_path) {
-            log::warn!(
-                "failed to roll back merged block file {}: {error:#}",
-                merged_path.display()
-            );
-        }
-    }
-    let merged_thumb_path = vault.thumb_path(&merged_block.slug);
-    if merged_thumb_path.exists() {
-        let _ = std::fs::remove_file(&merged_thumb_path);
-    }
-    if let Err(error) = index::remove_block(conn, &merged_block.slug) {
-        log::warn!(
-            "failed to roll back merged block index {}: {error:#}",
-            merged_block.slug
-        );
-    }
-
-    for write in reference_writes {
-        if let Err(error) = files::write_atomically(&write.path, write.content.as_bytes()) {
-            log::warn!(
-                "failed to restore merge reference file {}: {error:#}",
-                write.path.display()
-            );
-            continue;
-        }
-        let parsed = parse_markdown_document(
-            &write.block.slug,
-            &write.content,
-            file_saved_at(&write.path),
-        );
-        match parsed {
-            Ok(parsed) => {
-                if let Err(error) = index::upsert_block(conn, &parsed.block, Some(vault.root())) {
-                    log::warn!(
-                        "failed to restore merge reference index {}: {error:#}",
-                        parsed.block.slug
-                    );
-                }
-            }
-            Err(error) => {
-                log::warn!(
-                    "failed to parse restored merge reference {}: {error}",
-                    write.path.display()
-                );
-            }
-        }
-    }
-
-    for source in sources {
-        if let Err(error) = files::write_atomically(&source.path, source.content.as_bytes()) {
-            log::warn!(
-                "failed to restore merged source file {}: {error:#}",
-                source.path.display()
-            );
-            continue;
-        }
-        if let Err(error) = index::upsert_block(conn, &source.block, Some(vault.root())) {
-            log::warn!(
-                "failed to restore merged source index {}: {error:#}",
-                source.block.slug
-            );
-        }
-        let source_thumb_path = vault.thumb_path(&source.block.slug);
-        let thumb_source = thumbnails::generate_for_block(&source.block, vault);
-        if matches!(thumb_source, thumbnails::ThumbSource::None) && source_thumb_path.exists() {
-            let _ = std::fs::remove_file(&source_thumb_path);
-        }
-        let _ = index::sync_thumb_metadata(
-            conn,
-            &source.block.slug,
-            &source_thumb_path,
-            Some(vault.root()),
-        );
-    }
 }
 
 fn validate_merge_slugs(ordered_slugs: Vec<String>) -> Result<Vec<String>, MergeBlocksError> {
@@ -1856,7 +1815,6 @@ fn load_merge_source_blocks(
         sources.push(MergeSourceBlock {
             path,
             block: parsed.block,
-            content,
         });
     }
     Ok(sources)
@@ -1968,7 +1926,6 @@ fn build_merge_reference_writes(
             writes.push(MergeReferenceWrite {
                 path,
                 block: rewritten,
-                content,
             });
         }
     }
@@ -2205,18 +2162,28 @@ fn rename_media_asset_inner(
         )
         .map_err(internal_media_asset_error)?;
 
-    if let Some(parent) = new_path.parent() {
-        std::fs::create_dir_all(parent).map_err(internal_media_asset_error)?;
-    }
-    std::fs::rename(&old_path, &new_path).map_err(internal_media_asset_error)?;
+    let mut source_writes = planned_writes
+        .iter()
+        .map(|write| {
+            SourceFileWrite::replace(
+                write.path.clone(),
+                crate::domain::block::serialize_block(&write.block).into_bytes(),
+            )
+        })
+        .collect::<Vec<_>>();
+    source_writes.push(SourceFileWrite::rename(old_path, new_path));
+    let staged = StagedSourceMutation::stage(source_writes).map_err(internal_media_asset_error)?;
+    staged
+        .commit_with_index(conn, "rename_media_asset", |index_conn| {
+            for write in &planned_writes {
+                index::upsert_block(index_conn, &write.block, Some(vault.root()))?;
+            }
+            Ok(())
+        })
+        .map_err(internal_media_asset_error)?;
 
     let mut affected_slugs = Vec::new();
     for write in planned_writes {
-        let serialized = crate::domain::block::serialize_block(&write.block);
-        files::write_atomically(&write.path, serialized.as_bytes())
-            .map_err(internal_media_asset_error)?;
-        index::upsert_block(conn, &write.block, Some(vault.root()))
-            .map_err(internal_media_asset_error)?;
         let _ = thumbnails::generate_for_block(&write.block, vault);
         let _ = index::sync_thumb_metadata(
             conn,
@@ -2261,13 +2228,28 @@ fn delete_media_asset_inner(
         )
         .map_err(internal_media_asset_error)?;
 
+    let source_writes = planned_writes
+        .iter()
+        .map(|write| {
+            SourceFileWrite::replace(
+                write.path.clone(),
+                crate::domain::block::serialize_block(&write.block).into_bytes(),
+            )
+        })
+        .chain(std::iter::once(SourceFileWrite::delete(media_path.clone())))
+        .collect();
+    let staged = StagedSourceMutation::stage(source_writes).map_err(internal_media_asset_error)?;
+    staged
+        .commit_with_index(conn, "delete_media_asset", |index_conn| {
+            for write in &planned_writes {
+                index::upsert_block(index_conn, &write.block, Some(vault.root()))?;
+            }
+            Ok(())
+        })
+        .map_err(internal_media_asset_error)?;
+
     let mut affected_slugs = Vec::new();
     for write in planned_writes {
-        let serialized = crate::domain::block::serialize_block(&write.block);
-        files::write_atomically(&write.path, serialized.as_bytes())
-            .map_err(internal_media_asset_error)?;
-        index::upsert_block(conn, &write.block, Some(vault.root()))
-            .map_err(internal_media_asset_error)?;
         let thumb_path = vault.thumb_path(&write.block.slug);
         let thumb_source = thumbnails::generate_for_block(&write.block, vault);
         if matches!(thumb_source, thumbnails::ThumbSource::None) && thumb_path.exists() {
@@ -2277,7 +2259,6 @@ fn delete_media_asset_inner(
             index::sync_thumb_metadata(conn, &write.block.slug, &thumb_path, Some(vault.root()));
         affected_slugs.push(write.block.slug);
     }
-    std::fs::remove_file(&media_path).map_err(internal_media_asset_error)?;
     affected_slugs.sort();
     affected_slugs.dedup();
 
@@ -2392,9 +2373,16 @@ fn remove_media_asset_from_card_inner(
         .map_err(internal_media_asset_error)?;
 
     let serialized = crate::domain::block::serialize_block(&block);
-    files::write_atomically(&source_path, serialized.as_bytes())
+    let staged = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
+        source_path,
+        serialized.into_bytes(),
+    )])
+    .map_err(internal_media_asset_error)?;
+    staged
+        .commit_with_index(conn, "detach_media_asset", |index_conn| {
+            index::upsert_block(index_conn, &block, Some(vault.root())).map(|_| ())
+        })
         .map_err(internal_media_asset_error)?;
-    index::upsert_block(conn, &block, Some(vault.root())).map_err(internal_media_asset_error)?;
     let thumb_source = thumbnails::generate_for_block(&block, vault);
     if matches!(thumb_source, thumbnails::ThumbSource::None) && thumb_path.exists() {
         let _ = std::fs::remove_file(&thumb_path);
@@ -2916,6 +2904,29 @@ fn rename_block_file_inner(
             rewrite_block_for_rename(&old_block, old_slug, &new_slug, &BTreeMap::new())
         });
 
+    let mut source_writes = planned_writes
+        .iter()
+        .map(|write| {
+            let bytes = crate::domain::block::serialize_block(&write.block).into_bytes();
+            if write.original_path == old_path {
+                SourceFileWrite::rename_with_bytes(
+                    write.original_path.clone(),
+                    write.target_path.clone(),
+                    bytes,
+                )
+            } else {
+                SourceFileWrite::replace(write.target_path.clone(), bytes)
+            }
+        })
+        .collect::<Vec<_>>();
+    source_writes.extend(
+        media_renames
+            .iter()
+            .map(|rename| SourceFileWrite::rename(rename.from.clone(), rename.to.clone())),
+    );
+    let staged_source =
+        StagedSourceMutation::stage(source_writes).map_err(internal_rename_error)?;
+
     let mut suppressed_paths = BTreeSet::new();
     for write in &planned_writes {
         suppressed_paths.insert(write.original_path.clone());
@@ -2934,98 +2945,40 @@ fn rename_block_file_inner(
             message: e.to_string(),
         })?;
 
-    for rename in &media_renames {
-        if let Some(parent) = rename.to.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create directory: {}", parent.display()))
-                .map_err(internal_rename_error)?;
-        }
-        std::fs::rename(&rename.from, &rename.to)
-            .with_context(|| {
-                format!(
-                    "failed to rename media file {} -> {}",
-                    rename.from.display(),
-                    rename.to.display()
-                )
-            })
-            .map_err(internal_rename_error)?;
-    }
-
-    let new_path = vault.block_path(&new_slug);
-    if let Some(parent) = new_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create directory: {}", parent.display()))
-            .map_err(internal_rename_error)?;
-    }
-    std::fs::rename(&old_path, &new_path)
-        .with_context(|| {
-            format!(
-                "failed to rename block file {} -> {}",
-                old_path.display(),
-                new_path.display()
-            )
+    staged_source
+        .commit_with_index(conn, "rename_block", |index_conn| {
+            let renamed = index::rename_slug(index_conn, old_slug, &new_slug)?;
+            if !renamed {
+                bail!(
+                    "source slug '{}' missing from index during rename",
+                    old_slug
+                );
+            }
+            for write in &planned_writes {
+                if write.block.frontmatter.block_type == BlockType::Channel {
+                    index::upsert_channel_from_block(index_conn, &write.block)?;
+                } else {
+                    index::upsert_block(index_conn, &write.block, Some(vault.root()))?;
+                }
+            }
+            Ok(())
         })
         .map_err(internal_rename_error)?;
-
-    for write in &planned_writes {
-        let serialized = crate::domain::block::serialize_block(&write.block);
-        files::write_atomically(&write.target_path, serialized.as_bytes())
-            .with_context(|| {
-                format!(
-                    "failed to write updated block file: {}",
-                    write.target_path.display()
-                )
-            })
-            .map_err(internal_rename_error)?;
+    if let Err(error) = files::rename_derived_artifacts(vault, old_slug, &new_slug) {
+        log::warn!("rename derived artifacts will self-heal for {new_slug}: {error:#}");
     }
-
-    conn.execute_batch("BEGIN IMMEDIATE")
-        .map_err(internal_sqlite_rename_error)?;
-    let db_result = (|| -> anyhow::Result<()> {
-        let renamed = index::rename_slug(conn, old_slug, &new_slug)?;
-        if !renamed {
-            bail!(
-                "source slug '{}' missing from index during rename",
-                old_slug
-            );
-        }
-        files::rename_derived_artifacts(vault, old_slug, &new_slug)?;
-        if article_audio_should_invalidate_after_rename(&old_block, &renamed_root_block) {
-            article_audio::delete_all_artifacts(vault, &new_slug)?;
-        }
-
-        for write in &planned_writes {
-            if write.block.frontmatter.block_type == BlockType::Channel {
-                index::upsert_channel_from_block(conn, &write.block)?;
-            } else {
-                index::upsert_block(conn, &write.block, Some(vault.root()))?;
-            }
-        }
-
-        Ok(())
-    })();
-
-    match db_result {
-        Ok(()) => conn
-            .execute_batch("COMMIT")
-            .map_err(internal_sqlite_rename_error)?,
-        Err(error) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            return Err(internal_rename_error(error));
-        }
+    if article_audio_should_invalidate_after_rename(&old_block, &renamed_root_block) {
+        let _ = article_audio::delete_all_artifacts(vault, &new_slug);
     }
 
     if let Some(app) = app {
-        app.emit(
+        let _ = app.emit(
             "block:renamed",
             RenameBlockResult {
                 old_slug: old_slug.to_string(),
                 new_slug: new_slug.clone(),
             },
-        )
-        .map_err(|e| RenameBlockError::Internal {
-            message: format!("failed to emit block:renamed: {e}"),
-        })?;
+        );
     }
 
     Ok(RenameBlockResult {
@@ -3523,12 +3476,6 @@ fn internal_rename_error(error: impl std::fmt::Display) -> RenameBlockError {
     }
 }
 
-fn internal_sqlite_rename_error(error: rusqlite::Error) -> RenameBlockError {
-    RenameBlockError::Internal {
-        message: error.to_string(),
-    }
-}
-
 fn build_planned_block_writes(
     vault: &VaultLayout,
     root_block: &Block,
@@ -3919,7 +3866,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_blocks_apply_failure_rolls_back_rewritten_references_and_new_card() {
+    fn merge_blocks_stage_failure_keeps_sources_references_and_index_unchanged() {
         let (_root, _derived, vault, conn) = make_vault();
         let first = article("First Card", "Alpha body");
         let second = article("Second Card", "Beta body");
@@ -3950,14 +3897,11 @@ mod tests {
         reference_writes.push(MergeReferenceWrite {
             path: blocker.join("Broken.md"),
             block: article("Broken", "Broken body"),
-            content: "Broken body".to_string(),
         });
 
         let error = apply_merge_blocks(&conn, &vault, &merged_block, &sources, &reference_writes)
             .unwrap_err();
         assert!(matches!(error, MergeBlocksError::Internal { .. }));
-
-        rollback_merge_blocks(&conn, &vault, &merged_block, &sources, &reference_writes);
 
         assert!(!vault.block_path("First Card — merged").exists());
         assert!(vault.block_path("First Card").exists());
@@ -4204,6 +4148,52 @@ mod tests {
     }
 
     #[test]
+    fn rename_media_asset_sql_failure_restores_media_references_and_index() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
+        persist_block(&conn, &vault, &source);
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+        let markdown = std::fs::read(vault.block_path("Source Article")).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_media_rename_index
+             BEFORE UPDATE ON blocks
+             WHEN OLD.slug = 'Source Article'
+             BEGIN
+                 SELECT RAISE(FAIL, 'injected media rename failure');
+             END;",
+        )
+        .unwrap();
+
+        let error = rename_media_asset_inner(
+            &state,
+            &conn,
+            &vault,
+            "photo.png".to_string(),
+            "renamed".to_string(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, MediaAssetActionError::Internal { .. }));
+        assert_eq!(
+            std::fs::read(vault.root().join("photo.png")).unwrap(),
+            b"image-bytes"
+        );
+        assert!(!vault.root().join("renamed.png").exists());
+        assert_eq!(
+            std::fs::read(vault.block_path("Source Article")).unwrap(),
+            markdown
+        );
+        assert_eq!(
+            index::get_block(&conn, "Source Article")
+                .unwrap()
+                .unwrap()
+                .body,
+            source.body
+        );
+    }
+
+    #[test]
     fn prepare_delete_media_asset_inner_lists_referencing_cards() {
         let (_root, _derived, vault, conn) = make_vault();
         let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
@@ -4282,6 +4272,45 @@ mod tests {
         let parsed = crate::domain::block::parse_block("Photo Card", &media_content).unwrap();
         assert_eq!(parsed.frontmatter.file.as_deref(), None);
         assert!(parsed.body.is_empty());
+    }
+
+    #[test]
+    fn delete_media_asset_sql_failure_restores_media_references_and_index() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
+        persist_block(&conn, &vault, &source);
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+        let markdown = std::fs::read(vault.block_path("Source Article")).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_media_delete_index
+             BEFORE UPDATE ON blocks
+             WHEN OLD.slug = 'Source Article'
+             BEGIN
+                 SELECT RAISE(FAIL, 'injected media delete failure');
+             END;",
+        )
+        .unwrap();
+
+        let error =
+            delete_media_asset_inner(&state, &conn, &vault, "photo.png".to_string()).unwrap_err();
+
+        assert!(matches!(error, MediaAssetActionError::Internal { .. }));
+        assert_eq!(
+            std::fs::read(vault.root().join("photo.png")).unwrap(),
+            b"image-bytes"
+        );
+        assert_eq!(
+            std::fs::read(vault.block_path("Source Article")).unwrap(),
+            markdown
+        );
+        assert_eq!(
+            index::get_block(&conn, "Source Article")
+                .unwrap()
+                .unwrap()
+                .body,
+            source.body
+        );
     }
 
     #[test]
@@ -4461,6 +4490,7 @@ mod tests {
     #[test]
     fn delete_plan_splits_unused_and_shared_embedded_media() {
         let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
         persist_block(
             &conn,
             &vault,
@@ -4475,23 +4505,56 @@ mod tests {
         std::fs::write(vault.root().join("shared.png"), b"shared").unwrap();
 
         let plan = build_delete_block_plan(&conn, &vault, "Source Article").unwrap();
-        let media_paths: Vec<PathBuf> = plan
-            .unused_media
-            .iter()
-            .map(|media| media.absolute_path.clone())
-            .collect();
-
         assert_eq!(plan.unused_media.len(), 1);
         assert_eq!(plan.unused_media[0].path, "unused.png");
         assert_eq!(plan.shared_media.len(), 1);
         assert_eq!(plan.shared_media[0].path, "shared.png");
 
-        files::delete_block_files_with_media_paths(&vault, "Source Article", &media_paths).unwrap();
-        index::remove_block(&conn, "Source Article").unwrap();
+        assert!(delete_block_inner(&state, &conn, &vault, "Source Article", Some(true)).unwrap());
 
         assert!(!vault.block_path("Source Article").exists());
         assert!(!vault.root().join("unused.png").exists());
         assert!(vault.root().join("shared.png").exists());
+    }
+
+    #[test]
+    fn delete_block_sql_failure_restores_markdown_media_and_index() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        persist_block(&conn, &vault, &article("Source Article", "![[unused.png]]"));
+        std::fs::write(vault.root().join("unused.png"), b"media-bytes").unwrap();
+        let markdown = std::fs::read(vault.block_path("Source Article")).unwrap();
+
+        conn.execute_batch(
+            "CREATE TRIGGER fail_block_delete
+             BEFORE DELETE ON blocks
+             WHEN OLD.slug = 'Source Article'
+             BEGIN
+                 SELECT RAISE(FAIL, 'injected delete failure');
+             END;",
+        )
+        .unwrap();
+
+        let error =
+            delete_block_inner(&state, &conn, &vault, "Source Article", Some(true)).unwrap_err();
+
+        assert!(matches!(error, CommandError::Internal(_)));
+        assert_eq!(
+            std::fs::read(vault.block_path("Source Article")).unwrap(),
+            markdown
+        );
+        assert_eq!(
+            std::fs::read(vault.root().join("unused.png")).unwrap(),
+            b"media-bytes"
+        );
+        assert!(index::get_block(&conn, "Source Article").unwrap().is_some());
+        assert!(std::fs::read_dir(vault.root()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("mine-delete-backup")
+        }));
     }
 
     #[test]
@@ -4828,6 +4891,56 @@ mod tests {
 
         assert!(index::get_block(&conn, "Old Name").unwrap().is_none());
         assert!(index::get_block(&conn, "Renamed Name").unwrap().is_some());
+    }
+
+    #[test]
+    fn rename_block_file_sql_failure_restores_vault_and_index() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+
+        let original = article("Old Name", "Intro\n\n![[Old Name (image 1).jpg]]");
+        let reference = article("Reference Note", "See [[Old Name#^anchor]].");
+        persist_block(&conn, &vault, &original);
+        persist_block(&conn, &vault, &reference);
+        std::fs::write(vault.root().join("Old Name (image 1).jpg"), b"img").unwrap();
+
+        let old_content = std::fs::read(vault.block_path("Old Name")).unwrap();
+        let reference_content = std::fs::read(vault.block_path("Reference Note")).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_block_rename
+             BEFORE UPDATE OF slug ON blocks
+             WHEN OLD.slug = 'Old Name'
+             BEGIN
+                 SELECT RAISE(FAIL, 'injected rename failure');
+             END;",
+        )
+        .unwrap();
+
+        let error =
+            rename_block_file_inner(None, &state, &conn, &vault, "Old Name", "Renamed Name")
+                .unwrap_err();
+
+        assert!(matches!(error, RenameBlockError::Internal { .. }));
+        assert_eq!(
+            std::fs::read(vault.block_path("Old Name")).unwrap(),
+            old_content
+        );
+        assert_eq!(
+            std::fs::read(vault.block_path("Reference Note")).unwrap(),
+            reference_content
+        );
+        assert!(!vault.block_path("Renamed Name").exists());
+        assert!(vault.root().join("Old Name (image 1).jpg").exists());
+        assert!(!vault.root().join("Renamed Name (image 1).jpg").exists());
+        assert!(index::get_block(&conn, "Old Name").unwrap().is_some());
+        assert!(index::get_block(&conn, "Renamed Name").unwrap().is_none());
+        assert!(std::fs::read_dir(vault.root()).unwrap().all(|entry| {
+            let name = entry.unwrap().file_name();
+            let name = name.to_string_lossy();
+            !name.contains("mine-rename")
+                && !name.contains("mine-delete-backup")
+                && !name.contains("mine-tmp")
+        }));
     }
 
     #[test]

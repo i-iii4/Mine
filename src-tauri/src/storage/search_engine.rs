@@ -231,7 +231,9 @@ fn grid_search_sql(
         "SELECT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.url, b.media_file,
                     b.thumbnail, b.saved_at, b.width, b.height, b.author,
                     CASE WHEN b.card_kind = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
-                    b.preview_text, b.first_image, b.media_urls, b.media_dimensions, b.preview_manifest, b.feed_playback,
+                    b.preview_text, b.first_image, b.media_urls, b.media_dimensions,
+                    CASE WHEN b.preview_state = 'ready' THEN b.preview_manifest END,
+                    CASE WHEN b.preview_state = 'ready' THEN b.feed_playback END,
                     b.description, b.body
              FROM blocks b
              JOIN blocks_fts ON blocks_fts.rowid = b.id",
@@ -1069,7 +1071,9 @@ fn load_light_block_by_slug(conn: &Connection, slug: &str) -> Result<Option<Ligh
         "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
                 thumbnail, saved_at, width, height, author,
                 CASE WHEN card_kind = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
-                preview_text, first_image, media_urls, media_dimensions, preview_manifest, feed_playback
+                preview_text, first_image, media_urls, media_dimensions,
+                CASE WHEN preview_state = 'ready' THEN preview_manifest END,
+                CASE WHEN preview_state = 'ready' THEN feed_playback END
          FROM blocks
          WHERE slug = ?2 AND card_kind != 'channel'",
     )?;
@@ -1917,6 +1921,35 @@ mod tests {
         assert_eq!(search_match.kind, SearchMatchKind::Semantic);
         assert!(search_match.ranges.is_empty());
         assert!(search_match.excerpt.contains("experience"));
+    }
+
+    #[test]
+    fn search_exposes_preview_only_after_ready_state() {
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "preview-ready",
+            "image",
+            Some("Preview ready"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.file = Some("photo.jpg".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+
+        let (stale, _) =
+            search_grid_blocks_with_provider(&conn, None, 0, 20, "preview", None).unwrap();
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].preview_manifest, None);
+
+        conn.execute(
+            "UPDATE blocks SET preview_state = 'ready' WHERE slug = 'preview-ready'",
+            [],
+        )
+        .unwrap();
+        let (ready, _) =
+            search_grid_blocks_with_provider(&conn, None, 0, 20, "preview", None).unwrap();
+        assert!(ready[0].preview_manifest.is_some());
     }
 
     #[test]

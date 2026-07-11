@@ -9,6 +9,7 @@
     "test": "bun run test:frontend && bun run test:rust",
     "test:frontend": "vitest run",
     "test:feed-scroll": "node scripts/feed-scroll-audit.mjs",
+    "test:graph": "node scripts/graph-view-audit.mjs",
     "test:rust": "cargo test --workspace --all-targets --locked",
     "test:watch": "vitest",
     "lint": "eslint .",

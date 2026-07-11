@@ -13,11 +13,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use rusqlite::Connection;
 use serde::Serialize;
 
-use crate::commands::state::{AppState, CommandError, VaultState};
+use crate::commands::state::{
+    current_vault_layout, schedule_preview_reconcile, AppState, CommandError, SweepGuard,
+    VaultState,
+};
 use crate::domain::vault::VaultLayout;
-use crate::storage::db;
 use crate::storage::index;
 use crate::storage::search_engine;
+use crate::storage::{db, files, reconcile};
 use crate::util::{append_startup_trace, reset_startup_trace};
 use crate::watcher::handler::{self, ScanResult};
 use crate::watcher::watch;
@@ -185,36 +188,33 @@ pub fn start_vault_sync(app: AppHandle, state: State<'_, AppState>) -> Result<bo
 /// Rebuild the index from scratch: drop all indexed data, re-scan vault files.
 /// Use when the index is corrupted or out of sync with the filesystem.
 #[tauri::command]
-pub fn rebuild_index(
+pub async fn rebuild_index(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ScanResult, CommandError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    let vault = current_vault_layout(&state)?;
+    let app_for_task = app.clone();
+    let result =
+        tauri::async_runtime::spawn_blocking(move || -> Result<ScanResult, CommandError> {
+            let conn = db::open_or_create(&vault.index_db_path())?;
 
-    // Clear all indexed data
-    vs.conn
-        .execute_batch(
-            "DELETE FROM block_tags;
-             DELETE FROM wikilinks;
-             DELETE FROM blocks;
-             DELETE FROM channels;",
-        )
-        .map_err(|e| CommandError::Internal(format!("failed to clear index: {e}")))?;
-
-    // Re-scan vault files
-    let result = handler::full_scan(
-        &vs.conn,
-        &vs.vault,
-        Some(thumbs_done_cb(
-            app.clone(),
-            vs.vault.root().to_string_lossy().into_owned(),
-        )),
-        Some(app.clone()),
-    )?;
+            // Force every source through the canonical reconciler without deleting
+            // the last-good projection first. A fatal or per-file failure therefore
+            // preserves readable Grid/Search/Detail state and remains retryable.
+            let report = rebuild_index_projection(&conn, &vault)?;
+            search_engine::warm_search_index(&conn, None)?;
+            let app_state = app_for_task.state::<AppState>();
+            start_thumbnail_sweep(&app_for_task, &app_state, vault.clone())?;
+            schedule_preview_reconcile(&app_for_task, vault, std::iter::empty::<String>(), true)?;
+            Ok(ScanResult {
+                indexed: report.upserted.len(),
+                errors: report.errors.len(),
+            })
+        })
+        .await
+        .map_err(|error| {
+            CommandError::Internal(format!("rebuild_index task join failed: {error}"))
+        })??;
 
     log::info!(
         "index rebuilt: {} indexed, {} errors",
@@ -223,6 +223,18 @@ pub fn rebuild_index(
     );
 
     Ok(result)
+}
+
+fn rebuild_index_projection(
+    conn: &Connection,
+    vault: &VaultLayout,
+) -> Result<reconcile::ReconcileReport, CommandError> {
+    conn.execute("DELETE FROM source_index_state", [])
+        .map_err(|error| {
+            CommandError::Internal(format!("failed to invalidate source stamps: {error}"))
+        })?;
+    reconcile::reconcile_vault(conn, vault)
+        .map_err(|error| CommandError::Internal(format!("failed to rebuild index: {error:#}")))
 }
 
 /// Re-verify the thumb cache against current media dependencies and
@@ -247,26 +259,35 @@ pub fn sweep_vault_thumbnails(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<usize, CommandError> {
-    let Some(guard) = state.try_start_sweep() else {
-        log::debug!("sweep_vault_thumbnails: already in progress, skipping");
+    let vault = current_vault_layout(&state)?;
+    let count = start_thumbnail_sweep(&app, &state, vault.clone())?;
+    schedule_preview_reconcile(&app, vault, std::iter::empty::<String>(), true)?;
+    log::info!("thumb_sweep: queued {count} blocks for freshness check");
+    Ok(count)
+}
+
+/// Start the one application-wide classic thumbnail sweep for the active
+/// vault. Startup sync and focus refresh share this boundary, so they cannot
+/// decode the same corpus concurrently. A vault switch makes the request
+/// obsolete before it can acquire the worker.
+fn start_thumbnail_sweep(
+    app: &AppHandle,
+    state: &AppState,
+    vault: VaultLayout,
+) -> Result<usize, CommandError> {
+    if !state.is_current_vault(vault.root()) {
+        return Ok(0);
+    }
+    let Some(guard) = state.try_start_sweep(&vault) else {
+        log::debug!("thumbnail sweep already in progress, coalescing request");
         return Ok(0);
     };
 
     // Open a fresh SQLite connection for the sweep so we can release the
     // AppState mutex immediately — list_blocks on the sweep's own handle
     // keeps other IPC commands responsive while the pass runs.
-    let (vault, vault_root_str, db_path) = {
-        let vault_state = state
-            .vault_state
-            .lock()
-            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-        let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-        (
-            vs.vault.clone(),
-            vs.vault.root().to_string_lossy().into_owned(),
-            vs.vault.index_db_path(),
-        )
-    };
+    let vault_root_str = vault.root().to_string_lossy().into_owned();
+    let db_path = vault.index_db_path();
 
     let conn = db::open_or_create(&db_path)
         .map_err(|e| CommandError::Internal(format!("open sweep db: {e:#}")))?;
@@ -276,14 +297,41 @@ pub fn sweep_vault_thumbnails(
     // the worker never runs (spawn failure, zero jobs), the closure is
     // dropped without firing and the guard still releases through Drop.
     let original_done = thumbs_done_cb(app.clone(), vault_root_str);
+    let completion = SweepCompletion {
+        app: app.clone(),
+        guard: Some(guard),
+    };
     let done = Box::new(move || {
         original_done();
-        drop(guard);
+        drop(completion);
     }) as Box<dyn FnOnce() + Send>;
 
-    let count = handler::thumb_sweep(&conn, &vault, Some(app), Some(done))?;
-    log::info!("thumb_sweep: queued {count} blocks for freshness check");
+    let count = handler::thumb_sweep(&conn, &vault, Some(app.clone()), Some(done))?;
     Ok(count)
+}
+
+/// Lives inside the worker completion closure. The closure may be invoked or
+/// simply dropped; either path releases the running sweep and immediately
+/// drains the one pending active-vault request.
+struct SweepCompletion {
+    app: AppHandle,
+    guard: Option<SweepGuard>,
+}
+
+impl Drop for SweepCompletion {
+    fn drop(&mut self) {
+        self.guard.take();
+        let state = self.app.state::<AppState>();
+        let Some(vault) = state.take_pending_sweep() else {
+            return;
+        };
+        if !state.is_current_vault(vault.root()) {
+            return;
+        }
+        if let Err(error) = start_thumbnail_sweep(&self.app, &state, vault) {
+            log::warn!("failed to start pending thumbnail sweep: {error}");
+        }
+    }
 }
 
 // ─── Shared initialization ──────────────────────────────────────────────────
@@ -493,7 +541,7 @@ fn initialize_vault(
 /// Current thumb cache format version. Bump this when the thumbnail
 /// pipeline changes in a way that makes old cached files incompatible
 /// (e.g. text placeholders switched from JPEG to PNG, or new font).
-const THUMB_FORMAT_VERSION: &str = "6";
+const THUMB_FORMAT_VERSION: &str = "7";
 
 /// If the thumb cache was written by an older format version, delete
 /// all cached thumbnails and let a background sync regenerate them fresh.
@@ -511,21 +559,34 @@ fn migrate_thumb_cache(vault: &VaultLayout) -> bool {
         THUMB_FORMAT_VERSION,
     );
 
-    // Delete all .jpg files in thumbs dir. Keep the directory itself
-    // and any non-.jpg files (like the marker we're about to write).
-    if let Ok(entries) = std::fs::read_dir(vault.thumbs_dir()) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("jpg") {
-                let _ = std::fs::remove_file(&path);
-            }
-        }
-    }
+    // Preview paths may become nested as the cache schema evolves. Walk
+    // directories without following symlinks so no stale JPEG can survive a
+    // format migration while non-preview sidecars remain untouched.
+    clear_cached_jpegs(&vault.thumbs_dir());
 
     // Write the new version marker. If this fails, next startup will
     // re-run the migration — safe, just slightly wasteful.
-    let _ = std::fs::write(&marker, THUMB_FORMAT_VERSION);
+    let _ = files::write_atomically(&marker, THUMB_FORMAT_VERSION.as_bytes());
     true
+}
+
+fn clear_cached_jpegs(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            clear_cached_jpegs(&path);
+        } else if file_type.is_file()
+            && path.extension().and_then(|extension| extension.to_str()) == Some("jpg")
+        {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 /// Legacy derived stores may predate the current preview/feed metadata
@@ -571,6 +632,18 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                     return;
                 }
             };
+
+            let freshness = app_for_thread
+                .state::<AppState>()
+                .freshness
+                .reconcile(&vault);
+            if let Err(error) = freshness.result {
+                log::warn!(
+                    "index metadata backfill freshness failed for {}: {}",
+                    path_for_thread,
+                    error
+                );
+            }
 
             let media_updated = match index::backfill_media_index(&conn, &vault) {
                 Ok(updated) => updated,
@@ -689,6 +762,18 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                 + playback_updated
                 + preview_text_updated
                 + search_updated;
+            if let Err(error) = schedule_preview_reconcile(
+                &app_for_thread,
+                vault,
+                std::iter::empty::<String>(),
+                true,
+            ) {
+                log::warn!(
+                    "failed to schedule startup preview reconciliation for {}: {}",
+                    path_for_thread,
+                    error
+                );
+            }
             if total_updated == 0 {
                 append_startup_trace(
                     &app_for_thread,
@@ -736,6 +821,9 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
 /// Create a callback that emits "vault-changed" when background thumbnails finish.
 fn thumbs_done_cb(app: AppHandle, path: String) -> Box<dyn FnOnce() + Send> {
     Box::new(move || {
+        if !app.state::<AppState>().is_current_vault(Path::new(&path)) {
+            return;
+        }
         log::info!("background thumbnails done, notifying frontend");
         let _ = app.emit("vault-changed", VaultChangedPayload { path });
     })
@@ -821,8 +909,7 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                 }
             };
             let sync_state = app_for_thread.state::<AppState>();
-            let mut force_full_scan = migrate_thumb_cache(&vault);
-            if force_full_scan {
+            if migrate_thumb_cache(&vault) {
                 append_startup_trace(
                     &app_for_thread,
                     "vault_sync_thread",
@@ -837,27 +924,12 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                 if let Err(err) = sync_state.begin_sync_pass(&path_for_thread) {
                     break Err(err);
                 }
-                let result = if force_full_scan {
-                    force_full_scan = false;
-                    handler::full_scan(
-                        &conn,
-                        &vault,
-                        Some(thumbs_done_cb(
-                            app_for_thread.clone(),
-                            path_for_thread.clone(),
-                        )),
-                        Some(app_for_thread.clone()),
-                    )
-                } else {
-                    handler::incremental_scan(
-                        &conn,
-                        &vault,
-                        Some(thumbs_done_cb(
-                            app_for_thread.clone(),
-                            path_for_thread.clone(),
-                        )),
-                        Some(app_for_thread.clone()),
-                    )
+                let result = match sync_state.freshness.reconcile(&vault).result {
+                    Ok(report) => Ok(ScanResult {
+                        indexed: report.upserted.len(),
+                        errors: report.errors.len(),
+                    }),
+                    Err(error) => Err(anyhow::anyhow!(error)),
                 };
                 match result {
                     Ok(scan) => match sync_state.complete_sync_pass(&path_for_thread) {
@@ -889,15 +961,7 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                     // device) without touching the `.md` mtime — which
                     // incremental_scan correctly skips but that would
                     // otherwise leave the sidebar showing a stale version.
-                    match handler::thumb_sweep(
-                        &conn,
-                        &vault,
-                        Some(app_for_thread.clone()),
-                        Some(thumbs_done_cb(
-                            app_for_thread.clone(),
-                            path_for_thread.clone(),
-                        )),
-                    ) {
+                    match start_thumbnail_sweep(&app_for_thread, &sync_state, vault.clone()) {
                         Ok(count) => append_startup_trace(
                             &app_for_thread,
                             "vault_sync_thread",
@@ -911,6 +975,18 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                         Err(err) => {
                             log::warn!("thumb_sweep failed for {}: {:#}", path_for_thread, err)
                         }
+                    }
+                    if let Err(error) = schedule_preview_reconcile(
+                        &app_for_thread,
+                        vault.clone(),
+                        std::iter::empty::<String>(),
+                        true,
+                    ) {
+                        log::warn!(
+                            "failed to schedule sync preview reconciliation for {}: {}",
+                            path_for_thread,
+                            error
+                        );
                     }
                     append_startup_trace(
                         &app_for_thread,
@@ -1003,16 +1079,16 @@ fn ensure_vault_id(vault: &VaultLayout) -> Result<String, CommandError> {
     if let Ok(existing) = std::fs::read_to_string(vault.legacy_vault_id_path()) {
         let trimmed = existing.trim();
         if !trimmed.is_empty() {
-            std::fs::write(&path, format!("{trimmed}\n")).map_err(|e| {
-                CommandError::Internal(format!("failed to migrate vault-id to .mine: {e}"))
+            files::write_atomically(&path, format!("{trimmed}\n").as_bytes()).map_err(|e| {
+                CommandError::Internal(format!("failed to migrate vault-id to .mine: {e:#}"))
             })?;
             return Ok(trimmed.to_string());
         }
     }
 
     let new_id = generate_vault_id()?;
-    std::fs::write(&path, format!("{new_id}\n"))
-        .map_err(|e| CommandError::Internal(format!("failed to write vault-id: {e}")))?;
+    files::write_atomically(&path, format!("{new_id}\n").as_bytes())
+        .map_err(|e| CommandError::Internal(format!("failed to write vault-id: {e:#}")))?;
     Ok(new_id)
 }
 
@@ -1249,7 +1325,7 @@ fn migrate_channels_to_files(conn: &Connection, vault: &VaultLayout) {
             body: String::new(),
         };
 
-        if let Err(e) = files::write_block_file(vault, &block) {
+        if let Err(e) = files::write_new_block_file(vault, &block) {
             log::warn!("failed to migrate channel '{}' to file: {e:#}", ch.tag);
         }
     }
@@ -1284,11 +1360,13 @@ pub(crate) fn write_config(app: &AppHandle, json: &serde_json::Value) {
     if let Some(parent) = config.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Err(e) = std::fs::write(
+    if let Err(e) = files::write_atomically(
         &config,
-        serde_json::to_string_pretty(json).unwrap_or_default(),
+        serde_json::to_string_pretty(json)
+            .unwrap_or_default()
+            .as_bytes(),
     ) {
-        log::warn!("failed to save config: {e}");
+        log::warn!("failed to save config: {e:#}");
     }
 }
 
@@ -1381,6 +1459,40 @@ mod tests {
                 .trim(),
             "legacy-id"
         );
+    }
+
+    #[test]
+    fn rebuild_failure_preserves_last_good_index_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let source_path = vault.block_path("Stable");
+        std::fs::write(
+            &source_path,
+            "---\ntype: article\nsaved_at: 2026-07-10T00:00:00Z\n---\nold body",
+        )
+        .unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        std::fs::write(
+            &source_path,
+            "---\ntype: article\nsaved_at: 2026-07-10T00:00:00Z\n---\nnew body",
+        )
+        .unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_rebuild_update
+             BEFORE UPDATE ON blocks
+             WHEN new.slug = 'Stable'
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected rebuild failure');
+             END;",
+        )
+        .unwrap();
+
+        let report = rebuild_index_projection(&conn, &vault).unwrap();
+
+        assert_eq!(report.errors.len(), 1);
+        let indexed = index::get_block(&conn, "Stable").unwrap().unwrap();
+        assert_eq!(indexed.body.trim(), "old body");
     }
 
     #[test]

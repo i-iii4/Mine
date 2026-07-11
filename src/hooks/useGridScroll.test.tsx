@@ -78,6 +78,30 @@ function CountingHarness({
   );
 }
 
+function EmergencyHarness({ positions }: { positions: MasonryPosition[] }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const getVisibleItems = useCallback(
+    (scrollTop: number) => visibleForViewport(positions, scrollTop, 1000),
+    [positions],
+  );
+  const getEmergencyVisibleItems = useCallback(
+    (scrollTop: number) => visibleForViewport(positions, scrollTop, 100),
+    [positions],
+  );
+  const visible = useGridScroll(scrollRef, {
+    getVisibleItems,
+    getEmergencyVisibleItems,
+    resetKey: "emergency",
+    viewportHeight: 100,
+  });
+
+  return (
+    <div ref={scrollRef} data-testid="scroll">
+      <div data-testid="visible">{visible.map((item) => item.index).join(",")}</div>
+    </div>
+  );
+}
+
 describe("useGridScroll", () => {
   it("does not bump render state when a readiness-window change leaves the visible set identical", () => {
     // item 1 sits at top 500, far outside both the 100 px viewport and the
@@ -154,5 +178,32 @@ describe("useGridScroll", () => {
     });
 
     expect(screen.getByTestId("visible")).toHaveTextContent("99");
+  });
+
+  it("commits only the emergency viewport window synchronously", () => {
+    const positions = [
+      position(0, 0),
+      position(1, 120),
+      position(2, 240),
+      position(99, 12000),
+      position(100, 12120),
+      position(101, 12240),
+    ];
+
+    render(<EmergencyHarness positions={positions} />);
+
+    const scroll = screen.getByTestId("scroll");
+    Object.defineProperty(scroll, "clientHeight", {
+      value: 100,
+      configurable: true,
+    });
+
+    act(() => {
+      scroll.scrollTop = 12000;
+      scroll.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(screen.getByTestId("visible")).toHaveTextContent("99");
+    expect(screen.getByTestId("visible")).not.toHaveTextContent("100");
   });
 });

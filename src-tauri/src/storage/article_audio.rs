@@ -364,7 +364,7 @@ fn write_stored_state(
     }
     let bytes =
         serde_json::to_vec_pretty(state).context("failed to serialize article audio state")?;
-    std::fs::write(&path, bytes)
+    crate::storage::files::write_atomically(&path, &bytes)
         .with_context(|| format!("failed to write article audio state: {}", path.display()))
 }
 

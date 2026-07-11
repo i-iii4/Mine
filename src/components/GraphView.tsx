@@ -1,5 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { forceCollide } from "d3-force";
+import { Search, SlidersHorizontal, X } from "lucide-react";
 import ForceGraph2D, {
   type ForceGraphMethods,
   type LinkObject,
@@ -11,7 +22,28 @@ import { fallbackThumbsRoot, thumbnailUrl } from "@/lib/assets";
 import { parsePreviewManifest } from "@/lib/cardLayout";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import { ReadOnlyCardPreview } from "./Card";
-import type { GraphLink, GraphNode, GraphSnapshot, IndexedBlock, LightBlock } from "@/types";
+import { Button } from "./ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import { Input } from "./ui/input";
+import {
+  SegmentedControl,
+  type SegmentedControlOption,
+} from "./ui/segmented-control";
+import type {
+  GraphLink,
+  GraphNode,
+  GraphOptions,
+  GraphScope,
+  GraphScopeKind,
+  GraphSnapshot,
+  IndexedBlock,
+  LightBlock,
+} from "@/types";
 
 type GraphCanvasNode = GraphNode & NodeObject<GraphNode>;
 type PositionedGraphCanvasNode = GraphCanvasNode & { x: number; y: number };
@@ -40,6 +72,12 @@ type GraphCardMenuPoint = {
   x: number;
   y: number;
 };
+
+type GraphToggleOption =
+  | "include_collections"
+  | "include_wikilinks"
+  | "include_related_notes"
+  | "include_unresolved";
 
 type GraphPalette = {
   cardFill: string;
@@ -72,16 +110,23 @@ interface GraphForce {
   initialize?: (nodes: GraphCanvasNode[], ...args: unknown[]) => void;
 }
 
-interface GraphViewProps {
+export interface GraphViewProps {
   currentCollection?: string;
   vaultPath: string;
   thumbsRootPath?: string;
   loadedBlocks: LightBlock[];
   thumbVersions: ReadonlyMap<string, number>;
   hoverPreviewFrozen?: boolean;
+  selectedSlug?: string | null;
+  detailOpen?: boolean;
+  loadSnapshot?: (scope: GraphScope, options: GraphOptions) => Promise<GraphSnapshot>;
   onOpenBlock: (block: LightBlock | IndexedBlock) => void;
   onOpenCardMenu: (block: LightBlock | IndexedBlock, point: GraphCardMenuPoint) => void;
   onNavigateCollection: (collectionRef?: string) => void;
+}
+
+export interface GraphViewHandle {
+  centerOnNode: (nodeId: string) => void;
 }
 
 const CARD_THUMBNAIL_SIZE = 32;
@@ -97,6 +142,27 @@ const GRAPH_PREVIEW_WIDTH = 240;
 const GRAPH_PREVIEW_FALLBACK_HEIGHT = 320;
 const GRAPH_PREVIEW_GAP = 8;
 const GRAPH_PREVIEW_VIEWPORT_MARGIN = 16;
+const GRAPH_SEARCH_DIMMED_ALPHA = 0.15;
+const GRAPH_BACKEND_SEARCH_DELAY_MS = 120;
+const GRAPH_CENTER_MARGIN = 48;
+const GRAPH_CENTER_DURATION_MS = 400;
+const GRAPH_INITIAL_FIT_TICKS = 18;
+const GRAPH_INITIAL_FIT_DURATION_MS = 250;
+
+const GRAPH_SCOPE_OPTIONS: readonly SegmentedControlOption<GraphScopeKind>[] = [
+  { value: "current_route", label: "Route" },
+  { value: "library", label: "Library" },
+  { value: "ego", label: "Ego" },
+];
+
+const DEFAULT_GRAPH_OPTIONS: GraphOptions = {
+  include_collections: true,
+  include_wikilinks: true,
+  include_related_notes: true,
+  include_unresolved: false,
+  materialize_large_library: false,
+  query: null,
+};
 
 const GRAPH_PALETTE: Record<"light" | "dark", GraphPalette> = {
   dark: {
@@ -125,28 +191,38 @@ function graphPhysics(nodeCount: number) {
   };
 }
 
-export function GraphView({
+export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function GraphView({
   currentCollection,
   vaultPath,
   thumbsRootPath,
   loadedBlocks,
   thumbVersions,
   hoverPreviewFrozen = false,
+  selectedSlug = null,
+  detailOpen = false,
+  loadSnapshot = listGraphSnapshot,
   onOpenBlock,
   onOpenCardMenu,
   onNavigateCollection,
-}: GraphViewProps) {
+}: GraphViewProps, ref) {
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [theme, setTheme] = useState<"light" | "dark">(() => readGraphTheme());
+  const [scopeKind, setScopeKind] = useState<GraphScopeKind>(() =>
+    currentCollection ? "current_route" : "library",
+  );
+  const [graphOptions, setGraphOptions] = useState<GraphOptions>(DEFAULT_GRAPH_OPTIONS);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [backendSearchQuery, setBackendSearchQuery] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoverPreviewTarget, setHoverPreviewTarget] = useState<GraphPreviewTarget | null>(null);
-  const [hoverPreviewBlock, setHoverPreviewBlock] = useState<IndexedBlock | null>(null);
+  const [hoverPreviewBlock, setHoverPreviewBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<GraphPreviewPosition | null>(null);
   const [hoveredCollectionId, setHoveredCollectionId] = useState<string | null>(null);
-  const [, setImageVersion] = useState(0);
+  const [imageVersion, setImageVersion] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphMethods<GraphCanvasNode, GraphCanvasLink> | undefined>(
@@ -160,6 +236,9 @@ export function GraphView({
   const graphScaleRef = useRef(1);
   const collectionDragClickSuppressionRef = useRef<{ nodeId: string; until: number } | null>(null);
   const previousHoverPreviewFrozenRef = useRef(hoverPreviewFrozen);
+  const previousDetailOpenRef = useRef(detailOpen);
+  const pendingCenterNodeIdRef = useRef<string | null>(null);
+  const pendingFitTicksRef = useRef(0);
 
   const loadedBlocksBySlug = useMemo(() => {
     return new Map(loadedBlocks.map((block) => [block.slug, block]));
@@ -167,12 +246,41 @@ export function GraphView({
 
   const canvasTheme = useMemo(() => readGraphCanvasTheme(theme), [theme]);
 
+  const normalizedSearch = useMemo(() => normalizeGraphSearch(searchQuery), [searchQuery]);
+  const searchReady = normalizedSearch.alphanumericCount >= 2;
+  const selectedCardSlug = selectedNodeId?.startsWith("card:")
+    ? selectedNodeId.slice("card:".length)
+    : null;
+  const egoCenterSlug = selectedSlug ?? selectedCardSlug;
+  const scopeCenterSlug = scopeKind === "ego" ? egoCenterSlug : null;
+  const scope = useMemo<GraphScope>(() => ({
+    kind: scopeKind,
+    collection_ref: currentCollection ?? null,
+    center_slug: scopeCenterSlug,
+    hops: 1,
+  }), [currentCollection, scopeCenterSlug, scopeKind]);
+  const requestOptions = useMemo<GraphOptions>(() => ({
+    ...graphOptions,
+    query: backendSearchQuery,
+  }), [backendSearchQuery, graphOptions]);
+
+  useEffect(() => {
+    if (!snapshot?.truncated || !searchReady) {
+      setBackendSearchQuery(null);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setBackendSearchQuery(normalizedSearch.value);
+    }, GRAPH_BACKEND_SEARCH_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [normalizedSearch.value, searchReady, snapshot?.truncated]);
+
   const reloadSnapshot = useCallback(async () => {
     const sequence = ++loadSequenceRef.current;
     setLoading(true);
     setError(null);
     try {
-      const next = await listGraphSnapshot(currentCollection);
+      const next = await loadSnapshot(scope, requestOptions);
       if (loadSequenceRef.current === sequence) {
         setSnapshot(next);
       }
@@ -185,7 +293,17 @@ export function GraphView({
         setLoading(false);
       }
     }
+  }, [loadSnapshot, requestOptions, scope]);
+
+  useLayoutEffect(() => {
+    setScopeKind(currentCollection ? "current_route" : "library");
   }, [currentCollection]);
+
+  useEffect(() => {
+    if (scopeKind === "ego" && !egoCenterSlug) {
+      setScopeKind(currentCollection ? "current_route" : "library");
+    }
+  }, [currentCollection, egoCenterSlug, scopeKind]);
 
   useEffect(() => {
     void reloadSnapshot();
@@ -252,7 +370,95 @@ export function GraphView({
     };
   }, [snapshot]);
 
+  const matchingNodeIds = useMemo(() => {
+    if (!searchReady) return new Set<string>();
+    return new Set(
+      graphData.nodes
+        .filter((node) => graphNodeMatchesSearch(node, normalizedSearch.value))
+        .map((node) => node.id),
+    );
+  }, [graphData.nodes, normalizedSearch.value, searchReady]);
+
+  const selectedNode = useMemo(
+    () => graphData.nodes.find((node) => node.id === selectedNodeId) ?? null,
+    [graphData.nodes, selectedNodeId],
+  );
+
+  const availableScopeOptions = useMemo(() => GRAPH_SCOPE_OPTIONS.filter((option) => {
+    if (option.value === "current_route") return Boolean(currentCollection);
+    if (option.value === "ego") return Boolean(egoCenterSlug);
+    return true;
+  }), [currentCollection, egoCenterSlug]);
+
+  const renderThumbnails = !(
+    scopeKind === "library" && graphOptions.materialize_large_library
+    && (snapshot?.total_nodes ?? 0) > 1_000
+  );
+  const graphViewportReady = size.width > 0 && size.height > 0;
+
+  const centerNodeIfNeeded = useCallback((nodeId: string): boolean => {
+    const graph = graphRef.current;
+    const node = graphData.nodes.find((candidate) => candidate.id === nodeId);
+    if (!graph || !node || !hasNodePosition(node) || size.width <= 0 || size.height <= 0) {
+      return false;
+    }
+
+    const screen = graph.graph2ScreenCoords(node.x, node.y);
+    const inside = screen.x >= GRAPH_CENTER_MARGIN
+      && screen.x <= size.width - GRAPH_CENTER_MARGIN
+      && screen.y >= GRAPH_CENTER_MARGIN
+      && screen.y <= size.height - GRAPH_CENTER_MARGIN;
+    if (!inside) {
+      graph.centerAt(node.x, node.y, GRAPH_CENTER_DURATION_MS);
+    }
+    return true;
+  }, [graphData.nodes, size.height, size.width]);
+
+  useImperativeHandle(ref, () => ({
+    centerOnNode(nodeId: string) {
+      pendingCenterNodeIdRef.current = nodeId;
+      if (!detailOpen && centerNodeIfNeeded(nodeId)) {
+        pendingCenterNodeIdRef.current = null;
+      }
+    },
+  }), [centerNodeIfNeeded, detailOpen]);
+
   useEffect(() => {
+    if (!selectedSlug) return;
+    const nodeId = `card:${selectedSlug}`;
+    if (!graphData.nodes.some((node) => node.id === nodeId)) return;
+    setSelectedNodeId(nodeId);
+    pendingCenterNodeIdRef.current = nodeId;
+  }, [graphData.nodes, selectedSlug]);
+
+  useEffect(() => {
+    const wasOpen = previousDetailOpenRef.current;
+    previousDetailOpenRef.current = detailOpen;
+    if (wasOpen && !detailOpen && selectedNodeId) {
+      pendingCenterNodeIdRef.current = selectedNodeId;
+    }
+  }, [detailOpen, selectedNodeId]);
+
+  useEffect(() => {
+    const pendingNodeId = pendingCenterNodeIdRef.current;
+    if (!pendingNodeId || detailOpen || !graphViewportReady) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      if (centerNodeIfNeeded(pendingNodeId)) {
+        pendingCenterNodeIdRef.current = null;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    centerNodeIfNeeded,
+    detailOpen,
+    graphViewportReady,
+    selectedNodeId,
+    size.height,
+    size.width,
+  ]);
+
+  useEffect(() => {
+    if (!renderThumbnails) return;
     const cache = imageCacheRef.current;
     for (const node of graphData.nodes) {
       if (node.kind !== "card" || !node.slug) continue;
@@ -267,13 +473,11 @@ export function GraphView({
       image.onerror = () => {};
       image.src = url;
     }
-  }, [graphData.nodes, resolvedThumbsRoot, thumbVersions]);
+  }, [graphData.nodes, renderThumbnails, resolvedThumbsRoot, thumbVersions]);
 
   const syncGraphScale = useCallback((scale: number) => {
     graphScaleRef.current = Number.isFinite(scale) && scale > 0 ? scale : 1;
   }, []);
-
-  const graphViewportReady = size.width > 0 && size.height > 0;
 
   useEffect(() => {
     if (!graphViewportReady || graphData.nodes.length === 0) return;
@@ -320,13 +524,22 @@ export function GraphView({
         collectionLabelCollisionForce(() => graphScaleRef.current),
       );
 
-      graph.zoomToFit(0, 40);
       syncGraphScale(graph.zoom());
+      pendingFitTicksRef.current = GRAPH_INITIAL_FIT_TICKS;
       graph.d3ReheatSimulation();
     };
     frame = requestAnimationFrame(applyForces);
     return () => cancelAnimationFrame(frame);
-  }, [graphData, graphViewportReady, size.width, size.height, syncGraphScale]);
+  }, [graphData, graphViewportReady, syncGraphScale]);
+
+  const handleEngineTick = useCallback(() => {
+    if (pendingFitTicksRef.current <= 0) return;
+    pendingFitTicksRef.current -= 1;
+    if (pendingFitTicksRef.current > 0) return;
+    const graph = graphRef.current;
+    if (!graph) return;
+    graph.zoomToFit(GRAPH_INITIAL_FIT_DURATION_MS, 40);
+  }, []);
 
   const clearPreviewOpenTimer = useCallback(() => {
     if (previewOpenTimerRef.current === null) return;
@@ -430,6 +643,15 @@ export function GraphView({
       previewRef.current?.getBoundingClientRect().height ?? GRAPH_PREVIEW_FALLBACK_HEIGHT,
     ));
 
+    const loaded = loadedBlocksBySlug.get(hoverPreviewTarget.slug);
+    if (loaded) {
+      lastPreviewOpenedAtRef.current = Date.now();
+      setHoverPreviewBlock(loaded);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     void getBlock(hoverPreviewTarget.slug)
       .then((block) => {
         if (cancelled) return;
@@ -446,7 +668,7 @@ export function GraphView({
     return () => {
       cancelled = true;
     };
-  }, [graphData.nodes, hoverPreviewTarget]);
+  }, [graphData.nodes, hoverPreviewTarget, loadedBlocksBySlug]);
 
   useEffect(() => {
     if (!hoverPreviewTarget || !hoverPreviewBlock) return undefined;
@@ -484,6 +706,7 @@ export function GraphView({
 
   const handleNodeClick = useCallback(
     async (node: GraphCanvasNode) => {
+      setSelectedNodeId(node.id);
       closePreview();
       if (node.kind === "collection") {
         const suppression = collectionDragClickSuppressionRef.current;
@@ -497,6 +720,7 @@ export function GraphView({
         onNavigateCollection(node.collection_ref ?? undefined);
         return;
       }
+      if (node.kind === "unresolved") return;
       if (!node.slug) return;
 
       const loaded = loadedBlocksBySlug.get(node.slug);
@@ -518,6 +742,7 @@ export function GraphView({
       event.preventDefault();
       event.stopPropagation();
       if (node.kind !== "card" || !node.slug) return;
+      setSelectedNodeId(node.id);
 
       const point = { x: event.clientX, y: event.clientY };
       const loaded = loadedBlocksBySlug.get(node.slug);
@@ -534,6 +759,57 @@ export function GraphView({
     [loadedBlocksBySlug, onOpenCardMenu],
   );
 
+  const handleGraphKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      if (searchQuery) {
+        event.preventDefault();
+        event.stopPropagation();
+        setSearchQuery("");
+        return;
+      }
+      if (selectedNodeId) {
+        event.preventDefault();
+        event.stopPropagation();
+        setSelectedNodeId(null);
+      }
+      return;
+    }
+
+    if (event.key === "Enter" && selectedNode) {
+      event.preventDefault();
+      event.stopPropagation();
+      void handleNodeClick(selectedNode);
+      return;
+    }
+
+    if (!isGraphArrowKey(event.key)) return;
+    const next = directionalGraphNode(
+      graphData.nodes,
+      selectedNode,
+      event.key,
+      graphRef.current,
+    );
+    if (!next) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedNodeId(next.id);
+    pendingCenterNodeIdRef.current = next.id;
+  }, [graphData.nodes, handleNodeClick, searchQuery, selectedNode, selectedNodeId]);
+
+  const handleSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Escape" || !searchQuery) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setSearchQuery("");
+  }, [searchQuery]);
+
+  const updateGraphOption = useCallback(
+    (key: GraphToggleOption, checked: boolean) => {
+      setGraphOptions((current) => ({ ...current, [key]: checked }));
+    },
+    [],
+  );
+
   const suppressCollectionClickAfterDrag = useCallback((node: GraphCanvasNode) => {
     if (node.kind !== "collection") return;
     collectionDragClickSuppressionRef.current = {
@@ -546,23 +822,58 @@ export function GraphView({
   const nodeCanvasObject = useCallback(
     (node: GraphCanvasNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
       if (!hasNodePosition(node)) return;
+      const dimmed = searchReady && !matchingNodeIds.has(node.id);
+      const selected = selectedNodeId === node.id;
+      const showLabel = selected || (searchReady && matchingNodeIds.has(node.id));
+      ctx.save();
+      if (dimmed) {
+        ctx.globalAlpha *= GRAPH_SEARCH_DIMMED_ALPHA;
+      }
       if (node.kind === "collection") {
         paintCollectionNode(ctx, node, {
           globalScale,
           theme: canvasTheme,
           hovered: hoveredCollectionId === node.id,
+          selected,
         });
+        ctx.restore();
+        return;
+      }
+      if (node.kind === "unresolved") {
+        paintUnresolvedNode(ctx, node, {
+          globalScale,
+          theme: canvasTheme,
+          selected,
+          showLabel,
+        });
+        ctx.restore();
         return;
       }
       paintCardNode(ctx, node, {
         globalScale,
         theme,
+        canvasTheme,
         imageCache: imageCacheRef.current,
         thumbsRootPath: resolvedThumbsRoot,
         thumbVersion: node.slug ? thumbVersions.get(node.slug) ?? 0 : 0,
+        renderThumbnail: renderThumbnails,
+        selected,
+        showLabel,
       });
+      ctx.restore();
     },
-    [canvasTheme, hoveredCollectionId, resolvedThumbsRoot, theme, thumbVersions],
+    [
+      canvasTheme,
+      hoveredCollectionId,
+      imageVersion,
+      matchingNodeIds,
+      renderThumbnails,
+      resolvedThumbsRoot,
+      searchReady,
+      selectedNodeId,
+      theme,
+      thumbVersions,
+    ],
   );
 
   const nodePointerAreaPaint = useCallback(
@@ -575,11 +886,39 @@ export function GraphView({
         ctx.fill();
         return;
       }
+      if (node.kind === "unresolved") {
+        const radius = 5 / globalScale;
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
       const size = CARD_THUMBNAIL_SIZE / globalScale;
       ctx.fillRect(node.x - size / 2, node.y - size / 2, size, size);
     },
     [],
   );
+
+  const linkColor = useCallback((link: GraphCanvasLink) => {
+    if (!searchReady) return canvasTheme.linkDefault;
+    const sourceId = graphEndpointId(link.source);
+    const targetId = graphEndpointId(link.target);
+    if (
+      (sourceId && matchingNodeIds.has(sourceId))
+      || (targetId && matchingNodeIds.has(targetId))
+    ) {
+      return canvasTheme.linkDefault;
+    }
+    return canvasColorWithAlpha(canvasTheme.linkDefault, GRAPH_SEARCH_DIMMED_ALPHA);
+  }, [canvasTheme.linkDefault, matchingNodeIds, searchReady]);
+
+  const selectedStatus = selectedNode
+    ? `${selectedNode.label}, ${selectedNode.degree} ${selectedNode.degree === 1 ? "neighbor" : "neighbors"}`
+    : searchQuery && !searchReady
+      ? "Graph search pending"
+      : searchReady
+        ? `${matchingNodeIds.size} graph ${matchingNodeIds.size === 1 ? "match" : "matches"}`
+        : "";
 
   const physics = graphPhysics(graphData.nodes.length);
 
@@ -590,13 +929,126 @@ export function GraphView({
       onContextMenu={(event) => event.preventDefault()}
       data-graph-view=""
     >
+      <div
+        className="absolute top-3 right-3 left-3 z-20 flex min-w-0 flex-wrap items-center gap-2"
+        data-graph-controls=""
+        onPointerDown={(event) => event.stopPropagation()}
+        onContextMenu={(event) => event.stopPropagation()}
+      >
+        <div className="relative w-[min(18rem,calc(100vw-8rem))] min-w-36">
+          <Search
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-tertiary-foreground"
+          />
+          <Input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            placeholder="Search graph"
+            aria-label="Search graph"
+            data-graph-search-state={searchQuery && !searchReady ? "pending" : "ready"}
+            className="bg-chrome pr-8 pl-8"
+          />
+          {searchQuery ? (
+            <button
+              type="button"
+              aria-label="Clear graph search"
+              title="Clear graph search"
+              className="absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-1 text-muted-foreground hover:text-foreground"
+              onClick={() => setSearchQuery("")}
+            >
+              <X aria-hidden="true" className="size-3.5" />
+            </button>
+          ) : null}
+          {searchReady && matchingNodeIds.size === 0 && !loading ? (
+            <div
+              className="absolute top-full left-0 mt-1 border bg-chrome px-2 py-1 text-sm text-muted-foreground"
+              data-graph-search-empty=""
+            >
+              No graph matches
+            </div>
+          ) : null}
+        </div>
+
+        {availableScopeOptions.length > 1 ? (
+          <SegmentedControl
+            value={scopeKind}
+            options={availableScopeOptions}
+            onChange={setScopeKind}
+            aria-label="Graph scope"
+          />
+        ) : null}
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="default"
+              size="icon-xs"
+              aria-label="Graph filters"
+              title="Graph filters"
+            >
+              <SlidersHorizontal aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuCheckboxItem
+              checked={graphOptions.include_collections}
+              onCheckedChange={(checked) => updateGraphOption("include_collections", checked)}
+            >
+              Collections
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={graphOptions.include_wikilinks}
+              onCheckedChange={(checked) => updateGraphOption("include_wikilinks", checked)}
+            >
+              Wikilinks
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={graphOptions.include_related_notes}
+              onCheckedChange={(checked) => updateGraphOption("include_related_notes", checked)}
+            >
+              Related notes
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={graphOptions.include_unresolved}
+              onCheckedChange={(checked) => updateGraphOption("include_unresolved", checked)}
+            >
+              Unresolved
+            </DropdownMenuCheckboxItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {snapshot?.truncated
+          && snapshot.can_materialize_full
+          && !graphOptions.materialize_large_library ? (
+            <Button
+              type="button"
+              variant="default"
+              size="xs"
+              onClick={() => setGraphOptions((current) => ({
+                ...current,
+                materialize_large_library: true,
+              }))}
+              data-graph-materialize-all=""
+            >
+              Show all
+            </Button>
+          ) : null}
+      </div>
+
+      <div className="sr-only" aria-live="polite" data-graph-selection-status="">
+        {selectedStatus}
+      </div>
+
       {error ? (
-        <div className="absolute inset-0 grid place-items-center px-8 text-sm text-destructive">
+        <div className="absolute inset-0 z-10 grid place-items-center px-8 text-sm text-destructive">
           {error}
         </div>
       ) : null}
       {!error && graphData.nodes.length === 0 && !loading ? (
-        <div className="absolute inset-0 grid place-items-center px-8 text-sm text-muted-foreground">
+        <div className="absolute inset-0 z-10 grid place-items-center px-8 text-sm text-muted-foreground">
           No graph nodes
         </div>
       ) : null}
@@ -620,58 +1072,167 @@ export function GraphView({
           />
         </div>
       ) : null}
-      {graphViewportReady ? (
-        <ForceGraph2D<GraphCanvasNode, GraphCanvasLink>
-          ref={graphRef}
-          graphData={graphData}
-          width={size.width}
-          height={size.height}
-          nodeId="id"
-          linkSource="source"
-          linkTarget="target"
-          nodeCanvasObject={nodeCanvasObject}
-          nodePointerAreaPaint={nodePointerAreaPaint}
-          nodeLabel={() => ""}
-          onNodeClick={handleNodeClick}
-          onNodeRightClick={handleNodeRightClick}
-          onNodeHover={(node) => {
-            if (hoverPreviewFrozen) return;
-            if (!node) {
+      <div
+        className="absolute inset-0 outline-none focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring"
+        tabIndex={0}
+        role="group"
+        aria-label="Graph canvas"
+        data-graph-keyboard-surface=""
+        onKeyDown={handleGraphKeyDown}
+      >
+        {graphViewportReady ? (
+          <ForceGraph2D<GraphCanvasNode, GraphCanvasLink>
+            ref={graphRef}
+            graphData={graphData}
+            width={size.width}
+            height={size.height}
+            nodeId="id"
+            linkSource="source"
+            linkTarget="target"
+            nodeCanvasObject={nodeCanvasObject}
+            nodePointerAreaPaint={nodePointerAreaPaint}
+            nodeLabel={() => ""}
+            onNodeClick={handleNodeClick}
+            onNodeRightClick={handleNodeRightClick}
+            onBackgroundClick={() => {
+              setSelectedNodeId(null);
+              closePreview();
+            }}
+            onNodeHover={(node) => {
+              if (hoverPreviewFrozen) return;
+              if (!node) {
+                setHoveredCollectionId(null);
+                closePreview();
+                return;
+              }
+              if (node.kind === "collection") {
+                setHoveredCollectionId(node.id);
+                closePreview();
+                return;
+              }
               setHoveredCollectionId(null);
-              closePreview();
-              return;
-            }
-            if (node.kind === "collection") {
-              setHoveredCollectionId(node.id);
-              closePreview();
-              return;
-            }
-            setHoveredCollectionId(null);
-            schedulePreviewOpen(node);
-          }}
-          onNodeDrag={suppressCollectionClickAfterDrag}
-          onNodeDragEnd={suppressCollectionClickAfterDrag}
-          d3AlphaDecay={physics.alphaDecay}
-          d3VelocityDecay={physics.velocityDecay}
-          warmupTicks={physics.warmupTicks}
-          cooldownTime={physics.cooldownTime}
-          onZoom={(transform) => syncGraphScale(transform.k)}
-          onZoomEnd={(transform) => syncGraphScale(transform.k)}
-          backgroundColor="transparent"
-          linkDirectionalArrowLength={0}
-          linkColor={() => canvasTheme.linkDefault}
-          linkWidth={1}
-        />
-      ) : null}
+              schedulePreviewOpen(node);
+            }}
+            onNodeDrag={suppressCollectionClickAfterDrag}
+            onNodeDragEnd={suppressCollectionClickAfterDrag}
+            d3AlphaDecay={physics.alphaDecay}
+            d3VelocityDecay={physics.velocityDecay}
+            warmupTicks={physics.warmupTicks}
+            cooldownTime={physics.cooldownTime}
+            onEngineTick={handleEngineTick}
+            onZoom={(transform) => syncGraphScale(transform.k)}
+            onZoomEnd={(transform) => syncGraphScale(transform.k)}
+            backgroundColor="transparent"
+            linkDirectionalArrowLength={(link) => link.directed ? 3 : 0}
+            linkColor={linkColor}
+            linkWidth={1}
+          />
+        ) : null}
+      </div>
     </div>
   );
-}
+});
 
 function endpointNode(endpoint: unknown): GraphCanvasNode | null {
   if (endpoint && typeof endpoint === "object" && "kind" in endpoint) {
     return endpoint as GraphCanvasNode;
   }
   return null;
+}
+
+type GraphArrowKey = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
+
+function isGraphArrowKey(key: string): key is GraphArrowKey {
+  return key === "ArrowUp"
+    || key === "ArrowDown"
+    || key === "ArrowLeft"
+    || key === "ArrowRight";
+}
+
+function directionalGraphNode(
+  nodes: GraphCanvasNode[],
+  current: GraphCanvasNode | null,
+  direction: GraphArrowKey,
+  graph: ForceGraphMethods<GraphCanvasNode, GraphCanvasLink> | undefined,
+): GraphCanvasNode | null {
+  if (!graph) return null;
+  const positioned = nodes.filter(hasNodePosition);
+  if (positioned.length === 0) return null;
+  if (!current || !hasNodePosition(current)) {
+    return positioned
+      .map((node) => ({ node, point: graph.graph2ScreenCoords(node.x, node.y) }))
+      .sort((left, right) => left.point.y - right.point.y || left.point.x - right.point.x)[0]
+      ?.node ?? null;
+  }
+
+  const origin = graph.graph2ScreenCoords(current.x, current.y);
+  const vector = graphDirectionVector(direction);
+  let best: { node: GraphCanvasNode; score: number } | null = null;
+  for (const candidate of positioned) {
+    if (candidate.id === current.id) continue;
+    const point = graph.graph2ScreenCoords(candidate.x, candidate.y);
+    const dx = point.x - origin.x;
+    const dy = point.y - origin.y;
+    const projection = dx * vector.x + dy * vector.y;
+    if (projection <= 0) continue;
+    const perpendicular = Math.abs(dx * vector.y - dy * vector.x);
+    const score = projection + perpendicular * 2;
+    if (!best || score < best.score) {
+      best = { node: candidate, score };
+    }
+  }
+  return best?.node ?? null;
+}
+
+function graphDirectionVector(direction: GraphArrowKey): { x: number; y: number } {
+  switch (direction) {
+    case "ArrowUp":
+      return { x: 0, y: -1 };
+    case "ArrowDown":
+      return { x: 0, y: 1 };
+    case "ArrowLeft":
+      return { x: -1, y: 0 };
+    case "ArrowRight":
+      return { x: 1, y: 0 };
+  }
+}
+
+function normalizeGraphSearch(query: string): { value: string; alphanumericCount: number } {
+  const value = query.trim().toLocaleLowerCase();
+  return {
+    value,
+    alphanumericCount: Array.from(value).filter((character) => /[\p{L}\p{N}]/u.test(character))
+      .length,
+  };
+}
+
+function graphNodeMatchesSearch(node: GraphCanvasNode, query: string): boolean {
+  return [node.label, node.slug, node.collection_ref, node.unresolved_ref]
+    .some((value) => value?.toLocaleLowerCase().includes(query));
+}
+
+function graphEndpointId(endpoint: string | GraphCanvasNode): string | null {
+  if (typeof endpoint === "string") return endpoint;
+  return endpoint.id ?? null;
+}
+
+function canvasColorWithAlpha(color: string, alpha: number): string {
+  const hex = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)?.[1];
+  if (hex) {
+    const expanded = hex.length === 3
+      ? hex.split("").map((digit) => `${digit}${digit}`).join("")
+      : hex;
+    const red = Number.parseInt(expanded.slice(0, 2), 16);
+    const green = Number.parseInt(expanded.slice(2, 4), 16);
+    const blue = Number.parseInt(expanded.slice(4, 6), 16);
+    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+  }
+
+  const rgb = color.match(
+    /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*[\d.]+)?\s*\)$/i,
+  );
+  if (!rgb) return color;
+  return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})`;
 }
 
 function hasNodePosition(node: GraphCanvasNode): node is PositionedGraphCanvasNode {
@@ -834,9 +1395,13 @@ function paintCardNode(
   options: {
     globalScale: number;
     theme: "light" | "dark";
+    canvasTheme: GraphCanvasTheme;
     imageCache: Map<string, HTMLImageElement>;
     thumbsRootPath: string;
     thumbVersion: number;
+    renderThumbnail: boolean;
+    selected: boolean;
+    showLabel: boolean;
   },
 ) {
   const palette = GRAPH_PALETTE[options.theme];
@@ -847,7 +1412,7 @@ function paintCardNode(
   const imageUrl = node.slug
     ? graphThumbnailUrl(options.thumbsRootPath, node.slug, options.thumbVersion)
     : null;
-  const image = imageUrl ? options.imageCache.get(imageUrl) : null;
+  const image = options.renderThumbnail && imageUrl ? options.imageCache.get(imageUrl) : null;
 
   ctx.beginPath();
   ctx.rect(x, y, size, size);
@@ -864,6 +1429,15 @@ function paintCardNode(
     ctx.fillStyle = palette.cardFill;
     ctx.fillRect(x, y, size, size);
   }
+
+  if (options.selected) {
+    ctx.lineWidth = 2 / options.globalScale;
+    ctx.strokeStyle = options.canvasTheme.hoverOutline;
+    ctx.strokeRect(x, y, size, size);
+  }
+  if (options.showLabel) {
+    paintScreenFixedLabel(ctx, node, options.globalScale, options.canvasTheme.foregroundText, size);
+  }
 }
 
 function paintCollectionNode(
@@ -873,6 +1447,7 @@ function paintCollectionNode(
     globalScale: number;
     theme: GraphCanvasTheme;
     hovered: boolean;
+    selected: boolean;
   },
 ) {
   const label = collectionLabel(node);
@@ -886,8 +1461,10 @@ function paintCollectionNode(
   roundedRectPath(ctx, x, y, width, COLLECTION_HEIGHT, COLLECTION_HEIGHT / 2);
   ctx.fillStyle = options.theme.chromeFill;
   ctx.fill();
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = options.hovered ? options.theme.hoverOutline : options.theme.border;
+  ctx.lineWidth = options.selected ? 2 : 1;
+  ctx.strokeStyle = options.hovered || options.selected
+    ? options.theme.hoverOutline
+    : options.theme.border;
   ctx.stroke();
 
   ctx.font = `400 ${COLLECTION_FONT_SIZE}px system-ui, -apple-system, BlinkMacSystemFont, sans-serif`;
@@ -895,6 +1472,55 @@ function paintCollectionNode(
   ctx.textBaseline = "middle";
   ctx.fillStyle = options.hovered ? options.theme.foregroundText : options.theme.mutedText;
   ctx.fillText(label, 0, 0, width - COLLECTION_PAD_X * 2);
+  ctx.restore();
+}
+
+function paintUnresolvedNode(
+  ctx: CanvasRenderingContext2D,
+  node: PositionedGraphCanvasNode,
+  options: {
+    globalScale: number;
+    theme: GraphCanvasTheme;
+    selected: boolean;
+    showLabel: boolean;
+  },
+) {
+  const radius = 4 / options.globalScale;
+  ctx.beginPath();
+  ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = options.theme.mutedText;
+  ctx.fill();
+  if (options.selected) {
+    ctx.lineWidth = 2 / options.globalScale;
+    ctx.strokeStyle = options.theme.hoverOutline;
+    ctx.stroke();
+  }
+  if (options.showLabel) {
+    paintScreenFixedLabel(
+      ctx,
+      node,
+      options.globalScale,
+      options.theme.mutedText,
+      radius * 2,
+    );
+  }
+}
+
+function paintScreenFixedLabel(
+  ctx: CanvasRenderingContext2D,
+  node: PositionedGraphCanvasNode,
+  globalScale: number,
+  color: string,
+  nodeSize: number,
+) {
+  ctx.save();
+  ctx.translate(node.x, node.y + nodeSize / 2);
+  ctx.scale(1 / globalScale, 1 / globalScale);
+  ctx.font = `400 ${COLLECTION_FONT_SIZE}px system-ui, -apple-system, BlinkMacSystemFont, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = color;
+  ctx.fillText(node.label, 0, 4, 180);
   ctx.restore();
 }
 

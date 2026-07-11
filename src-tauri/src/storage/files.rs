@@ -16,6 +16,7 @@ use crate::domain::block::{
     CardKind,
 };
 use crate::domain::vault::VaultLayout;
+use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
 use crate::storage::{article_audio, index, media_refs, thumbnails};
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -39,61 +40,145 @@ pub fn write_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf> {
 /// be observable (mirrors `thumbnails::write_thumb_atomically` for derived
 /// files).
 pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
-    }
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("block");
-    let tmp = path.with_file_name(format!(
-        "{file_name}.tmp.{}.{}",
-        std::process::id(),
-        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-
-    let write_result = (|| -> Result<()> {
-        let mut file = std::fs::File::create(&tmp)
-            .with_context(|| format!("failed to create temp file: {}", tmp.display()))?;
-        file.write_all(bytes)
-            .with_context(|| format!("failed to write temp file: {}", tmp.display()))?;
-        file.sync_all()
-            .with_context(|| format!("failed to fsync temp file: {}", tmp.display()))?;
-        Ok(())
-    })();
-    if let Err(e) = write_result {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-
-    std::fs::rename(&tmp, path).with_context(|| {
+    let tmp = prepare_temp_file(path, |file| file.write_all(bytes))?;
+    if let Err(error) = std::fs::rename(&tmp, path).with_context(|| {
         format!(
             "failed to rename temp file {} -> {}",
             tmp.display(),
             path.display()
         )
-    })?;
+    }) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    sync_parent_directory(path)?;
     Ok(())
+}
+
+/// Atomically publish a new file without replacing an existing destination.
+/// The complete fsynced temp inode is linked under the final name in one
+/// operation, preserving create-new semantics without exposing partial bytes.
+pub fn write_new_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = prepare_temp_file(path, |file| file.write_all(bytes))?;
+    if let Err(error) = std::fs::hard_link(&tmp, path).with_context(|| {
+        format!(
+            "failed to publish new file {} -> {}",
+            tmp.display(),
+            path.display()
+        )
+    }) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    let _ = std::fs::remove_file(&tmp);
+    sync_parent_directory(path)?;
+    Ok(())
+}
+
+/// Atomically copy a file to a destination that must not already exist.
+pub fn copy_new_atomically(source: &Path, destination: &Path) -> Result<()> {
+    let mut source_file = std::fs::File::open(source)
+        .with_context(|| format!("failed to open media source: {}", source.display()))?;
+    let tmp = prepare_temp_file(destination, |file| {
+        std::io::copy(&mut source_file, file).map(|_| ())
+    })?;
+    if let Err(error) = std::fs::hard_link(&tmp, destination).with_context(|| {
+        format!(
+            "failed to publish copied file {} -> {}",
+            tmp.display(),
+            destination.display()
+        )
+    }) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    let _ = std::fs::remove_file(&tmp);
+    sync_parent_directory(destination)?;
+    Ok(())
+}
+
+fn copy_atomically(source: &Path, destination: &Path) -> Result<()> {
+    let mut source_file = std::fs::File::open(source)
+        .with_context(|| format!("failed to open media source: {}", source.display()))?;
+    let tmp = prepare_temp_file(destination, |file| {
+        std::io::copy(&mut source_file, file).map(|_| ())
+    })?;
+    if let Err(error) = std::fs::rename(&tmp, destination).with_context(|| {
+        format!(
+            "failed to publish copied file {} -> {}",
+            tmp.display(),
+            destination.display()
+        )
+    }) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    sync_parent_directory(destination)?;
+    Ok(())
+}
+
+pub(crate) fn prepare_temp_file(
+    path: &Path,
+    writer: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("file has no parent directory: {}", path.display()))?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("file");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let tmp = path.with_file_name(format!(
+        "{file_name}.tmp.{}.{}.{}",
+        std::process::id(),
+        nonce,
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| -> Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .with_context(|| format!("failed to create temp file: {}", tmp.display()))?;
+        writer(&mut file)
+            .with_context(|| format!("failed to write temp file: {}", tmp.display()))?;
+        file.sync_all()
+            .with_context(|| format!("failed to fsync temp file: {}", tmp.display()))?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    Ok(tmp)
+}
+
+pub(crate) fn sync_parent_directory(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("file has no parent directory: {}", path.display()))?;
+    let directory = std::fs::File::open(parent)
+        .with_context(|| format!("failed to open directory for fsync: {}", parent.display()))?;
+    directory
+        .sync_all()
+        .with_context(|| format!("failed to fsync directory: {}", parent.display()))
 }
 
 /// Write a new block file without overwriting an existing user file.
 pub fn write_new_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf> {
     let path = vault.block_path(&block.slug);
     let content = serialize_block(block);
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
-    }
-
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
+    write_new_atomically(&path, content.as_bytes())
         .with_context(|| format!("failed to create block file: {}", path.display()))?;
-    file.write_all(content.as_bytes())
-        .with_context(|| format!("failed to write block file: {}", path.display()))?;
 
     Ok(path)
 }
@@ -182,7 +267,7 @@ pub fn copy_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Result
 
     let dest = vault.media_path(slug, ext);
 
-    std::fs::copy(source, &dest)
+    copy_atomically(source, &dest)
         .with_context(|| format!("failed to copy media to {}", dest.display()))?;
 
     Ok(dest)
@@ -193,19 +278,7 @@ pub fn copy_new_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Re
     let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("bin");
     let dest = vault.media_path(slug, ext);
 
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
-    }
-
-    let mut src = std::fs::File::open(source)
-        .with_context(|| format!("failed to open media source: {}", source.display()))?;
-    let mut out = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&dest)
-        .with_context(|| format!("failed to create media file: {}", dest.display()))?;
-    std::io::copy(&mut src, &mut out)
+    copy_new_atomically(source, &dest)
         .with_context(|| format!("failed to copy media to {}", dest.display()))?;
 
     Ok(dest)
@@ -335,31 +408,35 @@ pub fn persist_new_block(
         block_path.display()
     );
 
-    // Copy media before creating the markdown file so a media-copy failure
-    // does not leave an orphaned block document behind.
-    let mut copied_media: Option<PathBuf> = None;
-    if let Some(source) = source_file {
-        let canonical = source
-            .canonicalize()
-            .with_context(|| format!("invalid file path: {}", source.display()))?;
-        anyhow::ensure!(canonical.is_file(), "path is not a file");
-
-        copied_media = Some(copy_new_media_file(&canonical, vault, &block.slug)?);
+    let canonical_source = source_file
+        .map(|source| {
+            let canonical = source
+                .canonicalize()
+                .with_context(|| format!("invalid file path: {}", source.display()))?;
+            anyhow::ensure!(canonical.is_file(), "path is not a file");
+            Ok::<PathBuf, anyhow::Error>(canonical)
+        })
+        .transpose()?;
+    let mut writes = Vec::with_capacity(2);
+    if let Some(source) = canonical_source.as_ref() {
+        let ext = source
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("bin");
+        writes.push(SourceFileWrite::create_from_file(
+            vault.media_path(&block.slug, ext),
+            source.clone(),
+        ));
     }
-
-    if let Err(error) = write_new_block_file(vault, block) {
-        if let Some(path) = copied_media {
-            let _ = std::fs::remove_file(path);
-        }
-        return Err(error);
-    }
+    writes.push(SourceFileWrite::create(
+        block_path,
+        serialize_block(block).into_bytes(),
+    ));
+    commit_new_block_source(conn, vault, block, writes)?;
 
     // Generate thumbnail after the source files exist. Thumbnail generation is
     // best effort and never rolls back the user-owned block/media files.
-    if let Some(source) = source_file {
-        let canonical = source
-            .canonicalize()
-            .with_context(|| format!("invalid file path: {}", source.display()))?;
+    if let Some(canonical) = canonical_source.as_ref() {
         let ext = canonical.extension().and_then(|e| e.to_str()).unwrap_or("");
         if is_image_ext(ext) {
             let media_dest = vault.media_path(&block.slug, ext);
@@ -382,8 +459,6 @@ pub fn persist_new_block(
         );
     }
 
-    // Index
-    index::upsert_block(conn, block, Some(vault.root()))?;
     let _ = index::sync_thumb_metadata(
         conn,
         &block.slug,
@@ -404,9 +479,16 @@ pub fn persist_new_reference_block(
     vault: &VaultLayout,
     block: &Block,
 ) -> Result<index::IndexedBlock> {
-    write_new_block_file(vault, block)?;
+    commit_new_block_source(
+        conn,
+        vault,
+        block,
+        vec![SourceFileWrite::create(
+            vault.block_path(&block.slug),
+            serialize_block(block).into_bytes(),
+        )],
+    )?;
     let _ = thumbnails::generate_for_block(block, vault);
-    index::upsert_block(conn, block, Some(vault.root()))?;
     let _ = index::sync_thumb_metadata(
         conn,
         &block.slug,
@@ -416,6 +498,19 @@ pub fn persist_new_reference_block(
 
     index::get_block(conn, &block.slug)?
         .ok_or_else(|| anyhow::anyhow!("block not found after creation"))
+}
+
+fn commit_new_block_source(
+    conn: &Connection,
+    vault: &VaultLayout,
+    block: &Block,
+    writes: Vec<SourceFileWrite>,
+) -> Result<()> {
+    let staged = StagedSourceMutation::stage(writes)?;
+    staged.commit_with_index(conn, "create_block", |index_conn| {
+        index::upsert_block(index_conn, block, Some(vault.root())).map(|_| ())
+    })?;
+    Ok(())
 }
 
 /// Image extensions the bundled `image` crate can decode for thumbnail
@@ -436,6 +531,7 @@ fn is_image_ext(ext: &str) -> bool {
 mod tests {
     use super::*;
     use crate::domain::block::{parse_block, BlockType, DateTime, Frontmatter};
+    use crate::storage::db;
 
     fn make_vault(dir: &Path) -> VaultLayout {
         VaultLayout::new(dir.to_path_buf())
@@ -502,6 +598,28 @@ mod tests {
             std::fs::read_to_string(vault.block_path("sunset")).unwrap(),
             "existing"
         );
+        assert!(!std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().contains(".tmp.")));
+    }
+
+    #[test]
+    fn failed_temp_write_leaves_no_final_or_partial_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("note.md");
+
+        let result = prepare_temp_file(&destination, |file| {
+            std::io::Write::write_all(file, b"partial")?;
+            Err(std::io::Error::other("injected write failure"))
+        });
+
+        assert!(result.is_err());
+        assert!(!destination.exists());
+        assert!(!std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().contains(".tmp.")));
     }
 
     // ── scan_md_files ────────────────────────────────────────────────────
@@ -578,6 +696,37 @@ mod tests {
             std::fs::read(vault.media_path("my-image", "png")).unwrap(),
             b"existing data"
         );
+        assert!(!std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().contains(".tmp.")));
+    }
+
+    #[test]
+    fn persist_new_block_removes_markdown_and_media_when_index_commit_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let source = dir.path().join("source.png");
+        std::fs::write(&source, b"media bytes").unwrap();
+        let mut block = make_test_block("Rejected");
+        block.frontmatter.file = Some("Rejected.png".to_string());
+        conn.execute_batch(
+            "CREATE TRIGGER reject_new_block
+             BEFORE INSERT ON blocks
+             WHEN new.slug = 'Rejected'
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected create failure');
+             END;",
+        )
+        .unwrap();
+
+        let result = persist_new_block(&conn, &vault, &block, Some(&source));
+
+        assert!(result.is_err());
+        assert!(!vault.block_path("Rejected").exists());
+        assert!(!vault.media_path("Rejected", "png").exists());
+        assert!(index::get_block(&conn, "Rejected").unwrap().is_none());
     }
 
     // ── delete_block_files ───────────────────────────────────────────────

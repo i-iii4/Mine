@@ -24,7 +24,7 @@ function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["
 function block(overrides: Partial<LightBlock> = {}): LightBlock {
   const blockType = overrides.block_type ?? "link";
   const cardKind = overrides.card_kind ?? cardKindForBlockType(blockType);
-  return {
+  const value: LightBlock = {
     id: 1,
     slug: "test-block",
     card_kind: cardKind,
@@ -48,6 +48,56 @@ function block(overrides: Partial<LightBlock> = {}): LightBlock {
     tags: ["test"],
     ...overrides,
   };
+  if (overrides.preview_manifest !== undefined) {
+    return value;
+  }
+
+  const indexedSources = (() => {
+    if (value.media_urls) {
+      try {
+        const parsed = JSON.parse(value.media_urls) as unknown;
+        if (Array.isArray(parsed)) {
+          const sources = parsed.filter((item): item is string => typeof item === "string");
+          if (sources.length > 0) return sources;
+        }
+      } catch {
+        // Malformed metadata represents a text-only projection in tests too.
+      }
+    }
+    return [value.media_file, value.thumbnail, value.first_image].filter(
+      (item): item is string => typeof item === "string" && item.length > 0,
+    );
+  })();
+  const visualSources = indexedSources.filter((source) =>
+    /\.(?:jpe?g|png|gif|webp|bmp|tiff?|heic|heif|avif|mp4|webm|m4v|mov)$/i.test(source),
+  );
+  if (visualSources.length === 0) {
+    return value;
+  }
+  const dimensions = value.media_dimensions
+    ? JSON.parse(value.media_dimensions) as Record<string, [number, number]>
+    : {};
+  const tiles = visualSources.slice(0, 4).map((source, index) => {
+    const [width, height] = dimensions[source] ?? [value.width, value.height];
+    const isVideo = /\.(?:mp4|webm|m4v|mov)$/i.test(source);
+    return {
+      source_path: source,
+      preview_path: `${value.slug}.preview-${index + 1}.jpg`,
+      width,
+      height,
+      is_video: isVideo,
+      is_video_poster: isVideo,
+    };
+  });
+  value.preview_manifest = JSON.stringify({
+    kind: tiles.length > 1 ? "composite" : tiles[0]?.is_video ? "video_poster" : "image",
+    primary_preview_path: `${value.slug}.jpg`,
+    width: tiles.length > 1 ? 1 : tiles[0]?.width ?? value.width,
+    height: tiles.length > 1 ? 1 : tiles[0]?.height ?? value.height,
+    tiles,
+    overflow_count: Math.max(0, visualSources.length - tiles.length),
+  });
+  return value;
 }
 
 const VAULT = "/tmp/test-vault";
@@ -518,7 +568,7 @@ describe("Card", () => {
     expect(img.className).not.toContain("opacity-");
   });
 
-  it("falls through to the original image when the generated thumbnail fails", () => {
+  it("does not fall through to the original image when a derived preview fails", () => {
     const b = block({ block_type: "image", title: "Sunset", media_file: "sunset.jpg" });
     const { container } = render(
       <Card block={b} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} />,
@@ -531,11 +581,13 @@ describe("Card", () => {
 
     fireEvent.error(screen.getByRole("img"));
 
-    expect(screen.getByRole("img")).toHaveAttribute("src", expect.stringContaining("sunset.jpg"));
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByText("Sunset")).toBeInTheDocument();
+    expect(container.innerHTML).not.toContain(`${VAULT}/sunset.jpg`);
     expect(container.querySelector("[data-card-image-base]")).not.toBeInTheDocument();
   });
 
-  it("falls through from cached thumbnail to source media when the thumbnail load fails", () => {
+  it("renders a neutral surface when the ready derived preview becomes unavailable", () => {
     const b = block({
       block_type: "image",
       media_file: "sunset.jpg",
@@ -543,11 +595,8 @@ describe("Card", () => {
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const img = screen.getByRole("img");
     fireEvent.error(img);
-    const fallback = screen.getByRole("img");
-    expect(fallback).toHaveAttribute(
-      "src",
-      expect.stringContaining("sunset.jpg"),
-    );
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByText("Test Block")).toBeInTheDocument();
   });
 
   it("renders image card alt text from the title", () => {
@@ -569,10 +618,7 @@ describe("Card", () => {
     expect(screen.getByRole("img")).toHaveClass("object-cover");
   });
 
-  it("renders broken image fallback after every source in the cascade fails", () => {
-    // Exhaust the whole cascade: source → thumb → fallback text card.
-    // Each onError bumps the internal index; once every candidate is
-    // spent the text-plus-icon placeholder takes over.
+  it("renders the broken-image surface after the derived preview fails", () => {
     const b = block({
       block_type: "image",
       media_file: "missing.jpg",
@@ -580,7 +626,7 @@ describe("Card", () => {
     });
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     fireEvent.error(screen.getByRole("img"));
-    fireEvent.error(screen.getByRole("img"));
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByText("Missing Image")).toBeInTheDocument();
   });
 
@@ -605,7 +651,7 @@ describe("Card", () => {
     expect(screen.getByText("test-block")).toBeInTheDocument();
   });
 
-  it("renders compact link card when thumbnail fails to load", () => {
+  it("renders a compact link card when no ready preview exists", () => {
     const b = block({
       block_type: "link",
       title: "No Image Site",
@@ -614,10 +660,6 @@ describe("Card", () => {
     const { container } = render(
       <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
     );
-    // Trigger image error on the hidden thumbnail
-    const img = container.querySelector("img")!;
-    fireEvent.error(img);
-    // Should show compact card without the color placeholder
     expect(screen.getByText("No Image Site")).toBeInTheDocument();
     expect(screen.getByText("noimage.example.com")).toBeInTheDocument();
     // The img element should be gone (compact card has no image)
@@ -662,11 +704,7 @@ describe("Card", () => {
     expect(preview.compareDocumentPosition(author) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("renders a single-image article from the real image, not the slug thumbnail file", () => {
-    // Regression: the slug thumbnail file is the backend text-render fallback
-    // when an image had not downloaded at thumb-gen time, so the main card must
-    // show the real image (preview/source), never thumbnailUrl(slug). That
-    // keeps the text-render confined to the small micro-previews.
+  it("renders a single-image article from its derived tile", () => {
     const b = block({
       block_type: "article",
       title: "Single Image Article",
@@ -678,8 +716,8 @@ describe("Card", () => {
     const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const img = container.querySelector("img");
     expect(img).toBeTruthy();
-    expect(img!.getAttribute("src")).toContain("hero.webp");
-    expect(img!.getAttribute("src")).not.toContain("test-block");
+    expect(img!.getAttribute("src")).toContain("test-block.preview-1.jpg");
+    expect(img!.getAttribute("src")).not.toContain(`${VAULT}/hero.webp`);
   });
 
   it("article card hides author when absent", () => {
@@ -724,9 +762,9 @@ describe("Card", () => {
     const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const images = Array.from(container.querySelectorAll("img"));
     expect(images).toHaveLength(3);
-    expect(images[0]?.getAttribute("src")).toContain("/a.webp");
-    expect(images[1]?.getAttribute("src")).toContain("/b.png");
-    expect(images[2]?.getAttribute("src")).toContain("/c.heic");
+    expect(images[0]?.getAttribute("src")).toContain("/a.jpg");
+    expect(images[1]?.getAttribute("src")).toContain("/b.jpg");
+    expect(images[2]?.getAttribute("src")).toContain("/c.jpg");
     expect(screen.queryByText("+2")).not.toBeInTheDocument();
   });
 
@@ -762,10 +800,7 @@ describe("Card", () => {
     expect(srcs.every((s) => !s.includes("test-block"))).toBe(true);
   });
 
-  it("derives video gallery posters when the manifest predates per-video posters (preview_path null)", () => {
-    // Existing gallery blocks have preview_path: null in their stored manifest.
-    // The frontend must still derive each video tile's <stem>.jpg poster so the
-    // tiles differ instead of all falling back to the block thumbnail.
+  it("rejects legacy gallery tiles that have no derived preview path", () => {
     const b = block({
       block_type: "article",
       url: "https://www.instagram.com/p/Y/",
@@ -786,12 +821,10 @@ describe("Card", () => {
     });
     const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const srcs = Array.from(container.querySelectorAll("img")).map((img) => img.getAttribute("src") ?? "");
-    expect(srcs.length).toBeGreaterThanOrEqual(2);
-    expect(srcs[0]).not.toEqual(srcs[1]);
-    expect(srcs.every((s) => !s.includes("test-block"))).toBe(true);
+    expect(srcs).toEqual([]);
   });
 
-  it("renders legacy article multi-image previews from source images when preview_manifest is missing", () => {
+  it("renders backfilled article galleries from unique derived tiles", () => {
     const b = block({
       block_type: "article",
       title: "Legacy Gallery Article",
@@ -803,11 +836,11 @@ describe("Card", () => {
     const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const images = Array.from(container.querySelectorAll("img"));
     expect(images).toHaveLength(2);
-    expect(images[0]?.getAttribute("src")).toContain("/img0.webp");
-    expect(images[1]?.getAttribute("src")).toContain("/img1.webp");
+    expect(images[0]?.getAttribute("src")).toContain("/test-block.preview-1.jpg");
+    expect(images[1]?.getAttribute("src")).toContain("/test-block.preview-2.jpg");
   });
 
-  it("falls back to distinct source images when social gallery tiles have no preview assets", () => {
+  it("renders social galleries from distinct derived tiles", () => {
     const b = block({
       block_type: "article",
       url: "https://x.com/a/status/1",
@@ -818,10 +851,10 @@ describe("Card", () => {
     const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const images = Array.from(container.querySelectorAll("img"));
     expect(images).toHaveLength(4);
-    expect(images[0]?.getAttribute("src")).toContain("/img0.jpg");
-    expect(images[1]?.getAttribute("src")).toContain("/img1.jpg");
-    expect(images[2]?.getAttribute("src")).toContain("/img2.jpg");
-    expect(images[3]?.getAttribute("src")).toContain("/img3.jpg");
+    expect(images[0]?.getAttribute("src")).toContain("/test-block.preview-1.jpg");
+    expect(images[1]?.getAttribute("src")).toContain("/test-block.preview-2.jpg");
+    expect(images[2]?.getAttribute("src")).toContain("/test-block.preview-3.jpg");
+    expect(images[3]?.getAttribute("src")).toContain("/test-block.preview-4.jpg");
   });
 
   it("does not add a phantom top gap before social media when top content is absent", () => {
@@ -857,7 +890,7 @@ describe("Card", () => {
     expect(preview.compareDocumentPosition(author) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("renders social single-image cards from the source image when preview path is synthetic", () => {
+  it("renders social single-image cards from the manifest-derived path", () => {
     const b = block({
       block_type: "article",
       slug: "tweet-block",
@@ -888,7 +921,7 @@ describe("Card", () => {
     expect(img).toHaveAttribute("draggable", "false");
     expect(img).toHaveAttribute(
       "src",
-      expect.stringContaining(`${VAULT}/tweet-photo.jpg`),
+      expect.stringContaining(`${VAULT}/.mine/cache/thumbs/tweet-photo.jpg`),
     );
   });
 
@@ -1022,7 +1055,7 @@ describe("Card", () => {
     );
   });
 
-  it("falls back from missing dedicated video poster preview to the block thumb", () => {
+  it("does not fall back from a missing video preview to an unverified block thumb", () => {
     const b = block({
       block_type: "video",
       title: "Poster Fallback Video",
@@ -1045,10 +1078,7 @@ describe("Card", () => {
     const img = container.querySelector("img");
     expect(img).toBeInTheDocument();
     fireEvent.error(img!);
-    expect(img).toHaveAttribute(
-      "src",
-      expect.stringContaining(`${VAULT}/.mine/cache/thumbs/test-block.jpg`),
-    );
+    expect(img).not.toHaveAttribute("src", expect.stringContaining("test-block.jpg"));
   });
 
   it("renders article single-video preview as autoplay video in feed", () => {
@@ -1062,7 +1092,7 @@ describe("Card", () => {
         width: 1280,
         height: 720,
         tiles: [
-          { src: "clip.mp4", width: 1280, height: 720, is_video: true, is_video_poster: true },
+          { src: "clip.mp4", preview_path: "test-block.preview-1.jpg", width: 1280, height: 720, is_video: true, is_video_poster: true },
         ],
         overflow_count: 0,
       }),

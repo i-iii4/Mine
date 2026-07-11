@@ -2,6 +2,19 @@
 
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md)
 
+## Status
+
+**Deferred by product decision on 10.07.2026.** Signing, notarization, updater,
+release hosting and telemetry are not part of the active architecture plan or
+its Definition of Done because the required external capability is currently
+unavailable. This document remains the target production contract and must not
+be partially implemented with weaker substitutes.
+
+Current development acceptance ends at a locally built debug `Mine.app`.
+Distribution work may resume only after an explicit product decision; until
+then it is neither a release blocker for the active local-first architecture
+phases nor an implied background task.
+
 ## Контекст
 
 Mine распространяется как локальное desktop-приложение для macOS. Пользовательские данные находятся в source vault и не зависят от сервера Mine. Сетевая инфраструктура нужна только для доставки приложения, проверки обновлений, приема диагностических отчетов и агрегированной продуктовой телеметрии.

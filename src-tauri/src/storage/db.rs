@@ -9,6 +9,8 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
 
+pub const GRAPH_LINK_INDEX_VERSION: i64 = 1;
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /// Open an existing database or create a new one at the given path.
@@ -67,8 +69,13 @@ fn apply_pragmas(conn: &Connection) -> Result<()> {
 }
 
 fn create_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS blocks (
+    // Every process/worker may open its own SQLite connection. Serialize the
+    // DDL migration across those connections so DROP/CREATE trigger sequences
+    // cannot interleave during startup.
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let migration_result = (|| -> Result<()> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS blocks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             slug TEXT UNIQUE NOT NULL,
             block_type TEXT NOT NULL,
@@ -93,13 +100,25 @@ fn create_schema(conn: &Connection) -> Result<()> {
             origin TEXT,
             index_warning TEXT,
             preview_manifest TEXT,
+            preview_state TEXT NOT NULL DEFAULT 'stale',
+            preview_source_stamp TEXT,
+            preview_error_kind TEXT,
+            preview_schema_version INTEGER NOT NULL DEFAULT 1,
             feed_playback TEXT,
             media_index_version INTEGER,
             collection_index_version INTEGER,
+            graph_link_index_version INTEGER,
             related_notes TEXT,
             thumb_format TEXT,
             thumb_mtime INTEGER,
             indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS source_index_state (
+            slug TEXT PRIMARY KEY,
+            source_kind TEXT NOT NULL,
+            source_stamp TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_blocks_saved_at ON blocks(saved_at DESC);
@@ -136,6 +155,15 @@ fn create_schema(conn: &Connection) -> Result<()> {
             target_slug TEXT NOT NULL,
             PRIMARY KEY (source_id, target_slug)
         );
+
+        CREATE TABLE IF NOT EXISTS related_note_links (
+            source_id INTEGER NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
+            target_slug TEXT NOT NULL,
+            PRIMARY KEY (source_id, target_slug)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_related_note_links_target
+            ON related_note_links(target_slug);
 
         CREATE TABLE IF NOT EXISTS search_document_state (
             block_id INTEGER PRIMARY KEY REFERENCES blocks(id) ON DELETE CASCADE,
@@ -209,47 +237,71 @@ fn create_schema(conn: &Connection) -> Result<()> {
                 old.body
             );
         END;",
-    )?;
+        )?;
 
-    // Migration: add media_urls column (JSON array of image/video URLs from body)
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN first_image TEXT");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_urls TEXT");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN content_heading TEXT");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN display_title TEXT");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN fallback_label TEXT");
+        // Migration: add media_urls column (JSON array of image/video URLs from body)
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN first_image TEXT");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_urls TEXT");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN content_heading TEXT");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN display_title TEXT");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN fallback_label TEXT");
 
-    // Migration: add media_dimensions column.
-    // JSON object mapping each referenced media filename → [width, height] in
-    // pixels. Populated at index time by reading the image header (fast, no
-    // decoding). Enables the frontend to render embedded images at their
-    // exact aspect ratio without runtime measurement.
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_dimensions TEXT");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_text TEXT");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_text_cap INTEGER");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_manifest TEXT");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN feed_playback TEXT");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_index_version INTEGER");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN collection_index_version INTEGER");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN related_notes TEXT");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_format TEXT");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_mtime INTEGER");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN origin TEXT");
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN index_warning TEXT");
-    let _ =
-        conn.execute_batch("ALTER TABLE blocks ADD COLUMN card_kind TEXT NOT NULL DEFAULT 'media'");
-    let _ = conn.execute_batch(
-        "UPDATE blocks
+        // Migration: add media_dimensions column.
+        // JSON object mapping each referenced media filename → [width, height] in
+        // pixels. Populated at index time by reading the image header (fast, no
+        // decoding). Enables the frontend to render embedded images at their
+        // exact aspect ratio without runtime measurement.
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_dimensions TEXT");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_text TEXT");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_text_cap INTEGER");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_manifest TEXT");
+        let _ = conn.execute_batch(
+            "ALTER TABLE blocks ADD COLUMN preview_state TEXT NOT NULL DEFAULT 'stale'",
+        );
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_source_stamp TEXT");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN preview_error_kind TEXT");
+        let _ = conn.execute_batch(
+            "ALTER TABLE blocks ADD COLUMN preview_schema_version INTEGER NOT NULL DEFAULT 0",
+        );
+        let _ = conn.execute_batch(
+            "UPDATE blocks SET preview_state = 'stale'
+         WHERE preview_state IS NULL
+            OR preview_state NOT IN ('missing', 'stale', 'ready', 'failed')",
+        );
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN feed_playback TEXT");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN media_index_version INTEGER");
+        let _ =
+            conn.execute_batch("ALTER TABLE blocks ADD COLUMN collection_index_version INTEGER");
+        let _ =
+            conn.execute_batch("ALTER TABLE blocks ADD COLUMN graph_link_index_version INTEGER");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN related_notes TEXT");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_format TEXT");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN thumb_mtime INTEGER");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN origin TEXT");
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN index_warning TEXT");
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS source_index_state (
+            slug TEXT PRIMARY KEY,
+            source_kind TEXT NOT NULL,
+            source_stamp TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        )?;
+        let _ = conn
+            .execute_batch("ALTER TABLE blocks ADD COLUMN card_kind TEXT NOT NULL DEFAULT 'media'");
+        let _ = conn.execute_batch(
+            "UPDATE blocks
             SET card_kind = CASE
                 WHEN block_type = 'channel' THEN 'channel'
                 WHEN trim(coalesce(body, '')) != '' THEN 'article'
                 ELSE 'media'
             END",
-    );
-    let _ =
-        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_blocks_card_kind ON blocks(card_kind)");
+        );
+        let _ = conn
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_blocks_card_kind ON blocks(card_kind)");
 
-    conn.execute_batch(
-        "CREATE TRIGGER blocks_au
+        conn.execute_batch(
+            "CREATE TRIGGER blocks_au
             AFTER UPDATE OF title, display_title, fallback_label, description, body
             ON blocks BEGIN
             INSERT INTO blocks_fts(blocks_fts, rowid, title, description, body)
@@ -276,20 +328,20 @@ fn create_schema(conn: &Connection) -> Result<()> {
                 new.body
             );
         END;",
-    )?;
+        )?;
 
-    // Migration: add body_hash column. SHA-256 over the block body, used by
-    // Phase 18.G watcher rename detection to match a Remove+Create event
-    // pair as a single rename without losing identity. Null for rows not
-    // yet indexed after upgrade; backfilled incrementally on next scan.
-    let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN body_hash TEXT");
+        // Migration: add body_hash column. SHA-256 over the block body, used by
+        // Phase 18.G watcher rename detection to match a Remove+Create event
+        // pair as a single rename without losing identity. Null for rows not
+        // yet indexed after upgrade; backfilled incrementally on next scan.
+        let _ = conn.execute_batch("ALTER TABLE blocks ADD COLUMN body_hash TEXT");
 
-    // Migration: vault_conflicts table. Records iCloud-style filename
-    // conflicts ("<name> (conflicted copy).md") so the UI can surface them
-    // and let the user choose a resolution. Conflict files are never
-    // automatically indexed as separate blocks.
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS vault_conflicts (
+        // Migration: vault_conflicts table. Records iCloud-style filename
+        // conflicts ("<name> (conflicted copy).md") so the UI can surface them
+        // and let the user choose a resolution. Conflict files are never
+        // automatically indexed as separate blocks.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS vault_conflicts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             base_slug TEXT NOT NULL,
             conflict_slug TEXT NOT NULL,
@@ -298,8 +350,89 @@ fn create_schema(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_vault_conflicts_base_slug
             ON vault_conflicts(base_slug);",
-    )?;
+        )?;
 
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS related_note_links (
+            source_id INTEGER NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
+            target_slug TEXT NOT NULL,
+            PRIMARY KEY (source_id, target_slug)
+        );
+        CREATE INDEX IF NOT EXISTS idx_related_note_links_target
+            ON related_note_links(target_slug);",
+        )?;
+        Ok(())
+    })();
+
+    match migration_result {
+        Ok(()) => conn.execute_batch("COMMIT")?,
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(error);
+        }
+    }
+    backfill_graph_link_index(conn)?;
+
+    Ok(())
+}
+
+fn backfill_graph_link_index(conn: &Connection) -> Result<()> {
+    let pending: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM blocks
+         WHERE graph_link_index_version IS NULL OR graph_link_index_version != ?1",
+        [GRAPH_LINK_INDEX_VERSION],
+        |row| row.get(0),
+    )?;
+    if pending == 0 {
+        return Ok(());
+    }
+
+    let tx = conn.unchecked_transaction()?;
+    let rows = {
+        let mut stmt = tx.prepare(
+            "SELECT id, body, related_notes
+             FROM blocks
+             WHERE graph_link_index_version IS NULL OR graph_link_index_version != ?1",
+        )?;
+        let rows = stmt.query_map([GRAPH_LINK_INDEX_VERSION], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
+
+    for (block_id, body, raw_related) in rows {
+        tx.execute("DELETE FROM wikilinks WHERE source_id = ?1", [block_id])?;
+        tx.execute(
+            "DELETE FROM related_note_links WHERE source_id = ?1",
+            [block_id],
+        )?;
+        for target in crate::domain::block::extract_wikilinks(&body) {
+            tx.execute(
+                "INSERT OR IGNORE INTO wikilinks (source_id, target_slug) VALUES (?1, ?2)",
+                rusqlite::params![block_id, target],
+            )?;
+        }
+        let related = raw_related
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
+            .unwrap_or_default();
+        for target in related {
+            tx.execute(
+                "INSERT OR IGNORE INTO related_note_links (source_id, target_slug)
+                 VALUES (?1, ?2)",
+                rusqlite::params![block_id, target],
+            )?;
+        }
+        tx.execute(
+            "UPDATE blocks SET graph_link_index_version = ?2 WHERE id = ?1",
+            rusqlite::params![block_id, GRAPH_LINK_INDEX_VERSION],
+        )?;
+    }
+    tx.commit()?;
     Ok(())
 }
 
@@ -331,6 +464,36 @@ mod tests {
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
             .unwrap();
         assert_eq!(mode, "wal");
+    }
+
+    #[test]
+    fn concurrent_open_serializes_schema_trigger_migration() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("concurrent.db");
+        let barrier = Arc::new(Barrier::new(8));
+        let handles = (0..8)
+            .map(|_| {
+                let db_path = db_path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let conn = open_or_create(&db_path).unwrap();
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM sqlite_master
+                         WHERE type = 'trigger' AND name IN ('blocks_ai', 'blocks_ad', 'blocks_au')",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            assert_eq!(handle.join().unwrap(), 3);
+        }
     }
 
     #[test]
@@ -369,6 +532,7 @@ mod tests {
         assert!(tables.contains(&"block_tags".to_string()));
         assert!(tables.contains(&"channels".to_string()));
         assert!(tables.contains(&"wikilinks".to_string()));
+        assert!(tables.contains(&"related_note_links".to_string()));
     }
 
     #[test]
@@ -446,6 +610,55 @@ mod tests {
             .query_row("SELECT count(*) FROM wikilinks", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn graph_link_backfill_restores_provenance_from_indexed_columns() {
+        let conn = open_memory().unwrap();
+        conn.execute(
+            "INSERT INTO blocks (
+                slug, block_type, saved_at, body, related_notes, graph_link_index_version
+             ) VALUES (?1, 'article', '2026-01-01T00:00:00Z', ?2, ?3, NULL)",
+            rusqlite::params![
+                "source",
+                "See [[body-target]]",
+                r#"["related-target#^block"]"#
+            ],
+        )
+        .unwrap();
+        let block_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO wikilinks (source_id, target_slug) VALUES (?1, 'legacy-mixed')",
+            [block_id],
+        )
+        .unwrap();
+
+        backfill_graph_link_index(&conn).unwrap();
+
+        let body_target: String = conn
+            .query_row(
+                "SELECT target_slug FROM wikilinks WHERE source_id = ?1",
+                [block_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let related_target: String = conn
+            .query_row(
+                "SELECT target_slug FROM related_note_links WHERE source_id = ?1",
+                [block_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(body_target, "body-target");
+        assert_eq!(related_target, "related-target#^block");
+        let version: i64 = conn
+            .query_row(
+                "SELECT graph_link_index_version FROM blocks WHERE id = ?1",
+                [block_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, GRAPH_LINK_INDEX_VERSION);
     }
 
     #[test]

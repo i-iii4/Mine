@@ -11,13 +11,16 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
+use crate::commands::state::{schedule_preview_reconcile, AppState};
 use crate::domain::block::{
     compute_body_hash, derive_card_kind, iter_inline_media_references, parse_block,
     parse_markdown_document, Block, BlockType, CardKind, DateTime,
 };
 use crate::domain::vault::VaultLayout;
+#[cfg(test)]
+use crate::storage::reconcile;
 use crate::storage::{article_audio, db, files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
 
@@ -101,215 +104,65 @@ const ARTICLE_AUDIO_UPDATED_EVENT: &str = "article-audio-updated";
 ///
 /// `on_thumbs_done` is called from the background thread when all thumbnails
 /// have been generated. Use this to notify the frontend to refresh previews.
+#[cfg(test)]
 pub fn full_scan(
     conn: &Connection,
     vault: &VaultLayout,
     on_thumbs_done: Option<Box<dyn FnOnce() + Send>>,
     app: Option<AppHandle>,
 ) -> Result<ScanResult> {
-    let paths = canonicalize_channel_scan_paths(vault, files::scan_md_files(vault)?)?;
-    let mut indexed = 0;
-    let mut errors = 0;
-
-    // Collect thumbnail work items during indexing.
-    // Each job owns its parsed Block so the background thread can
-    // delegate the full cascade to thumbnails::generate_for_block.
-    let mut thumb_jobs: Vec<ThumbJob> = Vec::new();
-
-    // Wrap all indexing in a single transaction for performance (one commit
-    // instead of N commits). Individual upsert_block calls use savepoints.
-    let tx = conn
-        .unchecked_transaction()
-        .context("failed to begin transaction for full_scan")?;
-
-    for path in &paths {
-        // Phase 18.G.3: iCloud conflict files go into vault_conflicts
-        // and are not treated as independent blocks. Skip them here
-        // before the indexer sees them.
-        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            if let Some(base_slug) = crate::domain::vault::detect_icloud_conflict(&stem) {
-                let _ = index::record_vault_conflict(&tx, &base_slug, &stem);
-                log::info!(
-                    "iCloud conflict detected during scan: {} (base slug: {})",
-                    stem,
-                    base_slug
-                );
-                continue;
-            }
-        }
-
-        match index_md_file_inner(&tx, vault, path) {
-            Ok(outcome) => {
-                indexed += 1;
-                if let Some(j) = outcome.thumb_job {
-                    thumb_jobs.push(j);
-                }
-                if outcome.audio_invalidated {
-                    if let Some(ref app) = app {
-                        emit_article_audio_updated(app, &outcome.slug);
-                    }
-                }
-            }
-            Err(e) => {
-                log::warn!("failed to index {}: {:#}", path.display(), e);
-                errors += 1;
-            }
-        }
-    }
-
-    // Remove orphan index entries whose .md file no longer exists on
-    // disk. Covers renamed/deleted blocks that left stale DB rows.
-    // iCloud conflict files are filtered out so their presence on disk
-    // doesn't falsely keep an unrelated same-stemmed row alive, and
-    // conflict stems themselves don't count as real blocks.
-    let live_slugs: std::collections::HashSet<String> = paths
-        .iter()
-        .filter_map(|p| path_to_slug(vault, p))
-        .filter(|stem| crate::domain::vault::detect_icloud_conflict(stem).is_none())
-        .collect();
-    let all_indexed = index::list_blocks_light(&tx).unwrap_or_default();
-    let mut orphans_removed = 0;
-    for block in &all_indexed {
-        if block.slug.is_empty() || block.block_type == BlockType::Channel {
-            continue;
-        }
-        if !live_slugs.contains(&block.slug) {
-            let _ = index::remove_block(&tx, &block.slug);
-            // Also remove orphan thumbnail
-            let thumb = vault.thumb_path(&block.slug);
-            if thumb.exists() {
-                let _ = std::fs::remove_file(&thumb);
-            }
-            let _ = article_audio::delete_all_artifacts(vault, &block.slug);
-            orphans_removed += 1;
-        }
-    }
-    if orphans_removed > 0 {
-        log::info!(
-            "full_scan: removed {} orphan index entries",
-            orphans_removed
-        );
-    }
-
-    tx.commit()
-        .context("failed to commit full_scan transaction")?;
-
-    // Spawn background thread for thumbnail generation
-    spawn_thumb_jobs_worker(
-        thumb_jobs,
-        vault.clone(),
-        app.clone(),
-        on_thumbs_done,
-        "full",
-    );
-
-    Ok(ScanResult { indexed, errors })
+    reconcile_scan(conn, vault, on_thumbs_done, app, "full")
 }
 
 /// Scan only files whose source mtime is newer than the last indexed_at
 /// marker stored in SQLite. New files (including channel docs) are always
 /// parsed. Deleted files are removed from the index after the pass.
+#[cfg(test)]
 pub fn incremental_scan(
     conn: &Connection,
     vault: &VaultLayout,
     on_thumbs_done: Option<Box<dyn FnOnce() + Send>>,
     app: Option<AppHandle>,
 ) -> Result<ScanResult> {
-    let paths = canonicalize_channel_scan_paths(vault, files::scan_md_files(vault)?)?;
-    let indexed_at_map = index::get_block_indexed_at_map(conn)?;
-    let mut indexed = 0;
-    let mut errors = 0;
-    let mut thumb_jobs: Vec<ThumbJob> = Vec::new();
-    let mut live_slugs = std::collections::HashSet::<String>::new();
+    reconcile_scan(conn, vault, on_thumbs_done, app, "incremental")
+}
 
-    let tx = conn
-        .unchecked_transaction()
-        .context("failed to begin transaction for incremental_scan")?;
-
-    for path in &paths {
-        // Keep incremental scan behavior identical to full_scan and
-        // index_md_file: iCloud conflict copies are surfaced in
-        // vault_conflicts, not indexed as independent blocks.
-        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            if let Some(base_slug) = crate::domain::vault::detect_icloud_conflict(stem) {
-                let _ = index::record_vault_conflict(&tx, &base_slug, stem);
-                log::info!(
-                    "iCloud conflict detected during incremental scan: {} (base slug: {})",
-                    stem,
-                    base_slug
-                );
-                continue;
-            }
-        }
-        if let Some(slug) = path_to_slug(vault, path) {
-            live_slugs.insert(slug.clone());
-            if let Some(indexed_at) = indexed_at_map.get(&slug) {
-                if file_mtime_secs(path).is_some_and(|mtime| mtime <= *indexed_at) {
-                    continue;
+#[cfg(test)]
+fn reconcile_scan(
+    conn: &Connection,
+    vault: &VaultLayout,
+    on_thumbs_done: Option<Box<dyn FnOnce() + Send>>,
+    app: Option<AppHandle>,
+    label: &'static str,
+) -> Result<ScanResult> {
+    let report = reconcile::reconcile_vault(conn, vault)
+        .map_err(|error| anyhow::anyhow!("{label} reconciliation failed: {error:#}"))?;
+    let mut thumb_jobs = Vec::with_capacity(report.upserted.len());
+    for slug in &report.upserted {
+        match index::get_block(conn, slug)? {
+            Some(indexed) => match indexed.to_domain_block() {
+                Ok(block) => thumb_jobs.push(ThumbJob {
+                    block,
+                    source_path: vault.block_path(slug),
+                }),
+                Err(error) => {
+                    log::warn!("{label}: failed to project reconciled block {slug}: {error}")
                 }
-            }
-        }
-
-        match index_md_file_inner(&tx, vault, path) {
-            Ok(outcome) => {
-                indexed += 1;
-                if let Some(j) = outcome.thumb_job {
-                    thumb_jobs.push(j);
-                }
-                if outcome.audio_invalidated {
+            },
+            None => {
+                if article_audio::delete_all_artifacts(vault, slug).unwrap_or(false) {
                     if let Some(ref app) = app {
-                        emit_article_audio_updated(app, &outcome.slug);
+                        emit_article_audio_updated(app, slug);
                     }
                 }
             }
-            Err(e) => {
-                log::warn!("failed to incrementally index {}: {:#}", path.display(), e);
-                errors += 1;
-            }
         }
     }
-
-    let mut orphans_removed = 0usize;
-    for slug in indexed_at_map.keys() {
-        if !live_slugs.contains(slug) {
-            let _ = index::remove_block(&tx, slug);
-            let thumb = vault.thumb_path(slug);
-            if thumb.exists() {
-                let _ = std::fs::remove_file(&thumb);
-            }
-            let _ = article_audio::delete_all_artifacts(vault, slug);
-            orphans_removed += 1;
-        }
-    }
-
-    let channels = index::list_channels(&tx).unwrap_or_default();
-    let mut channels_removed = 0usize;
-    for channel in channels {
-        if !live_slugs.contains(&channel.tag) {
-            let _ = index::remove_channel(&tx, &channel.tag);
-            channels_removed += 1;
-        }
-    }
-    if orphans_removed > 0 || channels_removed > 0 {
-        log::info!(
-            "incremental_scan: removed {} orphan blocks and {} orphan channels",
-            orphans_removed,
-            channels_removed
-        );
-    }
-
-    tx.commit()
-        .context("failed to commit incremental_scan transaction")?;
-
-    spawn_thumb_jobs_worker(
-        thumb_jobs,
-        vault.clone(),
-        app.clone(),
-        on_thumbs_done,
-        "incremental",
-    );
-
-    Ok(ScanResult { indexed, errors })
+    spawn_thumb_jobs_worker(thumb_jobs, vault.clone(), app, on_thumbs_done, label);
+    Ok(ScanResult {
+        indexed: report.upserted.len(),
+        errors: report.errors.len(),
+    })
 }
 
 /// Scan every indexed block in the vault and regenerate any thumbnail
@@ -421,7 +274,19 @@ fn spawn_thumb_jobs_worker(
                 let mut generated = 0;
                 let mut skipped = 0;
                 let mut metadata_updates = 0;
+                let mut cancelled = false;
+                let is_active_vault = || {
+                    app.as_ref().map_or(true, |handle| {
+                        handle
+                            .state::<AppState>()
+                            .is_current_vault(vault.root())
+                    })
+                };
                 for job in &thumb_jobs {
+                    if !is_active_vault() {
+                        cancelled = true;
+                        break;
+                    }
                     let thumb_path = vault.thumb_path(&job.block.slug);
 
                     if thumbnails::is_thumb_fresh(
@@ -446,12 +311,19 @@ fn spawn_thumb_jobs_worker(
                                 ),
                             }
                         }
-                        if matches!(
-                            thumbnails::thumb_disk_state(&thumb_path),
-                            thumbnails::ThumbDiskState::Png
-                        ) {
+                        if is_active_vault()
+                            && matches!(
+                                thumbnails::thumb_disk_state(&thumb_path),
+                                thumbnails::ThumbDiskState::Png
+                            )
+                        {
                             if let Some(ref app) = app {
-                                emit_thumb_events(app, &vault, &job.block, thumbnails::ThumbSource::Text);
+                                emit_thumb_events(
+                                    app,
+                                    &vault,
+                                    &job.block,
+                                    thumbnails::ThumbSource::Text,
+                                );
                             }
                         }
                         continue;
@@ -480,20 +352,22 @@ fn spawn_thumb_jobs_worker(
                     }
                     if source != thumbnails::ThumbSource::None {
                         generated += 1;
-                        if let Some(ref app) = app {
-                            emit_thumb_events(app, &vault, &job.block, source);
+                        if is_active_vault() {
+                            if let Some(ref app) = app {
+                                emit_thumb_events(app, &vault, &job.block, source);
+                            }
                         }
                     }
                 }
                 log::info!(
-                    "thumb-gen({label}): {} generated, {} skipped (fresh), {} metadata updates, {} total",
-                    generated, skipped, metadata_updates, total
+                    "thumb-gen({label}): {} generated, {} skipped (fresh), {} metadata updates, {} total, cancelled={}",
+                    generated, skipped, metadata_updates, total, cancelled
                 );
-                generated + metadata_updates
+                (generated + metadata_updates, cancelled)
             }));
             match result {
-                Ok(changed) => {
-                    if changed > 0 {
+                Ok((changed, cancelled)) => {
+                    if changed > 0 && !cancelled {
                         if let Some(cb) = on_done {
                             cb();
                         }
@@ -557,6 +431,18 @@ pub fn index_md_file(
     if outcome.audio_invalidated {
         if let Some(app) = app {
             emit_article_audio_updated(app, &outcome.slug);
+        }
+    }
+
+    if let Some(app) = app {
+        if let Err(error) =
+            schedule_preview_reconcile(app, vault.clone(), [outcome.slug.clone()], false)
+        {
+            log::warn!(
+                "failed to schedule derived preview for {}: {}",
+                outcome.slug,
+                error
+            );
         }
     }
 
@@ -657,10 +543,6 @@ fn emit_thumb_events(
         },
     );
 
-    // Per-video gallery tile posters are independent of the block thumb: a
-    // block can have a real <slug>.jpg yet still need its tile posters.
-    let tile_posters = resolve_tile_posters_for_block(vault, block);
-
     // Block <slug>.jpg upgrade — only when Phase 1 wrote a text placeholder.
     // A real JPEG thumb from Rust decode is already the final result.
     let slug_upgrade = if source == thumbnails::ThumbSource::Text {
@@ -669,7 +551,7 @@ fn emit_thumb_events(
         None
     };
 
-    if slug_upgrade.is_none() && tile_posters.is_empty() {
+    if slug_upgrade.is_none() {
         return;
     }
 
@@ -682,39 +564,9 @@ fn emit_thumb_events(
             slug: block.slug.clone(),
             media_path,
             kind,
-            tile_posters,
+            tile_posters: Vec::new(),
         },
     );
-}
-
-/// Resolve per-video gallery tile posters still missing for `block`, mirroring
-/// `commands::thumbnails::resolve_tile_posters` but from a full `Block`. For
-/// each gallery video tile whose `<media-stem>.jpg` poster is not yet a real
-/// JPEG, return the destination poster name and resolved source video path for
-/// the browser to decode.
-fn resolve_tile_posters_for_block(
-    vault: &VaultLayout,
-    block: &Block,
-) -> Vec<TilePosterUpgradePayload> {
-    let mut out = Vec::new();
-    for (source, media_path) in
-        crate::storage::preview_plan::collect_gallery_video_posters(block, vault)
-    {
-        let poster_name = crate::storage::preview_plan::media_poster_path(&source);
-        let poster_path = vault.thumbs_dir().join(&poster_name);
-        if matches!(
-            thumbnails::thumb_disk_state(&poster_path),
-            thumbnails::ThumbDiskState::Jpeg
-        ) {
-            continue;
-        }
-        out.push(TilePosterUpgradePayload {
-            poster_name,
-            media_path: media_path.to_string_lossy().into_owned(),
-            kind: "video".into(),
-        });
-    }
-    out
 }
 
 /// Mirror of `commands::thumbnails::resolve_upgrade_media` but working
@@ -801,14 +653,6 @@ struct IndexMdOutcome {
     audio_invalidated: bool,
 }
 
-fn canonicalize_channel_scan_paths(
-    vault: &VaultLayout,
-    paths: Vec<PathBuf>,
-) -> Result<Vec<PathBuf>> {
-    let _ = vault;
-    Ok(paths)
-}
-
 fn canonicalize_channel_file(vault: &VaultLayout, path: &Path) -> Result<PathBuf> {
     let _ = vault;
     Ok(path.to_path_buf())
@@ -861,11 +705,9 @@ fn index_md_file_inner(
     })
 }
 
-/// Handle a single vault event: dispatch to the appropriate storage operation.
-///
-/// When `app` is `Some`, emits Tauri events (`block:added`, `block:removed`,
-/// `thumb:updated`, `thumb:upgrade-requested`) to drive the event-driven
-/// sidebar in the frontend. Tests pass `None` to exercise the pure logic.
+// Handle a single vault event by dispatching to the appropriate storage
+// operation. With an app handle, the path emits block/thumbnail events for the
+// frontend; tests pass `None` to exercise the pure storage behavior.
 // ─── Rename-detection pending queue (Phase 18.G) ────────────────────────────
 //
 // Filesystem-level rename on macOS surfaces as a BlockDeleted followed by a
@@ -1201,16 +1043,6 @@ pub fn handle_event(
 /// Extract path-based slug from a vault file path.
 fn path_to_slug(vault: &VaultLayout, path: &Path) -> Option<String> {
     vault.slug_for_path(path).ok()
-}
-
-fn file_mtime_secs(path: &Path) -> Option<u64> {
-    std::fs::metadata(path)
-        .ok()?
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|duration| duration.as_secs())
 }
 
 fn file_saved_at(path: &Path) -> DateTime {

@@ -35,19 +35,6 @@ function asBoolean(value: unknown): boolean {
   return value === true;
 }
 
-function isRemoteMediaPath(value: string): boolean {
-  return value.startsWith("http://") || value.startsWith("https://");
-}
-
-function legacySyntheticTilePreviewPath(sourcePath: string): string | null {
-  if (isRemoteMediaPath(sourcePath)) return null;
-  const clean = decodeLocalMarkdownUrl(sourcePath).split("?")[0] ?? sourcePath;
-  const fileName = clean.split(/[\\/]/).pop() ?? clean;
-  const dotIndex = fileName.lastIndexOf(".");
-  if (dotIndex <= 0) return null;
-  return `${fileName.slice(0, dotIndex)}.jpg`;
-}
-
 function fileNameOfLocalPath(value: string): string {
   const clean = decodeLocalMarkdownUrl(value).split("?")[0] ?? value;
   return clean.split(/[\\/]/).pop() ?? clean;
@@ -55,6 +42,19 @@ function fileNameOfLocalPath(value: string): string {
 
 export function normalizeFeedPreviewManifest(
   raw: string | null | undefined,
+): NormalizedFeedPreviewManifest | null {
+  return normalizePreviewManifest(raw, true);
+}
+
+export function normalizeDetailPreviewManifest(
+  raw: string | null | undefined,
+): NormalizedFeedPreviewManifest | null {
+  return normalizePreviewManifest(raw, false);
+}
+
+function normalizePreviewManifest(
+  raw: string | null | undefined,
+  requireDerivedTile: boolean,
 ): NormalizedFeedPreviewManifest | null {
   if (!raw) return null;
 
@@ -94,45 +94,13 @@ export function normalizeFeedPreviewManifest(
           const sourcePath = asString(tile.source_path) ?? asString(tile.src);
           if (!sourcePath) return null;
 
-          // Preview paths must come from the backend manifest. If
-          // `preview_path` is absent the backend is telling us there is
-          // no dedicated preview tile — either because the source is
-          // already a valid sidebar-ready image (single-image clips) or
-          // because tile generation was skipped. The consumer falls
-          // back to the source file through `asset://` in that case.
-          // Legacy behaviour (deriving `<stem>.jpg` in the thumbs/
-          // directory) caused 404s for `<slug> (image N).jpg` inline
-          // media whose preview = the source itself.
-          let previewPath = asString(tile.preview_path);
+          // A route-facing manifest is exposed only in preview_state=ready.
+          // Missing paths therefore indicate corrupt/legacy data and must not
+          // fall through to source media in the Grid process.
+          const previewPath = asString(tile.preview_path);
+          if (requireDerivedTile && !previewPath) return null;
           const isVideo = asBoolean(tile.is_video);
           const isVideoPoster = asBoolean(tile.is_video_poster);
-
-          // Image tiles render their real source directly, so a synthetic
-          // `<stem>.jpg` preview that merely mirrors the source is dropped to
-          // avoid 404s on `<slug> (image N).jpg`. Video tiles are different: a
-          // video cannot be drawn into an <img>, so `<stem>.jpg` is a real
-          // generated per-video poster and must be kept.
-          const legacySyntheticPreview = legacySyntheticTilePreviewPath(sourcePath);
-          if (
-            previewPath
-            && !isVideo
-            && legacySyntheticPreview
-            && decodeLocalMarkdownUrl(previewPath) === legacySyntheticPreview
-          ) {
-            previewPath = null;
-          }
-
-          if (!previewPath && isVideoPoster) {
-            previewPath = primaryPreviewPath;
-          } else if (!previewPath && isVideo && legacySyntheticPreview) {
-            // Gallery video tile renders from its generated per-video poster
-            // `<stem>.jpg`. Derive that name even when the manifest predates
-            // per-video posters (preview_path null): the backend generates the
-            // same `<stem>.jpg` from the source, so the file matches — and if
-            // it isn't there yet, GalleryTileImage's onError falls back to the
-            // block thumbnail. Avoids a full reindex of existing gallery blocks.
-            previewPath = legacySyntheticPreview;
-          }
 
           return {
             sourcePath,

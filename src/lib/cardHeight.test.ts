@@ -39,6 +39,29 @@ function makeBlock(overrides: Partial<LightBlock> & { block_type: LightBlock["bl
   };
 }
 
+function derivedPreviewManifest(
+  sources: string[],
+  dimensions: Record<string, [number, number]> = {},
+): string {
+  const first = sources[0] ?? null;
+  const firstDimensions = first ? dimensions[first] : undefined;
+  return JSON.stringify({
+    kind: sources.length > 1 ? "composite" : "image",
+    primary_preview_path: first ? "test.preview-0.jpg" : null,
+    width: firstDimensions?.[0] ?? null,
+    height: firstDimensions?.[1] ?? null,
+    tiles: sources.map((source, index) => ({
+      source_path: source,
+      preview_path: `test.preview-${index}.jpg`,
+      width: dimensions[source]?.[0] ?? null,
+      height: dimensions[source]?.[1] ?? null,
+      is_video: false,
+      is_video_poster: false,
+    })),
+    overflow_count: 0,
+  });
+}
+
 // Card outer wrapper has `border` class = 1px top + 1px bottom = 2px added
 // to the outer height. All block types include this in their returned height.
 const CARD_BORDER = 2;
@@ -224,12 +247,15 @@ describe("computeCardHeight — article", () => {
     expect(fallback).toBeGreaterThanOrEqual(measured);
   });
 
-  it("article with first_image is taller than without", () => {
+  it("article with a ready derived preview is taller than without", () => {
     const withImage = makeBlock({
       block_type: "article",
       title: "T",
       body: "b",
       first_image: "some.jpg",
+      preview_manifest: derivedPreviewManifest(["some.jpg"], {
+        "some.jpg": [1200, 800],
+      }),
     });
     const without = makeBlock({ block_type: "article", title: "T", body: "b" });
     const a = computeCardHeight(withImage, 280, wordWidths);
@@ -266,6 +292,9 @@ describe("computeCardHeight — social", () => {
       body: "hello\n![](photo.jpg)",
       media_dimensions: "{\"photo.jpg\":[1200,800]}",
       media_urls: "[\"photo.jpg\"]",
+      preview_manifest: derivedPreviewManifest(["photo.jpg"], {
+        "photo.jpg": [1200, 800],
+      }),
     });
     const h = computeCardHeight(block, 280, wordWidths);
     expect(h).toBeGreaterThan(150);
@@ -277,12 +306,14 @@ describe("computeCardHeight — social", () => {
       url: "https://instagram.com/p/1",
       body: "hello\n![](a.jpg)\n![](b.jpg)",
       media_urls: "[\"a.jpg\",\"b.jpg\"]",
+      preview_manifest: derivedPreviewManifest(["a.jpg", "b.jpg"]),
     });
     const four = makeBlock({
       block_type: "article",
       url: "https://instagram.com/p/1",
       body: "hello\n![](a.jpg)\n![](b.jpg)\n![](c.jpg)\n![](d.jpg)",
       media_urls: "[\"a.jpg\",\"b.jpg\",\"c.jpg\",\"d.jpg\"]",
+      preview_manifest: derivedPreviewManifest(["a.jpg", "b.jpg", "c.jpg", "d.jpg"]),
     });
     expect(computeCardHeight(four, 280, wordWidths)).toBeGreaterThan(computeCardHeight(two, 280, wordWidths));
   });
@@ -294,6 +325,7 @@ describe("computeCardHeight — social", () => {
       author: "@artist",
       body: "![](a.jpg)\n![](b.jpg)",
       media_urls: "[\"a.jpg\",\"b.jpg\"]",
+      preview_manifest: derivedPreviewManifest(["a.jpg", "b.jpg"]),
     });
     const h = computeCardHeight(block, 280, wordWidths);
     // border 2 + top padding 16 + one media row 122 + text-stack gap 12 + author 16 + bottom padding 16
