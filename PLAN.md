@@ -8,7 +8,7 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 **Это не MVP.** Каждый модуль реализуется в финальном качестве.
 
-## Canonical active plan — audited 10.07.2026
+## Canonical active plan — audited 11.07.2026
 
 This section is the source of truth for unfinished desktop architecture. Older
 phase tables below remain implementation history; their status cells use words
@@ -40,6 +40,14 @@ part of local desktop completion. Current acceptance ends at a locally built
 debug `Mine.app`.
 
 ### Phase A5 — Cold-space semantic acceptance [ACTIVE]
+
+#### Acceptance checkpoint — 11.07.2026
+
+- После push `5a7daae` текущая desktop-сборка в целом принята как рабочая и
+  визуально стабильная на уже прогретом пространстве.
+- Новых frontend-блокеров в этом acceptance checkpoint не обнаружено.
+- A5 остаётся активной: общая положительная оценка не закрывает ранее
+  воспроизведённые first-open blank cards и semantic preview failure в `Тест`.
 
 #### Confirmed boundary — 10.07.2026
 

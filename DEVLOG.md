@@ -1,5 +1,20 @@
 # Devlog
 
+## 11.07.2026 — Post-push desktop acceptance checkpoint
+
+### Результат
+- Сборка из `5a7daae` после пользовательской проверки в целом оценена как
+  рабочая; новых существенных frontend-проблем не зафиксировано.
+- Завершённые A0–A4 и уже пройденный verification bundle остаются актуальными.
+- Phase A5 намеренно не закрыта: first-open поведение отдельного пространства
+  `Тест` и metadata-only link `ai-2027-3.md` остаются следующей проверяемой
+  границей.
+
+### Следующий шаг
+- Продолжить с sanitized cold-space fixture и fresh-derived-store acceptance из
+  `PLAN.md`, затем повторить проверку на исходном `Тест` без изменения его
+  пользовательских файлов.
+
 ## 10.07.2026 — Architecture remediation A0–A4 and cold-space follow-up
 
 ### Задача
