@@ -1,17 +1,18 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 #[cfg(test)]
 use rusqlite::params;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::storage::index;
+use crate::domain::block::{BlockType, CardKind};
+use crate::storage::{index, projection};
 
 pub const FULL_LIBRARY_NODE_LIMIT: usize = 1_000;
 pub const EXPLICIT_LARGE_LIBRARY_LIMIT: usize = 5_000;
 pub const MATERIALIZED_CARD_LIMIT: usize = 1_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum GraphNodeKind {
     Card,
@@ -19,7 +20,7 @@ pub enum GraphNodeKind {
     Unresolved,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum GraphLinkKind {
     CollectionMembership,
@@ -37,7 +38,7 @@ impl GraphLinkKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum GraphScopeKind {
     CurrentRoute,
@@ -46,7 +47,7 @@ pub enum GraphScopeKind {
     Ego,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(default)]
 pub struct GraphScope {
     pub kind: GraphScopeKind,
@@ -66,7 +67,7 @@ impl Default for GraphScope {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(default)]
 pub struct GraphOptions {
     pub include_collections: bool,
@@ -90,13 +91,13 @@ impl Default for GraphOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum GraphTruncationReason {
     LargeLibrary,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct GraphNode {
     pub id: String,
     pub kind: GraphNodeKind,
@@ -104,14 +105,14 @@ pub struct GraphNode {
     pub slug: Option<String>,
     pub collection_ref: Option<String>,
     pub unresolved_ref: Option<String>,
-    pub card_kind: Option<String>,
-    pub block_type: Option<String>,
+    pub card_kind: Option<CardKind>,
+    pub block_type: Option<BlockType>,
     pub thumbnail: Option<String>,
     pub preview_manifest: Option<String>,
     pub degree: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct GraphLink {
     pub id: String,
     pub kind: GraphLinkKind,
@@ -122,8 +123,9 @@ pub struct GraphLink {
     pub target_ref: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct GraphSnapshot {
+    pub generation: projection::ProjectionRevision,
     pub nodes: Vec<GraphNode>,
     pub links: Vec<GraphLink>,
     pub total_cards: usize,
@@ -171,6 +173,17 @@ pub fn graph_snapshot(
     conn: &Connection,
     scope: &GraphScope,
     options: &GraphOptions,
+) -> Result<GraphSnapshot> {
+    projection::read_projection_snapshot(conn, |conn, generation| {
+        build_graph_snapshot(conn, scope, options, generation)
+    })
+}
+
+fn build_graph_snapshot(
+    conn: &Connection,
+    scope: &GraphScope,
+    options: &GraphOptions,
+    generation: projection::ProjectionRevision,
 ) -> Result<GraphSnapshot> {
     let model = build_graph_model(conn, options)?;
     let total_nodes = model.nodes.len();
@@ -241,6 +254,7 @@ pub fn graph_snapshot(
     let large_library = library_card_count > FULL_LIBRARY_NODE_LIMIT;
 
     Ok(GraphSnapshot {
+        generation,
         nodes,
         links,
         total_cards,
@@ -266,6 +280,10 @@ fn build_graph_model(conn: &Connection, options: &GraphOptions) -> Result<GraphM
     let cards = load_cards(conn)?;
     let mut model = GraphModel::default();
     for card in cards {
+        let card_kind = CardKind::from_str(&card.card_kind)
+            .with_context(|| format!("invalid graph card_kind for {}", card.slug))?;
+        let block_type = BlockType::from_str(&card.block_type)
+            .with_context(|| format!("invalid graph block_type for {}", card.slug))?;
         let id = card_node_id(&card.slug);
         model.card_order.push(id.clone());
         model.card_slugs.insert(card.slug.clone());
@@ -278,8 +296,8 @@ fn build_graph_model(conn: &Connection, options: &GraphOptions) -> Result<GraphM
                 slug: Some(card.slug),
                 collection_ref: None,
                 unresolved_ref: None,
-                card_kind: Some(card.card_kind),
-                block_type: Some(card.block_type),
+                card_kind: Some(card_kind),
+                block_type: Some(block_type),
                 thumbnail: card.thumbnail,
                 preview_manifest: card.preview_manifest,
                 degree: 0,
@@ -797,6 +815,10 @@ mod tests {
         attach(&conn, "first", "Design");
 
         let snapshot = graph_snapshot(&conn, &library_scope(), &options()).unwrap();
+        assert_eq!(
+            snapshot.generation,
+            projection::current_generation(&conn).unwrap()
+        );
         assert!(snapshot.nodes.iter().any(|node| node.id == "card:first"));
         assert!(snapshot
             .nodes

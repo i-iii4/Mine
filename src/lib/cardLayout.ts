@@ -42,7 +42,11 @@ export interface ContentCardSlots {
   hasBottomMeta: boolean;
 }
 
-export function getRuntimeCardKind(block: LightBlock): LightBlock["card_kind"] {
+export type CardLayoutBlock = Omit<LightBlock, "search_match"> & {
+  search_match?: LightBlock["search_match"];
+};
+
+export function getRuntimeCardKind(block: CardLayoutBlock): LightBlock["card_kind"] {
   const maybeKind = (block as Partial<LightBlock>).card_kind;
   if (
     maybeKind === "article"
@@ -114,7 +118,7 @@ function isLocalImageFile(src: string): boolean {
   return !/^https?:\/\//i.test(src) && /\.(jpg|jpeg|png|gif|webp|bmp|tiff|tif|heic|heif|avif)(\?|$)/i.test(src);
 }
 
-export function parsePreviewManifest(block: Pick<LightBlock, "preview_manifest">) {
+export function parsePreviewManifest(block: Pick<CardLayoutBlock, "preview_manifest">) {
   return normalizeFeedPreviewManifest(block.preview_manifest);
 }
 
@@ -155,7 +159,7 @@ function isEmbeddableVideoUrl(url: string | null): boolean {
   return /(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/.test(url);
 }
 
-function mediaFileAspectRatio(block: LightBlock): number | null {
+function mediaFileAspectRatio(block: CardLayoutBlock): number | null {
   return parseAspectRatio(parseMediaDimensions(block), block.media_file)
     ?? aspectRatioFromDimensions(block.width, block.height);
 }
@@ -170,7 +174,7 @@ function mediaItemsFromMediaMetadata(
 }
 
 function hasVideoMediaSignal(
-  block: LightBlock,
+  block: CardLayoutBlock,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
   mediaItems: CardLayoutMediaItem[],
 ): boolean {
@@ -183,7 +187,7 @@ function hasVideoMediaSignal(
 }
 
 function hasImageMediaSignal(
-  block: LightBlock,
+  block: CardLayoutBlock,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
 ): boolean {
   return (
@@ -196,7 +200,7 @@ function hasImageMediaSignal(
 }
 
 function deriveMediaCardLayoutDescriptor(
-  block: LightBlock,
+  block: CardLayoutBlock,
   titleText: string,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
 ): CardLayoutDescriptor {
@@ -274,7 +278,7 @@ function deriveMediaCardLayoutDescriptor(
 }
 
 function deriveArticleCardLayoutDescriptor(
-  block: LightBlock,
+  block: CardLayoutBlock,
   titleText: string,
   authorText: string,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
@@ -377,7 +381,7 @@ function deriveLinkCardLayoutDescriptor(
   };
 }
 
-export function deriveCardLayoutDescriptor(block: LightBlock): CardLayoutDescriptor {
+export function deriveCardLayoutDescriptor(block: CardLayoutBlock): CardLayoutDescriptor {
   const titleText = getDisplayTitle(block) ?? "";
   const authorText = block.author ?? "";
   const previewManifest = parsePreviewManifest(block);

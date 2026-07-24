@@ -146,13 +146,41 @@ pub fn search_grid_blocks_with_provider(
     query: &str,
     semantic_provider: Option<&dyn SemanticEmbeddingProvider>,
 ) -> Result<(Vec<LightBlock>, bool)> {
+    sync_search_documents(conn)?;
+    search_grid_blocks_prepared_with_provider(conn, tag, offset, limit, query, semantic_provider)
+}
+
+pub(crate) fn search_grid_blocks_prepared(
+    conn: &Connection,
+    tag: Option<&str>,
+    offset: usize,
+    limit: usize,
+    query: &str,
+) -> Result<(Vec<LightBlock>, bool)> {
+    search_grid_blocks_prepared_with_provider(
+        conn,
+        tag,
+        offset,
+        limit,
+        query,
+        production_semantic_provider(),
+    )
+}
+
+fn search_grid_blocks_prepared_with_provider(
+    conn: &Connection,
+    tag: Option<&str>,
+    offset: usize,
+    limit: usize,
+    query: &str,
+    semantic_provider: Option<&dyn SemanticEmbeddingProvider>,
+) -> Result<(Vec<LightBlock>, bool)> {
     let Some(plan) = SearchPlan::from_query(query) else {
         return Ok((Vec::new(), false));
     };
 
     let semantic_provider = semantic_provider.filter(|_| plan.allows_semantic_only());
 
-    sync_search_documents(conn)?;
     let candidate_limit = (offset + limit + SEMANTIC_CANDIDATE_LIMIT).max(limit + 1);
     let lexical_blocks = lexical_grid_search(conn, tag, 0, candidate_limit, &plan)?;
     let mut chunk_candidates = metadata_candidates(conn, tag, &plan)?;
@@ -294,7 +322,7 @@ fn search_light_block_from_row(
     Ok(block)
 }
 
-fn sync_search_documents(conn: &Connection) -> Result<usize> {
+pub(crate) fn sync_search_documents(conn: &Connection) -> Result<usize> {
     let documents = load_search_documents(conn)?;
     let mut changed = 0;
 

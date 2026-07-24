@@ -1,12 +1,15 @@
-import type { IndexedBlock, LightBlock } from "@/types";
+import type { LightBlock } from "@/types";
 
-type AnyBlock = LightBlock | IndexedBlock;
+type DisplayTitleBlock = Pick<
+  LightBlock,
+  "slug" | "fallback_label" | "content_heading" | "display_title" | "title"
+>;
 
-export function getFallbackLabel(block: AnyBlock): string {
+export function getFallbackLabel(block: DisplayTitleBlock): string {
   return block.fallback_label?.trim() || block.slug;
 }
 
-export function getDisplayTitle(block: AnyBlock): string | null {
+export function getDisplayTitle(block: DisplayTitleBlock): string | null {
   const contentHeading = block.content_heading?.trim();
   if (contentHeading) {
     return contentHeading;
@@ -19,6 +22,6 @@ export function getDisplayTitle(block: AnyBlock): string | null {
   return legacyTitle || null;
 }
 
-export function getNavigationLabel(block: AnyBlock): string {
+export function getNavigationLabel(block: DisplayTitleBlock): string {
   return getDisplayTitle(block) ?? getFallbackLabel(block);
 }

@@ -79,8 +79,17 @@ describe("computeCardHeight — image", () => {
   it("enforces minimum height for ultra-wide images", () => {
     const block = makeBlock({ block_type: "image", width: 2000, height: 100 });
     const h = computeCardHeight(block, 280, null);
-    // raw = 278 * 100/2000 = 13.9, clamped to IMAGE_MIN_HEIGHT 120; + border
-    expect(h).toBeGreaterThanOrEqual(120);
+    // raw = 14px; adaptive minimum = round(278 * 0.4) = 111px; + border
+    expect(h).toBe(113);
+  });
+
+  it("adapts the ultra-wide image minimum to the column width", () => {
+    const block = makeBlock({ block_type: "image", width: 2000, height: 100 });
+
+    // Narrow columns can contract to the 90px interactive card floor.
+    expect(computeCardHeight(block, 200, null)).toBe(CARD_HOVER_ACTION_MIN_HEIGHT);
+    // Wide columns stop growing at the 120px image-surface cap plus border.
+    expect(computeCardHeight(block, 500, null)).toBe(122);
   });
 
   it("falls back to DEFAULT_CARD_HEIGHT without metadata", () => {

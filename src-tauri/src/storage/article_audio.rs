@@ -13,14 +13,14 @@ const ARTICLE_AUDIO_FILE_EXTENSIONS: &[&str] = &["aiff", "caf", "m4a", "wav"];
 const ARTICLE_AUDIO_FORMAT_VERSION: u8 = 2;
 const DESKTOP_ARTICLE_AUDIO_BACKEND: &str = "apple_avspeech_v2";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ArticleAudioStatus {
     Absent,
     Ready,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct ArticleAudioState {
     pub status: ArticleAudioStatus,
     pub audio_path: Option<String>,

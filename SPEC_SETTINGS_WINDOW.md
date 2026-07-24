@@ -171,10 +171,10 @@ UI:
   + счётчик выбранного.
 - Панель действий под списком (видна при выборе ≥1):
   - `Convert to Elements` — `Button default`: батч-команда
-    `promote_orphan_media(file_names) -> Vec<IndexedBlock>`;
+    `promote_orphan_media(request: OrphanMediaBatchRequest) -> Vec<IndexedBlock>`;
   - `Delete` — `Button destructive`: `AlertDialog` подтверждение
     («Delete N files? Files are moved to the system Trash.»), затем
-    `delete_orphan_media(file_names)` (crate `trash`).
+    `delete_orphan_media(request: OrphanMediaBatchRequest)` (crate `trash`).
 - Пустое состояние: центрированное `No orphan media`
   (`text-sm text-muted-foreground`).
 - После любой операции список перезагружается; прогресс батча — кнопка в
@@ -206,8 +206,8 @@ UI:
 | `reorder_known_vaults(paths)` | переписать порядок `known_vaults`; set-equality валидация |
 | `space_stats(path)` | статистика пространства: files/markdown/media/bytes (stat-only) + elements из локального индекса; path обязан быть в `known_vaults` |
 | `list_orphan_media()` | сироты: имя, размер, mtime |
-| `promote_orphan_media(file_names)` | батч: медиа → элементы (без копирования) |
-| `delete_orphan_media(file_names)` | батч: в системную корзину |
+| `promote_orphan_media(request: OrphanMediaBatchRequest)` | батч: медиа → элементы (без копирования) |
+| `delete_orphan_media(request: OrphanMediaBatchRequest)` | батч: в системную корзину |
 
 ## Объём реализации
 

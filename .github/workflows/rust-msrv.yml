@@ -1,0 +1,19 @@
+name: Rust MSRV
+
+on:
+  pull_request:
+  push:
+    branches: [main, audit-remediation]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust 1.88
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Check locked workspace at MSRV
+        run: cargo +1.88.0 check --workspace --all-targets --locked

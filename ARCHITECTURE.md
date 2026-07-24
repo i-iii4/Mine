@@ -482,7 +482,7 @@ iOS UI contract:
 ### Frontend rendering model
 
 - `App.tsx` больше не хранит в памяти весь корпус `LightBlock` ради клиентской фильтрации. Горячий путь — `list_grid_blocks(current_tag)`: backend сразу отдаёт карточки текущего маршрута, исключает channel-документы и не передаёт per-block tag arrays. Полные теги блока догружаются через `get_block(slug)` только когда открыт hover/context menu или Detail.
-- Surface Search расширяет тот же route-facing read model: `Cmd+F` передаёт `query` в `list_grid_blocks`, backend фильтрует текущий route и возвращает `GridSnapshot` с relevance ordering и optional match excerpts. Non-empty Grid search проходит через `storage::search_engine`: SQLite FTS5 lexical/alias retrieval, searchable metadata chunks (`author`, `url` без видимого highlight), chunk-based fuzzy matching, local multilingual `fastembed` semantic vectors и deterministic fusion/rerank. Single-token Latin queries are strict, bypass semantic embedding work and do not inject semantic-only cards without a visible match; semantic-only retrieval is reserved for Cyrillic cross-language and multi-token semantic queries. Отдельной Search route/palette нет; `Shift+Cmd+F` фильтрует только sidebar taxonomy. Полный контракт: [SPEC_SEARCH.md](SPEC_SEARCH.md).
+- Surface Search имеет отдельный route-facing read model: `Cmd+F` открывает overlay, непустой query идёт в `search_grid_blocks`, а обычный `list_grid_blocks` и Grid snapshot под overlay не меняются. `SearchSnapshot` несёт `ProjectionRevision`, независимый `SearchRevision` и opaque cursor, связанный также с query fingerprint; несовпадение любой части сбрасывает pagination на offset zero. Retrieval остаётся в `storage::search_engine`: SQLite FTS5 lexical/alias retrieval, searchable metadata chunks (`author`, `url` без видимого highlight), chunk-based fuzzy matching, local multilingual `fastembed` semantic vectors и deterministic fusion/rerank. Single-token Latin queries are strict, bypass semantic embedding work and do not inject semantic-only cards without a visible match; semantic-only retrieval is reserved for Cyrillic cross-language and multi-token semantic queries. Отдельной Search route/palette нет; `Shift+Cmd+F` фильтрует только sidebar taxonomy. Полный контракт: [SPEC_SEARCH.md](SPEC_SEARCH.md).
 - Открытие vault двухфазное: `select_vault` / `get_vault_path` поднимают SQLite,
   watcher и последний индексированный snapshot сразу, а единый
   `VaultReconciler` выполняет коалесцированный metadata-first catch-up в фоне.
@@ -494,13 +494,19 @@ iOS UI contract:
   paint.
 - Переключение vault не делает `window.location.reload()`. `App.tsx` remount'ит `AppWithVault` по `key={vaultPath}`, сбрасывает локальное состояние и игнорирует stale async-ответы через `vaultPathRef + requestId`.
 - `App.tsx` держит per-route snapshot cache (`tag -> GridSnapshot`). Повторный переход в уже посещённый канал сначала применяет локальный snapshot синхронно, а taxonomy (`list_tags` / `list_channels`) не перезапрашивается на чистом route switch. Это убирает лишний IPC round-trip и второй `list_grid_blocks` на старте после `setTags/setChannels`.
-- Каждый `GridSnapshot` несёт persisted SQLite `generation`. Триггеры на
+- Каждый `GridSnapshot` несёт typed persisted SQLite `ProjectionRevision`. Триггеры на
   `blocks`, `channels`, `block_tags` и `source_index_state` повышают generation
   внутри той же транзакции, где меняется index, preview readiness или route
   membership. `storage::projection::read_grid_snapshot` читает generation,
   rows, total и pagination state одной SQLite snapshot-транзакцией. App
   применяет поколения только монотонно; pagination другого generation не
   добавляется к текущей ленте, а запускает reload с offset zero.
+- Taxonomy, sidebar previews и Graph используют тот же `ProjectionRevision` и
+  читают revision плюс все свои запросы через один
+  `storage::projection::read_projection_snapshot`. Единственный
+  `useProjectionRevisionOwner` в mounted-vault App принимает revisions
+  монотонно по surface и сбрасывается только при смене vault; отдельные
+  компоненты не публикуют stale responses самостоятельно.
 - Route-facing preview публикуется только при `preview_state = ready` и точном
   совпадении `preview_source_stamp` с текущим `source_index_state.source_stamp`.
   Поэтому сохранённый legacy/last-good manifest может оставаться в SQLite, но
@@ -523,6 +529,40 @@ iOS UI contract:
   резервирует свободный localhost port, поднимает Vite, запускает Feed и Graph
   Playwright audits, затем завершает audit/server process groups при success,
   failure, `SIGINT` или `SIGTERM`.
+
+### Persistence, IPC and composition boundaries
+
+- `storage/db.rs` владеет открытием соединений и SQLite pragmas.
+  `storage/migrations.rs` владеет `CURRENT_SCHEMA_VERSION`, последовательными
+  `PRAGMA user_version` migrations и post-migration validation. Весь upgrade
+  выполняется под `BEGIN IMMEDIATE`; ошибка шага, drift или future version
+  откатывает транзакцию и не маскируется как already-applied migration.
+  Connection PRAGMAs и migration entry сериализованы process-owned lock:
+  SQLite busy handler сам по себе не защищает одновременный cold-open от гонки
+  на `PRAGMA journal_mode = WAL`. `BEGIN IMMEDIATE` остаётся межпроцессной
+  границей, а процессный lock не позволяет соединениям Mine столкнуться до неё.
+- Backend request/response DTO и все command errors выводятся из Rust/Specta.
+  `src-tauri/src/bin/export_bindings.rs` генерирует committed
+  `src/types/generated.ts`; `bindings:check` является первой частью
+  `verify:core`. Общий tagged `CommandError` проходит через один frontend
+  invoke-adapter в читаемый `Error`, а feature-specific unions сохраняют
+  `kind`. `src/types/index.ts` содержит только frontend-owned shapes.
+- `commands/state.rs` остаётся composition root. Freshness, preview reconcile и
+  thumbnail sweeps имеют отдельных владельцев. `storage/index.rs` владеет
+  block writes/backfills; route/utility query hydration вынесена в
+  `block_queries.rs`, channel persistence и vault conflicts — в
+  `channel_index.rs` и `vault_conflicts.rs`; DB migrations вынесены из `db.rs`.
+- Frontend composition root `App.tsx` владеет routes/IPC/DnD, а secondary
+  chrome, Grid interaction geometry и Graph paint/physics/interaction живут в
+  focused modules. Границы определяются state-machine ownership, а не числом
+  строк.
+- Release verification добавляет настоящий native-shell smoke: packaged
+  macOS `Mine.app` открывает WKWebView smoke route, выполняет Tauri `invoke`
+  (`get_vault_path`) и подтверждает результат вторым IPC command. HTTP audit
+  routes остаются integration gates и не выдаются за native E2E.
+- Locked dependency graph определяет MSRV `1.88`; оба Rust packages объявляют
+  его явно, а CI выполняет `cargo +1.88.0 check --workspace --all-targets
+  --locked`.
 - `Grid.tsx` использует собственный windowed masonry renderer: карточки позиционируются абсолютно, контейнер получает вычисленную `totalHeight`, в DOM остаются только видимые элементы плюс overscan.
 - Геометрия карточки больше не должна выводиться из независимых эвристик в `Card.tsx` и `cardHeight.ts`. Введён общий descriptor-driven слой (`src/lib/cardLayout.ts`): variant карточки, preview text и media geometry вычисляются один раз и затем используются и для рендера, и для расчёта высоты.
 - Контентные карточки больше не кодируют spacing через variant-specific `mt-*` ветки. Введён slot-based contract: frame карточки задаёт общий inset, media идёт первой, а текстовые слоты живут единым text-stack ниже (`media -> display title/preview -> author`). Внутренние gap'ы появляются только между реально существующими соседними слотами. Это устраняет phantom top gap и сохраняет системный отступ под media.
@@ -1305,10 +1345,15 @@ Rationale: Merge changes identity, content and graph edges at the same time.
 The source of truth is the Markdown vault, so the correct boundary is one
 backend command that owns file reads, slug generation, output body composition,
 external wikilink/`Mine Related Notes` rewrites, source-card deletion, index
-refresh and thumbnail refresh. The frontend owns only selection state, dialog
-ordering and command invocation. Output media references reuse existing files;
-no media file is copied, renamed, rewritten or deleted by merge. Full contract:
-[SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md).
+refresh and preview publication. После commit файлов команда проецирует merged
+Markdown и переписанные внешние заметки вместе с `source_index_state` в одной
+SQLite-транзакции, затем синхронно вызывает канонический `derived_preview`
+reconciler и только после этого возвращает заново hydrated block. Поэтому
+multi-image card попадает уже в первый Grid snapshot с готовым composite
+manifest, а не появляется текстовой и не «догружается» через десятки секунд.
+The frontend owns only selection state, dialog ordering and command invocation.
+Output media references reuse existing files; no media file is copied, renamed,
+rewritten or deleted by merge. Full contract: [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md).
 
 ### 025: X status extraction uses typed source extractors
 
@@ -1456,8 +1501,8 @@ opens cannot publish and pagination cannot combine two generations. The common
 | d3-force | 3.x | Force simulation primitives for Graph View physics tuning | ISC |
 | ureq | 2.x | Синхронный HTTP-клиент (импорт Are.na) | MIT/Apache-2.0 |
 | tailwindcss | 4.x | Стилизация | MIT |
-| shadcn/ui | latest | Компонентная библиотека: Button, Dialog, ContextMenu и др. | MIT |
-| radix-ui | latest | Headless UI-примитивы (основа shadcn) | MIT |
+| shadcn CLI | 4.x | Инструмент source-owned компонентов; конфигурация Mine разрешается CLI как `base = radix` | MIT |
+| radix-ui | 1.x | Текущая headless-основа Button, Dialog, ContextMenu и других UI-компонентов Mine | MIT |
 | lucide-react | latest | Иконки (замена ручных SVG) | ISC |
 | class-variance-authority | latest | Варианты компонентов (CVA) | Apache-2.0 |
 | tw-animate-css | latest | CSS-анимации для Tailwind v4 | MIT |

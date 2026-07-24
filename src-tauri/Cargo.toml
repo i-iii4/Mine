@@ -6,7 +6,7 @@ authors = ["i_iii"]
 license = "MIT"
 repository = "https://github.com/i-iii4/mine"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.88"
 default-run = "mine"
 
 [lib]
@@ -77,6 +77,7 @@ log = "0.4"
 # Type generation for TypeScript
 specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 tauri-specta = { version = "=2.0.0-rc.21", features = ["typescript"] }
+specta-typescript = "=0.0.9"
 
 # OS trash (not available on iOS)
 [target.'cfg(not(target_os = "ios"))'.dependencies]
@@ -104,14 +105,12 @@ path = "src/bin/migrate_primary_file_to_wikilinks.rs"
 name = "cold-space-audit"
 path = "src/bin/cold_space_audit.rs"
 
+[[bin]]
+name = "export-bindings"
+path = "src/bin/export_bindings.rs"
+
 [dev-dependencies]
 indoc = "2"
 tempfile = "3"
 
 # custom-protocol is in [features] at top
-
-[profile.release]
-strip = true
-lto = true
-codegen-units = 1
-panic = "abort"

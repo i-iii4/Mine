@@ -1,6 +1,8 @@
 #[cfg(feature = "desktop")]
 mod asset_protocol;
 #[cfg(feature = "desktop")]
+pub mod bindings;
+#[cfg(feature = "desktop")]
 mod commands;
 pub mod domain;
 #[cfg(feature = "desktop")]
@@ -69,6 +71,7 @@ pub fn run() {
             commands::tags::rename_tag,
             commands::tags::delete_tag_from_all,
             commands::search::search,
+            commands::search::search_grid_blocks,
             commands::channels::list_channels,
             commands::channels::list_taxonomy_snapshot,
             commands::channels::create_channel,
@@ -94,6 +97,7 @@ pub fn run() {
             commands::settings::list_orphan_media,
             commands::settings::promote_orphan_media,
             commands::settings::delete_orphan_media,
+            commands::native_shell_smoke::report_native_shell_smoke,
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -110,7 +114,12 @@ pub fn run() {
             _ => {}
         })
         .setup(|app| {
-            match crate::util::acquire_single_instance("com.mine.app")? {
+            let instance_id = if commands::native_shell_smoke::enabled() {
+                "com.mine.app.native-shell-smoke"
+            } else {
+                "com.mine.app"
+            };
+            match crate::util::acquire_single_instance(instance_id)? {
                 crate::util::SingleInstanceAcquire::Primary(guard) => {
                     app.state::<AppState>().set_instance_guard(guard)?;
                 }
@@ -126,6 +135,17 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            }
+
+            if commands::native_shell_smoke::enabled() {
+                let window = app
+                    .get_webview_window("main")
+                    .ok_or_else(|| anyhow::anyhow!("native-shell smoke main window is missing"))?;
+                let url = tauri::Url::parse(&format!(
+                    "tauri://localhost/index.html?{}=1",
+                    commands::native_shell_smoke::QUERY_FLAG,
+                ))?;
+                window.navigate(url)?;
             }
 
             // ── Native macOS menu ────────────────────────────────────────

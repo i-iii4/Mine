@@ -59,8 +59,8 @@
 | react-force-graph-2d + d3-force | Canvas Graph View: force-directed layout, zoom/pan, custom node paint |
 | TypeScript | Язык фронтенда |
 | TailwindCSS v4 | Стилизация (CSS-first конфигурация) |
-| shadcn/ui | Дизайн-система: OKLCH-токены, Radix-примитивы (Button, Dialog, ContextMenu и др.), glass-вариант, `cn()` |
-| radix-ui | Headless UI-примитивы (основа shadcn) |
+| shadcn/ui CLI 4.x | Source-owned дизайн-система: OKLCH-токены, Radix-base компоненты, glass-вариант, `cn()` |
+| radix-ui | Текущая headless-основа компонентов Mine (`shadcn info`: `base = radix`) |
 | lucide-react | Иконки (замена ручных SVG) |
 | class-variance-authority | Варианты компонентов (CVA) |
 | tw-animate-css | CSS-анимации для Tailwind v4 (Dialog, DropdownMenu, ContextMenu) |
@@ -85,7 +85,8 @@ local-arena/
 │   ├── src/
 │   │   ├── bin/
 │   │   │   ├── native_host.rs  # Native messaging host для веб-клиппера (stdin/stdout JSON)
-│   │   │   └── cold_space_audit.rs # Read-only source + disposable derived acceptance CLI
+│   │   │   ├── cold_space_audit.rs # Read-only source + disposable derived acceptance CLI
+│   │   │   └── export_bindings.rs # Rust/Specta → committed TypeScript bindings
 │   │   ├── main.rs             # Только инициализация Tauri
 │   │   ├── domain/             # Чистая бизнес-логика (без Tauri, без SQLite)
 │   │   │   ├── mod.rs
@@ -100,9 +101,14 @@ local-arena/
 │   │   │   ├── mod.rs
 │   │   │   ├── article_audio.rs # Local derived audio state + sidecar persistence
 │   │   │   ├── cold_space_audit.rs # Cold/reopen/cache-reset projection acceptance
-│   │   │   ├── db.rs           # Connection pool, migrations
+│   │   │   ├── db.rs           # Connection pragmas/opening
+│   │   │   ├── migrations.rs   # Versioned PRAGMA user_version migrations + validation
 │   │   │   ├── index.rs        # Frontmatter → SQLite indexing
-│   │   │   ├── projection.rs   # Persisted generation + atomic GridSnapshot reads
+│   │   │   ├── block_queries.rs # Block read models + row hydration
+│   │   │   ├── channel_index.rs # Collection persistence owner
+│   │   │   ├── vault_conflicts.rs # Vault filename conflict queries
+│   │   │   ├── projection.rs   # ProjectionRevision + atomic route snapshots
+│   │   │   ├── search_projection.rs # SearchRevision + revision-safe cursor
 │   │   │   ├── files.rs        # File operations (copy, move, delete, derived artifact rename)
 │   │   │   ├── graph.rs        # GraphSnapshot projection for Graph View
 │   │   │   └── thumbnails.rs   # Thumbnail generation + cache
@@ -120,6 +126,10 @@ local-arena/
 │   │       ├── article_audio.rs # get/generate/delete/set_position commands
 │   │       ├── article_audio_desktop.rs # Native macOS helper orchestration + voice defaults
 │   │       ├── state.rs        # AppState, VaultState, CommandError
+│   │       ├── freshness.rs     # Reconciliation coordinator
+│   │       ├── preview_reconcile.rs # Derived preview queue
+│   │       ├── thumbnail_sweeps.rs # Thumbnail sweep coordinator
+│   │       ├── native_shell_smoke.rs # Packaged WKWebView IPC smoke report
 │   │       ├── blocks.rs       # create/delete/rename block commands → вызывает domain + storage
 │   │       ├── graph.rs        # list_graph_snapshot command
 │   │       ├── tags.rs
@@ -137,6 +147,9 @@ local-arena/
 │   ├── components/
 │   │   ├── Grid.tsx            # Masonry-сетка с чанковым рендерингом (IntersectionObserver)
 │   │   ├── GraphView.tsx       # Graph M1: Canvas nodes/edges, scopes/search, selection/a11y
+│   │   ├── graph/              # Canvas paint, physics, contracts, interactions
+│   │   ├── grid/               # Grid interaction geometry/controllers
+│   │   ├── MainSecondaryChrome.tsx # Main route secondary chrome
 │   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
 │   │   ├── Detail.tsx          # Lightbox: просмотр, коллекции, навигация стрелками
@@ -149,13 +162,14 @@ local-arena/
 │   │   └── SidebarResizeHandle.tsx # Ресайз-ручка сайдбара (pill-стиль)
 │   ├── hooks/
 │   │   └── useSidebarResize.ts # Хук ресайза сайдбара (pointer events + persist)
-│   ├── types/                  # TypeScript-типы (ручные, без specta)
+│   ├── types/                  # generated.ts from Rust/Specta + frontend-owned index.ts
 │   ├── lib/                    # commands.ts (IPC), articleAudioGateway.tsx (UI transport contract), articleAudioDesktopGateway.ts (desktop adapter), domSelectors.ts, assets.ts, utils.ts (cn()), recentTags.ts
 │   ├── dev/                    # Dev-only routes/harnesses: FeedScrollAuditRoute, GraphAuditRoute
 │   └── styles/                 # Глобальные стили
 ├── scripts/
 │   ├── feed-scroll-audit.mjs   # Playwright Grid scroll/source-request acceptance
-│   └── graph-view-audit.mjs    # Dark/light Canvas pixel/interaction/performance acceptance
+│   ├── graph-view-audit.mjs    # Dark/light Canvas pixel/interaction/performance acceptance
+│   └── native-shell-smoke.mjs  # Packaged macOS WKWebView + Tauri IPC smoke
 ├── extension/                  # Chrome/Safari веб-клиппер
 │   ├── background.js           # Service worker: контекстное меню, native messaging
 │   ├── content.js              # Content script: метаданные, Defuddle, Twitter/Instagram парсеры
@@ -262,9 +276,16 @@ bun run test:feed-scroll       # Browser-level Grid scroll blank/performance acc
 bun run test:graph             # Browser-level Graph Canvas acceptance (requires running dev server)
 bun run test:cold-space        # Browser cold first/settled/deep Grid acceptance (requires running dev server)
 bun run test:browser           # Сам поднимает Vite и запускает все browser gates
-bun run verify:core            # Линтинг + frontend/Rust tests
+bun run test:native-shell      # Packaged macOS WKWebView + real Tauri invoke smoke
+bun run bindings:generate      # Обновить committed Rust/Specta TypeScript bindings
+bun run bindings:check         # Проверить bindings на drift
+bun run verify:core            # Bindings + lint + frontend/Rust tests
 bun run verify                 # Полный contract, включая Feed, Graph и cold-space browser gates
+bun run verify:release         # Полный contract + native-shell smoke
+bunx shadcn info               # Проверить CLI/config/base без изменения файлов
+bunx shadcn add button --diff  # Read-only upstream diff; не перезаписывает компонент
 cargo run -p mine --bin cold-space-audit -- <source> <empty-derived-dir> 2
+cargo +1.88.0 check --workspace --all-targets --locked # MSRV gate
 cargo clippy                   # Линтинг Rust
 ```
 

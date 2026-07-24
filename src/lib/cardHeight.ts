@@ -55,8 +55,9 @@ function innerWidth(columnWidth: number): number {
 
 // ─── Image/video/link card constants ────────────────────────────────────────
 
-/** Minimum enforced height for image cards even on extremely tall ratios. */
-const IMAGE_MIN_HEIGHT = 120;
+/** Image-card minimum follows the column while preserving hover controls. */
+const IMAGE_MIN_HEIGHT_MAX = 120;
+const IMAGE_MIN_HEIGHT_COLUMN_RATIO = 0.4;
 
 /** Aspect for video/link thumbnail area (16:9). */
 const THUMBNAIL_ASPECT = 9 / 16;
@@ -143,7 +144,7 @@ const ARTICLE_IMAGE_ASPECT = 9 / 16;
 
 // ─── Image-card fallback when no width/height metadata ──────────────────────
 
-function explicitImageAspectRatio(block: LightBlock): number | null {
+export function explicitImageAspectRatio(block: LightBlock): number | null {
   const dims = parseMediaDimensions(block);
   if (dims && block.media_file) {
     const entry = dims[block.media_file];
@@ -172,12 +173,32 @@ function explicitImageAspectRatio(block: LightBlock): number | null {
   return null;
 }
 
+function computeImageMinimumHeight(columnWidth: number): number {
+  const interactiveFloor = CARD_HOVER_ACTION_MIN_HEIGHT - CARD_BORDER_HEIGHT;
+  return Math.min(
+    IMAGE_MIN_HEIGHT_MAX,
+    Math.max(
+      interactiveFloor,
+      Math.round(innerWidth(columnWidth) * IMAGE_MIN_HEIGHT_COLUMN_RATIO),
+    ),
+  );
+}
+
+export function imageCardNeedsGeometryRefresh(block: LightBlock): boolean {
+  const descriptor = deriveCardLayoutDescriptor(block);
+  return (
+    getRuntimeCardKind(block) === "media" &&
+    descriptor.variant === "image" &&
+    explicitImageAspectRatio(block) === null
+  );
+}
+
 function computeImageHeight(block: LightBlock, columnWidth: number): number {
   const iw = innerWidth(columnWidth);
   const aspectRatio = explicitImageAspectRatio(block);
   if (aspectRatio) {
     return (
-      Math.max(IMAGE_MIN_HEIGHT, Math.round(iw / aspectRatio)) +
+      Math.max(computeImageMinimumHeight(columnWidth), Math.round(iw / aspectRatio)) +
       CARD_BORDER_HEIGHT
     );
   }

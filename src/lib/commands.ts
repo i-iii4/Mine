@@ -1,10 +1,16 @@
 // Tauri IPC wrappers. Thin typed layer over invoke().
 // Each function maps 1:1 to a #[tauri::command] in Rust.
 
-import { invoke } from "@tauri-apps/api/core";
+import {
+  invoke as tauriInvoke,
+  type InvokeArgs,
+  type InvokeOptions,
+} from "@tauri-apps/api/core";
 import type {
   IndexedBlock,
   GridSnapshot,
+  SearchPageToken,
+  SearchSnapshot,
   GraphSnapshot,
   GraphOptions,
   GraphScope,
@@ -14,6 +20,7 @@ import type {
   RenameBlockResult,
   TagCount,
   ChannelDto,
+  ChannelPreviewsSnapshot,
   TaxonomySnapshot,
   VaultStats,
   VaultOpenResult,
@@ -38,10 +45,40 @@ import type {
   MergeBlocksResult,
   TextSelectionExtractError,
   OrphanMedia,
+  OrphanMediaBatchRequest,
   PromoteOrphanResult,
   DeleteOrphanResult,
   SpaceStats,
+  NativeShellSmokeReport,
+  CommandError,
 } from "@/types";
+
+function isCommandError(error: unknown): error is CommandError {
+  if (!error || typeof error !== "object" || !("kind" in error)) return false;
+  const kind = (error as { kind?: unknown }).kind;
+  return kind === "no_vault" || kind === "internal";
+}
+
+function commandErrorMessage(error: CommandError): string {
+  return error.kind === "no_vault" ? "no vault selected" : error.message;
+}
+
+async function invoke<T>(
+  command: string,
+  args?: InvokeArgs,
+  options?: InvokeOptions,
+): Promise<T> {
+  try {
+    return options === undefined
+      ? await tauriInvoke<T>(command, args)
+      : await tauriInvoke<T>(command, args, options);
+  } catch (error) {
+    if (isCommandError(error)) {
+      throw Object.assign(new Error(commandErrorMessage(error)), { cause: error });
+    }
+    throw error;
+  }
+}
 
 // Vault
 export const selectVault = (path: string) =>
@@ -52,6 +89,9 @@ export const openVault = (path: string) =>
 
 export const getVaultPath = () =>
   invoke<string | null>("get_vault_path");
+
+export const reportNativeShellSmoke = (report: NativeShellSmokeReport) =>
+  invoke<void>("report_native_shell_smoke", { report });
 
 export const listKnownVaults = () =>
   invoke<string[]>("list_known_vaults");
@@ -94,13 +134,24 @@ export const listGridBlocks = (
   current_tag?: string,
   offset?: number,
   limit?: number,
-  query?: string,
 ) =>
   invoke<GridSnapshot>("list_grid_blocks", {
     current_tag: current_tag ?? null,
     offset: offset ?? null,
     limit: limit ?? null,
-    query: query ?? null,
+  });
+
+export const searchGridBlocks = (
+  current_tag: string | undefined,
+  query: string,
+  limit: number,
+  cursor?: SearchPageToken,
+) =>
+  invoke<SearchSnapshot>("search_grid_blocks", {
+    current_tag: current_tag ?? null,
+    query,
+    limit,
+    cursor: cursor ?? null,
   });
 
 export const listGraphSnapshot = (scope: GraphScope, options: GraphOptions) =>
@@ -113,7 +164,7 @@ export const getBlock = (slug: string) =>
   invoke<IndexedBlock | null>("get_block", { slug });
 
 export const createBlock = (params: CreateBlockParams) =>
-  invoke<IndexedBlock>("create_block", { ...params });
+  invoke<IndexedBlock>("create_block", { params });
 
 function normalizeInlineMediaExtractError(error: unknown): InlineMediaExtractError {
   if (error && typeof error === "object" && "kind" in error) {
@@ -130,7 +181,7 @@ function normalizeInlineMediaExtractError(error: unknown): InlineMediaExtractErr
 
 export const extractInlineMedia = async (params: ExtractInlineMediaParams) => {
   try {
-    return await invoke<IndexedBlock>("extract_inline_media", { ...params });
+    return await tauriInvoke<IndexedBlock>("extract_inline_media", { params });
   } catch (error) {
     throw normalizeInlineMediaExtractError(error);
   }
@@ -151,7 +202,7 @@ function normalizeMediaAssetActionError(error: unknown): MediaAssetActionError {
 
 export const createMediaAssetCard = async (params: CreateMediaAssetCardParams) => {
   try {
-    return await invoke<IndexedBlock>("create_media_asset_card", { ...params });
+    return await tauriInvoke<IndexedBlock>("create_media_asset_card", { params });
   } catch (error) {
     throw normalizeMediaAssetActionError(error);
   }
@@ -159,7 +210,7 @@ export const createMediaAssetCard = async (params: CreateMediaAssetCardParams) =
 
 export const renameMediaAsset = async (params: RenameMediaAssetParams) => {
   try {
-    return await invoke<MediaAssetMutationResult>("rename_media_asset", { ...params });
+    return await tauriInvoke<MediaAssetMutationResult>("rename_media_asset", { params });
   } catch (error) {
     throw normalizeMediaAssetActionError(error);
   }
@@ -167,7 +218,7 @@ export const renameMediaAsset = async (params: RenameMediaAssetParams) => {
 
 export const prepareDeleteMediaAsset = async (media_ref: string) => {
   try {
-    return await invoke<DeleteMediaAssetPlan>("prepare_delete_media_asset", { media_ref });
+    return await tauriInvoke<DeleteMediaAssetPlan>("prepare_delete_media_asset", { media_ref });
   } catch (error) {
     throw normalizeMediaAssetActionError(error);
   }
@@ -175,7 +226,7 @@ export const prepareDeleteMediaAsset = async (media_ref: string) => {
 
 export const deleteMediaAsset = async (media_ref: string) => {
   try {
-    return await invoke<MediaAssetMutationResult>("delete_media_asset", { media_ref });
+    return await tauriInvoke<MediaAssetMutationResult>("delete_media_asset", { media_ref });
   } catch (error) {
     throw normalizeMediaAssetActionError(error);
   }
@@ -183,7 +234,7 @@ export const deleteMediaAsset = async (media_ref: string) => {
 
 export const removeMediaAssetFromCard = async (params: RemoveMediaAssetFromCardParams) => {
   try {
-    return await invoke<MediaAssetMutationResult>("remove_media_asset_from_card", { ...params });
+    return await tauriInvoke<MediaAssetMutationResult>("remove_media_asset_from_card", { params });
   } catch (error) {
     throw normalizeMediaAssetActionError(error);
   }
@@ -191,7 +242,7 @@ export const removeMediaAssetFromCard = async (params: RemoveMediaAssetFromCardP
 
 export const copyMediaAssetToClipboard = async (media_ref: string) => {
   try {
-    await invoke<void>("copy_media_asset_to_clipboard", { media_ref });
+    await tauriInvoke<void>("copy_media_asset_to_clipboard", { media_ref });
   } catch (error) {
     throw normalizeMediaAssetActionError(error);
   }
@@ -212,7 +263,7 @@ function normalizeTextSelectionExtractError(error: unknown): TextSelectionExtrac
 
 export const extractTextSelection = async (params: ExtractTextSelectionParams) => {
   try {
-    return await invoke<IndexedBlock>("extract_text_selection", { ...params });
+    return await tauriInvoke<IndexedBlock>("extract_text_selection", { params });
   } catch (error) {
     throw normalizeTextSelectionExtractError(error);
   }
@@ -220,7 +271,7 @@ export const extractTextSelection = async (params: ExtractTextSelectionParams) =
 
 export const deleteTextSelection = async (params: DeleteTextSelectionParams) => {
   try {
-    return await invoke<IndexedBlock>("delete_text_selection", { ...params });
+    return await tauriInvoke<IndexedBlock>("delete_text_selection", { params });
   } catch (error) {
     throw normalizeTextSelectionExtractError(error);
   }
@@ -241,7 +292,7 @@ function normalizeRenameBlockError(error: unknown): RenameBlockError {
 
 export const renameBlockFile = async (old_slug: string, new_stem: string) => {
   try {
-    return await invoke<RenameBlockResult>("rename_block_file", { old_slug, new_stem });
+    return await tauriInvoke<RenameBlockResult>("rename_block_file", { old_slug, new_stem });
   } catch (error) {
     throw normalizeRenameBlockError(error);
   }
@@ -271,7 +322,7 @@ function normalizeMergeBlocksError(error: unknown): MergeBlocksError {
 
 export const mergeBlocks = async (ordered_slugs: string[]) => {
   try {
-    return await invoke<MergeBlocksResult>("merge_blocks", { ordered_slugs });
+    return await tauriInvoke<MergeBlocksResult>("merge_blocks", { ordered_slugs });
   } catch (error) {
     throw normalizeMergeBlocksError(error);
   }
@@ -313,7 +364,7 @@ export const deleteChannel = (tag: string) =>
   invoke<boolean>("delete_channel", { tag });
 
 export const listChannelPreviews = (limit: number) =>
-  invoke<Record<string, import("@/types").PreviewItem[]>>("list_channel_previews", { limit });
+  invoke<ChannelPreviewsSnapshot>("list_channel_previews", { limit });
 
 // Are.na import
 export const listArenaChannels = (username: string) =>
@@ -419,11 +470,15 @@ export const forgetKnownVault = (path: string) =>
 export const listOrphanMedia = () =>
   invoke<OrphanMedia[]>("list_orphan_media");
 
-export const promoteOrphanMedia = (file_names: string[]) =>
-  invoke<PromoteOrphanResult>("promote_orphan_media", { file_names });
+export const promoteOrphanMedia = (fileNames: string[]) =>
+  invoke<PromoteOrphanResult>("promote_orphan_media", {
+    request: { file_names: fileNames } satisfies OrphanMediaBatchRequest,
+  });
 
-export const deleteOrphanMedia = (file_names: string[]) =>
-  invoke<DeleteOrphanResult>("delete_orphan_media", { file_names });
+export const deleteOrphanMedia = (fileNames: string[]) =>
+  invoke<DeleteOrphanResult>("delete_orphan_media", {
+    request: { file_names: fileNames } satisfies OrphanMediaBatchRequest,
+  });
 
 export const spaceStats = (path: string) =>
   invoke<SpaceStats>("space_stats", { path });

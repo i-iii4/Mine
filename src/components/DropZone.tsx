@@ -40,6 +40,7 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
           await createBlock({
             block_type: blockType,
             title,
+            url: null,
             tags,
             file_path: filePath,
           });

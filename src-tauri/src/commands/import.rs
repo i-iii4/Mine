@@ -14,7 +14,7 @@ use crate::storage::db;
 
 // ─── Response types ──────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct ArenaChannelInfo {
     pub id: i64,
     pub title: String,
@@ -103,7 +103,7 @@ pub fn import_arena_channels(
     Ok(results)
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, specta::Type)]
 pub struct ImportChannelRequest {
     pub slug: String,
     pub tag: String,

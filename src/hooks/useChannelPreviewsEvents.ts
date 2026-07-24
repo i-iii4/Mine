@@ -24,10 +24,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listChannelPreviews } from "@/lib/commands";
 import { thumbnailUrl } from "@/lib/assets";
 import type { PreviewCard } from "@/types";
+import type { ProjectionRevisionOwner } from "./useProjectionRevisionOwner";
 
 interface Options {
   thumbsRootPath: string | null;
   limit: number;
+  revisionOwner?: ProjectionRevisionOwner;
 }
 
 /**
@@ -35,7 +37,7 @@ interface Options {
  * and a `refresh()` function for forced reload after imports or bulk
  * operations that bypass the normal event flow.
  */
-export function useChannelPreviewsEvents({ thumbsRootPath, limit }: Options): {
+export function useChannelPreviewsEvents({ thumbsRootPath, limit, revisionOwner }: Options): {
   channelPreviews: Map<string, PreviewCard[]>;
   refresh: () => Promise<void>;
   bumpThumbVersion: (slug: string) => void;
@@ -73,8 +75,12 @@ export function useChannelPreviewsEvents({ thumbsRootPath, limit }: Options): {
     ) {
       return;
     }
+    if (revisionOwner && !revisionOwner.accept("sidebar-previews", raw.generation)) {
+      return;
+    }
     const next = new Map<string, PreviewCard[]>();
-    for (const [key, items] of Object.entries(raw)) {
+    for (const [key, items] of Object.entries(raw.previews)) {
+      if (!items) continue;
       next.set(
         key,
         items.filter((item) => item.has_thumb).map((item) => {
@@ -95,7 +101,7 @@ export function useChannelPreviewsEvents({ thumbsRootPath, limit }: Options): {
       );
     }
     setChannelPreviews(next);
-  }, [limit]);
+  }, [limit, revisionOwner]);
 
   // Initial load on mount / vault switch.
   useEffect(() => {

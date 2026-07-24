@@ -35,7 +35,34 @@ Status vocabulary:
 | A4. Graph View M1 | DONE | Wikilink/related edges, scopes, controls/search, selection/a11y, truncation and Canvas acceptance | Full edge model, stable interactions, keyboard navigation and dark/light Playwright pixel/performance gates pass |
 | A5. Cold-space semantic acceptance | MANUAL QA | Fresh-derived-store space switch, legacy card projection audit, semantic preview readiness | Automated source/projection, first-frame, rapid-switch, reopen and cache-reset contracts pass; only final desktop visual open/restart remains |
 | A6. Verification gate hardening | DONE | Self-starting browser audit runner wired into `bun run verify` | A clean shell runs Feed, Graph and cold-space gates without a prestarted server and always tears the server down |
-| A7. Structural decomposition | ACTIVE | Split oversized Grid, Graph and command-state orchestration at existing ownership boundaries | Composition roots no longer own unrelated state machines; extracted modules have focused tests and the full behavior contract stays unchanged |
+| A7. Structural decomposition | DONE | Split App/Grid/Graph, command-state orchestration and storage DB/index responsibilities at existing ownership boundaries | Composition roots retain orchestration; focused owners contain migrations, coordinators, interaction/physics/paint and secondary chrome; behavior gates stay green |
+| A8. Persistence and read-model contracts | DONE | Versioned SQLite migrations, shared projection revisions, independent search revisions, generated IPC bindings, native-shell smoke and truthful MSRV | Upgrade tests, atomic snapshot tests, binding freshness, browser/native gates and Rust 1.88 locked-workspace CI all pass |
+
+### Tooling maintenance checkpoint — 19.07.2026
+
+- `shadcn` CLI обновлён до 4.13.1; `shadcn info` подтверждает текущий
+  `base = radix` без перезаписи `components.json` и UI-компонентов.
+- Официальный global skill из `shadcn/ui` установлен для агентов и обновляется
+  еженедельно отдельной Codex automation.
+- Dependabot с `package-ecosystem: bun` предлагает отдельные weekly PR только
+  для CLI; source-owned `src/components/ui/` проверяется через `--diff` и не
+  обновляется автоматически.
+
+### Media consistency checkpoint — 24.07.2026
+
+- Settings Orphans использует единый Rust-owned
+  `OrphanMediaBatchRequest { file_names }` для promote/delete; generated IPC
+  bindings исключают расхождение `fileNames` и `file_names`.
+- Image-card geometry использует адаптивный minimum, зависящий от ширины
+  колонки, а graphic surface заполняется через `object-cover`. При появлении
+  deterministic dimensions событие `thumb:updated` один раз пересчитывает
+  layout вместо сохранения чёрного остатка под широким изображением.
+- Batch Merge проецирует committed Markdown и `source_index_state`, затем
+  синхронно публикует preview через единый `derived_preview` pipeline.
+  Multi-image result уже в первом Grid snapshot имеет ready composite manifest.
+- Одновременный cold-open SQLite сериализует connection PRAGMAs и migration
+  entry внутри процесса; stress-test из двадцати запусков по восемь соединений
+  проходит без `database is locked`.
 
 Production distribution is `DEFERRED` by explicit product decision and is not
 part of local desktop completion. Current acceptance ends at a locally built
@@ -143,28 +170,52 @@ debug `Mine.app`.
 | R4 | Self-contained browser verification | DONE | `bun run verify` starts one audit server and runs Feed, Graph and Rust-produced cold-space gates |
 | R5 | Cold-space acceptance and closure | MANUAL QA | Persisted projection generations and real vault -> SQLite -> Rust IPC DTO -> Grid browser gate pass; untouched `Тест` storage audit remains stable; only final desktop visual open/restart remains |
 
-### Phase A7 — Structural decomposition [ACTIVE, after A5 acceptance]
+### Phase A7 — Structural decomposition [DONE, 12.07.2026]
 
 This is a maintainability boundary, not a current product regression. It must
 not be mixed into cold-space behavioral remediation.
 
 | # | Task | Status |
 |---|---|---|
-| A7.1 | Write responsibility maps and dependency rules for `Grid.tsx`, `GraphView.tsx` and `commands/state.rs`; identify existing pure helpers/hooks before moving code | ACTIVE |
-| A7.2 | Extract `FreshnessCoordinator`, preview-work queue and thumbnail-sweep coordinator from `commands/state.rs`; keep `AppState` as composition and shared ownership only | ACTIVE |
-| A7.3 | Split Graph controller, force configuration, Canvas painter/hit geometry and interaction state from `GraphView.tsx` without changing the `GraphSnapshot` or UX contract | ACTIVE |
-| A7.4 | Split Grid viewport/readiness orchestration, selection/keyboard controller and render shell from `Grid.tsx`, reusing existing pure layout modules instead of creating a second state model | ACTIVE |
+| A7.1 | Map responsibilities and dependency rules for `App.tsx`, `Grid.tsx`, `GraphView.tsx`, `commands/state.rs`, `storage/index.rs` and `storage/db.rs` | DONE |
+| A7.2 | Extract `FreshnessCoordinator`, preview-work queue and thumbnail-sweep coordinator from `commands/state.rs`; keep `AppState` as composition and shared ownership only | DONE |
+| A7.3 | Split Graph force configuration, Canvas painter/hit geometry, contracts and interaction state without changing `GraphSnapshot` or UX | DONE |
+| A7.4 | Split Grid selection/keyboard/marquee/viewport-anchor geometry into a focused interaction owner, reusing existing layout modules | DONE |
+| A7.5 | Move main secondary chrome out of `App.tsx`; keep App as route/IPC/DnD composition root | DONE |
+| A7.6 | Move transactional migrations out of `storage/db.rs`; split block query hydration, channel-index and vault-conflict ownership out of `storage/index.rs` | DONE |
 
 Definition of Done:
 
 - extraction commits are behavior-preserving and independently reviewable;
 - no cyclic frontend/backend module dependencies are introduced;
-- the three composition roots describe ownership at a glance and do not retain
+- composition roots describe ownership at a glance and do not retain
   duplicated helper/state-machine implementations;
 - focused unit tests move with each owner; Feed/Graph/cold-space browser gates
   and full Rust/frontend verification remain green after every slice;
 - success is judged by responsibility boundaries, not an arbitrary line-count
   target.
+
+### Phase A8 — Persistence and read-model contracts [DONE, 12.07.2026]
+
+| # | Task | Status |
+|---|---|---|
+| A8.1 | Replace best-effort schema changes with sequential `PRAGMA user_version` migrations under `BEGIN IMMEDIATE`, schema validation and rollback-safe upgrade tests | DONE |
+| A8.2 | Introduce typed `ProjectionRevision` for Grid, taxonomy, sidebar previews and Graph; read every DTO under one SQLite snapshot and reject stale frontend publication centrally | DONE |
+| A8.3 | Generate shared DTO/error bindings from Rust with Specta, commit `src/types/generated.ts` and fail verification when it is stale | DONE |
+| A8.4 | Add independent `SearchRevision` and an opaque cursor bound to projection revision, search revision and query fingerprint | DONE |
+| A8.5 | Add a real packaged macOS WKWebView smoke that executes Tauri `invoke` and reports completion through a second IPC command | DONE |
+| A8.6 | Set workspace MSRV to the lowest version that builds the locked dependency graph (`1.88`) and enforce it in CI | DONE |
+
+Definition of Done:
+
+- old unversioned and version-1 databases upgrade without data loss; malformed
+  or future schemas fail atomically and concurrent opens cannot interleave;
+- no route-facing multi-query snapshot can combine projection revisions;
+- search pagination resets instead of combining a changed projection, changed
+  search index or different query;
+- generated bindings are the only backend DTO source in TypeScript;
+- `bun run verify:release` covers core, Feed, Graph, cold-space and native IPC;
+- `cargo +1.88.0 check --workspace --all-targets --locked` passes.
 
 ### Audited disposition of former open markers
 
@@ -1478,7 +1529,7 @@ Specification: [SPEC_SEARCH.md](SPEC_SEARCH.md).
 
 | # | Slice | Status | Scope |
 |---|---|---|---|
-| 27.1 | Search read model | [x] | Extend `list_grid_blocks` with optional query, FTS5 route filtering, relevance ranking and paginated lightweight `LightBlock` projection |
+| 27.1 | Search read model | [x] | Dedicated `search_grid_blocks` returns revision-safe paginated `SearchSnapshot`; normal `list_grid_blocks` remains the unfiltered route projection |
 | 27.2 | Match excerpts | [x] | Add search-only match metadata: title/description/body visible fields plus author/url searchable metadata, plain-text excerpt and frontend-safe ranges |
 | 27.3 | Main/Grid search UI | [x] | Main search mechanism remains App-owned and route-facing; visual search component temporarily removed, top chrome divider preserved |
 | 27.4 | Sidebar search UI | [x] | Top chrome now contains traffic-light spacer, space selector, and no-icon channel search; `Shift+Cmd+F` focuses search while Sidebar consumes the query and filters/ranks channel rows without changing Grid route; interactive top-chrome controls support threshold native window drag |

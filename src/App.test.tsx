@@ -71,6 +71,17 @@ vi.mock("@/lib/commands", () => ({
   startVaultSync: commandMocks.startVaultSync,
   sweepVaultThumbnails: commandMocks.sweepVaultThumbnails,
   listGridBlocks: commandMocks.listGridBlocks,
+  searchGridBlocks: async (tag: string | undefined, query: string, limit: number) => {
+    const grid = await commandMocks.listGridBlocks(tag, 0, limit, query);
+    return {
+      generation: grid.generation,
+      search_generation: 1,
+      blocks: grid.blocks,
+      has_more: grid.has_more,
+      next_cursor: null,
+      cursor_reset: false,
+    };
+  },
   listTaxonomySnapshot: commandMocks.listTaxonomySnapshot,
   getVaultStats: commandMocks.getVaultStats,
   createChannel: commandMocks.createChannel,
@@ -448,6 +459,7 @@ describe("AppWithVault", () => {
       return snapshots.get(tag ?? "__all__") ?? snapshots.get("__all__")!;
     });
     commandMocks.listTaxonomySnapshot.mockResolvedValue({
+      generation: 1,
       tags: [
         { tag: "alpha", count: 1 },
         { tag: "beta", count: 1 },
@@ -502,6 +514,7 @@ describe("AppWithVault", () => {
     const latest = block(90, "latest-space-b");
     commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([latest]));
     commandMocks.listTaxonomySnapshot.mockResolvedValue({
+      generation: 1,
       tags: [],
       channels: [],
       total_blocks: 1,
@@ -1197,7 +1210,6 @@ describe("AppWithVault", () => {
         undefined,
         0,
         20,
-        undefined,
       );
     });
     expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
@@ -1831,6 +1843,7 @@ describe("AppWithVault", () => {
 
   it("keeps sidebar channel order from channel positions when tag counts change", async () => {
     commandMocks.listTaxonomySnapshot.mockResolvedValue({
+      generation: 1,
       tags: [
         { tag: "beta", count: 9 },
         { tag: "loose", count: 5 },
@@ -2095,5 +2108,59 @@ describe("AppWithVault", () => {
     expect(commandMocks.listGridBlocks.mock.calls.length).toBe(gridCallsBefore);
     // The off-screen slug is not in the feed, so its version stays untouched.
     expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent("visible-card=0");
+  });
+
+  it("refreshes a loaded image once when thumb readiness supplies missing geometry", async () => {
+    const initial = {
+      ...block(1, "new-image"),
+      card_kind: "media" as const,
+      block_type: "image" as const,
+      media_file: "new-image.jpg",
+      body: "",
+    };
+    const ready = {
+      ...initial,
+      width: 1586,
+      height: 600,
+      media_dimensions: "{\"new-image.jpg\":[1586,600]}",
+    };
+    let gridRequest = 0;
+    commandMocks.listGridBlocks.mockImplementation(async () => {
+      const current = gridRequest === 0 ? initial : ready;
+      gridRequest += 1;
+      return {
+        generation: gridRequest,
+        blocks: [current],
+        total_blocks: 1,
+        has_more: false,
+      };
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
+    });
+    const gridCallsBefore = commandMocks.listGridBlocks.mock.calls.length;
+
+    fireEvent(
+      window,
+      new CustomEvent("thumb:updated", {
+        detail: { payload: { slug: "new-image", is_text: false } },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(commandMocks.listGridBlocks.mock.calls.length).toBeGreaterThan(
+        gridCallsBefore,
+      );
+      expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent(
+        "new-image=1",
+      );
+    });
   });
 });

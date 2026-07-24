@@ -429,7 +429,24 @@ between rows inside focus mode disables transition for that switch frame.
 
 ## Компоненты (shadcn/ui + CVA)
 
-Все компоненты — обёртки над Radix UI примитивами, стилизованные через CVA (Class Variance Authority). Радиусы, цвета, размеры — из токенов выше.
+Компоненты Mine хранятся в проекте как source-owned shadcn/ui код. Текущая
+headless-основа — Radix UI (`shadcn info`: `base = radix`); смена
+base является отдельной миграцией, а не обновлением CLI. Стили задаются
+через CVA (Class Variance Authority), а радиусы, цвета и размеры — токенами выше.
+
+### Обновление shadcn-инфраструктуры
+
+- `shadcn` CLI зафиксирован в `devDependencies`; его версию и `bun.lock`
+  обновляет отдельный еженедельный Dependabot PR.
+- Официальный global skill обновляется независимо от Mine из upstream
+  `shadcn/ui`.
+- Файлы `src/components/ui/` никогда не перезаписываются автоматически:
+  это source-owned код с продуктовыми кастомизациями Mine.
+- Upstream-расхождение проверяется read-only командой
+  `bunx shadcn add <component> --diff`; каждое изменение принимается отдельно с
+  прогоном компонентных и browser-тестов.
+- `init`, `apply`, `migrate` и смена base не являются maintenance-командами; это
+  отдельные архитектурные миграции.
 
 ### Button
 

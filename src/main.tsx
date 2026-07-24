@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
 import { applyDesign, getStoredDesignMode } from "@/lib/designMode";
 import { App } from "./App";
+import { getVaultPath, reportNativeShellSmoke } from "@/lib/commands";
 import "./styles/global.css";
 
 // Apply the stored theme and design variant before first paint (the settings
@@ -60,6 +61,8 @@ const graphAuditRoute =
   import.meta.env.DEV && window.location.pathname === "/__graph-audit";
 const coldSpaceAuditRoute =
   import.meta.env.DEV && window.location.pathname === "/__cold-space-audit";
+const nativeShellSmokeRoute = new URLSearchParams(window.location.search)
+  .has("mine-native-shell-smoke");
 const auditRoute = feedScrollAuditRoute
   ? "feed"
   : graphAuditRoute
@@ -123,11 +126,47 @@ function Root() {
     };
   }, []);
 
+  if (nativeShellSmokeRoute) {
+    return <NativeShellSmokeRoute />;
+  }
+
   if (auditRoute) {
     return AuditRoute ? <AuditRoute /> : null;
   }
 
   return <App />;
+}
+
+function NativeShellSmokeRoute() {
+  const [status, setStatus] = React.useState("running");
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      let vaultPath: string | null = null;
+      let reportStatus = "ok";
+      try {
+        vaultPath = await getVaultPath();
+      } catch (error) {
+        reportStatus = `get_vault_path failed: ${String(error)}`;
+      }
+      await reportNativeShellSmoke({
+        status: reportStatus,
+        vault_path: vaultPath,
+        location: window.location.href,
+        user_agent: window.navigator.userAgent,
+        timestamp_ms: Date.now(),
+      });
+      if (!cancelled) setStatus(reportStatus);
+    })().catch((error) => {
+      if (!cancelled) setStatus(`failed: ${String(error)}`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return <div data-native-shell-smoke={status}>{status}</div>;
 }
 
 ReactDOM.createRoot(rootElement).render(

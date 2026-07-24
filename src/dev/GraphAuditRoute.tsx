@@ -41,6 +41,9 @@ function auditBlock(index: number): LightBlock {
     card_kind: index % 4 === 0 ? "media" : "article",
     block_type: index % 4 === 0 ? "image" : "article",
     title: `Graph audit card ${index + 1}`,
+    content_heading: null,
+    display_title: null,
+    fallback_label: `Graph audit card ${index + 1}`,
     url: `https://example.test/graph/${index}`,
     media_file: null,
     thumbnail: null,
@@ -223,6 +226,7 @@ function graphAuditSnapshot(
   const libraryScope = scope.kind === "library";
 
   return {
+    generation: 1,
     nodes,
     links,
     total_cards: nodes.filter((node) => node.kind === "card").length,

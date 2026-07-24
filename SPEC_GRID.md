@@ -229,7 +229,9 @@ export function computeCardHeight(
 
 - **media** — presentation variant выводится из `media_file`, `thumbnail`,
   `preview_manifest`, URL и file extension:
-  - image: `columnWidth * aspectRatio`, если metadata есть; иначе conservative fallback
+  - image: `max(columnWidth / aspectRatio, adaptiveImageMinimum)` при наличии
+    metadata; `adaptiveImageMinimum = clamp(interactiveFloor, columnWidth * 0.4,
+    120px)`; без metadata используется conservative fallback
   - video: `columnWidth * 9 / 16` (fixed 16:9 + play overlay)
   - link: `columnWidth * 9 / 16 + 76` (16:9 thumbnail + 76px text)
   - file: fixed compact height
@@ -655,7 +657,13 @@ Phase 11 закрыта через доказуемые вертикальные
 
 ## Edge cases
 
-1. **Block без `width/height` метаданных (image)** — используется `DEFAULT_CARD_HEIGHT = 240` как conservative fallback. Backend task (отдельный PR) должен извлекать dimensions из image file при индексации и записывать в SQLite.
+1. **Block без `width/height` метаданных (image)** — используется
+   `DEFAULT_CARD_HEIGHT = 240` как conservative fallback, а image surface
+   заполняет весь зарезервированный envelope через `object-cover`, поэтому
+   fallback не создаёт пустую полосу. Если загруженная image-карточка ещё не
+   имела детерминированной геометрии, первое `thumb:updated` немедленно
+   обновляет текущий Grid snapshot; карточки с уже известными размерами
+   сохраняют дешёвый pixel-only cache-buster path.
 
 2. **Очень длинный display title/preview в article** — слова, которые не влезают в column width целиком, разбиваются на символы через `Intl.Segmenter` на grapheme boundaries. Fallback на CSS `word-break: break-word` если `Intl.Segmenter` недоступен.
 

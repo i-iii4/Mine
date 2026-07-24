@@ -22,6 +22,17 @@ vi.mock("@/lib/commands", () => ({
     limit?: number,
     query?: string,
   ) => listGridBlocksMock(tag, offset, limit, query),
+  searchGridBlocks: async (tag: string | undefined, query: string, limit: number) => {
+    const grid = await listGridBlocksMock(tag, 0, limit, query);
+    return {
+      generation: grid.generation,
+      search_generation: 1,
+      blocks: grid.blocks,
+      has_more: grid.has_more,
+      next_cursor: null,
+      cursor_reset: false,
+    };
+  },
   // CardHoverMenu lazily loads the full block for its Connect submenu.
   getBlock: async () => null,
 }));

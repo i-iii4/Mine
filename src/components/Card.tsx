@@ -216,7 +216,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
 });
 
 export function ReadOnlyCardPreview({
-  block,
+  block: sourceBlock,
   vaultPath,
   thumbsRootPath,
   width = 240,
@@ -224,7 +224,7 @@ export function ReadOnlyCardPreview({
   shadow = "lg",
   className,
 }: {
-  block: LightBlock & Partial<Pick<IndexedBlock, "thumb_format" | "thumb_mtime">>;
+  block: LightBlock | IndexedBlock;
   vaultPath: string;
   thumbsRootPath?: string;
   width?: number;
@@ -232,6 +232,10 @@ export function ReadOnlyCardPreview({
   shadow?: "none" | "sm" | "md" | "lg";
   className?: string;
 }) {
+  const block: LightBlock & Partial<Pick<IndexedBlock, "thumb_format" | "thumb_mtime">> =
+    "search_match" in sourceBlock
+      ? sourceBlock
+      : { ...sourceBlock, search_match: null };
   const shadowClassName =
     shadow === "none"
       ? null
@@ -802,7 +806,7 @@ const ImageCard = memo(function ImageCard({
   if (currentSrc === null) {
     return (
       <GraphicSurface
-        className="flex items-center justify-center"
+        className="flex h-full items-center justify-center"
         style={{ aspectRatio }}
       >
         <div className="text-center">
@@ -821,6 +825,7 @@ const ImageCard = memo(function ImageCard({
   // hidden DOM measurement pass in Grid.tsx to read a stable height.
   return (
     <GraphicSurface
+      className="h-full"
       style={{ aspectRatio }}
     >
       {!measurementMode && (

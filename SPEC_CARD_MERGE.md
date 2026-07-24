@@ -485,13 +485,23 @@ Algorithm:
 8. Delete selected source `.md` files.
 9. Delete only source-card derived artifacts such as stale thumbnails/index
    rows. Do not delete media binaries.
-10. Index the new block and every rewritten file.
-11. Emit events:
+10. Project the new block and every rewritten file from their committed
+    Markdown bytes, including `source_index_state`; remove the selected source
+    rows and their source-state rows in the same SQLite transaction.
+11. Reconcile the merged card and every rewritten external card through the
+    canonical `derived_preview` pipeline before publishing the mutation. For
+    Rust-decodable local media, the returned block and rewritten route rows must
+    already have `Ready` previews whose `preview_source_stamp` matches their
+    committed source stamps. Browser-decode-required formats may remain typed
+    non-ready and continue through the existing browser upgrade path.
+12. Emit events:
     - `block:added` for the merged block;
     - `block:removed` for each removed source slug;
-    - `thumb:updated` for the merged slug after preview generation;
+    - `thumb:updated` for the merged slug only after the synchronous preview
+      reconciliation attempt;
     - refresh events for rewritten related-note targets as needed.
-12. Return `MergeBlocksResult`.
+13. Return `MergeBlocksResult` hydrated after preview reconciliation, never the
+    stale row captured before derived preview publication.
 
 Rollback/repair contract:
 

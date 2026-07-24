@@ -1,5 +1,95 @@
 # Devlog
 
+## 24.07.2026 — Immediate media readiness and cold-open hardening
+
+### Задача
+Закрыть обнаруженные в реальном пространстве расхождения между файловой
+мутацией и первым Grid snapshot, выровнять image-card geometry, восстановить
+batch delete сирот и подготовить накопленный архитектурный блок к push.
+
+### Что сделано
+- Orphans-команды переведены на Rust-owned `OrphanMediaBatchRequest`.
+  Frontend передаёт generated request object, поэтому Tauri больше не получает
+  несовместимые `fileNames` для параметра `file_names`; promote/delete разделяют
+  один типобезопасный batch-контракт.
+- Для широких изображений minimum карточки стал адаптивным относительно ширины
+  колонки, а media surface заполняется через `object-cover`. Если preview
+  сначала пришёл без deterministic geometry, `thumb:updated` выполняет один
+  целевой пересчёт layout.
+- Batch Merge теперь после filesystem commit сразу проецирует merged Markdown
+  и переписанные внешние заметки вместе с `source_index_state`, удаляет source
+  rows в той же SQLite-транзакции и запускает канонический
+  `derived_preview` reconciler до публикации результата. Multi-image merge
+  возвращается уже с ready composite manifest и не ждёт фонового sweep.
+- SQLite connection initialization получила process-owned boundary вокруг
+  PRAGMAs и versioned migrations. `busy_timeout` включается до
+  `journal_mode = WAL`, а `BEGIN IMMEDIATE` продолжает защищать upgrade между
+  процессами; concurrent cold-open больше не падает с `database is locked`.
+- Актуализированы `ARCHITECTURE.md`, `PLAN.md`, `SPEC_CARD_MERGE.md`,
+  `SPEC_GRID.md` и `SPEC_SETTINGS_WINDOW.md`.
+
+### Проверки
+- Focused Merge: 5 tests passed; storage reconciliation: 11 tests passed.
+- Concurrent SQLite cold-open: 20 stress-runs по 8 соединений passed.
+- `bun run verify:core`: generated bindings без drift, ESLint clean,
+  74 frontend files / 675 tests; Rust main library 653 passed, 5 ignored,
+  native host 56 passed, migration binaries 13 passed.
+- `cargo fmt --all -- --check` и `git diff --check` passed.
+
+### Статус
+- Orphan delete, image-card fill и first-snapshot multi-image merge закрыты
+  автоматическими regression tests.
+- A7/A8 сохраняют статус DONE; A5 остаётся `MANUAL QA` только в ранее
+  зафиксированной границе реального visual restart.
+
+## 12.07.2026 — Versioned persistence and revision-safe route contracts
+
+### Задача
+Закрыть архитектурные риски после cold-space remediation: заменить
+best-effort SQLite upgrades, распространить revision contract на все read
+models, убрать ручное дублирование IPC types, разделить независимые state
+machines и добавить настоящий native-shell gate.
+
+### Что сделано
+- Схема SQLite переведена на последовательные `PRAGMA user_version` migrations
+  (`V0 -> V1 -> V2`) под `BEGIN IMMEDIATE`. После upgrade проверяются tables,
+  column types, indexes, triggers и singleton rows; drift/future version
+  откатываются и возвращают явную ошибку.
+- Введён typed `ProjectionRevision` для Grid, taxonomy, sidebar previews и
+  Graph. Каждый DTO читается одной SQLite snapshot-границей, а
+  `useProjectionRevisionOwner` централизованно отвергает stale publication.
+- Search получил отдельный `SearchRevision` и cursor, связанный с projection,
+  search index и query fingerprint. Search Overlay использует
+  `search_grid_blocks`; `list_grid_blocks` больше не имеет скрытого query path.
+- Rust/Specta генерирует committed `src/types/generated.ts`. Проверка drift
+  встроена в `verify:core`; request DTO block/media/text-selection commands
+  также Rust-owned и принимаются единым `params` object. Generic
+  `CommandError` стал generated tagged union с единым frontend adapter;
+  feature-specific errors сохраняют `kind`. Ручными остаются только
+  frontend-owned types.
+- `commands/state.rs`, Graph, Grid, App, `storage/db.rs` и `storage/index.rs`
+  разделены по ownership: coordinators, Canvas/physics/interaction, Grid
+  interaction, secondary chrome, migrations, block queries/row hydration,
+  channel index и vault conflicts получили собственные модули.
+- Добавлен packaged macOS WKWebView smoke: реальный Tauri `invoke` читает vault
+  path и подтверждает результат вторым IPC command. Он входит в
+  `verify:release` и отдельный macOS CI workflow.
+- Реальный minimum locked workspace зафиксирован как Rust `1.88` и проверяется
+  отдельным CI gate; release profile перенесён в workspace root.
+
+### Проверки
+- `verify:core`: 74 frontend files / 672 tests; Rust main library 652 passed,
+  5 ignored, native host 56 passed, migration binaries 13 passed.
+- Feed wide/narrow, Graph dark/light и cold-space first/settled/deep browser
+  gates passed без forbidden requests, blank viewport или long tasks.
+- Native shell returned `ok=true`, `transport=tauri-ipc`,
+  `shell=macos-wkwebview`; Rust 1.88 locked-workspace check passed.
+
+### Статус
+- A7 и A8 закрыты по responsibility boundaries и executable evidence.
+- Оставшаяся A5 manual QA относится только к финальному пользовательскому
+  visual restart реального пространства, не к этим архитектурным контрактам.
+
 ## 11.07.2026 — Persisted projection generations and true cold-space E2E
 
 ### Задача

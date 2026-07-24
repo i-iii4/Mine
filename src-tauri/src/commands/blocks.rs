@@ -3,7 +3,7 @@
 // Contract: SPEC_INTEGRATION.md#commands/blocks
 
 use anyhow::bail;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -25,30 +25,116 @@ use crate::domain::markdown::{
 use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultLayout};
 use crate::storage::index::IndexedBlock;
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
-use crate::storage::{article_audio, db, files, index, media_refs, projection, thumbnails};
+use crate::storage::{
+    article_audio, db, derived_preview, files, index, media_refs, projection, reconcile, thumbnails,
+};
 use crate::util::append_startup_trace;
 
 pub use crate::storage::projection::GridSnapshot;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+pub struct CreateBlockParams {
+    pub block_type: String,
+    pub title: Option<String>,
+    pub url: Option<String>,
+    pub tags: Vec<String>,
+    pub file_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+pub struct ExtractInlineMediaParams {
+    pub source_slug: String,
+    pub media_ref: String,
+    pub target_tag: String,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+pub struct CreateMediaAssetCardParams {
+    pub media_ref: String,
+    pub target_tag: String,
+    pub source_slug: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+pub struct RenameMediaAssetParams {
+    pub media_ref: String,
+    pub new_stem: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaAssetReferenceKind {
+    FrontmatterFile,
+    BodyEmbed,
+}
+
+impl MediaAssetReferenceKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::FrontmatterFile => "frontmatter_file",
+            Self::BodyEmbed => "body_embed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+pub struct RemoveMediaAssetFromCardParams {
+    pub media_ref: String,
+    pub source_slug: String,
+    pub reference_kind: MediaAssetReferenceKind,
+    pub occurrence_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+pub struct ExtractTextSelectionParams {
+    pub source_slug: String,
+    pub target_tag: String,
+    pub selected_text: String,
+    pub first_block_start: usize,
+    pub first_block_end: usize,
+    pub source_body_hash: String,
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+pub struct DeleteTextSelectionParams {
+    pub source_slug: String,
+    pub selected_text: String,
+    pub first_block_start: usize,
+    pub first_block_end: usize,
+    pub source_body_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct RenameBlockResult {
     pub old_slug: String,
     pub new_slug: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum DeleteMediaAssetKind {
+    Image,
+    Video,
+    Audio,
+    Document,
+    File,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct DeleteBlockMedia {
     pub path: String,
     pub file_name: String,
-    pub kind: String,
+    pub kind: DeleteMediaAssetKind,
     pub referenced_by: Vec<String>,
     #[serde(skip_serializing)]
+    #[specta(skip)]
     absolute_path: PathBuf,
     #[serde(skip_serializing)]
+    #[specta(skip)]
     slug_owned_primary: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct DeleteBlockPlan {
     pub slug: String,
     pub markdown_file: String,
@@ -56,21 +142,21 @@ pub struct DeleteBlockPlan {
     pub shared_media: Vec<DeleteBlockMedia>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct MergeBlocksResult {
     pub block: IndexedBlock,
     pub merged_slug: String,
     pub removed_slugs: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct MediaAssetMutationResult {
     pub media_ref: String,
     pub new_media_ref: Option<String>,
     pub affected_slugs: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct MediaAssetReferenceBlock {
     pub slug: String,
     pub title: Option<String>,
@@ -80,14 +166,14 @@ pub struct MediaAssetReferenceBlock {
     pub reference_kinds: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct DeleteMediaAssetPlan {
     pub media_ref: String,
-    pub media_kind: String,
+    pub media_kind: DeleteMediaAssetKind,
     pub referenced_by: Vec<MediaAssetReferenceBlock>,
 }
 
-#[derive(Debug, Error, Serialize)]
+#[derive(Debug, Error, Serialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RenameBlockError {
     #[error("no vault selected")]
@@ -106,7 +192,7 @@ pub enum RenameBlockError {
     Internal { message: String },
 }
 
-#[derive(Debug, Error, Serialize)]
+#[derive(Debug, Error, Serialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InlineMediaExtractError {
     #[error("no vault selected")]
@@ -140,7 +226,7 @@ pub enum InlineMediaExtractError {
     Internal { message: String },
 }
 
-#[derive(Debug, Error, Serialize)]
+#[derive(Debug, Error, Serialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MediaAssetActionError {
     #[error("no vault selected")]
@@ -169,7 +255,7 @@ pub enum MediaAssetActionError {
     Internal { message: String },
 }
 
-#[derive(Debug, Error, Serialize)]
+#[derive(Debug, Error, Serialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TextSelectionExtractError {
     #[error("no vault selected")]
@@ -203,7 +289,7 @@ pub enum TextSelectionExtractError {
     Internal { message: String },
 }
 
-#[derive(Debug, Error, Serialize)]
+#[derive(Debug, Error, Serialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MergeBlocksError {
     #[error("no vault selected")]
@@ -313,22 +399,15 @@ pub async fn list_grid_blocks(
     current_tag: Option<String>,
     offset: Option<usize>,
     limit: Option<usize>,
-    query: Option<String>,
 ) -> Result<GridSnapshot, CommandError> {
     append_startup_trace(
         &app,
         "list_grid_blocks",
         &format!(
-            "start tag={} offset={} limit={} query={}",
+            "start tag={} offset={} limit={}",
             current_tag.as_deref().unwrap_or("__all__"),
             offset.unwrap_or(0),
-            limit.unwrap_or(200),
-            query
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(|_| "yes")
-                .unwrap_or("no")
+            limit.unwrap_or(200)
         ),
     );
     let vault = current_vault_layout(&state)?;
@@ -337,24 +416,14 @@ pub async fn list_grid_blocks(
     let page_limit = limit.unwrap_or(200).max(1);
     let db_path = vault.index_db_path();
     let current_tag_for_task = current_tag.clone();
-    let query_for_task = query
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
     let snapshot =
         tauri::async_runtime::spawn_blocking(move || -> Result<GridSnapshot, CommandError> {
-            let conn = if query_for_task.is_some() {
-                db::open_or_create(&db_path)?
-            } else {
-                db::open_read_only(&db_path)?
-            };
+            let conn = db::open_read_only(&db_path)?;
             Ok(projection::read_grid_snapshot(
                 &conn,
                 current_tag_for_task.as_deref(),
                 page_offset,
                 page_limit,
-                query_for_task.as_deref(),
             )?)
         })
         .await
@@ -396,12 +465,15 @@ pub async fn get_block(
 #[tauri::command(rename_all = "snake_case")]
 pub fn create_block(
     state: State<'_, AppState>,
-    block_type: String,
-    title: Option<String>,
-    url: Option<String>,
-    tags: Vec<String>,
-    file_path: Option<String>,
+    params: CreateBlockParams,
 ) -> Result<IndexedBlock, CommandError> {
+    let CreateBlockParams {
+        block_type,
+        title,
+        url,
+        tags,
+        file_path,
+    } = params;
     let vault_state = state
         .vault_state
         .lock()
@@ -478,10 +550,13 @@ pub fn create_block(
 pub async fn extract_inline_media(
     app: AppHandle,
     state: State<'_, AppState>,
-    source_slug: String,
-    media_ref: String,
-    target_tag: String,
+    params: ExtractInlineMediaParams,
 ) -> Result<IndexedBlock, InlineMediaExtractError> {
+    let ExtractInlineMediaParams {
+        source_slug,
+        media_ref,
+        target_tag,
+    } = params;
     let vault = {
         let vault_state =
             state
@@ -540,10 +615,13 @@ pub async fn extract_inline_media(
 pub async fn create_media_asset_card(
     app: AppHandle,
     state: State<'_, AppState>,
-    media_ref: String,
-    target_tag: String,
-    source_slug: Option<String>,
+    params: CreateMediaAssetCardParams,
 ) -> Result<IndexedBlock, MediaAssetActionError> {
+    let CreateMediaAssetCardParams {
+        media_ref,
+        target_tag,
+        source_slug,
+    } = params;
     let vault = {
         let vault_state =
             state
@@ -597,9 +675,12 @@ pub async fn create_media_asset_card(
 pub fn rename_media_asset(
     app: AppHandle,
     state: State<'_, AppState>,
-    media_ref: String,
-    new_stem: String,
+    params: RenameMediaAssetParams,
 ) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let RenameMediaAssetParams {
+        media_ref,
+        new_stem,
+    } = params;
     let vault_state = state
         .vault_state
         .lock()
@@ -700,11 +781,14 @@ pub fn delete_media_asset(
 pub fn remove_media_asset_from_card(
     app: AppHandle,
     state: State<'_, AppState>,
-    media_ref: String,
-    source_slug: String,
-    reference_kind: String,
-    occurrence_index: Option<usize>,
+    params: RemoveMediaAssetFromCardParams,
 ) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let RemoveMediaAssetFromCardParams {
+        media_ref,
+        source_slug,
+        reference_kind,
+        occurrence_index,
+    } = params;
     let vault_state = state
         .vault_state
         .lock()
@@ -719,7 +803,7 @@ pub fn remove_media_asset_from_card(
         &vs.vault,
         media_ref,
         source_slug,
-        reference_kind,
+        reference_kind.as_str().to_string(),
         occurrence_index,
     )?;
     for slug in &result.affected_slugs {
@@ -776,13 +860,16 @@ pub fn copy_media_asset_to_clipboard(
 pub async fn extract_text_selection(
     app: AppHandle,
     state: State<'_, AppState>,
-    source_slug: String,
-    target_tag: String,
-    selected_text: String,
-    first_block_start: usize,
-    first_block_end: usize,
-    source_body_hash: String,
+    params: ExtractTextSelectionParams,
 ) -> Result<IndexedBlock, TextSelectionExtractError> {
+    let ExtractTextSelectionParams {
+        source_slug,
+        target_tag,
+        selected_text,
+        first_block_start,
+        first_block_end,
+        source_body_hash,
+    } = params;
     validate_slug(&source_slug).map_err(|e| TextSelectionExtractError::UnsafeSourcePatch {
         reason: format!("invalid source slug: {e}"),
     })?;
@@ -858,12 +945,15 @@ pub async fn extract_text_selection(
 pub async fn delete_text_selection(
     app: AppHandle,
     state: State<'_, AppState>,
-    source_slug: String,
-    selected_text: String,
-    first_block_start: usize,
-    first_block_end: usize,
-    source_body_hash: String,
+    params: DeleteTextSelectionParams,
 ) -> Result<IndexedBlock, TextSelectionExtractError> {
+    let DeleteTextSelectionParams {
+        source_slug,
+        selected_text,
+        first_block_start,
+        first_block_end,
+        source_body_hash,
+    } = params;
     validate_slug(&source_slug).map_err(|e| TextSelectionExtractError::UnsafeSourcePatch {
         reason: format!("invalid source slug: {e}"),
     })?;
@@ -1711,40 +1801,24 @@ fn apply_merge_blocks(
             .map(|source| SourceFileWrite::delete(source.path.clone())),
     );
     let staged = StagedSourceMutation::stage(writes).map_err(internal_merge_error)?;
-    let indexed = staged
+    let merged_path = vault.block_path(&merged_block.slug);
+    staged
         .commit_with_index(conn, "merge_blocks", |index_conn| {
-            index::upsert_block(index_conn, merged_block, Some(vault.root()))?;
+            reconcile::project_source_path(index_conn, vault, &merged_path)?;
             for write in reference_writes {
-                index::upsert_block(index_conn, &write.block, Some(vault.root()))?;
+                reconcile::project_source_path(index_conn, vault, &write.path)?;
             }
             for source in sources {
-                index::remove_block(index_conn, &source.block.slug)?;
+                reconcile::remove_source_projection(index_conn, &source.block.slug)?;
             }
-            index::get_block(index_conn, &merged_block.slug)?.ok_or_else(|| {
-                anyhow::anyhow!("merged block '{}' missing from index", merged_block.slug)
-            })
+            Ok(())
         })
         .map_err(internal_merge_error)?;
 
-    let thumb_path = vault.thumb_path(&merged_block.slug);
-    let thumb_source = thumbnails::generate_for_block(merged_block, vault);
-    if matches!(thumb_source, thumbnails::ThumbSource::None) && thumb_path.exists() {
-        let _ = std::fs::remove_file(&thumb_path);
-    }
-    let _ = index::sync_thumb_metadata(conn, &merged_block.slug, &thumb_path, Some(vault.root()));
+    reconcile_committed_preview(conn, vault, &merged_block.slug);
 
     for write in reference_writes {
-        let reference_thumb = vault.thumb_path(&write.block.slug);
-        let source = thumbnails::generate_for_block(&write.block, vault);
-        if matches!(source, thumbnails::ThumbSource::None) && reference_thumb.exists() {
-            let _ = std::fs::remove_file(&reference_thumb);
-        }
-        let _ = index::sync_thumb_metadata(
-            conn,
-            &write.block.slug,
-            &reference_thumb,
-            Some(vault.root()),
-        );
+        reconcile_committed_preview(conn, vault, &write.block.slug);
     }
     for source in sources {
         let source_thumb_path = vault.thumb_path(&source.block.slug);
@@ -1759,7 +1833,21 @@ fn apply_merge_blocks(
         }
     }
 
-    Ok(indexed)
+    index::get_block(conn, &merged_block.slug)
+        .map_err(internal_merge_error)?
+        .ok_or_else(|| {
+            internal_merge_error(anyhow::anyhow!(
+                "merged block '{}' missing from index after preview reconciliation",
+                merged_block.slug
+            ))
+        })
+}
+
+fn reconcile_committed_preview(conn: &rusqlite::Connection, vault: &VaultLayout, slug: &str) {
+    if let Err(error) = derived_preview::reconcile_preview_for_slug(conn, vault, slug) {
+        log::warn!("failed to reconcile committed preview for {slug}: {error:#}");
+    }
+    let _ = index::sync_thumb_metadata(conn, slug, &vault.thumb_path(slug), Some(vault.root()));
 }
 
 fn validate_merge_slugs(ordered_slugs: Vec<String>) -> Result<Vec<String>, MergeBlocksError> {
@@ -2116,7 +2204,7 @@ fn insert_delete_media(
                 .and_then(|name| name.to_str())
                 .unwrap_or(&root_relative)
                 .to_string(),
-            kind: delete_media_kind(&root_relative).to_string(),
+            kind: delete_media_kind(&root_relative),
             referenced_by: Vec::new(),
             absolute_path: path.to_path_buf(),
             slug_owned_primary,
@@ -2454,22 +2542,22 @@ fn is_deletable_media_path(root_relative: &str) -> bool {
     !ext.is_empty() && ext != "md"
 }
 
-fn delete_media_kind(root_relative: &str) -> &'static str {
+fn delete_media_kind(root_relative: &str) -> DeleteMediaAssetKind {
     let ext = Path::new(root_relative)
         .extension()
         .and_then(|ext| ext.to_str())
         .unwrap_or("")
         .to_lowercase();
     if thumbnails::is_image_ext(&ext) {
-        "image"
+        DeleteMediaAssetKind::Image
     } else if thumbnails::is_video_ext(&ext) {
-        "video"
+        DeleteMediaAssetKind::Video
     } else if matches!(ext.as_str(), "mp3" | "m4a" | "wav" | "aac" | "flac" | "ogg") {
-        "audio"
+        DeleteMediaAssetKind::Audio
     } else if ext == "pdf" {
-        "document"
+        DeleteMediaAssetKind::Document
     } else {
-        "file"
+        DeleteMediaAssetKind::File
     }
 }
 
@@ -2644,7 +2732,7 @@ fn prepare_delete_media_asset_inner(
             reason: "media reference must stay inside the vault".to_string(),
         }
     })?;
-    let media_kind = delete_media_kind(&media_ref).to_string();
+    let media_kind = delete_media_kind(&media_ref);
     let referenced_by = collect_media_asset_reference_blocks(vault, &media_path)?;
 
     Ok(DeleteMediaAssetPlan {
@@ -3756,7 +3844,9 @@ mod tests {
         persist_block(&conn, &vault, &first);
         persist_block(&conn, &vault, &second);
         persist_block(&conn, &vault, &external);
-        std::fs::write(vault.root().join("second.png"), b"image-bytes").unwrap();
+        image::RgbImage::from_pixel(8, 8, image::Rgb([24, 48, 72]))
+            .save(vault.root().join("second.png"))
+            .unwrap();
 
         let mutation = merge_blocks_inner(
             &state,
@@ -3798,15 +3888,66 @@ mod tests {
         assert!(!vault.block_path("First Card").exists());
         assert!(!vault.block_path("Second Image").exists());
         assert!(vault.block_path("First Card — merged").exists());
-        assert_eq!(
-            std::fs::read(vault.root().join("second.png")).unwrap(),
-            b"image-bytes"
+        assert!(
+            std::fs::metadata(vault.root().join("second.png"))
+                .unwrap()
+                .len()
+                > 0
         );
         assert!(index::get_block(&conn, "First Card").unwrap().is_none());
         assert!(index::get_block(&conn, "Second Image").unwrap().is_none());
+        let removed_source_states: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM source_index_state
+                 WHERE slug IN ('First Card', 'Second Image')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(removed_source_states, 0);
         assert!(index::get_block(&conn, "First Card — merged")
             .unwrap()
             .is_some());
+        let (preview_state, preview_source_stamp, source_stamp): (String, Option<String>, String) =
+            conn.query_row(
+                "SELECT b.preview_state, b.preview_source_stamp, source.source_stamp
+                 FROM blocks b
+                 JOIN source_index_state source ON source.slug = b.slug
+                 WHERE b.slug = 'First Card — merged'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(preview_state, "ready");
+        assert_eq!(preview_source_stamp.as_deref(), Some(source_stamp.as_str()));
+        let (external_preview_state, external_preview_stamp, external_source_stamp): (
+            String,
+            Option<String>,
+            String,
+        ) = conn
+            .query_row(
+                "SELECT b.preview_state, b.preview_source_stamp, source.source_stamp
+                 FROM blocks b
+                 JOIN source_index_state source ON source.slug = b.slug
+                 WHERE b.slug = 'External Note'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(external_preview_state, "ready");
+        assert_eq!(
+            external_preview_stamp.as_deref(),
+            Some(external_source_stamp.as_str())
+        );
+        let grid = index::list_grid_blocks(&conn, None, 0, 20).unwrap().0;
+        let merged_grid_block = grid
+            .iter()
+            .find(|block| block.slug == "First Card — merged")
+            .unwrap();
+        let manifest: index::FeedPreviewManifest =
+            serde_json::from_str(merged_grid_block.preview_manifest.as_deref().unwrap()).unwrap();
+        assert_eq!(manifest.kind, index::FeedPreviewKind::Image);
+        assert_eq!(manifest.tiles.len(), 1);
         let merged_content =
             std::fs::read_to_string(vault.block_path("First Card — merged")).unwrap();
         assert!(merged_content.contains("Mine Collections:\n  - \"[[notes]]\"\n  - \"[[visual]]\""));
@@ -3819,6 +3960,52 @@ mod tests {
         assert!(external_content.contains("[[First Card — merged|image card]]"));
         assert!(!external_content.contains("[[First Card#^alpha]]"));
         assert!(!external_content.contains("[[Second Image|image card]]"));
+    }
+
+    #[test]
+    fn merge_blocks_publishes_multi_image_preview_in_first_grid_snapshot() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let first = image("First Image", "first.png");
+        let second = image("Second Image", "second.png");
+        persist_block(&conn, &vault, &first);
+        persist_block(&conn, &vault, &second);
+        image::RgbImage::from_pixel(8, 8, image::Rgb([220, 32, 64]))
+            .save(vault.root().join("first.png"))
+            .unwrap();
+        image::RgbImage::from_pixel(12, 8, image::Rgb([32, 96, 220]))
+            .save(vault.root().join("second.png"))
+            .unwrap();
+
+        let mutation = merge_blocks_inner(
+            &state,
+            &conn,
+            &vault,
+            vec!["First Image".to_string(), "Second Image".to_string()],
+        )
+        .unwrap();
+
+        let grid = index::list_grid_blocks(&conn, None, 0, 20).unwrap().0;
+        let merged = grid
+            .iter()
+            .find(|block| block.slug == mutation.result.merged_slug)
+            .unwrap();
+        let manifest: index::FeedPreviewManifest =
+            serde_json::from_str(merged.preview_manifest.as_deref().unwrap()).unwrap();
+        assert_eq!(manifest.kind, index::FeedPreviewKind::Composite);
+        assert_eq!(
+            manifest
+                .tiles
+                .iter()
+                .map(|tile| tile.source_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first.png", "second.png"]
+        );
+        assert!(vault.thumb_path(&mutation.result.merged_slug).is_file());
+        for tile in &manifest.tiles {
+            let preview = tile.preview_path.as_deref().unwrap();
+            assert!(vault.thumbs_dir().join(preview).is_file());
+        }
     }
 
     #[test]
@@ -4196,7 +4383,7 @@ mod tests {
         let plan = prepare_delete_media_asset_inner(&vault, "photo.png".to_string()).unwrap();
 
         assert_eq!(plan.media_ref, "photo.png");
-        assert_eq!(plan.media_kind, "image");
+        assert_eq!(plan.media_kind, DeleteMediaAssetKind::Image);
         assert_eq!(plan.referenced_by.len(), 2);
         assert_eq!(plan.referenced_by[0].slug, "Photo Card");
         assert_eq!(

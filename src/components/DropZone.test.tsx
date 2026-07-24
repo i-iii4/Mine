@@ -72,6 +72,7 @@ describe("DropZone", () => {
       expect(mocks.createBlock).toHaveBeenCalledWith({
         block_type: "image",
         title: "example",
+        url: null,
         tags: ["Inbox"],
         file_path: "/tmp/example.png",
       });

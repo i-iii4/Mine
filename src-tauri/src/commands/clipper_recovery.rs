@@ -16,18 +16,24 @@ use crate::storage::{clipper_uploads, db, files, index, thumbnails};
 use crate::util::now_iso8601;
 use crate::watcher::handler;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipperRecoveryKind {
+    PendingUpload,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipperRecoveryItem {
     pub id: String,
-    pub kind: String,
+    pub kind: ClipperRecoveryKind,
     pub file_name: String,
     pub media_path: Option<String>,
     pub size: u64,
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RecoveredClipperBlock {
     pub slug: String,
@@ -62,7 +68,7 @@ fn list_recovery_items_for_vault(
     {
         items.push(ClipperRecoveryItem {
             id: pending.upload_id,
-            kind: "pending_upload".to_string(),
+            kind: ClipperRecoveryKind::PendingUpload,
             file_name: pending.original_filename,
             media_path: None,
             size: pending.size,

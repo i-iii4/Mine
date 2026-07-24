@@ -3,7 +3,7 @@
 // Modal navigation search: input header, result list with first-match
 // snippets on the left, a real read-only card preview of the active result on
 // the right. Reuses the existing hybrid-search backend contract
-// (`list_grid_blocks(query)` + `search_match`) and the standalone card
+// (`search_grid_blocks` + `search_match`) and the standalone card
 // renderer; owns no IPC beyond the debounced search request.
 
 import {
@@ -32,7 +32,7 @@ import {
   METADATA_VALUE_BASE_CLASSES,
 } from "@/components/MetadataRow";
 import { domainFromUrl, isSafeUrl, fallbackThumbsRoot } from "@/lib/assets";
-import { listGridBlocks } from "@/lib/commands";
+import { listGridBlocks, searchGridBlocks } from "@/lib/commands";
 import { normalizeSurfaceSearchQuery } from "@/lib/searchQuery";
 import { groupByRecency } from "@/lib/recencyBuckets";
 import { deriveSearchResultRow } from "@/lib/searchResultRow";
@@ -128,13 +128,11 @@ export function SearchOverlay({
     (searchQuery: string | null, options: { preserveActive: boolean }) => {
       const sequence = ++requestSequenceRef.current;
       const queryKey = searchQuery ?? "";
-      void listGridBlocks(
-        undefined,
-        0,
-        searchQuery === null ? SEARCH_OVERLAY_RECENT_LIMIT : SEARCH_OVERLAY_RESULT_LIMIT,
-        searchQuery ?? undefined,
-      )
-        .then((grid) => {
+      const request = searchQuery === null
+        ? listGridBlocks(undefined, 0, SEARCH_OVERLAY_RECENT_LIMIT)
+        : searchGridBlocks(undefined, searchQuery, SEARCH_OVERLAY_RESULT_LIMIT);
+      void request
+        .then((snapshot) => {
           if (requestSequenceRef.current !== sequence) return;
           setResults((previous) => {
             if (options.preserveActive) {
@@ -144,17 +142,17 @@ export function SearchOverlay({
               setActiveIndex((index) => {
                 const activeSlugBefore = previous?.[index]?.slug ?? null;
                 const followed = activeSlugBefore
-                  ? grid.blocks.findIndex((candidate) => candidate.slug === activeSlugBefore)
+                  ? snapshot.blocks.findIndex((candidate) => candidate.slug === activeSlugBefore)
                   : -1;
                 if (followed >= 0) return followed;
-                return Math.min(index, Math.max(0, grid.blocks.length - 1));
+                return Math.min(index, Math.max(0, snapshot.blocks.length - 1));
               });
             } else {
               setActiveIndex(0);
             }
-            return grid.blocks;
+            return snapshot.blocks;
           });
-          setResultHasMore(grid.has_more);
+          setResultHasMore(snapshot.has_more);
           setSettledQueryKey(queryKey);
         })
         .catch((error) => {

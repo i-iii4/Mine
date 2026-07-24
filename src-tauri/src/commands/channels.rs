@@ -15,7 +15,7 @@ use crate::domain::block::{
 use crate::domain::channel::Channel;
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
-use crate::storage::{db, files, index};
+use crate::storage::{db, files, index, projection};
 use crate::util::append_startup_trace;
 
 const SOURCE_MUTATION_WATCHER_SUPPRESSION_MS: u64 = 1500;
@@ -23,7 +23,7 @@ const SOURCE_MUTATION_WATCHER_SUPPRESSION_MS: u64 = 1500;
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /// Serializable channel data for the frontend.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct ChannelDto {
     pub tag: String,
     pub description: Option<String>,
@@ -49,8 +49,9 @@ impl ChannelDto {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct TaxonomySnapshot {
+    pub generation: projection::ProjectionRevision,
     pub tags: Vec<index::TagCount>,
     pub channels: Vec<ChannelDto>,
     pub total_blocks: usize,
@@ -92,11 +93,17 @@ pub async fn list_taxonomy_snapshot(
     let snapshot =
         tauri::async_runtime::spawn_blocking(move || -> Result<TaxonomySnapshot, CommandError> {
             let conn = db::open_read_only(&db_path)?;
-            Ok(TaxonomySnapshot {
-                tags: index::get_all_tags(&conn)?,
-                channels: load_channels(&conn)?,
-                total_blocks: index::count_grid_blocks(&conn)?,
-            })
+            Ok(projection::read_projection_snapshot(
+                &conn,
+                |conn, generation| {
+                    Ok(TaxonomySnapshot {
+                        generation,
+                        tags: index::get_all_tags(conn)?,
+                        channels: load_channels(conn)?,
+                        total_blocks: index::count_grid_blocks(conn)?,
+                    })
+                },
+            )?)
         })
         .await
         .map_err(|e| {
@@ -384,7 +391,7 @@ fn file_saved_at(path: &std::path::Path) -> DateTime {
 }
 
 /// Sidebar preview: slug + whether it's a text-only thumbnail (for dark mode invert).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct PreviewItem {
     pub slug: String,
     /// True for text-only articles (baked text thumbnail needs CSS invert in dark mode).
@@ -402,6 +409,12 @@ pub struct PreviewItem {
     pub has_thumb: bool,
 }
 
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ChannelPreviewsSnapshot {
+    pub generation: projection::ProjectionRevision,
+    pub previews: HashMap<String, Vec<PreviewItem>>,
+}
+
 /// Return preview items per channel for sidebar thumbnails.
 /// Includes `__all__` key for all blocks regardless of channel.
 /// Max `limit` thumbnails per channel.
@@ -410,40 +423,47 @@ pub async fn list_channel_previews(
     app: AppHandle,
     state: State<'_, AppState>,
     limit: usize,
-) -> Result<HashMap<String, Vec<PreviewItem>>, CommandError> {
+) -> Result<ChannelPreviewsSnapshot, CommandError> {
     let vault = current_vault_layout(&state)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
     let db_path = vault.index_db_path();
     tauri::async_runtime::spawn_blocking(
-        move || -> Result<HashMap<String, Vec<PreviewItem>>, CommandError> {
+        move || -> Result<ChannelPreviewsSnapshot, CommandError> {
             let conn = db::open_read_only(&db_path)?;
-            let tags = index::get_all_tags(&conn)?;
-            let all_previews = index::list_preview_blocks(&conn, limit)?;
-            let per_tag_previews = index::list_preview_blocks_by_tag(&conn, limit)?;
+            Ok(projection::read_projection_snapshot(
+                &conn,
+                |conn, generation| {
+                    let tags = index::get_all_tags(conn)?;
+                    let all_previews = index::list_preview_blocks(conn, limit)?;
+                    let per_tag_previews = index::list_preview_blocks_by_tag(conn, limit)?;
 
-            let to_item = |preview: &index::PreviewBlock| -> PreviewItem {
-                PreviewItem {
-                    slug: preview.slug.clone(),
-                    text: preview.thumb_format == Some(index::ThumbFormat::Png),
-                    mtime: preview.thumb_mtime,
-                    has_thumb: preview.thumb_format.is_some(),
-                }
-            };
+                    let to_item = |preview: &index::PreviewBlock| -> PreviewItem {
+                        PreviewItem {
+                            slug: preview.slug.clone(),
+                            text: preview.thumb_format == Some(index::ThumbFormat::Png),
+                            mtime: preview.thumb_mtime,
+                            has_thumb: preview.thumb_format.is_some(),
+                        }
+                    };
 
-            let mut result = HashMap::new();
-            let all_items: Vec<PreviewItem> = all_previews.iter().map(to_item).collect();
-            result.insert("__all__".to_string(), all_items);
+                    let mut previews = HashMap::new();
+                    previews.insert(
+                        "__all__".to_string(),
+                        all_previews.iter().map(to_item).collect(),
+                    );
+                    for (tag, items) in per_tag_previews {
+                        previews.insert(tag, items.iter().map(to_item).collect());
+                    }
+                    for tag in &tags {
+                        previews.entry(tag.tag.clone()).or_default();
+                    }
 
-            for (tag, previews) in per_tag_previews {
-                let items: Vec<PreviewItem> = previews.iter().map(to_item).collect();
-                result.insert(tag, items);
-            }
-
-            for tag in &tags {
-                result.entry(tag.tag.clone()).or_insert_with(Vec::new);
-            }
-
-            Ok(result)
+                    Ok(ChannelPreviewsSnapshot {
+                        generation,
+                        previews,
+                    })
+                },
+            )?)
         },
     )
     .await

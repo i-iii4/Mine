@@ -99,6 +99,22 @@ Every read-write `open_or_create` runs schema/trigger migration inside one
 connections wait on SQLite's busy timeout instead of interleaving
 `DROP TRIGGER` / `CREATE TRIGGER`; a failed migration rolls back before the
 connection is returned.
+
+### Versioned migration contract
+
+- `PRAGMA user_version` is the only authoritative schema version. The current
+  version is owned by `storage/migrations.rs`; `storage/db.rs` owns connection
+  pragmas and delegates all schema evolution to that module.
+- An unversioned legacy database is version `0`. Migrations run strictly in
+  sequence (`V0 -> V1 -> V2`) under one `BEGIN IMMEDIATE` transaction and
+  persist `user_version` after every successful step.
+- Every open validates required tables, typed columns, indexes, triggers and
+  singleton rows after migration. A future version or incompatible drift is an
+  explicit error; it is never interpreted as an already-applied migration.
+- No `ALTER TABLE` error may be discarded. On any migration or validation
+  failure the transaction rolls back, including the schema version update.
+- Upgrade tests cover fresh creation, representative unversioned data, V1
+  search data, malformed legacy schema, future versions and concurrent opens.
 `title` in the physical schema is legacy metadata. The body column carries
 Markdown H1 text, so search still sees new content headings without storing a
 generated `frontmatter.title`.
@@ -343,8 +359,10 @@ separate persisted `projection_generation` that identifies the exact committed
 state visible to route reads.
 
 ```rust
+struct ProjectionRevision(u64);
+
 struct GridSnapshot {
-    generation: u64,
+    generation: ProjectionRevision,
     blocks: Vec<LightBlock>,
     total_blocks: usize,
     has_more: bool,
@@ -355,7 +373,6 @@ fn read_grid_snapshot(
     tag: Option<&str>,
     offset: usize,
     limit: usize,
-    query: Option<&str>,
 ) -> Result<GridSnapshot>;
 ```
 
@@ -366,9 +383,11 @@ Rules:
   Insert/update/delete advances one monotonic SQLite generation inside the same
   transaction as that write. Multiple row writes in one source transaction may
   advance it more than once; only ordering and atomic visibility are semantic.
-- A route snapshot reads `generation`, rows, count and pagination state inside
-  one SQLite transaction. A concurrent writer is therefore observed either
-  entirely before or entirely after the snapshot, never between its fields.
+- Grid, taxonomy, sidebar previews and Graph expose the same typed
+  `ProjectionRevision`. Each DTO reads its revision and all dependent queries
+  through `read_projection_snapshot` inside one SQLite savepoint. A concurrent
+  writer is therefore observed either entirely before or entirely after the
+  snapshot, never between its fields.
 - A preview manifest is route-visible only when `preview_state = ready` and
   `preview_source_stamp` equals the current `source_index_state.source_stamp`
   for that slug. A legacy/nonmatching manifest remains stored for diagnosis or
@@ -379,8 +398,40 @@ Rules:
 - Generation zero is a valid empty/new database snapshot. Generation identity
   is scoped to one vault-derived database; changing vault remounts the frontend
   owner and resets its accepted generation.
-- Search and unfiltered Grid use the same `GridSnapshot` envelope and preview
-  publication predicate.
+- Search carries the same projection revision and preview publication
+  predicate, but has its own snapshot and independent search revision below.
+
+### Search revision and cursor contract
+
+```rust
+struct SearchRevision(u64);
+
+struct SearchPageToken {
+    projection_revision: ProjectionRevision,
+    search_revision: SearchRevision,
+    offset: usize,
+    query_fingerprint: String,
+}
+
+struct SearchSnapshot {
+    generation: ProjectionRevision,
+    search_generation: SearchRevision,
+    blocks: Vec<LightBlock>,
+    has_more: bool,
+    next_cursor: Option<SearchPageToken>,
+    cursor_reset: bool,
+}
+```
+
+- `search_state.revision` advances on inserts, updates and deletes in
+  `search_document_state`, `search_chunks` and `search_embeddings`; these
+  derived writes do not pretend to be source projection changes.
+- A page token is valid only when projection revision, search revision and the
+  fingerprint of collection plus query all still match. Any mismatch resets to
+  offset zero and returns `cursor_reset = true`.
+- `SearchSnapshot` is read after search-document synchronization under the
+  projection snapshot boundary, so ranking and pagination cannot silently mix
+  two search-index states.
 
 ## storage/derived_preview — completion contract
 
@@ -582,7 +633,7 @@ get_block(conn: &Connection, slug: &str) -> Result<Option<IndexedBlock>>
 list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>>
 list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>>
 list_grid_blocks(conn: &Connection, tag: Option<&str>, offset: usize, limit: usize) -> Result<(Vec<LightBlock>, bool)>
-list_grid_blocks_with_query(conn: &Connection, tag: Option<&str>, offset: usize, limit: usize, query: Option<&str>) -> Result<(Vec<LightBlock>, bool)>
+read_search_snapshot(conn: &Connection, tag: Option<&str>, query: &str, limit: usize, cursor: Option<&SearchPageToken>) -> Result<SearchSnapshot>
 list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlock>>
 get_all_tags(conn: &Connection) -> Result<Vec<TagCount>>
 slug_exists(conn: &Connection, slug: &str) -> Result<bool>
@@ -672,15 +723,18 @@ a normalized tag. Legacy normalized values are migration inputs only.
 ### Поведение Grid search
 
 Surface Search не возвращает отдельный `IndexedBlock` result set в frontend.
-Main/Grid search расширяет route-facing `list_grid_blocks`:
+Он использует отдельный route-facing `search_grid_blocks`, а обычный Grid
+остаётся на `list_grid_blocks` без query-параметра:
 
-- `query` пустой — текущий route path, `ORDER BY saved_at DESC`;
-- `query` непустой — `JOIN blocks_fts`, optional collection `JOIN block_tags`,
+- пустой overlay использует обычный vault-wide `list_grid_blocks` для recent;
+- непустой query идёт через `search_grid_blocks`, optional collection filter,
   `WHERE blocks_fts MATCH ?`;
 - ranking: `ORDER BY bm25(blocks_fts, 8.0, 3.0, 1.0) ASC, b.saved_at DESC`;
 - projection остаётся lightweight `LightBlock`, без полного body payload для
   media cards и без per-block tags;
 - search excerpt/highlight metadata строится только для возвращаемых rows;
+- pagination uses `SearchPageToken`; raw offsets are not accepted for a
+  continued search page;
 - FTS columns: `title` = `display_title` + legacy `title` + `fallback_label`,
   `description`, `body`.
 - derived `search_chunks` дополнительно содержат searchable metadata fields:

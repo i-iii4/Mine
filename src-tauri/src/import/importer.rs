@@ -18,7 +18,7 @@ use crate::storage::{index, thumbnails};
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 /// Result of importing a single channel.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct ImportChannelResult {
     pub channel_slug: String,
     pub channel_title: String,
@@ -28,7 +28,7 @@ pub struct ImportChannelResult {
 }
 
 /// Progress update for a single block import.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct ImportProgress {
     pub channel_slug: String,
     pub current: usize,

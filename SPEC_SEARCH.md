@@ -54,8 +54,8 @@ under vague semantic-neighbor results.
 contract lives in [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md). Key points
 owned here:
 
-- the overlay calls the same route-facing backend command
-  (`list_grid_blocks(query)`) vault-wide (`currentTag` is not passed) and
+- the overlay calls the dedicated route-facing backend command
+  (`search_grid_blocks`) vault-wide (`currentTag` is not passed) and
   renders `LightBlock` + `search_match` per the Match Metadata / Card Rendering
   rules below;
 - the Grid is never filtered by a search query: overlay results live in
@@ -191,33 +191,37 @@ use the physical `KeyboardEvent.code === "KeyF"` path in addition to the Latin
 
 ## Backend Read Model
 
-Main search is implemented by extending the existing route-facing Grid read
-command, not by restoring the removed global `search()` frontend surface.
+Main search uses a dedicated route-facing `search_grid_blocks` snapshot, not
+the normal Grid command and not the removed global `search()` frontend surface.
 
 ```ts
-interface ListGridBlocksParams {
+interface SearchGridBlocksParams {
   currentTag?: string;
-  offset: number;
   limit: number;
-  query?: string;
+  query: string;
+  cursor?: SearchPageToken;
 }
 
-interface GridSnapshot {
+interface SearchSnapshot {
+  generation: ProjectionRevision;
+  search_generation: SearchRevision;
   blocks: LightBlock[];
-  total_blocks: number;
   has_more: boolean;
+  next_cursor: SearchPageToken | null;
+  cursor_reset: boolean;
 }
 ```
 
-If `query` is empty, `list_grid_blocks` keeps the current SQL path:
+If `query` is empty, Search Overlay recent mode uses vault-wide
+`list_grid_blocks` and keeps the normal SQL path:
 
 - filter out channel documents;
 - optional `block_tags` filter for `currentTag`;
 - `ORDER BY saved_at DESC`;
 - `LIMIT limit + 1 OFFSET offset`.
 
-If `query` is non-empty, `list_grid_blocks` switches to the backend
-`SearchEngine` path:
+If `query` is non-empty, `search_grid_blocks` uses the backend `SearchEngine`
+path:
 
 - sync normalized derived `search_chunks` for changed indexed blocks;
 - run lexical FTS5 over `blocks_fts`;
@@ -249,13 +253,13 @@ The lexical layer still uses SQLite FTS5. The route-facing backend is a local
 | Semantic vector index | Cross-language and meaning-based recall | Russian query can retrieve English content by meaning without literal overlap |
 | Fusion/rerank | Combine evidence into one ordered Grid | Exact lexical trust is preserved while semantic recall improves discovery |
 
-The frontend continues to call one route-facing search command. It must not know
+The frontend calls one route-facing search command for non-empty queries. It must not know
 whether a result came from FTS5, Tantivy, aliases or vector search except through
 explicit match metadata.
 
 Implemented behavior:
 
-- `list_grid_blocks(..., query)` delegates non-empty queries to the backend
+- `search_grid_blocks(...)` delegates non-empty queries to the backend
   `SearchEngine` boundary;
 - lexical retrieval still uses SQLite FTS5 with prefix terms;
 - query planning refuses stopword-filtered queries shorter than 2 alphanumeric
@@ -472,12 +476,19 @@ App owns:
 - per-route normal snapshot cache (route-keyed only — search never touches it).
 
 Overlay search requests are owned by the overlay component: a debounced
-`list_grid_blocks(undefined, 0, limit, query)` call with a request sequence.
+`search_grid_blocks(undefined, query, limit, cursor)` call with a request
+sequence. A continued page uses only the opaque cursor returned by the previous
+`SearchSnapshot`; it never invents an offset.
 Search results are never applied if:
 
 - the query changed after request start;
 - a newer request sequence completed first;
 - the overlay closed.
+
+Every search response carries both `ProjectionRevision` and `SearchRevision`.
+If either changed, or the cursor query fingerprint differs, backend returns a
+reset snapshot from offset zero; frontend replaces the result set and never
+combines ranking pages from different revisions.
 
 Debounce: `100ms`. It is short enough to feel live while avoiding one IPC
 request per key repeat.

@@ -1,3 +1,9 @@
 [workspace]
 members = ["src-tauri", "core-ffi"]
 resolver = "2"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"

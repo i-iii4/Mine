@@ -8,7 +8,15 @@ React 19 + TypeScript + TailwindCSS v4 фронтенд для Mine. Работ�
 
 ## TypeScript types
 
-Типы определяются вручную и соответствуют `Serialize`-выводу Rust-структур.
+Backend DTO и типизированные ошибки генерируются из Rust/Specta в committed
+`src/types/generated.ts`. `src/types/index.ts` только реэкспортирует generated
+контракт и объявляет действительно frontend-owned interaction/view types.
+`bun run bindings:generate` обновляет файл, а `bun run bindings:check` и
+`verify:core` запрещают drift между Rust и TypeScript. Примеры ниже описывают
+форму generated типов, но не являются вторым ручным источником правды.
+Generic `CommandError` сериализуется tagged union и нормализуется единым IPC
+adapter в читаемый JavaScript `Error`; feature-specific tagged errors проходят
+без потери `kind` к соответствующим UI handlers.
 
 ### IndexedBlock
 
@@ -1095,8 +1103,9 @@ Image media expansion:
   `KeyboardEvent.code === "KeyF"` плюс Latin `key === "f"`.
 - `Cmd+K` не участвует в поиске; он остаётся scoped shortcut для card/Detail
   overflow menus.
-- Main/Grid search вызывает route-facing `list_grid_blocks` с query, получает
-  тот же `GridSnapshot`, но отфильтрованный и отсортированный по релевантности.
+- Search Overlay вызывает `search_grid_blocks` для непустого query и получает
+  `SearchSnapshot`; обычный Grid и recent-режим используют `list_grid_blocks`
+  без query-параметра, поэтому поиск не может изменить route snapshot под ним.
 - `GridSnapshot.generation` is the persisted SQLite projection generation, not
   a request counter or layout key. `App` accepts generations monotonically for
   the mounted vault. An older route/cache response cannot replace a newer one.
@@ -1107,6 +1116,15 @@ Image media expansion:
   atomic IPC envelope. Preview batches update Grid only through a newer full
   snapshot; UI code never patches a ready manifest into rows from another
   generation.
+- Taxonomy, sidebar previews and Graph carry the same `ProjectionRevision`.
+  `useProjectionRevisionOwner` is the single mounted-vault owner for all four
+  surfaces: it accepts revisions monotonically per surface and resets only
+  when vault identity changes. Components do not implement independent stale
+  response rules.
+- `SearchSnapshot` additionally carries `SearchRevision` and an opaque next
+  cursor. The cursor binds projection revision, search revision and query
+  fingerprint; a reset response replaces results from offset zero instead of
+  appending incompatible ranking generations.
   Frontend не знает, какой backend дал результат: FTS5, alias/transliteration,
   fuzzy или semantic. Разница видна только через `search_match.kind`.
 - Article-derived feed cards в search mode получают optional `search_match`,

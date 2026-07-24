@@ -459,7 +459,7 @@ fn capture_snapshot(
     }
 
     let grid_count = index::count_grid_blocks(conn)?;
-    let grid_snapshot = projection::read_grid_snapshot(conn, None, 0, grid_count.max(1), None)?;
+    let grid_snapshot = projection::read_grid_snapshot(conn, None, 0, grid_count.max(1))?;
     if grid_snapshot.has_more || grid_snapshot.blocks.len() != grid_count {
         bail!(
             "Grid projection is incomplete: rows={}, count={}, has_more={has_more}",

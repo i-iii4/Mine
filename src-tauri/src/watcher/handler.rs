@@ -85,7 +85,7 @@ struct ArticleAudioUpdatedPayload {
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /// Result of a full vault scan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct ScanResult {
     /// Number of blocks successfully indexed.
     pub indexed: usize,

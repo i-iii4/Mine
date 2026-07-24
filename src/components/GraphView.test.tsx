@@ -265,6 +265,7 @@ function makeSnapshotFromNodes(
   overrides: Partial<GraphSnapshot> = {},
 ): GraphSnapshot {
   return {
+    generation: 1,
     nodes,
     links: [],
     total_cards: nodes.filter((node) => node.kind === "card").length,
@@ -393,6 +394,18 @@ describe("GraphView", () => {
     graphMethodMocks.zoomToFit.mockReset();
     graphMethodMocks.d3ReheatSimulation.mockReset();
     graphMethodMocks.centerAt.mockReset();
+  });
+
+  it("does not publish a graph snapshot rejected by the projection owner", async () => {
+    const acceptSnapshotRevision = vi.fn(() => false);
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshot(
+      graphCardNode("stale-card", "Stale card"),
+    ));
+
+    renderGraph({ acceptSnapshotRevision });
+
+    await waitFor(() => expect(acceptSnapshotRevision).toHaveBeenCalledWith(1));
+    expect(screen.queryByRole("button", { name: "Stale card" })).not.toBeInTheDocument();
   });
 
   it("opens the block on card node left click", async () => {

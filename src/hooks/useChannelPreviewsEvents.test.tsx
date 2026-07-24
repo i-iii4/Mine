@@ -1,8 +1,12 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listChannelPreviews } from "@/lib/commands";
-import type { PreviewItem } from "@/types";
+import type { ChannelPreviewsSnapshot } from "@/types";
 import { useChannelPreviewsEvents } from "./useChannelPreviewsEvents";
+import {
+  createProjectionRevisionOwner,
+  type ProjectionRevisionOwner,
+} from "./useProjectionRevisionOwner";
 
 vi.mock("@/lib/commands", () => ({
   listChannelPreviews: vi.fn(),
@@ -16,10 +20,17 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function Probe({ thumbsRootPath }: { thumbsRootPath: string | null }) {
+function Probe({
+  thumbsRootPath,
+  revisionOwner,
+}: {
+  thumbsRootPath: string | null;
+  revisionOwner?: ProjectionRevisionOwner;
+}) {
   const { channelPreviews } = useChannelPreviewsEvents({
     thumbsRootPath,
     limit: 20,
+    revisionOwner,
   });
   return (
     <output data-testid="previews">
@@ -34,8 +45,8 @@ describe("useChannelPreviewsEvents", () => {
   });
 
   it("ignores stale preview snapshots from a previous thumbs root", async () => {
-    const oldSnapshot = deferred<Record<string, PreviewItem[]>>();
-    const newSnapshot = deferred<Record<string, PreviewItem[]>>();
+    const oldSnapshot = deferred<ChannelPreviewsSnapshot>();
+    const newSnapshot = deferred<ChannelPreviewsSnapshot>();
     const listChannelPreviewsMock = vi.mocked(listChannelPreviews);
     listChannelPreviewsMock
       .mockReturnValueOnce(oldSnapshot.promise)
@@ -49,8 +60,11 @@ describe("useChannelPreviewsEvents", () => {
 
     await act(async () => {
       newSnapshot.resolve({
-        "__all__": [{ slug: "new-all", text: false, mtime: 2, has_thumb: true }],
-        "new-channel": [{ slug: "new-card", text: false, mtime: 2, has_thumb: true }],
+        generation: 2,
+        previews: {
+          "__all__": [{ slug: "new-all", text: false, mtime: 2, has_thumb: true }],
+          "new-channel": [{ slug: "new-card", text: false, mtime: 2, has_thumb: true }],
+        },
       });
       await newSnapshot.promise;
     });
@@ -61,8 +75,11 @@ describe("useChannelPreviewsEvents", () => {
 
     await act(async () => {
       oldSnapshot.resolve({
-        "__all__": [{ slug: "old-all", text: false, mtime: 1, has_thumb: true }],
-        "old-channel": [{ slug: "old-card", text: false, mtime: 1, has_thumb: true }],
+        generation: 1,
+        previews: {
+          "__all__": [{ slug: "old-all", text: false, mtime: 1, has_thumb: true }],
+          "old-channel": [{ slug: "old-card", text: false, mtime: 1, has_thumb: true }],
+        },
       });
       await oldSnapshot.promise;
     });
@@ -75,11 +92,17 @@ describe("useChannelPreviewsEvents", () => {
     const listChannelPreviewsMock = vi.mocked(listChannelPreviews);
     listChannelPreviewsMock
       .mockResolvedValueOnce({
-        "__all__": [{ slug: "old-all", text: false, mtime: 1, has_thumb: true }],
+        generation: 1,
+        previews: {
+          "__all__": [{ slug: "old-all", text: false, mtime: 1, has_thumb: true }],
+        },
       })
       .mockResolvedValueOnce({
-        "__all__": [{ slug: "new-all", text: false, mtime: 2, has_thumb: true }],
-        "new-channel": [{ slug: "new-card", text: false, mtime: 2, has_thumb: true }],
+        generation: 2,
+        previews: {
+          "__all__": [{ slug: "new-all", text: false, mtime: 2, has_thumb: true }],
+          "new-channel": [{ slug: "new-card", text: false, mtime: 2, has_thumb: true }],
+        },
       });
 
     render(<Probe thumbsRootPath="/thumbs" />);
@@ -97,5 +120,21 @@ describe("useChannelPreviewsEvents", () => {
       expect(listChannelPreviewsMock).toHaveBeenCalledTimes(2);
       expect(screen.getByTestId("previews")).toHaveTextContent("new-channel");
     });
+  });
+
+  it("does not publish a snapshot older than the vault projection owner", async () => {
+    const owner = createProjectionRevisionOwner();
+    owner.accept("sidebar-previews", 5);
+    vi.mocked(listChannelPreviews).mockResolvedValue({
+      generation: 4,
+      previews: {
+        "__all__": [{ slug: "stale", text: false, mtime: 1, has_thumb: true }],
+      },
+    });
+
+    render(<Probe thumbsRootPath="/thumbs" revisionOwner={owner} />);
+
+    await waitFor(() => expect(listChannelPreviews).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("previews")).not.toHaveTextContent("stale");
   });
 });

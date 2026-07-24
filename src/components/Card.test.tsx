@@ -616,8 +616,11 @@ describe("Card", () => {
       height: 2578,
       media_dimensions: "{\"wide-screenshot.jpg\":[2880,980]}",
     });
-    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const { container } = render(
+      <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
+    );
     expect(screen.getByRole("img")).toHaveClass("object-cover");
+    expect(container.querySelector("[data-card-graphic-surface]")).toHaveClass("h-full");
   });
 
   it("renders the broken-image surface after the derived preview fails", () => {

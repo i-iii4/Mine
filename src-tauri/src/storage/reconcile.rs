@@ -313,6 +313,30 @@ pub fn reconcile_vault(
     })
 }
 
+/// Project one already-committed Markdown source and its dependency stamp.
+///
+/// In-app source mutations use this helper inside their SQLite transaction so
+/// route visibility does not wait for a later watcher or full-vault catch-up.
+pub fn project_source_path(conn: &Connection, vault: &VaultLayout, path: &Path) -> Result<Block> {
+    let markdown_stamp = FileStamp::read(path)
+        .with_context(|| format!("read source metadata for {}", path.display()))?;
+    let source = prepare_source(vault, path, markdown_stamp, false)
+        .map_err(|error| anyhow::anyhow!("prepare source {}: {}", path.display(), error.message))?;
+    apply_prepared_source(conn, vault, &source)?;
+    Ok(source.block)
+}
+
+/// Remove every projection row owned by a deleted Markdown source.
+///
+/// This is nestable inside a larger source mutation transaction.
+pub fn remove_source_projection(conn: &Connection, slug: &str) -> Result<()> {
+    index::remove_block(conn, slug).with_context(|| format!("remove stale block {slug}"))?;
+    index::remove_channel(conn, slug).with_context(|| format!("remove stale channel {slug}"))?;
+    conn.execute("DELETE FROM source_index_state WHERE slug = ?1", [slug])
+        .with_context(|| format!("remove stale source state {slug}"))?;
+    Ok(())
+}
+
 fn prepare_source(
     vault: &VaultLayout,
     path: &Path,

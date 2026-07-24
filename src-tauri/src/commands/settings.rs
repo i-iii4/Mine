@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use unicode_normalization::UnicodeNormalization;
 
@@ -159,7 +159,7 @@ pub fn reorder_known_vaults(
 
 // ─── Space stats ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct SpaceStats {
     pub file_count: u64,
     pub markdown_count: u64,
@@ -270,23 +270,28 @@ pub fn space_stats(app: AppHandle, path: String) -> Result<SpaceStats, CommandEr
 
 // ─── Orphan media ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct OrphanMedia {
     pub file_name: String,
     pub size_bytes: u64,
     pub modified_secs: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct PromoteOrphanResult {
     pub created: Vec<index::IndexedBlock>,
     pub skipped: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct DeleteOrphanResult {
     pub deleted: Vec<String>,
     pub skipped: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
+pub struct OrphanMediaBatchRequest {
+    pub file_names: Vec<String>,
 }
 
 fn nfc(value: &str) -> String {
@@ -502,14 +507,14 @@ pub(crate) fn promote_orphan_media_inner(
 #[tauri::command]
 pub fn promote_orphan_media(
     state: State<'_, AppState>,
-    file_names: Vec<String>,
+    request: OrphanMediaBatchRequest,
 ) -> Result<PromoteOrphanResult, CommandError> {
     let vault_state = state
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    promote_orphan_media_inner(vs, file_names)
+    promote_orphan_media_inner(vs, request.file_names)
 }
 
 pub(crate) fn delete_orphan_media_inner(
@@ -541,14 +546,14 @@ pub(crate) fn delete_orphan_media_inner(
 #[tauri::command]
 pub fn delete_orphan_media(
     state: State<'_, AppState>,
-    file_names: Vec<String>,
+    request: OrphanMediaBatchRequest,
 ) -> Result<DeleteOrphanResult, CommandError> {
     let vault_state = state
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    delete_orphan_media_inner(vs, file_names)
+    delete_orphan_media_inner(vs, request.file_names)
 }
 
 #[cfg(test)]

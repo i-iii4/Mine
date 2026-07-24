@@ -268,9 +268,15 @@ enum CommandError {
 
 ```rust
 #[tauri::command] list_blocks(state) -> Result<Vec<IndexedBlock>, CommandError>
-#[tauri::command] list_grid_blocks(state, current_tag: Option<String>, offset: Option<usize>, limit: Option<usize>, query: Option<String>) -> Result<GridSnapshot, CommandError>
+#[tauri::command] list_grid_blocks(state, current_tag: Option<String>, offset: Option<usize>, limit: Option<usize>) -> Result<GridSnapshot, CommandError>
 #[tauri::command] get_block(state, slug: String) -> Result<Option<IndexedBlock>, CommandError>
-#[tauri::command] create_block(state, ...) -> Result<IndexedBlock, CommandError>
+#[tauri::command] create_block(state, params: CreateBlockParams) -> Result<IndexedBlock, CommandError>
+#[tauri::command] extract_inline_media(state, params: ExtractInlineMediaParams) -> Result<IndexedBlock, InlineMediaExtractError>
+#[tauri::command] create_media_asset_card(state, params: CreateMediaAssetCardParams) -> Result<IndexedBlock, MediaAssetActionError>
+#[tauri::command] rename_media_asset(state, params: RenameMediaAssetParams) -> Result<MediaAssetMutationResult, MediaAssetActionError>
+#[tauri::command] remove_media_asset_from_card(state, params: RemoveMediaAssetFromCardParams) -> Result<MediaAssetMutationResult, MediaAssetActionError>
+#[tauri::command] extract_text_selection(state, params: ExtractTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError>
+#[tauri::command] delete_text_selection(state, params: DeleteTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError>
 #[tauri::command] extract_text_selection(state, ...) -> Result<IndexedBlock, TextSelectionExtractError>
 #[tauri::command] prepare_delete_block(state, slug: String) -> Result<DeleteBlockPlan, CommandError>
 #[tauri::command] delete_block(state, slug: String, delete_unused_media: Option<bool>) -> Result<bool, CommandError>
@@ -466,16 +472,33 @@ Boundary:
 
 ```rust
 #[tauri::command] search(state, query: String) -> Result<Vec<IndexedBlock>, CommandError>
+#[tauri::command] search_grid_blocks(state, current_tag: Option<String>, query: String, limit: Option<usize>, cursor: Option<SearchPageToken>) -> Result<SearchSnapshot, CommandError>
 ```
 
 Делегирует в `domain::search::parse_search_query` → `storage::index::search_blocks`.
 Это legacy/backend utility command. Новый пользовательский Surface Search не
 должен восстанавливать отдельный Search frontend или `Cmd+K` command palette:
-Main/Grid search идёт через `list_grid_blocks(..., query)` и возвращает
-`GridSnapshot`, чтобы текущий Grid route фильтровался in place. Hybrid Search
-остаётся за тем же command boundary: lexical/alias/fuzzy/semantic retrieval и
+Search Overlay идёт через `search_grid_blocks` и возвращает `SearchSnapshot`,
+не изменяя обычный Grid route. Snapshot содержит `ProjectionRevision`,
+независимый `SearchRevision` и opaque pagination cursor. Hybrid Search остаётся
+за тем же command boundary: lexical/alias/fuzzy/semantic retrieval и
 fusion/rerank реализуются внутри backend SearchEngine, без нового frontend route
-или отдельной command palette.
+или отдельной command palette. Cursor, чей projection/search revision или
+query fingerprint устарел, сбрасывается на offset zero.
+
+## Generated IPC contract
+
+- Сериализуемые request/response DTO и ошибки выводятся из Rust через Specta и
+  генерируются в committed `src/types/generated.ts`.
+- `src/types/index.ts` не дублирует backend shapes вручную; там остаются только
+  frontend-owned view/interaction types.
+- Generic `CommandError` является generated tagged union (`no_vault |
+  internal`), а не строкой. Общий frontend invoke adapter сохраняет прежний
+  readable `Error` UX; feature-specific errors bypass adapter normalization и
+  сохраняют discriminant.
+- `bun run bindings:check` входит в `verify:core` и падает при любом diff, так
+  что изменение Rust DTO нельзя отправить без соответствующего TypeScript
+  контракта.
 
 ---
 

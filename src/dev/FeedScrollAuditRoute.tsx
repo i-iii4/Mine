@@ -89,7 +89,7 @@ function makeAuditBlock(index: number): LightBlock {
     title: metadataOnlyLink ? `AI 2027 link ${index + 1}` : `Feed scroll audit ${index + 1}`,
     content_heading: null,
     display_title: null,
-    fallback_label: null,
+    fallback_label: metadataOnlyLink ? `AI 2027 link ${index + 1}` : `Feed scroll audit ${index + 1}`,
     url: `https://example.test/feed-scroll-audit/${id}`,
     media_file: null,
     thumbnail: null,

@@ -21,7 +21,7 @@ pub struct SourceVaultFileStats {
     pub source_bytes: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultStats {
     pub total_file_count: u64,
