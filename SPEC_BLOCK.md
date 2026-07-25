@@ -258,17 +258,21 @@ fn serialize_block(block: &Block) -> String
 - Формат: `---\n<yaml>\n---\n<body>` (если body непустое) или `---\n<yaml>\n---\n` (если пустое)
 - Гарантия: `parse_block(slug, &serialize_block(block)) == Ok(block)` (roundtrip)
 
-### extract_wikilinks
+### extract_note_wikilinks
 
-Извлекает `[[wikilinks]]` из тела блока.
+Извлекает только plain note links `[[note]]` из тела блока. Media embeds
+`![[file]]` принадлежат отдельному inline-media parser и не являются
+block-to-block graph relations.
 
 ```rust
-fn extract_wikilinks(body: &str) -> Vec<String>
+fn extract_note_wikilinks(body: &str) -> Vec<String>
 ```
 
 **Поведение:**
 - `"text [[foo]] more [[bar]]"` → `["foo", "bar"]`
-- `"![[image.png]]"` → `["image.png"]` (embed — тоже wikilink)
+- `"![[image.png]]"` → `[]`
+- `"[[note#^block-id|Label]]"` → `["note#^block-id|Label"]`
+- `"[[note]] ![[image #1.jpg|Caption]]"` → `["note"]`
 - `"[[]]"` → пустой vec (пустой wikilink игнорируется)
 - `"[[ spaces ]]"` → `["spaces"]` (пробелы по краям обрезаются)
 - `"no links here"` → `[]`

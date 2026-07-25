@@ -29,12 +29,6 @@ export type GraphCardMenuPoint = {
   y: number;
 };
 
-export type GraphToggleOption =
-  | "include_collections"
-  | "include_wikilinks"
-  | "include_related_notes"
-  | "include_unresolved";
-
 export type GraphPalette = {
   cardFill: string;
   linkDefault: string;
@@ -79,8 +73,6 @@ export const GRAPH_PREVIEW_WIDTH = 240;
 export const GRAPH_PREVIEW_FALLBACK_HEIGHT = 320;
 export const GRAPH_PREVIEW_GAP = 8;
 export const GRAPH_PREVIEW_VIEWPORT_MARGIN = 16;
-export const GRAPH_SEARCH_DIMMED_ALPHA = 0.15;
-export const GRAPH_BACKEND_SEARCH_DELAY_MS = 120;
 export const GRAPH_CENTER_MARGIN = 48;
 export const GRAPH_CENTER_DURATION_MS = 400;
 export const GRAPH_INITIAL_FIT_TICKS = 18;

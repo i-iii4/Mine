@@ -518,13 +518,17 @@ iOS UI contract:
   switch это может быть pending state предыдущего snapshot.
 - Graph View добавляет отдельный route-facing read model `GraphSnapshot` вместо
   попытки строить связи из `LightBlock[]` на фронтенде. M1 projection собирает
-  из SQLite card/collection/unresolved nodes и
+  из SQLite card/collection nodes и
   collection-membership/wikilink/related-note edges, сохраняет provenance,
-  direction и duplicate count, а adjacency map обслуживает `current_route`,
-  `library` и 1/2-hop `ego` scopes без O(V x E) обхода. Backend также владеет
-  large-vault truncation и query materialization; Canvas владеет одним слоем
-  paint/hit-test/physics, controls/search/selection и Detail используют тот же
-  snapshot state. Полный контракт: [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
+  direction и duplicate count. Route автоматически выбирает `current_route`
+  для коллекции или `library` для Everything; пользовательского scope switcher
+  и graph-local search нет. Backend владеет large-vault truncation, Canvas —
+  одним слоем paint/hit-test/physics/selection, а три relation-layer preference
+  приходят из общего Settings через один `mine.graphPreferences` контракт.
+  `wikilinks` содержит только plain note links; media embeds остаются в media
+  pipeline, а отсутствующие targets не материализуются как узлы или edges.
+  Полный контракт:
+  [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
 - `bun run verify` является self-contained gate: один orchestration script
   резервирует свободный localhost port, поднимает Vite, запускает Feed и Graph
   Playwright audits, затем завершает audit/server process groups при success,
@@ -1446,9 +1450,11 @@ without changing graph node/link styling. Full contract:
 M1 implementation keeps card thumbnails and collection pills in the same Canvas
 coordinate system, uses rectangular collection collision with a 2px screen-space
 gap, and keeps hover visual-only. It adds directed wikilink/related-note edges,
-optional unresolved targets, route/library/ego scopes, edge toggles, local plus
-backend-materialized search, one pointer/keyboard selected-node state,
-Detail-aware conditional centering and an `aria-live` status. Initial
+real-target-only projection, automatic route/library scope, one
+pointer/keyboard selected-node state, Detail-aware conditional centering and an
+`aria-live` status. Graph-local search, scope controls and the settings trigger
+were removed; Collections/Wikilinks/Related notes are persisted only in the
+common Settings window. Initial
 `zoomToFit` waits for measured dimensions and 18 engine ticks; later resize
 updates Canvas dimensions without reheating or refitting. `bun run test:graph`
 is the dark/light real-browser pixel, hover, resize, request and interaction

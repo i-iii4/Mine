@@ -75,15 +75,15 @@ export type GraphLink = { id: string; kind: GraphLinkKind; source: string; targe
 
 export type GraphLinkKind = "collection_membership" | "wikilink" | "related_note"
 
-export type GraphNode = { id: string; kind: GraphNodeKind; label: string; slug: string | null; collection_ref: string | null; unresolved_ref: string | null; card_kind: CardKind | null; block_type: BlockType | null; thumbnail: string | null; preview_manifest: string | null; degree: number }
+export type GraphNode = { id: string; kind: GraphNodeKind; label: string; slug: string | null; collection_ref: string | null; card_kind: CardKind | null; block_type: BlockType | null; thumbnail: string | null; preview_manifest: string | null; degree: number }
 
-export type GraphNodeKind = "card" | "collection" | "unresolved"
+export type GraphNodeKind = "card" | "collection"
 
-export type GraphOptions = { include_collections: boolean; include_wikilinks: boolean; include_related_notes: boolean; include_unresolved: boolean; materialize_large_library: boolean; query: string | null }
+export type GraphOptions = { include_collections: boolean; include_wikilinks: boolean; include_related_notes: boolean; materialize_large_library: boolean }
 
-export type GraphScope = { kind: GraphScopeKind; collection_ref: string | null; center_slug: string | null; hops: number }
+export type GraphScope = { kind: GraphScopeKind; collection_ref: string | null }
 
-export type GraphScopeKind = "current_route" | "library" | "ego"
+export type GraphScopeKind = "current_route" | "library"
 
 export type GraphSnapshot = { generation: ProjectionRevision; nodes: GraphNode[]; links: GraphLink[]; total_cards: number; total_collections: number; current_collection: string | null; truncated: boolean; truncation_reason: GraphTruncationReason | null; can_materialize_full: boolean; visible_nodes: number; visible_links: number; total_nodes: number; total_links: number }
 

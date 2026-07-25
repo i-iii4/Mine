@@ -147,7 +147,7 @@ local-arena/
 │   ├── App.tsx                 # Корневой компонент + роутинг
 │   ├── components/
 │   │   ├── Grid.tsx            # Masonry-сетка с чанковым рендерингом (IntersectionObserver)
-│   │   ├── GraphView.tsx       # Graph M1: Canvas nodes/edges, scopes/search, selection/a11y
+│   │   ├── GraphView.tsx       # Graph M1: Canvas nodes/edges, route-derived scope, selection/a11y
 │   │   ├── graph/              # Canvas paint, physics, contracts, interactions
 │   │   ├── grid/               # Grid interaction geometry/controllers
 │   │   ├── MainSecondaryChrome.tsx # Main route secondary chrome

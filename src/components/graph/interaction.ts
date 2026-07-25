@@ -76,44 +76,6 @@ function graphDirectionVector(direction: GraphArrowKey): { x: number; y: number 
   }
 }
 
-export function normalizeGraphSearch(query: string): { value: string; alphanumericCount: number } {
-  const value = query.trim().toLocaleLowerCase();
-  return {
-    value,
-    alphanumericCount: Array.from(value).filter((character) => /[\p{L}\p{N}]/u.test(character))
-      .length,
-  };
-}
-
-export function graphNodeMatchesSearch(node: GraphCanvasNode, query: string): boolean {
-  return [node.label, node.slug, node.collection_ref, node.unresolved_ref]
-    .some((value) => value?.toLocaleLowerCase().includes(query));
-}
-
-export function graphEndpointId(endpoint: string | GraphCanvasNode): string | null {
-  if (typeof endpoint === "string") return endpoint;
-  return endpoint.id ?? null;
-}
-
-export function canvasColorWithAlpha(color: string, alpha: number): string {
-  const hex = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)?.[1];
-  if (hex) {
-    const expanded = hex.length === 3
-      ? hex.split("").map((digit) => `${digit}${digit}`).join("")
-      : hex;
-    const red = Number.parseInt(expanded.slice(0, 2), 16);
-    const green = Number.parseInt(expanded.slice(2, 4), 16);
-    const blue = Number.parseInt(expanded.slice(4, 6), 16);
-    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
-  }
-
-  const rgb = color.match(
-    /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*[\d.]+)?\s*\)$/i,
-  );
-  if (!rgb) return color;
-  return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})`;
-}
-
 export function hasNodePosition(node: GraphCanvasNode): node is PositionedGraphCanvasNode {
   return Number.isFinite(node.x) && Number.isFinite(node.y);
 }

@@ -293,7 +293,6 @@ function graphCardNode(
     label,
     slug,
     collection_ref: null,
-    unresolved_ref: null,
     card_kind: "article",
     block_type: "article",
     thumbnail: null,
@@ -313,6 +312,11 @@ function renderGraph(props: Partial<Parameters<typeof GraphView>[0]> = {}) {
       vaultPath="/vault"
       loadedBlocks={[]}
       thumbVersions={new Map()}
+      graphPreferences={{
+        include_collections: true,
+        include_wikilinks: true,
+        include_related_notes: true,
+      }}
       hoverPreviewFrozen={false}
       onOpenBlock={onOpenBlock}
       onOpenCardMenu={onOpenCardMenu}
@@ -329,6 +333,11 @@ function renderGraph(props: Partial<Parameters<typeof GraphView>[0]> = {}) {
           vaultPath="/vault"
           loadedBlocks={[]}
           thumbVersions={new Map()}
+          graphPreferences={{
+            include_collections: true,
+            include_wikilinks: true,
+            include_related_notes: true,
+          }}
           hoverPreviewFrozen={false}
           onOpenBlock={onOpenBlock}
           onOpenCardMenu={onOpenCardMenu}
@@ -416,7 +425,6 @@ describe("GraphView", () => {
       label: "Alpha card",
       slug: block.slug,
       collection_ref: null,
-      unresolved_ref: null,
       card_kind: "article",
       block_type: "article",
       thumbnail: null,
@@ -444,7 +452,6 @@ describe("GraphView", () => {
       label: "Alpha card",
       slug: block.slug,
       collection_ref: null,
-      unresolved_ref: null,
       card_kind: "article",
       block_type: "article",
       thumbnail: null,
@@ -472,7 +479,6 @@ describe("GraphView", () => {
       label: "Alpha card",
       slug: block.slug,
       collection_ref: null,
-      unresolved_ref: null,
       card_kind: "article",
       block_type: "article",
       thumbnail: null,
@@ -508,7 +514,6 @@ describe("GraphView", () => {
         label: "Alpha card",
         slug: alpha.slug,
         collection_ref: null,
-        unresolved_ref: null,
         card_kind: "article",
         block_type: "article",
         thumbnail: null,
@@ -521,7 +526,6 @@ describe("GraphView", () => {
         label: "Beta card",
         slug: beta.slug,
         collection_ref: null,
-        unresolved_ref: null,
         card_kind: "article",
         block_type: "article",
         thumbnail: null,
@@ -560,7 +564,6 @@ describe("GraphView", () => {
       label: "Alpha card",
       slug: block.slug,
       collection_ref: null,
-      unresolved_ref: null,
       card_kind: "article",
       block_type: "article",
       thumbnail: null,
@@ -597,7 +600,6 @@ describe("GraphView", () => {
       label: "Alpha card",
       slug: block.slug,
       collection_ref: null,
-      unresolved_ref: null,
       card_kind: "article",
       block_type: "article",
       thumbnail: null,
@@ -633,7 +635,6 @@ describe("GraphView", () => {
       label: "Design",
       slug: null,
       collection_ref: "Design",
-      unresolved_ref: null,
       card_kind: null,
       block_type: null,
       thumbnail: null,
@@ -673,7 +674,6 @@ describe("GraphView", () => {
       label: "Design",
       slug: null,
       collection_ref: "Design",
-      unresolved_ref: null,
       card_kind: null,
       block_type: null,
       thumbnail: null,
@@ -702,118 +702,62 @@ describe("GraphView", () => {
       {
         kind: "library",
         collection_ref: null,
-        center_slug: null,
-        hops: 1,
       },
       {
         include_collections: true,
         include_wikilinks: true,
         include_related_notes: true,
-        include_unresolved: false,
         materialize_large_library: false,
-        query: null,
       },
     );
   });
 
-  it("keeps Ego available from the shared pointer selection after Detail activation", async () => {
-    const block = makeBlock();
+  it("derives current-route scope from the active collection without a mode switch", async () => {
     commandMocks.listGraphSnapshot.mockResolvedValue(
-      makeSnapshot(graphCardNode(block.slug, "Alpha card")),
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
     );
-    renderGraph({ loadedBlocks: [block] });
-
-    fireEvent.click(await screen.findByRole("button", { name: "Alpha card" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Ego" }));
+    renderGraph({ currentCollection: "Design" });
 
     await waitFor(() => {
-      expect(commandMocks.listGraphSnapshot).toHaveBeenLastCalledWith(
+      expect(commandMocks.listGraphSnapshot).toHaveBeenCalledWith(
         {
-          kind: "ego",
-          collection_ref: null,
-          center_slug: "alpha-card",
-          hops: 1,
+          kind: "current_route",
+          collection_ref: "Design",
         },
         expect.any(Object),
       );
     });
   });
 
-  it("keeps a one-character graph query pending without an empty result state or IPC", async () => {
+  it("renders no graph-local search, scope selector, settings trigger or Unresolved option", async () => {
     commandMocks.listGraphSnapshot.mockResolvedValue(
       makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
     );
     renderGraph();
     await screen.findByRole("button", { name: "Alpha card" });
 
-    const search = screen.getByRole("searchbox", { name: "Search graph" });
-    fireEvent.change(search, { target: { value: "a" } });
-
-    expect(search).toHaveAttribute("data-graph-search-state", "pending");
-    expect(screen.queryByText("No graph matches")).not.toBeInTheDocument();
-    await new Promise((resolve) => window.setTimeout(resolve, 160));
-    expect(commandMocks.listGraphSnapshot).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("searchbox", { name: "Search graph" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Graph filters" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Route" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Library" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ego" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Unresolved")).not.toBeInTheDocument();
   });
 
-  it("dims non-matches locally without reloading an untruncated snapshot", async () => {
-    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([
-      graphCardNode("alpha-card", "Alpha card"),
-      graphCardNode("beta-card", "Beta card"),
-    ]));
-    renderGraph();
-    const alpha = await screen.findByRole("button", { name: "Alpha card" });
-    const beta = screen.getByRole("button", { name: "Beta card" });
-
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search graph" }), {
-      target: { value: "alpha" },
-    });
-
-    await waitFor(() => {
-      expect(alpha).toHaveAttribute("data-paint-alpha", "1");
-      expect(beta).toHaveAttribute("data-paint-alpha", "0.15");
-    });
-    expect(commandMocks.listGraphSnapshot).toHaveBeenCalledTimes(1);
-  });
-
-  it("materializes search through the backend only for a truncated snapshot", async () => {
-    const overview = makeSnapshotFromNodes([], {
-      truncated: true,
-      truncation_reason: "large_library",
-      can_materialize_full: false,
-      total_nodes: 8_000,
-      total_links: 12_000,
-    });
-    const materialized = makeSnapshot(graphCardNode("alpha-card", "Alpha card"));
-    commandMocks.listGraphSnapshot.mockImplementation(async (_scope, options) => (
-      options.query ? { ...materialized, truncated: true } : overview
-    ));
-    renderGraph();
-    await screen.findByText("No graph nodes");
-
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search graph" }), {
-      target: { value: "alpha" },
-    });
-
-    await waitFor(() => {
-      expect(commandMocks.listGraphSnapshot).toHaveBeenLastCalledWith(
-        expect.any(Object),
-        expect.objectContaining({ query: "alpha" }),
-      );
-    });
-    expect(await screen.findByRole("button", { name: "Alpha card" })).toBeInTheDocument();
-  });
-
-  it("reloads the projection when an edge type is toggled", async () => {
+  it("reloads the projection when the settings owner passes new graph preferences", async () => {
     commandMocks.listGraphSnapshot.mockResolvedValue(
       makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
     );
-    renderGraph();
+    const { rerenderGraph } = renderGraph();
     await screen.findByRole("button", { name: "Alpha card" });
 
-    fireEvent.keyDown(screen.getByRole("button", { name: "Graph filters" }), {
-      key: "ArrowDown",
+    rerenderGraph({
+      graphPreferences: {
+        include_collections: true,
+        include_wikilinks: false,
+        include_related_notes: true,
+      },
     });
-    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Wikilinks" }));
 
     await waitFor(() => {
       expect(commandMocks.listGraphSnapshot).toHaveBeenLastCalledWith(

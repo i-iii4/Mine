@@ -4,22 +4,24 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 
 ## Status
 
-M1 implemented and verified on 10.07.2026. The technical solution is extracted
-from the Graph View implementation in
+M1 implemented on 10.07.2026; the final minimal product surface and shared
+Settings contract were verified on 25.07.2026. The technical solution is
+extracted from the Graph View implementation in
 `/Users/i_iii/Проекты/longevity-landscape` and adapted to Mine's
 Obsidian-first data model.
 
 The verified boundary includes:
 
-- card, collection and optional unresolved nodes;
+- card and collection nodes;
 - collection-membership, wikilink and related-note edges with provenance,
   direction, dedupe and duplicate counts;
-- `current_route`, `library` and 1/2-hop `ego` scopes plus large-library query
-  materialization;
+- automatic `current_route` / `library` scope derived from the active route,
+  plus explicit large-library materialization;
 - Canvas rendering with screen-fixed thumbnails, collision-safe collection
   labels, stable hover/click/context-menu/drag contracts and resize-safe layout;
-- graph-local search, edge toggles, selected-node synchronization, conditional
-  centering, keyboard navigation and an `aria-live` status model;
+- persisted edge visibility in the common Settings window, selected-node
+  synchronization, conditional centering, keyboard navigation and an
+  `aria-live` status model;
 - Rust/unit coverage and dark/light real-browser Canvas pixel, hover, resize,
   request-bound and interaction-performance acceptance.
 
@@ -85,7 +87,7 @@ Graph View cannot be "render-only" over `LightBlock[]`: it needs edges from
 route-facing read model:
 
 ```text
-current route/search state
+current route + persisted graph preferences
       |
       v
 list_graph_snapshot(scope, options)
@@ -100,7 +102,7 @@ one purpose-built snapshot, backend owns filtering, dedupe, and payload shape.
 ## Node Types
 
 ```typescript
-type GraphNodeKind = "card" | "collection" | "unresolved";
+type GraphNodeKind = "card" | "collection";
 
 interface GraphNode {
   id: string;
@@ -108,7 +110,6 @@ interface GraphNode {
   label: string;
   slug: string | null;
   collection_ref: string | null;
-  unresolved_ref: string | null;
   card_kind: "article" | "media" | "channel" | null;
   block_type: "image" | "article" | "link" | "video" | "file" | "channel" | null;
   thumbnail: string | null;
@@ -150,21 +151,9 @@ collection:<CollectionRef>
 Collection nodes render as text pill nodes. They are always label-visible
 because a collection node without text is not meaningful.
 
-### Unresolved Nodes
-
-`kind = "unresolved"` represents a wikilink target that does not currently
-resolve to an indexed block. This mirrors Obsidian red links without making them
-editable.
-
-Identity:
-
-```text
-unresolved:<target>
-```
-
-Unresolved nodes are disabled by default in dense scopes and enabled by a Graph
-View toggle. When enabled, they are small muted nodes with visible labels only on
-hover/search/zoom.
+Graph View materializes only real objects. A plain note link whose target does
+not resolve to an indexed card or collection is omitted together with its edge.
+Missing targets are neither graph nodes nor a Graph filter.
 
 ## Edge Types
 
@@ -211,13 +200,11 @@ Graph edge:
 card:<source_slug> -> card:<target_slug>
 ```
 
-If the target does not resolve and unresolved nodes are enabled:
-
-```text
-card:<source_slug> -> unresolved:<target>
-```
-
 `directed = true`, because body wikilinks have a source note and a target note.
+Only plain note links `[[note]]` are present in the `wikilinks` read model.
+Media embeds `![[file]]` belong to the media pipeline and never become Graph
+edges. If a note target does not resolve to a real card or collection, the edge
+is omitted.
 
 ### Related-Note Edges
 
@@ -250,22 +237,18 @@ link width stable to avoid visual jumping.
 ## Graph Snapshot
 
 ```typescript
-type GraphScopeKind = "current_route" | "library" | "ego";
+type GraphScopeKind = "current_route" | "library";
 
 interface GraphScope {
   kind: GraphScopeKind;
   collection_ref: string | null;
-  center_slug: string | null;
-  hops: 1 | 2;
 }
 
 interface GraphOptions {
   include_collections: boolean;
   include_wikilinks: boolean;
   include_related_notes: boolean;
-  include_unresolved: boolean;
   materialize_large_library: boolean;
-  query: string | null;
 }
 
 interface GraphSnapshot {
@@ -284,29 +267,24 @@ interface GraphSnapshot {
 }
 ```
 
-M1 uses `GraphScope + GraphOptions` rather than a positional collection
-argument. The
-backend owns scope, dedupe, unresolved policy, query materialization and exact
+The frontend derives `GraphScope` from the active route rather than exposing a
+scope selector: collection routes use `current_route`; Everything uses
+`library`. The backend owns scope, dedupe, real-target resolution and exact
 visible/total counters.
 
 ### Scope Semantics
 
 `current_route`:
 
-- on Everything: library graph policy below;
 - on a collection route: collection node, member blocks, their 1-hop wikilink
   and related-note neighbors, plus neighbor collections for those blocks.
 
 `library`:
 
+- used by Everything;
 - for small vaults, full card + collection graph;
-- for large vaults, collection-level graph first, with cards materialized by
-  search, current collection, or explicit ego expansion.
-
-`ego`:
-
-- center block plus 1-hop or 2-hop neighbors;
-- used when opening graph from Detail or search result.
+- for large vaults, collection-level graph first; `Show all` is the only
+  explicit full-materialization action when the backend marks it safe.
 
 ### Large Vault Policy
 
@@ -318,8 +296,8 @@ Thresholds:
 | Node count | Policy |
 |---|---|
 | `<= 1000` | Full graph allowed. Labels are progressive. |
-| `1001..5000` | Full graph allowed only after explicit user action; no thumbnails; finite cooldown; labels only on zoom/hover/search/selection. |
-| `> 5000` | Default library scope is collection-level plus query/ego materialization. Snapshot sets `truncated = true` with a reason. |
+| `1001..5000` | Full graph allowed only after explicit `Show all`; no thumbnails; finite cooldown; labels only on zoom/hover/selection. |
+| `> 5000` | Library scope stays collection-level. Snapshot sets `truncated = true` with a reason and does not offer full materialization. |
 
 Counters in the UI must distinguish exact snapshot counts from truncated
 library counts:
@@ -356,6 +334,10 @@ pub fn graph_snapshot(
 - Resolve collection identity through `CollectionRef` values in `block_tags`.
 - Resolve wikilink targets through the same normalization rules used by the
   indexer.
+- `wikilinks` contains only plain note links. Inline media embeds are indexed by
+  the media pipeline and must not enter Graph projection.
+- Omit a wikilink or related-note edge when its target does not resolve to a
+  materialized card or collection.
 - Strip `#^block-id` fragments for related-note node identity while preserving
   the full source target in `target_ref`.
 - Open the database read-only unless a future graph maintenance pass needs a
@@ -420,9 +402,10 @@ src-tauri/src/storage/graph.rs
 
 `GraphView` owns one coherent snapshot state for Canvas rendering, physics,
 image cache, sidebar-style hover preview, shared card menu invocation,
-collection navigation, scope/edge controls, local or backend-materialized
-search, empty/truncated states, Detail integration and selected-node sync.
-There is no second `GraphWithControls` owner and no DOM node layer over Canvas.
+collection navigation, route-derived scope, empty/truncated states, Detail
+integration and selected-node sync. Persisted edge visibility is passed from the
+main settings owner. There is no second `GraphWithControls` owner and no DOM
+node layer over Canvas.
 
 ### Renderer
 
@@ -500,7 +483,6 @@ Rules:
 - collection label pointer interaction uses native ForceGraph node hit areas:
   click navigates to the collection, drag moves the collection node on canvas and
   suppresses the release click;
-- unresolved nodes use muted low-contrast styling;
 - search highlights use the same semantic color family as search marks where
   possible, but not the yellow text highlight itself on nodes.
 
@@ -510,7 +492,6 @@ Rules:
 |---|---|---|
 | `collection` | canvas-native capsule matching `GraphCollectionLabel` | always visible |
 | `card` | sidebar micro thumbnail: screen-fixed square `32 / globalScale`, no rounding, no stroke | search match or keyboard/pointer selection |
-| `unresolved` | small muted circle | hover/search/zoom |
 
 Card thumbnails use cover crop, clipped into the square. Collection hit areas
 must match the capsule bounds closely enough that click/drag begin on the
@@ -655,11 +636,6 @@ Collection node click:
 2. keep Graph View active;
 3. request a new `current_route` graph snapshot.
 
-Unresolved node click:
-
-- no action in v1;
-- future action may create a note, but that requires its own spec.
-
 ### Centering With Detail
 
 The graph exposes an imperative handle:
@@ -681,19 +657,23 @@ Centering uses `graph2ScreenCoords`:
 Never center unconditionally on every click; it makes graph navigation feel
 unstable.
 
-### Search
+### Controls And Settings
 
-Graph search is local to the loaded graph snapshot unless the current scope is
-too truncated to answer locally.
+Graph View has no graph-local search, scope selector, or settings icon. The
+active route determines the snapshot automatically:
 
-Input rules mirror recent Search Overlay lessons:
+- Everything → `library`;
+- collection route → `current_route`.
 
-- one normalized alphanumeric character is pending, not "no results";
-- no IPC for local dimming when a snapshot is already loaded;
-- for large truncated library graphs, query can request a backend materialized
-  graph subset;
-- labels show for matched nodes;
-- non-matches dim to `0.15` alpha.
+The common Settings window owns the persisted `Collections`, `Wikilinks`, and
+`Related notes` switches under a dedicated `Graph` section. Defaults are `true`.
+Settings writes one versionless local preference object and emits the existing
+`settings-changed` event; the main window re-reads it and passes one immutable
+preference value into Graph View. The Canvas does not read or persist settings.
+
+`Show all` remains a contextual action, shown only for a truncated library
+snapshot with `can_materialize_full = true`. It is session-local and resets when
+Graph View remounts; it is not a general preference.
 
 ## Display Mode Integration
 
@@ -745,11 +725,11 @@ from `block:<old_slug>` to `block:<new_slug>` without closing Detail.
 Canvas is not inherently accessible. Graph View must provide a parallel keyboard
 model:
 
-- `Tab` reaches graph controls before the canvas.
+- `Tab` reaches `Show all` when present, otherwise the canvas.
 - Arrow keys move selection among currently visible graph nodes using screen
   coordinates after layout has settled.
 - `Enter` activates the selected node.
-- `Escape` clears graph search or selected node before closing higher-level UI.
+- `Escape` clears the selected node before closing higher-level UI.
 - A textual status region announces selected node label and neighbor count.
 
 Keyboard and pointer navigation share one selected node id. The implemented
@@ -762,7 +742,10 @@ Keyboard and pointer navigation share one selected node id. The implemented
 - `build_graph_snapshot` returns collection nodes and membership edges from
   `Mine Collections` / `block_tags`.
 - Wikilinks become directed block edges.
-- Unresolved wikilinks are omitted by default and included when requested.
+- Missing wikilink and related-note targets are omitted together with their
+  edges.
+- Media embeds are absent from `wikilinks` after runtime indexing and
+  graph-link-index backfill.
 - Related-note block references resolve by base slug while preserving fragments
   outside graph identity.
 - Duplicate links increment `count`.
@@ -776,7 +759,9 @@ Keyboard and pointer navigation share one selected node id. The implemented
 - card hover uses `getHoverPreviewOpenDelay` from shared sidebar timing.
 - card hover open/close does not change node opacity, link color, card size, or
   card labels.
-- search pending state for one-character query does not show "No results".
+- Graph View renders no graph-local search, scope selector, or settings trigger.
+- persisted graph preferences are forwarded unchanged to the graph snapshot
+  request and a settings change reloads the projection.
 - collection node hit-area metrics match pill width/height.
 - graph hover preview uses `ReadOnlyCardPreview` with `previewMode="micro"` and
   width `240`.
@@ -794,19 +779,17 @@ Use Playwright for real Canvas verification:
 - Hovering a card for the cold delay shows the sidebar-style micro preview and
   does not visually mutate the graph canvas.
 - Large snapshot does not create thousands of image requests.
-- Mobile/narrow window does not overlap controls with the graph canvas.
+- Mobile/narrow window keeps the contextual `Show all` action inside the graph
+  viewport when present.
 
 Canvas pixel checks must verify that the graph has non-background pixels after
 render and after route switches.
 
 The executable acceptance is `bun run test:graph` against the dev-only
 `/__graph-audit` route. It runs both dark and light themes and verifies settled
-first paint, raw Canvas pixels, route switching, resize without remount, narrow
-control layout, truncated backend search, bounded image requests, real delayed
-hover without Canvas mutation, and pan/zoom timing. On the 10.07.2026 reference
-run, first paint was about `380..459 ms`, backend-materialized search
-`132..150 ms`, image requests were deduplicated to `6`, hover changed `0` Canvas
-pixels, pan/zoom p95 was about `9 ms`, and no long task was observed.
+first paint, raw Canvas pixels, automatic route switching, resize without
+remount, absence of removed Graph controls, bounded image requests, real delayed
+hover without Canvas mutation, and pan/zoom timing.
 
 `bun run verify` must include this gate through a self-contained browser-audit
 runner. The runner starts one Vite server on a free localhost port, waits for
@@ -819,8 +802,8 @@ verification prerequisite.
 - Backend snapshot for a returned graph of at most 1,000 nodes and 5,000 links:
   at most 250 ms in release mode on the reference Apple Silicon machine.
 - First non-background Canvas paint: at most 1,000 ms after a fresh snapshot.
-- Search/selection centering: at most 250 ms from input commit to highlighted
-  node when the node is already materialized.
+- Selection centering: at most 250 ms from selection to centered node when the
+  node is already materialized.
 - Pan/zoom/drag interaction: p95 frame interval below 32 ms and no main-thread
   task above 100 ms during the Playwright interaction trace.
 - Settled collection labels keep at least 2 CSS pixels between pill bounds at
@@ -836,8 +819,8 @@ verification prerequisite.
 - A right click opens the shared card menu and freezes hover replacement.
 - Pointer movement across the drag threshold cancels click activation and pins
   the dragged node until release.
-- Closing menu/Detail/search selection restores simulation state without a
-  synthetic drag or remount.
+- Closing menu or Detail restores simulation state without a synthetic drag or
+  remount.
 - Keyboard selection and pointer selection share one selected node id.
 
 ## Implementation Slices
@@ -849,8 +832,9 @@ verification prerequisite.
    dedupe and scope/threshold tests.
 4. **DONE: Canvas renderer** — `GraphView`, measured mount, tick-delayed initial
    fit, resize-stable physics, custom paint/hit areas and shared hover preview.
-5. **DONE: Controls and Detail integration** — scopes, edge toggles, search,
-   selected-node sync and conditional centering.
+5. **DONE: Minimal controls and Detail integration** — automatic route scope,
+   persisted Graph preferences in common Settings, selected-node sync and
+   conditional centering; graph-local search/settings controls removed.
 6. **DONE: Display mode wiring** — persisted secondary-bar switch, route
    preservation and refresh events.
 7. **DONE: Performance and accessibility** — large-vault policy, keyboard

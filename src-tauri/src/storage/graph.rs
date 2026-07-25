@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use rusqlite::params;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::block::{BlockType, CardKind};
 use crate::storage::{index, projection};
@@ -17,7 +17,6 @@ pub const MATERIALIZED_CARD_LIMIT: usize = 1_000;
 pub enum GraphNodeKind {
     Card,
     Collection,
-    Unresolved,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, specta::Type)]
@@ -44,7 +43,6 @@ pub enum GraphScopeKind {
     CurrentRoute,
     #[default]
     Library,
-    Ego,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -52,8 +50,6 @@ pub enum GraphScopeKind {
 pub struct GraphScope {
     pub kind: GraphScopeKind,
     pub collection_ref: Option<String>,
-    pub center_slug: Option<String>,
-    pub hops: u8,
 }
 
 impl Default for GraphScope {
@@ -61,8 +57,6 @@ impl Default for GraphScope {
         Self {
             kind: GraphScopeKind::Library,
             collection_ref: None,
-            center_slug: None,
-            hops: 1,
         }
     }
 }
@@ -73,9 +67,7 @@ pub struct GraphOptions {
     pub include_collections: bool,
     pub include_wikilinks: bool,
     pub include_related_notes: bool,
-    pub include_unresolved: bool,
     pub materialize_large_library: bool,
-    pub query: Option<String>,
 }
 
 impl Default for GraphOptions {
@@ -84,9 +76,7 @@ impl Default for GraphOptions {
             include_collections: true,
             include_wikilinks: true,
             include_related_notes: true,
-            include_unresolved: false,
             materialize_large_library: false,
-            query: None,
         }
     }
 }
@@ -104,7 +94,6 @@ pub struct GraphNode {
     pub label: String,
     pub slug: Option<String>,
     pub collection_ref: Option<String>,
-    pub unresolved_ref: Option<String>,
     pub card_kind: Option<CardKind>,
     pub block_type: Option<BlockType>,
     pub thumbnail: Option<String>,
@@ -215,17 +204,6 @@ fn build_graph_snapshot(
         .collect::<Vec<_>>();
     links.sort_by(|left, right| left.id.cmp(&right.id));
 
-    let connected_unresolved = links
-        .iter()
-        .flat_map(|link| [&link.source, &link.target])
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    selected.retain(|node_id| {
-        model.nodes.get(node_id).is_some_and(|node| {
-            node.kind != GraphNodeKind::Unresolved || connected_unresolved.contains(node_id)
-        })
-    });
-
     let mut degree = BTreeMap::<String, usize>::new();
     for link in &links {
         *degree.entry(link.source.clone()).or_default() += 1;
@@ -295,7 +273,6 @@ fn build_graph_model(conn: &Connection, options: &GraphOptions) -> Result<GraphM
                 label: card_label(&card),
                 slug: Some(card.slug),
                 collection_ref: None,
-                unresolved_ref: None,
                 card_kind: Some(card_kind),
                 block_type: Some(block_type),
                 thumbnail: card.thumbnail,
@@ -372,22 +349,6 @@ fn insert_reference_edge(
         card_node_id(&normalized)
     } else if options.include_collections && model.collection_refs.contains(&normalized) {
         collection_node_id(&normalized)
-    } else if options.include_unresolved {
-        let id = unresolved_node_id(&normalized);
-        model.nodes.entry(id.clone()).or_insert_with(|| GraphNode {
-            id: id.clone(),
-            kind: GraphNodeKind::Unresolved,
-            label: collection_label(&normalized),
-            slug: None,
-            collection_ref: None,
-            unresolved_ref: Some(normalized.clone()),
-            card_kind: None,
-            block_type: None,
-            thumbnail: None,
-            preview_manifest: None,
-            degree: 0,
-        });
-        id
     } else {
         return;
     };
@@ -451,7 +412,6 @@ fn select_scope(
             )
         }
         GraphScopeKind::Library => select_library_scope(model, options),
-        GraphScopeKind::Ego => (select_ego_scope(model, scope), false),
     }
 }
 
@@ -463,22 +423,12 @@ fn select_library_scope(model: &GraphModel, options: &GraphOptions) -> (BTreeSet
         return (model.nodes.keys().cloned().collect(), false);
     }
 
-    let mut selected = model
+    let selected = model
         .nodes
         .values()
         .filter(|node| node.kind == GraphNodeKind::Collection)
         .map(|node| node.id.clone())
         .collect::<BTreeSet<_>>();
-    if let Some(query) = normalized_graph_query(options.query.as_deref()) {
-        let matches = model
-            .nodes
-            .values()
-            .filter(|node| node_matches_query(node, &query))
-            .map(|node| node.id.clone())
-            .collect::<BTreeSet<_>>();
-        selected.extend(matches.iter().cloned());
-        expand_neighbors(model, &mut selected, &matches);
-    }
     (selected, true)
 }
 
@@ -510,36 +460,6 @@ fn select_current_route(model: &GraphModel, collection_ref: &str) -> BTreeSet<St
         if link.kind == GraphLinkKind::CollectionMembership && selected_cards.contains(&link.target)
         {
             selected.insert(link.source.clone());
-        }
-    }
-    selected
-}
-
-fn select_ego_scope(model: &GraphModel, scope: &GraphScope) -> BTreeSet<String> {
-    let Some(center_slug) = scope
-        .center_slug
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return BTreeSet::new();
-    };
-    let center = card_node_id(center_slug);
-    if !model.nodes.contains_key(&center) {
-        return BTreeSet::new();
-    }
-
-    let max_hops = scope.hops.clamp(1, 2);
-    let mut selected = BTreeSet::from([center.clone()]);
-    let mut queue = VecDeque::from([(center, 0_u8)]);
-    while let Some((node_id, depth)) = queue.pop_front() {
-        if depth >= max_hops {
-            continue;
-        }
-        for neighbor in neighbors(model, &node_id) {
-            if selected.insert(neighbor.clone()) {
-                queue.push_back((neighbor, depth + 1));
-            }
         }
     }
     selected
@@ -599,28 +519,6 @@ fn selected_card_count(model: &GraphModel, selected: &BTreeSet<String>) -> usize
                 .is_some_and(|node| node.kind == GraphNodeKind::Card)
         })
         .count()
-}
-
-fn normalized_graph_query(raw: Option<&str>) -> Option<String> {
-    let normalized = raw.unwrap_or("").trim().to_lowercase();
-    (normalized
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .count()
-        >= 2)
-        .then_some(normalized)
-}
-
-fn node_matches_query(node: &GraphNode, query: &str) -> bool {
-    node.label.to_lowercase().contains(query)
-        || node
-            .slug
-            .as_deref()
-            .is_some_and(|slug| slug.to_lowercase().contains(query))
-        || node
-            .collection_ref
-            .as_deref()
-            .is_some_and(|collection| collection.to_lowercase().contains(query))
 }
 
 fn load_cards(conn: &Connection) -> Result<Vec<CardRow>> {
@@ -691,7 +589,6 @@ fn insert_collection_node(nodes: &mut BTreeMap<String, GraphNode>, collection_re
         label: collection_label(collection_ref),
         slug: None,
         collection_ref: Some(collection_ref.to_string()),
-        unresolved_ref: None,
         card_kind: None,
         block_type: None,
         thumbnail: None,
@@ -717,10 +614,6 @@ fn card_node_id(slug: &str) -> String {
 
 fn collection_node_id(collection_ref: &str) -> String {
     format!("collection:{collection_ref}")
-}
-
-fn unresolved_node_id(target: &str) -> String {
-    format!("unresolved:{target}")
 }
 
 fn card_label(card: &CardRow) -> String {
@@ -862,23 +755,25 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_targets_are_optional() {
+    fn missing_targets_are_omitted_with_their_edges() {
         let conn = db::open_memory().unwrap();
-        insert_block(&conn, "source", "See [[missing]]", &[]);
+        insert_block(
+            &conn,
+            "source",
+            "See [[missing]] and ![[existing #1.jpg|Preview]]",
+            &["also-missing#^fragment"],
+        );
 
-        let hidden = graph_snapshot(&conn, &library_scope(), &options()).unwrap();
-        assert!(!hidden
-            .nodes
-            .iter()
-            .any(|node| node.kind == GraphNodeKind::Unresolved));
-
-        let mut visible_options = options();
-        visible_options.include_unresolved = true;
-        let visible = graph_snapshot(&conn, &library_scope(), &visible_options).unwrap();
-        assert!(visible
-            .nodes
-            .iter()
-            .any(|node| node.id == "unresolved:missing"));
+        let snapshot = graph_snapshot(&conn, &library_scope(), &options()).unwrap();
+        assert_eq!(
+            snapshot
+                .nodes
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["card:source"]
+        );
+        assert!(snapshot.links.is_empty());
     }
 
     #[test]
@@ -910,26 +805,6 @@ mod tests {
     }
 
     #[test]
-    fn ego_scope_respects_hop_count() {
-        let conn = db::open_memory().unwrap();
-        insert_block(&conn, "a", "[[b]]", &[]);
-        insert_block(&conn, "b", "[[c]]", &[]);
-        insert_block(&conn, "c", "", &[]);
-        let scope = GraphScope {
-            kind: GraphScopeKind::Ego,
-            center_slug: Some("a".to_string()),
-            hops: 1,
-            ..GraphScope::default()
-        };
-        let one = graph_snapshot(&conn, &scope, &options()).unwrap();
-        assert!(one.nodes.iter().any(|node| node.id == "card:b"));
-        assert!(!one.nodes.iter().any(|node| node.id == "card:c"));
-
-        let two = graph_snapshot(&conn, &GraphScope { hops: 2, ..scope }, &options()).unwrap();
-        assert!(two.nodes.iter().any(|node| node.id == "card:c"));
-    }
-
-    #[test]
     fn duplicate_edge_increments_count() {
         let mut links = BTreeMap::new();
         for target_ref in ["b#first", "b#second"] {
@@ -949,7 +824,7 @@ mod tests {
     }
 
     #[test]
-    fn large_library_is_truncated_and_query_materializes_match() {
+    fn large_library_is_truncated_until_explicit_materialization() {
         let conn = db::open_memory().unwrap();
         let tx = conn.unchecked_transaction().unwrap();
         for index in 0..=FULL_LIBRARY_NODE_LIMIT {
@@ -980,15 +855,6 @@ mod tests {
         let full = graph_snapshot(&conn, &library_scope(), &explicit).unwrap();
         assert!(!full.truncated);
         assert_eq!(full.total_cards, FULL_LIBRARY_NODE_LIMIT + 1);
-
-        let mut queried = options();
-        queried.query = Some("note-0999".to_string());
-        let materialized = graph_snapshot(&conn, &library_scope(), &queried).unwrap();
-        assert!(materialized
-            .nodes
-            .iter()
-            .any(|node| node.id == "card:note-0999"));
-        assert_eq!(materialized.visible_nodes, materialized.nodes.len());
     }
 
     #[test]

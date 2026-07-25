@@ -1,5 +1,90 @@
 # Devlog
 
+## 25.07.2026 — Minimal Graph surface and shared settings
+
+### Задача
+Упростить Graph View до самого холста и контекстного `Show all`: убрать
+graph-local search, ручное переключение Route/Library и локальную кнопку
+настроек, а оставшиеся слои перенести в общие Settings приложения.
+
+### Что сделано
+- Graph scope теперь определяется только текущим маршрутом: открытая коллекция
+  запрашивает `current_route`, Everything — `library`. Ручного scope selector и
+  ego/search scope в IPC-контракте больше нет.
+- Из Graph View удалены строка поиска и отдельная кнопка настроек. Контекстная
+  команда `Show all` остаётся только для усечённой большой библиотеки.
+- Настройки слоёв `Collections`, `Wikilinks` и `Related notes` перенесены в
+  отдельный раздел общих Settings. Один typed preference object в
+  `mine.graphPreferences` принадлежит `App` и передаётся в Graph без локального
+  дублирования состояния.
+- `Related notes` сохранены как реальный слой связей. `Unresolved` по-прежнему
+  полностью отсутствует в node kinds, IPC options, Canvas и интерфейсе.
+- Browser audit проверяет отсутствие `Search graph`, graph-local settings/scope
+  controls и `Unresolved`, а также ждёт уже применённый route snapshot и первый
+  repaint после resize.
+- Причина видимого пользователем `Unresolved` подтверждена: работал процесс,
+  запущенный 24.07, тогда как актуальный bundle был собран 25.07. Это не
+  migration/backfill и не остаток текущего UI-кода.
+
+### Проверки
+- Focused frontend: 5 files / 30 tests passed; focused Rust Graph projection:
+  8 tests passed.
+- `bun run verify:release` — passed: generated bindings без drift, ESLint clean,
+  76 frontend files / 681 tests, Rust main library 656 passed / 5 ignored,
+  native host 56 passed, migration binaries 13 passed.
+- Feed desktop/narrow, Graph dark/light и cold-space first/settled/deep browser
+  gates прошли без failures. Graph first paint: 386.1 ms dark и 371.5 ms light;
+  hover не изменяет Canvas pixels.
+- Packaged macOS WKWebView/Tauri IPC smoke:
+  `ok=true`, `transport=tauri-ipc`, `shell=macos-wkwebview`.
+
+### Статус
+- Graph View больше не содержит собственную панель поиска, scope selector или
+  settings popover; общие Settings являются единственным владельцем настроек
+  слоёв.
+- Свежий debug bundle собран в
+  `target/debug/bundle/macos/Mine.app`; commit и push в этой сессии не
+  выполнялись.
+
+## 25.07.2026 — Graph real-object boundary and WikiLink index repair
+
+### Задача
+Убрать `Unresolved` из Graph View как продуктовую сущность и устранить причину,
+по которой существующие media embeds `![[file]]` ошибочно индексировались как
+ссылки на заметки.
+
+### Что сделано
+- Graph snapshot, generated IPC types и frontend теперь содержат только реальные
+  `card` и `collection` nodes. Ссылка на отсутствующую заметку не создаёт node,
+  edge, filter или отдельный interaction path.
+- Парсер `extract_note_wikilinks` отделяет обычные WikiLinks от media embeds.
+  Алиасы и fragments обычных ссылок сохраняются для последующей нормализации,
+  а `![[file]]`, включая имена media с `#`, остаются только в media pipeline.
+- Runtime indexing и migration backfill используют один note-link parser.
+  `GRAPH_LINK_INDEX_VERSION` поднят до `2`, поэтому существующий SQLite index
+  автоматически очищается от ранее записанных media targets при следующем
+  открытии vault.
+- Удалены `Unresolved` node kind, option, filter, paint/hit-test path и audit
+  fixtures. Спецификации Graph, Block и Storage закрепляют границу:
+  Graph показывает только существующие объекты и фактические связи.
+
+### Проверки
+- Focused Rust: 11 note-link parser tests, 2 graph-link backfill tests и
+  9 graph projection tests passed.
+- Focused frontend: 19 Graph View tests passed.
+- `bun run verify:release` — passed: generated bindings без drift, ESLint clean,
+  74 frontend files / 678 tests, Rust main library 657 passed / 5 ignored,
+  Feed/Graph/cold-space browser gates и packaged macOS WKWebView/Tauri IPC smoke.
+- Первый cold browser run один раз превысил трёхсекундный timeout ожидания
+  Graph paint; отдельный browser rerun и полный повторный `verify:release`
+  прошли без failures.
+
+### Статус
+- Настоящие отсутствующие WikiLink targets намеренно не представлены в Graph.
+  Поддержка обычных WikiLinks между существующими заметками сохранена.
+- Реальный source vault не изменялся; очистка его derived SQLite произойдёт
+  автоматически через versioned backfill при следующем открытии.
+
 ## 25.07.2026 — Native Sidebar shortcut and stable card frame
 
 ### Задача

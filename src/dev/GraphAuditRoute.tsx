@@ -32,6 +32,11 @@ const AUDIT_COLLECTIONS = [
 ] as const;
 const AUDIT_VAULT_PATH = "/tmp/mine-graph-audit";
 const AUDIT_THUMBS_PATH = "/graph-audit/thumbs";
+const AUDIT_GRAPH_PREFERENCES = {
+  include_collections: true,
+  include_wikilinks: true,
+  include_related_notes: true,
+} as const;
 
 function auditBlock(index: number): LightBlock {
   const slug = `graph-card-${index}`;
@@ -76,7 +81,6 @@ function auditCardNode(block: LightBlock): GraphNode {
     label: block.title ?? block.slug,
     slug: block.slug,
     collection_ref: null,
-    unresolved_ref: null,
     card_kind: block.card_kind,
     block_type: block.block_type,
     thumbnail: null,
@@ -92,7 +96,6 @@ function auditCollectionNode(collection: string): GraphNode {
     label: collection,
     slug: null,
     collection_ref: collection,
-    unresolved_ref: null,
     card_kind: null,
     block_type: null,
     thumbnail: null,
@@ -163,55 +166,12 @@ function graphAuditSnapshot(
     for (const link of allLinks) {
       if (link.source === collectionId) selected.add(link.target);
     }
-  } else if (scope.kind === "ego" && scope.center_slug) {
-    const centerId = `card:${scope.center_slug}`;
-    selected = new Set([centerId]);
-    for (const link of allLinks) {
-      if (link.source === centerId) selected.add(link.target);
-      if (link.target === centerId) selected.add(link.source);
-    }
-  }
-
-  if (options.query) {
-    const query = options.query.toLocaleLowerCase();
-    const matches = allNodes.filter((node) => node.label.toLocaleLowerCase().includes(query));
-    selected = new Set(matches.map((node) => node.id));
-    for (const link of allLinks) {
-      if (selected.has(link.source)) selected.add(link.target);
-      if (selected.has(link.target)) selected.add(link.source);
-    }
   }
 
   if (!options.include_collections) {
     for (const node of allNodes) {
       if (node.kind === "collection") selected.delete(node.id);
     }
-  }
-
-  if (options.include_unresolved) {
-    selected.add("unresolved:missing-audit-note");
-    allNodes.push({
-      id: "unresolved:missing-audit-note",
-      kind: "unresolved",
-      label: "Missing audit note",
-      slug: null,
-      collection_ref: null,
-      unresolved_ref: "missing-audit-note",
-      card_kind: null,
-      block_type: null,
-      thumbnail: null,
-      preview_manifest: null,
-      degree: 0,
-    });
-    allLinks.push({
-      id: "wikilink:graph-card-0:missing-audit-note",
-      kind: "wikilink",
-      source: "card:graph-card-0",
-      target: "unresolved:missing-audit-note",
-      directed: true,
-      count: 1,
-      target_ref: "missing-audit-note",
-    });
   }
 
   const links = allLinks.filter((link) => selected.has(link.source) && selected.has(link.target));
@@ -295,6 +255,7 @@ export function GraphAuditRoute() {
         thumbsRootPath={AUDIT_THUMBS_PATH}
         loadedBlocks={blocks}
         thumbVersions={thumbVersions}
+        graphPreferences={AUDIT_GRAPH_PREFERENCES}
         loadSnapshot={loadSnapshot}
         onOpenBlock={(block) => setActivatedSlug(block.slug)}
         onOpenCardMenu={() => undefined}

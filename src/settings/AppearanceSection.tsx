@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { emit } from "@tauri-apps/api/event";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -23,9 +22,9 @@ import {
   getStoredBottomActionBarHidden,
 } from "@/lib/bottomActionBarVisibility";
 import {
-  SETTINGS_CHANGED_EVENT,
-  type SettingsChangedPayload,
+  broadcastSettingsChange,
 } from "@/lib/settingsChanged";
+import { SettingRow } from "./SettingRow";
 
 const THEME_OPTIONS = [
   { value: "system", label: "System" },
@@ -38,34 +37,6 @@ const DESIGN_OPTIONS = [
   { value: "default", label: "Default" },
   { value: "alt", label: "Alt" },
 ] as const;
-
-// Broadcast a settings change to every window (the main window re-reads the
-// changed key). localStorage is shared across windows of the same origin, so
-// the event carries only the key, not the value.
-function broadcastSettingsChange(key: string) {
-  const payload: SettingsChangedPayload = { key };
-  void emit(SETTINGS_CHANGED_EVENT, payload).catch((error) => {
-    console.error("Failed to broadcast settings change:", error);
-  });
-}
-
-interface SettingRowProps {
-  label: string;
-  caption?: string;
-  children: React.ReactNode;
-}
-
-function SettingRow({ label, caption, children }: SettingRowProps) {
-  return (
-    <div className="flex items-center justify-between gap-s3">
-      <div className="min-w-0">
-        <p className="text-base">{label}</p>
-        {caption && <p className="text-sm text-muted-foreground">{caption}</p>}
-      </div>
-      <div className="shrink-0">{children}</div>
-    </div>
-  );
-}
 
 export function AppearanceSection() {
   const [theme, setTheme] = useState<ThemeMode>(getStoredTheme);

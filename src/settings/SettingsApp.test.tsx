@@ -56,6 +56,9 @@ describe("SettingsApp", () => {
       screen.getByRole("button", { name: "Appearance" }).className,
     ).not.toContain("bg-active");
 
+    fireEvent.click(screen.getByRole("button", { name: "Graph" }));
+    expect(await screen.findByRole("heading", { name: "Graph" })).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: "Orphans" }));
     expect(await screen.findByRole("heading", { name: /Orphans/ })).toBeInTheDocument();
   });

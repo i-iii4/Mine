@@ -98,37 +98,6 @@ export function paintCollectionNode(
   ctx.restore();
 }
 
-export function paintUnresolvedNode(
-  ctx: CanvasRenderingContext2D,
-  node: PositionedGraphCanvasNode,
-  options: {
-    globalScale: number;
-    theme: GraphCanvasTheme;
-    selected: boolean;
-    showLabel: boolean;
-  },
-) {
-  const radius = 4 / options.globalScale;
-  ctx.beginPath();
-  ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
-  ctx.fillStyle = options.theme.mutedText;
-  ctx.fill();
-  if (options.selected) {
-    ctx.lineWidth = 2 / options.globalScale;
-    ctx.strokeStyle = options.theme.hoverOutline;
-    ctx.stroke();
-  }
-  if (options.showLabel) {
-    paintScreenFixedLabel(
-      ctx,
-      node,
-      options.globalScale,
-      options.theme.mutedText,
-      radius * 2,
-    );
-  }
-}
-
 function paintScreenFixedLabel(
   ctx: CanvasRenderingContext2D,
   node: PositionedGraphCanvasNode,

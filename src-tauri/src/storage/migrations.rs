@@ -11,7 +11,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 2;
-pub const GRAPH_LINK_INDEX_VERSION: i64 = 1;
+pub const GRAPH_LINK_INDEX_VERSION: i64 = 2;
 
 const BLOCK_COLUMNS: &[(&str, &str)] = &[
     ("id", "INTEGER"),
@@ -730,7 +730,7 @@ pub(crate) fn backfill_graph_link_index(conn: &Connection) -> Result<()> {
             "DELETE FROM related_note_links WHERE source_id = ?1",
             [block_id],
         )?;
-        for target in crate::domain::block::extract_wikilinks(&body) {
+        for target in crate::domain::block::extract_note_wikilinks(&body) {
             tx.execute(
                 "INSERT OR IGNORE INTO wikilinks (source_id, target_slug) VALUES (?1, ?2)",
                 rusqlite::params![block_id, target],
@@ -769,6 +769,66 @@ mod tests {
 
         assert_eq!(user_version(&conn).unwrap(), CURRENT_SCHEMA_VERSION);
         validate_schema(&conn).unwrap();
+    }
+
+    #[test]
+    fn graph_link_backfill_replaces_media_embeds_with_plain_note_links() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
+        migrate_and_validate(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO blocks (
+                slug, block_type, card_kind, saved_at, body, related_notes,
+                graph_link_index_version
+             ) VALUES (
+                'source', 'article', 'article', '2026-07-25T00:00:00Z',
+                '[[Note#^block-id|Label]] ![[image #1.jpg|Caption]]',
+                '[\"Related\"]', ?1
+             )",
+            [GRAPH_LINK_INDEX_VERSION - 1],
+        )
+        .unwrap();
+        let block_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO wikilinks (source_id, target_slug)
+             VALUES (?1, 'image #1.jpg|Caption')",
+            [block_id],
+        )
+        .unwrap();
+
+        backfill_graph_link_index(&conn).unwrap();
+
+        let note_targets = conn
+            .prepare(
+                "SELECT target_slug FROM wikilinks
+                 WHERE source_id = ?1 ORDER BY target_slug",
+            )
+            .unwrap()
+            .query_map([block_id], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(note_targets, vec!["Note#^block-id|Label"]);
+        let related_targets = conn
+            .prepare(
+                "SELECT target_slug FROM related_note_links
+                 WHERE source_id = ?1 ORDER BY target_slug",
+            )
+            .unwrap()
+            .query_map([block_id], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(related_targets, vec!["Related"]);
+        assert_eq!(
+            conn.query_row(
+                "SELECT graph_link_index_version FROM blocks WHERE id = ?1",
+                [block_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            GRAPH_LINK_INDEX_VERSION
+        );
     }
 
     #[test]

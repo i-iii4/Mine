@@ -5,12 +5,13 @@ Related documents: [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_FRONTEND.md](SPE
 ## Goal
 
 Отдельное компактное окно настроек с системным заголовком и перетаскиванием.
-Слева — список разделов, справа — контент раздела. Три раздела:
+Слева — список разделов, справа — контент раздела. Четыре раздела:
 
 1. **Appearance** — отображение контента (тема и режимы интерфейса; сюда
    переезжают пункты нынешнего Settings-дропдауна).
-2. **Spaces** — список пространств: добавить новое, забыть старое.
-3. **Orphans** — все медиа-файлы vault, на которые не ссылается ни один
+2. **Graph** — видимость collection, wikilink и related-note слоёв графа.
+3. **Spaces** — список пространств: добавить новое, забыть старое.
+4. **Orphans** — все медиа-файлы vault, на которые не ссылается ни один
    элемент, с групповыми действиями: безвозвратное удаление или превращение
    в элементы.
 
@@ -56,6 +57,7 @@ Related documents: [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_FRONTEND.md](SPE
 ┌─ Settings ────────────────────────────────┐  ← системный titlebar
 │ ┌──────────┐ ┌──────────────────────────┐ │
 │ │ Appearance│ │  <заголовок раздела>     │ │
+│ │ Graph      │ │                          │ │
 │ │ Spaces    │ │                          │ │
 │ │ Orphans   │ │  …контент раздела…       │ │
 │ │          │ │                          │ │
@@ -94,6 +96,23 @@ localStorage (общий для origin) и эмитит Tauri-событие `se
 применяется через `applyTheme`, compact/bottom — через существующие
 state-сеттеры). Событие выбрано вместо DOM `storage` как гарантированный
 канал в Tauri.
+
+## Graph
+
+Graph View не содержит собственного поиска, scope switcher или settings menu.
+Оставшиеся persisted-параметры находятся только здесь:
+
+| Настройка | Контрол | Значение по умолчанию |
+|---|---|---|
+| Collections | `Checkbox` + подпись | `true` |
+| Wikilinks | `Checkbox` + подпись | `true` |
+| Related notes | `Checkbox` + подпись | `true` |
+
+Все три значения хранятся одним объектом под ключом
+`mine.graphPreferences`. Settings использует общий
+`getStoredGraphPreferences` / `storeGraphPreferences` контракт и эмитит один
+`settings-changed` с этим ключом. Главное окно перечитывает объект и передаёт
+его в Graph View; Graph View не владеет второй persisted-копией.
 
 ## Spaces
 
@@ -214,8 +233,8 @@ UI:
 | Слой | Файлы |
 |---|---|
 | Rust | `commands/settings.rs` (окно + spaces + orphans) или расширение `vault.rs`/`blocks.rs`; регистрация в `lib.rs`; `capabilities/default.json` (+`settings` window); меню `Settings…` `Cmd+,` |
-| Фронт | `settings.html`, `src/settings/main.tsx`, `src/settings/SettingsApp.tsx`, разделы (`AppearanceSection`, `SpacesSection`, `OrphansSection`); `src/lib/themeMode.ts` (вынос из `ThemeMenuButton`); `vite.config.ts` (multi-entry input) |
-| Main-окно | кнопка `Settings` → `invoke("open_settings_window")`; удаление `ThemeMenuButton`-дропдауна; слушатель `settings-changed` (тема/compact/bottom) |
+| Фронт | `settings.html`, `src/settings/main.tsx`, `src/settings/SettingsApp.tsx`, разделы (`AppearanceSection`, `GraphSection`, `SpacesSection`, `OrphansSection`); общие `SettingRow`, `themeMode` и `graphPreferences`; `vite.config.ts` (multi-entry input) |
+| Main-окно | кнопка `Settings` → `invoke("open_settings_window")`; удаление `ThemeMenuButton`-дропдауна; слушатель `settings-changed` (тема/compact/bottom/graph) |
 | Доки | DESIGN_SYSTEM (Settings window: лэйаут, навигация, строки настроек), CLAUDE/ARCHITECTURE ссылки |
 
 ## Test Contract
@@ -241,10 +260,12 @@ Rust (`cargo test`):
 
 Frontend (vitest):
 
-- `SettingsApp`: рендер трёх разделов, переключение навигацией, активная
+- `SettingsApp`: рендер четырёх разделов, переключение навигацией, активная
   строка `bg-active`;
 - Appearance: смена темы вызывает `applyTheme` + emit `settings-changed`;
   чекбоксы пишут свои ключи;
+- Graph: три checkbox читают/пишут единый `mine.graphPreferences`, сохраняют
+  `Related notes` и эмитят один `settings-changed`;
 - Spaces: список рендерится мгновенно, статистика догружается per-row
   (`N elements · … · N files · size`); `element_count: null` → `—`; активная
   строка `bg-active` + `aria-current`, текстовой метки нет; клик по строке —
@@ -259,4 +280,5 @@ Frontend (vitest):
   зовёт команду с выбранными; `Convert` зовёт promote и перезагружает список;
   пустое состояние.
 - App (main): кнопка `Settings` вызывает `open_settings_window`; событие
-  `settings-changed` с темой применяет тему.
+  `settings-changed` с темой применяет тему, а graph key обновляет переданные в
+  Graph View preferences.

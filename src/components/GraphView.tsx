@@ -3,37 +3,24 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { forceCollide } from "d3-force";
-import { Search, SlidersHorizontal, X } from "lucide-react";
 import ForceGraph2D, {
   type ForceGraphMethods,
 } from "react-force-graph-2d";
 import { getBlock, listGraphSnapshot } from "@/lib/commands";
 import { fallbackThumbsRoot } from "@/lib/assets";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
+import type { GraphPreferences } from "@/lib/graphPreferences";
 import { ReadOnlyCardPreview } from "./Card";
 import { Button } from "./ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
-import { Input } from "./ui/input";
-import {
-  SegmentedControl,
-  type SegmentedControlOption,
-} from "./ui/segmented-control";
 import type {
   GraphOptions,
   GraphScope,
-  GraphScopeKind,
   GraphSnapshot,
   IndexedBlock,
   LightBlock,
@@ -44,14 +31,12 @@ import {
   CARD_THUMBNAIL_SIZE,
   COLLECTION_COLLISION_RADIUS,
   COLLECTION_LABEL_CLICK_SUPPRESS_MS,
-  GRAPH_BACKEND_SEARCH_DELAY_MS,
   GRAPH_CENTER_DURATION_MS,
   GRAPH_CENTER_MARGIN,
   GRAPH_INITIAL_FIT_DURATION_MS,
   GRAPH_INITIAL_FIT_TICKS,
   GRAPH_PREVIEW_FALLBACK_HEIGHT,
   GRAPH_PREVIEW_WIDTH,
-  GRAPH_SEARCH_DIMMED_ALPHA,
   type GraphCanvasData,
   type GraphCanvasLink,
   type GraphCanvasNode,
@@ -62,30 +47,24 @@ import {
   type GraphLinkDistanceForce,
   type GraphPreviewPosition,
   type GraphPreviewTarget,
-  type GraphToggleOption,
 } from "./graph/contracts";
 import {
   paintCardNode,
   paintCollectionNode,
-  paintUnresolvedNode,
   readGraphCanvasTheme,
   readGraphTheme,
   roundedRectPath,
   collectionPillBox,
 } from "./graph/canvas";
 import {
-  canvasColorWithAlpha,
   compareGraphNodePaintOrder,
   computeGraphPreviewPosition,
   directionalGraphNode,
   endpointNode,
   graphClientPointFromEvent,
-  graphEndpointId,
-  graphNodeMatchesSearch,
   graphThumbnailUrl,
   hasNodePosition,
   isGraphArrowKey,
-  normalizeGraphSearch,
 } from "./graph/interaction";
 import { collectionLabelCollisionForce, graphPhysics } from "./graph/physics";
 
@@ -95,6 +74,7 @@ export interface GraphViewProps {
   thumbsRootPath?: string;
   loadedBlocks: LightBlock[];
   thumbVersions: ReadonlyMap<string, number>;
+  graphPreferences: GraphPreferences;
   hoverPreviewFrozen?: boolean;
   selectedSlug?: string | null;
   detailOpen?: boolean;
@@ -109,27 +89,13 @@ export interface GraphViewHandle {
   centerOnNode: (nodeId: string) => void;
 }
 
-const GRAPH_SCOPE_OPTIONS: readonly SegmentedControlOption<GraphScopeKind>[] = [
-  { value: "current_route", label: "Route" },
-  { value: "library", label: "Library" },
-  { value: "ego", label: "Ego" },
-];
-
-const DEFAULT_GRAPH_OPTIONS: GraphOptions = {
-  include_collections: true,
-  include_wikilinks: true,
-  include_related_notes: true,
-  include_unresolved: false,
-  materialize_large_library: false,
-  query: null,
-};
-
 export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function GraphView({
   currentCollection,
   vaultPath,
   thumbsRootPath,
   loadedBlocks,
   thumbVersions,
+  graphPreferences,
   hoverPreviewFrozen = false,
   selectedSlug = null,
   detailOpen = false,
@@ -145,12 +111,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const [error, setError] = useState<string | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [theme, setTheme] = useState<"light" | "dark">(() => readGraphTheme());
-  const [scopeKind, setScopeKind] = useState<GraphScopeKind>(() =>
-    currentCollection ? "current_route" : "library",
-  );
-  const [graphOptions, setGraphOptions] = useState<GraphOptions>(DEFAULT_GRAPH_OPTIONS);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [backendSearchQuery, setBackendSearchQuery] = useState<string | null>(null);
+  const [materializedRouteKey, setMaterializedRouteKey] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoverPreviewTarget, setHoverPreviewTarget] = useState<GraphPreviewTarget | null>(null);
   const [hoverPreviewBlock, setHoverPreviewBlock] = useState<LightBlock | IndexedBlock | null>(null);
@@ -181,23 +142,16 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
 
   const canvasTheme = useMemo(() => readGraphCanvasTheme(theme), [theme]);
 
-  const normalizedSearch = useMemo(() => normalizeGraphSearch(searchQuery), [searchQuery]);
-  const searchReady = normalizedSearch.alphanumericCount >= 2;
-  const selectedCardSlug = selectedNodeId?.startsWith("card:")
-    ? selectedNodeId.slice("card:".length)
-    : null;
-  const egoCenterSlug = selectedSlug ?? selectedCardSlug;
-  const scopeCenterSlug = scopeKind === "ego" ? egoCenterSlug : null;
+  const routeKey = currentCollection ?? "__library__";
+  const materializeLargeLibrary = materializedRouteKey === routeKey;
   const scope = useMemo<GraphScope>(() => ({
-    kind: scopeKind,
+    kind: currentCollection ? "current_route" : "library",
     collection_ref: currentCollection ?? null,
-    center_slug: scopeCenterSlug,
-    hops: 1,
-  }), [currentCollection, scopeCenterSlug, scopeKind]);
+  }), [currentCollection]);
   const requestOptions = useMemo<GraphOptions>(() => ({
-    ...graphOptions,
-    query: backendSearchQuery,
-  }), [backendSearchQuery, graphOptions]);
+    ...graphPreferences,
+    materialize_large_library: materializeLargeLibrary,
+  }), [graphPreferences, materializeLargeLibrary]);
 
   const acceptRevision = useCallback((revision: ProjectionRevision) => {
     if (acceptSnapshotRevision) return acceptSnapshotRevision(revision);
@@ -206,17 +160,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     acceptedRevisionRef.current = revision;
     return true;
   }, [acceptSnapshotRevision]);
-
-  useEffect(() => {
-    if (!snapshot?.truncated || !searchReady) {
-      setBackendSearchQuery(null);
-      return undefined;
-    }
-    const timer = window.setTimeout(() => {
-      setBackendSearchQuery(normalizedSearch.value);
-    }, GRAPH_BACKEND_SEARCH_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [normalizedSearch.value, searchReady, snapshot?.truncated]);
 
   const reloadSnapshot = useCallback(async () => {
     const sequence = ++loadSequenceRef.current;
@@ -237,16 +180,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       }
     }
   }, [acceptRevision, loadSnapshot, requestOptions, scope]);
-
-  useLayoutEffect(() => {
-    setScopeKind(currentCollection ? "current_route" : "library");
-  }, [currentCollection]);
-
-  useEffect(() => {
-    if (scopeKind === "ego" && !egoCenterSlug) {
-      setScopeKind(currentCollection ? "current_route" : "library");
-    }
-  }, [currentCollection, egoCenterSlug, scopeKind]);
 
   useEffect(() => {
     void reloadSnapshot();
@@ -313,28 +246,13 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     };
   }, [snapshot]);
 
-  const matchingNodeIds = useMemo(() => {
-    if (!searchReady) return new Set<string>();
-    return new Set(
-      graphData.nodes
-        .filter((node) => graphNodeMatchesSearch(node, normalizedSearch.value))
-        .map((node) => node.id),
-    );
-  }, [graphData.nodes, normalizedSearch.value, searchReady]);
-
   const selectedNode = useMemo(
     () => graphData.nodes.find((node) => node.id === selectedNodeId) ?? null,
     [graphData.nodes, selectedNodeId],
   );
 
-  const availableScopeOptions = useMemo(() => GRAPH_SCOPE_OPTIONS.filter((option) => {
-    if (option.value === "current_route") return Boolean(currentCollection);
-    if (option.value === "ego") return Boolean(egoCenterSlug);
-    return true;
-  }), [currentCollection, egoCenterSlug]);
-
   const renderThumbnails = !(
-    scopeKind === "library" && graphOptions.materialize_large_library
+    scope.kind === "library" && materializeLargeLibrary
     && (snapshot?.total_nodes ?? 0) > 1_000
   );
   const graphViewportReady = size.width > 0 && size.height > 0;
@@ -663,7 +581,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
         onNavigateCollection(node.collection_ref ?? undefined);
         return;
       }
-      if (node.kind === "unresolved") return;
       if (!node.slug) return;
 
       const loaded = loadedBlocksBySlug.get(node.slug);
@@ -704,12 +621,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
 
   const handleGraphKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
-      if (searchQuery) {
-        event.preventDefault();
-        event.stopPropagation();
-        setSearchQuery("");
-        return;
-      }
       if (selectedNodeId) {
         event.preventDefault();
         event.stopPropagation();
@@ -737,21 +648,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     event.stopPropagation();
     setSelectedNodeId(next.id);
     pendingCenterNodeIdRef.current = next.id;
-  }, [graphData.nodes, handleNodeClick, searchQuery, selectedNode, selectedNodeId]);
-
-  const handleSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== "Escape" || !searchQuery) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setSearchQuery("");
-  }, [searchQuery]);
-
-  const updateGraphOption = useCallback(
-    (key: GraphToggleOption, checked: boolean) => {
-      setGraphOptions((current) => ({ ...current, [key]: checked }));
-    },
-    [],
-  );
+  }, [graphData.nodes, handleNodeClick, selectedNode, selectedNodeId]);
 
   const suppressCollectionClickAfterDrag = useCallback((node: GraphCanvasNode) => {
     if (node.kind !== "collection") return;
@@ -765,29 +662,15 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const nodeCanvasObject = useCallback(
     (node: GraphCanvasNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
       if (!hasNodePosition(node)) return;
-      const dimmed = searchReady && !matchingNodeIds.has(node.id);
       const selected = selectedNodeId === node.id;
-      const showLabel = selected || (searchReady && matchingNodeIds.has(node.id));
+      const showLabel = selected;
       ctx.save();
-      if (dimmed) {
-        ctx.globalAlpha *= GRAPH_SEARCH_DIMMED_ALPHA;
-      }
       if (node.kind === "collection") {
         paintCollectionNode(ctx, node, {
           globalScale,
           theme: canvasTheme,
           hovered: hoveredCollectionId === node.id,
           selected,
-        });
-        ctx.restore();
-        return;
-      }
-      if (node.kind === "unresolved") {
-        paintUnresolvedNode(ctx, node, {
-          globalScale,
-          theme: canvasTheme,
-          selected,
-          showLabel,
         });
         ctx.restore();
         return;
@@ -809,10 +692,8 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       canvasTheme,
       hoveredCollectionId,
       imageVersion,
-      matchingNodeIds,
       renderThumbnails,
       resolvedThumbsRoot,
-      searchReady,
       selectedNodeId,
       theme,
       thumbVersions,
@@ -829,39 +710,17 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
         ctx.fill();
         return;
       }
-      if (node.kind === "unresolved") {
-        const radius = 5 / globalScale;
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
-        ctx.fill();
-        return;
-      }
       const size = CARD_THUMBNAIL_SIZE / globalScale;
       ctx.fillRect(node.x - size / 2, node.y - size / 2, size, size);
     },
     [],
   );
 
-  const linkColor = useCallback((link: GraphCanvasLink) => {
-    if (!searchReady) return canvasTheme.linkDefault;
-    const sourceId = graphEndpointId(link.source);
-    const targetId = graphEndpointId(link.target);
-    if (
-      (sourceId && matchingNodeIds.has(sourceId))
-      || (targetId && matchingNodeIds.has(targetId))
-    ) {
-      return canvasTheme.linkDefault;
-    }
-    return canvasColorWithAlpha(canvasTheme.linkDefault, GRAPH_SEARCH_DIMMED_ALPHA);
-  }, [canvasTheme.linkDefault, matchingNodeIds, searchReady]);
+  const linkColor = useCallback(() => canvasTheme.linkDefault, [canvasTheme.linkDefault]);
 
   const selectedStatus = selectedNode
     ? `${selectedNode.label}, ${selectedNode.degree} ${selectedNode.degree === 1 ? "neighbor" : "neighbors"}`
-    : searchQuery && !searchReady
-      ? "Graph search pending"
-      : searchReady
-        ? `${matchingNodeIds.size} graph ${matchingNodeIds.size === 1 ? "match" : "matches"}`
-        : "";
+    : "";
 
   const physics = graphPhysics(graphData.nodes.length);
 
@@ -871,115 +730,28 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       className="absolute inset-0 overflow-hidden bg-background"
       onContextMenu={(event) => event.preventDefault()}
       data-graph-view=""
+      data-graph-snapshot-route={snapshot?.current_collection ?? "__library__"}
     >
-      <div
-        className="absolute top-3 right-3 left-3 z-20 flex min-w-0 flex-wrap items-center gap-2"
-        data-graph-controls=""
-        onPointerDown={(event) => event.stopPropagation()}
-        onContextMenu={(event) => event.stopPropagation()}
-      >
-        <div className="relative w-[min(18rem,calc(100vw-8rem))] min-w-36">
-          <Search
-            aria-hidden="true"
-            className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-tertiary-foreground"
-          />
-          <Input
-            type="search"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            placeholder="Search graph"
-            aria-label="Search graph"
-            data-graph-search-state={searchQuery && !searchReady ? "pending" : "ready"}
-            className="bg-chrome pr-8 pl-8"
-          />
-          {searchQuery ? (
-            <button
-              type="button"
-              aria-label="Clear graph search"
-              title="Clear graph search"
-              className="absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-1 text-muted-foreground hover:text-foreground"
-              onClick={() => setSearchQuery("")}
-            >
-              <X aria-hidden="true" className="size-3.5" />
-            </button>
-          ) : null}
-          {searchReady && matchingNodeIds.size === 0 && !loading ? (
-            <div
-              className="absolute top-full left-0 mt-1 border bg-chrome px-2 py-1 text-sm text-muted-foreground"
-              data-graph-search-empty=""
-            >
-              No graph matches
-            </div>
-          ) : null}
-        </div>
-
-        {availableScopeOptions.length > 1 ? (
-          <SegmentedControl
-            value={scopeKind}
-            options={availableScopeOptions}
-            onChange={setScopeKind}
-            aria-label="Graph scope"
-          />
-        ) : null}
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="default"
-              size="icon-xs"
-              aria-label="Graph filters"
-              title="Graph filters"
-            >
-              <SlidersHorizontal aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuCheckboxItem
-              checked={graphOptions.include_collections}
-              onCheckedChange={(checked) => updateGraphOption("include_collections", checked)}
-            >
-              Collections
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={graphOptions.include_wikilinks}
-              onCheckedChange={(checked) => updateGraphOption("include_wikilinks", checked)}
-            >
-              Wikilinks
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={graphOptions.include_related_notes}
-              onCheckedChange={(checked) => updateGraphOption("include_related_notes", checked)}
-            >
-              Related notes
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={graphOptions.include_unresolved}
-              onCheckedChange={(checked) => updateGraphOption("include_unresolved", checked)}
-            >
-              Unresolved
-            </DropdownMenuCheckboxItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        {snapshot?.truncated
-          && snapshot.can_materialize_full
-          && !graphOptions.materialize_large_library ? (
+      {snapshot?.truncated
+        && snapshot.can_materialize_full
+        && !materializeLargeLibrary ? (
+          <div
+            className="absolute top-3 right-3 z-20"
+            data-graph-controls=""
+            onPointerDown={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.stopPropagation()}
+          >
             <Button
               type="button"
               variant="default"
               size="xs"
-              onClick={() => setGraphOptions((current) => ({
-                ...current,
-                materialize_large_library: true,
-              }))}
+              onClick={() => setMaterializedRouteKey(routeKey)}
               data-graph-materialize-all=""
             >
               Show all
             </Button>
-          ) : null}
-      </div>
+          </div>
+        ) : null}
 
       <div className="sr-only" aria-live="polite" data-graph-selection-status="">
         {selectedStatus}

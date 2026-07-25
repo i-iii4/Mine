@@ -657,7 +657,9 @@ remove_channel(conn: &Connection, tag: &str) -> Result<bool>
 - Если блок с таким slug уже есть — обновляет все поля
 - Пересчитывает и сохраняет `body_hash` (body после frontmatter) для external rename detection
 - Обновляет block_tags: удаляет старые, вставляет новые
-- Обновляет wikilinks: удаляет старые, вставляет новые (из extract_wikilinks)
+- Обновляет `wikilinks`: удаляет старые, вставляет только plain note links из
+  `extract_note_wikilinks`. Media embeds `![[file]]` остаются в media pipeline
+  и не попадают в block-to-block graph relation index.
 - FTS5 обновляется автоматически через триггеры
 - Не генерирует thumbnail и не угадывает `thumb_format` по slug. Thumbnail
   metadata синхронизируется отдельным `sync_thumb_metadata` после записи thumb.

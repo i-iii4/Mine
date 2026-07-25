@@ -1709,6 +1709,13 @@ SPEC_SETTINGS_WINDOW.md § Design decisions.
 (`applyTheme(getStoredTheme())` до первого рендера) — модуль
 `src/lib/themeMode.ts`.
 
+Graph имеет отдельный пункт в левой навигации Settings. Три стандартные
+`SettingRow` с `Checkbox` управляют `Collections`, `Wikilinks` и
+`Related notes`; все значения сохраняются одним объектом
+`mine.graphPreferences`. В самом Graph View нет дублирующего settings trigger,
+search field или scope selector. Текущий route автоматически определяет
+collection/library snapshot.
+
 ### Сетка
 
 Masonry с round-robin распределением по колонкам. Gap: 32px (`--spacing-s5`). Минимальная ширина карточки: 220px; максимальная ширина не фиксируется токеном и определяется алгоритмически перед переходом к следующему числу колонок. Лента должна ощущаться как бесконечный canvas: scroll может быть быстрым, но медиа не должны появляться заметными рывками после входа карточки во viewport.

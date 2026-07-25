@@ -885,12 +885,13 @@ pub fn serialize_block(block: &Block) -> String {
     }
 }
 
-/// Extract `[[wikilinks]]` from body text.
+/// Extract plain note links (`[[...]]`) from body text.
 ///
-/// Handles embeds (`![[...]]`), trims whitespace, deduplicates,
-/// and correctly resolves nested brackets by matching each `]]`
-/// with the most recent `[[`.
-pub fn extract_wikilinks(body: &str) -> Vec<String> {
+/// Media embeds (`![[...]]`) belong to the inline-media pipeline and are
+/// intentionally excluded from block-to-block graph relations. Note-link
+/// targets are kept verbatim so alias and block fragments can be normalized by
+/// the graph projection after indexing.
+pub fn extract_note_wikilinks(body: &str) -> Vec<String> {
     let mut results = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let bytes = body.as_bytes();
@@ -902,16 +903,18 @@ pub fn extract_wikilinks(body: &str) -> Vec<String> {
             let start = i + 2;
             let mut j = start;
             let mut real_start = start;
+            let mut is_embed = i > 0 && bytes[i - 1] == b'!';
 
             while j + 1 < len {
                 if bytes[j] == b'[' && bytes[j + 1] == b'[' {
                     // Nested [[ resets the match start
                     real_start = j + 2;
+                    is_embed = is_embed || (j > 0 && bytes[j - 1] == b'!');
                     j += 2;
                 } else if bytes[j] == b']' && bytes[j + 1] == b']' {
                     let content = &body[real_start..j];
                     let trimmed = content.trim();
-                    if !trimmed.is_empty() && seen.insert(trimmed.to_string()) {
+                    if !is_embed && !trimmed.is_empty() && seen.insert(trimmed.to_string()) {
                         results.push(trimmed.to_string());
                     }
                     i = j + 2;
@@ -2329,59 +2332,80 @@ mod tests {
         assert_eq!(block.body, reparsed.body);
     }
 
-    // ── extract_wikilinks ───────────────────────────────────────────────
+    // ── extract_note_wikilinks ──────────────────────────────────────────
 
     #[test]
-    fn wikilinks_basic() {
-        let result = extract_wikilinks("text [[foo]] more [[bar]]");
+    fn note_wikilinks_basic() {
+        let result = extract_note_wikilinks("text [[foo]] more [[bar]]");
         assert_eq!(result, vec!["foo", "bar"]);
     }
 
     #[test]
-    fn wikilinks_embed() {
-        // ![[image.png]] is also a wikilink (embed syntax).
-        let result = extract_wikilinks("![[image.png]]");
-        assert_eq!(result, vec!["image.png"]);
-    }
-
-    #[test]
-    fn wikilinks_empty_ignored() {
-        // E14: empty wikilinks are ignored.
-        let result = extract_wikilinks("[[]] [[ ]]");
+    fn note_wikilinks_exclude_media_embeds() {
+        let result = extract_note_wikilinks("![[image.png]]");
         assert!(result.is_empty());
     }
 
     #[test]
-    fn wikilinks_trimmed() {
-        let result = extract_wikilinks("[[ spaces ]]");
+    fn note_wikilinks_mixed_body_preserves_alias_and_fragment() {
+        let result = extract_note_wikilinks(
+            "See [[Existing Note#^block-id|Label]]\n\
+             ![[photo.jpg|Caption]]\n\
+             and [[Second Note|Second]].",
+        );
+        assert_eq!(
+            result,
+            vec!["Existing Note#^block-id|Label", "Second Note|Second"]
+        );
+    }
+
+    #[test]
+    fn note_wikilinks_ignore_media_filename_containing_hash() {
+        let result = extract_note_wikilinks(
+            "![[Building weather #indiegame (video 1).mp4|Preview]]\n\
+             [[Actual Note#Section|Read it]]",
+        );
+        assert_eq!(result, vec!["Actual Note#Section|Read it"]);
+    }
+
+    #[test]
+    fn note_wikilinks_empty_ignored() {
+        // E14: empty wikilinks are ignored.
+        let result = extract_note_wikilinks("[[]] [[ ]]");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn note_wikilinks_trimmed() {
+        let result = extract_note_wikilinks("[[ spaces ]]");
         assert_eq!(result, vec!["spaces"]);
     }
 
     #[test]
-    fn wikilinks_no_links() {
-        let result = extract_wikilinks("no links here");
+    fn note_wikilinks_no_links() {
+        let result = extract_note_wikilinks("no links here");
         assert!(result.is_empty());
     }
 
     #[test]
-    fn wikilinks_dedup() {
+    fn note_wikilinks_dedup() {
         // E15: duplicates removed.
-        let result = extract_wikilinks("[[a]] text [[a]]");
+        let result = extract_note_wikilinks("[[a]] text [[a]]");
         assert_eq!(result, vec!["a"]);
     }
 
     #[test]
-    fn wikilinks_nested_takes_inner() {
+    fn note_wikilinks_nested_takes_inner() {
         // Per spec: nested [[foo [[bar]]]] — each [[ resets the match start,
         // so the first ]] matches the most recent [[ → result is ["bar"].
-        let result = extract_wikilinks("[[foo [[bar]]]]");
+        let result = extract_note_wikilinks("[[foo [[bar]]]]");
         assert!(result.contains(&"bar".to_string()));
         assert!(!result.contains(&"foo [[bar".to_string()));
     }
 
     #[test]
-    fn wikilinks_multiple_on_same_line() {
-        let result = extract_wikilinks("see [[alpha]] and [[beta]] and [[gamma]]");
+    fn note_wikilinks_multiple_on_same_line() {
+        let result = extract_note_wikilinks("see [[alpha]] and [[beta]] and [[gamma]]");
         assert_eq!(result.len(), 3);
         assert!(result.contains(&"alpha".to_string()));
         assert!(result.contains(&"beta".to_string()));
@@ -2389,8 +2413,8 @@ mod tests {
     }
 
     #[test]
-    fn wikilinks_multiline() {
-        let result = extract_wikilinks("line one [[foo]]\nline two [[bar]]");
+    fn note_wikilinks_multiline() {
+        let result = extract_note_wikilinks("line one [[foo]]\nline two [[bar]]");
         assert_eq!(result, vec!["foo", "bar"]);
     }
 

@@ -130,10 +130,10 @@ local-arena/
 │   ├── settings/               # Окно настроек (второй Vite-entry: settings.html)
 │   │   ├── main.tsx            # Bootstrap: тема до первого рендера
 │   │   ├── SettingsApp.tsx     # Хром + навигация разделов
-│   │   └── *Section.tsx        # AppearanceSection, SpacesSection, OrphansSection
+│   │   └── *Section.tsx        # AppearanceSection, GraphSection, SpacesSection, OrphansSection
 │   ├── components/
 │   │   ├── Grid.tsx            # Virtualized masonry grid — scroll-based windowing, direction-aware overscan, priority loading
-│   │   ├── GraphView.tsx       # Graph M1: Canvas nodes/edges, scopes/search, selection/a11y
+│   │   ├── GraphView.tsx       # Graph M1: Canvas nodes/edges, route-derived scope, selection/a11y
 │   │   ├── graph/              # Canvas paint, physics, contracts, interactions
 │   │   ├── grid/               # Grid interaction geometry/controllers
 │   │   ├── MainSecondaryChrome.tsx # Main route secondary chrome

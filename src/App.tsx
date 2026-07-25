@@ -218,6 +218,11 @@ import {
   getStoredCompactDetailTopMenu,
 } from "@/lib/compactDetailTopMenuVisibility";
 import {
+  getStoredGraphPreferences,
+  GRAPH_PREFERENCES_STORAGE_KEY,
+  type GraphPreferences,
+} from "@/lib/graphPreferences";
+import {
   SETTINGS_CHANGED_EVENT,
   type SettingsChangedPayload,
 } from "@/lib/settingsChanged";
@@ -417,6 +422,9 @@ export function AppWithVault({
   );
   const [bottomActionBarHidden, setBottomActionBarHidden] = useState(
     getStoredBottomActionBarHidden,
+  );
+  const [graphPreferences, setGraphPreferences] = useState(
+    getStoredGraphPreferences,
   );
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>(getStoredMainViewMode);
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
@@ -1581,6 +1589,8 @@ export function AppWithVault({
         setCompactDetailTopMenuEnabled(getStoredCompactDetailTopMenu());
       } else if (key === BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY) {
         setBottomActionBarHidden(getStoredBottomActionBarHidden());
+      } else if (key === GRAPH_PREFERENCES_STORAGE_KEY) {
+        setGraphPreferences(getStoredGraphPreferences());
       }
     });
     return () => {
@@ -2976,6 +2986,7 @@ export function AppWithVault({
                 tags={orderedTags}
                 currentTag={currentTag}
                 viewMode={mainViewMode}
+                graphPreferences={graphPreferences}
                 routeSnapshotReady={gridRouteSnapshotReady}
                 scrollToTop={scrollToTopSignal}
                 blockDragActive={activeDragBlocks.length > 0}
@@ -3241,6 +3252,7 @@ interface RouteContext {
   tags: TagCount[];
   currentTag?: string;
   viewMode: MainViewMode;
+  graphPreferences: GraphPreferences;
   routeSnapshotReady: boolean;
   scrollToTop: number;
   blockDragActive: boolean;
@@ -3291,6 +3303,7 @@ function AllBlocksPage() {
         thumbsRootPath={ctx.thumbsRootPath}
         loadedBlocks={ctx.blocks}
         thumbVersions={ctx.thumbVersions}
+        graphPreferences={ctx.graphPreferences}
         hoverPreviewFrozen={ctx.hoverPreviewFrozen}
         selectedSlug={ctx.selectedBlockSlug}
         detailOpen={ctx.detailOpen}
@@ -3314,6 +3327,7 @@ function ChannelPage() {
         thumbsRootPath={ctx.thumbsRootPath}
         loadedBlocks={ctx.blocks}
         thumbVersions={ctx.thumbVersions}
+        graphPreferences={ctx.graphPreferences}
         hoverPreviewFrozen={ctx.hoverPreviewFrozen}
         selectedSlug={ctx.selectedBlockSlug}
         detailOpen={ctx.detailOpen}

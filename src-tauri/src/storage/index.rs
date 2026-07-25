@@ -12,7 +12,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::block::{
-    build_preview_text, derive_card_kind, derive_title_fields, extract_wikilinks,
+    build_preview_text, derive_card_kind, derive_title_fields, extract_note_wikilinks,
     iter_inline_media_references, normalize_local_markdown_url, parse_markdown_document,
     strip_first_markdown_h1, Block, BlockType, CardKind, DateTime, Frontmatter,
     FEED_PREVIEW_TEXT_BUFFER_CHARS,
@@ -1061,7 +1061,7 @@ pub(crate) fn parse_card_kind_row(
 
 /// Insert or update a block in the index. Returns the block's row id.
 ///
-/// On conflict (same slug): updates all fields, replaces tags and wikilinks.
+/// On conflict (same slug): updates all fields, replaces tags and note wikilinks.
 /// FTS5 is updated automatically through triggers.
 ///
 /// `vault_root` is used to resolve media filenames when extracting image
@@ -1292,9 +1292,9 @@ fn upsert_block_inner(
         .context("failed to insert tag")?;
     }
 
-    // Replace body wikilinks and related-note provenance independently. The
-    // graph read model needs their edge kinds; combining them in one table
-    // loses that distinction when both target the same note.
+    // Replace plain note links and related-note provenance independently.
+    // Inline media embeds stay in the media pipeline and never become graph
+    // relations.
     conn.execute("DELETE FROM wikilinks WHERE source_id = ?1", [block_id])
         .context("failed to delete old wikilinks")?;
     conn.execute(
@@ -1302,7 +1302,7 @@ fn upsert_block_inner(
         [block_id],
     )
     .context("failed to delete old related-note links")?;
-    for link in extract_wikilinks(&block.body) {
+    for link in extract_note_wikilinks(&block.body) {
         conn.execute(
             "INSERT OR IGNORE INTO wikilinks (source_id, target_slug) VALUES (?1, ?2)",
             params![block_id, link],
@@ -2206,7 +2206,7 @@ mod tests {
     }
 
     #[test]
-    fn upsert_preserves_wikilink_and_related_note_provenance() {
+    fn upsert_separates_media_embeds_from_note_link_and_related_provenance() {
         let conn = test_conn();
         let mut block = make_block_full(
             "extracted",
@@ -2214,7 +2214,7 @@ mod tests {
             Some("Extracted"),
             "2026-01-01T00:00:00Z",
             &["inspiration"],
-            "![[extracted.jpg]]",
+            "![[extracted #1.jpg|Preview]]\nSee [[Source Note#^block-id|Source]]",
         );
         block.frontmatter.related_notes = vec!["Source Article".to_string()];
         upsert_block(&conn, &block, None).unwrap();
@@ -2246,7 +2246,7 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(wikilink_targets, vec!["extracted.jpg"]);
+        assert_eq!(wikilink_targets, vec!["Source Note#^block-id|Source"]);
         let related_targets = conn
             .prepare(
                 "SELECT target_slug FROM related_note_links

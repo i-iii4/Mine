@@ -6,7 +6,6 @@ const DEFAULT_AUDIT_URL = "http://127.0.0.1:1420/__graph-audit";
 const AUDIT_URL = process.env.MINE_GRAPH_AUDIT_URL ?? DEFAULT_AUDIT_URL;
 const FIRST_PAINT_BUDGET_MS = 1_000;
 const PAINT_WAIT_TIMEOUT_MS = 3_000;
-const SEARCH_BUDGET_MS = 250;
 const MAX_UNIQUE_IMAGE_REQUESTS = 48;
 const MAX_LONG_TASK_MS = 100;
 const MAX_P95_FRAME_MS = 32;
@@ -26,33 +25,57 @@ async function assertDevServerReady() {
 
 async function waitForGraphPaint(page, requireSettledFrame = false) {
   await page.waitForSelector("[data-graph-view] canvas");
-  await page.waitForFunction((requireSettled) => {
-    const canvas = document.querySelector("[data-graph-view] canvas");
-    if (!(canvas instanceof HTMLCanvasElement) || canvas.width <= 0 || canvas.height <= 0) {
-      return false;
-    }
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) return false;
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    const stride = Math.max(4, Math.floor(Math.min(canvas.width, canvas.height) / 180) * 4);
-    let minX = canvas.width;
-    let maxX = 0;
-    let minY = canvas.height;
-    let maxY = 0;
-    for (let index = 3; index < pixels.length; index += stride) {
-      if (pixels[index] <= 24) continue;
-      if (!requireSettled) return true;
-      const pixelIndex = (index - 3) / 4;
-      const x = pixelIndex % canvas.width;
-      const y = Math.floor(pixelIndex / canvas.width);
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-    }
-    return maxX - minX >= canvas.width * 0.45
-      && maxY - minY >= canvas.height * 0.45;
-  }, requireSettledFrame, { timeout: PAINT_WAIT_TIMEOUT_MS });
+  try {
+    await page.waitForFunction((requireSettled) => {
+      const canvas = document.querySelector("[data-graph-view] canvas");
+      if (!(canvas instanceof HTMLCanvasElement) || canvas.width <= 0 || canvas.height <= 0) {
+        return false;
+      }
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) return false;
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      const stride = Math.max(4, Math.floor(Math.min(canvas.width, canvas.height) / 180) * 4);
+      let minX = canvas.width;
+      let maxX = 0;
+      let minY = canvas.height;
+      let maxY = 0;
+      for (let index = 3; index < pixels.length; index += stride) {
+        if (pixels[index] <= 24) continue;
+        if (!requireSettled) return true;
+        const pixelIndex = (index - 3) / 4;
+        const x = pixelIndex % canvas.width;
+        const y = Math.floor(pixelIndex / canvas.width);
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      }
+      return maxX - minX >= canvas.width * 0.45
+        && maxY - minY >= canvas.height * 0.45;
+    }, requireSettledFrame, { timeout: PAINT_WAIT_TIMEOUT_MS });
+  } catch (error) {
+    const diagnostics = await page.evaluate(() => {
+      const view = document.querySelector("[data-graph-view]");
+      const canvas = view?.querySelector("canvas");
+      return {
+        audit: window.__MINE_GRAPH_AUDIT__ ?? null,
+        route: view?.getAttribute("data-graph-snapshot-route") ?? null,
+        canvas: canvas instanceof HTMLCanvasElement
+          ? {
+              width: canvas.width,
+              height: canvas.height,
+              clientWidth: canvas.clientWidth,
+              clientHeight: canvas.clientHeight,
+            }
+          : null,
+        bodyText: document.body.textContent?.trim() ?? "",
+      };
+    });
+    throw new Error(
+      `Graph paint timed out: ${JSON.stringify(diagnostics)}\n`
+      + `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 function nonBackgroundRatio(buffer) {
@@ -124,7 +147,9 @@ async function assertNonblank(page, label) {
 }
 
 async function assertControlsFit(page, label) {
-  const result = await page.locator("[data-graph-controls]").evaluate((controls) => {
+  const controlsLocator = page.locator("[data-graph-controls]");
+  if (await controlsLocator.count() === 0) return;
+  const result = await controlsLocator.evaluate((controls) => {
     const viewportWidth = document.documentElement.clientWidth;
     const rect = controls.getBoundingClientRect();
     const children = Array.from(controls.children).map((child) => child.getBoundingClientRect());
@@ -146,6 +171,19 @@ async function assertControlsFit(page, label) {
   });
   if (!result.withinViewport || result.horizontalOverflow || result.overlaps.length > 0) {
     throw new Error(`${label}: graph controls overlap or overflow: ${JSON.stringify(result)}`);
+  }
+}
+
+async function assertRemovedGraphControls(page, label) {
+  const visible = await page.evaluate(() => ({
+    search: document.querySelector('[aria-label="Search graph"]') !== null,
+    filters: document.querySelector('[aria-label="Graph filters"]') !== null,
+    scope: document.querySelector('[aria-label="Graph scope"]') !== null,
+    unresolved: Array.from(document.querySelectorAll("*"))
+      .some((node) => node.textContent?.trim() === "Unresolved"),
+  }));
+  if (Object.values(visible).some(Boolean)) {
+    throw new Error(`${label}: removed Graph controls are visible: ${JSON.stringify(visible)}`);
   }
 }
 
@@ -250,6 +288,7 @@ async function runTheme(browser, theme) {
     throw new Error(`${theme}: first graph paint ${firstPaintMs.toFixed(1)}ms exceeds ${FIRST_PAINT_BUDGET_MS}ms`);
   }
   const firstPaintRatio = await assertNonblank(page, `${theme} first paint`);
+  await assertRemovedGraphControls(page, `${theme} desktop`);
   await assertControlsFit(page, `${theme} desktop`);
   await installFrameProbe(page);
   const hoverChangedRatio = theme === "dark"
@@ -260,6 +299,7 @@ async function runTheme(browser, theme) {
   await canvas.evaluate((node) => node.setAttribute("data-audit-canvas-identity", "preserve"));
   await page.getByRole("button", { name: "Collection audit" }).click();
   await page.waitForFunction(() => window.__MINE_GRAPH_AUDIT__?.lastScope?.kind === "current_route");
+  await page.waitForSelector('[data-graph-view][data-graph-snapshot-route="Design"]');
   await waitForGraphPaint(page);
   if (await canvas.getAttribute("data-audit-canvas-identity") !== "preserve") {
     throw new Error(`${theme}: route switch remounted the graph canvas`);
@@ -276,21 +316,15 @@ async function runTheme(browser, theme) {
   if (await canvas.getAttribute("data-audit-canvas-identity") !== "preserve") {
     throw new Error(`${theme}: resize remounted the graph canvas`);
   }
+  await waitForGraphPaint(page);
   await assertControlsFit(page, `${theme} narrow`);
   const narrowPaintRatio = await assertNonblank(page, `${theme} narrow`);
 
   await page.getByRole("button", { name: "Library audit" }).click();
   await page.waitForFunction(() => window.__MINE_GRAPH_AUDIT__?.lastScope?.kind === "library");
+  await page.waitForSelector('[data-graph-view][data-graph-snapshot-route="__library__"]');
   await waitForGraphPaint(page);
-
-  const searchStartedAt = performance.now();
-  await page.getByRole("searchbox", { name: "Search graph" }).fill("card 12");
-  await page.waitForFunction(() => window.__MINE_GRAPH_AUDIT__?.lastOptions?.query === "card 12");
-  const searchMs = performance.now() - searchStartedAt;
-  if (searchMs > SEARCH_BUDGET_MS) {
-    throw new Error(`${theme}: materialized graph search ${searchMs.toFixed(1)}ms exceeds ${SEARCH_BUDGET_MS}ms`);
-  }
-  await page.getByRole("button", { name: "Clear graph search" }).click();
+  await assertRemovedGraphControls(page, `${theme} library`);
 
   const interaction = await exerciseZoomAndPan(page);
   if (interaction.frameCount > 5 && interaction.p95FrameMs > MAX_P95_FRAME_MS) {
@@ -315,7 +349,6 @@ async function runTheme(browser, theme) {
     firstPaintRatio: Number(firstPaintRatio.toFixed(5)),
     routePaintRatio: Number(routePaintRatio.toFixed(5)),
     narrowPaintRatio: Number(narrowPaintRatio.toFixed(5)),
-    searchMs: Number(searchMs.toFixed(1)),
     uniqueImageRequests: imageRequests.size,
     hoverChangedRatio,
     ...interaction,

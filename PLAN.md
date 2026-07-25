@@ -32,7 +32,7 @@ Status vocabulary:
 | A1. Vault freshness | DONE | Last-good route reads, persistent clean/dirty state, non-blocking safety audit | One bad file never blocks Grid/Search/Detail; clean reads scan nothing; sequential search does not repeat inventory; missed events still converge |
 | A2. Watcher/storage consistency | DONE | Watcher recovery, lock order, atomic source writes, rollback-safe compound mutations | Injected watcher/write failures recover without partial source/index state or deadlock |
 | A3. Derived preview completion | DONE | Semantic `CardKind::Link`, recipe-backed readiness, one preview planner | Metadata-only links stay links; `ready` agrees with card semantics; watcher and commands cannot select different sources |
-| A4. Graph View M1 | DONE | Wikilink/related edges, scopes, controls/search, selection/a11y, truncation and Canvas acceptance | Full edge model, stable interactions, keyboard navigation and dark/light Playwright pixel/performance gates pass |
+| A4. Graph View M1 | DONE | Wikilink/related edges, automatic route scope, shared Settings preferences, selection/a11y, truncation and Canvas acceptance | Full real-object edge model, minimal Graph surface, stable interactions, keyboard navigation and dark/light Playwright pixel/performance gates pass |
 | A5. Cold-space semantic acceptance | MANUAL QA | Fresh-derived-store space switch, legacy card projection audit, semantic preview readiness | Automated source/projection, first-frame, rapid-switch, reopen and cache-reset contracts pass; only final desktop visual open/restart remains |
 | A6. Verification gate hardening | DONE | Self-starting browser audit runner wired into `bun run verify` | A clean shell runs Feed, Graph and cold-space gates without a prestarted server and always tears the server down |
 | A7. Structural decomposition | DONE | Split App/Grid/Graph, command-state orchestration and storage DB/index responsibilities at existing ownership boundaries | Composition roots retain orchestration; focused owners contain migrations, coordinators, interaction/physics/paint and secondary chrome; behavior gates stay green |
@@ -78,6 +78,30 @@ Status vocabulary:
 - Полный `bun run verify:release` проходит: generated bindings без drift,
   ESLint, frontend/Rust workspace tests, Feed/Graph/cold-space browser gates и
   packaged macOS WKWebView/Tauri IPC smoke.
+
+### Graph real-object projection checkpoint — 25.07.2026
+
+- Graph View больше не имеет типа, фильтра или визуального состояния
+  `Unresolved`: отсутствующие WikiLink targets не становятся nodes или edges.
+- `extract_note_wikilinks` индексирует только обычные WikiLinks. Media embeds
+  `![[file]]` остаются в media pipeline и не участвуют в Graph projection.
+- `GRAPH_LINK_INDEX_VERSION = 2` запускает автоматический backfill существующего
+  SQLite index, удаляя ранее записанные media targets без изменения source
+  Markdown.
+- Алиасы и fragments обычных WikiLinks, mixed bodies и media filenames с `#`
+  закрыты regression tests; полный `bun run verify:release` проходит.
+
+### Minimal Graph View checkpoint — 25.07.2026
+
+- Graph-local search, ручной `Route / Library / Ego` selector и локальная
+  settings-иконка удалены из product surface и IPC contract.
+- Scope определяется маршрутом: Everything использует `library`, коллекция —
+  `current_route`. `Show all` остаётся только session-local действием для
+  безопасно материализуемого truncated graph.
+- `Collections`, `Wikilinks` и `Related notes` живут в отдельном разделе
+  общего Settings и сохраняются одним `mine.graphPreferences` объектом.
+- `Unresolved` отсутствует в Rust/TypeScript DTO, Graph UI и browser audit;
+  старая видимая строка относилась к процессу Mine, запущенному до пересборки.
 
 Production distribution is `DEFERRED` by explicit product decision and is not
 part of local desktop completion. Current acceptance ends at a locally built
@@ -1584,10 +1608,10 @@ section nav, cross-window sync. Specification:
 |---|---|---|---|
 | 29.1 | Rust commands | [x] | `commands/settings.rs`: `open_settings_window` (single instance, Overlay titlebar), `add_known_vault`/`forget_known_vault` (config-only, active not removable), orphan media scan/promote/delete (one-pass referenced-set через `collect_delete_media_for_block`, promote без копирования, revalidation + skipped) |
 | 29.2 | Window wiring | [x] | Регистрация команд в `lib.rs`, нативный пункт меню `Settings…` (`Cmd+,`), `capabilities/default.json` windows += `settings` |
-| 29.3 | Settings frontend | [x] | Второй Vite-entry `settings.html` + `src/settings/` (SettingsApp, Appearance/Spaces/Orphans), chrome bar h-8 bg-chrome + traffic-light reserve, nav 176px bg-active |
+| 29.3 | Settings frontend | [x] | Второй Vite-entry `settings.html` + `src/settings/` (SettingsApp, Appearance/Graph/Spaces/Orphans), chrome bar h-8 bg-chrome + traffic-light reserve, nav 176px bg-active |
 | 29.4 | Theme extraction | [x] | `src/lib/themeMode.ts` (вынос из ThemeMenuButton), оба окна применяют тему до первого рендера; ThemeMenuButton удалён |
-| 29.5 | Cross-window sync | [x] | `settings-changed` Tauri event (`src/lib/settingsChanged.ts`), main-окно перечитывает тему/compact/bottom; кнопка Settings в нижней панели → `open_settings_window` |
-| 29.6 | Tests | [x] | Rust: 8 тестов (spaces dedupe/forget-active, space stats scan/index/validation, orphan scan/promote/delete edge cases); frontend: themeMode, formatBytes, SettingsApp nav, 3 секции, App интеграция |
+| 29.5 | Cross-window sync | [x] | `settings-changed` Tauri event (`src/lib/settingsChanged.ts`), main-окно перечитывает тему/compact/bottom и единый `mine.graphPreferences` объект; кнопка Settings в нижней панели → `open_settings_window` |
+| 29.6 | Tests | [x] | Rust: 8 тестов (spaces dedupe/forget-active, space stats scan/index/validation, orphan scan/promote/delete edge cases); frontend: themeMode, graphPreferences, formatBytes, SettingsApp nav, 4 секции, App интеграция |
 | 29.7 | Spaces redesign | [x] | Строка пространства: per-row статистика `space_stats(path)` (stat-only top-level + elements из локального индекса `card_kind != 'channel'`, без чтения содержимого — iCloud dataless safe); сводка `N elements · N markdown · N media · N files · size`; `Remove Space` в `⋯`-меню (detach); зафиксированные решения Р-1…Р-12 в SPEC § Design decisions; `formatBytes` (десятичная база) и `MenuIconSlot` (ui/) дедуплицированы |
 | 29.8 | Spaces interactions | [x] | Клик по строке = переключение (`select_vault` эмитит `vault-selected`, корневой App ремонтирует `AppWithVault`); активная строка `bg-active` без текстовой метки; dnd-kit reorder (`reorder_known_vaults`, set-equality; PointerSensor distance 8); `VaultSwitcher` перечитывает список при открытии меню; Remove активного → switch на следующее, затем forget (инвариант config); единственное пространство забывается без переключения |
 
@@ -1602,12 +1626,12 @@ Specification: [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
 | # | Slice | Status | Scope |
 |---|---|---|---|
 | 30.1 | Longevity extraction + SPEC | DONE A4 | Studied `/Users/i_iii/Проекты/longevity-landscape` Graph View and documented the transferable Canvas/d3-force renderer, backend graph snapshot, physics, UX, large-vault policy and tests |
-| 30.2 | Dependencies + DTOs | DONE A4 | Added `react-force-graph-2d`, `d3-force`, `@types/d3-force`; M1 Rust/TS DTOs cover card/collection/unresolved nodes, typed links, scopes, options and truncation state |
-| 30.3 | Backend graph snapshot | DONE A4 | Typed card/collection/unresolved nodes; membership/wikilink/related edges with provenance, dedupe and adjacency; route/library/ego scopes and large-vault materialization |
+| 30.2 | Dependencies + DTOs | DONE A4 | Added `react-force-graph-2d`, `d3-force`, `@types/d3-force`; M1 Rust/TS DTOs cover card/collection nodes, typed links, scopes, options and truncation state |
+| 30.3 | Backend graph snapshot | DONE A4 | Typed card/collection nodes; real-target-only membership/wikilink/related edges with provenance, dedupe and adjacency; plain note-link indexing excludes media embeds; automatic route/library scopes and explicit safe large-vault materialization |
 | 30.4 | Canvas renderer | DONE A4 | Screen-fixed derived thumbnails and labels, same-layer hit testing/physics, delayed stable fit, image-cache invalidation and camera-only resize/zoom |
-| 30.5 | Controls + Detail integration | DONE A4 | Scope and edge controls, local/truncated search, one selected-node state, conditional centering, shared hover/menu behavior and keyboard/a11y model |
+| 30.5 | Minimal surface + Detail integration | DONE A4 | Removed graph-local search/scope/settings controls; common Settings owns three persisted graph layers; one selected-node state, conditional centering, shared hover/menu behavior and keyboard/a11y model |
 | 30.6 | Display mode wiring | DONE A4 | Canonical secondary-bar Grid/Graph selector, persisted mode, route preservation and `vault-refreshed` projection reload |
-| 30.7 | Verification | DONE A4 | Rust provenance/scope/threshold tests, 18 GraphView interaction tests and dark/light Playwright Canvas pixel/resize/hover/request/performance gates |
+| 30.7 | Verification | DONE A4 | Rust provenance/route/threshold tests, GraphView plus Settings contract tests and dark/light Playwright Canvas pixel/resize/hover/request/performance gates |
 
 ### Backlog
 

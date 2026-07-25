@@ -2,13 +2,15 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { useNativeWindowChromeSurface } from "@/lib/nativeWindowChromeSurface";
 import { AppearanceSection } from "./AppearanceSection";
+import { GraphSection } from "./GraphSection";
 import { SpacesSection } from "./SpacesSection";
 import { OrphansSection } from "./OrphansSection";
 
-type SettingsSection = "appearance" | "spaces" | "orphans";
+type SettingsSection = "appearance" | "graph" | "spaces" | "orphans";
 
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
+  { id: "graph", label: "Graph" },
   { id: "spaces", label: "Spaces" },
   { id: "orphans", label: "Orphans" },
 ];
@@ -57,6 +59,7 @@ export function SettingsApp() {
 
         <main className="min-w-0 flex-1 overflow-y-auto p-s4">
           {section === "appearance" && <AppearanceSection />}
+          {section === "graph" && <GraphSection />}
           {section === "spaces" && <SpacesSection />}
           {section === "orphans" && <OrphansSection />}
         </main>
