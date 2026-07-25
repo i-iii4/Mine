@@ -64,6 +64,21 @@ Status vocabulary:
   entry внутри процесса; stress-test из двадцати запусков по восемь соединений
   проходит без `database is locked`.
 
+### Desktop Sidebar and card-frame checkpoint — 25.07.2026
+
+- Native macOS `View` menu владеет accelerator `Control+Cmd+S` и эмитит одно
+  событие toggle; browser/dev fallback использует physical `KeyS`, а Tauri
+  WebView не обрабатывает тот же `keydown` повторно.
+- `useSidebarResize.collapsed` остаётся единственным владельцем состояния.
+  Native menu синхронно проецирует следующий action как `Hide Sidebar` или
+  `Show Sidebar`, не создавая второй collapsed-state.
+- Card hover больше не меняет общий frame. Hover-affordance принадлежит action
+  controls, а keyboard/group-selection frame остаётся ответственностью
+  `GridItem` по существующему design-system contract.
+- Полный `bun run verify:release` проходит: generated bindings без drift,
+  ESLint, frontend/Rust workspace tests, Feed/Graph/cold-space browser gates и
+  packaged macOS WKWebView/Tauri IPC smoke.
+
 Production distribution is `DEFERRED` by explicit product decision and is not
 part of local desktop completion. Current acceptance ends at a locally built
 debug `Mine.app`.

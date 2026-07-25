@@ -461,6 +461,9 @@ export const discardClipperPendingUpload = (upload_id: string) =>
 export const openSettingsWindow = () =>
   invoke<void>("open_settings_window");
 
+export const setSidebarMenuCollapsed = (collapsed: boolean) =>
+  invoke<void>("set_sidebar_menu_collapsed", { collapsed });
+
 export const addKnownVault = (path: string) =>
   invoke<string[]>("add_known_vault", { path });
 

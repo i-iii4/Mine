@@ -424,13 +424,14 @@ describe("Card", () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
-  it("enforces the minimum height needed for hover actions", () => {
+  it("enforces the hover-action height without changing the card frame", () => {
     render(<Card block={block()} vaultPath={VAULT} onClick={vi.fn()} />);
     const card = screen.getByRole("button");
     expect(card).toHaveStyle({
       minHeight: `${CARD_HOVER_ACTION_MIN_HEIGHT}px`,
     });
-    expect(card).toHaveClass(
+    expect(card).toHaveClass("border-border");
+    expect(card).not.toHaveClass(
       "hover:border-component-fill-hover",
       "focus-visible:border-component-fill-hover",
       "transition-colors",

@@ -1,5 +1,44 @@
 # Devlog
 
+## 25.07.2026 — Native Sidebar shortcut and stable card frame
+
+### Задача
+Добавить системную команду сворачивания Sidebar без второго владельца состояния
+и вернуть card frame к design-system контракту, в котором обычный hover не
+меняет рамку.
+
+### Что сделано
+- В native macOS `View` menu добавлен один action
+  `Hide Sidebar` / `Show Sidebar` с accelerator `Control+Cmd+S`.
+  `commands/window_chrome.rs` меняет title по текущему React-state, а menu
+  action эмитит `sidebar-toggle-shortcut`.
+- `useSidebarResize.collapsed` остаётся source of truth. Frontend синхронизирует
+  menu title через `set_sidebar_menu_collapsed`; packaged Tauri не выполняет
+  дублирующий WebView `keydown`, browser/dev fallback использует physical
+  `KeyboardEvent.code === "KeyS"` для нелатинских раскладок.
+- Из общего `Card` frame удалены hover/focus border-color и transition.
+  Keyboard focus и group-selection frame остаются на `GridItem`, hover
+  проявляется только через action controls.
+- Актуализированы `SPEC_FRONTEND.md`, `ARCHITECTURE.md`, `CLAUDE.md`,
+  `AGENTS.md` и `PLAN.md`.
+
+### Проверки
+- `bun run verify:release` — passed.
+- Generated bindings — без drift; ESLint — clean.
+- Frontend: 74 test files, 678 tests passed.
+- Rust: main library 654 passed, 5 ignored; native host 56 passed; migration
+  binaries 13 passed.
+- Feed desktop/narrow, Graph dark/light и cold-space first/settled/deep browser
+  gates прошли без failures.
+- Packaged native shell:
+  `ok=true`, `transport=tauri-ipc`, `shell=macos-wkwebview`.
+
+### Статус
+- Native Sidebar shortcut, menu-title projection и browser fallback закрыты
+  автоматическими regression tests.
+- Card frame снова соответствует уже зафиксированному design-system контракту;
+  отдельное изменение `DESIGN_SYSTEM.md` не требуется.
+
 ## 24.07.2026 — Immediate media readiness and cold-open hardening
 
 ### Задача

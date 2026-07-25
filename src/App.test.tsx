@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
@@ -54,12 +55,14 @@ const commandMocks = vi.hoisted(() => ({
   extractTextSelection: vi.fn(),
   deleteTextSelection: vi.fn(),
   openSettingsWindow: vi.fn<() => Promise<void>>(async () => {}),
+  setSidebarMenuCollapsed: vi.fn<(collapsed: boolean) => Promise<void>>(async () => {}),
 }));
 
 const sidebarResizeState = vi.hoisted(() => ({
   width: 300,
   collapsed: false,
   isResizing: false,
+  toggleCollapsed: vi.fn(),
 }));
 
 const clipboardWriteText = vi.fn<(text: string) => Promise<void>>();
@@ -100,6 +103,7 @@ vi.mock("@/lib/commands", () => ({
   extractTextSelection: commandMocks.extractTextSelection,
   deleteTextSelection: commandMocks.deleteTextSelection,
   openSettingsWindow: commandMocks.openSettingsWindow,
+  setSidebarMenuCollapsed: commandMocks.setSidebarMenuCollapsed,
 }));
 
 vi.mock("@/lib/articleAudioDesktopGateway", () => ({
@@ -121,7 +125,7 @@ vi.mock("@/hooks/useSidebarResize", () => ({
     startResize: vi.fn(),
     updateResize: vi.fn(),
     endResize: vi.fn(),
-    toggleCollapsed: vi.fn(),
+    toggleCollapsed: sidebarResizeState.toggleCollapsed,
   }),
 }));
 
@@ -402,6 +406,7 @@ describe("AppWithVault", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(isTauri).mockReturnValue(false);
     vi.mocked(getCurrentWindow).mockReturnValue({
       startDragging,
       setBackgroundColor,
@@ -1242,6 +1247,59 @@ describe("AppWithVault", () => {
     );
     await waitFor(() => {
       expect(document.querySelector("[data-search-overlay]")).toBeNull();
+    });
+  });
+
+  it("uses the native sidebar shortcut in Tauri and the keydown fallback in browsers", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent(
+      window,
+      new CustomEvent("sidebar-toggle-shortcut", {
+        detail: { payload: null },
+      }),
+    );
+    expect(sidebarResizeState.toggleCollapsed).toHaveBeenCalledTimes(1);
+
+    vi.mocked(isTauri).mockReturnValue(true);
+    fireEvent.keyDown(window, {
+      key: "ы",
+      code: "KeyS",
+      metaKey: true,
+      ctrlKey: true,
+    });
+    expect(sidebarResizeState.toggleCollapsed).toHaveBeenCalledTimes(1);
+
+    vi.mocked(isTauri).mockReturnValue(false);
+    fireEvent.keyDown(window, {
+      key: "ы",
+      code: "KeyS",
+      metaKey: true,
+      ctrlKey: true,
+    });
+    expect(sidebarResizeState.toggleCollapsed).toHaveBeenCalledTimes(2);
+  });
+
+  it("projects the current sidebar state into the native View menu", async () => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    sidebarResizeState.collapsed = true;
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(commandMocks.setSidebarMenuCollapsed).toHaveBeenCalledWith(true);
     });
   });
 

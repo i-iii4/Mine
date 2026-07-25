@@ -114,6 +114,7 @@ local-arena/
 │   │       ├── preview_reconcile.rs # Derived preview queue
 │   │       ├── thumbnail_sweeps.rs # Thumbnail sweep coordinator
 │   │       ├── native_shell_smoke.rs # Packaged WKWebView IPC smoke report
+│   │       ├── window_chrome.rs # Native View-menu projection for Sidebar state
 │   │       ├── blocks.rs       # → вызывает domain + storage
 │   │       ├── graph.rs        # list_graph_snapshot command
 │   │       ├── tags.rs

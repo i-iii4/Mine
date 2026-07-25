@@ -16,6 +16,8 @@ mod watcher;
 #[cfg(feature = "desktop")]
 use commands::state::AppState;
 #[cfg(feature = "desktop")]
+use commands::window_chrome::{MENU_ID_TOGGLE_SIDEBAR, MENU_ID_VIEW};
+#[cfg(feature = "desktop")]
 use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 #[cfg(feature = "desktop")]
 use tauri::Emitter;
@@ -97,6 +99,7 @@ pub fn run() {
             commands::settings::list_orphan_media,
             commands::settings::promote_orphan_media,
             commands::settings::delete_orphan_media,
+            commands::window_chrome::set_sidebar_menu_collapsed,
             commands::native_shell_smoke::report_native_shell_smoke,
         ])
         .plugin(tauri_plugin_dialog::init())
@@ -107,6 +110,9 @@ pub fn run() {
             }
             MENU_ID_FIND_CHANNELS => {
                 let _ = app.emit("surface-search-shortcut", "sidebar");
+            }
+            MENU_ID_TOGGLE_SIDEBAR => {
+                let _ = app.emit("sidebar-toggle-shortcut", ());
             }
             MENU_ID_SETTINGS => {
                 let _ = commands::settings::open_settings_window(app.clone());
@@ -193,7 +199,15 @@ pub fn run() {
                 .item(&find_channels_item)
                 .build()?;
 
-            let view_menu = SubmenuBuilder::new(app, "View").fullscreen().build()?;
+            let toggle_sidebar_item =
+                MenuItemBuilder::with_id(MENU_ID_TOGGLE_SIDEBAR, "Hide Sidebar")
+                    .accelerator("Ctrl+Cmd+S")
+                    .build(app)?;
+            let view_menu = SubmenuBuilder::with_id(app, MENU_ID_VIEW, "View")
+                .item(&toggle_sidebar_item)
+                .separator()
+                .fullscreen()
+                .build()?;
 
             let window_menu = SubmenuBuilder::new(app, "Window")
                 .minimize()

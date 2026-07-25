@@ -1281,6 +1281,23 @@ Image media expansion:
 
 ### Клавиатурная навигация
 
+#### Sidebar
+- `Control+Cmd+S` — свернуть/развернуть Sidebar.
+- Desktop delivery принадлежит native
+  `View -> Hide Sidebar` / `View -> Show Sidebar` menu accelerator, который эмитит
+  `sidebar-toggle-shortcut`. Frontend `keydown` остаётся только browser/dev
+  fallback: при `isTauri() === true` он не меняет состояние, чтобы один жест не
+  вызывал native event и второй toggle из WKWebView. Browser fallback проверяет
+  physical `KeyboardEvent.code === "KeyS"`, чтобы команда работала на
+  нелатинских раскладках.
+- React `useSidebarResize.collapsed` остаётся источником состояния. При каждом
+  изменении frontend синхронизирует native menu title через
+  `set_sidebar_menu_collapsed`: раскрытая панель показывает `Hide Sidebar`,
+  свёрнутая — `Show Sidebar`. Поэтому shortcut, toolbar action и resize-collapse
+  имеют один menu contract, а native menu не хранит независимое состояние.
+- Одно сочетание toggles оба состояния и вызывает существующий
+  `useSidebarResize.toggleCollapsed`; отдельного shortcut для expand нет.
+
 #### История страниц
 - `Cmd+[` / `Cmd+]` — перейти назад/вперёд по router/browser history.
 - Shortcut не срабатывает из input/textarea/select/contenteditable и вложенных

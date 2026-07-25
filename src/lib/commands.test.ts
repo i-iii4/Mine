@@ -7,6 +7,7 @@ import {
   extractInlineMedia,
   getVaultPath,
   promoteOrphanMedia,
+  setSidebarMenuCollapsed,
 } from "./commands";
 
 const mockInvoke = vi.mocked(tauriInvoke);
@@ -63,6 +64,14 @@ describe("IPC command adapter", () => {
     });
     expect(mockInvoke).toHaveBeenNthCalledWith(2, "delete_orphan_media", {
       request: { file_names: fileNames },
+    });
+  });
+
+  it("synchronizes the native sidebar menu with the React sidebar state", async () => {
+    await setSidebarMenuCollapsed(true);
+
+    expect(mockInvoke).toHaveBeenCalledWith("set_sidebar_menu_collapsed", {
+      collapsed: true,
     });
   });
 });

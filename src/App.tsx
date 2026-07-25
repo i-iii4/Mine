@@ -19,6 +19,7 @@ import {
   useLocation,
 } from "react-router";
 import { X } from "lucide-react";
+import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   DndContext,
@@ -102,6 +103,16 @@ function isSearchShortcut(e: KeyboardEvent): boolean {
   return e.code === "KeyF" || e.key.toLowerCase() === "f";
 }
 
+function isToggleSidebarShortcut(e: KeyboardEvent): boolean {
+  return (
+    e.metaKey
+    && e.ctrlKey
+    && !e.shiftKey
+    && !e.altKey
+    && (e.code === "KeyS" || e.key.toLowerCase() === "s")
+  );
+}
+
 /** Pin the DragOverlay so the cursor tip sits just outside the top-left corner. */
 const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
   if (!activatorEvent || !draggingNodeRect) return transform;
@@ -163,6 +174,7 @@ import {
   deleteTextSelection,
   sweepVaultThumbnails,
   openSettingsWindow,
+  setSidebarMenuCollapsed,
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
@@ -666,6 +678,13 @@ export function AppWithVault({
     endResize,
     toggleCollapsed,
   } = useSidebarResize();
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    void setSidebarMenuCollapsed(sidebarCollapsed).catch((error) => {
+      console.error("Failed to synchronize the native sidebar menu:", error);
+    });
+  }, [sidebarCollapsed]);
 
   const topCollectionSwitcherCompact = sidebarCollapsed || compactDetailTopMenuEnabled;
 
@@ -1520,6 +1539,19 @@ export function AppWithVault({
     };
   }, [handleSurfaceSearchShortcut]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const unlisten = listen("sidebar-toggle-shortcut", () => {
+      if (!cancelled) {
+        toggleCollapsed();
+      }
+    });
+    return () => {
+      cancelled = true;
+      unlisten.then((fn) => fn());
+    };
+  }, [toggleCollapsed]);
+
   const handleOpenSettings = useCallback(() => {
     void openSettingsWindow().catch((error) => {
       console.error("Failed to open settings window:", error);
@@ -1561,6 +1593,14 @@ export function AppWithVault({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
+      if (isToggleSidebarShortcut(e)) {
+        // The native View menu owns this accelerator in packaged Mine. Letting
+        // WKWebView handle the same keydown would toggle the sidebar twice.
+        if (isTauri()) return;
+        e.preventDefault();
+        toggleCollapsed();
+        return;
+      }
       if (isSearchShortcut(e)) {
         if (isOverlayKeyboardTarget(e.target)) return;
         if (e.shiftKey) {
@@ -1629,6 +1669,7 @@ export function AppWithVault({
     navigate,
     renderedDetailBlock,
     selectedBlock,
+    toggleCollapsed,
     vaultPath,
   ]);
 
