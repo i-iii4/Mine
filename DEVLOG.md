@@ -1,5 +1,47 @@
 # Devlog
 
+## 25.07.2026 — Semantic Graph link styling
+
+### Задача
+Визуально отделить фактическое членство карточки в коллекции от смысловых
+ссылок между карточками, не меняя модель данных и физику Graph View.
+
+### Что сделано
+- `collection_membership` сохраняет прямую сплошную линию текущего цвета и
+  толщины.
+- `wikilink` и `related_note` рисуются штатным Canvas renderer как пунктирные
+  quadratic curves. Направленные стрелки сохранены и следуют геометрии кривой.
+- Кривизна детерминирована неориентированной парой endpoint id: повторный
+  render не меняет сторону дуги, а встречные ссылки расходятся по разным
+  визуальным траекториям.
+- Для WikiLink используется curvature `0.14`, для Related note — `0.20`.
+  Пунктир `4 px / 4 px` компенсирует текущий zoom, поэтому экранный ритм не
+  расползается при масштабировании.
+- Контракт вынесен в `components/graph/linkStyle.ts`, закреплён в
+  `SPEC_GRAPH_VIEW.md` и `DESIGN_SYSTEM.md`; физические силы и цвета связей не
+  изменялись.
+- Browser audit теперь подтверждает, что реальный Canvas renderer вызывает
+  отрисовку и кривых, и пунктирных линий в обеих темах.
+
+### Проверки
+- Focused frontend: 2 files / 21 tests passed; ESLint clean.
+- Focused Graph browser audit прошёл в dark/light. Первый холодный запуск
+  dev-server занял 1193 ms при бюджете 1000 ms; немедленный прогретый повтор
+  прошёл за 372 ms в обеих темах.
+- `bun run verify:release` — passed: generated bindings без drift, ESLint clean,
+  77 frontend files / 685 tests, Rust main library 656 passed / 5 ignored,
+  native host 56 passed, migration binaries 13 passed.
+- Feed desktop/narrow, Graph dark/light и cold-space first/settled/deep browser
+  gates прошли без failures. Graph first paint: 370.0 ms dark и 367.4 ms light;
+  p95 frame: 8.4 ms dark и 9.5 ms light.
+- Packaged macOS WKWebView/Tauri IPC smoke:
+  `ok=true`, `transport=tauri-ipc`, `shell=macos-wkwebview`.
+
+### Статус
+- Новый debug bundle собран в
+  `target/debug/bundle/macos/Mine.app`; commit и push в этой сессии не
+  выполнялись.
+
 ## 25.07.2026 — Minimal Graph surface and shared settings
 
 ### Задача

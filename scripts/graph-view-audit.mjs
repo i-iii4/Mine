@@ -146,6 +146,14 @@ async function assertNonblank(page, label) {
   return ratio;
 }
 
+async function assertSemanticLinkPaint(page, label) {
+  const stats = await page.evaluate(() => window.__MINE_GRAPH_LINK_PAINT__ ?? null);
+  if (!stats || stats.curvedLinks === 0 || stats.dashedLinks === 0) {
+    throw new Error(`${label}: semantic graph links were not painted: ${JSON.stringify(stats)}`);
+  }
+  return stats;
+}
+
 async function assertControlsFit(page, label) {
   const controlsLocator = page.locator("[data-graph-controls]");
   if (await controlsLocator.count() === 0) return;
@@ -271,6 +279,24 @@ async function verifyCardHoverDoesNotMutateCanvas(page) {
 
 async function runTheme(browser, theme) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await page.addInitScript(() => {
+    window.__MINE_GRAPH_LINK_PAINT__ = {
+      curvedLinks: 0,
+      dashedLinks: 0,
+    };
+    const originalQuadraticCurveTo = CanvasRenderingContext2D.prototype.quadraticCurveTo;
+    CanvasRenderingContext2D.prototype.quadraticCurveTo = function (...args) {
+      window.__MINE_GRAPH_LINK_PAINT__.curvedLinks += 1;
+      return originalQuadraticCurveTo.apply(this, args);
+    };
+    const originalSetLineDash = CanvasRenderingContext2D.prototype.setLineDash;
+    CanvasRenderingContext2D.prototype.setLineDash = function (segments) {
+      if (segments.some((segment) => segment > 0)) {
+        window.__MINE_GRAPH_LINK_PAINT__.dashedLinks += 1;
+      }
+      return originalSetLineDash.call(this, segments);
+    };
+  });
   const imageRequests = new Set();
   const consoleErrors = [];
   page.on("request", (request) => {
@@ -288,6 +314,7 @@ async function runTheme(browser, theme) {
     throw new Error(`${theme}: first graph paint ${firstPaintMs.toFixed(1)}ms exceeds ${FIRST_PAINT_BUDGET_MS}ms`);
   }
   const firstPaintRatio = await assertNonblank(page, `${theme} first paint`);
+  const semanticLinkPaint = await assertSemanticLinkPaint(page, `${theme} first paint`);
   await assertRemovedGraphControls(page, `${theme} desktop`);
   await assertControlsFit(page, `${theme} desktop`);
   await installFrameProbe(page);
@@ -350,6 +377,7 @@ async function runTheme(browser, theme) {
     routePaintRatio: Number(routePaintRatio.toFixed(5)),
     narrowPaintRatio: Number(narrowPaintRatio.toFixed(5)),
     uniqueImageRequests: imageRequests.size,
+    semanticLinkPaint,
     hoverChangedRatio,
     ...interaction,
   };

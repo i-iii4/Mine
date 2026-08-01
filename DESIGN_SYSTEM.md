@@ -860,6 +860,21 @@ hover/focus text `text-foreground`, hover outline из
 collision должны жить в одном canvas/d3-force координатном пространстве, без DOM
 overlay поверх графа.
 
+### GraphLink
+
+Graph использует геометрию линии как семантический маркер, не вводя новые
+цветовые токены:
+
+- membership коллекции — прямая сплошная линия текущего `linkDefault`;
+- wikilink и related note — изогнутая пунктирная линия того же цвета и толщины;
+- пунктир сохраняет экранный ритм `4px / 4px` при любом zoom;
+- wikilink использует curvature `0.14`, related note — `0.20`;
+- направление изгиба стабильно для пары нодов, а directed arrow остаётся
+  частью semantic reference.
+
+Hover не меняет цвет, толщину, пунктир или кривизну. Стиль связи не влияет на
+physics и не является отдельным интерактивным состоянием.
+
 ### AlertDialog
 
 Структура: `AlertDialogContent > Header(Title + Description) > Footer(Cancel + Action)`.

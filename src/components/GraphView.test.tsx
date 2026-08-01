@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  GraphLink,
   GraphNode,
   GraphOptions,
   GraphScope,
@@ -18,6 +19,7 @@ type MockGraphNode = GraphNode & {
 type MockGraphProps = {
   graphData?: {
     nodes: MockGraphNode[];
+    links: GraphLink[];
   };
   width?: number;
   height?: number;
@@ -31,6 +33,8 @@ type MockGraphProps = {
     context: CanvasRenderingContext2D,
     globalScale: number,
   ) => void;
+  linkCurvature?: (link: GraphLink) => number;
+  linkLineDash?: (link: GraphLink) => number[] | null;
 };
 
 type MockGraphHandle = {
@@ -96,6 +100,8 @@ vi.mock("react-force-graph-2d", async () => {
       onBackgroundClick,
       onEngineTick,
       nodeCanvasObject,
+      linkCurvature,
+      linkLineDash,
     }, ref) {
       React.useImperativeHandle(ref, () => ({
         d3Force: () => forceAccessor,
@@ -110,6 +116,12 @@ vi.mock("react-force-graph-2d", async () => {
         node.x ??= 100 + index * 40;
         node.y ??= 120;
       });
+      const membershipLink = graphData?.links.find(
+        (link) => link.kind === "collection_membership",
+      );
+      const referenceLink = graphData?.links.find(
+        (link) => link.kind === "wikilink",
+      );
 
       return React.createElement(
         "div",
@@ -117,6 +129,18 @@ vi.mock("react-force-graph-2d", async () => {
           "data-testid": "force-graph",
           "data-width": String(width),
           "data-height": String(height),
+          "data-membership-curvature": membershipLink && linkCurvature
+            ? String(linkCurvature(membershipLink))
+            : "",
+          "data-membership-dash": membershipLink && linkLineDash
+            ? String(linkLineDash(membershipLink))
+            : "",
+          "data-reference-curvature": referenceLink && linkCurvature
+            ? String(linkCurvature(referenceLink))
+            : "",
+          "data-reference-dash": referenceLink && linkLineDash
+            ? String(linkLineDash(referenceLink))
+            : "",
           onClick: (event: React.MouseEvent) => {
             if (event.target === event.currentTarget) onBackgroundClick?.();
           },
@@ -415,6 +439,57 @@ describe("GraphView", () => {
 
     await waitFor(() => expect(acceptSnapshotRevision).toHaveBeenCalledWith(1));
     expect(screen.queryByRole("button", { name: "Stale card" })).not.toBeInTheDocument();
+  });
+
+  it("renders membership solid and semantic references curved and dashed", async () => {
+    const card = graphCardNode("alpha-card", "Alpha card");
+    const collection: GraphNode = {
+      id: "collection:Design",
+      kind: "collection",
+      label: "Design",
+      slug: null,
+      collection_ref: "Design",
+      card_kind: null,
+      block_type: null,
+      thumbnail: null,
+      preview_manifest: null,
+      degree: 1,
+    };
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
+      [card, collection],
+      {
+        links: [
+          {
+            id: "membership:Design:alpha-card",
+            kind: "collection_membership",
+            source: collection.id,
+            target: card.id,
+            directed: false,
+            count: 1,
+            target_ref: null,
+          },
+          {
+            id: "wikilink:alpha-card:beta-card",
+            kind: "wikilink",
+            source: card.id,
+            target: "card:beta-card",
+            directed: true,
+            count: 1,
+            target_ref: "beta-card",
+          },
+        ],
+        visible_links: 2,
+        total_links: 2,
+      },
+    ));
+
+    renderGraph();
+
+    const graph = await screen.findByTestId("force-graph");
+    expect(graph).toHaveAttribute("data-membership-curvature", "0");
+    expect(graph).toHaveAttribute("data-membership-dash", "null");
+    expect(Math.abs(Number(graph.getAttribute("data-reference-curvature")))).toBe(0.14);
+    expect(graph).toHaveAttribute("data-reference-dash", "4,4");
   });
 
   it("opens the block on card node left click", async () => {

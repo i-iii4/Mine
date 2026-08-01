@@ -66,6 +66,7 @@ import {
   hasNodePosition,
   isGraphArrowKey,
 } from "./graph/interaction";
+import { graphLinkCurvature, graphLinkLineDash } from "./graph/linkStyle";
 import { collectionLabelCollisionForce, graphPhysics } from "./graph/physics";
 
 export interface GraphViewProps {
@@ -717,6 +718,10 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   );
 
   const linkColor = useCallback(() => canvasTheme.linkDefault, [canvasTheme.linkDefault]);
+  const linkDash = useCallback(
+    (link: GraphCanvasLink) => graphLinkLineDash(link, graphScaleRef.current),
+    [],
+  );
 
   const selectedStatus = selectedNode
     ? `${selectedNode.label}, ${selectedNode.degree} ${selectedNode.degree === 1 ? "neighbor" : "neighbors"}`
@@ -840,6 +845,8 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
             backgroundColor="transparent"
             linkDirectionalArrowLength={(link) => link.directed ? 3 : 0}
             linkColor={linkColor}
+            linkCurvature={graphLinkCurvature}
+            linkLineDash={linkDash}
             linkWidth={1}
           />
         ) : null}

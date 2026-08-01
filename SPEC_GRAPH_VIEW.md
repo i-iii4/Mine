@@ -419,8 +419,22 @@ Use `react-force-graph-2d` with custom Canvas drawing:
 - `linkWidth` remains stable (`1`) to avoid hover-induced layout noise.
 - `linkColor` stays stable during hover; hover must not recolor or dim the
   graph.
+- `collection_membership` uses a straight solid line: it is the structural
+  collection skeleton.
+- `wikilink` and `related_note` use stable curved dashed lines: they are
+  semantic references between real objects. Wikilinks use curvature `0.14`;
+  related notes use `0.20` so parallel relation kinds remain distinguishable.
+  The curvature side is derived deterministically from the unordered endpoint
+  pair, so reciprocal links occupy opposite visual lanes without changing
+  after reload.
+- Reference dashes use a `4px / 4px` screen-space pattern. Dash units are
+  divided by the current graph scale so zoom never stretches or compresses the
+  visible rhythm.
 - `linkDirectionalArrowLength` is zero for undirected collection membership and
   non-zero for directed wikilink/related-note edges.
+
+Curvature and dashing are renderer-only. They do not change d3 link distance,
+charge, collision, adjacency or snapshot identity.
 
 The graph container must be:
 
@@ -762,6 +776,9 @@ Keyboard and pointer navigation share one selected node id. The implemented
 - Graph View renders no graph-local search, scope selector, or settings trigger.
 - persisted graph preferences are forwarded unchanged to the graph snapshot
   request and a settings change reloads the projection.
+- collection-membership links are straight and solid; wikilink/related-note
+  links are curved and dashed with deterministic pair-stable curvature.
+- reference dash segments preserve the `4px / 4px` visual rhythm across zoom.
 - collection node hit-area metrics match pill width/height.
 - graph hover preview uses `ReadOnlyCardPreview` with `previewMode="micro"` and
   width `240`.
