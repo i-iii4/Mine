@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { GridSnapshot, LightBlock, SearchMatch } from "@/types";
-import { TOP_FADE_MIN_ALPHA } from "@/lib/edgeFade";
+import { TOP_FADE_LIST } from "@/lib/edgeFade";
 import {
   SearchOverlay,
   SEARCH_OVERLAY_MIN_QUERY_CHARS,
@@ -152,7 +152,9 @@ describe("SearchOverlay", () => {
     fireEvent.scroll(list);
 
     expect(list.dataset.searchResultsTopFade).toBe("true");
-    expect(list.style.maskImage).toContain(`rgba(0, 0, 0, ${TOP_FADE_MIN_ALPHA}) 0px`);
+    // The search results list is a dense list, so it uses the list profile.
+    expect(list.style.maskImage).toContain(`rgba(0, 0, 0, ${TOP_FADE_LIST.minAlpha}) 0px`);
+    expect(list.style.maskImage).toContain(`${TOP_FADE_LIST.width}px`);
   });
 
   it("leaves the results list alone when the preference is off", () => {

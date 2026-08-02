@@ -1856,7 +1856,7 @@ export function Grid({
   // The feed already tracks its own scroll offset for windowing, so the top
   // fade reuses it instead of attaching a second scroll listener to the hot
   // scroll path.
-  const topFadeMaskStyle = topFadeMaskStyleFor(scrollEdgeFade, scrollTop);
+  const topFadeMaskStyle = topFadeMaskStyleFor(scrollEdgeFade, scrollTop, "canvas");
 
   return (
     <ContextMenu>

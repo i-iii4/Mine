@@ -196,7 +196,7 @@ export function Sidebar({
   const [uncontrolledLinkMode, setUncontrolledLinkMode] = useState<SidebarLinkMode>("all");
   const effectiveLinkMode = linkMode ?? uncontrolledLinkMode;
   const navRef = useRef<HTMLElement>(null);
-  const topFade = useTopFadeMask(navRef, scrollEdgeFade);
+  const topFade = useTopFadeMask(navRef, scrollEdgeFade, "list");
   const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
   const previewRef = useRef<HTMLDivElement | null>(null);
   const previewOpenTimerRef = useRef<number | null>(null);

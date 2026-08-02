@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   EDGE_FADE_WIDTH,
-  TOP_FADE_MIN_ALPHA,
-  TOP_FADE_WIDTH,
-  TOP_FADE_MASK_STYLE,
+  TOP_FADE_CANVAS,
+  TOP_FADE_LIST,
   TOP_FADE_SCROLLED_THRESHOLD_PX,
   createRightFadeMaskStyle,
   createTopFadeMaskStyle,
+  topFadeAlpha,
+  topFadeStopCount,
   topFadeMaskStyleFor,
 } from "./edgeFade";
 
@@ -38,101 +39,157 @@ describe("createRightFadeMaskStyle", () => {
     const withoutTail = String(createRightFadeMaskStyle(24, 0).maskImage);
     const withTail = String(createRightFadeMaskStyle(24, 12).maskImage);
 
-    // The ramp start sits at fadeWidth + clearTail from the right edge.
     expect(withoutTail).toContain("calc(100% - 24px)");
     expect(withTail).toContain("calc(100% - 36px)");
-    // The transparent end sits exactly at the reserved tail.
     expect(withTail).toContain("rgba(0, 0, 0, 0) calc(100% - 12px)");
   });
 });
 
+describe("topFadeAlpha", () => {
+  it("starts at the floor and reaches full opacity", () => {
+    expect(topFadeAlpha(0, 0.06)).toBe(0.06);
+    expect(topFadeAlpha(1, 0.06)).toBe(1);
+  });
+
+  it("flattens at both ends so neither end produces a Mach band", () => {
+    // Step wider than the 3-decimal rounding of the alpha values, otherwise the
+    // difference quotient collapses to zero everywhere.
+    const h = 0.01;
+    const slope = (t: number, floor: number) =>
+      (topFadeAlpha(t + h, floor) - topFadeAlpha(t, floor)) / h;
+
+    // Near-flat where the ramp meets the edge and where it meets opaque
+    // content; steep in the middle, which is where the transition should live.
+    expect(Math.abs(slope(0, 0.06))).toBeLessThan(0.05);
+    expect(Math.abs(slope(1 - h, 0.06))).toBeLessThan(0.05);
+    expect(slope(0.5, 0.06)).toBeGreaterThan(1);
+  });
+
+  it("rises monotonically", () => {
+    let previous = -1;
+    for (let i = 0; i <= 40; i += 1) {
+      const value = topFadeAlpha(i / 40, 0.06);
+      expect(value).toBeGreaterThanOrEqual(previous);
+      previous = value;
+    }
+  });
+
+  it("never returns less than the floor", () => {
+    for (let i = 0; i <= 40; i += 1) {
+      expect(topFadeAlpha(i / 40, 0.08)).toBeGreaterThanOrEqual(0.08);
+    }
+  });
+
+  it("holds content readable past the midpoint instead of collapsing early", () => {
+    // Gamma correction is what keeps the ramp from looking like it drops out
+    // immediately: at the halfway point the content is still clearly present.
+    expect(topFadeAlpha(0.5, 0.06)).toBeGreaterThan(0.3);
+    expect(topFadeAlpha(0.5, 0.06)).toBeLessThan(0.55);
+  });
+});
+
+describe("topFadeStopCount", () => {
+  it("scales stop density with ramp length", () => {
+    expect(topFadeStopCount(56)).toBeGreaterThan(topFadeStopCount(28));
+  });
+
+  it("keeps a floor of stops on short ramps and a ceiling on long ones", () => {
+    expect(topFadeStopCount(4)).toBe(12);
+    expect(topFadeStopCount(400)).toBe(24);
+  });
+
+  it("keeps every ramp segment under the width where faceting shows", () => {
+    for (const width of [12, 28, 56, 96]) {
+      const segment = width / topFadeStopCount(width);
+      expect(segment).toBeLessThanOrEqual(4);
+    }
+  });
+});
+
 describe("createTopFadeMaskStyle", () => {
-  it("keeps a faint remainder at the top edge and is fully opaque below the ramp", () => {
-    const gradient = String(createTopFadeMaskStyle(TOP_FADE_WIDTH).maskImage);
+  it("keeps a faint remainder at the edge and is fully opaque below the ramp", () => {
+    const gradient = String(createTopFadeMaskStyle(TOP_FADE_CANVAS).maskImage);
     const stops = parseStops(gradient);
 
     expect(gradient.startsWith("linear-gradient(to bottom,")).toBe(true);
-    // Never zero: content that dissolves completely reads as clipped.
-    expect(stops[0]).toEqual({ alpha: TOP_FADE_MIN_ALPHA, position: "0px" });
-    expect(stops.at(-2)).toEqual({ alpha: 1, position: `${TOP_FADE_WIDTH}px` });
+    expect(stops[0]).toEqual({ alpha: TOP_FADE_CANVAS.minAlpha, position: "0px" });
+    expect(stops.at(-2)).toEqual({ alpha: 1, position: `${TOP_FADE_CANVAS.width}px` });
     expect(stops.at(-1)).toEqual({ alpha: 1, position: "100%" });
   });
 
   it("never emits a fully transparent stop", () => {
-    const stops = parseStops(String(createTopFadeMaskStyle(TOP_FADE_WIDTH).maskImage));
-    for (const stop of stops) {
-      expect(stop.alpha).toBeGreaterThanOrEqual(TOP_FADE_MIN_ALPHA);
+    for (const profile of [TOP_FADE_CANVAS, TOP_FADE_LIST]) {
+      const stops = parseStops(String(createTopFadeMaskStyle(profile).maskImage));
+      for (const stop of stops) {
+        expect(stop.alpha).toBeGreaterThanOrEqual(profile.minAlpha);
+      }
     }
   });
 
-  it("increases alpha monotonically with distance from the top edge", () => {
-    const stops = parseStops(String(createTopFadeMaskStyle(TOP_FADE_WIDTH).maskImage));
-    const rampStops = stops.slice(0, -1); // drop the trailing 100% anchor
+  it("advances position and alpha monotonically", () => {
+    const stops = parseStops(String(createTopFadeMaskStyle(TOP_FADE_CANVAS).maskImage));
+    const ramp = stops.slice(0, -1); // drop the trailing 100% anchor
 
-    const positions = rampStops.map((stop) => Number.parseFloat(stop.position));
-    const alphas = rampStops.map((stop) => stop.alpha);
-
-    for (let i = 1; i < rampStops.length; i += 1) {
-      expect(positions[i]!).toBeGreaterThan(positions[i - 1]!);
-      expect(alphas[i]!).toBeGreaterThan(alphas[i - 1]!);
+    for (let i = 1; i < ramp.length; i += 1) {
+      expect(Number.parseFloat(ramp[i]!.position)).toBeGreaterThan(
+        Number.parseFloat(ramp[i - 1]!.position),
+      );
+      expect(ramp[i]!.alpha).toBeGreaterThanOrEqual(ramp[i - 1]!.alpha);
     }
   });
 
-  it("keeps the right-edge ramp shape, rescaled above the floor", () => {
-    // The two edges no longer share raw alphas: the top ramp is squeezed into
-    // [TOP_FADE_MIN_ALPHA, 1] so it never disappears. The shape is preserved —
-    // each top stop is its mirrored right-edge stop mapped through that range.
-    const rampAlphas = (gradient: string, floor: number) =>
-      parseStops(gradient)
-        .map((stop) => stop.alpha)
-        .filter((alpha) => alpha > floor && alpha < 1);
-
-    const right = rampAlphas(String(createRightFadeMaskStyle(EDGE_FADE_WIDTH, 0).maskImage), 0);
-    const top = rampAlphas(
-      String(createTopFadeMaskStyle(TOP_FADE_WIDTH).maskImage),
-      TOP_FADE_MIN_ALPHA,
-    );
-
-    expect(right).toEqual([0.82, 0.64, 0.49, 0.36, 0.25, 0.16, 0.09, 0.04, 0.01]);
-    const expected = [...right]
-      .reverse()
-      .map((alpha) => Math.round((TOP_FADE_MIN_ALPHA + (1 - TOP_FADE_MIN_ALPHA) * alpha) * 1000) / 1000);
-    expect(top).toEqual(expected);
+  it("emits one stop per ramp step plus the closing anchor", () => {
+    const stops = parseStops(String(createTopFadeMaskStyle(TOP_FADE_CANVAS).maskImage));
+    expect(stops.length).toBe(topFadeStopCount(TOP_FADE_CANVAS.width) + 2);
   });
 
-  it("uses a top ramp half the width of the right ramp", () => {
-    // The right edge fades a line of text sideways and needs room to stay
-    // legible mid-fade; the top edge only softens the pass under the chrome.
-    expect(TOP_FADE_WIDTH * 2).toBe(EDGE_FADE_WIDTH);
-    expect(String(TOP_FADE_MASK_STYLE.maskImage)).toContain(`rgba(0, 0, 0, 1) ${TOP_FADE_WIDTH}px`);
+  it("sets the same value on both the standard and WebKit mask property", () => {
+    const style = createTopFadeMaskStyle(TOP_FADE_LIST);
+    expect(style.maskImage).toBe(style.WebkitMaskImage);
+  });
+});
+
+describe("top fade profiles", () => {
+  it("gives large-format content a longer ramp than dense lists", () => {
+    // A canvas-width ramp would swallow a whole 32px sidebar row.
+    expect(TOP_FADE_CANVAS.width).toBeGreaterThan(TOP_FADE_LIST.width);
+    expect(TOP_FADE_LIST.width).toBeLessThan(32);
   });
 
-  it("scales the ramp with the requested width", () => {
-    const narrow = parseStops(String(createTopFadeMaskStyle(12).maskImage));
-    const wide = parseStops(String(createTopFadeMaskStyle(24).maskImage));
+  it("keeps every ramp long enough to read as a gradient, not a halo", () => {
+    for (const profile of [TOP_FADE_CANVAS, TOP_FADE_LIST]) {
+      expect(profile.width).toBeGreaterThanOrEqual(24);
+    }
+  });
 
-    const narrowRampEnd = narrow.at(-2)!;
-    const wideRampEnd = wide.at(-2)!;
-    expect(narrowRampEnd.position).toBe("12px");
-    expect(wideRampEnd.position).toBe("24px");
+  it("leans on a stronger remainder where the ramp is shorter", () => {
+    expect(TOP_FADE_LIST.minAlpha).toBeGreaterThan(TOP_FADE_CANVAS.minAlpha);
   });
 });
 
 describe("topFadeMaskStyleFor", () => {
   it("returns no style while the surface is at rest", () => {
-    expect(topFadeMaskStyleFor(true, 0)).toBeUndefined();
+    expect(topFadeMaskStyleFor(true, 0, "canvas")).toBeUndefined();
   });
 
   it("returns no style while the preference is off, however far it is scrolled", () => {
-    expect(topFadeMaskStyleFor(false, 5000)).toBeUndefined();
+    expect(topFadeMaskStyleFor(false, 5000, "canvas")).toBeUndefined();
   });
 
   it("ignores sub-pixel scroll offsets", () => {
-    expect(topFadeMaskStyleFor(true, TOP_FADE_SCROLLED_THRESHOLD_PX - 0.5)).toBeUndefined();
+    expect(
+      topFadeMaskStyleFor(true, TOP_FADE_SCROLLED_THRESHOLD_PX - 0.5, "list"),
+    ).toBeUndefined();
   });
 
-  it("returns the shared mask once the surface is scrolled", () => {
-    expect(topFadeMaskStyleFor(true, TOP_FADE_SCROLLED_THRESHOLD_PX)).toBe(TOP_FADE_MASK_STYLE);
-    expect(topFadeMaskStyleFor(true, 1200)).toBe(TOP_FADE_MASK_STYLE);
+  it("returns a stable style object per variant once scrolled", () => {
+    const canvas = topFadeMaskStyleFor(true, 400, "canvas");
+    const list = topFadeMaskStyleFor(true, 400, "list");
+
+    expect(canvas).toBeDefined();
+    expect(list).toBeDefined();
+    expect(canvas).not.toBe(list);
+    // Same object across calls: surfaces can compare by identity.
+    expect(topFadeMaskStyleFor(true, 900, "canvas")).toBe(canvas);
   });
 });

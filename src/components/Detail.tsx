@@ -345,7 +345,7 @@ export function Detail({
   }, [block.slug, refreshFullBlock]);
 
   const panelRef = useRef<HTMLDivElement>(null);
-  const topFade = useTopFadeMask(panelRef, scrollEdgeFade);
+  const topFade = useTopFadeMask(panelRef, scrollEdgeFade, "canvas");
 
   // ESC closes Detail. Arrow keys remain native to the reading surface.
   useEffect(() => {

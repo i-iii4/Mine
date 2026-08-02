@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { createRef } from "react";
-import { TOP_FADE_MASK_STYLE } from "@/lib/edgeFade";
+import { topFadeMaskStyleFor } from "@/lib/edgeFade";
+
+const LIST_MASK = topFadeMaskStyleFor(true, 999, "list");
 import { useTopFadeMask } from "./useTopFadeMask";
 
 /// A detached scroll container. `scrollTop` is not settable on a jsdom element
@@ -25,7 +27,7 @@ function createScrollElement(initialScrollTop = 0) {
 
 function renderMask(enabled: boolean) {
   const forwardRef = createRef<HTMLElement>() as React.RefObject<HTMLElement | null>;
-  const hook = renderHook(({ on }: { on: boolean }) => useTopFadeMask(forwardRef, on), {
+  const hook = renderHook(({ on }: { on: boolean }) => useTopFadeMask(forwardRef, on, "list"), {
     initialProps: { on: enabled },
   });
   /// Attach a node the way a component would, in a commit.
@@ -47,7 +49,7 @@ describe("useTopFadeMask", () => {
     attach(element);
 
     act(() => scrollTo(120));
-    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
+    expect(result.current.style).toBe(LIST_MASK);
   });
 
   it("turns the mask off again when the surface returns to the top", () => {
@@ -56,7 +58,7 @@ describe("useTopFadeMask", () => {
     attach(element);
 
     act(() => scrollTo(120));
-    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
+    expect(result.current.style).toBe(LIST_MASK);
 
     act(() => scrollTo(0));
     expect(result.current.style).toBeUndefined();
@@ -66,7 +68,7 @@ describe("useTopFadeMask", () => {
     const { element } = createScrollElement(400);
     const { result, attach } = renderMask(true);
     attach(element);
-    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
+    expect(result.current.style).toBe(LIST_MASK);
   });
 
   it("attaches to a node that only appears in a later render", () => {
@@ -80,7 +82,7 @@ describe("useTopFadeMask", () => {
 
     attach(element); // dialog opens
     act(() => scrollTo(300));
-    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
+    expect(result.current.style).toBe(LIST_MASK);
   });
 
   it("stops observing a node that is unmounted and remounted", () => {
@@ -90,7 +92,7 @@ describe("useTopFadeMask", () => {
 
     attach(first.element);
     act(() => first.scrollTo(300));
-    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
+    expect(result.current.style).toBe(LIST_MASK);
 
     attach(null); // dialog closes
     expect(result.current.style).toBeUndefined();
@@ -98,7 +100,7 @@ describe("useTopFadeMask", () => {
     attach(second.element); // dialog reopens at the top
     expect(result.current.style).toBeUndefined();
     act(() => second.scrollTo(300));
-    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
+    expect(result.current.style).toBe(LIST_MASK);
   });
 
   it("keeps the caller's own ref pointing at the node", () => {
@@ -137,7 +139,7 @@ describe("useTopFadeMask", () => {
     attach(element);
 
     act(() => scrollTo(300));
-    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
+    expect(result.current.style).toBe(LIST_MASK);
 
     rerender({ on: false });
     expect(result.current.style).toBeUndefined();
@@ -153,7 +155,7 @@ describe("useTopFadeMask", () => {
     expect(result.current.style).toBeUndefined();
 
     rerender({ on: true });
-    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
+    expect(result.current.style).toBe(LIST_MASK);
   });
 
   it("does not throw when no node is ever attached", () => {

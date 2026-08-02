@@ -114,7 +114,7 @@ export function SearchOverlay({
   const [tagsBySlug, setTagsBySlug] = useState<Map<string, string[]>>(new Map());
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const resultsTopFade = useTopFadeMask(undefined, scrollEdgeFade);
+  const resultsTopFade = useTopFadeMask(undefined, scrollEdgeFade, "list");
   const requestSequenceRef = useRef(0);
   // Pointer ownership starts only after a real pointermove with new
   // coordinates, so keyboard scrolling under a resting cursor does not steal

@@ -13,7 +13,11 @@
 // silently never fade.
 
 import { useCallback, useEffect, useState, type CSSProperties, type RefObject } from "react";
-import { TOP_FADE_SCROLLED_THRESHOLD_PX, topFadeMaskStyleFor } from "@/lib/edgeFade";
+import {
+  TOP_FADE_SCROLLED_THRESHOLD_PX,
+  topFadeMaskStyleFor,
+  type TopFadeVariant,
+} from "@/lib/edgeFade";
 
 export interface TopFadeMask {
   /// Attach to the scroll container. Also populates the caller's own ref, so a
@@ -32,6 +36,7 @@ export interface TopFadeMask {
 export function useTopFadeMask(
   forwardRef: RefObject<HTMLElement | null> | undefined,
   enabled: boolean,
+  variant: TopFadeVariant,
 ): TopFadeMask {
   const [node, setNode] = useState<HTMLElement | null>(null);
   const [scrolled, setScrolled] = useState(false);
@@ -63,6 +68,6 @@ export function useTopFadeMask(
 
   return {
     ref,
-    style: topFadeMaskStyleFor(enabled, scrolled ? TOP_FADE_SCROLLED_THRESHOLD_PX : 0),
+    style: topFadeMaskStyleFor(enabled, scrolled ? TOP_FADE_SCROLLED_THRESHOLD_PX : 0, variant),
   };
 }
