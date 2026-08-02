@@ -610,6 +610,54 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(layoutEl?.style.marginTop).toBe("32px");
   });
 
+  it("leaves the scrollport unmasked when the top fade preference is off", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(8101), makeBlock(8102)];
+    setBlockHeight(8101, 200);
+    setBlockHeight(8102, 220);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="fade-off" />);
+    await flushAsync();
+
+    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
+    expect(scrollEl).toBeTruthy();
+    expect(scrollEl?.dataset.gridTopFade).toBeUndefined();
+    expect(scrollEl?.style.maskImage).toBe("");
+  });
+
+  it("masks the scrolled feed without dropping the scrollport's own styles", async () => {
+    vi.useFakeTimers();
+
+    const blocks = Array.from({ length: 12 }, (_, index) => makeBlock(8200 + index));
+    blocks.forEach((block, index) => setBlockHeight(8200 + index, 200 + index));
+
+    render(
+      <Grid {...BASE_PROPS} blocks={blocks} currentTag="fade-on" scrollEdgeFade />,
+    );
+    await flushAsync();
+
+    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement;
+    const paddingBeforeScroll = scrollEl.style.paddingLeft;
+
+    // At rest the first row must stay fully opaque.
+    expect(scrollEl.dataset.gridTopFade).toBeUndefined();
+
+    scrollEl.scrollTop = 600;
+    fireEvent.scroll(scrollEl);
+    await flushAsync();
+
+    expect(scrollEl.dataset.gridTopFade).toBe("true");
+    // jsdom normalizes the gradient: `to bottom` is the default direction and is
+    // dropped, and `rgba(...)` with alpha 1 collapses to `rgb(...)`. Assert the
+    // ramp itself — transparent at the top edge, opaque below the ramp.
+    expect(scrollEl.style.maskImage).toContain("rgba(0, 0, 0, 0) 0px");
+    expect(scrollEl.style.maskImage).toContain("24px");
+    // The mask is spread onto the existing style object, not instead of it.
+    expect(scrollEl.style.paddingLeft).toBe(paddingBeforeScroll);
+    expect(scrollEl.style.scrollbarGutter).toBe("stable");
+  });
+
   it("restores feed focus by slug and marks the GridItem without Card focus props", async () => {
     vi.useFakeTimers();
 

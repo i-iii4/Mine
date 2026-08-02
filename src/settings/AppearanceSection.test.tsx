@@ -70,11 +70,33 @@ describe("AppearanceSection", () => {
     expect(localStorage.getItem("mine.bottomActionBarHidden")).toBe("false");
   });
 
+  it("persists the scroll edge fade flag and broadcasts its key", () => {
+    render(<AppearanceSection />);
+
+    const checkbox = screen.getByRole("checkbox", { name: "Fade content under the chrome" });
+    // Off by default: a fresh install keeps the existing hard content edge.
+    expect(checkbox).toHaveAttribute("data-state", "unchecked");
+
+    fireEvent.click(checkbox);
+    expect(localStorage.getItem("mine.scrollEdgeFade")).toBe("true");
+    expect(emit).toHaveBeenCalledWith("settings-changed", {
+      key: "mine.scrollEdgeFade",
+    });
+
+    fireEvent.click(checkbox);
+    expect(localStorage.getItem("mine.scrollEdgeFade")).toBe("false");
+  });
+
   it("reflects stored values on mount", () => {
     localStorage.setItem("theme", "light");
     localStorage.setItem("mine.compactDetailTopMenu", "true");
+    localStorage.setItem("mine.scrollEdgeFade", "true");
 
     render(<AppearanceSection />);
+
+    expect(
+      screen.getByRole("checkbox", { name: "Fade content under the chrome" }),
+    ).toHaveAttribute("data-state", "checked");
 
     expect(screen.getByRole("button", { name: "Light" })).toHaveAttribute(
       "aria-pressed",

@@ -40,6 +40,7 @@ import { renderSearchHighlightedText } from "@/lib/searchHighlight";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
 import { cn } from "@/lib/utils";
+import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import type { LightBlock, TagCount } from "@/types";
 
 /** One request, top results only — refining the query beats paging (SPEC). */
@@ -83,6 +84,8 @@ interface SearchOverlayProps {
   onCreateAndAssign?: (tag: string, blockSlug: string) => void | Promise<void>;
   onRequestRename?: (block: LightBlock) => void;
   onRequestDelete?: (slug: string) => void;
+  /** Dissolve results into transparency as they scroll up under the query row. */
+  scrollEdgeFade?: boolean;
 }
 
 export function SearchOverlay({
@@ -100,6 +103,7 @@ export function SearchOverlay({
   onCreateAndAssign,
   onRequestRename,
   onRequestDelete,
+  scrollEdgeFade = false,
 }: SearchOverlayProps) {
   const [results, setResults] = useState<LightBlock[] | null>(null);
   const [resultHasMore, setResultHasMore] = useState(false);
@@ -110,6 +114,8 @@ export function SearchOverlay({
   const [tagsBySlug, setTagsBySlug] = useState<Map<string, string[]>>(new Map());
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const topFadeMaskStyle = useTopFadeMask(resultsRef, scrollEdgeFade);
   const requestSequenceRef = useRef(0);
   // Pointer ownership starts only after a real pointermove with new
   // coordinates, so keyboard scrolling under a resting cursor does not steal
@@ -494,10 +500,13 @@ export function SearchOverlay({
 
         <div className="flex min-h-0 flex-1">
           <div
+            ref={resultsRef}
             id="search-overlay-listbox"
             role="listbox"
             aria-label="Search results"
             className="min-w-0 flex-1 overflow-y-auto p-1"
+            style={topFadeMaskStyle}
+            data-search-results-top-fade={topFadeMaskStyle ? "true" : undefined}
           >
             {showNoResults && (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

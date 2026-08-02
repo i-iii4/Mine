@@ -47,6 +47,8 @@ import {
   sidebarRowDomId,
 } from "@/lib/sidebarSearch";
 import { cn } from "@/lib/utils";
+import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
+import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { ReadOnlyCardPreview } from "./Card";
 import { MicroPreviewThumbnail, microPreviewFromPreviewCard } from "./MicroPreviewThumbnail";
@@ -60,40 +62,12 @@ const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = 80;
 const SIDEBAR_ROW_ACTION_BUTTON_GAP = 8;
 const SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET =
   SIDEBAR_ROW_ACTION_BUTTON_WIDTH + SIDEBAR_ROW_ACTION_BUTTON_GAP;
-const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = 24;
-const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = 24;
+const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
+const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH =
   SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET + SIDEBAR_PREVIEW_DIVIDER_GAP;
 const SIDEBAR_ROW_ACTION_BUTTON_CLASS =
   "inline-flex h-6 cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
-const createRightFadeMaskStyle = (fadeWidth: number, clearTailWidth: number) => {
-  const rightFadeMaskStop = (alpha: number, progress: number) => {
-    const offset =
-      clearTailWidth
-      + Math.round(fadeWidth * (1 - progress) * 100) / 100;
-    return `rgba(0, 0, 0, ${alpha}) calc(100% - ${offset}px)`;
-  };
-  const stops = [
-    "rgba(0, 0, 0, 1) 0%",
-    `rgba(0, 0, 0, 1) calc(100% - ${clearTailWidth + fadeWidth}px)`,
-    rightFadeMaskStop(0.82, 0.14),
-    rightFadeMaskStop(0.64, 0.24),
-    rightFadeMaskStop(0.49, 0.33),
-    rightFadeMaskStop(0.36, 0.45),
-    rightFadeMaskStop(0.25, 0.57),
-    rightFadeMaskStop(0.16, 0.69),
-    rightFadeMaskStop(0.09, 0.81),
-    rightFadeMaskStop(0.04, 0.9),
-    rightFadeMaskStop(0.01, 0.97),
-    `rgba(0, 0, 0, 0) calc(100% - ${clearTailWidth}px)`,
-    "rgba(0, 0, 0, 0) 100%",
-  ].join(", ");
-  const gradient = `linear-gradient(to right, ${stops})`;
-  return {
-    maskImage: gradient,
-    WebkitMaskImage: gradient,
-  } as CSSProperties;
-};
 const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
   SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH,
   SIDEBAR_PREVIEW_DIVIDER_GAP,
@@ -169,6 +143,8 @@ interface SidebarProps {
   onLinkModeChange?: (mode: SidebarLinkMode) => void;
   showLinkModeChrome?: boolean;
   detailChromeClosing?: boolean;
+  /** Dissolve rows into transparency as they scroll up under the chrome. */
+  scrollEdgeFade?: boolean;
 }
 
 function createSidebarSeamAccentSet(
@@ -214,11 +190,13 @@ export function Sidebar({
   onLinkModeChange,
   showLinkModeChrome = true,
   detailChromeClosing = false,
+  scrollEdgeFade = false,
 }: SidebarProps) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [uncontrolledLinkMode, setUncontrolledLinkMode] = useState<SidebarLinkMode>("all");
   const effectiveLinkMode = linkMode ?? uncontrolledLinkMode;
   const navRef = useRef<HTMLElement>(null);
+  const topFadeMaskStyle = useTopFadeMask(navRef, scrollEdgeFade);
   const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
   const previewRef = useRef<HTMLDivElement | null>(null);
   const previewOpenTimerRef = useRef<number | null>(null);
@@ -667,7 +645,9 @@ export function Sidebar({
             ? "px-2 pt-8"
             : "px-[var(--sidebar-nav-pad-x)] pt-[var(--sidebar-nav-pad-top)]",
         )}
+        style={topFadeMaskStyle}
         data-sidebar-scroll
+        data-sidebar-top-fade={topFadeMaskStyle ? "true" : undefined}
         data-sidebar-link-editor-mode={isLinkEditorActive ? "true" : undefined}
         data-sidebar-row-hover-seam={SIDEBAR_ROW_HOVER_SEAM_ENABLED ? "true" : "false"}
         data-sidebar-row-focus-mode={hasSidebarRowFocusMode ? "true" : undefined}

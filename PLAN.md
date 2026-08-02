@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md)
 
 ## Goal
 
@@ -1632,6 +1632,22 @@ Specification: [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
 | 30.5 | Minimal surface + Detail integration | DONE A4 | Removed graph-local search/scope/settings controls; common Settings owns three persisted graph layers; one selected-node state, conditional centering, shared hover/menu behavior and keyboard/a11y model |
 | 30.6 | Display mode wiring | DONE A4 | Canonical secondary-bar Grid/Graph selector, persisted mode, route preservation and `vault-refreshed` projection reload |
 | 30.7 | Verification | DONE A4 | Rust provenance/route/threshold tests, GraphView plus Settings contract tests and dark/light Playwright Canvas pixel/resize/hover/request/performance gates |
+
+### Phase 31 — Scroll edge fade
+
+Goal: optional dissolve of the top edge on every scrollable surface, reusing the
+sidebar's existing fade curve instead of introducing a shadow.
+
+Specification: [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md).
+
+| # | Slice | Status | Scope |
+|---|---|---|---|
+| 31.1 | Shared curve | [x] | `src/lib/edgeFade.ts`: `EDGE_FADE_WIDTH`, nine `alpha/progress` ramp stops, `createRightFadeMaskStyle`, `createTopFadeMaskStyle`, `topFadeMaskStyleFor`, activation threshold. Sidebar migrated off its local copy |
+| 31.2 | Activation | [x] | `useTopFadeMask` for surfaces without a tracked offset; `Grid` reuses its own `scrollTop`. Boolean state only, mask off at rest |
+| 31.3 | Surfaces | [x] | Sidebar nav, feed scrollport, Detail scroll panel, search results list; state exposed through `data-*-top-fade` attributes |
+| 31.4 | Preference | [x] | `mine.scrollEdgeFade` (off by default), Appearance row `Fade content under the chrome`, `settings-changed` branch, prop threaded through `RouteContext` |
+| 31.5 | Tests | [x] | 11 curve tests, 10 hook tests, 2 feed integration tests, 1 settings test |
+
 
 ### Backlog
 

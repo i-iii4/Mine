@@ -30,6 +30,7 @@
 - `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md` — implemented migration: collections as Obsidian pages, `Mine Collections` values as quoted wikilinks, legacy formats handled by CLI migration
 - `SPEC_SEARCH_OVERLAY.md` — поиск по блокам: модальный overlay (`Cmd+F`), список результатов с подсветкой первого совпадения, превью-карточка справа; заменяет невидимый грид-фильтр main search
 - `SPEC_SETTINGS_WINDOW.md` — отдельное окно настроек: Appearance / Spaces / Orphans (сироты-медиа с batch delete/convert), межоконная синхронизация
+- `SPEC_SCROLL_EDGE_FADE.md` — растворение верхней кромки прокручиваемых поверхностей: общая кривая маски, порог активации, настройка `mine.scrollEdgeFade`
 - `DESIGN_SYSTEM_IOS.md` — дизайн-система iOS: цвета, типографика, компоненты, жесты
 - `AUDIT_PERFORMANCE.md` — аудит производительности и план оптимизации
 - `AUDIT.md` — результаты аудитов кодовой базы (01.03.2026 — первый, 03.03.2026 — повторный), план доработки — Phase 9 в PLAN.md

@@ -14,6 +14,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import type { LightBlock, TagCount } from "@/types";
+import { topFadeMaskStyleFor } from "@/lib/edgeFade";
 import { Card, CardSkeleton } from "./Card";
 import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
@@ -197,6 +198,8 @@ interface GridProps {
   hasMoreBlocks?: boolean;
   loadingMoreBlocks?: boolean;
   onLoadMoreBlocks?: () => void;
+  /** Dissolve cards into transparency as they scroll up under the chrome. */
+  scrollEdgeFade?: boolean;
 }
 
 interface GridContext {
@@ -412,6 +415,7 @@ export function Grid({
   hasMoreBlocks = false,
   loadingMoreBlocks = false,
   onLoadMoreBlocks,
+  scrollEdgeFade = false,
 }: GridProps) {
   const designMode = useDesignMode();
   const layoutGap = designMode === "alt" ? GAP_ALT : GAP_DEFAULT;
@@ -1849,6 +1853,11 @@ export function Grid({
     ],
   );
 
+  // The feed already tracks its own scroll offset for windowing, so the top
+  // fade reuses it instead of attaching a second scroll listener to the hot
+  // scroll path.
+  const topFadeMaskStyle = topFadeMaskStyleFor(scrollEdgeFade, scrollTop);
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -1865,8 +1874,10 @@ export function Grid({
             paddingRight: gridXInset,
             scrollbarGutter: "stable",
             transition: "padding-left 200ms ease, padding-right 200ms ease",
+            ...topFadeMaskStyle,
           }}
           data-grid-scroll
+          data-grid-top-fade={topFadeMaskStyle ? "true" : undefined}
           data-feed-grid-interaction-mode={feedInteractionMode}
           data-feed-grid-focus-mode={visualFocusActive ? "true" : undefined}
         >

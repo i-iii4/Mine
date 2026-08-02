@@ -22,6 +22,10 @@ import {
   getStoredBottomActionBarHidden,
 } from "@/lib/bottomActionBarVisibility";
 import {
+  SCROLL_EDGE_FADE_STORAGE_KEY,
+  getStoredScrollEdgeFade,
+} from "@/lib/scrollEdgeFade";
+import {
   broadcastSettingsChange,
 } from "@/lib/settingsChanged";
 import { SettingRow } from "./SettingRow";
@@ -47,6 +51,7 @@ export function AppearanceSection() {
   const [bottomActionBarHidden, setBottomActionBarHidden] = useState(
     getStoredBottomActionBarHidden,
   );
+  const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
 
   const handleThemeChange = (mode: ThemeMode) => {
     setTheme(mode);
@@ -70,6 +75,12 @@ export function AppearanceSection() {
     setBottomActionBarHidden(checked);
     localStorage.setItem(BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY, checked ? "true" : "false");
     broadcastSettingsChange(BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY);
+  };
+
+  const handleScrollEdgeFadeChange = (checked: boolean) => {
+    setScrollEdgeFade(checked);
+    localStorage.setItem(SCROLL_EDGE_FADE_STORAGE_KEY, checked ? "true" : "false");
+    broadcastSettingsChange(SCROLL_EDGE_FADE_STORAGE_KEY);
   };
 
   return (
@@ -107,6 +118,17 @@ export function AppearanceSection() {
           aria-label="Compact Detail top menu"
           checked={compactDetailTopMenu}
           onCheckedChange={(checked) => handleCompactChange(checked === true)}
+        />
+      </SettingRow>
+
+      <SettingRow
+        label="Fade content under the chrome"
+        caption="Dissolve the top edge of the sidebar, feed, Detail and search as they scroll"
+      >
+        <Checkbox
+          aria-label="Fade content under the chrome"
+          checked={scrollEdgeFade}
+          onCheckedChange={(checked) => handleScrollEdgeFadeChange(checked === true)}
         />
       </SettingRow>
 

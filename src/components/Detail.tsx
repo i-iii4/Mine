@@ -82,6 +82,7 @@ import {
 } from "@/lib/assets";
 import { safeMarkdownUrl } from "@/lib/markdownUrl";
 import { cn } from "@/lib/utils";
+import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
@@ -175,6 +176,8 @@ interface DetailProps {
     tag: string,
   ) => Promise<void>;
   onTextSelectionDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
+  /** Dissolve content into transparency as it scrolls up under the top menu. */
+  scrollEdgeFade?: boolean;
 }
 
 function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock {
@@ -261,6 +264,7 @@ export function Detail({
   onTextSelectionDrop,
   onCreateChannelAndTextSelectionCard = noopTextSelectionCreate,
   onTextSelectionDelete,
+  scrollEdgeFade = false,
 }: DetailProps) {
   const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
     isIndexedBlock(block) ? block : null,
@@ -341,6 +345,7 @@ export function Detail({
   }, [block.slug, refreshFullBlock]);
 
   const panelRef = useRef<HTMLDivElement>(null);
+  const topFadeMaskStyle = useTopFadeMask(panelRef, scrollEdgeFade);
 
   // ESC closes Detail. Arrow keys remain native to the reading surface.
   useEffect(() => {
@@ -449,7 +454,9 @@ export function Detail({
           ref={panelRef}
           tabIndex={-1}
           className="h-full w-full overflow-y-auto outline-none"
+          style={topFadeMaskStyle}
           data-detail-scroll
+          data-detail-top-fade={topFadeMaskStyle ? "true" : undefined}
         >
           <div
             className={cn(layoutClasses, DETAIL_BOTTOM_SAFE_SPACE_CLASS)}

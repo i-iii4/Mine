@@ -54,6 +54,10 @@ import {
   getStoredBottomActionBarHidden,
 } from "@/lib/bottomActionBarVisibility";
 import {
+  SCROLL_EDGE_FADE_STORAGE_KEY,
+  getStoredScrollEdgeFade,
+} from "@/lib/scrollEdgeFade";
+import {
   useNativeWindowChromeSurface,
   type NativeWindowChromeSurfaceToken,
 } from "@/lib/nativeWindowChromeSurface";
@@ -426,6 +430,7 @@ export function AppWithVault({
   const [graphPreferences, setGraphPreferences] = useState(
     getStoredGraphPreferences,
   );
+  const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>(getStoredMainViewMode);
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
@@ -1591,6 +1596,8 @@ export function AppWithVault({
         setBottomActionBarHidden(getStoredBottomActionBarHidden());
       } else if (key === GRAPH_PREFERENCES_STORAGE_KEY) {
         setGraphPreferences(getStoredGraphPreferences());
+      } else if (key === SCROLL_EDGE_FADE_STORAGE_KEY) {
+        setScrollEdgeFade(getStoredScrollEdgeFade());
       }
     });
     return () => {
@@ -2934,6 +2941,7 @@ export function AppWithVault({
         onLinkModeChange={setDetailLinkMode}
         showLinkModeChrome={false}
         detailChromeClosing={detailChromeClosing}
+        scrollEdgeFade={scrollEdgeFade}
       />
 
       <SidebarResizeHandle
@@ -2987,6 +2995,7 @@ export function AppWithVault({
                 currentTag={currentTag}
                 viewMode={mainViewMode}
                 graphPreferences={graphPreferences}
+                scrollEdgeFade={scrollEdgeFade}
                 routeSnapshotReady={gridRouteSnapshotReady}
                 scrollToTop={scrollToTopSignal}
                 blockDragActive={activeDragBlocks.length > 0}
@@ -3038,6 +3047,7 @@ export function AppWithVault({
               vaultPath={vaultPath}
               thumbsRootPath={thumbsRootPath ?? undefined}
               isClosing={detailChromeClosing}
+              scrollEdgeFade={scrollEdgeFade}
               topChromeMode="external"
               onClose={handleDetailClose}
               onNavigate={handleDetailNavigate}
@@ -3114,6 +3124,7 @@ export function AppWithVault({
         vaultPath={vaultPath}
         thumbsRootPath={thumbsRootPath ?? undefined}
         onQueryChange={setSearchOverlayQuery}
+        scrollEdgeFade={scrollEdgeFade}
         onClose={() => setSearchOverlayOpen(false)}
         onOpenBlock={handleSearchOverlayOpenBlock}
         loadBlockTags={handleLoadBlockTags}
@@ -3253,6 +3264,7 @@ interface RouteContext {
   currentTag?: string;
   viewMode: MainViewMode;
   graphPreferences: GraphPreferences;
+  scrollEdgeFade: boolean;
   routeSnapshotReady: boolean;
   scrollToTop: number;
   blockDragActive: boolean;
