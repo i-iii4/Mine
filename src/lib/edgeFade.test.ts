@@ -5,11 +5,13 @@ import {
   TOP_FADE_LIST,
   TOP_FADE_SCROLLED_THRESHOLD_PX,
   createRightFadeMaskStyle,
-  createTopFadeMaskStyle,
+  isTopFadeActive,
   topFadeAlpha,
   topFadeStopCount,
-  topFadeMaskStyleFor,
 } from "./edgeFade";
+import { createTopFadeScrimStyle } from "@/components/TopFadeScrim";
+
+const ALL_PROFILES = [TOP_FADE_CANVAS, TOP_FADE_LIST];
 
 /// Pull `<alpha, position>` pairs out of a generated gradient so the tests
 /// assert the ramp shape instead of one frozen string.
@@ -47,8 +49,8 @@ describe("createRightFadeMaskStyle", () => {
 
 describe("topFadeAlpha", () => {
   it("starts at the floor and reaches full opacity", () => {
-    expect(topFadeAlpha(0, 0.65)).toBe(0.65);
-    expect(topFadeAlpha(1, 0.65)).toBe(1);
+    expect(topFadeAlpha(0, 0.08)).toBe(0.08);
+    expect(topFadeAlpha(1, 0.08)).toBe(1);
   });
 
   it("flattens at both ends so neither end produces a Mach band", () => {
@@ -60,15 +62,15 @@ describe("topFadeAlpha", () => {
 
     // Near-flat where the ramp meets the edge and where it meets opaque
     // content; steepest in the middle, which is where the transition lives.
-    expect(Math.abs(slope(0, 0.65))).toBeLessThan(0.05);
-    expect(Math.abs(slope(1 - h, 0.65))).toBeLessThan(0.05);
-    expect(slope(0.5, 0.65)).toBeGreaterThan(slope(0.1, 0.65));
+    expect(Math.abs(slope(0, 0.08))).toBeLessThan(0.05);
+    expect(Math.abs(slope(1 - h, 0.08))).toBeLessThan(0.05);
+    expect(slope(0.5, 0.08)).toBeGreaterThan(slope(0.1, 0.08));
   });
 
   it("rises monotonically", () => {
     let previous = -1;
     for (let i = 0; i <= 40; i += 1) {
-      const value = topFadeAlpha(i / 40, 0.65);
+      const value = topFadeAlpha(i / 40, 0.08);
       expect(value).toBeGreaterThanOrEqual(previous);
       previous = value;
     }
@@ -76,16 +78,14 @@ describe("topFadeAlpha", () => {
 
   it("never returns less than the floor", () => {
     for (let i = 0; i <= 40; i += 1) {
-      expect(topFadeAlpha(i / 40, 0.7)).toBeGreaterThanOrEqual(0.7);
+      expect(topFadeAlpha(i / 40, 0.08)).toBeGreaterThanOrEqual(0.08);
     }
   });
 
-  it("stays a hint rather than a dissolve: content keeps most of its opacity", () => {
-    // Every pixel the ramp touches is content degraded, so the curve lives in a
-    // narrow band near full opacity instead of sweeping the whole alpha range.
-    expect(topFadeAlpha(0, 0.65)).toBe(0.65);
-    expect(topFadeAlpha(0.5, 0.65)).toBeGreaterThan(0.8);
-    expect(topFadeAlpha(0.75, 0.65)).toBeGreaterThan(0.94);
+  it("sweeps most of the range so the chrome genuinely covers the top", () => {
+    expect(topFadeAlpha(0, 0.08)).toBe(0.08);
+    expect(topFadeAlpha(0.5, 0.08)).toBeGreaterThan(0.4);
+    expect(topFadeAlpha(0.5, 0.08)).toBeLessThan(0.65);
   });
 });
 
@@ -107,97 +107,79 @@ describe("topFadeStopCount", () => {
   });
 });
 
-describe("createTopFadeMaskStyle", () => {
-  it("keeps a faint remainder at the edge and is fully opaque below the ramp", () => {
-    const gradient = String(createTopFadeMaskStyle(TOP_FADE_CANVAS).maskImage);
-    const stops = parseStops(gradient);
+describe("createTopFadeScrimStyle", () => {
+  it("starts as the chrome colour and fades to nothing over the band", () => {
+    const gradient = String(createTopFadeScrimStyle(TOP_FADE_CANVAS).backgroundImage);
 
     expect(gradient.startsWith("linear-gradient(to bottom,")).toBe(true);
-    expect(stops[0]).toEqual({ alpha: TOP_FADE_CANVAS.minAlpha, position: "0px" });
-    expect(stops.at(-2)).toEqual({ alpha: 1, position: `${TOP_FADE_CANVAS.width}px` });
-    expect(stops.at(-1)).toEqual({ alpha: 1, position: "100%" });
+    // Strongest against the edge — the chrome effectively continues there.
+    expect(gradient).toContain("var(--chrome) 92%");
+    // Gone by the bottom of the band.
+    expect(gradient).toContain(
+      `color-mix(in oklab, var(--chrome) 0%, transparent) ${TOP_FADE_CANVAS.height}px`,
+    );
   });
 
-  it("never emits a fully transparent stop", () => {
-    for (const profile of [TOP_FADE_CANVAS, TOP_FADE_LIST]) {
-      const stops = parseStops(String(createTopFadeMaskStyle(profile).maskImage));
-      for (const stop of stops) {
-        expect(stop.alpha).toBeGreaterThanOrEqual(profile.minAlpha);
-      }
+  it("mixes toward transparent instead of interpolating to it", () => {
+    // Interpolating a colour to `transparent` passes through transparent black
+    // and greys the midpoint of the gradient.
+    const gradient = String(createTopFadeScrimStyle(TOP_FADE_LIST).backgroundImage);
+    expect(gradient).toContain("color-mix(in oklab, var(--chrome)");
+    // Every stop is an explicit mix ratio, never a bare colour handed to the
+    // browser to interpolate toward `transparent`.
+    expect(gradient).toContain("%, transparent)");
+    expect(gradient).not.toMatch(/var\(--chrome\)\s*,/);
+  });
+
+  it("emits one stop per band step plus the closing anchor", () => {
+    const gradient = String(createTopFadeScrimStyle(TOP_FADE_CANVAS).backgroundImage);
+    const stops = gradient.split("color-mix").length - 1;
+    expect(stops).toBe(topFadeStopCount(TOP_FADE_CANVAS.height) + 1);
+  });
+
+  it("weakens monotonically from the edge downward", () => {
+    const gradient = String(createTopFadeScrimStyle(TOP_FADE_CANVAS).backgroundImage);
+    const percentages = [...gradient.matchAll(/var\(--chrome\) ([\d.]+)%/g)].map((m) =>
+      Number(m[1]),
+    );
+    for (let i = 1; i < percentages.length; i += 1) {
+      expect(percentages[i]!).toBeLessThanOrEqual(percentages[i - 1]!);
     }
-  });
-
-  it("advances position and alpha monotonically", () => {
-    const stops = parseStops(String(createTopFadeMaskStyle(TOP_FADE_CANVAS).maskImage));
-    const ramp = stops.slice(0, -1); // drop the trailing 100% anchor
-
-    for (let i = 1; i < ramp.length; i += 1) {
-      expect(Number.parseFloat(ramp[i]!.position)).toBeGreaterThan(
-        Number.parseFloat(ramp[i - 1]!.position),
-      );
-      expect(ramp[i]!.alpha).toBeGreaterThanOrEqual(ramp[i - 1]!.alpha);
-    }
-  });
-
-  it("emits one stop per ramp step plus the closing anchor", () => {
-    const stops = parseStops(String(createTopFadeMaskStyle(TOP_FADE_CANVAS).maskImage));
-    expect(stops.length).toBe(topFadeStopCount(TOP_FADE_CANVAS.width) + 2);
-  });
-
-  it("sets the same value on both the standard and WebKit mask property", () => {
-    const style = createTopFadeMaskStyle(TOP_FADE_LIST);
-    expect(style.maskImage).toBe(style.WebkitMaskImage);
+    expect(percentages.at(-1)).toBe(0);
   });
 });
 
 describe("top fade profiles", () => {
-  it("gives large-format content a longer ramp than dense lists", () => {
-    // A canvas-width ramp would swallow a whole 32px sidebar row.
-    expect(TOP_FADE_CANVAS.width).toBeGreaterThan(TOP_FADE_LIST.width);
-    expect(TOP_FADE_LIST.width).toBeLessThan(32);
+  it("keeps the list band inside a single 32px row", () => {
+    expect(TOP_FADE_LIST.height).toBeLessThanOrEqual(32);
+    expect(TOP_FADE_LIST.height).toBeLessThanOrEqual(TOP_FADE_CANVAS.height);
   });
 
-  it("keeps every ramp short enough not to eat usable content", () => {
-    // The ramp degrades real content, so it stays well inside one sidebar row.
-    for (const profile of [TOP_FADE_CANVAS, TOP_FADE_LIST]) {
-      expect(profile.width).toBeLessThanOrEqual(20);
+  it("makes the canvas band tall enough to read as a panel, not a line", () => {
+    expect(TOP_FADE_CANVAS.height).toBeGreaterThanOrEqual(40);
+  });
+
+  it("starts nearly opaque so content genuinely passes under the chrome", () => {
+    for (const profile of ALL_PROFILES) {
+      expect(profile.minAlpha).toBeLessThanOrEqual(0.1);
     }
-  });
-
-  it("never takes more than about a third of the content's opacity", () => {
-    for (const profile of [TOP_FADE_CANVAS, TOP_FADE_LIST]) {
-      expect(profile.minAlpha).toBeGreaterThanOrEqual(0.6);
-    }
-  });
-
-  it("goes lighter on list text than on photographs", () => {
-    expect(TOP_FADE_LIST.minAlpha).toBeGreaterThan(TOP_FADE_CANVAS.minAlpha);
   });
 });
 
-describe("topFadeMaskStyleFor", () => {
-  it("returns no style while the surface is at rest", () => {
-    expect(topFadeMaskStyleFor(true, 0, "canvas")).toBeUndefined();
+describe("isTopFadeActive", () => {
+  it("stays off while the surface is at rest", () => {
+    expect(isTopFadeActive(true, 0)).toBe(false);
   });
 
-  it("returns no style while the preference is off, however far it is scrolled", () => {
-    expect(topFadeMaskStyleFor(false, 5000, "canvas")).toBeUndefined();
+  it("stays off while the preference is off, however far it is scrolled", () => {
+    expect(isTopFadeActive(false, 5000)).toBe(false);
   });
 
   it("ignores sub-pixel scroll offsets", () => {
-    expect(
-      topFadeMaskStyleFor(true, TOP_FADE_SCROLLED_THRESHOLD_PX - 0.5, "list"),
-    ).toBeUndefined();
+    expect(isTopFadeActive(true, TOP_FADE_SCROLLED_THRESHOLD_PX - 0.5)).toBe(false);
   });
 
-  it("returns a stable style object per variant once scrolled", () => {
-    const canvas = topFadeMaskStyleFor(true, 400, "canvas");
-    const list = topFadeMaskStyleFor(true, 400, "list");
-
-    expect(canvas).toBeDefined();
-    expect(list).toBeDefined();
-    expect(canvas).not.toBe(list);
-    // Same object across calls: surfaces can compare by identity.
-    expect(topFadeMaskStyleFor(true, 900, "canvas")).toBe(canvas);
+  it("turns on once content has travelled under the chrome", () => {
+    expect(isTopFadeActive(true, TOP_FADE_SCROLLED_THRESHOLD_PX)).toBe(true);
   });
 });

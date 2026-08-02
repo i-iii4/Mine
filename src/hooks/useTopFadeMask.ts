@@ -1,43 +1,37 @@
-// Top-edge fade activation for a scroll container.
+// Tracks whether a scroll container is scrolled, so its surface can show the
+// band that continues the chrome over the content.
 //
-// The mask is only meaningful once content has actually travelled up under the
-// chrome: at rest the first row must stay fully opaque. The hook therefore
-// tracks a single boolean — "is this surface scrolled" — instead of a scroll
-// offset, so ordinary scrolling produces no re-render once the mask is on.
+// The band is only meaningful once content has actually travelled under the
+// chrome: at rest there is nothing to continue over. The hook therefore tracks a
+// single boolean rather than a scroll offset, so ordinary scrolling produces no
+// re-render once the band is up.
 //
-// Attachment goes through a callback ref rather than a ref object. Surfaces
-// like the search overlay live inside a Radix `Dialog`, which does not mount
-// its content until the dialog opens, so the scroll container appears in a
-// later render than the component itself. A ref object would still be empty
-// when the effect ran, and the effect would never re-run — those surfaces would
-// silently never fade.
+// Attachment goes through a callback ref rather than a ref object. Surfaces like
+// the search overlay live inside a Radix `Dialog`, which does not mount its
+// content until the dialog opens: the scroll container appears in a later render
+// than the component itself. A ref object would still be empty when the effect
+// ran, and the effect would never re-run, so those surfaces would silently never
+// show the band.
 
-import { useCallback, useEffect, useState, type CSSProperties, type RefObject } from "react";
-import {
-  TOP_FADE_SCROLLED_THRESHOLD_PX,
-  topFadeMaskStyleFor,
-  type TopFadeVariant,
-} from "@/lib/edgeFade";
+import { useCallback, useEffect, useState, type RefObject } from "react";
+import { TOP_FADE_SCROLLED_THRESHOLD_PX } from "@/lib/edgeFade";
 
-export interface TopFadeMask {
+export interface TopFadeState {
   /// Attach to the scroll container. Also populates the caller's own ref, so a
   /// surface that already needs the node for focus or scrolling keeps working.
   ref: (node: HTMLElement | null) => void;
-  /// Mask style while enabled and scrolled, `undefined` otherwise. `undefined`
-  /// leaves the element's `style` free of mask properties rather than setting
-  /// them to `none`.
-  style: CSSProperties | undefined;
+  /// Whether the surface is scrolled far enough to show the band.
+  active: boolean;
 }
 
-/// Dissolve a scroll container's top edge once it is scrolled.
+/// Watch a scroll container for the top fade band.
 ///
 /// `forwardRef` is the caller's existing ref for the same node, kept in sync so
 /// this hook can be added to a surface without disturbing what already uses it.
 export function useTopFadeMask(
   forwardRef: RefObject<HTMLElement | null> | undefined,
   enabled: boolean,
-  variant: TopFadeVariant,
-): TopFadeMask {
+): TopFadeState {
   const [node, setNode] = useState<HTMLElement | null>(null);
   const [scrolled, setScrolled] = useState(false);
 
@@ -66,8 +60,5 @@ export function useTopFadeMask(
     };
   }, [node, enabled]);
 
-  return {
-    ref,
-    style: topFadeMaskStyleFor(enabled, scrolled ? TOP_FADE_SCROLLED_THRESHOLD_PX : 0, variant),
-  };
+  return { ref, active: enabled && scrolled };
 }

@@ -47,7 +47,8 @@ import {
   sidebarRowDomId,
 } from "@/lib/sidebarSearch";
 import { cn } from "@/lib/utils";
-import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
+import { EDGE_FADE_WIDTH, TOP_FADE_LIST, createRightFadeMaskStyle } from "@/lib/edgeFade";
+import { TopFadeScrim } from "./TopFadeScrim";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { ReadOnlyCardPreview } from "./Card";
@@ -196,7 +197,7 @@ export function Sidebar({
   const [uncontrolledLinkMode, setUncontrolledLinkMode] = useState<SidebarLinkMode>("all");
   const effectiveLinkMode = linkMode ?? uncontrolledLinkMode;
   const navRef = useRef<HTMLElement>(null);
-  const topFade = useTopFadeMask(navRef, scrollEdgeFade, "list");
+  const topFade = useTopFadeMask(navRef, scrollEdgeFade);
   const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
   const previewRef = useRef<HTMLDivElement | null>(null);
   const previewOpenTimerRef = useRef<number | null>(null);
@@ -645,9 +646,8 @@ export function Sidebar({
             ? "px-2 pt-8"
             : "px-[var(--sidebar-nav-pad-x)] pt-[var(--sidebar-nav-pad-top)]",
         )}
-        style={topFade.style}
         data-sidebar-scroll
-        data-sidebar-top-fade={topFade.style ? "true" : undefined}
+        data-sidebar-top-fade={topFade.active ? "true" : undefined}
         data-sidebar-link-editor-mode={isLinkEditorActive ? "true" : undefined}
         data-sidebar-row-hover-seam={SIDEBAR_ROW_HOVER_SEAM_ENABLED ? "true" : "false"}
         data-sidebar-row-focus-mode={hasSidebarRowFocusMode ? "true" : undefined}
@@ -657,6 +657,7 @@ export function Sidebar({
         onFocusCapture={handleSidebarFocusCapture}
         onBlurCapture={handleSidebarBlurCapture}
       >
+        <TopFadeScrim profile={TOP_FADE_LIST} active={topFade.active} surface="sidebar" />
         {!isLinkingBlock && headerSlot}
 
         <div className="relative" data-sidebar-rows>

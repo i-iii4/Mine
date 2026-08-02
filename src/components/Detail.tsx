@@ -83,6 +83,8 @@ import {
 import { safeMarkdownUrl } from "@/lib/markdownUrl";
 import { cn } from "@/lib/utils";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
+import { TOP_FADE_CANVAS } from "@/lib/edgeFade";
+import { TopFadeScrim } from "./TopFadeScrim";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
@@ -345,7 +347,7 @@ export function Detail({
   }, [block.slug, refreshFullBlock]);
 
   const panelRef = useRef<HTMLDivElement>(null);
-  const topFade = useTopFadeMask(panelRef, scrollEdgeFade, "canvas");
+  const topFade = useTopFadeMask(panelRef, scrollEdgeFade);
 
   // ESC closes Detail. Arrow keys remain native to the reading surface.
   useEffect(() => {
@@ -454,10 +456,10 @@ export function Detail({
           ref={topFade.ref}
           tabIndex={-1}
           className="h-full w-full overflow-y-auto outline-none"
-          style={topFade.style}
           data-detail-scroll
-          data-detail-top-fade={topFade.style ? "true" : undefined}
+          data-detail-top-fade={topFade.active ? "true" : undefined}
         >
+          <TopFadeScrim profile={TOP_FADE_CANVAS} active={topFade.active} surface="detail" />
           <div
             className={cn(layoutClasses, DETAIL_BOTTOM_SAFE_SPACE_CLASS)}
             data-detail-layout-grid="scroll"

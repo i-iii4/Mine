@@ -1,21 +1,22 @@
-// Edge fade contract. Mine dissolves content into transparency at two kinds of
-// edge: sidebar row text and previews fade toward the right guideline, and
-// scrollable surfaces fade toward the top edge under the chrome.
+// Edge treatments. Mine softens two kinds of container edge, and they work by
+// opposite means.
 //
-// The effect is a mask, not a shadow. Masked content becomes transparent, so the
-// surface behind it stays visible and the result is theme-independent. Mine
-// separates planes with background levels, borders and masks; `box-shadow` is
-// reserved for floating menus (see DESIGN_SYSTEM.md).
+// The right edge of sidebar rows *masks* content: row text and previews become
+// transparent as they approach the action column, hiding an overflow.
 //
-// The two edges solve different problems and therefore use different curves.
-// The right edge hides a text overflow: it is a hand-tuned table that ends in
-// full transparency. The top edge suggests content continuing past a boundary:
-// it is generated from a closed-form curve, keeps a faint remainder, and scales
-// its ramp to the content it covers.
+// The top edge of scrollable surfaces does not touch the content at all. The
+// chrome colour is extended downward as a band that fades out, so content
+// passes underneath at full strength and reads as sliding under the panel.
+// Masking was tried there first and was wrong: transparent content dissolves
+// into the page background, and on a light background a photograph simply
+// bleaches toward white — damaged content rather than depth.
+//
+// Neither edge uses `box-shadow`; that is reserved for floating menus (see
+// DESIGN_SYSTEM.md).
 
 import type { CSSProperties } from "react";
 
-// ─── Right edge ─────────────────────────────────────────────────────────────
+// ─── Right edge: masks content ──────────────────────────────────────────────
 
 /// Width of the right-edge dissolve ramp, in CSS pixels.
 export const EDGE_FADE_WIDTH = 24;
@@ -68,122 +69,69 @@ export function createRightFadeMaskStyle(
   } as CSSProperties;
 }
 
-// ─── Top edge ───────────────────────────────────────────────────────────────
+// ─── Top edge: extends the chrome ───────────────────────────────────────────
 
 /// Smootherstep: `6t⁵ − 15t⁴ + 10t³`.
 ///
 /// Both its first and second derivative are zero at `t = 0` and `t = 1`. That
-/// matters at each end of the ramp: a curve arriving at a flat value with a
+/// matters at each end of the band: a curve arriving at a flat value with a
 /// non-zero slope produces a Mach band — the eye amplifies the discontinuity and
-/// reports a bright line that is not in the pixels.
+/// reports a line that is not in the pixels. At the top that would show as a
+/// seam against the chrome, at the bottom as an edge across the content.
 const smootherstep = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
 
-// No gamma correction here, deliberately. Gamma matters when a ramp spans most
-// of the alpha range, where perceived brightness diverges sharply from the alpha
-// value. This ramp spans a narrow band near full opacity — its job is a hint of
-// depth, not a dissolve — and applying gamma there only drags the curve toward
-// the transparent end, which is what made content look bleached.
-
-/// One stop per this many pixels of ramp.
+/// One stop per this many pixels of band.
 ///
-/// 8-bit alpha gives ~256 levels, but the visible artefact is the linear
-/// interpolation *between* stops: too few stops and the ramp reads as a series
-/// of flat facets. Roughly one stop every 2.5px keeps each segment below the
-/// threshold where its linear approximation becomes visible.
+/// The visible artefact is the linear interpolation *between* stops: too few and
+/// the band reads as a series of flat facets.
 const PIXELS_PER_STOP = 2.5;
 const MIN_TOP_FADE_STOPS = 12;
 const MAX_TOP_FADE_STOPS = 24;
 
-/// A top-fade profile: how far the ramp runs and how much opacity survives at
-/// the very edge.
+/// Geometry of the band that continues the chrome over the content.
 export interface TopFadeProfile {
-  /// Ramp length in CSS pixels.
-  width: number;
-  /// Opacity at the very top edge. Never zero — content that dissolves
-  /// completely reads as clipped, while a faint remainder reads as content
-  /// continuing past the chrome.
+  /// Band height in CSS pixels — the distance over which the chrome dissolves.
+  height: number;
+  /// How much of the content still shows through at the very top of the band.
+  /// Not zero: a fully opaque start would just look like a taller chrome.
   minAlpha: number;
 }
 
 /// Profile for large-format content: the feed and Detail.
 ///
-/// The effect is a hint of depth, not a dissolve. A card is content the user
-/// wants to see, and every pixel the ramp touches is content degraded — on a
-/// light background a dark image bleaches toward white and reads as damaged
-/// rather than distant. So the ramp is short and its floor is high: content
-/// under the chrome loses about a third of its opacity, never more.
-export const TOP_FADE_CANVAS: TopFadeProfile = { width: 20, minAlpha: 0.65 };
+/// The band must be tall enough to read as the panel continuing over the
+/// content rather than as a smudged line along its edge.
+export const TOP_FADE_CANVAS: TopFadeProfile = { height: 48, minAlpha: 0.08 };
 
 /// Profile for dense lists: the sidebar and search results, whose rows are 32px.
-/// Shorter still, so the ramp stays well inside a single row, and slightly
-/// weaker — list text carries less visual mass than a photograph, so the same
-/// alpha reads stronger on it.
-export const TOP_FADE_LIST: TopFadeProfile = { width: 16, minAlpha: 0.7 };
+/// A canvas-height band would blanket an entire row, so it is shorter.
+export const TOP_FADE_LIST: TopFadeProfile = { height: 32, minAlpha: 0.08 };
 
-/// Alpha at normalized ramp position `t`, where `0` is the very edge and `1` is
-/// the end of the ramp.
+/// How much of the content shows through at normalized band position `t`, where
+/// `0` is the very edge and `1` is the bottom of the band.
+///
+/// No gamma correction: the band is a colour laid over content, and its own
+/// opacity is what the eye judges. The gamma term that a content mask needs
+/// would only skew this curve.
 export function topFadeAlpha(t: number, minAlpha: number): number {
   return Math.round((minAlpha + (1 - minAlpha) * smootherstep(t)) * 1000) / 1000;
 }
 
-/// Number of stops used for a ramp of the given width.
-export function topFadeStopCount(width: number): number {
+/// Number of stops used for a band of the given height.
+export function topFadeStopCount(height: number): number {
   return Math.min(
     MAX_TOP_FADE_STOPS,
-    Math.max(MIN_TOP_FADE_STOPS, Math.round(width / PIXELS_PER_STOP)),
+    Math.max(MIN_TOP_FADE_STOPS, Math.round(height / PIXELS_PER_STOP)),
   );
 }
 
-/// Build a mask that fades content out toward the top edge.
-///
-/// Transparent-but-not-invisible at the top of the box, fully opaque `width`
-/// pixels below it. Applied to a scroll container, this dissolves content as it
-/// travels up under the chrome instead of clipping it at a hard line.
-export function createTopFadeMaskStyle({ width, minAlpha }: TopFadeProfile): CSSProperties {
-  const stopCount = topFadeStopCount(width);
-  const stops: string[] = [];
-
-  for (let i = 0; i <= stopCount; i += 1) {
-    const t = i / stopCount;
-    const position = Math.round(t * width * 100) / 100;
-    stops.push(`rgba(0, 0, 0, ${topFadeAlpha(t, minAlpha)}) ${position}px`);
-  }
-  stops.push("rgba(0, 0, 0, 1) 100%");
-
-  const gradient = `linear-gradient(to bottom, ${stops.join(", ")})`;
-  return {
-    maskImage: gradient,
-    WebkitMaskImage: gradient,
-  } as CSSProperties;
-}
-
-const TOP_FADE_STYLES: Record<TopFadeVariant, CSSProperties> = {
-  canvas: createTopFadeMaskStyle(TOP_FADE_CANVAS),
-  list: createTopFadeMaskStyle(TOP_FADE_LIST),
-};
-
-/// Which profile a surface uses. `canvas` for the feed and Detail, `list` for
-/// the sidebar and search results.
-export type TopFadeVariant = "canvas" | "list";
-
-/// Scroll offset at which a surface counts as scrolled and the top fade turns
-/// on. Sub-pixel offsets are reported during momentum scrolling and resize; one
-/// full pixel is the smallest offset that can actually hide content.
-///
-/// Surfaces that already track their scroll offset (the feed) compare against
-/// this directly instead of attaching a second scroll listener; the rest go
-/// through `useTopFadeMask`.
+/// Scroll offset at which a surface counts as scrolled and the band appears.
+/// Sub-pixel offsets are reported during momentum scrolling and resize; one full
+/// pixel is the smallest offset that can actually put content under the chrome.
 export const TOP_FADE_SCROLLED_THRESHOLD_PX = 1;
 
-/// Resolve the top fade style for a surface that already knows its scroll
-/// offset. Returns `undefined` when the fade is off or the surface is at rest,
-/// leaving the element's `style` free of mask properties.
-export function topFadeMaskStyleFor(
-  enabled: boolean,
-  scrollTop: number,
-  variant: TopFadeVariant,
-): CSSProperties | undefined {
-  return enabled && scrollTop >= TOP_FADE_SCROLLED_THRESHOLD_PX
-    ? TOP_FADE_STYLES[variant]
-    : undefined;
+/// Whether a surface that already tracks its own scroll offset should show the
+/// band. Surfaces that do not track it go through `useTopFadeMask`.
+export function isTopFadeActive(enabled: boolean, scrollTop: number): boolean {
+  return enabled && scrollTop >= TOP_FADE_SCROLLED_THRESHOLD_PX;
 }

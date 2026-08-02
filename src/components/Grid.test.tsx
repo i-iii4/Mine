@@ -624,7 +624,7 @@ describe("Grid — no collapse after add / revisit", () => {
     const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
     expect(scrollEl).toBeTruthy();
     expect(scrollEl?.dataset.gridTopFade).toBeUndefined();
-    expect(scrollEl?.style.maskImage).toBe("");
+    expect(document.querySelector('[data-top-fade-scrim="feed"]')).toBeNull();
   });
 
   it("masks the scrolled feed without dropping the scrollport's own styles", async () => {
@@ -649,14 +649,17 @@ describe("Grid — no collapse after add / revisit", () => {
     await flushAsync();
 
     expect(scrollEl.dataset.gridTopFade).toBe("true");
-    // jsdom normalizes the gradient: `to bottom` is the default direction and is
-    // dropped, and `rgba(...)` with alpha 1 collapses to `rgb(...)`. Assert the
-    // ramp itself — faint but not invisible at the top edge, opaque below it.
-    expect(scrollEl.style.maskImage).toContain(`rgba(0, 0, 0, ${TOP_FADE_CANVAS.minAlpha}) 0px`);
-    expect(scrollEl.style.maskImage).toContain(`${TOP_FADE_CANVAS.width}px`);
-    // The mask is spread onto the existing style object, not instead of it.
+    const scrim = document.querySelector('[data-top-fade-scrim="feed"]') as HTMLElement;
+    expect(scrim).toBeTruthy();
+    // The band sits inside the scrollport but takes no space in the flow.
+    expect(scrim.className).toContain("h-0");
+    expect(scrim.className).toContain("sticky");
+    expect((scrim.firstElementChild as HTMLElement).style.height)
+      .toBe(`${TOP_FADE_CANVAS.height}px`);
+    // The scrollport keeps its own styles: the band is a child, not a mask.
     expect(scrollEl.style.paddingLeft).toBe(paddingBeforeScroll);
     expect(scrollEl.style.scrollbarGutter).toBe("stable");
+    expect(scrollEl.style.maskImage).toBe("");
   });
 
   it("restores feed focus by slug and marks the GridItem without Card focus props", async () => {

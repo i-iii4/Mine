@@ -14,7 +14,8 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import type { LightBlock, TagCount } from "@/types";
-import { topFadeMaskStyleFor } from "@/lib/edgeFade";
+import { TOP_FADE_CANVAS, isTopFadeActive } from "@/lib/edgeFade";
+import { TopFadeScrim } from "./TopFadeScrim";
 import { Card, CardSkeleton } from "./Card";
 import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
@@ -1856,7 +1857,7 @@ export function Grid({
   // The feed already tracks its own scroll offset for windowing, so the top
   // fade reuses it instead of attaching a second scroll listener to the hot
   // scroll path.
-  const topFadeMaskStyle = topFadeMaskStyleFor(scrollEdgeFade, scrollTop, "canvas");
+  const topFadeActive = isTopFadeActive(scrollEdgeFade, scrollTop);
 
   return (
     <ContextMenu>
@@ -1874,13 +1875,17 @@ export function Grid({
             paddingRight: gridXInset,
             scrollbarGutter: "stable",
             transition: "padding-left 200ms ease, padding-right 200ms ease",
-            ...topFadeMaskStyle,
           }}
           data-grid-scroll
-          data-grid-top-fade={topFadeMaskStyle ? "true" : undefined}
+          data-grid-top-fade={topFadeActive ? "true" : undefined}
           data-feed-grid-interaction-mode={feedInteractionMode}
           data-feed-grid-focus-mode={visualFocusActive ? "true" : undefined}
         >
+          <TopFadeScrim
+            profile={TOP_FADE_CANVAS}
+            active={topFadeActive}
+            surface="feed"
+          />
           {parentWidth > 0 && blocks.length > 0 && (
             <VirtualMasonryLayout
               blocks={blocks}

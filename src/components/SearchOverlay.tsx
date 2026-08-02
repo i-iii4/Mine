@@ -41,6 +41,8 @@ import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
 import { cn } from "@/lib/utils";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
+import { TOP_FADE_LIST } from "@/lib/edgeFade";
+import { TopFadeScrim } from "./TopFadeScrim";
 import type { LightBlock, TagCount } from "@/types";
 
 /** One request, top results only — refining the query beats paging (SPEC). */
@@ -114,7 +116,7 @@ export function SearchOverlay({
   const [tagsBySlug, setTagsBySlug] = useState<Map<string, string[]>>(new Map());
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const resultsTopFade = useTopFadeMask(undefined, scrollEdgeFade, "list");
+  const resultsTopFade = useTopFadeMask(undefined, scrollEdgeFade);
   const requestSequenceRef = useRef(0);
   // Pointer ownership starts only after a real pointermove with new
   // coordinates, so keyboard scrolling under a resting cursor does not steal
@@ -504,9 +506,13 @@ export function SearchOverlay({
             role="listbox"
             aria-label="Search results"
             className="min-w-0 flex-1 overflow-y-auto p-1"
-            style={resultsTopFade.style}
-            data-search-results-top-fade={resultsTopFade.style ? "true" : undefined}
+            data-search-results-top-fade={resultsTopFade.active ? "true" : undefined}
           >
+            <TopFadeScrim
+              profile={TOP_FADE_LIST}
+              active={resultsTopFade.active}
+              surface="search"
+            />
             {showNoResults && (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 No results
