@@ -47,8 +47,8 @@ describe("createRightFadeMaskStyle", () => {
 
 describe("topFadeAlpha", () => {
   it("starts at the floor and reaches full opacity", () => {
-    expect(topFadeAlpha(0, 0.06)).toBe(0.06);
-    expect(topFadeAlpha(1, 0.06)).toBe(1);
+    expect(topFadeAlpha(0, 0.65)).toBe(0.65);
+    expect(topFadeAlpha(1, 0.65)).toBe(1);
   });
 
   it("flattens at both ends so neither end produces a Mach band", () => {
@@ -59,16 +59,16 @@ describe("topFadeAlpha", () => {
       (topFadeAlpha(t + h, floor) - topFadeAlpha(t, floor)) / h;
 
     // Near-flat where the ramp meets the edge and where it meets opaque
-    // content; steep in the middle, which is where the transition should live.
-    expect(Math.abs(slope(0, 0.06))).toBeLessThan(0.05);
-    expect(Math.abs(slope(1 - h, 0.06))).toBeLessThan(0.05);
-    expect(slope(0.5, 0.06)).toBeGreaterThan(1);
+    // content; steepest in the middle, which is where the transition lives.
+    expect(Math.abs(slope(0, 0.65))).toBeLessThan(0.05);
+    expect(Math.abs(slope(1 - h, 0.65))).toBeLessThan(0.05);
+    expect(slope(0.5, 0.65)).toBeGreaterThan(slope(0.1, 0.65));
   });
 
   it("rises monotonically", () => {
     let previous = -1;
     for (let i = 0; i <= 40; i += 1) {
-      const value = topFadeAlpha(i / 40, 0.06);
+      const value = topFadeAlpha(i / 40, 0.65);
       expect(value).toBeGreaterThanOrEqual(previous);
       previous = value;
     }
@@ -76,15 +76,16 @@ describe("topFadeAlpha", () => {
 
   it("never returns less than the floor", () => {
     for (let i = 0; i <= 40; i += 1) {
-      expect(topFadeAlpha(i / 40, 0.08)).toBeGreaterThanOrEqual(0.08);
+      expect(topFadeAlpha(i / 40, 0.7)).toBeGreaterThanOrEqual(0.7);
     }
   });
 
-  it("holds content readable past the midpoint instead of collapsing early", () => {
-    // Gamma correction is what keeps the ramp from looking like it drops out
-    // immediately: at the halfway point the content is still clearly present.
-    expect(topFadeAlpha(0.5, 0.06)).toBeGreaterThan(0.3);
-    expect(topFadeAlpha(0.5, 0.06)).toBeLessThan(0.55);
+  it("stays a hint rather than a dissolve: content keeps most of its opacity", () => {
+    // Every pixel the ramp touches is content degraded, so the curve lives in a
+    // narrow band near full opacity instead of sweeping the whole alpha range.
+    expect(topFadeAlpha(0, 0.65)).toBe(0.65);
+    expect(topFadeAlpha(0.5, 0.65)).toBeGreaterThan(0.8);
+    expect(topFadeAlpha(0.75, 0.65)).toBeGreaterThan(0.94);
   });
 });
 
@@ -156,13 +157,20 @@ describe("top fade profiles", () => {
     expect(TOP_FADE_LIST.width).toBeLessThan(32);
   });
 
-  it("keeps every ramp long enough to read as a gradient, not a halo", () => {
+  it("keeps every ramp short enough not to eat usable content", () => {
+    // The ramp degrades real content, so it stays well inside one sidebar row.
     for (const profile of [TOP_FADE_CANVAS, TOP_FADE_LIST]) {
-      expect(profile.width).toBeGreaterThanOrEqual(24);
+      expect(profile.width).toBeLessThanOrEqual(20);
     }
   });
 
-  it("leans on a stronger remainder where the ramp is shorter", () => {
+  it("never takes more than about a third of the content's opacity", () => {
+    for (const profile of [TOP_FADE_CANVAS, TOP_FADE_LIST]) {
+      expect(profile.minAlpha).toBeGreaterThanOrEqual(0.6);
+    }
+  });
+
+  it("goes lighter on list text than on photographs", () => {
     expect(TOP_FADE_LIST.minAlpha).toBeGreaterThan(TOP_FADE_CANVAS.minAlpha);
   });
 });

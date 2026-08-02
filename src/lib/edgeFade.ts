@@ -78,14 +78,11 @@ export function createRightFadeMaskStyle(
 /// reports a bright line that is not in the pixels.
 const smootherstep = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
 
-/// Gamma applied on top of the smootherstep shape.
-///
-/// The browser composites alpha linearly over sRGB values, but perceived
-/// brightness is roughly a power law. Without this correction a geometrically
-/// even ramp looks like it collapses early and then crawls; `1.8` is the
-/// exponent that made the hand-tuned right-edge table look even, so the two
-/// edges keep a common visual character.
-const TOP_FADE_GAMMA = 1.8;
+// No gamma correction here, deliberately. Gamma matters when a ramp spans most
+// of the alpha range, where perceived brightness diverges sharply from the alpha
+// value. This ramp spans a narrow band near full opacity — its job is a hint of
+// depth, not a dissolve — and applying gamma there only drags the curve toward
+// the transparent end, which is what made content look bleached.
 
 /// One stop per this many pixels of ramp.
 ///
@@ -108,25 +105,25 @@ export interface TopFadeProfile {
   minAlpha: number;
 }
 
-/// Profile for large-format content: the feed and Detail, where a single card or
-/// image spans hundreds of pixels.
+/// Profile for large-format content: the feed and Detail.
 ///
-/// Below roughly 24px a ramp stops reading as a gradient and becomes a halo
-/// around the edge — the alpha step per pixel rises above the threshold where
-/// the eye resolves the transition itself. At 56px the step is small enough that
-/// the curve, not the length, decides how the fade looks.
-export const TOP_FADE_CANVAS: TopFadeProfile = { width: 56, minAlpha: 0.06 };
+/// The effect is a hint of depth, not a dissolve. A card is content the user
+/// wants to see, and every pixel the ramp touches is content degraded — on a
+/// light background a dark image bleaches toward white and reads as damaged
+/// rather than distant. So the ramp is short and its floor is high: content
+/// under the chrome loses about a third of its opacity, never more.
+export const TOP_FADE_CANVAS: TopFadeProfile = { width: 20, minAlpha: 0.65 };
 
 /// Profile for dense lists: the sidebar and search results, whose rows are 32px.
-/// A canvas-width ramp would swallow a whole row, so the ramp is shorter and
-/// leans on a slightly stronger remainder to stay distinguishable from a cut.
-export const TOP_FADE_LIST: TopFadeProfile = { width: 28, minAlpha: 0.08 };
+/// Shorter still, so the ramp stays well inside a single row, and slightly
+/// weaker — list text carries less visual mass than a photograph, so the same
+/// alpha reads stronger on it.
+export const TOP_FADE_LIST: TopFadeProfile = { width: 16, minAlpha: 0.7 };
 
 /// Alpha at normalized ramp position `t`, where `0` is the very edge and `1` is
 /// the end of the ramp.
 export function topFadeAlpha(t: number, minAlpha: number): number {
-  const shaped = smootherstep(t) ** TOP_FADE_GAMMA;
-  return Math.round((minAlpha + (1 - minAlpha) * shaped) * 1000) / 1000;
+  return Math.round((minAlpha + (1 - minAlpha) * smootherstep(t)) * 1000) / 1000;
 }
 
 /// Number of stops used for a ramp of the given width.
