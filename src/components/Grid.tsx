@@ -14,7 +14,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import type { LightBlock, TagCount } from "@/types";
-import { TOP_FADE_CANVAS, isTopFadeActive } from "@/lib/edgeFade";
+import { TOP_FADE_CANVAS, topFadeHeight } from "@/lib/edgeFade";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { Card, CardSkeleton } from "./Card";
 import { MeasureCard } from "./MeasureCard";
@@ -1857,7 +1857,7 @@ export function Grid({
   // The feed already tracks its own scroll offset for windowing, so the top
   // fade reuses it instead of attaching a second scroll listener to the hot
   // scroll path.
-  const topFadeActive = isTopFadeActive(scrollEdgeFade, scrollTop);
+  const topFadeBandHeight = topFadeHeight(scrollEdgeFade, scrollTop, TOP_FADE_CANVAS);
 
   return (
     <ContextMenu>
@@ -1877,13 +1877,13 @@ export function Grid({
             transition: "padding-left 200ms ease, padding-right 200ms ease",
           }}
           data-grid-scroll
-          data-grid-top-fade={topFadeActive ? "true" : undefined}
+          data-grid-top-fade={topFadeBandHeight > 0 ? "true" : undefined}
           data-feed-grid-interaction-mode={feedInteractionMode}
           data-feed-grid-focus-mode={visualFocusActive ? "true" : undefined}
         >
           <TopFadeScrim
             profile={TOP_FADE_CANVAS}
-            active={topFadeActive}
+            height={topFadeBandHeight}
             surface="feed"
           />
           {parentWidth > 0 && blocks.length > 0 && (

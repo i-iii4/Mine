@@ -654,8 +654,9 @@ describe("Grid — no collapse after add / revisit", () => {
     // The band sits inside the scrollport but takes no space in the flow.
     expect(scrim.className).toContain("h-0");
     expect(scrim.className).toContain("sticky");
+    // Scrolled far past the cap, so the band sits at its maximum.
     expect((scrim.firstElementChild as HTMLElement).style.height)
-      .toBe(`${TOP_FADE_CANVAS.height}px`);
+      .toBe(`${TOP_FADE_CANVAS.maxHeight}px`);
     // The scrollport keeps its own styles: the band is a child, not a mask.
     expect(scrollEl.style.paddingLeft).toBe(paddingBeforeScroll);
     expect(scrollEl.style.scrollbarGutter).toBe("stable");

@@ -16,6 +16,7 @@
 
 import type { CSSProperties } from "react";
 import { topFadeAlpha, topFadeStopCount, type TopFadeProfile } from "@/lib/edgeFade";
+import { useThemeAppearance } from "@/hooks/useThemeAppearance";
 
 /// Build the band's background: the chrome colour at full strength against the
 /// edge, fading to fully transparent over `height`.
@@ -24,7 +25,7 @@ import { topFadeAlpha, topFadeStopCount, type TopFadeProfile } from "@/lib/edgeF
 /// `transparent` rather than interpolated by the browser, because interpolating
 /// a colour to `transparent` passes through transparent black and greys the
 /// midpoint of the gradient.
-export function createTopFadeScrimStyle({ height, minAlpha }: TopFadeProfile): CSSProperties {
+export function createTopFadeScrimStyle(height: number, minAlpha: number): CSSProperties {
   const stopCount = topFadeStopCount(height);
   const stops: string[] = [];
 
@@ -45,17 +46,18 @@ export function createTopFadeScrimStyle({ height, minAlpha }: TopFadeProfile): C
 }
 
 interface TopFadeScrimProps {
-  /// Ramp geometry for this surface.
+  /// Coverage profile for this surface.
   profile: TopFadeProfile;
-  /// Whether the surface below is scrolled. At rest the band is absent
-  /// entirely: there is nothing underneath for the chrome to continue over.
-  active: boolean;
+  /// Current band height in CSS pixels. Zero means no band at all: at rest
+  /// there is nothing underneath for the chrome to continue over.
+  height: number;
   /// Marks the band in the DOM for acceptance checks.
   surface: string;
 }
 
-export function TopFadeScrim({ profile, active, surface }: TopFadeScrimProps) {
-  if (!active) return null;
+export function TopFadeScrim({ profile, height, surface }: TopFadeScrimProps) {
+  const appearance = useThemeAppearance();
+  if (height <= 0) return null;
 
   // Rendered as the first child of the scroll container. The outer element is
   // sticky with zero height, so it holds the band against the top edge while
@@ -69,7 +71,7 @@ export function TopFadeScrim({ profile, active, surface }: TopFadeScrimProps) {
     >
       <div
         className="w-full"
-        style={{ height: profile.height, ...createTopFadeScrimStyle(profile) }}
+        style={{ height, ...createTopFadeScrimStyle(height, profile.minAlpha[appearance]) }}
       />
     </div>
   );

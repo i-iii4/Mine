@@ -197,7 +197,7 @@ export function Sidebar({
   const [uncontrolledLinkMode, setUncontrolledLinkMode] = useState<SidebarLinkMode>("all");
   const effectiveLinkMode = linkMode ?? uncontrolledLinkMode;
   const navRef = useRef<HTMLElement>(null);
-  const topFade = useTopFadeMask(navRef, scrollEdgeFade);
+  const topFade = useTopFadeMask(navRef, scrollEdgeFade, TOP_FADE_LIST);
   const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
   const previewRef = useRef<HTMLDivElement | null>(null);
   const previewOpenTimerRef = useRef<number | null>(null);
@@ -647,7 +647,7 @@ export function Sidebar({
             : "px-[var(--sidebar-nav-pad-x)] pt-[var(--sidebar-nav-pad-top)]",
         )}
         data-sidebar-scroll
-        data-sidebar-top-fade={topFade.active ? "true" : undefined}
+        data-sidebar-top-fade={topFade.height > 0 ? "true" : undefined}
         data-sidebar-link-editor-mode={isLinkEditorActive ? "true" : undefined}
         data-sidebar-row-hover-seam={SIDEBAR_ROW_HOVER_SEAM_ENABLED ? "true" : "false"}
         data-sidebar-row-focus-mode={hasSidebarRowFocusMode ? "true" : undefined}
@@ -657,7 +657,7 @@ export function Sidebar({
         onFocusCapture={handleSidebarFocusCapture}
         onBlurCapture={handleSidebarBlurCapture}
       >
-        <TopFadeScrim profile={TOP_FADE_LIST} active={topFade.active} surface="sidebar" />
+        <TopFadeScrim profile={TOP_FADE_LIST} height={topFade.height} surface="sidebar" />
         {!isLinkingBlock && headerSlot}
 
         <div className="relative" data-sidebar-rows>

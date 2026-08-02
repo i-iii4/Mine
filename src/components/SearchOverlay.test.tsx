@@ -156,7 +156,7 @@ describe("SearchOverlay", () => {
     expect(scrim).toBeTruthy();
     // Search results are a dense list, so they use the shorter band.
     expect((scrim.firstElementChild as HTMLElement).style.height)
-      .toBe(`${TOP_FADE_LIST.height}px`);
+      .toBe(`${TOP_FADE_LIST.maxHeight}px`);
   });
 
   it("leaves the results list alone when the preference is off", () => {

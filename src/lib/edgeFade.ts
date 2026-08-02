@@ -88,24 +88,36 @@ const PIXELS_PER_STOP = 2.5;
 const MIN_TOP_FADE_STOPS = 12;
 const MAX_TOP_FADE_STOPS = 24;
 
+/// Resolved color scheme.
+export type TopFadeAppearance = "light" | "dark";
+
 /// Geometry of the band that continues the chrome over the content.
 export interface TopFadeProfile {
-  /// Band height in CSS pixels — the distance over which the chrome dissolves.
-  height: number;
+  /// Tallest the band ever gets, in CSS pixels. Measured from the reference
+  /// screenshots: content reaches full contrast about 41–43px below the edge.
+  maxHeight: number;
   /// How much of the content still shows through at the very top of the band.
-  /// Not zero: a fully opaque start would just look like a taller chrome.
-  minAlpha: number;
+  ///
+  /// Per theme, because the same coverage does not read the same way: a light
+  /// band over a dark photograph is far more visible than a dark band over the
+  /// same photograph. The light value matches the reference measurement — about
+  /// 38–40% of the content's contrast survives at the edge; the dark theme
+  /// covers harder, which is what it needs to register at all.
+  minAlpha: Record<TopFadeAppearance, number>;
 }
 
 /// Profile for large-format content: the feed and Detail.
-///
-/// The band must be tall enough to read as the panel continuing over the
-/// content rather than as a smudged line along its edge.
-export const TOP_FADE_CANVAS: TopFadeProfile = { height: 48, minAlpha: 0.08 };
+export const TOP_FADE_CANVAS: TopFadeProfile = {
+  maxHeight: 44,
+  minAlpha: { light: 0.4, dark: 0.08 },
+};
 
 /// Profile for dense lists: the sidebar and search results, whose rows are 32px.
-/// A canvas-height band would blanket an entire row, so it is shorter.
-export const TOP_FADE_LIST: TopFadeProfile = { height: 32, minAlpha: 0.08 };
+/// A canvas-height band would blanket an entire row.
+export const TOP_FADE_LIST: TopFadeProfile = {
+  maxHeight: 24,
+  minAlpha: { light: 0.4, dark: 0.08 },
+};
 
 /// How much of the content shows through at normalized band position `t`, where
 /// `0` is the very edge and `1` is the bottom of the band.
@@ -130,8 +142,18 @@ export function topFadeStopCount(height: number): number {
 /// pixel is the smallest offset that can actually put content under the chrome.
 export const TOP_FADE_SCROLLED_THRESHOLD_PX = 1;
 
-/// Whether a surface that already tracks its own scroll offset should show the
-/// band. Surfaces that do not track it go through `useTopFadeMask`.
-export function isTopFadeActive(enabled: boolean, scrollTop: number): boolean {
-  return enabled && scrollTop >= TOP_FADE_SCROLLED_THRESHOLD_PX;
+/// Height of the band for a given scroll offset.
+///
+/// The band grows with the scroll: at 5px scrolled it is 5px tall, because 5px
+/// of content is all that has gone under the chrome. A band that appears at full
+/// height the instant scrolling starts covers content that has not moved yet —
+/// which is what made the sidebar look broken, its 32px band blanketing a 32px
+/// row still fully in view.
+export function topFadeHeight(
+  enabled: boolean,
+  scrollTop: number,
+  profile: TopFadeProfile,
+): number {
+  if (!enabled || scrollTop < TOP_FADE_SCROLLED_THRESHOLD_PX) return 0;
+  return Math.min(Math.round(scrollTop), profile.maxHeight);
 }
