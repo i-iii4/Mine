@@ -18,14 +18,18 @@ import type { CSSProperties } from "react";
 import { topFadeAlpha, topFadeStopCount, type TopFadeProfile } from "@/lib/edgeFade";
 import { useThemeAppearance } from "@/hooks/useThemeAppearance";
 
-/// Build the band's background: the chrome colour at full strength against the
+/// Build the band's background: the surface colour at full strength against the
 /// edge, fading to fully transparent over `height`.
 ///
 /// Stops are generated from the shared curve. Colour is mixed against
 /// `transparent` rather than interpolated by the browser, because interpolating
 /// a colour to `transparent` passes through transparent black and greys the
 /// midpoint of the gradient.
-export function createTopFadeScrimStyle(height: number, minAlpha: number): CSSProperties {
+export function createTopFadeScrimStyle(
+  height: number,
+  minAlpha: number,
+  color: string,
+): CSSProperties {
   const stopCount = topFadeStopCount(height);
   const stops: string[] = [];
 
@@ -36,7 +40,7 @@ export function createTopFadeScrimStyle(height: number, minAlpha: number): CSSPr
     const percent = Math.round(strength * 1000) / 10;
     const position = Math.round(t * height * 100) / 100;
     stops.push(
-      `color-mix(in oklab, var(--chrome) ${percent}%, transparent) ${position}px`,
+      `color-mix(in oklab, ${color} ${percent}%, transparent) ${position}px`,
     );
   }
 
@@ -53,9 +57,16 @@ interface TopFadeScrimProps {
   height: number;
   /// Marks the band in the DOM for acceptance checks.
   surface: string;
+  /// Background colour of the surface the band sits on, as a CSS value.
+  ///
+  /// It must be the colour *behind the content*, not the chrome above it. Mine's
+  /// chrome and page background are different tokens (`0.17` against `0.14` in
+  /// the dark theme), so a band painted in the chrome colour reads as a
+  /// rectangle of the wrong shade sitting on the feed.
+  color: string;
 }
 
-export function TopFadeScrim({ profile, height, surface }: TopFadeScrimProps) {
+export function TopFadeScrim({ profile, height, surface, color }: TopFadeScrimProps) {
   const appearance = useThemeAppearance();
   if (height <= 0) return null;
 
@@ -71,7 +82,10 @@ export function TopFadeScrim({ profile, height, surface }: TopFadeScrimProps) {
     >
       <div
         className="w-full"
-        style={{ height, ...createTopFadeScrimStyle(height, profile.minAlpha[appearance]) }}
+        style={{
+          height,
+          ...createTopFadeScrimStyle(height, profile.minAlpha[appearance], color),
+        }}
       />
     </div>
   );

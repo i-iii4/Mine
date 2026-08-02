@@ -11,6 +11,9 @@ import {
 } from "./edgeFade";
 import { createTopFadeScrimStyle } from "@/components/TopFadeScrim";
 
+/// The band paints the colour behind the content, not the chrome above it.
+const BG = "var(--background)";
+
 const ALL_PROFILES = [TOP_FADE_CANVAS, TOP_FADE_LIST];
 
 /// Pull `<alpha, position>` pairs out of a generated gradient so the tests
@@ -113,34 +116,34 @@ describe("topFadeStopCount", () => {
 
 describe("createTopFadeScrimStyle", () => {
   it("starts as the chrome colour and fades to nothing over the band", () => {
-    const gradient = String(createTopFadeScrimStyle(44, 0.08).backgroundImage);
+    const gradient = String(createTopFadeScrimStyle(44, 0.08, BG).backgroundImage);
 
     expect(gradient.startsWith("linear-gradient(to bottom,")).toBe(true);
-    expect(gradient).toContain("var(--chrome) 92%");
-    expect(gradient).toContain("color-mix(in oklab, var(--chrome) 0%, transparent) 44px");
+    expect(gradient).toContain("var(--background) 92%");
+    expect(gradient).toContain("color-mix(in oklab, var(--background) 0%, transparent) 44px");
   });
 
   it("covers less in the light theme, matching the reference measurement", () => {
     // Reference screenshots keep about 38-40% of the content's contrast at the
     // edge; a light band over a dark photograph is far more visible than a dark
     // band over the same photograph.
-    const light = String(createTopFadeScrimStyle(44, TOP_FADE_CANVAS.minAlpha.light).backgroundImage);
-    const dark = String(createTopFadeScrimStyle(44, TOP_FADE_CANVAS.minAlpha.dark).backgroundImage);
+    const light = String(createTopFadeScrimStyle(44, TOP_FADE_CANVAS.minAlpha.light, BG).backgroundImage);
+    const dark = String(createTopFadeScrimStyle(44, TOP_FADE_CANVAS.minAlpha.dark, BG).backgroundImage);
 
-    expect(light).toContain("var(--chrome) 60%");
-    expect(dark).toContain("var(--chrome) 92%");
+    expect(light).toContain("var(--background) 60%");
+    expect(dark).toContain("var(--background) 92%");
   });
 
   it("mixes toward transparent instead of interpolating to it", () => {
-    const gradient = String(createTopFadeScrimStyle(24, 0.4).backgroundImage);
-    expect(gradient).toContain("color-mix(in oklab, var(--chrome)");
+    const gradient = String(createTopFadeScrimStyle(24, 0.4, BG).backgroundImage);
+    expect(gradient).toContain("color-mix(in oklab, var(--background)");
     expect(gradient).toContain("%, transparent)");
     expect(gradient).not.toMatch(/var\(--chrome\)\s*,/);
   });
 
   it("weakens monotonically from the edge downward", () => {
-    const gradient = String(createTopFadeScrimStyle(44, 0.08).backgroundImage);
-    const percentages = [...gradient.matchAll(/var\(--chrome\) ([\d.]+)%/g)].map((m) =>
+    const gradient = String(createTopFadeScrimStyle(44, 0.08, BG).backgroundImage);
+    const percentages = [...gradient.matchAll(/var\(--background\) ([\d.]+)%/g)].map((m) =>
       Number(m[1]),
     );
     for (let i = 1; i < percentages.length; i += 1) {

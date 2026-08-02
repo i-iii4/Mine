@@ -657,7 +657,12 @@ export function Sidebar({
         onFocusCapture={handleSidebarFocusCapture}
         onBlurCapture={handleSidebarBlurCapture}
       >
-        <TopFadeScrim profile={TOP_FADE_LIST} height={topFade.height} surface="sidebar" />
+        <TopFadeScrim
+          profile={TOP_FADE_LIST}
+          height={topFade.height}
+          surface="sidebar"
+          color="var(--sidebar)"
+        />
         {!isLinkingBlock && headerSlot}
 
         <div className="relative" data-sidebar-rows>

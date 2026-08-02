@@ -1885,6 +1885,7 @@ export function Grid({
             profile={TOP_FADE_CANVAS}
             height={topFadeBandHeight}
             surface="feed"
+            color="var(--background)"
           />
           {parentWidth > 0 && blocks.length > 0 && (
             <VirtualMasonryLayout

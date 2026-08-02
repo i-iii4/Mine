@@ -512,6 +512,7 @@ export function SearchOverlay({
               profile={TOP_FADE_LIST}
               height={resultsTopFade.height}
               surface="search"
+              color="var(--card)"
             />
             {showNoResults && (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
