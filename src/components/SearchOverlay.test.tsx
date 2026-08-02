@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { GridSnapshot, LightBlock, SearchMatch } from "@/types";
+import { TOP_FADE_MIN_ALPHA } from "@/lib/edgeFade";
 import {
   SearchOverlay,
   SEARCH_OVERLAY_MIN_QUERY_CHARS,
@@ -132,6 +133,39 @@ beforeEach(() => {
 });
 
 describe("SearchOverlay", () => {
+  it("does not mask the results list while it is at rest", () => {
+    renderOverlay({ scrollEdgeFade: true });
+
+    const list = document.getElementById("search-overlay-listbox") as HTMLElement;
+    expect(list).toBeTruthy();
+    expect(list.dataset.searchResultsTopFade).toBeUndefined();
+    expect(list.style.maskImage).toBe("");
+  });
+
+  it("dissolves the results list once it is scrolled", () => {
+    // The list lives inside a Radix Dialog and is mounted only after the dialog
+    // opens, so the fade must attach to a node that appeared after mount.
+    renderOverlay({ scrollEdgeFade: true });
+
+    const list = document.getElementById("search-overlay-listbox") as HTMLElement;
+    Object.defineProperty(list, "scrollTop", { value: 240, configurable: true });
+    fireEvent.scroll(list);
+
+    expect(list.dataset.searchResultsTopFade).toBe("true");
+    expect(list.style.maskImage).toContain(`rgba(0, 0, 0, ${TOP_FADE_MIN_ALPHA}) 0px`);
+  });
+
+  it("leaves the results list alone when the preference is off", () => {
+    renderOverlay();
+
+    const list = document.getElementById("search-overlay-listbox") as HTMLElement;
+    Object.defineProperty(list, "scrollTop", { value: 240, configurable: true });
+    fireEvent.scroll(list);
+
+    expect(list.dataset.searchResultsTopFade).toBeUndefined();
+    expect(list.style.maskImage).toBe("");
+  });
+
   it("renders the focused input and selects the previous query on open", () => {
     renderOverlay({ query: "previous query" });
     const input = screen.getByRole("combobox") as HTMLInputElement;

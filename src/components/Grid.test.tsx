@@ -19,6 +19,7 @@ import {
   FEED_HEAVY_HYSTERESIS_FRACTION,
   type HeavyPlaybackCandidate,
 } from "./Grid";
+import { TOP_FADE_MIN_ALPHA, TOP_FADE_WIDTH } from "@/lib/edgeFade";
 import { computeMasonryLayout } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
 import type { LightBlock } from "@/types";
@@ -650,9 +651,9 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(scrollEl.dataset.gridTopFade).toBe("true");
     // jsdom normalizes the gradient: `to bottom` is the default direction and is
     // dropped, and `rgba(...)` with alpha 1 collapses to `rgb(...)`. Assert the
-    // ramp itself — transparent at the top edge, opaque below the ramp.
-    expect(scrollEl.style.maskImage).toContain("rgba(0, 0, 0, 0) 0px");
-    expect(scrollEl.style.maskImage).toContain("24px");
+    // ramp itself — faint but not invisible at the top edge, opaque below it.
+    expect(scrollEl.style.maskImage).toContain(`rgba(0, 0, 0, ${TOP_FADE_MIN_ALPHA}) 0px`);
+    expect(scrollEl.style.maskImage).toContain(`${TOP_FADE_WIDTH}px`);
     // The mask is spread onto the existing style object, not instead of it.
     expect(scrollEl.style.paddingLeft).toBe(paddingBeforeScroll);
     expect(scrollEl.style.scrollbarGutter).toBe("stable");

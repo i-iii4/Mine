@@ -196,7 +196,7 @@ export function Sidebar({
   const [uncontrolledLinkMode, setUncontrolledLinkMode] = useState<SidebarLinkMode>("all");
   const effectiveLinkMode = linkMode ?? uncontrolledLinkMode;
   const navRef = useRef<HTMLElement>(null);
-  const topFadeMaskStyle = useTopFadeMask(navRef, scrollEdgeFade);
+  const topFade = useTopFadeMask(navRef, scrollEdgeFade);
   const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
   const previewRef = useRef<HTMLDivElement | null>(null);
   const previewOpenTimerRef = useRef<number | null>(null);
@@ -633,7 +633,7 @@ export function Sidebar({
       )}
       {/* Navigation */}
       <nav
-        ref={navRef}
+        ref={topFade.ref}
         className={cn(
           // min-width freezes the menu at the three-equal-columns layout: below
           // it the nav keeps this width and the panel's overflow-hidden clips it.
@@ -645,9 +645,9 @@ export function Sidebar({
             ? "px-2 pt-8"
             : "px-[var(--sidebar-nav-pad-x)] pt-[var(--sidebar-nav-pad-top)]",
         )}
-        style={topFadeMaskStyle}
+        style={topFade.style}
         data-sidebar-scroll
-        data-sidebar-top-fade={topFadeMaskStyle ? "true" : undefined}
+        data-sidebar-top-fade={topFade.style ? "true" : undefined}
         data-sidebar-link-editor-mode={isLinkEditorActive ? "true" : undefined}
         data-sidebar-row-hover-seam={SIDEBAR_ROW_HOVER_SEAM_ENABLED ? "true" : "false"}
         data-sidebar-row-focus-mode={hasSidebarRowFocusMode ? "true" : undefined}

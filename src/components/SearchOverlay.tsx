@@ -114,8 +114,7 @@ export function SearchOverlay({
   const [tagsBySlug, setTagsBySlug] = useState<Map<string, string[]>>(new Map());
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const resultsRef = useRef<HTMLDivElement>(null);
-  const topFadeMaskStyle = useTopFadeMask(resultsRef, scrollEdgeFade);
+  const resultsTopFade = useTopFadeMask(undefined, scrollEdgeFade);
   const requestSequenceRef = useRef(0);
   // Pointer ownership starts only after a real pointermove with new
   // coordinates, so keyboard scrolling under a resting cursor does not steal
@@ -500,13 +499,13 @@ export function SearchOverlay({
 
         <div className="flex min-h-0 flex-1">
           <div
-            ref={resultsRef}
+            ref={resultsTopFade.ref}
             id="search-overlay-listbox"
             role="listbox"
             aria-label="Search results"
             className="min-w-0 flex-1 overflow-y-auto p-1"
-            style={topFadeMaskStyle}
-            data-search-results-top-fade={topFadeMaskStyle ? "true" : undefined}
+            style={resultsTopFade.style}
+            data-search-results-top-fade={resultsTopFade.style ? "true" : undefined}
           >
             {showNoResults && (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

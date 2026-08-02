@@ -23,98 +23,151 @@ function createScrollElement(initialScrollTop = 0) {
   return { element, scrollTo };
 }
 
-function renderMask(element: HTMLElement | null, enabled: boolean) {
-  const ref = createRef<HTMLElement>() as React.RefObject<HTMLElement | null>;
-  ref.current = element;
-  return renderHook(({ on }: { on: boolean }) => useTopFadeMask(ref, on), {
+function renderMask(enabled: boolean) {
+  const forwardRef = createRef<HTMLElement>() as React.RefObject<HTMLElement | null>;
+  const hook = renderHook(({ on }: { on: boolean }) => useTopFadeMask(forwardRef, on), {
     initialProps: { on: enabled },
   });
+  /// Attach a node the way a component would, in a commit.
+  const attach = (node: HTMLElement | null) => act(() => hook.result.current.ref(node));
+  return { ...hook, forwardRef, attach };
 }
 
 describe("useTopFadeMask", () => {
   it("returns no style while the surface is at rest", () => {
     const { element } = createScrollElement();
-    const { result } = renderMask(element, true);
-    expect(result.current).toBeUndefined();
+    const { result, attach } = renderMask(true);
+    attach(element);
+    expect(result.current.style).toBeUndefined();
   });
 
   it("turns the mask on once the surface is scrolled", () => {
     const { element, scrollTo } = createScrollElement();
-    const { result } = renderMask(element, true);
+    const { result, attach } = renderMask(true);
+    attach(element);
 
     act(() => scrollTo(120));
-    expect(result.current).toBe(TOP_FADE_MASK_STYLE);
+    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
   });
 
   it("turns the mask off again when the surface returns to the top", () => {
     const { element, scrollTo } = createScrollElement();
-    const { result } = renderMask(element, true);
+    const { result, attach } = renderMask(true);
+    attach(element);
 
     act(() => scrollTo(120));
-    expect(result.current).toBe(TOP_FADE_MASK_STYLE);
+    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
 
     act(() => scrollTo(0));
-    expect(result.current).toBeUndefined();
+    expect(result.current.style).toBeUndefined();
   });
 
-  it("picks up a surface that is already scrolled when it mounts", () => {
+  it("picks up a surface that is already scrolled when it attaches", () => {
     const { element } = createScrollElement(400);
-    const { result } = renderMask(element, true);
-    expect(result.current).toBe(TOP_FADE_MASK_STYLE);
+    const { result, attach } = renderMask(true);
+    attach(element);
+    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
+  });
+
+  it("attaches to a node that only appears in a later render", () => {
+    // The search overlay lives inside a Radix Dialog: its scroll container does
+    // not exist until the dialog opens, long after the component mounted. A ref
+    // object would still be empty when the effect first ran.
+    const { element, scrollTo } = createScrollElement();
+    const { result, attach } = renderMask(true);
+
+    expect(result.current.style).toBeUndefined();
+
+    attach(element); // dialog opens
+    act(() => scrollTo(300));
+    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
+  });
+
+  it("stops observing a node that is unmounted and remounted", () => {
+    const first = createScrollElement();
+    const second = createScrollElement();
+    const { result, attach } = renderMask(true);
+
+    attach(first.element);
+    act(() => first.scrollTo(300));
+    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
+
+    attach(null); // dialog closes
+    expect(result.current.style).toBeUndefined();
+
+    attach(second.element); // dialog reopens at the top
+    expect(result.current.style).toBeUndefined();
+    act(() => second.scrollTo(300));
+    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
+  });
+
+  it("keeps the caller's own ref pointing at the node", () => {
+    const { element } = createScrollElement();
+    const { forwardRef, attach } = renderMask(true);
+
+    attach(element);
+    expect(forwardRef.current).toBe(element);
+
+    attach(null);
+    expect(forwardRef.current).toBeNull();
   });
 
   it("ignores sub-pixel offsets from momentum scrolling", () => {
     const { element, scrollTo } = createScrollElement();
-    const { result } = renderMask(element, true);
+    const { result, attach } = renderMask(true);
+    attach(element);
 
     act(() => scrollTo(0.5));
-    expect(result.current).toBeUndefined();
+    expect(result.current.style).toBeUndefined();
   });
 
   it("stays off while the preference is disabled, even when scrolled", () => {
     const { element, scrollTo } = createScrollElement(500);
-    const { result } = renderMask(element, false);
-    expect(result.current).toBeUndefined();
+    const { result, attach } = renderMask(false);
+    attach(element);
+    expect(result.current.style).toBeUndefined();
 
     act(() => scrollTo(900));
-    expect(result.current).toBeUndefined();
+    expect(result.current.style).toBeUndefined();
   });
 
   it("clears an active mask when the preference is turned off mid-session", () => {
     const { element, scrollTo } = createScrollElement();
-    const { result, rerender } = renderMask(element, true);
+    const { result, rerender, attach } = renderMask(true);
+    attach(element);
 
     act(() => scrollTo(300));
-    expect(result.current).toBe(TOP_FADE_MASK_STYLE);
+    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
 
     rerender({ on: false });
-    expect(result.current).toBeUndefined();
+    expect(result.current.style).toBeUndefined();
   });
 
   it("re-attaches and reflects current scroll when the preference is turned back on", () => {
     const { element, scrollTo } = createScrollElement();
-    const { result, rerender } = renderMask(element, true);
+    const { result, rerender, attach } = renderMask(true);
+    attach(element);
 
     act(() => scrollTo(300));
     rerender({ on: false });
-    expect(result.current).toBeUndefined();
+    expect(result.current.style).toBeUndefined();
 
     rerender({ on: true });
-    expect(result.current).toBe(TOP_FADE_MASK_STYLE);
+    expect(result.current.style).toBe(TOP_FADE_MASK_STYLE);
   });
 
-  it("does not throw when the ref has no node", () => {
-    const { result } = renderMask(null, true);
-    expect(result.current).toBeUndefined();
+  it("does not throw when no node is ever attached", () => {
+    const { result } = renderMask(true);
+    expect(result.current.style).toBeUndefined();
   });
 
   it("removes its scroll listener on unmount", () => {
     const { element, scrollTo } = createScrollElement();
-    const { result, unmount } = renderMask(element, true);
+    const { result, unmount, attach } = renderMask(true);
+    attach(element);
 
     unmount();
-    // A scroll after unmount must not reach the unmounted hook's state setter.
     expect(() => act(() => scrollTo(500))).not.toThrow();
-    expect(result.current).toBeUndefined();
+    expect(result.current.style).toBeUndefined();
   });
 });

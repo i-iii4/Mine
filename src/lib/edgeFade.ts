@@ -10,8 +10,17 @@
 
 import type { CSSProperties } from "react";
 
-/// Width of the dissolve ramp, in CSS pixels. Shared by every edge.
+/// Width of the right-edge dissolve ramp, in CSS pixels. Sidebar row text and
+/// previews fade over this distance before the action column.
 export const EDGE_FADE_WIDTH = 24;
+
+/// Width of the top-edge dissolve ramp, in CSS pixels.
+///
+/// Half the right-edge width on purpose. The right edge fades a whole line of
+/// text sideways and needs room to stay legible mid-fade; the top edge only has
+/// to soften the moment content passes under the chrome, so a tighter ramp reads
+/// as a crisp edge treatment instead of a wide haze over the first row.
+export const TOP_FADE_WIDTH = 12;
 
 /// Perceptual alpha ramp, ordered from opaque to transparent.
 ///
@@ -61,20 +70,33 @@ export function createRightFadeMaskStyle(
   } as CSSProperties;
 }
 
+/// Opacity that survives at the very top edge.
+///
+/// The top ramp deliberately does not reach zero. Content that dissolves
+/// completely reads as clipped — the row simply ends — while a faint remainder
+/// reads as content continuing past the chrome. The right edge still fades to
+/// full transparency: there it hides a text overflow rather than a boundary.
+export const TOP_FADE_MIN_ALPHA = 0.12;
+
+/// Rescale a ramp alpha so the ramp runs from `TOP_FADE_MIN_ALPHA` to `1`
+/// instead of from `0` to `1`, preserving the perceptual shape of the curve.
+const withMinAlpha = (alpha: number) =>
+  Math.round((TOP_FADE_MIN_ALPHA + (1 - TOP_FADE_MIN_ALPHA) * alpha) * 1000) / 1000;
+
 /// Build a mask that fades content out toward the top edge.
 ///
-/// Same ramp as the right edge, mirrored: the transparent end sits at the top of
-/// the box and the content becomes fully opaque `fadeWidth` pixels below it.
-/// Applied to a scroll container, this dissolves rows as they travel up under
-/// the chrome instead of clipping them at a hard line.
+/// Same ramp as the right edge, mirrored and floored: the faintest end sits at
+/// the top of the box and the content becomes fully opaque `fadeWidth` pixels
+/// below it. Applied to a scroll container, this dissolves rows as they travel
+/// up under the chrome instead of clipping them at a hard line.
 export function createTopFadeMaskStyle(fadeWidth: number): CSSProperties {
   const stops = [
-    "rgba(0, 0, 0, 0) 0px",
+    `rgba(0, 0, 0, ${TOP_FADE_MIN_ALPHA}) 0px`,
     ...[...EDGE_FADE_STOPS]
       .reverse()
       .map(
         ({ alpha, progress }) =>
-          `rgba(0, 0, 0, ${alpha}) ${rampOffset(fadeWidth, progress)}px`,
+          `rgba(0, 0, 0, ${withMinAlpha(alpha)}) ${rampOffset(fadeWidth, progress)}px`,
       ),
     `rgba(0, 0, 0, 1) ${fadeWidth}px`,
     "rgba(0, 0, 0, 1) 100%",
@@ -87,7 +109,7 @@ export function createTopFadeMaskStyle(fadeWidth: number): CSSProperties {
 }
 
 /// The single top-edge mask used by every scrollable surface.
-export const TOP_FADE_MASK_STYLE = createTopFadeMaskStyle(EDGE_FADE_WIDTH);
+export const TOP_FADE_MASK_STYLE = createTopFadeMaskStyle(TOP_FADE_WIDTH);
 
 /// Scroll offset at which a surface counts as scrolled and the top fade turns
 /// on. Sub-pixel offsets are reported during momentum scrolling and resize; one
