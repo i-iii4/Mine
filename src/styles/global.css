@@ -781,9 +781,10 @@ body {
      reflowing: the nav holds this width and the narrowing panel (overflow-hidden)
      slides its right edge over it like a curtain. = reserved + 2×88. */
   --sidebar-min-width: 332px;
-  /* top chrome: collection switcher trigger padding; its label text lands at
-     this value + the 8px inner pill padding (default 24+8 = 32 = card edge) */
-  --top-collection-pad-x: 24px;
+  /* top chrome: collection switcher trigger padding. Its label text lands at
+     this value + the 8px inner pill padding, so the text aligns with the card
+     edge — hence the rhythm minus that inner padding, not the rhythm itself. */
+  --top-collection-pad-x: calc(var(--edge-rhythm, 32px) - 8px);
   /* second chrome row: vault meta (left) and collection count (right) */
   --main-secondary-pad-x: var(--edge-rhythm, 32px);
 }
@@ -794,8 +795,6 @@ body {
   /* alt: meta 88 + row-pad 16 + divider-gap 4 = 108 */
   --sidebar-reserved: 108px;
   --sidebar-min-width: 284px;
-  --top-collection-pad-x: 8px;  /* 8 + 8 inner = 16, flush with alt cards */
-  --main-secondary-pad-x: 16px;
 }
 
 /* ── Relative elevation (color architecture, category 3) ─────────────────────
