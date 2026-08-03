@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
 import { applyDesign, getStoredDesignMode } from "@/lib/designMode";
+import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
 import { App } from "./App";
 import { getVaultPath, reportNativeShellSmoke } from "@/lib/commands";
 import "./styles/global.css";
@@ -11,6 +12,7 @@ import "./styles/global.css";
 // window owns the controls; this window re-applies on "settings-changed").
 applyTheme(getStoredTheme());
 applyDesign(getStoredDesignMode());
+applyCardRadius(getStoredCardRadius());
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },

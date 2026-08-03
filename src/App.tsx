@@ -58,6 +58,11 @@ import {
   getStoredScrollEdgeFade,
 } from "@/lib/scrollEdgeFade";
 import {
+  CARD_RADIUS_STORAGE_KEY,
+  applyCardRadius,
+  getStoredCardRadius,
+} from "@/lib/cardRadius";
+import {
   useNativeWindowChromeSurface,
   type NativeWindowChromeSurfaceToken,
 } from "@/lib/nativeWindowChromeSurface";
@@ -1598,6 +1603,8 @@ export function AppWithVault({
         setGraphPreferences(getStoredGraphPreferences());
       } else if (key === SCROLL_EDGE_FADE_STORAGE_KEY) {
         setScrollEdgeFade(getStoredScrollEdgeFade());
+      } else if (key === CARD_RADIUS_STORAGE_KEY) {
+        applyCardRadius(getStoredCardRadius());
       }
     });
     return () => {

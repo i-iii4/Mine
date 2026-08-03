@@ -26,6 +26,13 @@ import {
   getStoredScrollEdgeFade,
 } from "@/lib/scrollEdgeFade";
 import {
+  CARD_RADIUS_OPTIONS,
+  CARD_RADIUS_STORAGE_KEY,
+  applyCardRadius,
+  getStoredCardRadius,
+  type CardRadius,
+} from "@/lib/cardRadius";
+import {
   broadcastSettingsChange,
 } from "@/lib/settingsChanged";
 import { SettingRow } from "./SettingRow";
@@ -37,6 +44,12 @@ const THEME_OPTIONS = [
 ] as const;
 
 // Layout axis, orthogonal to the color theme: any theme + either design.
+// SegmentedControl is keyed by strings; the radius stays numeric everywhere else.
+const CARD_RADIUS_CONTROL_OPTIONS = CARD_RADIUS_OPTIONS.map((value) => ({
+  value: String(value),
+  label: value === 0 ? "Square" : String(value),
+}));
+
 const DESIGN_OPTIONS = [
   { value: "default", label: "Default" },
   { value: "alt", label: "Alt" },
@@ -52,6 +65,7 @@ export function AppearanceSection() {
     getStoredBottomActionBarHidden,
   );
   const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
+  const [cardRadius, setCardRadius] = useState<CardRadius>(getStoredCardRadius);
 
   const handleThemeChange = (mode: ThemeMode) => {
     setTheme(mode);
@@ -75,6 +89,13 @@ export function AppearanceSection() {
     setBottomActionBarHidden(checked);
     localStorage.setItem(BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY, checked ? "true" : "false");
     broadcastSettingsChange(BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY);
+  };
+
+  const handleCardRadiusChange = (raw: string) => {
+    const value = Number(raw) as CardRadius;
+    setCardRadius(value);
+    applyCardRadius(value);
+    broadcastSettingsChange(CARD_RADIUS_STORAGE_KEY);
   };
 
   const handleScrollEdgeFadeChange = (checked: boolean) => {
@@ -118,6 +139,19 @@ export function AppearanceSection() {
           aria-label="Compact Detail top menu"
           checked={compactDetailTopMenu}
           onCheckedChange={(checked) => handleCompactChange(checked === true)}
+        />
+      </SettingRow>
+
+      <SettingRow
+        label="Card corners"
+        caption="Corner radius of cards and their images, in pixels"
+      >
+        <SegmentedControl
+          aria-label="Card corners"
+          size="default"
+          value={String(cardRadius)}
+          options={CARD_RADIUS_CONTROL_OPTIONS}
+          onChange={handleCardRadiusChange}
         />
       </SettingRow>
 

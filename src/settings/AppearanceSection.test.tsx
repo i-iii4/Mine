@@ -14,6 +14,7 @@ describe("AppearanceSection", () => {
     localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.removeAttribute("data-design");
+    document.documentElement.removeAttribute("style");
     vi.mocked(emit).mockClear();
     vi.mocked(setTauriTheme).mockClear();
   });
@@ -85,6 +86,18 @@ describe("AppearanceSection", () => {
 
     fireEvent.click(checkbox);
     expect(localStorage.getItem("mine.scrollEdgeFade")).toBe("false");
+  });
+
+  it("applies the card corner radius to both tokens and broadcasts it", () => {
+    render(<AppearanceSection />);
+
+    fireEvent.click(screen.getByRole("button", { name: "8" }));
+
+    const root = document.documentElement;
+    expect(root.style.getPropertyValue("--radius-card")).toBe("8px");
+    expect(root.style.getPropertyValue("--radius-media")).toBe("8px");
+    expect(localStorage.getItem("mine.cardRadius")).toBe("8");
+    expect(emit).toHaveBeenCalledWith("settings-changed", { key: "mine.cardRadius" });
   });
 
   it("reflects stored values on mount", () => {
