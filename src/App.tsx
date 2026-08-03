@@ -1851,15 +1851,20 @@ export function AppWithVault({
   }, [navigate, reloadAllSnapshots]);
 
   // ── Opt+Cmd+Up/Down — switch channels ─────────────────────────────────
+  //
+  // Works with a card open: the card belongs to the channel being left, so it
+  // closes and the feed moves on. Detail is a full-screen viewer inside the same
+  // route, not a modal that owns the keyboard — it does not even intercept the
+  // arrows — so `isDetailShortcutBlockedTarget` lets it through while still
+  // blocking menus, listboxes, the image preview and other dialogs.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!(e.metaKey && e.altKey)) return;
       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
       if (
         e.defaultPrevented
-        || selectedBlock
         || isEditableKeyboardTarget(e.target)
-        || isOverlayKeyboardTarget(e.target)
+        || isDetailShortcutBlockedTarget(e.target)
       ) {
         return;
       }
@@ -1890,6 +1895,7 @@ export function AppWithVault({
         }
       }
       if (!targetPath || !targetRowKey) return;
+      if (selectedBlock) handleDetailClose();
       setSidebarKeyboardNavigationFocus((current) => ({
         rowKey: targetRowKey,
         sequence: (current?.sequence ?? 0) + 1,
@@ -1898,7 +1904,7 @@ export function AppWithVault({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [currentTag, orderedTags, navigate, selectedBlock]);
+  }, [currentTag, orderedTags, navigate, selectedBlock, handleDetailClose]);
 
 
   // ── Channel management ─────────────────────────────────────────────────

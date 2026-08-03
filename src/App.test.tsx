@@ -853,7 +853,7 @@ describe("AppWithVault", () => {
     expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith("alpha", 0, 200);
   });
 
-  it("does not switch channels with keyboard shortcut while Detail is open", async () => {
+  it("closes Detail and switches channel with the keyboard shortcut", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -867,13 +867,18 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
     });
-    const gridCallsBeforeShortcut = commandMocks.listGridBlocks.mock.calls.length;
 
+    // The open card belongs to the channel being left, so it goes with it.
+    // Detail is a full-screen viewer inside the same route, not a modal that
+    // owns the keyboard.
     fireEvent.keyDown(window, { key: "ArrowDown", metaKey: true, altKey: true });
 
-    expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
-    expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
-    expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeShortcut);
+    await waitFor(() => {
+      expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith("alpha", 0, 200);
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("detail-title")).not.toBeInTheDocument();
+    });
   });
 
   it("does not expose or open the removed global Search command", async () => {
