@@ -17,6 +17,15 @@ describe("ActionButton presentation", () => {
     expect(node).toHaveTextContent("Search");
   });
 
+  it("encloses the hotkey, not the action name", () => {
+    render(<ActionButton hotkey="⌘F">Search</ActionButton>);
+
+    // The hotkey is the fixed, glyph-like half and reads as a key cap when
+    // enclosed; the action name is prose and stays open.
+    expect(screen.getByText("⌘F").className).toContain("bg-component-fill-inner");
+    expect(screen.getByText("Search").className).not.toContain("bg-component-fill-inner");
+  });
+
   it("puts the hotkey in a frame and the label beside it when standard", () => {
     applyActionButtonStyle("standard");
     render(<ActionButton hotkey="⌘F">Search</ActionButton>);

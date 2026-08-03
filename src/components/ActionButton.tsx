@@ -50,17 +50,20 @@ export const ActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
           className,
         )}
       >
+        {/* The fill sits on the hotkey: it is the fixed, glyph-like half of the
+            pair, and enclosing it reads as a key cap. The action name is prose
+            and stays unenclosed. */}
         {hotkey ? (
-          <span
-            className={cn(
-              "inline-flex h-5 shrink-0 items-center px-[1ch] leading-none",
-              "text-foreground",
-            )}
-          >
+          <span className="inline-flex h-5 shrink-0 items-center rounded-[2px] bg-component-fill-inner px-[1ch] leading-none text-foreground">
             {hotkey}
           </span>
         ) : null}
-        <span className="inline-flex h-5 shrink-0 items-center rounded-[2px] bg-component-fill-inner px-[1ch] leading-none text-foreground">
+        <span
+          className={cn(
+            "inline-flex h-5 shrink-0 items-center px-[1ch] leading-none",
+            "text-foreground",
+          )}
+        >
           {children}
         </span>
       </div>
