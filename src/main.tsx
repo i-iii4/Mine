@@ -8,12 +8,7 @@ import {
   applyActionButtonStyle,
   getStoredActionButtonStyle,
 } from "@/lib/actionButtonStyle";
-import {
-  applyCardGap,
-  applyEdgeDensity,
-  getStoredCardGap,
-  getStoredEdgeDensity,
-} from "@/lib/density";
+import { applyDensity, getStoredDensity } from "@/lib/density";
 import { App } from "./App";
 import { getVaultPath, reportNativeShellSmoke } from "@/lib/commands";
 import "./styles/global.css";
@@ -24,8 +19,7 @@ applyTheme(getStoredTheme());
 applyDesign(getStoredDesignMode());
 applyCardRadius(getStoredCardRadius());
 applyActionButtonStyle(getStoredActionButtonStyle());
-applyEdgeDensity(getStoredEdgeDensity());
-applyCardGap(getStoredCardGap());
+applyDensity(getStoredDensity());
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },

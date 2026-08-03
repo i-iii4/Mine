@@ -8,12 +8,7 @@ import {
   applyActionButtonStyle,
   getStoredActionButtonStyle,
 } from "@/lib/actionButtonStyle";
-import {
-  applyCardGap,
-  applyEdgeDensity,
-  getStoredCardGap,
-  getStoredEdgeDensity,
-} from "@/lib/density";
+import { applyDensity, getStoredDensity } from "@/lib/density";
 import { SettingsApp } from "./SettingsApp";
 import "@/styles/global.css";
 
@@ -23,8 +18,7 @@ applyTheme(getStoredTheme());
 applyDesign(getStoredDesignMode());
 applyCardRadius(getStoredCardRadius());
 applyActionButtonStyle(getStoredActionButtonStyle());
-applyEdgeDensity(getStoredEdgeDensity());
-applyCardGap(getStoredCardGap());
+applyDensity(getStoredDensity());
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {

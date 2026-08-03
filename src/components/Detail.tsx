@@ -130,9 +130,9 @@ import type { ImagePreviewRequest } from "./ImagePreviewOverlay";
 // Side columns, the gap between article and rail, and the top offset all follow
 // the app-wide edge rhythm.
 const DETAIL_RAIL_LAYOUT_CLASSES =
-  "grid w-full grid-cols-[minmax(var(--edge-rhythm),1fr)_minmax(400px,48rem)_minmax(var(--edge-rhythm),1fr)_20rem_var(--edge-rhythm)] pt-[var(--edge-rhythm)]";
+  "grid w-full grid-cols-[minmax(var(--edge-rhythm,32px),1fr)_minmax(400px,48rem)_minmax(var(--edge-rhythm,32px),1fr)_20rem_var(--edge-rhythm,32px)] pt-[var(--edge-rhythm,32px)]";
 const DETAIL_STACKED_LAYOUT_CLASSES =
-  "grid w-full grid-cols-[var(--edge-rhythm)_minmax(240px,1fr)_var(--edge-rhythm)] pt-[var(--edge-rhythm)]";
+  "grid w-full grid-cols-[var(--edge-rhythm,32px)_minmax(240px,1fr)_var(--edge-rhythm,32px)] pt-[var(--edge-rhythm,32px)]";
 const DETAIL_MIN_ARTICLE_WIDTH_PX = 400;
 const DETAIL_FIXED_RAIL_WIDTH_PX = 320;
 const DETAIL_GRID_INSET_WIDTH_PX = 32;
@@ -404,7 +404,7 @@ export function Detail({
         <header
           data-entered={chromeEntered ? "true" : "false"}
           className={cn(
-            "detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 px-[var(--edge-rhythm)]",
+            "detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 px-[var(--edge-rhythm,32px)]",
             "bg-accent",
           )}
           data-detail-top-menu="classic"

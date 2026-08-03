@@ -26,13 +26,10 @@ import {
   getStoredScrollEdgeFade,
 } from "@/lib/scrollEdgeFade";
 import {
-  CARD_GAP_STORAGE_KEY,
   DENSITY_STEPS,
-  EDGE_DENSITY_STORAGE_KEY,
-  applyCardGap,
-  applyEdgeDensity,
-  getStoredCardGap,
-  getStoredEdgeDensity,
+  DENSITY_STORAGE_KEY,
+  applyDensity,
+  getStoredDensity,
   type DensityStep,
 } from "@/lib/density";
 import {
@@ -95,8 +92,7 @@ export function AppearanceSection() {
   const [actionButtonStyle, setActionButtonStyle] = useState<ActionButtonStyle>(
     getStoredActionButtonStyle,
   );
-  const [edgeDensity, setEdgeDensity] = useState<DensityStep>(getStoredEdgeDensity);
-  const [cardGap, setCardGap] = useState<DensityStep>(getStoredCardGap);
+  const [density, setDensity] = useState<DensityStep>(getStoredDensity);
 
   const handleThemeChange = (mode: ThemeMode) => {
     setTheme(mode);
@@ -122,18 +118,11 @@ export function AppearanceSection() {
     broadcastSettingsChange(BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY);
   };
 
-  const handleEdgeDensityChange = (raw: string) => {
+  const handleDensityChange = (raw: string) => {
     const value = Number(raw) as DensityStep;
-    setEdgeDensity(value);
-    applyEdgeDensity(value);
-    broadcastSettingsChange(EDGE_DENSITY_STORAGE_KEY);
-  };
-
-  const handleCardGapChange = (raw: string) => {
-    const value = Number(raw) as DensityStep;
-    setCardGap(value);
-    applyCardGap(value);
-    broadcastSettingsChange(CARD_GAP_STORAGE_KEY);
+    setDensity(value);
+    applyDensity(value);
+    broadcastSettingsChange(DENSITY_STORAGE_KEY);
   };
 
   const handleActionButtonStyleChange = (value: ActionButtonStyle) => {
@@ -194,28 +183,15 @@ export function AppearanceSection() {
       </SettingRow>
 
       <SettingRow
-        label="Edge spacing"
-        caption="Distance from window edges and chrome: bars, sidebar, feed insets, expanded card"
+        label="Spacing"
+        caption="Distance from edges and chrome, and between cards: bars, sidebar, feed, expanded card"
       >
         <SegmentedControl
-          aria-label="Edge spacing"
+          aria-label="Spacing"
           size="default"
-          value={String(edgeDensity)}
+          value={String(density)}
           options={DENSITY_OPTIONS}
-          onChange={handleEdgeDensityChange}
-        />
-      </SettingRow>
-
-      <SettingRow
-        label="Card spacing"
-        caption="Gap between cards in the feed"
-      >
-        <SegmentedControl
-          aria-label="Card spacing"
-          size="default"
-          value={String(cardGap)}
-          options={DENSITY_OPTIONS}
-          onChange={handleCardGapChange}
+          onChange={handleDensityChange}
         />
       </SettingRow>
 

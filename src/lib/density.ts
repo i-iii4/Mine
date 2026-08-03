@@ -1,19 +1,13 @@
-// Two independent density axes.
+// Interface spacing — one value behind every gap that separates content.
 //
-// `edge` is the app-wide edge rhythm: how far content sits from window edges and
-// from the chrome — top and bottom bars, the sidebar table, the feed's side and
-// top insets, the expanded card's columns and top offset.
+// It drives the distance from window edges and chrome (top and bottom bars, the
+// sidebar table, the feed's side and top insets, the expanded card's columns and
+// top offset) and the gap between feed cards. One rhythm, applied everywhere:
+// spacing that varies per surface reads as inconsistency, not as intent.
 //
-// `cardGap` is the space between cards in the feed, and nothing else.
-//
-// They are separate because they answer different questions. The edge rhythm is
-// about the frame around the interface; the card gap is about how densely the
-// content itself is packed. Wanting cards tighter is not the same as wanting the
-// whole interface tighter, and the previous single value forced both at once.
-//
-// Both are published as CSS variables on the root so stylesheets and Tailwind
-// arbitrary values read them directly; the feed also reads the numbers through
-// hooks, because masonry geometry is computed in JS.
+// Published as a CSS variable on the root so stylesheets and Tailwind arbitrary
+// values read it directly; the feed also reads the number through a hook,
+// because masonry geometry is computed in JS.
 
 import { useSyncExternalStore } from "react";
 
@@ -21,53 +15,38 @@ export type DensityStep = 32 | 24 | 16;
 
 export const DENSITY_STEPS: readonly DensityStep[] = [32, 24, 16];
 
-export const EDGE_DENSITY_STORAGE_KEY = "mine.edgeDensity";
-export const CARD_GAP_STORAGE_KEY = "mine.cardGap";
+export const DENSITY_STORAGE_KEY = "mine.spacing";
 
 const DEFAULT_STEP: DensityStep = 32;
 
-const EDGE_VAR = "--edge-rhythm";
-const CARD_GAP_VAR = "--card-gap";
+const SPACING_VAR = "--edge-rhythm";
 
 function isStep(value: number): value is DensityStep {
   return (DENSITY_STEPS as readonly number[]).includes(value);
 }
 
-function readStored(key: string): DensityStep {
+export function getStoredDensity(): DensityStep {
   if (typeof window === "undefined") return DEFAULT_STEP;
-  const raw = Number(window.localStorage.getItem(key));
+  const raw = Number(window.localStorage.getItem(DENSITY_STORAGE_KEY));
   return isStep(raw) ? raw : DEFAULT_STEP;
 }
 
-export function getStoredEdgeDensity(): DensityStep {
-  return readStored(EDGE_DENSITY_STORAGE_KEY);
+export function applyDensity(step: DensityStep) {
+  localStorage.setItem(DENSITY_STORAGE_KEY, String(step));
+  document.documentElement.style.setProperty(SPACING_VAR, `${step}px`);
 }
 
-export function getStoredCardGap(): DensityStep {
-  return readStored(CARD_GAP_STORAGE_KEY);
-}
-
-export function applyEdgeDensity(step: DensityStep) {
-  localStorage.setItem(EDGE_DENSITY_STORAGE_KEY, String(step));
-  document.documentElement.style.setProperty(EDGE_VAR, `${step}px`);
-}
-
-export function applyCardGap(step: DensityStep) {
-  localStorage.setItem(CARD_GAP_STORAGE_KEY, String(step));
-  document.documentElement.style.setProperty(CARD_GAP_VAR, `${step}px`);
-}
-
-function readVar(name: string): DensityStep {
+function readVar(): DensityStep {
   if (typeof document === "undefined") return DEFAULT_STEP;
   const raw = Number.parseInt(
-    getComputedStyle(document.documentElement).getPropertyValue(name),
+    getComputedStyle(document.documentElement).getPropertyValue(SPACING_VAR),
     10,
   );
   return isStep(raw) ? raw : DEFAULT_STEP;
 }
 
 function subscribe(onChange: () => void): () => void {
-  // Both values live in the root element's inline style.
+  // The value lives in the root element's inline style.
   const observer = new MutationObserver(onChange);
   observer.observe(document.documentElement, {
     attributes: true,
@@ -76,20 +55,7 @@ function subscribe(onChange: () => void): () => void {
   return () => observer.disconnect();
 }
 
-/// Edge rhythm in pixels, for layout computed in JS.
-export function useEdgeDensity(): DensityStep {
-  return useSyncExternalStore(
-    subscribe,
-    () => readVar(EDGE_VAR),
-    () => DEFAULT_STEP,
-  );
-}
-
-/// Gap between feed cards in pixels.
-export function useCardGap(): DensityStep {
-  return useSyncExternalStore(
-    subscribe,
-    () => readVar(CARD_GAP_VAR),
-    () => DEFAULT_STEP,
-  );
+/// Spacing in pixels, for layout computed in JS.
+export function useDensity(): DensityStep {
+  return useSyncExternalStore(subscribe, readVar, () => DEFAULT_STEP);
 }

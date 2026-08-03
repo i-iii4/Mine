@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/context-menu";
 import type { LightBlock, TagCount } from "@/types";
 import { TopFadeScrim } from "./TopFadeScrim";
-import { useCardGap, useEdgeDensity } from "@/lib/density";
+import { useDensity } from "@/lib/density";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { Card, CardSkeleton } from "./Card";
 import { MeasureCard } from "./MeasureCard";
@@ -106,11 +106,9 @@ declare global {
 // ─── Layout constants ───────────────────────────────────────────────────────
 
 const COLUMN_MIN_WIDTH = 220;
-// Card gap and container insets are settings, not design-variant metrics: the
-// gap is its own axis (how densely content is packed), the insets follow the
-// app-wide edge rhythm (how far content sits from edges and chrome). They used
-// to be tied together inside the alt design, which forced one to move whenever
-// the other did. See src/lib/density.ts.
+// Card gap and container insets both follow the app-wide spacing setting; they
+// used to be design-variant constants baked into the alt design. See
+// src/lib/density.ts.
 const MEASUREMENT_BATCH_SIZE = 24;
 const INITIAL_COMMIT_BLOCKS = 48;
 const EMERGENCY_RENDER_OVERSCAN_PX = 128;
@@ -415,9 +413,10 @@ export function Grid({
   onLoadMoreBlocks,
   scrollEdgeFade = false,
 }: GridProps) {
-  const layoutGap = useCardGap();
-  const gridXInset = useEdgeDensity();
-  const gridTopInset = gridXInset;
+  const spacing = useDensity();
+  const layoutGap = spacing;
+  const gridXInset = spacing;
+  const gridTopInset = spacing;
   const parentRef = useRef<HTMLDivElement>(null);
   // Same signal path as every other surface. The feed does track its own
   // scrollTop for windowing, but reusing it here would give this surface a

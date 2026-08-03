@@ -241,7 +241,7 @@ export function MainSecondaryTopBar({
         </div>
         {detailBlock && (
           <div
-            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 flex-1 items-center gap-3 px-[var(--edge-rhythm)]"
+            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 flex-1 items-center gap-3 px-[var(--edge-rhythm,32px)]"
             data-entered={detailLayerEntered ? "true" : "false"}
             data-secondary-detail-top-menu=""
           >
