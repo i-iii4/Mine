@@ -134,6 +134,8 @@ beforeEach(() => {
 
 describe("SearchOverlay", () => {
   it("does not mask the results list while it is at rest", () => {
+    // The band is a dark-theme treatment; jsdom resolves to light by default.
+    document.documentElement.setAttribute("data-theme", "dark");
     renderOverlay({ scrollEdgeFade: true });
 
     const list = document.getElementById("search-overlay-listbox") as HTMLElement;
@@ -144,6 +146,8 @@ describe("SearchOverlay", () => {
   });
 
   it("dissolves the results list once it is scrolled", () => {
+    // The band is a dark-theme treatment; jsdom resolves to light by default.
+    document.documentElement.setAttribute("data-theme", "dark");
     // The list lives inside a Radix Dialog and is mounted only after the dialog
     // opens, so the fade must attach to a node that appeared after mount.
     renderOverlay({ scrollEdgeFade: true });
@@ -162,6 +166,8 @@ describe("SearchOverlay", () => {
   });
 
   it("leaves the results list alone when the preference is off", () => {
+    // The band is a dark-theme treatment; jsdom resolves to light by default.
+    document.documentElement.setAttribute("data-theme", "dark");
     renderOverlay();
 
     const list = document.getElementById("search-overlay-listbox") as HTMLElement;

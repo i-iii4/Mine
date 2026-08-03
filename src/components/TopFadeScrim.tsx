@@ -15,9 +15,17 @@
 // The band paints the colour *behind* the content, not the chrome above it: in
 // Mine those are different tokens, and the chrome colour left a rectangle of the
 // wrong shade sitting on the feed.
+//
+// It is a dark-theme treatment only — see `isTopFadeSupported`.
 
 import type { CSSProperties } from "react";
-import { TOP_FADE_HEIGHT, TOP_FADE_MIN_ALPHA, topFadeAlpha, topFadeStopCount } from "@/lib/edgeFade";
+import {
+  TOP_FADE_HEIGHT,
+  TOP_FADE_MIN_ALPHA,
+  isTopFadeSupported,
+  topFadeAlpha,
+  topFadeStopCount,
+} from "@/lib/edgeFade";
 import { useThemeAppearance } from "@/hooks/useThemeAppearance";
 
 /// Build the band's background: the surface colour at full strength against the
@@ -58,6 +66,7 @@ interface TopFadeScrimProps {
 
 export function TopFadeScrim({ scrolled, surface, color }: TopFadeScrimProps) {
   const appearance = useThemeAppearance();
+  if (!isTopFadeSupported(appearance)) return null;
 
   return (
     <div
@@ -68,7 +77,7 @@ export function TopFadeScrim({ scrolled, surface, color }: TopFadeScrimProps) {
       style={{
         height: TOP_FADE_HEIGHT,
         opacity: scrolled ? 1 : 0,
-        ...createTopFadeScrimStyle(TOP_FADE_HEIGHT, TOP_FADE_MIN_ALPHA[appearance], color),
+        ...createTopFadeScrimStyle(TOP_FADE_HEIGHT, TOP_FADE_MIN_ALPHA, color),
       }}
     />
   );

@@ -613,6 +613,8 @@ describe("Grid — no collapse after add / revisit", () => {
 
   it("leaves the scrollport unmasked when the top fade preference is off", async () => {
     vi.useFakeTimers();
+    // The band is a dark-theme treatment; jsdom resolves to light by default.
+    document.documentElement.setAttribute("data-theme", "dark");
 
     const blocks = [makeBlock(8101), makeBlock(8102)];
     setBlockHeight(8101, 200);
@@ -633,6 +635,7 @@ describe("Grid — no collapse after add / revisit", () => {
 
   it("masks the scrolled feed without dropping the scrollport's own styles", async () => {
     vi.useFakeTimers();
+    document.documentElement.setAttribute("data-theme", "dark");
 
     const blocks = Array.from({ length: 12 }, (_, index) => makeBlock(8200 + index));
     blocks.forEach((block, index) => setBlockHeight(8200 + index, 200 + index));

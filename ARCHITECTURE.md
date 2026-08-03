@@ -1490,28 +1490,34 @@ generations. `App.test.tsx` additionally proves obsolete `A -> B -> A -> B`
 opens cannot publish and pagination cannot combine two generations. The common
 `bun run test:browser` runner owns Feed, Graph and cold-space gates.
 
-### 030: Scroll edge fade is one shared mask curve, not a per-surface shadow
+### 030: Scroll edge fade overlays the surface colour instead of masking content
 
 | Approach | Problem |
 |---|---|
-| Dark gradient or `box-shadow` at the top edge | Reads as a smudge over content in light theme, nearly disappears in dark, and needs separate per-theme values. `box-shadow` is reserved for floating menus |
-| Background-coloured overlay faking the dissolve | Requires knowing the exact colour under each surface and breaks wherever that background is not flat |
-| A fade curve per surface | Four copies of the same perceptual ramp drift apart on the first tweak |
-| **One shared transparency mask** (chosen) | Content genuinely becomes transparent, so the effect is theme-independent and surface-independent; every edge reads the same ramp from `src/lib/edgeFade.ts` |
+| Mask the scroll container | Masked content dissolves into the page background; on a light background a photograph bleaches toward white and reads as damaged rather than distant |
+| `box-shadow` at the edge | `box-shadow` is reserved for floating menus; planes are separated by background levels, borders and overlays |
+| Progressive blur (`backdrop-filter`) | Genuine depth and what iOS 26 does natively, but a different effect than the reference, and several `backdrop-filter` layers over a scrolling feed threaten the frame budget |
+| **Gradient band in the surface colour** (chosen) | Content keeps its own opacity and passes underneath; the result depends only on a background token |
 
-Rationale: the sidebar already dissolved row text and previews toward its right
-guideline with a hand-tuned non-linear alpha ramp. The top-edge fade is the same
-perceptual problem rotated 90 degrees, so it reuses the same nine `alpha/progress`
-pairs instead of introducing a second curve. The ramp is deliberately non-linear —
-a linear alpha ramp reads as a hard band.
+Rationale: the band is the surface colour laid over the content and faded out, so
+the content reads as sliding under the chrome. It is a dark-theme treatment only
+— covering with a near-black colour darkens content into the distance, while
+covering with a near-white one bleaches it — so `isTopFadeSupported` returns true
+for `dark` alone and the band does not render in the light theme.
 
-Activation splits by who already owns the scroll offset: `Grid` tracks `scrollTop`
-for windowing and resolves the mask directly through `topFadeMaskStyleFor`, so the
-hot feed scroll path gains no second listener; the sidebar, Detail and search
-overlay use `useTopFadeMask`, which stores one boolean rather than an offset and
-therefore stops re-rendering once the mask is on. The mask is off at rest — a
-surface at `scrollTop = 0` must keep its first row fully opaque — and the whole
-effect is opt-in through `mine.scrollEdgeFade`, off by default. Full contract:
+One height (`24px`) and one coverage serve every surface: the band means the same
+thing everywhere, and it has to fit inside the sidebar's 32px rows. Colour is
+per-surface (`--background`, `--sidebar`, `--card`), because the chrome token is
+a different shade and painting the band with it left a rectangle of the wrong
+colour over the feed.
+
+The band is a sibling of each scroll container, absolutely positioned in its
+parent, with constant height and only `opacity` changing between "at rest" and
+"scrolled". Everything else was tried and failed: `position: sticky` inside the
+container cannot escape its padding box, and deriving height from the scroll
+offset re-rendered the whole surface once per frame and made scrolling stutter.
+All four surfaces share `useTopFadeMask`, which attaches through a callback ref
+so surfaces mounted later by a Radix `Dialog` are observed too. Full contract:
 [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md).
 
 

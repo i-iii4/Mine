@@ -99,17 +99,20 @@ export type TopFadeAppearance = "light" | "dark";
 /// height that satisfies the tightest surface satisfies the rest.
 export const TOP_FADE_HEIGHT = 24;
 
-/// How much of the content still shows through at the very top of the band.
+/// The band is a dark-theme treatment only.
 ///
-/// Per theme, because the same coverage does not read the same way: a light band
-/// over a dark photograph is far more visible than a dark band over the same
-/// photograph. The light value matches the reference measurement — about 38-40%
-/// of the content's contrast survives at the edge; the dark theme covers harder,
-/// which is what it needs to register at all.
-export const TOP_FADE_MIN_ALPHA: Record<TopFadeAppearance, number> = {
-  light: 0.4,
-  dark: 0.08,
-};
+/// A band works by covering content with the surface colour. In the dark theme
+/// that colour is near-black and the covered pixels darken — the content reads
+/// as receding. In the light theme the same operation lightens the content
+/// toward white, and a photograph does not read as receding when it bleaches;
+/// it reads as damaged. Every tuning pass on the light theme traded one defect
+/// for another, so the effect is simply off there.
+export function isTopFadeSupported(appearance: TopFadeAppearance): boolean {
+  return appearance === "dark";
+}
+
+/// How much of the content still shows through at the very top of the band.
+export const TOP_FADE_MIN_ALPHA = 0.08;
 
 /// How much of the content shows through at normalized band position `t`, where
 /// `0` is the very edge and `1` is the bottom of the band.

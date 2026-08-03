@@ -1635,19 +1635,20 @@ Specification: [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
 
 ### Phase 31 — Scroll edge fade
 
-Goal: optional dissolve of the top edge on every scrollable surface, reusing the
-sidebar's existing fade curve instead of introducing a shadow.
+Goal: optional band at the top edge of every scrollable surface, so scrolled
+content reads as sliding under the chrome instead of being cut by it.
 
 Specification: [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md).
 
 | # | Slice | Status | Scope |
 |---|---|---|---|
-| 31.1 | Shared curve | [x] | `src/lib/edgeFade.ts`: `EDGE_FADE_WIDTH`, nine `alpha/progress` ramp stops, `createRightFadeMaskStyle`, `createTopFadeMaskStyle`, `topFadeMaskStyleFor`, activation threshold. Sidebar migrated off its local copy |
-| 31.2 | Activation | [x] | `useTopFadeMask` for surfaces without a tracked offset; `Grid` reuses its own `scrollTop`. Boolean state only, mask off at rest |
-| 31.3 | Surfaces | [x] | Sidebar nav, feed scrollport, Detail scroll panel, search results list; state exposed through `data-*-top-fade` attributes |
-| 31.4 | Preference | [x] | `mine.scrollEdgeFade` (off by default), Appearance row `Fade content under the chrome`, `settings-changed` branch, prop threaded through `RouteContext` |
-| 31.5 | Tests | [x] | 11 curve tests, 10 hook tests, 2 feed integration tests, 1 settings test |
-
+| 31.1 | Curve and constants | [x] | `src/lib/edgeFade.ts`: `smootherstep` ramp with no gamma term, `TOP_FADE_HEIGHT = 24`, `TOP_FADE_MIN_ALPHA = 0.08`, stop density, scroll threshold, `isTopFadeSupported` |
+| 31.2 | Overlay, not mask | [x] | `TopFadeScrim`: gradient in the surface colour via `color-mix`, per-surface token (`--background` / `--sidebar` / `--card`) |
+| 31.3 | Dark theme only | [x] | Light-theme coverage bleaches photographs; the band does not render there |
+| 31.4 | Placement | [x] | Sibling of each scroll container, constant height, `opacity`-only state change; sidebar wrapper matches the nav's frozen min-width |
+| 31.5 | Activation | [x] | One `useTopFadeMask` for all four surfaces, callback ref for dialog-mounted nodes, boolean state |
+| 31.6 | Preference | [x] | `mine.scrollEdgeFade` (off by default), Appearance row, `settings-changed` branch, prop through `RouteContext` |
+| 31.7 | Tests | [x] | Curve, stop density, gradient shape, theme gate, hook lifecycle, feed/search/sidebar integration |
 
 ### Backlog
 

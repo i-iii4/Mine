@@ -3,6 +3,7 @@ import {
   EDGE_FADE_WIDTH,
   TOP_FADE_HEIGHT,
   TOP_FADE_MIN_ALPHA,
+  isTopFadeSupported,
   createRightFadeMaskStyle,
   topFadeAlpha,
   topFadeStopCount,
@@ -87,9 +88,7 @@ describe("topFadeAlpha", () => {
     expect(topFadeAlpha(0.5, 0.08)).toBeLessThan(0.65);
   });
 
-  it("keeps the light-theme floor at the measured reference level", () => {
-    expect(topFadeAlpha(0, TOP_FADE_MIN_ALPHA.light)).toBe(0.4);
-  });
+
 });
 
 describe("topFadeStopCount", () => {
@@ -119,17 +118,6 @@ describe("createTopFadeScrimStyle", () => {
     expect(gradient).toContain(`color-mix(in oklab, var(--background) 0%, transparent) ${TOP_FADE_HEIGHT}px`);
   });
 
-  it("covers less in the light theme, matching the reference measurement", () => {
-    // Reference screenshots keep about 38-40% of the content's contrast at the
-    // edge; a light band over a dark photograph is far more visible than a dark
-    // band over the same photograph.
-    const light = String(createTopFadeScrimStyle(TOP_FADE_HEIGHT, TOP_FADE_MIN_ALPHA.light, BG).backgroundImage);
-    const dark = String(createTopFadeScrimStyle(TOP_FADE_HEIGHT, TOP_FADE_MIN_ALPHA.dark, BG).backgroundImage);
-
-    expect(light).toContain("var(--background) 60%");
-    expect(dark).toContain("var(--background) 92%");
-  });
-
   it("mixes toward transparent instead of interpolating to it", () => {
     const gradient = String(createTopFadeScrimStyle(TOP_FADE_HEIGHT, 0.4, BG).backgroundImage);
     expect(gradient).toContain("color-mix(in oklab, var(--background)");
@@ -149,6 +137,15 @@ describe("createTopFadeScrimStyle", () => {
   });
 });
 
+describe("isTopFadeSupported", () => {
+  it("applies to the dark theme only", () => {
+    // Covering with a near-black surface makes content recede; covering with a
+    // near-white one bleaches it, which reads as damage rather than depth.
+    expect(isTopFadeSupported("dark")).toBe(true);
+    expect(isTopFadeSupported("light")).toBe(false);
+  });
+});
+
 describe("top fade constants", () => {
   it("uses one height everywhere, small enough for a 32px sidebar row", () => {
     // The band means the same thing on every surface, so it reads the same on
@@ -156,12 +153,7 @@ describe("top fade constants", () => {
     expect(TOP_FADE_HEIGHT).toBeLessThan(32);
   });
 
-  it("covers harder in the dark theme than in the light one", () => {
-    expect(TOP_FADE_MIN_ALPHA.dark).toBeLessThan(TOP_FADE_MIN_ALPHA.light);
-  });
-
-  it("keeps the light coverage at the measured reference level", () => {
-    // Reference screenshots leave about 38-40% of the content's contrast.
-    expect(TOP_FADE_MIN_ALPHA.light).toBe(0.4);
+  it("covers nearly all of the content at the edge", () => {
+    expect(TOP_FADE_MIN_ALPHA).toBeLessThanOrEqual(0.1);
   });
 });
