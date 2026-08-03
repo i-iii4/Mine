@@ -57,6 +57,13 @@ interface TopFadeScrimProps {
   height: number;
   /// Marks the band in the DOM for acceptance checks.
   surface: string;
+  /// Padding of the scroll container, as CSS values, so the band can cancel it.
+  ///
+  /// A sticky element cannot escape its parent's padding box: inside a
+  /// container with `padding-top: 32px` it settles 32px below the actual edge,
+  /// and horizontal padding makes it narrower than the surface. Negative
+  /// margins pull it back to the true edges.
+  inset?: { top?: string; x?: string };
   /// Background colour of the surface the band sits on, as a CSS value.
   ///
   /// It must be the colour *behind the content*, not the chrome above it. Mine's
@@ -66,7 +73,13 @@ interface TopFadeScrimProps {
   color: string;
 }
 
-export function TopFadeScrim({ profile, height, surface, color }: TopFadeScrimProps) {
+export function TopFadeScrim({
+  profile,
+  height,
+  surface,
+  color,
+  inset,
+}: TopFadeScrimProps) {
   const appearance = useThemeAppearance();
   if (height <= 0) return null;
 
@@ -79,6 +92,10 @@ export function TopFadeScrim({ profile, height, surface, color }: TopFadeScrimPr
       aria-hidden="true"
       data-top-fade-scrim={surface}
       className="pointer-events-none sticky top-0 z-10 h-0"
+      style={{
+        marginTop: inset?.top ? `calc(-1 * ${inset.top})` : undefined,
+        marginInline: inset?.x ? `calc(-1 * ${inset.x})` : undefined,
+      }}
     >
       <div
         className="w-full"

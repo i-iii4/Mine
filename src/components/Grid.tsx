@@ -1886,6 +1886,7 @@ export function Grid({
             height={topFadeBandHeight}
             surface="feed"
             color="var(--background)"
+            inset={{ x: `${gridXInset}px` }}
           />
           {parentWidth > 0 && blocks.length > 0 && (
             <VirtualMasonryLayout

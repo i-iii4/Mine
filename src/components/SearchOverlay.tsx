@@ -513,6 +513,7 @@ export function SearchOverlay({
               height={resultsTopFade.height}
               surface="search"
               color="var(--card)"
+              inset={{ top: "0.25rem", x: "0.25rem" }}
             />
             {showNoResults && (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

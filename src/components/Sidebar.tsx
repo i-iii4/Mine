@@ -662,6 +662,11 @@ export function Sidebar({
           height={topFade.height}
           surface="sidebar"
           color="var(--sidebar)"
+          inset={
+            compact
+              ? { top: "2rem", x: "0.5rem" }
+              : { top: "var(--sidebar-nav-pad-top)", x: "var(--sidebar-nav-pad-x)" }
+          }
         />
         {!isLinkingBlock && headerSlot}
 
