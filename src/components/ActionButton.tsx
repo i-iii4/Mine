@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { useActionButtonStyle } from "@/lib/actionButtonStyle";
 
 interface ActionButtonProps {
@@ -78,39 +78,55 @@ ActionButton.displayName = "ActionButton";
 /// moves in and the pair collapses to a plain labelled button.
 const StandardActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
   ({ onClick, hotkey, children, isSelected, className }, ref) => {
-    const button = (
-      <Button
-        size="xs"
-        variant="default"
-        onClick={onClick}
-        data-selected={isSelected ? "true" : undefined}
+    // One interactive element for the whole pair. The visual button is a span
+    // inside it, not a nested <button>: the action name is part of the target,
+    // so making the frame the only clickable thing would leave half the control
+    // dead to the pointer.
+    const frame = (
+      <span
+        aria-hidden="true"
         className={cn(
+          buttonVariants({ variant: "default", size: "xs" }),
           // Height matches the inner pill of the other presentation, so the two
           // variants sit on the same baseline in the bar.
           "h-5 font-mono font-normal",
-          // The hotkey is reference material at rest and only comes forward
-          // under the pointer.
-          "text-muted-foreground hover:text-foreground",
+          // The hotkey is reference material at rest and comes forward only
+          // when the pointer is anywhere on the pair — hence group-hover, not
+          // hover on the frame itself.
+          "text-muted-foreground group-hover:text-foreground",
+          "group-hover:outline-1 group-hover:-outline-offset-1 group-hover:outline-component-fill-hover",
           isSelected && "bg-active",
         )}
       >
         {hotkey ?? children}
-      </Button>
+      </span>
     );
 
     return (
       <div
         ref={ref}
+        role="button"
+        tabIndex={0}
         data-action-button="standard"
+        data-selected={isSelected ? "true" : undefined}
+        onClick={onClick}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick?.(); }}
         className={cn(
-          "inline-flex shrink-0 items-center",
+          "group inline-flex shrink-0 cursor-pointer select-none items-center outline-0",
           hotkey && "gap-2",
+          // Separates this pair from the next control. Without it the label
+          // runs into the following button and stops reading as one group: the
+          // bar's own gap is the same size as the gap inside the pair.
+          "mr-2",
           className,
         )}
       >
-        {button}
+        {frame}
         {hotkey ? (
-          <span className="select-none whitespace-nowrap font-mono text-sm text-muted-foreground">
+          // Deliberately static on hover: the label already names the action,
+          // and lighting both halves at once turns the pair into a blinking
+          // block instead of one control.
+          <span className="whitespace-nowrap font-mono text-sm text-muted-foreground">
             {children}
           </span>
         ) : null}

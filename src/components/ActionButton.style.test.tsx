@@ -17,15 +17,34 @@ describe("ActionButton presentation", () => {
     expect(node).toHaveTextContent("Search");
   });
 
-  it("puts the hotkey in a button and the label beside it when standard", () => {
+  it("puts the hotkey in a frame and the label beside it when standard", () => {
     applyActionButtonStyle("standard");
     render(<ActionButton hotkey="⌘F">Search</ActionButton>);
 
-    // The hotkey is the button's own content; the label is its sibling.
-    const button = screen.getByRole("button");
-    expect(button).toHaveTextContent("⌘F");
-    expect(button).not.toHaveTextContent("Search");
-    expect(screen.getByText("Search")).toBeInTheDocument();
+    // One control covering both halves: the label is part of the target, not a
+    // caption sitting next to a smaller button.
+    const control = screen.getByRole("button");
+    expect(control.dataset.actionButton).toBe("standard");
+    expect(control).toHaveTextContent("⌘F");
+    expect(control).toHaveTextContent("Search");
+    expect(control.querySelector("button")).toBeNull();
+  });
+
+  it("activates from the label, not just the frame", () => {
+    const onClick = vi.fn();
+    applyActionButtonStyle("standard");
+    render(<ActionButton hotkey="⌘F" onClick={onClick}>Search</ActionButton>);
+
+    screen.getByText("Search").click();
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("separates the pair from the next control", () => {
+    applyActionButtonStyle("standard");
+    render(<ActionButton hotkey="⌘F">Search</ActionButton>);
+    // The bar's own gap equals the gap inside the pair, so without this the
+    // label runs into the following button.
+    expect(screen.getByRole("button").className).toContain("mr-2");
   });
 
   it("keeps behaviour identical across presentations", async () => {
@@ -46,20 +65,31 @@ describe("ActionButton presentation", () => {
     applyActionButtonStyle("standard");
     render(<ActionButton hotkey="⌘F">Search</ActionButton>);
 
-    const button = screen.getByRole("button");
+    const frame = screen.getByText("⌘F");
     // Same baseline as the pill presentation's inner fill.
-    expect(button.className).toContain("h-5");
-    // Reference material at rest, foreground only under the pointer.
-    expect(button.className).toContain("text-muted-foreground");
-    expect(button.className).toContain("hover:text-foreground");
-    expect(screen.getByText("Search").className).toContain("text-muted-foreground");
+    expect(frame.className).toContain("h-5");
+    // Reference material at rest, foreground only when the pair is hovered.
+    expect(frame.className).toContain("text-muted-foreground");
+    expect(frame.className).toContain("group-hover:text-foreground");
   });
 
-  it("collapses to a labelled button when there is no hotkey", () => {
+  it("leaves the label unchanged on hover", () => {
+    applyActionButtonStyle("standard");
+    render(<ActionButton hotkey="⌘F">Search</ActionButton>);
+
+    // Lighting both halves at once reads as a blinking block, not one control.
+    const label = screen.getByText("Search");
+    expect(label.className).toContain("text-muted-foreground");
+    expect(label.className).not.toContain("group-hover:");
+    expect(label.className).not.toContain("hover:");
+  });
+
+  it("collapses to a labelled frame when there is no hotkey", () => {
     applyActionButtonStyle("standard");
     render(<ActionButton>Design</ActionButton>);
     // Nothing to place inside, so the label moves in rather than standing alone.
     expect(screen.getByRole("button")).toHaveTextContent("Design");
+    expect(screen.getAllByText("Design")).toHaveLength(1);
   });
 
   it("switches presentation without remounting call sites", () => {
