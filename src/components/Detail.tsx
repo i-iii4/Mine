@@ -127,10 +127,12 @@ import type { ImagePreviewRequest } from "./ImagePreviewOverlay";
 // Layout constants shared by scroll content and fixed metadata. The rail is
 // anchored to the right edge with a fixed 20rem inspector width, while the
 // article/media column is centered in the remaining space to its left.
+// Side columns, the gap between article and rail, and the top offset all follow
+// the app-wide edge rhythm.
 const DETAIL_RAIL_LAYOUT_CLASSES =
-  "grid w-full grid-cols-[minmax(2rem,1fr)_minmax(400px,48rem)_minmax(2rem,1fr)_20rem_2rem] pt-8";
+  "grid w-full grid-cols-[minmax(var(--edge-rhythm),1fr)_minmax(400px,48rem)_minmax(var(--edge-rhythm),1fr)_20rem_var(--edge-rhythm)] pt-[var(--edge-rhythm)]";
 const DETAIL_STACKED_LAYOUT_CLASSES =
-  "grid w-full grid-cols-[2rem_minmax(240px,1fr)_2rem] pt-8";
+  "grid w-full grid-cols-[var(--edge-rhythm)_minmax(240px,1fr)_var(--edge-rhythm)] pt-[var(--edge-rhythm)]";
 const DETAIL_MIN_ARTICLE_WIDTH_PX = 400;
 const DETAIL_FIXED_RAIL_WIDTH_PX = 320;
 const DETAIL_GRID_INSET_WIDTH_PX = 32;
@@ -402,7 +404,7 @@ export function Detail({
         <header
           data-entered={chromeEntered ? "true" : "false"}
           className={cn(
-            "detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 px-8",
+            "detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 px-[var(--edge-rhythm)]",
             "bg-accent",
           )}
           data-detail-top-menu="classic"

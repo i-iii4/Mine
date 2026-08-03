@@ -761,8 +761,11 @@ body {
    reproduce the primary design; the alt block overrides them. JS-computed
    layout (masonry grid) reads the same attribute via src/lib/designMode.ts. */
 :root {
-  --sidebar-nav-pad-x: 32px;   /* sidebar table inset from panel edges */
-  --sidebar-nav-pad-top: 32px; /* sidebar table inset from the top chrome */
+  /* Edge rhythm — one value behind every inset from a window edge or the
+     chrome. Settings publish --edge-rhythm on the root; the fallback keeps the
+     stylesheet standalone. */
+  --sidebar-nav-pad-x: var(--edge-rhythm, 32px);   /* sidebar table inset from panel edges */
+  --sidebar-nav-pad-top: var(--edge-rhythm, 32px); /* sidebar table inset from the top chrome */
   --sidebar-row-pad-x: 0px;    /* inner row padding: text left / count right */
   /* Row reserved width = meta column (88) + fixed paddings/gap, per design.
      default: 88 + nav-pad 32×2 + divider-gap 4 = 156. The name column is then
@@ -782,7 +785,7 @@ body {
      this value + the 8px inner pill padding (default 24+8 = 32 = card edge) */
   --top-collection-pad-x: 24px;
   /* second chrome row: vault meta (left) and collection count (right) */
-  --main-secondary-pad-x: 32px;
+  --main-secondary-pad-x: var(--edge-rhythm, 32px);
 }
 :root[data-design="alt"] {
   --sidebar-nav-pad-x: 0px;

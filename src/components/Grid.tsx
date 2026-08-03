@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/context-menu";
 import type { LightBlock, TagCount } from "@/types";
 import { TopFadeScrim } from "./TopFadeScrim";
+import { useCardGap, useEdgeDensity } from "@/lib/density";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { Card, CardSkeleton } from "./Card";
 import { MeasureCard } from "./MeasureCard";
@@ -67,7 +68,6 @@ import {
   isEditableKeyboardTarget,
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
-import { useDesignMode } from "@/lib/designMode";
 import {
   blockCanRenderFromDeterministicHeight,
   blockSlugFromKeyboardTarget,
@@ -106,14 +106,11 @@ declare global {
 // ─── Layout constants ───────────────────────────────────────────────────────
 
 const COLUMN_MIN_WIDTH = 220;
-// Card gap and container side insets are design-variant metrics: the alt
-// design (data-design="alt", src/lib/designMode.ts) tightens both to 16px.
-const GAP_DEFAULT = 32;
-const GAP_ALT = 16;
-const GRID_X_INSET_DEFAULT = 32;
-const GRID_X_INSET_ALT = 16;
-const GRID_TOP_INSET_DEFAULT = 32;
-const GRID_TOP_INSET_ALT = 16;
+// Card gap and container insets are settings, not design-variant metrics: the
+// gap is its own axis (how densely content is packed), the insets follow the
+// app-wide edge rhythm (how far content sits from edges and chrome). They used
+// to be tied together inside the alt design, which forced one to move whenever
+// the other did. See src/lib/density.ts.
 const MEASUREMENT_BATCH_SIZE = 24;
 const INITIAL_COMMIT_BLOCKS = 48;
 const EMERGENCY_RENDER_OVERSCAN_PX = 128;
@@ -418,10 +415,9 @@ export function Grid({
   onLoadMoreBlocks,
   scrollEdgeFade = false,
 }: GridProps) {
-  const designMode = useDesignMode();
-  const layoutGap = designMode === "alt" ? GAP_ALT : GAP_DEFAULT;
-  const gridXInset = designMode === "alt" ? GRID_X_INSET_ALT : GRID_X_INSET_DEFAULT;
-  const gridTopInset = designMode === "alt" ? GRID_TOP_INSET_ALT : GRID_TOP_INSET_DEFAULT;
+  const layoutGap = useCardGap();
+  const gridXInset = useEdgeDensity();
+  const gridTopInset = gridXInset;
   const parentRef = useRef<HTMLDivElement>(null);
   // Same signal path as every other surface. The feed does track its own
   // scrollTop for windowing, but reusing it here would give this surface a

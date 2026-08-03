@@ -58,6 +58,14 @@ import {
   getStoredScrollEdgeFade,
 } from "@/lib/scrollEdgeFade";
 import {
+  CARD_GAP_STORAGE_KEY,
+  EDGE_DENSITY_STORAGE_KEY,
+  applyCardGap,
+  applyEdgeDensity,
+  getStoredCardGap,
+  getStoredEdgeDensity,
+} from "@/lib/density";
+import {
   ACTION_BUTTON_STYLE_STORAGE_KEY,
   applyActionButtonStyle,
   getStoredActionButtonStyle,
@@ -1612,6 +1620,10 @@ export function AppWithVault({
         applyCardRadius(getStoredCardRadius());
       } else if (key === ACTION_BUTTON_STYLE_STORAGE_KEY) {
         applyActionButtonStyle(getStoredActionButtonStyle());
+      } else if (key === EDGE_DENSITY_STORAGE_KEY) {
+        applyEdgeDensity(getStoredEdgeDensity());
+      } else if (key === CARD_GAP_STORAGE_KEY) {
+        applyCardGap(getStoredCardGap());
       }
     });
     return () => {
@@ -2871,9 +2883,9 @@ export function AppWithVault({
           )}
           {bottomActionBarHidden && (
             <div
-              // Right-edge inset follows the app-wide 32px edge rhythm (the
-              // bottom action bar's px-8, the grid's side insets).
-              className="ml-2 mr-8 flex shrink-0 items-center gap-2"
+              // Right-edge inset follows the app-wide edge rhythm (the bottom
+              // action bar, the grid's side insets, the sidebar table).
+              className="ml-2 mr-[var(--edge-rhythm)] flex shrink-0 items-center gap-2"
               data-top-chrome-settings-fallback=""
             >
               <ActionButton hotkey="⌘," onClick={handleOpenSettings}>
@@ -2990,7 +3002,7 @@ export function AppWithVault({
           </div>
         )}
         {!loadError && showPreparingLibrary && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/96 px-8">
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/96 px-[var(--edge-rhythm)]">
             <div className="max-w-md text-center">
               <p className="text-base font-medium text-foreground">Preparing library…</p>
               <p className="mt-2 text-sm text-muted-foreground">
@@ -3179,7 +3191,7 @@ export function AppWithVault({
 
       {!bottomActionBarHidden && (
         <div
-          className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-8"
+          className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-[var(--edge-rhythm)]"
           data-bottom-action-bar=""
         >
           <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>

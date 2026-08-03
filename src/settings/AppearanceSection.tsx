@@ -26,6 +26,16 @@ import {
   getStoredScrollEdgeFade,
 } from "@/lib/scrollEdgeFade";
 import {
+  CARD_GAP_STORAGE_KEY,
+  DENSITY_STEPS,
+  EDGE_DENSITY_STORAGE_KEY,
+  applyCardGap,
+  applyEdgeDensity,
+  getStoredCardGap,
+  getStoredEdgeDensity,
+  type DensityStep,
+} from "@/lib/density";
+import {
   ACTION_BUTTON_STYLE_STORAGE_KEY,
   applyActionButtonStyle,
   getStoredActionButtonStyle,
@@ -56,6 +66,11 @@ const CARD_RADIUS_CONTROL_OPTIONS = CARD_RADIUS_OPTIONS.map((value) => ({
   label: value === 0 ? "Square" : String(value),
 }));
 
+const DENSITY_OPTIONS = DENSITY_STEPS.map((step) => ({
+  value: String(step),
+  label: String(step),
+}));
+
 const ACTION_BUTTON_OPTIONS = [
   { value: "pill", label: "Pill" },
   { value: "standard", label: "Standard" },
@@ -80,6 +95,8 @@ export function AppearanceSection() {
   const [actionButtonStyle, setActionButtonStyle] = useState<ActionButtonStyle>(
     getStoredActionButtonStyle,
   );
+  const [edgeDensity, setEdgeDensity] = useState<DensityStep>(getStoredEdgeDensity);
+  const [cardGap, setCardGap] = useState<DensityStep>(getStoredCardGap);
 
   const handleThemeChange = (mode: ThemeMode) => {
     setTheme(mode);
@@ -103,6 +120,20 @@ export function AppearanceSection() {
     setBottomActionBarHidden(checked);
     localStorage.setItem(BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY, checked ? "true" : "false");
     broadcastSettingsChange(BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY);
+  };
+
+  const handleEdgeDensityChange = (raw: string) => {
+    const value = Number(raw) as DensityStep;
+    setEdgeDensity(value);
+    applyEdgeDensity(value);
+    broadcastSettingsChange(EDGE_DENSITY_STORAGE_KEY);
+  };
+
+  const handleCardGapChange = (raw: string) => {
+    const value = Number(raw) as DensityStep;
+    setCardGap(value);
+    applyCardGap(value);
+    broadcastSettingsChange(CARD_GAP_STORAGE_KEY);
   };
 
   const handleActionButtonStyleChange = (value: ActionButtonStyle) => {
@@ -159,6 +190,32 @@ export function AppearanceSection() {
           aria-label="Compact Detail top menu"
           checked={compactDetailTopMenu}
           onCheckedChange={(checked) => handleCompactChange(checked === true)}
+        />
+      </SettingRow>
+
+      <SettingRow
+        label="Edge spacing"
+        caption="Distance from window edges and chrome: bars, sidebar, feed insets, expanded card"
+      >
+        <SegmentedControl
+          aria-label="Edge spacing"
+          size="default"
+          value={String(edgeDensity)}
+          options={DENSITY_OPTIONS}
+          onChange={handleEdgeDensityChange}
+        />
+      </SettingRow>
+
+      <SettingRow
+        label="Card spacing"
+        caption="Gap between cards in the feed"
+      >
+        <SegmentedControl
+          aria-label="Card spacing"
+          size="default"
+          value={String(cardGap)}
+          options={DENSITY_OPTIONS}
+          onChange={handleCardGapChange}
         />
       </SettingRow>
 

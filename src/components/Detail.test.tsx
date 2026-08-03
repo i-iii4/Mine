@@ -152,7 +152,7 @@ describe("Detail", () => {
     const topMenu = container.querySelector('[data-detail-top-menu="classic"]');
     expect(topMenu).not.toBeNull();
     expect(topMenu).toHaveClass("detail-top-bar-enter");
-    expect(topMenu).toHaveClass("h-8", "bg-accent", "px-8");
+    expect(topMenu).toHaveClass("h-8", "bg-accent", "px-[var(--edge-rhythm)]");
   });
 
   it("toggles the classic top overflow menu with Command-K", async () => {
@@ -544,14 +544,14 @@ describe("Detail", () => {
     expect(spacer?.parentElement).toHaveClass(
       "w-full",
       "grid",
-      "grid-cols-[minmax(2rem,1fr)_minmax(400px,48rem)_minmax(2rem,1fr)_20rem_2rem]",
-      "pt-8",
+      "grid-cols-[minmax(var(--edge-rhythm),1fr)_minmax(400px,48rem)_minmax(var(--edge-rhythm),1fr)_20rem_var(--edge-rhythm)]",
+      "pt-[var(--edge-rhythm)]",
     );
     expect(rail?.parentElement).toHaveClass(
       "w-full",
       "grid",
-      "grid-cols-[minmax(2rem,1fr)_minmax(400px,48rem)_minmax(2rem,1fr)_20rem_2rem]",
-      "pt-8",
+      "grid-cols-[minmax(var(--edge-rhythm),1fr)_minmax(400px,48rem)_minmax(var(--edge-rhythm),1fr)_20rem_var(--edge-rhythm)]",
+      "pt-[var(--edge-rhythm)]",
     );
   });
 
@@ -587,8 +587,8 @@ describe("Detail", () => {
     const stackedMetadataRow = container.querySelector("[data-detail-stacked-metadata-row]");
 
     expect(scrollGrid).toHaveClass(
-      "grid-cols-[2rem_minmax(240px,1fr)_2rem]",
-      "pt-8",
+      "grid-cols-[var(--edge-rhythm)_minmax(240px,1fr)_var(--edge-rhythm)]",
+      "pt-[var(--edge-rhythm)]",
       "pb-20",
     );
     expect(articleColumn).toHaveClass(
@@ -622,8 +622,9 @@ describe("Detail", () => {
 
     const articleColumn = container.querySelector("[data-detail-article-column]");
     const rail = container.querySelector("[data-metadata-scroll]");
-    expect(articleColumn?.parentElement).toHaveClass("pt-8");
-    expect(rail?.parentElement).toHaveClass("pt-8");
+    // Side columns and top offset follow the app-wide edge rhythm setting.
+    expect(articleColumn?.parentElement).toHaveClass("pt-[var(--edge-rhythm)]");
+    expect(rail?.parentElement).toHaveClass("pt-[var(--edge-rhythm)]");
   });
 
   it("keeps related notes as a separate block below the metadata table", async () => {
