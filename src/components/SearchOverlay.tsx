@@ -116,7 +116,7 @@ export function SearchOverlay({
   const [tagsBySlug, setTagsBySlug] = useState<Map<string, string[]>>(new Map());
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const resultsTopFade = useTopFadeMask(undefined, scrollEdgeFade, TOP_FADE_LIST);
+  const resultsTopFade = useTopFadeMask(undefined, scrollEdgeFade);
   const requestSequenceRef = useRef(0);
   // Pointer ownership starts only after a real pointermove with new
   // coordinates, so keyboard scrolling under a resting cursor does not steal
@@ -500,21 +500,15 @@ export function SearchOverlay({
         </div>
 
         <div className="flex min-h-0 flex-1">
+          <div className="relative flex min-w-0 flex-1 flex-col">
           <div
             ref={resultsTopFade.ref}
             id="search-overlay-listbox"
             role="listbox"
             aria-label="Search results"
             className="min-w-0 flex-1 overflow-y-auto p-1"
-            data-search-results-top-fade={resultsTopFade.height > 0 ? "true" : undefined}
+            data-search-results-top-fade={resultsTopFade.scrolled ? "true" : undefined}
           >
-            <TopFadeScrim
-              profile={TOP_FADE_LIST}
-              height={resultsTopFade.height}
-              surface="search"
-              color="var(--card)"
-              inset={{ top: "0.25rem", x: "0.25rem" }}
-            />
             {showNoResults && (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 No results
@@ -538,6 +532,13 @@ export function SearchOverlay({
                   </div>
                 ))
               : rows.map((entry, index) => renderResultRow(entry, index))}
+          </div>
+          <TopFadeScrim
+            profile={TOP_FADE_LIST}
+            scrolled={resultsTopFade.scrolled}
+            surface="search"
+            color="var(--card)"
+          />
           </div>
 
           {/* Two zones: the card (micro preview — one uniform template for

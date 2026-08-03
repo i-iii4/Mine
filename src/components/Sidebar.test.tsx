@@ -494,7 +494,17 @@ describe("Sidebar", () => {
     const nav = container.querySelector("[data-sidebar-scroll]");
     expect(nav).toHaveClass("pt-[var(--sidebar-nav-pad-top)]");
     expect(nav).toHaveClass("pb-8");
-    expect(container.querySelector("aside")?.firstElementChild).toBe(nav);
+
+    // The inset belongs to the scroll container, and nothing above it may claim
+    // vertical space. The nav sits inside a positioning wrapper — the fade band
+    // has to be a sibling of the scrollport rather than a child of it — so the
+    // check is that the wrapper is layout-transparent and holds no other
+    // space-taking element before the nav.
+    const wrapper = container.querySelector("aside")?.firstElementChild;
+    expect(wrapper).toContainElement(nav as HTMLElement);
+    expect(wrapper).toHaveClass("flex-1");
+    expect(wrapper).toHaveClass("min-h-0");
+    expect(wrapper?.firstElementChild).toBe(nav);
   });
 
   it("applies collapsed width via style", () => {

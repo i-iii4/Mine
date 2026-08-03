@@ -5,7 +5,7 @@ import {
   TOP_FADE_LIST,
   TOP_FADE_SCROLLED_THRESHOLD_PX,
   createRightFadeMaskStyle,
-  topFadeHeight,
+  isTopFadeVisible,
   topFadeAlpha,
   topFadeStopCount,
 } from "./edgeFade";
@@ -153,33 +153,27 @@ describe("createTopFadeScrimStyle", () => {
   });
 });
 
-describe("topFadeHeight", () => {
-  it("stays at zero while the surface is at rest", () => {
-    expect(topFadeHeight(true, 0, TOP_FADE_CANVAS)).toBe(0);
+describe("isTopFadeVisible", () => {
+  it("stays off while the surface is at rest", () => {
+    expect(isTopFadeVisible(true, 0)).toBe(false);
   });
 
-  it("stays at zero while the preference is off", () => {
-    expect(topFadeHeight(false, 5000, TOP_FADE_CANVAS)).toBe(0);
+  it("stays off while the preference is off", () => {
+    expect(isTopFadeVisible(false, 5000)).toBe(false);
   });
 
   it("ignores sub-pixel scroll offsets", () => {
-    expect(topFadeHeight(true, TOP_FADE_SCROLLED_THRESHOLD_PX - 0.5, TOP_FADE_CANVAS)).toBe(0);
+    expect(isTopFadeVisible(true, TOP_FADE_SCROLLED_THRESHOLD_PX - 0.5)).toBe(false);
   });
 
-  it("matches the band to how much content has actually gone under", () => {
-    // The sidebar looked broken because a full-height band covered a row that
-    // had not moved yet.
-    expect(topFadeHeight(true, 5, TOP_FADE_CANVAS)).toBe(5);
-    expect(topFadeHeight(true, 17, TOP_FADE_CANVAS)).toBe(17);
+  it("turns on once content has travelled under the chrome", () => {
+    expect(isTopFadeVisible(true, TOP_FADE_SCROLLED_THRESHOLD_PX)).toBe(true);
   });
 
-  it("stops growing at the profile maximum", () => {
-    expect(topFadeHeight(true, 1000, TOP_FADE_CANVAS)).toBe(TOP_FADE_CANVAS.maxHeight);
-    expect(topFadeHeight(true, 1000, TOP_FADE_LIST)).toBe(TOP_FADE_LIST.maxHeight);
-  });
-
-  it("never lets the list band cover a whole 32px row", () => {
-    expect(topFadeHeight(true, 1000, TOP_FADE_LIST)).toBeLessThan(32);
+  it("returns the same value for every deeper offset", () => {
+    // The band is a two-state thing, so scrolling past the threshold produces
+    // no further state changes and no further re-renders.
+    expect(isTopFadeVisible(true, 40)).toBe(isTopFadeVisible(true, 4000));
   });
 });
 

@@ -1,18 +1,20 @@
-// The chrome, continued downward as a fading band.
+// The chrome, continued over the content as a fading band.
 //
-// Earlier revisions masked the scroll container itself, making content
-// transparent as it approached the edge. That is a different effect: masked
-// content dissolves into nothing and, on a light background, a photograph
-// simply bleaches toward white. It reads as damaged content, not as depth.
+// Three constraints shaped this, each learned by getting it wrong:
 //
-// Here the chrome colour itself extends past its own edge and fades out. The
-// content keeps its own opacity and passes underneath, so the band reads as the
-// panel continuing over it — which is exactly what "content slides under the
-// chrome" looks like.
+// 1. The band lives *outside* the scroll container, absolutely positioned in its
+//    parent. Inside it, `position: sticky` cannot escape the container's padding
+//    box — it settled below the real edge and narrower than the surface — and it
+//    put layout work on the scrolling subtree.
+// 2. Its height is constant. Driving height from the scroll offset re-rendered
+//    the whole surface on every scrolled pixel and made scrolling stutter.
+// 3. Only opacity changes, and only when the surface crosses between "at rest"
+//    and "scrolled". Opacity is compositor-only, so the transition costs no
+//    layout and no paint of the content beneath.
 //
-// The band is a sibling of the scroll container, not part of it: it never
-// scrolls, never enters the scrolled subtree, and costs no compositing on the
-// scrolling layer.
+// The band paints the colour *behind* the content, not the chrome above it: in
+// Mine those are different tokens, and the chrome colour left a rectangle of the
+// wrong shade sitting on the feed.
 
 import type { CSSProperties } from "react";
 import { topFadeAlpha, topFadeStopCount, type TopFadeProfile } from "@/lib/edgeFade";
@@ -22,9 +24,9 @@ import { useThemeAppearance } from "@/hooks/useThemeAppearance";
 /// edge, fading to fully transparent over `height`.
 ///
 /// Stops are generated from the shared curve. Colour is mixed against
-/// `transparent` rather than interpolated by the browser, because interpolating
-/// a colour to `transparent` passes through transparent black and greys the
-/// midpoint of the gradient.
+/// `transparent` explicitly rather than left to the browser, because
+/// interpolating a colour to `transparent` passes through transparent black and
+/// greys the midpoint of the gradient.
 export function createTopFadeScrimStyle(
   height: number,
   minAlpha: number,
@@ -39,71 +41,37 @@ export function createTopFadeScrimStyle(
     const strength = 1 - topFadeAlpha(t, minAlpha);
     const percent = Math.round(strength * 1000) / 10;
     const position = Math.round(t * height * 100) / 100;
-    stops.push(
-      `color-mix(in oklab, ${color} ${percent}%, transparent) ${position}px`,
-    );
+    stops.push(`color-mix(in oklab, ${color} ${percent}%, transparent) ${position}px`);
   }
 
-  return {
-    backgroundImage: `linear-gradient(to bottom, ${stops.join(", ")})`,
-  };
+  return { backgroundImage: `linear-gradient(to bottom, ${stops.join(", ")})` };
 }
 
 interface TopFadeScrimProps {
   /// Coverage profile for this surface.
   profile: TopFadeProfile;
-  /// Current band height in CSS pixels. Zero means no band at all: at rest
-  /// there is nothing underneath for the chrome to continue over.
-  height: number;
+  /// Whether the surface below is scrolled.
+  scrolled: boolean;
   /// Marks the band in the DOM for acceptance checks.
   surface: string;
-  /// Padding of the scroll container, as CSS values, so the band can cancel it.
-  ///
-  /// A sticky element cannot escape its parent's padding box: inside a
-  /// container with `padding-top: 32px` it settles 32px below the actual edge,
-  /// and horizontal padding makes it narrower than the surface. Negative
-  /// margins pull it back to the true edges.
-  inset?: { top?: string; x?: string };
   /// Background colour of the surface the band sits on, as a CSS value.
-  ///
-  /// It must be the colour *behind the content*, not the chrome above it. Mine's
-  /// chrome and page background are different tokens (`0.17` against `0.14` in
-  /// the dark theme), so a band painted in the chrome colour reads as a
-  /// rectangle of the wrong shade sitting on the feed.
   color: string;
 }
 
-export function TopFadeScrim({
-  profile,
-  height,
-  surface,
-  color,
-  inset,
-}: TopFadeScrimProps) {
+export function TopFadeScrim({ profile, scrolled, surface, color }: TopFadeScrimProps) {
   const appearance = useThemeAppearance();
-  if (height <= 0) return null;
 
-  // Rendered as the first child of the scroll container. The outer element is
-  // sticky with zero height, so it holds the band against the top edge while
-  // taking no space in the scrolled flow — no wrapper element and no change to
-  // the surrounding layout.
   return (
     <div
       aria-hidden="true"
       data-top-fade-scrim={surface}
-      className="pointer-events-none sticky top-0 z-10 h-0"
+      data-top-fade-visible={scrolled ? "true" : "false"}
+      className="pointer-events-none absolute inset-x-0 top-0 z-10 transition-opacity duration-150"
       style={{
-        marginTop: inset?.top ? `calc(-1 * ${inset.top})` : undefined,
-        marginInline: inset?.x ? `calc(-1 * ${inset.x})` : undefined,
+        height: profile.maxHeight,
+        opacity: scrolled ? 1 : 0,
+        ...createTopFadeScrimStyle(profile.maxHeight, profile.minAlpha[appearance], color),
       }}
-    >
-      <div
-        className="w-full"
-        style={{
-          height,
-          ...createTopFadeScrimStyle(height, profile.minAlpha[appearance], color),
-        }}
-      />
-    </div>
+    />
   );
 }

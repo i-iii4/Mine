@@ -624,7 +624,11 @@ describe("Grid — no collapse after add / revisit", () => {
     const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
     expect(scrollEl).toBeTruthy();
     expect(scrollEl?.dataset.gridTopFade).toBeUndefined();
-    expect(document.querySelector('[data-top-fade-scrim="feed"]')).toBeNull();
+    // The band stays mounted but fully transparent, so turning it on is a
+    // compositor-only opacity change rather than a mount.
+    const resting = document.querySelector('[data-top-fade-scrim="feed"]') as HTMLElement;
+    expect(resting.dataset.topFadeVisible).toBe("false");
+    expect(resting.style.opacity).toBe("0");
   });
 
   it("masks the scrolled feed without dropping the scrollport's own styles", async () => {
@@ -651,16 +655,14 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(scrollEl.dataset.gridTopFade).toBe("true");
     const scrim = document.querySelector('[data-top-fade-scrim="feed"]') as HTMLElement;
     expect(scrim).toBeTruthy();
-    // The band sits inside the scrollport but takes no space in the flow.
-    expect(scrim.className).toContain("h-0");
-    expect(scrim.className).toContain("sticky");
-    // Scrolled far past the cap, so the band sits at its maximum.
-    expect((scrim.firstElementChild as HTMLElement).style.height)
-      .toBe(`${TOP_FADE_CANVAS.maxHeight}px`);
-    // A sticky child cannot escape the scrollport's padding box, so the band
-    // cancels the horizontal inset to reach the real edges.
-    expect(scrim.style.marginInline).toMatch(/^calc\(-/);
-    // The scrollport keeps its own styles: the band is a child, not a mask.
+    expect(scrim.dataset.topFadeVisible).toBe("true");
+    expect(scrim.style.opacity).toBe("1");
+    // Constant height: scrolling changes opacity only, never layout.
+    expect(scrim.style.height).toBe(`${TOP_FADE_CANVAS.maxHeight}px`);
+    // Outside the scrollport, so it inherits none of its padding and adds no
+    // layout work to the scrolled subtree.
+    expect(scrollEl.contains(scrim)).toBe(false);
+    // The scrollport keeps its own styles and is never masked.
     expect(scrollEl.style.paddingLeft).toBe(paddingBeforeScroll);
     expect(scrollEl.style.scrollbarGutter).toBe("stable");
     expect(scrollEl.style.maskImage).toBe("");

@@ -142,18 +142,12 @@ export function topFadeStopCount(height: number): number {
 /// pixel is the smallest offset that can actually put content under the chrome.
 export const TOP_FADE_SCROLLED_THRESHOLD_PX = 1;
 
-/// Height of the band for a given scroll offset.
+/// Whether a surface is scrolled far enough to show the band.
 ///
-/// The band grows with the scroll: at 5px scrolled it is 5px tall, because 5px
-/// of content is all that has gone under the chrome. A band that appears at full
-/// height the instant scrolling starts covers content that has not moved yet —
-/// which is what made the sidebar look broken, its 32px band blanketing a 32px
-/// row still fully in view.
-export function topFadeHeight(
-  enabled: boolean,
-  scrollTop: number,
-  profile: TopFadeProfile,
-): number {
-  if (!enabled || scrollTop < TOP_FADE_SCROLLED_THRESHOLD_PX) return 0;
-  return Math.min(Math.round(scrollTop), profile.maxHeight);
+/// A boolean, not a height. Deriving the band's height from the scroll offset
+/// meant a state change on every scrolled pixel — a re-render of the whole
+/// surface per frame, which made scrolling stutter. The band has a constant
+/// height and only its opacity crosses between two states.
+export function isTopFadeVisible(enabled: boolean, scrollTop: number): boolean {
+  return enabled && scrollTop >= TOP_FADE_SCROLLED_THRESHOLD_PX;
 }

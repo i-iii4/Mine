@@ -2,9 +2,9 @@
 // band that continues the chrome over the content.
 //
 // The band is only meaningful once content has actually travelled under the
-// chrome: at rest there is nothing to continue over. It then grows with the
-// scroll until it reaches the profile maximum, after which the value is constant
-// and ordinary scrolling stops re-rendering.
+// chrome: at rest there is nothing to continue over. This tracks a single
+// boolean rather than the scroll offset, so ordinary scrolling produces no
+// re-render once the band is up.
 //
 // Attachment goes through a callback ref rather than a ref object. Surfaces like
 // the search overlay live inside a Radix `Dialog`, which does not mount its
@@ -14,15 +14,14 @@
 // show the band.
 
 import { useCallback, useEffect, useState, type RefObject } from "react";
-import { topFadeHeight, type TopFadeProfile } from "@/lib/edgeFade";
+import { TOP_FADE_SCROLLED_THRESHOLD_PX } from "@/lib/edgeFade";
 
 export interface TopFadeState {
   /// Attach to the scroll container. Also populates the caller's own ref, so a
   /// surface that already needs the node for focus or scrolling keeps working.
   ref: (node: HTMLElement | null) => void;
-  /// Band height in CSS pixels; `0` while the surface is at rest or the
-  /// preference is off.
-  height: number;
+  /// Whether the surface is scrolled far enough to show the band.
+  scrolled: boolean;
 }
 
 /// Watch a scroll container for the top fade band.
@@ -32,10 +31,9 @@ export interface TopFadeState {
 export function useTopFadeMask(
   forwardRef: RefObject<HTMLElement | null> | undefined,
   enabled: boolean,
-  profile: TopFadeProfile,
 ): TopFadeState {
   const [node, setNode] = useState<HTMLElement | null>(null);
-  const [height, setHeight] = useState(0);
+  const [scrolled, setScrolled] = useState(false);
 
   const ref = useCallback(
     (next: HTMLElement | null) => {
@@ -47,14 +45,14 @@ export function useTopFadeMask(
 
   useEffect(() => {
     if (!enabled || !node) {
-      setHeight(0);
+      setScrolled(false);
       return;
     }
 
-    // Once the band reaches its maximum this settles on a constant, so further
-    // scrolling stops re-rendering.
+    // A boolean, so React bails out on every scroll event that does not cross
+    // the threshold — which is all of them after the first.
     const sync = () => {
-      setHeight(topFadeHeight(true, node.scrollTop, profile));
+      setScrolled(node.scrollTop >= TOP_FADE_SCROLLED_THRESHOLD_PX);
     };
     sync();
 
@@ -62,7 +60,7 @@ export function useTopFadeMask(
     return () => {
       node.removeEventListener("scroll", sync);
     };
-  }, [node, enabled, profile]);
+  }, [node, enabled]);
 
-  return { ref, height };
+  return { ref, scrolled: enabled && scrolled };
 }

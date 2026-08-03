@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { createRef } from "react";
 
-import { TOP_FADE_LIST } from "@/lib/edgeFade";
 import { useTopFadeMask } from "./useTopFadeMask";
 
 /// A detached scroll container. `scrollTop` is not settable on a jsdom element
@@ -26,12 +25,9 @@ function createScrollElement(initialScrollTop = 0) {
 
 function renderMask(enabled: boolean) {
   const forwardRef = createRef<HTMLElement>() as React.RefObject<HTMLElement | null>;
-  const hook = renderHook(
-    ({ on }: { on: boolean }) => useTopFadeMask(forwardRef, on, TOP_FADE_LIST),
-    {
-      initialProps: { on: enabled },
-    },
-  );
+  const hook = renderHook(({ on }: { on: boolean }) => useTopFadeMask(forwardRef, on), {
+    initialProps: { on: enabled },
+  });
   /// Attach a node the way a component would, in a commit.
   const attach = (node: HTMLElement | null) => act(() => hook.result.current.ref(node));
   return { ...hook, forwardRef, attach };
@@ -42,7 +38,7 @@ describe("useTopFadeMask", () => {
     const { element } = createScrollElement();
     const { result, attach } = renderMask(true);
     attach(element);
-    expect(result.current.height).toBe(0);
+    expect(result.current.scrolled).toBe(false);
   });
 
   it("turns the mask on once the surface is scrolled", () => {
@@ -51,7 +47,7 @@ describe("useTopFadeMask", () => {
     attach(element);
 
     act(() => scrollTo(120));
-    expect(result.current.height).toBeGreaterThan(0);
+    expect(result.current.scrolled).toBe(true);
   });
 
   it("turns the mask off again when the surface returns to the top", () => {
@@ -60,17 +56,17 @@ describe("useTopFadeMask", () => {
     attach(element);
 
     act(() => scrollTo(120));
-    expect(result.current.height).toBeGreaterThan(0);
+    expect(result.current.scrolled).toBe(true);
 
     act(() => scrollTo(0));
-    expect(result.current.height).toBe(0);
+    expect(result.current.scrolled).toBe(false);
   });
 
   it("picks up a surface that is already scrolled when it attaches", () => {
     const { element } = createScrollElement(400);
     const { result, attach } = renderMask(true);
     attach(element);
-    expect(result.current.height).toBeGreaterThan(0);
+    expect(result.current.scrolled).toBe(true);
   });
 
   it("attaches to a node that only appears in a later render", () => {
@@ -80,11 +76,11 @@ describe("useTopFadeMask", () => {
     const { element, scrollTo } = createScrollElement();
     const { result, attach } = renderMask(true);
 
-    expect(result.current.height).toBe(0);
+    expect(result.current.scrolled).toBe(false);
 
     attach(element); // dialog opens
     act(() => scrollTo(300));
-    expect(result.current.height).toBeGreaterThan(0);
+    expect(result.current.scrolled).toBe(true);
   });
 
   it("stops observing a node that is unmounted and remounted", () => {
@@ -94,15 +90,15 @@ describe("useTopFadeMask", () => {
 
     attach(first.element);
     act(() => first.scrollTo(300));
-    expect(result.current.height).toBeGreaterThan(0);
+    expect(result.current.scrolled).toBe(true);
 
     attach(null); // dialog closes
-    expect(result.current.height).toBe(0);
+    expect(result.current.scrolled).toBe(false);
 
     attach(second.element); // dialog reopens at the top
-    expect(result.current.height).toBe(0);
+    expect(result.current.scrolled).toBe(false);
     act(() => second.scrollTo(300));
-    expect(result.current.height).toBeGreaterThan(0);
+    expect(result.current.scrolled).toBe(true);
   });
 
   it("keeps the caller's own ref pointing at the node", () => {
@@ -122,17 +118,17 @@ describe("useTopFadeMask", () => {
     attach(element);
 
     act(() => scrollTo(0.5));
-    expect(result.current.height).toBe(0);
+    expect(result.current.scrolled).toBe(false);
   });
 
   it("stays off while the preference is disabled, even when scrolled", () => {
     const { element, scrollTo } = createScrollElement(500);
     const { result, attach } = renderMask(false);
     attach(element);
-    expect(result.current.height).toBe(0);
+    expect(result.current.scrolled).toBe(false);
 
     act(() => scrollTo(900));
-    expect(result.current.height).toBe(0);
+    expect(result.current.scrolled).toBe(false);
   });
 
   it("clears an active mask when the preference is turned off mid-session", () => {
@@ -141,10 +137,10 @@ describe("useTopFadeMask", () => {
     attach(element);
 
     act(() => scrollTo(300));
-    expect(result.current.height).toBeGreaterThan(0);
+    expect(result.current.scrolled).toBe(true);
 
     rerender({ on: false });
-    expect(result.current.height).toBe(0);
+    expect(result.current.scrolled).toBe(false);
   });
 
   it("re-attaches and reflects current scroll when the preference is turned back on", () => {
@@ -154,15 +150,15 @@ describe("useTopFadeMask", () => {
 
     act(() => scrollTo(300));
     rerender({ on: false });
-    expect(result.current.height).toBe(0);
+    expect(result.current.scrolled).toBe(false);
 
     rerender({ on: true });
-    expect(result.current.height).toBeGreaterThan(0);
+    expect(result.current.scrolled).toBe(true);
   });
 
   it("does not throw when no node is ever attached", () => {
     const { result } = renderMask(true);
-    expect(result.current.height).toBe(0);
+    expect(result.current.scrolled).toBe(false);
   });
 
   it("removes its scroll listener on unmount", () => {
@@ -172,6 +168,6 @@ describe("useTopFadeMask", () => {
 
     unmount();
     expect(() => act(() => scrollTo(500))).not.toThrow();
-    expect(result.current.height).toBe(0);
+    expect(result.current.scrolled).toBe(false);
   });
 });

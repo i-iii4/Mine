@@ -14,7 +14,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import type { LightBlock, TagCount } from "@/types";
-import { TOP_FADE_CANVAS, topFadeHeight } from "@/lib/edgeFade";
+import { TOP_FADE_CANVAS, isTopFadeVisible } from "@/lib/edgeFade";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { Card, CardSkeleton } from "./Card";
 import { MeasureCard } from "./MeasureCard";
@@ -1854,12 +1854,14 @@ export function Grid({
     ],
   );
 
-  // The feed already tracks its own scroll offset for windowing, so the top
-  // fade reuses it instead of attaching a second scroll listener to the hot
-  // scroll path.
-  const topFadeBandHeight = topFadeHeight(scrollEdgeFade, scrollTop, TOP_FADE_CANVAS);
+  // The feed already tracks its own scroll offset for windowing, so the band
+  // reuses it instead of attaching a second scroll listener to the hot path.
+  const topFadeVisible = isTopFadeVisible(scrollEdgeFade, scrollTop);
 
   return (
+    // The band is a sibling of the scrollport, not a child: inside it, it would
+    // inherit the scrollport's padding and add layout work to the scrolled tree.
+    <div className="relative h-full">
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
@@ -1877,17 +1879,10 @@ export function Grid({
             transition: "padding-left 200ms ease, padding-right 200ms ease",
           }}
           data-grid-scroll
-          data-grid-top-fade={topFadeBandHeight > 0 ? "true" : undefined}
+          data-grid-top-fade={topFadeVisible ? "true" : undefined}
           data-feed-grid-interaction-mode={feedInteractionMode}
           data-feed-grid-focus-mode={visualFocusActive ? "true" : undefined}
         >
-          <TopFadeScrim
-            profile={TOP_FADE_CANVAS}
-            height={topFadeBandHeight}
-            surface="feed"
-            color="var(--background)"
-            inset={{ x: `${gridXInset}px` }}
-          />
           {parentWidth > 0 && blocks.length > 0 && (
             <VirtualMasonryLayout
               blocks={blocks}
@@ -1951,6 +1946,13 @@ export function Grid({
         />
       )}
     </ContextMenu>
+      <TopFadeScrim
+        profile={TOP_FADE_CANVAS}
+        scrolled={topFadeVisible}
+        surface="feed"
+        color="var(--background)"
+      />
+    </div>
   );
 }
 

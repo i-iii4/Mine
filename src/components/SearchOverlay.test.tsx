@@ -139,7 +139,8 @@ describe("SearchOverlay", () => {
     const list = document.getElementById("search-overlay-listbox") as HTMLElement;
     expect(list).toBeTruthy();
     expect(list.dataset.searchResultsTopFade).toBeUndefined();
-    expect(document.querySelector('[data-top-fade-scrim="search"]')).toBeNull();
+    const resting = document.querySelector('[data-top-fade-scrim="search"]') as HTMLElement;
+    expect(resting.style.opacity).toBe("0");
   });
 
   it("dissolves the results list once it is scrolled", () => {
@@ -154,9 +155,10 @@ describe("SearchOverlay", () => {
     expect(list.dataset.searchResultsTopFade).toBe("true");
     const scrim = document.querySelector('[data-top-fade-scrim="search"]') as HTMLElement;
     expect(scrim).toBeTruthy();
+    expect(scrim.style.opacity).toBe("1");
     // Search results are a dense list, so they use the shorter band.
-    expect((scrim.firstElementChild as HTMLElement).style.height)
-      .toBe(`${TOP_FADE_LIST.maxHeight}px`);
+    expect(scrim.style.height).toBe(`${TOP_FADE_LIST.maxHeight}px`);
+    expect(list.contains(scrim)).toBe(false);
   });
 
   it("leaves the results list alone when the preference is off", () => {
@@ -167,7 +169,8 @@ describe("SearchOverlay", () => {
     fireEvent.scroll(list);
 
     expect(list.dataset.searchResultsTopFade).toBeUndefined();
-    expect(document.querySelector('[data-top-fade-scrim="search"]')).toBeNull();
+    const off = document.querySelector('[data-top-fade-scrim="search"]') as HTMLElement;
+    expect(off.style.opacity).toBe("0");
   });
 
   it("renders the focused input and selects the previous query on open", () => {
