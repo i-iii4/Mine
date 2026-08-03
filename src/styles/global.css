@@ -40,10 +40,18 @@ video {
   -webkit-user-drag: none;
 }
 
-/* Card media rounding — controlled from one place via --radius-media */
+/* Feed-card media rounding — controlled from one place via --radius-media.
+   Independent of the card-corner setting: thumbnails sit edge to edge in the
+   grid, where rounded corners read as noise. */
 [data-block-slug] img,
 [data-block-slug] video {
   border-radius: var(--radius-media);
+}
+
+/* An expanded card shows one standalone image, so it takes the card corner. */
+[data-detail-article-column] img,
+[data-detail-article-column] video {
+  border-radius: var(--radius-card);
 }
 
 /* Native selection policy: app chrome is non-selectable; article prose opts in. */

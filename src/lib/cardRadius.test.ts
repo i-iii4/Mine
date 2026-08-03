@@ -16,30 +16,29 @@ describe("card radius", () => {
     expect(getStoredCardRadius()).toBe(0);
   });
 
-  it("offers the full set of steps", () => {
-    expect(CARD_RADIUS_OPTIONS).toEqual([0, 2, 4, 8, 16]);
+  it("offers square and one rounded step", () => {
+    expect(CARD_RADIUS_OPTIONS).toEqual([0, 3]);
   });
 
-  it("drives both the card and its media from one setting", () => {
-    applyCardRadius(8);
+  it("drives the card frame only, leaving feed-card media square", () => {
+    applyCardRadius(3);
     const root = document.documentElement;
-    expect(root.style.getPropertyValue("--radius-card")).toBe("8px");
-    expect(root.style.getPropertyValue("--radius-media")).toBe("8px");
+    expect(root.style.getPropertyValue("--radius-card")).toBe("3px");
+    // Feed thumbnails stay edge to edge whatever the card corner is.
+    expect(root.style.getPropertyValue("--radius-media")).toBe("");
   });
 
   it("persists the choice", () => {
-    applyCardRadius(16);
-    expect(localStorage.getItem(CARD_RADIUS_STORAGE_KEY)).toBe("16");
-    expect(getStoredCardRadius()).toBe(16);
+    applyCardRadius(3);
+    expect(localStorage.getItem(CARD_RADIUS_STORAGE_KEY)).toBe("3");
+    expect(getStoredCardRadius()).toBe(3);
   });
 
   it("hands the default back to the stylesheet instead of pinning 0px", () => {
-    applyCardRadius(4);
+    applyCardRadius(3);
     applyCardRadius(0);
-    const root = document.documentElement;
     // Cleared, not set to "0px": the token default stays a single source.
-    expect(root.style.getPropertyValue("--radius-card")).toBe("");
-    expect(root.style.getPropertyValue("--radius-media")).toBe("");
+    expect(document.documentElement.style.getPropertyValue("--radius-card")).toBe("");
   });
 
   it("falls back to the default on an unknown stored value", () => {

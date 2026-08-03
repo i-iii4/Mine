@@ -88,15 +88,16 @@ describe("AppearanceSection", () => {
     expect(localStorage.getItem("mine.scrollEdgeFade")).toBe("false");
   });
 
-  it("applies the card corner radius to both tokens and broadcasts it", () => {
+  it("applies the card corner radius and broadcasts it", () => {
     render(<AppearanceSection />);
 
-    fireEvent.click(screen.getByRole("button", { name: "8" }));
+    fireEvent.click(screen.getByRole("button", { name: "3" }));
 
     const root = document.documentElement;
-    expect(root.style.getPropertyValue("--radius-card")).toBe("8px");
-    expect(root.style.getPropertyValue("--radius-media")).toBe("8px");
-    expect(localStorage.getItem("mine.cardRadius")).toBe("8");
+    expect(root.style.getPropertyValue("--radius-card")).toBe("3px");
+    // Feed-card media is out of scope and stays square.
+    expect(root.style.getPropertyValue("--radius-media")).toBe("");
+    expect(localStorage.getItem("mine.cardRadius")).toBe("3");
     expect(emit).toHaveBeenCalledWith("settings-changed", { key: "mine.cardRadius" });
   });
 
