@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { GridSnapshot, LightBlock, SearchMatch } from "@/types";
-import { TOP_FADE_LIST } from "@/lib/edgeFade";
+import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
 import {
   SearchOverlay,
   SEARCH_OVERLAY_MIN_QUERY_CHARS,
@@ -157,7 +157,7 @@ describe("SearchOverlay", () => {
     expect(scrim).toBeTruthy();
     expect(scrim.style.opacity).toBe("1");
     // Search results are a dense list, so they use the shorter band.
-    expect(scrim.style.height).toBe(`${TOP_FADE_LIST.maxHeight}px`);
+    expect(scrim.style.height).toBe(`${TOP_FADE_HEIGHT}px`);
     expect(list.contains(scrim)).toBe(false);
   });
 

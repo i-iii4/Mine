@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   EDGE_FADE_WIDTH,
-  TOP_FADE_CANVAS,
-  TOP_FADE_LIST,
-  TOP_FADE_SCROLLED_THRESHOLD_PX,
+  TOP_FADE_HEIGHT,
+  TOP_FADE_MIN_ALPHA,
   createRightFadeMaskStyle,
-  isTopFadeVisible,
   topFadeAlpha,
   topFadeStopCount,
 } from "./edgeFade";
@@ -13,8 +11,6 @@ import { createTopFadeScrimStyle } from "@/components/TopFadeScrim";
 
 /// The band paints the colour behind the content, not the chrome above it.
 const BG = "var(--background)";
-
-const ALL_PROFILES = [TOP_FADE_CANVAS, TOP_FADE_LIST];
 
 /// Pull `<alpha, position>` pairs out of a generated gradient so the tests
 /// assert the ramp shape instead of one frozen string.
@@ -92,7 +88,7 @@ describe("topFadeAlpha", () => {
   });
 
   it("keeps the light-theme floor at the measured reference level", () => {
-    expect(topFadeAlpha(0, TOP_FADE_CANVAS.minAlpha.light)).toBe(0.4);
+    expect(topFadeAlpha(0, TOP_FADE_MIN_ALPHA.light)).toBe(0.4);
   });
 });
 
@@ -116,33 +112,33 @@ describe("topFadeStopCount", () => {
 
 describe("createTopFadeScrimStyle", () => {
   it("starts as the chrome colour and fades to nothing over the band", () => {
-    const gradient = String(createTopFadeScrimStyle(44, 0.08, BG).backgroundImage);
+    const gradient = String(createTopFadeScrimStyle(TOP_FADE_HEIGHT, 0.08, BG).backgroundImage);
 
     expect(gradient.startsWith("linear-gradient(to bottom,")).toBe(true);
     expect(gradient).toContain("var(--background) 92%");
-    expect(gradient).toContain("color-mix(in oklab, var(--background) 0%, transparent) 44px");
+    expect(gradient).toContain(`color-mix(in oklab, var(--background) 0%, transparent) ${TOP_FADE_HEIGHT}px`);
   });
 
   it("covers less in the light theme, matching the reference measurement", () => {
     // Reference screenshots keep about 38-40% of the content's contrast at the
     // edge; a light band over a dark photograph is far more visible than a dark
     // band over the same photograph.
-    const light = String(createTopFadeScrimStyle(44, TOP_FADE_CANVAS.minAlpha.light, BG).backgroundImage);
-    const dark = String(createTopFadeScrimStyle(44, TOP_FADE_CANVAS.minAlpha.dark, BG).backgroundImage);
+    const light = String(createTopFadeScrimStyle(TOP_FADE_HEIGHT, TOP_FADE_MIN_ALPHA.light, BG).backgroundImage);
+    const dark = String(createTopFadeScrimStyle(TOP_FADE_HEIGHT, TOP_FADE_MIN_ALPHA.dark, BG).backgroundImage);
 
     expect(light).toContain("var(--background) 60%");
     expect(dark).toContain("var(--background) 92%");
   });
 
   it("mixes toward transparent instead of interpolating to it", () => {
-    const gradient = String(createTopFadeScrimStyle(24, 0.4, BG).backgroundImage);
+    const gradient = String(createTopFadeScrimStyle(TOP_FADE_HEIGHT, 0.4, BG).backgroundImage);
     expect(gradient).toContain("color-mix(in oklab, var(--background)");
     expect(gradient).toContain("%, transparent)");
     expect(gradient).not.toMatch(/var\(--chrome\)\s*,/);
   });
 
   it("weakens monotonically from the edge downward", () => {
-    const gradient = String(createTopFadeScrimStyle(44, 0.08, BG).backgroundImage);
+    const gradient = String(createTopFadeScrimStyle(TOP_FADE_HEIGHT, 0.08, BG).backgroundImage);
     const percentages = [...gradient.matchAll(/var\(--background\) ([\d.]+)%/g)].map((m) =>
       Number(m[1]),
     );
@@ -153,46 +149,19 @@ describe("createTopFadeScrimStyle", () => {
   });
 });
 
-describe("isTopFadeVisible", () => {
-  it("stays off while the surface is at rest", () => {
-    expect(isTopFadeVisible(true, 0)).toBe(false);
-  });
-
-  it("stays off while the preference is off", () => {
-    expect(isTopFadeVisible(false, 5000)).toBe(false);
-  });
-
-  it("ignores sub-pixel scroll offsets", () => {
-    expect(isTopFadeVisible(true, TOP_FADE_SCROLLED_THRESHOLD_PX - 0.5)).toBe(false);
-  });
-
-  it("turns on once content has travelled under the chrome", () => {
-    expect(isTopFadeVisible(true, TOP_FADE_SCROLLED_THRESHOLD_PX)).toBe(true);
-  });
-
-  it("returns the same value for every deeper offset", () => {
-    // The band is a two-state thing, so scrolling past the threshold produces
-    // no further state changes and no further re-renders.
-    expect(isTopFadeVisible(true, 40)).toBe(isTopFadeVisible(true, 4000));
-  });
-});
-
-describe("top fade profiles", () => {
-  it("keeps the list band inside a single 32px row", () => {
-    expect(TOP_FADE_LIST.maxHeight).toBeLessThan(32);
-    expect(TOP_FADE_LIST.maxHeight).toBeLessThanOrEqual(TOP_FADE_CANVAS.maxHeight);
-  });
-
-  it("sizes the canvas band to the measured reference distance", () => {
-    // Reference screenshots reach full contrast 41-43px below the edge.
-    expect(TOP_FADE_CANVAS.maxHeight).toBeGreaterThanOrEqual(40);
-    expect(TOP_FADE_CANVAS.maxHeight).toBeLessThanOrEqual(48);
+describe("top fade constants", () => {
+  it("uses one height everywhere, small enough for a 32px sidebar row", () => {
+    // The band means the same thing on every surface, so it reads the same on
+    // every surface; the tightest surface sets the value for all of them.
+    expect(TOP_FADE_HEIGHT).toBeLessThan(32);
   });
 
   it("covers harder in the dark theme than in the light one", () => {
-    for (const profile of ALL_PROFILES) {
-      expect(profile.minAlpha.dark).toBeLessThan(profile.minAlpha.light);
-    }
+    expect(TOP_FADE_MIN_ALPHA.dark).toBeLessThan(TOP_FADE_MIN_ALPHA.light);
+  });
+
+  it("keeps the light coverage at the measured reference level", () => {
+    // Reference screenshots leave about 38-40% of the content's contrast.
+    expect(TOP_FADE_MIN_ALPHA.light).toBe(0.4);
   });
 });
-

@@ -19,7 +19,7 @@ import {
   FEED_HEAVY_HYSTERESIS_FRACTION,
   type HeavyPlaybackCandidate,
 } from "./Grid";
-import { TOP_FADE_CANVAS } from "@/lib/edgeFade";
+import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
 import { computeMasonryLayout } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
 import type { LightBlock } from "@/types";
@@ -658,7 +658,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(scrim.dataset.topFadeVisible).toBe("true");
     expect(scrim.style.opacity).toBe("1");
     // Constant height: scrolling changes opacity only, never layout.
-    expect(scrim.style.height).toBe(`${TOP_FADE_CANVAS.maxHeight}px`);
+    expect(scrim.style.height).toBe(`${TOP_FADE_HEIGHT}px`);
     // Outside the scrollport, so it inherits none of its padding and adds no
     // layout work to the scrolled subtree.
     expect(scrollEl.contains(scrim)).toBe(false);

@@ -14,8 +14,8 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import type { LightBlock, TagCount } from "@/types";
-import { TOP_FADE_CANVAS, isTopFadeVisible } from "@/lib/edgeFade";
 import { TopFadeScrim } from "./TopFadeScrim";
+import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { Card, CardSkeleton } from "./Card";
 import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
@@ -423,6 +423,11 @@ export function Grid({
   const gridXInset = designMode === "alt" ? GRID_X_INSET_ALT : GRID_X_INSET_DEFAULT;
   const gridTopInset = designMode === "alt" ? GRID_TOP_INSET_ALT : GRID_TOP_INSET_DEFAULT;
   const parentRef = useRef<HTMLDivElement>(null);
+  // Same signal path as every other surface. The feed does track its own
+  // scrollTop for windowing, but reusing it here would give this surface a
+  // different latency from the rest — that value is RAF-coalesced, so the band
+  // would lag a frame behind the sidebar's.
+  const topFade = useTopFadeMask(parentRef, scrollEdgeFade);
   const [parentWidth, setParentWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
@@ -1854,10 +1859,6 @@ export function Grid({
     ],
   );
 
-  // The feed already tracks its own scroll offset for windowing, so the band
-  // reuses it instead of attaching a second scroll listener to the hot path.
-  const topFadeVisible = isTopFadeVisible(scrollEdgeFade, scrollTop);
-
   return (
     // The band is a sibling of the scrollport, not a child: inside it, it would
     // inherit the scrollport's padding and add layout work to the scrolled tree.
@@ -1865,7 +1866,7 @@ export function Grid({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
-          ref={parentRef}
+          ref={topFade.ref}
           onContextMenu={handleContextMenu}
           onPointerDown={handleGridPointerDown}
           onPointerMove={handleGridPointerMove}
@@ -1879,7 +1880,7 @@ export function Grid({
             transition: "padding-left 200ms ease, padding-right 200ms ease",
           }}
           data-grid-scroll
-          data-grid-top-fade={topFadeVisible ? "true" : undefined}
+          data-grid-top-fade={topFade.scrolled ? "true" : undefined}
           data-feed-grid-interaction-mode={feedInteractionMode}
           data-feed-grid-focus-mode={visualFocusActive ? "true" : undefined}
         >
@@ -1946,12 +1947,7 @@ export function Grid({
         />
       )}
     </ContextMenu>
-      <TopFadeScrim
-        profile={TOP_FADE_CANVAS}
-        scrolled={topFadeVisible}
-        surface="feed"
-        color="var(--background)"
-      />
+      <TopFadeScrim scrolled={topFade.scrolled} surface="feed" color="var(--background)" />
     </div>
   );
 }

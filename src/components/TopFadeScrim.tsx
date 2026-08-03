@@ -17,7 +17,7 @@
 // wrong shade sitting on the feed.
 
 import type { CSSProperties } from "react";
-import { topFadeAlpha, topFadeStopCount, type TopFadeProfile } from "@/lib/edgeFade";
+import { TOP_FADE_HEIGHT, TOP_FADE_MIN_ALPHA, topFadeAlpha, topFadeStopCount } from "@/lib/edgeFade";
 import { useThemeAppearance } from "@/hooks/useThemeAppearance";
 
 /// Build the band's background: the surface colour at full strength against the
@@ -48,8 +48,6 @@ export function createTopFadeScrimStyle(
 }
 
 interface TopFadeScrimProps {
-  /// Coverage profile for this surface.
-  profile: TopFadeProfile;
   /// Whether the surface below is scrolled.
   scrolled: boolean;
   /// Marks the band in the DOM for acceptance checks.
@@ -58,7 +56,7 @@ interface TopFadeScrimProps {
   color: string;
 }
 
-export function TopFadeScrim({ profile, scrolled, surface, color }: TopFadeScrimProps) {
+export function TopFadeScrim({ scrolled, surface, color }: TopFadeScrimProps) {
   const appearance = useThemeAppearance();
 
   return (
@@ -68,9 +66,9 @@ export function TopFadeScrim({ profile, scrolled, surface, color }: TopFadeScrim
       data-top-fade-visible={scrolled ? "true" : "false"}
       className="pointer-events-none absolute inset-x-0 top-0 z-10 transition-opacity duration-150"
       style={{
-        height: profile.maxHeight,
+        height: TOP_FADE_HEIGHT,
         opacity: scrolled ? 1 : 0,
-        ...createTopFadeScrimStyle(profile.maxHeight, profile.minAlpha[appearance], color),
+        ...createTopFadeScrimStyle(TOP_FADE_HEIGHT, TOP_FADE_MIN_ALPHA[appearance], color),
       }}
     />
   );

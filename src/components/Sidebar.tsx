@@ -47,7 +47,7 @@ import {
   sidebarRowDomId,
 } from "@/lib/sidebarSearch";
 import { cn } from "@/lib/utils";
-import { EDGE_FADE_WIDTH, TOP_FADE_LIST, createRightFadeMaskStyle } from "@/lib/edgeFade";
+import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
@@ -635,7 +635,10 @@ export function Sidebar({
       {/* Navigation. The wrapper exists so the fade band can be a sibling of
           the scrollport: inside the nav it would inherit its padding and settle
           below the real top edge. */}
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      {/* Matches the nav's frozen min-width: the band is sized by this wrapper,
+          and a narrower wrapper would leave the right edge of the rows
+          uncovered as the panel is resized down. */}
+      <div className="relative flex min-h-0 min-w-[var(--sidebar-min-width)] flex-1 flex-col">
       <nav
         ref={topFade.ref}
         className={cn(
@@ -761,12 +764,7 @@ export function Sidebar({
         />
 
       </nav>
-      <TopFadeScrim
-        profile={TOP_FADE_LIST}
-        scrolled={topFade.scrolled}
-        surface="sidebar"
-        color="var(--sidebar)"
-      />
+      <TopFadeScrim scrolled={topFade.scrolled} surface="sidebar" color="var(--sidebar)" />
       </div>
 
       {vaultPath

@@ -91,32 +91,24 @@ const MAX_TOP_FADE_STOPS = 24;
 /// Resolved color scheme.
 export type TopFadeAppearance = "light" | "dark";
 
-/// Geometry of the band that continues the chrome over the content.
-export interface TopFadeProfile {
-  /// Tallest the band ever gets, in CSS pixels. Measured from the reference
-  /// screenshots: content reaches full contrast about 41–43px below the edge.
-  maxHeight: number;
-  /// How much of the content still shows through at the very top of the band.
-  ///
-  /// Per theme, because the same coverage does not read the same way: a light
-  /// band over a dark photograph is far more visible than a dark band over the
-  /// same photograph. The light value matches the reference measurement — about
-  /// 38–40% of the content's contrast survives at the edge; the dark theme
-  /// covers harder, which is what it needs to register at all.
-  minAlpha: Record<TopFadeAppearance, number>;
-}
+/// Band height in CSS pixels, shared by every surface.
+///
+/// One value, not a per-surface profile: the band means the same thing
+/// everywhere — content has gone under the chrome — so it should read the same
+/// everywhere. It also has to stay inside the sidebar's 32px rows, and the
+/// height that satisfies the tightest surface satisfies the rest.
+export const TOP_FADE_HEIGHT = 24;
 
-/// Profile for large-format content: the feed and Detail.
-export const TOP_FADE_CANVAS: TopFadeProfile = {
-  maxHeight: 44,
-  minAlpha: { light: 0.4, dark: 0.08 },
-};
-
-/// Profile for dense lists: the sidebar and search results, whose rows are 32px.
-/// A canvas-height band would blanket an entire row.
-export const TOP_FADE_LIST: TopFadeProfile = {
-  maxHeight: 24,
-  minAlpha: { light: 0.4, dark: 0.08 },
+/// How much of the content still shows through at the very top of the band.
+///
+/// Per theme, because the same coverage does not read the same way: a light band
+/// over a dark photograph is far more visible than a dark band over the same
+/// photograph. The light value matches the reference measurement — about 38-40%
+/// of the content's contrast survives at the edge; the dark theme covers harder,
+/// which is what it needs to register at all.
+export const TOP_FADE_MIN_ALPHA: Record<TopFadeAppearance, number> = {
+  light: 0.4,
+  dark: 0.08,
 };
 
 /// How much of the content shows through at normalized band position `t`, where
@@ -142,12 +134,3 @@ export function topFadeStopCount(height: number): number {
 /// pixel is the smallest offset that can actually put content under the chrome.
 export const TOP_FADE_SCROLLED_THRESHOLD_PX = 1;
 
-/// Whether a surface is scrolled far enough to show the band.
-///
-/// A boolean, not a height. Deriving the band's height from the scroll offset
-/// meant a state change on every scrolled pixel — a re-render of the whole
-/// surface per frame, which made scrolling stutter. The band has a constant
-/// height and only its opacity crosses between two states.
-export function isTopFadeVisible(enabled: boolean, scrollTop: number): boolean {
-  return enabled && scrollTop >= TOP_FADE_SCROLLED_THRESHOLD_PX;
-}

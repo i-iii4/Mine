@@ -41,7 +41,6 @@ import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
 import { cn } from "@/lib/utils";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
-import { TOP_FADE_LIST } from "@/lib/edgeFade";
 import { TopFadeScrim } from "./TopFadeScrim";
 import type { LightBlock, TagCount } from "@/types";
 
@@ -534,7 +533,6 @@ export function SearchOverlay({
               : rows.map((entry, index) => renderResultRow(entry, index))}
           </div>
           <TopFadeScrim
-            profile={TOP_FADE_LIST}
             scrolled={resultsTopFade.scrolled}
             surface="search"
             color="var(--card)"

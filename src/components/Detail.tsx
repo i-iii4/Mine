@@ -83,7 +83,6 @@ import {
 import { safeMarkdownUrl } from "@/lib/markdownUrl";
 import { cn } from "@/lib/utils";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
-import { TOP_FADE_CANVAS } from "@/lib/edgeFade";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
@@ -451,12 +450,7 @@ export function Detail({
         )}
         data-detail-layout-mode={isStackedLayout ? "stacked" : "rail"}
       >
-        <TopFadeScrim
-          profile={TOP_FADE_CANVAS}
-          scrolled={topFade.scrolled}
-          surface="detail"
-          color="var(--background)"
-        />
+        <TopFadeScrim scrolled={topFade.scrolled} surface="detail" color="var(--background)" />
         {/* Layer 1: Scrollable content + invisible spacer */}
         <div
           ref={topFade.ref}
