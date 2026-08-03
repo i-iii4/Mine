@@ -84,7 +84,15 @@ const StandardActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>
         variant="default"
         onClick={onClick}
         data-selected={isSelected ? "true" : undefined}
-        className={cn("font-mono font-normal", isSelected && "bg-active")}
+        className={cn(
+          // Height matches the inner pill of the other presentation, so the two
+          // variants sit on the same baseline in the bar.
+          "h-5 font-mono font-normal",
+          // The hotkey is reference material at rest and only comes forward
+          // under the pointer.
+          "text-muted-foreground hover:text-foreground",
+          isSelected && "bg-active",
+        )}
       >
         {hotkey ?? children}
       </Button>
@@ -102,7 +110,7 @@ const StandardActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>
       >
         {button}
         {hotkey ? (
-          <span className="select-none whitespace-nowrap font-mono text-sm text-foreground">
+          <span className="select-none whitespace-nowrap font-mono text-sm text-muted-foreground">
             {children}
           </span>
         ) : null}

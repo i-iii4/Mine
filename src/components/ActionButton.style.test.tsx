@@ -42,6 +42,19 @@ describe("ActionButton presentation", () => {
     expect(onClick).toHaveBeenCalledTimes(2);
   });
 
+  it("matches the inner pill height and keeps the hotkey secondary at rest", () => {
+    applyActionButtonStyle("standard");
+    render(<ActionButton hotkey="⌘F">Search</ActionButton>);
+
+    const button = screen.getByRole("button");
+    // Same baseline as the pill presentation's inner fill.
+    expect(button.className).toContain("h-5");
+    // Reference material at rest, foreground only under the pointer.
+    expect(button.className).toContain("text-muted-foreground");
+    expect(button.className).toContain("hover:text-foreground");
+    expect(screen.getByText("Search").className).toContain("text-muted-foreground");
+  });
+
   it("collapses to a labelled button when there is no hotkey", () => {
     applyActionButtonStyle("standard");
     render(<ActionButton>Design</ActionButton>);
