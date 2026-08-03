@@ -4,6 +4,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
 import { applyDesign, getStoredDesignMode } from "@/lib/designMode";
 import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
+import {
+  applyActionButtonStyle,
+  getStoredActionButtonStyle,
+} from "@/lib/actionButtonStyle";
 import { App } from "./App";
 import { getVaultPath, reportNativeShellSmoke } from "@/lib/commands";
 import "./styles/global.css";
@@ -13,6 +17,7 @@ import "./styles/global.css";
 applyTheme(getStoredTheme());
 applyDesign(getStoredDesignMode());
 applyCardRadius(getStoredCardRadius());
+applyActionButtonStyle(getStoredActionButtonStyle());
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },

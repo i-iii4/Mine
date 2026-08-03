@@ -58,6 +58,11 @@ import {
   getStoredScrollEdgeFade,
 } from "@/lib/scrollEdgeFade";
 import {
+  ACTION_BUTTON_STYLE_STORAGE_KEY,
+  applyActionButtonStyle,
+  getStoredActionButtonStyle,
+} from "@/lib/actionButtonStyle";
+import {
   CARD_RADIUS_STORAGE_KEY,
   applyCardRadius,
   getStoredCardRadius,
@@ -1605,6 +1610,8 @@ export function AppWithVault({
         setScrollEdgeFade(getStoredScrollEdgeFade());
       } else if (key === CARD_RADIUS_STORAGE_KEY) {
         applyCardRadius(getStoredCardRadius());
+      } else if (key === ACTION_BUTTON_STYLE_STORAGE_KEY) {
+        applyActionButtonStyle(getStoredActionButtonStyle());
       }
     });
     return () => {

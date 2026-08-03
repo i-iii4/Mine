@@ -26,6 +26,12 @@ import {
   getStoredScrollEdgeFade,
 } from "@/lib/scrollEdgeFade";
 import {
+  ACTION_BUTTON_STYLE_STORAGE_KEY,
+  applyActionButtonStyle,
+  getStoredActionButtonStyle,
+  type ActionButtonStyle,
+} from "@/lib/actionButtonStyle";
+import {
   CARD_RADIUS_OPTIONS,
   CARD_RADIUS_STORAGE_KEY,
   applyCardRadius,
@@ -50,6 +56,11 @@ const CARD_RADIUS_CONTROL_OPTIONS = CARD_RADIUS_OPTIONS.map((value) => ({
   label: value === 0 ? "Square" : String(value),
 }));
 
+const ACTION_BUTTON_OPTIONS = [
+  { value: "pill", label: "Pill" },
+  { value: "standard", label: "Standard" },
+] as const;
+
 const DESIGN_OPTIONS = [
   { value: "default", label: "Default" },
   { value: "alt", label: "Alt" },
@@ -66,6 +77,9 @@ export function AppearanceSection() {
   );
   const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
   const [cardRadius, setCardRadius] = useState<CardRadius>(getStoredCardRadius);
+  const [actionButtonStyle, setActionButtonStyle] = useState<ActionButtonStyle>(
+    getStoredActionButtonStyle,
+  );
 
   const handleThemeChange = (mode: ThemeMode) => {
     setTheme(mode);
@@ -89,6 +103,12 @@ export function AppearanceSection() {
     setBottomActionBarHidden(checked);
     localStorage.setItem(BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY, checked ? "true" : "false");
     broadcastSettingsChange(BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY);
+  };
+
+  const handleActionButtonStyleChange = (value: ActionButtonStyle) => {
+    setActionButtonStyle(value);
+    applyActionButtonStyle(value);
+    broadcastSettingsChange(ACTION_BUTTON_STYLE_STORAGE_KEY);
   };
 
   const handleCardRadiusChange = (raw: string) => {
@@ -139,6 +159,19 @@ export function AppearanceSection() {
           aria-label="Compact Detail top menu"
           checked={compactDetailTopMenu}
           onCheckedChange={(checked) => handleCompactChange(checked === true)}
+        />
+      </SettingRow>
+
+      <SettingRow
+        label="Bottom bar buttons"
+        caption="Pill: hotkey and label in one frame. Standard: hotkey in a button, label beside it"
+      >
+        <SegmentedControl
+          aria-label="Bottom bar buttons"
+          size="default"
+          value={actionButtonStyle}
+          options={ACTION_BUTTON_OPTIONS}
+          onChange={handleActionButtonStyleChange}
         />
       </SettingRow>
 

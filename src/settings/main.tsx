@@ -4,6 +4,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
 import { applyDesign, getStoredDesignMode } from "@/lib/designMode";
 import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
+import {
+  applyActionButtonStyle,
+  getStoredActionButtonStyle,
+} from "@/lib/actionButtonStyle";
 import { SettingsApp } from "./SettingsApp";
 import "@/styles/global.css";
 
@@ -12,6 +16,7 @@ import "@/styles/global.css";
 applyTheme(getStoredTheme());
 applyDesign(getStoredDesignMode());
 applyCardRadius(getStoredCardRadius());
+applyActionButtonStyle(getStoredActionButtonStyle());
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
