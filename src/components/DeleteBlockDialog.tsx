@@ -35,6 +35,7 @@ export function DeleteBlockDialog({
   const unusedCount = plan?.unused_media.length ?? 0;
   const sharedCount = plan?.shared_media.length ?? 0;
   const hasUnusedMedia = unusedCount > 0;
+  const description = deleteDialogDescription(error, plan, unusedCount, sharedCount);
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -46,9 +47,15 @@ export function DeleteBlockDialog({
           <AlertDialogTitle>
             Delete element?
           </AlertDialogTitle>
-          <AlertDialogDescription>
-            {deleteDialogDescription(error, plan, unusedCount, sharedCount)}
-          </AlertDialogDescription>
+          {description ? (
+            <AlertDialogDescription>{description}</AlertDialogDescription>
+          ) : (
+            // Radix requires a description for the dialog to be announced; keep
+            // it for screen readers when there is nothing worth showing.
+            <AlertDialogDescription className="sr-only">
+              Delete this element.
+            </AlertDialogDescription>
+          )}
         </AlertDialogHeader>
         {plan && hasUnusedMedia ? (
           <DeleteMediaPreviewGrid
@@ -76,12 +83,18 @@ export function DeleteBlockDialog({
   );
 }
 
+/// Describes what happens to media, and only that.
+///
+/// A card with no media has nothing to explain: the old copy said the delete
+/// would remove "only the element", which answers a question nobody asked and
+/// invites another one — what else could it have removed? Returns null there so
+/// the dialog shows the title alone.
 function deleteDialogDescription(
   error: string | null,
   plan: DeleteBlockPlan | null,
   unusedCount: number,
   sharedCount: number,
-) {
+): string | null {
   if (error) return `Could not prepare delete plan: ${error}`;
   if (!plan) return "Checking media references before deleting.";
   if (unusedCount > 0 && sharedCount > 0) {
@@ -93,7 +106,7 @@ function deleteDialogDescription(
   if (sharedCount > 0) {
     return `${mediaCountLabel(sharedCount)} ${mediaCountVerb(sharedCount)} used by other cards and will stay in the vault. Only this card will be deleted.`;
   }
-  return "This will delete only the element.";
+  return null;
 }
 
 function mediaCountLabel(count: number) {

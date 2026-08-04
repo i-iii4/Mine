@@ -1802,7 +1802,7 @@ impl Drop for TempFileGuard {
 fn resolve_tweet_video_via_ytdlp(
     tweet_url: &str,
     cookies: &[TwitterCookie],
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<Vec<(String, Option<String>)>> {
     if cookies.is_empty() {
         anyhow::bail!("no browser cookies supplied");
     }
@@ -1842,7 +1842,11 @@ fn resolve_tweet_video_via_ytdlp(
         .arg(&jar_path)
         .arg("--no-warnings")
         .arg("--quiet")
-        .arg("--get-url")
+        // Ask for the poster alongside the URL. Without it the preview falls
+        // back to the page's og:image, which on a restricted post is X's own
+        // "see what's happening" promo card rather than anything from the video.
+        .arg("--print")
+        .arg("%(url)s\t%(thumbnail)s")
         .arg("-f")
         // Prefer a progressive mp4: the rest of the pipeline downloads a single
         // file by URL and cannot mux separate streams.
@@ -1856,15 +1860,24 @@ fn resolve_tweet_video_via_ytdlp(
         anyhow::bail!("yt-dlp failed: {}", err.trim());
     }
 
-    let urls: Vec<String> = String::from_utf8_lossy(&output.stdout)
+    let urls: Vec<(String, Option<String>)> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
         .filter(|line| line.starts_with("http"))
-        .map(str::to_string)
+        .map(|line| {
+            let mut parts = line.splitn(2, '\t');
+            let url = parts.next().unwrap_or_default().to_string();
+            let poster = parts
+                .next()
+                .map(str::trim)
+                .filter(|value| value.starts_with("http"))
+                .map(str::to_string);
+            (url, poster)
+        })
         .collect();
 
     if urls.is_empty() {
-        anyhow::bail!("yt-dlp returned no media url");
+        anyhow::bail!("no progressive mp4 available for this post");
     }
     Ok(urls)
 }
@@ -1925,11 +1938,11 @@ fn handle_resolve_twitter_media(params: serde_json::Value) {
                 Ok(urls) => {
                     host_log(&format!("resolve_twitter_media: yt-dlp resolved {} url(s)", urls.len()));
                     let mut media = previews.unwrap_or_default();
-                    for src in urls {
+                    for (src, poster) in urls {
                         media.push(TwitterMediaPreview {
                             kind: "video".to_string(),
                             src,
-                            poster: None,
+                            poster,
                             media_type: "video".to_string(),
                         });
                     }
