@@ -603,8 +603,11 @@
     // tombstone for age-restricted posts, and the DOM only carries a `blob:`
     // URL. Flag it so the save path can ask the authenticated route.
     const hasPlayerInPage = !!targetArticle?.querySelector("video");
+    // A preview entry with no `src` is exactly the case this path exists for:
+    // the player runs off a blob: URL, so the entry carries a poster and
+    // nothing fetchable. Counting entries would treat that as resolved.
     const hasResolvedVideo =
-      embeddedVideos.length > 0
+      embeddedVideos.some((video) => !!video.src)
       || apiMediaDetails.some((media) => media.kind === "video");
     const needsAuthenticatedVideo = hasPlayerInPage && !hasResolvedVideo;
 
