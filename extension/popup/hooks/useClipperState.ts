@@ -798,25 +798,6 @@ export function useClipperState() {
         payload.author = resolved.byline;
       }
 
-      // Age-restricted tweets: the content script saw a player but could not
-      // resolve it. Only the background script has the session cookies, so ask
-      // it before saving — otherwise the note lands with text and no video.
-      const article = articleDataRef.current;
-      if (article?.needsAuthenticatedVideo) {
-        const resolvedVideo = await chrome.runtime.sendMessage({
-          target: "background",
-          action: "resolveAuthenticatedTweetVideo",
-          payload: { tweetUrl: article.tweetUrl, tweetId: article.tweetId },
-        });
-        const videoUrl = resolvedVideo?.ok
-          ? resolvedVideo.media?.find(
-              (item: { kind?: string; src?: string }) => item.kind === "video" && item.src,
-            )?.src
-          : null;
-        if (videoUrl) {
-          payload.body = `${payload.body}\n\n![](${videoUrl})`;
-        }
-      }
     } else if (currentType === "link") {
       payload.body = buildLinkBody(title);
     }
@@ -1093,10 +1074,31 @@ async function hydrateTwitterVideoPreviews(
 ): Promise<ArticleData> {
   if (!isTwitterStatusUrl(metadata.url)) return article;
 
-  const response = await sendToNative({
+  let response = await sendToNative({
     action: "resolve_twitter_media",
     url: metadata.url,
   }) as ResolveTwitterMediaResponse;
+
+  // Age-restricted posts: the public API answers with a tombstone and the page
+  // keeps the video behind a blob: URL, so the content script flagged it. Only
+  // the background script can read the session cookies, so the retry goes
+  // through it. Done here rather than at save time so the preview shows the
+  // real video too, and both paths stay on one source.
+  const publicHasVideo =
+    response.ok
+    && Array.isArray(response.media)
+    && response.media.some((media) => media.kind === "video" && media.src);
+  if (!publicHasVideo && article.needsAuthenticatedVideo) {
+    const authenticated = await chrome.runtime.sendMessage({
+      target: "background",
+      action: "resolveAuthenticatedTweetVideo",
+      payload: { tweetUrl: article.tweetUrl ?? metadata.url, tweetId: article.tweetId },
+    }) as ResolveTwitterMediaResponse | undefined;
+    if (authenticated?.ok && Array.isArray(authenticated.media)) {
+      response = authenticated;
+    }
+  }
+
   if (!response.ok || !Array.isArray(response.media)) return article;
 
   const currentTime = firstEmbeddedVideoCurrentTime(article);
