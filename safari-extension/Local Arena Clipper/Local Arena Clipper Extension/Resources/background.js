@@ -524,6 +524,39 @@ async function uploadFileToNativeHost({ port, token, filename, screenshotId, vau
   }
 }
 
+
+// ── Authenticated tweet video ─────────────────────────────────────────────
+//
+// Age-restricted posts are invisible to the public syndication API — it returns
+// a tombstone to anonymous callers — and their video sits behind a `blob:` URL
+// in the page, so neither the API nor DOM scraping can reach it. The one thing
+// that can is the session already logged in here.
+//
+// Cookies are read only for x.com, only when a tweet turned out to have video
+// the other paths could not resolve, and are handed straight to the native host
+// for a single yt-dlp call. They are never stored.
+async function resolveAuthenticatedTweetVideo({ tweetUrl, tweetId }) {
+  if (!tweetUrl && !tweetId) return { ok: false, error: "tweet reference missing" };
+
+  const jar = [];
+  for (const domain of ["x.com", "twitter.com"]) {
+    try {
+      const cookies = await chrome.cookies.getAll({ domain });
+      for (const cookie of cookies) jar.push({ name: cookie.name, value: cookie.value });
+    } catch (err) {
+      console.warn("[Mine] could not read cookies for", domain, err);
+    }
+  }
+  if (jar.length === 0) return { ok: false, error: "no session cookies for x.com" };
+
+  return sendNativeMessage({
+    action: "resolve_twitter_media",
+    url: tweetUrl ?? null,
+    tweet_id: tweetId ?? null,
+    cookies: jar,
+  });
+}
+
 // ── Message handler (from popup) ──────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -538,6 +571,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       sendResponse(response);
     });
+    return true; // async response
+  }
+
+  if (msg.action === "resolveAuthenticatedTweetVideo") {
+    resolveAuthenticatedTweetVideo(msg.payload ?? {}).then(sendResponse);
     return true; // async response
   }
 

@@ -105,6 +105,13 @@ export interface ArticleData {
   byline: string | null;
   excerpt: string;
   embeddedVideos?: EmbeddedVideoPreview[];
+  /// The page shows a player, but no path available to the content script could
+  /// resolve a URL for it — an age-restricted post, where the public API
+  /// answers with a tombstone and the DOM only holds a `blob:` URL. The save
+  /// path asks the background script, which has the session cookies.
+  needsAuthenticatedVideo?: boolean;
+  tweetUrl?: string;
+  tweetId?: string;
 }
 
 export interface EmbeddedVideoPreview {

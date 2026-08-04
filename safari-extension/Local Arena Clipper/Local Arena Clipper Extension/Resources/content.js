@@ -598,12 +598,25 @@
       }
     }
 
+    // A player in the page with nothing resolvable behind it means the tweet
+    // has video the anonymous paths cannot see: the API answers with a
+    // tombstone for age-restricted posts, and the DOM only carries a `blob:`
+    // URL. Flag it so the save path can ask the authenticated route.
+    const hasPlayerInPage = !!targetArticle?.querySelector("video");
+    const hasResolvedVideo =
+      embeddedVideos.length > 0
+      || apiMediaDetails.some((media) => media.kind === "video");
+    const needsAuthenticatedVideo = hasPlayerInPage && !hasResolvedVideo;
+
     return {
       title: tweetTitle,
       content: parts.join("\n\n"),
       byline: `@${authorHandle}`,
       excerpt: firstText.slice(0, 200),
       embeddedVideos,
+      needsAuthenticatedVideo,
+      tweetUrl: needsAuthenticatedVideo ? window.location.href : undefined,
+      tweetId: needsAuthenticatedVideo ? tweetId : undefined,
     };
   }
 

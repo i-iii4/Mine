@@ -797,6 +797,26 @@ export function useClipperState() {
       if (resolved.source === "article" && resolved.byline) {
         payload.author = resolved.byline;
       }
+
+      // Age-restricted tweets: the content script saw a player but could not
+      // resolve it. Only the background script has the session cookies, so ask
+      // it before saving — otherwise the note lands with text and no video.
+      const article = articleDataRef.current;
+      if (article?.needsAuthenticatedVideo) {
+        const resolvedVideo = await chrome.runtime.sendMessage({
+          target: "background",
+          action: "resolveAuthenticatedTweetVideo",
+          payload: { tweetUrl: article.tweetUrl, tweetId: article.tweetId },
+        });
+        const videoUrl = resolvedVideo?.ok
+          ? resolvedVideo.media?.find(
+              (item: { kind?: string; src?: string }) => item.kind === "video" && item.src,
+            )?.src
+          : null;
+        if (videoUrl) {
+          payload.body = `${payload.body}\n\n![](${videoUrl})`;
+        }
+      }
     } else if (currentType === "link") {
       payload.body = buildLinkBody(title);
     }

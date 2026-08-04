@@ -9,10 +9,13 @@
     "nativeMessaging",
     "storage",
     "scripting",
-    "tabs"
+    "tabs",
+    "cookies"
   ],
   "host_permissions": [
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "https://x.com/*",
+    "https://twitter.com/*"
   ],
   "action": {
     "default_title": "Mine Clipper",
@@ -29,7 +32,11 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*", "file:///*"],
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
       "js": [
         "lib/twitterThreadSelection.js",
         "lib/twitterTweetContent.js",
@@ -40,8 +47,12 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://www.instagram.com/*"],
-      "js": ["dist/overlay.js"],
+      "matches": [
+        "https://www.instagram.com/*"
+      ],
+      "js": [
+        "dist/overlay.js"
+      ],
       "run_at": "document_idle"
     }
   ],
@@ -69,7 +80,10 @@
         "dist/fonts/Geist-Variable.woff2",
         "dist/fonts/GeistMono-Variable.woff2"
       ],
-      "matches": ["http://*/*", "https://*/*"]
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ]
     }
   ]
 }

@@ -115,6 +115,18 @@ struct CreateChannelParams {
 struct ResolveTwitterMediaParams {
     url: Option<String>,
     tweet_id: Option<String>,
+    /// Cookies from the browser that is showing the tweet, as `name=value`
+    /// pairs. Present only when the page-side extraction found a video the
+    /// public API refuses to describe — age-restricted posts return a tombstone
+    /// to anonymous callers, and their video lives behind a `blob:` URL in the
+    /// DOM, so neither existing path can reach it.
+    cookies: Option<Vec<TwitterCookie>>,
+}
+
+#[derive(serde::Deserialize, Clone)]
+struct TwitterCookie {
+    name: String,
+    value: String,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -1739,6 +1751,90 @@ fn fetch_tweet_media_previews(tweet_id: &str) -> anyhow::Result<Vec<TwitterMedia
     Ok(media_previews)
 }
 
+/// Removes its path on drop, so a live session never outlives the call — including
+/// on the error paths below.
+struct TempFileGuard(std::path::PathBuf);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Resolve a tweet's video through `yt-dlp`, using the caller's browser session.
+///
+/// The public syndication API returns a tombstone for age-restricted posts, and
+/// the page keeps such videos behind a `blob:` URL, so neither of the existing
+/// paths can reach them. `yt-dlp` can, given the cookies of a session that is
+/// allowed to see the post.
+///
+/// The work is deliberately delegated rather than reimplemented: X's video
+/// delivery is a private, undocumented interface that changes on their
+/// schedule. `yt-dlp` tracks those changes as its whole purpose, so a break is
+/// fixed by updating it instead of by editing Mine.
+fn resolve_tweet_video_via_ytdlp(
+    tweet_url: &str,
+    cookies: &[TwitterCookie],
+) -> anyhow::Result<Vec<String>> {
+    if cookies.is_empty() {
+        anyhow::bail!("no browser cookies supplied");
+    }
+
+    // Netscape cookie jar — the only format yt-dlp accepts from a file.
+    let mut jar = String::from("# Netscape HTTP Cookie File\n");
+    for cookie in cookies {
+        if cookie.name.contains(['\t', '\n']) || cookie.value.contains(['\t', '\n']) {
+            continue;
+        }
+        jar.push_str(&format!(
+            ".x.com\tTRUE\t/\tTRUE\t0\t{}\t{}\n",
+            cookie.name, cookie.value
+        ));
+    }
+
+    // The jar carries a live session, so it is written with owner-only
+    // permissions and removed as soon as yt-dlp returns, whatever the outcome.
+    let jar_path = std::env::temp_dir().join(format!("mine-x-{}.txt", generate_token()));
+    std::fs::write(&jar_path, jar)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&jar_path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    let _jar_guard = TempFileGuard(jar_path.clone());
+
+    let output = std::process::Command::new("yt-dlp")
+        .arg("--cookies")
+        .arg(&jar_path)
+        .arg("--no-warnings")
+        .arg("--quiet")
+        .arg("--get-url")
+        .arg("-f")
+        // Prefer a progressive mp4: the rest of the pipeline downloads a single
+        // file by URL and cannot mux separate streams.
+        .arg("best[ext=mp4][protocol^=http]/best[ext=mp4]/best")
+        .arg(tweet_url)
+        .output()
+        .map_err(|e| anyhow::anyhow!("yt-dlp is not available: {e}"))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("yt-dlp failed: {}", err.trim());
+    }
+
+    let urls: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("http"))
+        .map(str::to_string)
+        .collect();
+
+    if urls.is_empty() {
+        anyhow::bail!("yt-dlp returned no media url");
+    }
+    Ok(urls)
+}
+
 fn handle_resolve_twitter_media(params: serde_json::Value) {
     let p: ResolveTwitterMediaParams = match serde_json::from_value(params) {
         Ok(p) => p,
@@ -1754,7 +1850,41 @@ fn handle_resolve_twitter_media(params: serde_json::Value) {
         return send_error("Twitter status id is required");
     };
 
-    match fetch_tweet_media_previews(&tweet_id) {
+    let previews = fetch_tweet_media_previews(&tweet_id);
+    let has_video = previews
+        .as_ref()
+        .map(|media| media.iter().any(|m| m.kind == "video"))
+        .unwrap_or(false);
+
+    // The public API covers everything it is allowed to see. Only when it comes
+    // back without video do we spend a subprocess on the authenticated path.
+    if !has_video {
+        if let Some(cookies) = p.cookies.as_ref().filter(|c| !c.is_empty()) {
+            let tweet_url = p
+                .url
+                .clone()
+                .unwrap_or_else(|| format!("https://x.com/i/status/{tweet_id}"));
+            match resolve_tweet_video_via_ytdlp(&tweet_url, cookies) {
+                Ok(urls) => {
+                    let mut media = previews.unwrap_or_default();
+                    for src in urls {
+                        media.push(TwitterMediaPreview {
+                            kind: "video".to_string(),
+                            src,
+                            poster: None,
+                            media_type: "video".to_string(),
+                        });
+                    }
+                    return send_response(&ResolveTwitterMediaResponse { ok: true, media });
+                }
+                Err(e) => {
+                    return send_error(&format!("failed to resolve Twitter video: {e}"));
+                }
+            }
+        }
+    }
+
+    match previews {
         Ok(media) => send_response(&ResolveTwitterMediaResponse { ok: true, media }),
         Err(e) => send_error(&format!("failed to resolve Twitter media: {e}")),
     }
@@ -2372,6 +2502,42 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn ytdlp_video_resolution_requires_browser_cookies() {
+        // Without a session there is nothing yt-dlp could do that the public
+        // API has not already tried, so the call is refused before spawning a
+        // process.
+        let err = resolve_tweet_video_via_ytdlp("https://x.com/i/status/1", &[])
+            .expect_err("empty cookie jar must be refused");
+        assert!(err.to_string().contains("no browser cookies"));
+    }
+
+    #[test]
+    fn ytdlp_cookie_jar_never_outlives_the_call() {
+        // The jar holds a live session. Whatever happens to the subprocess, the
+        // file must be gone when the call returns.
+        let before: Vec<_> = std::fs::read_dir(std::env::temp_dir())
+            .expect("temp dir readable")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("mine-x-"))
+            .collect();
+
+        let cookies = vec![TwitterCookie {
+            name: "auth_token".to_string(),
+            value: "test".to_string(),
+        }];
+        // Resolution itself is expected to fail here — there is no such tweet
+        // and yt-dlp may be absent; the guarantee under test is the cleanup.
+        let _ = resolve_tweet_video_via_ytdlp("https://x.com/i/status/1", &cookies);
+
+        let after: Vec<_> = std::fs::read_dir(std::env::temp_dir())
+            .expect("temp dir readable")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("mine-x-"))
+            .collect();
+        assert_eq!(before.len(), after.len(), "cookie jar left behind");
+    }
+
     fn existing_vault_stems_includes_disk_only_markdown_and_media() {
         let tmp = TempDir::new().unwrap();
         let vault = VaultLayout::new(tmp.path().to_path_buf());
