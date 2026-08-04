@@ -1650,6 +1650,23 @@ Specification: [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md).
 | 31.6 | Preference | [x] | `mine.scrollEdgeFade` (off by default), Appearance row, `settings-changed` branch, prop through `RouteContext` |
 | 31.7 | Tests | [x] | Curve, stop density, gradient shape, theme gate, hook lifecycle, feed/search/sidebar integration |
 
+### Phase 32 — Video from restricted X posts
+
+Goal: save video from age-restricted posts, which both existing extraction paths
+are structurally unable to reach.
+
+Specification: [SPEC_CLIPPER.md](SPEC_CLIPPER.md), decision 031 in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
+| # | Slice | Status | Scope |
+|---|---|---|---|
+| 32.1 | Detection | [x] | Content script flags a post whose player it sees but cannot resolve; the check tests for a usable `src`, not for the presence of preview entries — a `blob:` source leaves an entry carrying only a poster |
+| 32.2 | Cookies | [x] | `cookies` permission plus X host permissions; background reads cookies for X domains only, only for flagged posts, and never stores them |
+| 32.3 | Host resolution | [x] | `yt-dlp` located by install prefix (the browser hands the host a minimal `PATH`), progressive https mp4 only, poster requested in the same call, cookie jar written `0600` and removed on every exit path |
+| 32.4 | Body write-through | [x] | Resolved links appended to the note body — the host downloads media by reading markdown embeds, so preview-only video is dropped at save |
+| 32.5 | Host log | [x] | `~/Library/Logs/com.mine.app/native-host.log`; the host speaks over stdin/stdout, so printing there corrupts the protocol and stderr is lost |
+| 32.6 | Tests | [x] | Flag decision table, cookie-jar refusal and cleanup, binary lookup under a stripped `PATH` |
+
 ### Backlog
 
 | Task | Description |

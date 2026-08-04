@@ -1521,6 +1521,35 @@ so surfaces mounted later by a Radix `Dialog` are observed too. Full contract:
 [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md).
 
 
+### 031: Restricted-post video is delegated to yt-dlp, not reimplemented
+
+| Approach | Problem |
+|---|---|
+| Keep using the public syndication API | Returns a `TweetTombstone` to anonymous callers for age-restricted posts — no text, no media, nothing to work with |
+| Scrape the player from the page | X serves those videos as a stream; the DOM holds a `blob:` URL valid only inside the tab, which cannot be re-fetched |
+| Call X's internal GraphQL API ourselves | Requires reproducing bearer tokens, CSRF headers and an operation id that X rotates regularly — the fragile part is ours to maintain |
+| Patch `fetch` on the page and capture responses | Works without tokens, but means monkey-patching a third-party page: it assumes the transport, races the first request, and conflicts with other extensions |
+| **Hand the post URL and the browser's cookies to `yt-dlp`** (chosen) | An external dependency and a subprocess per restricted post, but the part that breaks is not ours |
+
+Rationale: X's video delivery is a private, undocumented interface that changes
+on their schedule. Every approach above except the last puts the burden of
+tracking those changes on Mine. Tracking them is what `yt-dlp` exists for, so a
+break there is fixed by updating a package rather than by editing this codebase.
+
+Authentication is not reproduced: the browser extension already runs inside the
+user's session, reads cookies for X domains through its own API, and passes them
+to the native host for a single call. That also removes any dependency on which
+browser the user runs — `yt-dlp` can read profiles for a fixed list of browsers,
+and the extension covers everything outside it.
+
+Two details that cost a debugging round each. The host is launched by the
+browser, so it inherits a minimal `PATH` and must locate the binary by install
+prefix. And resolved links have to be written into the note body, not only into
+the preview list: the host downloads media by reading markdown embeds, so a
+video present only in the preview is shown and then dropped on save. Full
+contract: [SPEC_CLIPPER.md](SPEC_CLIPPER.md).
+
+
 ## Dependencies
 
 | Package | Version | Purpose | License |
