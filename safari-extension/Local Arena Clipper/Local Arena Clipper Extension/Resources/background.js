@@ -547,6 +547,7 @@ async function resolveAuthenticatedTweetVideo({ tweetUrl, tweetId }) {
       console.warn("[Mine] could not read cookies for", domain, err);
     }
   }
+  console.log("[Mine] authenticated video: cookies", jar.length, "for", tweetUrl ?? tweetId);
   if (jar.length === 0) return { ok: false, error: "no session cookies for x.com" };
 
   return sendNativeMessage({

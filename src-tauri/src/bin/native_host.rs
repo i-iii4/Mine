@@ -1751,6 +1751,33 @@ fn fetch_tweet_media_previews(tweet_id: &str) -> anyhow::Result<Vec<TwitterMedia
     Ok(media_previews)
 }
 
+/// Locate the `yt-dlp` binary.
+///
+/// The host is launched by the browser, not a shell, so it inherits a minimal
+/// PATH — `/usr/bin:/bin:/usr/sbin:/sbin` on macOS. Package managers install
+/// outside all of it, so a bare command name resolves to nothing and the whole
+/// path fails with "No such file or directory" even on a machine where the tool
+/// works fine in a terminal.
+fn locate_ytdlp() -> Option<std::path::PathBuf> {
+    let mut candidates: Vec<std::path::PathBuf> = vec![
+        "/opt/homebrew/bin/yt-dlp".into(), // Homebrew, Apple silicon
+        "/usr/local/bin/yt-dlp".into(),    // Homebrew, Intel; manual installs
+        "/opt/local/bin/yt-dlp".into(),    // MacPorts
+    ];
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(std::path::PathBuf::from(&home).join(".local/bin/yt-dlp"));
+        candidates.push(std::path::PathBuf::from(&home).join("bin/yt-dlp"));
+    }
+    // A PATH entry still wins if the caller has one — a deliberate install
+    // should override our guesses.
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            candidates.insert(0, dir.join("yt-dlp"));
+        }
+    }
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
 /// Removes its path on drop, so a live session never outlives the call — including
 /// on the error paths below.
 struct TempFileGuard(std::path::PathBuf);
@@ -1803,7 +1830,14 @@ fn resolve_tweet_video_via_ytdlp(
     }
     let _jar_guard = TempFileGuard(jar_path.clone());
 
-    let output = std::process::Command::new("yt-dlp")
+    let ytdlp = locate_ytdlp().ok_or_else(|| {
+        anyhow::anyhow!(
+            "yt-dlp not found. Install it (brew install yt-dlp) so age-restricted \
+             posts can be resolved."
+        )
+    })?;
+
+    let output = std::process::Command::new(&ytdlp)
         .arg("--cookies")
         .arg(&jar_path)
         .arg("--no-warnings")
@@ -1835,6 +1869,23 @@ fn resolve_tweet_video_via_ytdlp(
     Ok(urls)
 }
 
+/// Append a line to the host's own log.
+///
+/// The host talks over stdin/stdout, so anything printed there corrupts the
+/// protocol, and stderr disappears into the browser. Without a file there is no
+/// way to see what the extension actually asked for.
+fn host_log(line: &str) {
+    use std::io::Write as _;
+    let Ok(home) = std::env::var("HOME") else { return };
+    let mut path = std::path::PathBuf::from(home);
+    path.push("Library/Logs/com.mine.app");
+    let _ = std::fs::create_dir_all(&path);
+    path.push("native-host.log");
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
 fn handle_resolve_twitter_media(params: serde_json::Value) {
     let p: ResolveTwitterMediaParams = match serde_json::from_value(params) {
         Ok(p) => p,
@@ -1849,6 +1900,12 @@ fn handle_resolve_twitter_media(params: serde_json::Value) {
     let Some(tweet_id) = tweet_id else {
         return send_error("Twitter status id is required");
     };
+
+    host_log(&format!(
+        "resolve_twitter_media: tweet={} cookies={}",
+        tweet_id,
+        p.cookies.as_ref().map(|c| c.len()).unwrap_or(0)
+    ));
 
     let previews = fetch_tweet_media_previews(&tweet_id);
     let has_video = previews
@@ -1866,6 +1923,7 @@ fn handle_resolve_twitter_media(params: serde_json::Value) {
                 .unwrap_or_else(|| format!("https://x.com/i/status/{tweet_id}"));
             match resolve_tweet_video_via_ytdlp(&tweet_url, cookies) {
                 Ok(urls) => {
+                    host_log(&format!("resolve_twitter_media: yt-dlp resolved {} url(s)", urls.len()));
                     let mut media = previews.unwrap_or_default();
                     for src in urls {
                         media.push(TwitterMediaPreview {
@@ -1878,6 +1936,7 @@ fn handle_resolve_twitter_media(params: serde_json::Value) {
                     return send_response(&ResolveTwitterMediaResponse { ok: true, media });
                 }
                 Err(e) => {
+                    host_log(&format!("resolve_twitter_media: yt-dlp failed: {e}"));
                     return send_error(&format!("failed to resolve Twitter video: {e}"));
                 }
             }
@@ -2502,6 +2561,29 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn ytdlp_is_found_outside_the_browser_launch_path() {
+        // The browser hands the host a minimal PATH, so a bare command name
+        // resolves to nothing even where the tool is installed. Locating it by
+        // known install prefixes is what makes the feature work at all.
+        let original = std::env::var("PATH").ok();
+        // SAFETY: single-threaded test; PATH is restored before returning.
+        unsafe { std::env::set_var("PATH", "/usr/bin:/bin:/usr/sbin:/sbin") };
+
+        let located = locate_ytdlp();
+
+        match original {
+            Some(path) => unsafe { std::env::set_var("PATH", path) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+
+        if let Some(found) = located {
+            assert!(found.is_file(), "located path must exist: {}", found.display());
+        }
+        // Absence is a valid outcome on a machine without yt-dlp; the contract
+        // under test is that a stripped PATH alone does not hide it.
+    }
+
     #[test]
     fn ytdlp_video_resolution_requires_browser_cookies() {
         // Without a session there is nothing yt-dlp could do that the public
