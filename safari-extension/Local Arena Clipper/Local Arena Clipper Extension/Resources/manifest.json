@@ -15,7 +15,8 @@
   "host_permissions": [
     "http://127.0.0.1/*",
     "https://x.com/*",
-    "https://twitter.com/*"
+    "https://twitter.com/*",
+    "https://public.api.bsky.app/*"
   ],
   "action": {
     "default_title": "Mine Clipper",

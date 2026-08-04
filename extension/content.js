@@ -389,6 +389,7 @@
     // Twitter threads — always save as article
     if (isTwitterUrl(meta.url)) return "article";
     // Instagram posts — always save as article
+    if (isBlueskyPostUrl(meta.url)) return "article";
     if (isInstagramPostUrl(meta.url)) return "article";
     // Article pages
     if (isArticlePage(meta)) return "article";
@@ -634,6 +635,84 @@
       fallbackTitle: getMeta("og:title") || getMeta("twitter:title") || document.title || "",
       fallbackByline,
     });
+  }
+
+
+  // ── Bluesky post extraction ────────────────────────────────────────────
+
+  function isBlueskyPostUrl(url) {
+    return /(?:^|\/\/)(?:[\w.-]*\.)?bsky\.app\/profile\/[^/]+\/post\/[\w]+/i.test(url ?? "");
+  }
+
+  /// Extract a Bluesky post through the public AT Protocol API.
+  ///
+  /// Unlike the other social sources here, this needs no session and no
+  /// scraping: `public.api.bsky.app` is a documented, unauthenticated interface
+  /// that returns the post record with direct CDN links to its media. That also
+  /// makes it stable — there is no private endpoint to break.
+  async function extractBlueskyPost() {
+    const match = window.location.href.match(
+      /bsky\.app\/profile\/([^/]+)\/post\/([\w]+)/i,
+    );
+    if (!match) return null;
+    const [, handleOrDid, rkey] = match;
+
+    try {
+      // A handle in the URL has to be resolved; a DID is already one.
+      let did = handleOrDid;
+      if (!did.startsWith("did:")) {
+        const resolved = await fetch(
+          `https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handleOrDid)}`,
+        );
+        if (!resolved.ok) return null;
+        did = (await resolved.json())?.did;
+        if (!did) return null;
+      }
+
+      const uri = `at://${did}/app.bsky.feed.post/${rkey}`;
+      const resp = await fetch(
+        `https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=0&parentHeight=0`,
+      );
+      if (!resp.ok) return null;
+
+      const post = (await resp.json())?.thread?.post;
+      if (!post) return null;
+
+      const text = (post.record?.text || "").trim();
+      const handle = post.author?.handle || handleOrDid;
+
+      const mediaEntries = [];
+      // Media sits under one of a few embed shapes; a quoted post carries its
+      // own media alongside the quote, so both are unwrapped.
+      const embeds = [post.embed, post.embed?.media].filter(Boolean);
+      for (const embed of embeds) {
+        for (const image of embed.images || []) {
+          if (image.fullsize) mediaEntries.push({ kind: "image", url: image.fullsize });
+        }
+        if (embed.playlist || embed.thumbnail) {
+          // Video is served as an HLS playlist, which cannot be saved as a file
+          // or previewed; the poster is a plain image and is worth keeping.
+          if (embed.thumbnail) {
+            mediaEntries.push({ kind: "image", url: embed.thumbnail });
+          }
+        }
+      }
+
+      const parts = [];
+      if (text) parts.push(text);
+      for (const entry of mediaEntries) parts.push(`![](${entry.url})`);
+      if (parts.length === 0) return null;
+
+      return {
+        title: text.replace(/\n/g, " ").trim().slice(0, 80) || `@${handle}`,
+        content: parts.join("\n\n"),
+        byline: `@${handle}`,
+        excerpt: text.slice(0, 200),
+        embeddedVideos: [],
+      };
+    } catch {
+      return null;
+    }
   }
 
   // ── Instagram post extraction ──────────────────────────────────────────
@@ -998,6 +1077,12 @@
         return longform.article;
       }
       return (await extractTwitterThread()) ||
+        { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
+    }
+
+    // Bluesky: public AT Protocol API — no session, no scraping.
+    if (isBlueskyPostUrl(window.location.href)) {
+      return (await extractBlueskyPost()) ||
         { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
 
