@@ -1120,8 +1120,26 @@ async function hydrateTwitterVideoPreviews(
   );
 
   if (videos.length === 0) return article;
+
+  // Previews alone are not enough: the native host downloads media by reading
+  // `![](url)` out of the body. For ordinary tweets those links come from the
+  // public API, which builds the body itself — but an age-restricted post never
+  // reaches that branch, so its body arrives as bare text and the video would
+  // be previewed and then dropped.
+  let content = article.content;
+  if (article.needsAuthenticatedVideo) {
+    const missing = videos
+      .map((video) => video.src)
+      .filter((src): src is string => !!src && !content.includes(src));
+    if (missing.length > 0) {
+      const embeds = missing.map((src) => `![](${src})`).join("\n\n");
+      content = content ? `${content}\n\n${embeds}` : embeds;
+    }
+  }
+
   return {
     ...article,
+    content,
     embeddedVideos: videos,
   };
 }
