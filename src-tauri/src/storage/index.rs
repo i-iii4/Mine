@@ -736,12 +736,17 @@ fn serialize_feed_preview_manifest(
                     .into_iter()
                     .next()
                 {
+                    // Carry the tile's dimensions up, exactly as the image arm
+                    // above does: the feed derives a card's aspect ratio from
+                    // the manifest, and a manifest without dimensions makes it
+                    // fall back to 16/9 — cropping portrait video to landscape.
+                    let tile = media_tile(&video_src, &dims, true, true);
                     FeedPreviewManifest {
                         kind: FeedPreviewKind::VideoPoster,
                         primary_preview_path: Some(primary_preview_path(&block.slug)),
-                        width: None,
-                        height: None,
-                        tiles: vec![media_tile(&video_src, &dims, true, true)],
+                        width: tile.width,
+                        height: tile.height,
+                        tiles: vec![tile],
                         overflow_count: 0,
                     }
                 } else {
@@ -2995,6 +3000,59 @@ mod tests {
         );
         assert_eq!(manifest.tiles.len(), 3);
         assert_eq!(manifest.overflow_count, 0);
+    }
+
+    #[test]
+    fn article_video_manifest_carries_the_clip_dimensions() {
+        // Without these the feed has nothing to derive an aspect ratio from and
+        // falls back to 16/9, cropping a portrait clip to landscape while the
+        // image next to it keeps its own proportions.
+        let block = make_block_full(
+            "portrait-clip",
+            "article",
+            Some("Portrait clip"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "text\n\n![[clip.mp4]]",
+        );
+        let manifest: FeedPreviewManifest = serde_json::from_str(
+            &serialize_feed_preview_manifest(
+                &block,
+                None,
+                None,
+                Some(r#"{"clip.mp4":[588,720]}"#),
+                Some(r#"["clip.mp4"]"#),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(manifest.kind, FeedPreviewKind::VideoPoster);
+        assert_eq!((manifest.width, manifest.height), (Some(588), Some(720)));
+        assert_eq!(
+            (manifest.tiles[0].width, manifest.tiles[0].height),
+            (Some(588), Some(720))
+        );
+    }
+
+    #[test]
+    fn article_video_manifest_without_dimensions_stays_empty() {
+        let block = make_block_full(
+            "unmeasured-clip",
+            "article",
+            Some("Unmeasured clip"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "text\n\n![[clip.mp4]]",
+        );
+        let manifest: FeedPreviewManifest = serde_json::from_str(
+            &serialize_feed_preview_manifest(&block, None, None, None, Some(r#"["clip.mp4"]"#))
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(manifest.kind, FeedPreviewKind::VideoPoster);
+        assert_eq!((manifest.width, manifest.height), (None, None));
     }
 
     #[test]

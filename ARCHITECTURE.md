@@ -545,6 +545,10 @@ iOS UI contract:
   SQLite busy handler сам по себе не защищает одновременный cold-open от гонки
   на `PRAGMA journal_mode = WAL`. `BEGIN IMMEDIATE` остаётся межпроцессной
   границей, а процессный lock не позволяет соединениям Mine столкнуться до неё.
+  Миграция может не только менять схему, но и сбрасывать производные значения,
+  которые прежняя версия записала неверно: `v3` обнуляет `preview_manifest` у
+  видео-блоков без размеров, чтобы обычный backfill пересобрал их из индекса.
+  Это дешевле полной переиндексации и не трогает уже корректные записи.
 - Backend request/response DTO и все command errors выводятся из Rust/Specta.
   `src-tauri/src/bin/export_bindings.rs` генерирует committed
   `src/types/generated.ts`; `bindings:check` является первой частью

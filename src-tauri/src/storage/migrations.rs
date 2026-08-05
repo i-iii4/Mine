@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 2;
+pub const CURRENT_SCHEMA_VERSION: i64 = 3;
 pub const GRAPH_LINK_INDEX_VERSION: i64 = 2;
 
 const BLOCK_COLUMNS: &[(&str, &str)] = &[
@@ -180,6 +180,7 @@ pub fn migrate_and_validate(conn: &Connection) -> Result<()> {
             match target {
                 1 => migrate_v0_to_v1(conn)?,
                 2 => migrate_v1_to_v2(conn)?,
+                3 => migrate_v2_to_v3(conn)?,
                 _ => bail!("missing SQLite migration implementation for version {target}"),
             }
             conn.pragma_update(None, "user_version", target)
@@ -577,6 +578,26 @@ fn migrate_v1_to_v2(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Drop video preview manifests that were written without dimensions.
+///
+/// Those manifests are why a portrait clip was cropped to landscape: the feed
+/// derives a card's aspect ratio from them and falls back to 16/9 when they say
+/// nothing. Clearing the column marks them for the regular backfill, which
+/// rewrites them from the indexed media dimensions on the next preview pass.
+/// Manifests that already carry dimensions are left alone.
+fn migrate_v2_to_v3(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "UPDATE blocks
+            SET preview_manifest = NULL
+          WHERE preview_manifest IS NOT NULL
+            AND json_extract(preview_manifest, '$.kind') = 'video_poster'
+            AND json_extract(preview_manifest, '$.width') IS NULL",
+        [],
+    )
+    .context("failed to clear dimensionless video preview manifests")?;
+    Ok(())
+}
+
 fn add_column_if_missing(conn: &Connection, name: &str, declaration: &str) -> Result<bool> {
     if block_columns(conn)?.contains_key(name) {
         return Ok(false);
@@ -769,6 +790,43 @@ mod tests {
 
         assert_eq!(user_version(&conn).unwrap(), CURRENT_SCHEMA_VERSION);
         validate_schema(&conn).unwrap();
+    }
+
+    #[test]
+    fn v3_clears_only_video_manifests_that_lack_dimensions() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
+        migrate_and_validate(&conn).unwrap();
+
+        let rows = [
+            ("stale-video", r#"{"kind":"video_poster","width":null,"height":null}"#),
+            ("measured-video", r#"{"kind":"video_poster","width":588,"height":720}"#),
+            ("image", r#"{"kind":"image","width":null,"height":null}"#),
+        ];
+        for (slug, manifest) in rows {
+            conn.execute(
+                "INSERT INTO blocks (slug, block_type, saved_at, body, preview_manifest)
+                 VALUES (?1, 'article', '2026-01-01T00:00:00Z', '', ?2)",
+                rusqlite::params![slug, manifest],
+            )
+            .unwrap();
+        }
+
+        migrate_v2_to_v3(&conn).unwrap();
+
+        let cleared = |slug: &str| -> bool {
+            conn.query_row(
+                "SELECT preview_manifest IS NULL FROM blocks WHERE slug = ?1",
+                [slug],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap()
+        };
+        assert!(cleared("stale-video"));
+        // An image manifest without dimensions is a different case and is not
+        // this migration's business; a measured video needs no rewrite.
+        assert!(!cleared("measured-video"));
+        assert!(!cleared("image"));
     }
 
     #[test]
