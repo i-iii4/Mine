@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
 import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
 import type { LightBlock } from "@/types";
@@ -133,6 +133,37 @@ describe("Card", () => {
     render(<Card block={b} vaultPath={VAULT} onClick={onClick} />);
     fireEvent.keyDown(screen.getByRole("button"), { key: " " });
     expect(onClick).toHaveBeenCalledWith(b);
+  });
+
+  it("reports the Connect menu opening, not just the keyboard overflow menu", async () => {
+    // The feed holds a card in place while its menu is open. The pre-existing
+    // notification only fired for the overflow menu opened from the keyboard,
+    // which misses the case this exists for: unchecking the current collection
+    // in Connect, by pointer.
+    const onMenuOpenChange = vi.fn();
+    render(
+      <Card
+        block={block()}
+        vaultPath={VAULT}
+        onClick={vi.fn()}
+        onMenuOpenChange={onMenuOpenChange}
+        tags={[{ tag: "Красивый веб", count: 1 }]}
+        currentTag="Красивый веб"
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    // The card itself is a draggable button whose label includes its actions,
+    // so the trigger is picked by its own text rather than by accessible name.
+    const connect = screen
+      .getAllByRole("button")
+      .find((element) => element.textContent?.trim() === "Connect");
+    fireEvent.pointerDown(connect!, { button: 0, ctrlKey: false });
+    fireEvent.click(connect!);
+    await waitFor(() => expect(onMenuOpenChange).toHaveBeenCalledWith(true));
   });
 
   it("renders pure text micro previews without a baked thumbnail image", () => {

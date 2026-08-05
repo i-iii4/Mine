@@ -72,6 +72,9 @@ interface CardProps {
   dragBlocks?: readonly LightBlock[];
   clearSelectionOnDragStart?: () => void;
   onKeyboardMoreMenuOpenChange?: (open: boolean) => void;
+  /// Any of the card's menus opened or closed — the overflow menu and Connect
+  /// alike. The feed uses this to hold the card in place while a menu is open.
+  onMenuOpenChange?: (open: boolean) => void;
   onModifiedClick?: (block: LightBlock, event: ReactMouseEvent<HTMLDivElement>) => boolean;
   onClick: (block: LightBlock) => void;
   tags?: import("@/types").TagCount[];
@@ -138,7 +141,7 @@ export function MeasuredCardFrame({
   );
 }
 
-export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumbVersion, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumbVersion, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
   const dragBlocks = useMemo(() => {
     const candidateBlocks = dragBlocksProp && dragBlocksProp.length > 0
       ? dragBlocksProp
@@ -208,6 +211,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
           openMoreMenuRequestSequence={openMoreMenuRequestSequence}
           hoverEnabled={hoverEnabled}
           onKeyboardMoreMenuOpenChange={onKeyboardMoreMenuOpenChange}
+          onInteractiveOpenChange={onMenuOpenChange}
         />
       )}
       <CardContent block={block} vaultPath={vaultPath} thumbsRootPath={thumbsRootPath} thumbVersion={thumbVersion} priority={priority} allowPlayback={allowPlayback} />

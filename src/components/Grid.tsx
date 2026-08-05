@@ -187,6 +187,10 @@ interface GridProps {
   onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
   onMergeSelectedBlocks: (orderedSlugs: string[]) => void | Promise<void>;
   onGroupSelectionStart?: () => void;
+  /// A card's action menu opened or closed. The feed above needs this to keep
+  /// the card in place while its menu is open, even after an edit drops it out
+  /// of the current collection.
+  onCardMenuOpenChange?: (slug: string, open: boolean) => void;
   onRequestRename: (block: LightBlock) => void;
   onRequestDelete: (slug: string) => void;
   onColumnCountChange?: (count: number) => void;
@@ -212,6 +216,7 @@ interface GridContext {
   hoverEnabled: boolean;
   onGridItemPointerMove: (slug: string, event: ReactPointerEvent<HTMLDivElement>) => void;
   onKeyboardActionMenuOpenChange: (slug: string, open: boolean) => void;
+  onCardMenuOpenChange?: (slug: string, open: boolean) => void;
   onClearSelection: () => void;
   onModifiedCardClick: (block: LightBlock, event: ReactMouseEvent<HTMLDivElement>) => boolean;
   onBlockClick: (block: LightBlock) => void;
@@ -404,6 +409,7 @@ export function Grid({
   onDeleteSelectedBlocks,
   onMergeSelectedBlocks,
   onGroupSelectionStart,
+  onCardMenuOpenChange,
   onRequestRename,
   onRequestDelete,
   onColumnCountChange,
@@ -1305,7 +1311,8 @@ export function Grid({
       if (open) return slug;
       return current === slug ? null : current;
     });
-  }, []);
+    onCardMenuOpenChange?.(slug, open);
+  }, [onCardMenuOpenChange]);
 
   const clearSelection = useCallback(() => {
     setSelectedSlugs(new Set());
@@ -1809,6 +1816,7 @@ export function Grid({
       hoverEnabled: feedInteractionMode !== "keyboard" && selectedSlugs.size === 0,
       onGridItemPointerMove: handleGridItemPointerMove,
       onKeyboardActionMenuOpenChange: handleKeyboardActionMenuOpenChange,
+      onCardMenuOpenChange,
       onClearSelection: clearSelection,
       onModifiedCardClick: handleModifiedCardClick,
       onBlockClick: handleBlockClick,
@@ -1837,6 +1845,7 @@ export function Grid({
       feedInteractionMode,
       handleGridItemPointerMove,
       handleKeyboardActionMenuOpenChange,
+      onCardMenuOpenChange,
       clearSelection,
       handleModifiedCardClick,
       handleBlockClick,
@@ -2073,6 +2082,15 @@ const GridItem = memo(function GridItem({
     [context.onKeyboardActionMenuOpenChange, block.slug],
   );
 
+  // Fires for every menu of the card, opened by pointer or keyboard, unlike the
+  // handler above which only covers the keyboard-driven overflow menu.
+  const handleMenuOpenChange = useCallback(
+    (open: boolean) => {
+      context.onCardMenuOpenChange?.(block.slug, open);
+    },
+    [context.onCardMenuOpenChange, block.slug],
+  );
+
   return (
     <div
       className="relative will-change-transform"
@@ -2117,6 +2135,7 @@ const GridItem = memo(function GridItem({
             dragBlocks={dragBlocks}
             clearSelectionOnDragStart={clearSelectionOnDragStart}
             onKeyboardMoreMenuOpenChange={handleKeyboardMoreMenuOpenChange}
+            onMenuOpenChange={handleMenuOpenChange}
             onModifiedClick={context.onModifiedCardClick}
             onClick={context.onBlockClick}
             tags={context.tags}

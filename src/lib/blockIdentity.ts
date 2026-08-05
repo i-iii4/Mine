@@ -82,6 +82,7 @@ export function lightBlockContentEqual(a: LightBlock, b: LightBlock): boolean {
 export function reconcileBlocks(
   prev: LightBlock[],
   next: LightBlock[],
+  heldSlugs?: ReadonlySet<string>,
 ): LightBlock[] {
   if (prev.length === 0) return next;
 
@@ -101,5 +102,33 @@ export function reconcileBlocks(
     return block;
   });
 
+  const withHeld = heldSlugs?.size ? restoreHeldBlocks(prev, result, heldSlugs) : result;
+  if (withHeld !== result) return withHeld;
+
   return changed ? result : prev;
+}
+
+/// Put back blocks that dropped out of the snapshot while their menu is open.
+///
+/// Removing a card from the collection you are browsing makes it fail the
+/// filter at once, and the list would close over the card the menu belongs to —
+/// the menu would follow the card out from under the pointer mid-gesture. The
+/// removal has already happened; only the reflow waits. Each held block returns
+/// to the index it occupied before, so nothing shifts around it either.
+function restoreHeldBlocks(
+  prev: LightBlock[],
+  next: LightBlock[],
+  heldSlugs: ReadonlySet<string>,
+): LightBlock[] {
+  const presentSlugs = new Set(next.map((block) => block.slug));
+  const missing = prev
+    .map((block, index) => ({ block, index }))
+    .filter(({ block }) => heldSlugs.has(block.slug) && !presentSlugs.has(block.slug));
+  if (missing.length === 0) return next;
+
+  const restored = [...next];
+  for (const { block, index } of missing) {
+    restored.splice(Math.min(index, restored.length), 0, block);
+  }
+  return restored;
 }

@@ -108,6 +108,44 @@ describe("reconcileBlocks", () => {
     expect(result[0]).toBe(next[0]);
     expect(result[0]).not.toBe(prev[0]);
   });
+
+  it("keeps a block whose menu is open after it leaves the snapshot", () => {
+    // Unchecking the collection you are browsing drops the card from the query
+    // at once. Without the hold, the list would close over the card the menu is
+    // attached to, and the menu would leave with it mid-gesture.
+    const prev = [makeBlock(1), makeBlock(2), makeBlock(3)];
+    const next = [makeBlock(1), makeBlock(3)];
+
+    const result = reconcileBlocks(prev, next, new Set(["block-2"]));
+
+    expect(result.map((block) => block.slug)).toEqual(["block-1", "block-2", "block-3"]);
+  });
+
+  it("lets the block go once nothing holds it", () => {
+    const prev = [makeBlock(1), makeBlock(2)];
+    const next = [makeBlock(1)];
+
+    expect(reconcileBlocks(prev, next, new Set()).map((b) => b.slug)).toEqual(["block-1"]);
+    expect(reconcileBlocks(prev, next).map((b) => b.slug)).toEqual(["block-1"]);
+  });
+
+  it("holds nothing for a block that is still in the snapshot", () => {
+    const prev = [makeBlock(1), makeBlock(2)];
+    const next = [makeBlock(1), makeBlock(2)];
+
+    const result = reconcileBlocks(prev, next, new Set(["block-2"]));
+
+    expect(result).toBe(prev);
+  });
+
+  it("restores several held blocks at their own positions", () => {
+    const prev = [makeBlock(1), makeBlock(2), makeBlock(3), makeBlock(4)];
+    const next = [makeBlock(3)];
+
+    const result = reconcileBlocks(prev, next, new Set(["block-1", "block-4"]));
+
+    expect(result.map((block) => block.slug)).toEqual(["block-1", "block-3", "block-4"]);
+  });
 });
 
 describe("lightBlockContentEqual", () => {

@@ -613,6 +613,18 @@ rendered; its segment remains an inert drag region.
   Grid. Initial mount и последующие `ResizeObserver` updates должны читать один
   и тот же width source; padding scrollport не входит в masonry layout width.
 - Layout считается чистой функцией: `containerWidth + estimatedHeights -> positions[]`
+- **Карточка с открытым меню остаётся на месте.** Пока у карточки открыто любое
+  её меню — «…» или `Connect`, — она не покидает ленту, даже если правка вывела
+  её из текущей коллекции. Запись уже произошла, ждёт только перестроение
+  списка: иначе снятие текущего канала выдёргивало бы карточку вместе с
+  открытым меню прямо из-под курсора, посреди жеста. Карточка возвращается на
+  свой прежний индекс, поэтому соседи не сдвигаются. Как только меню
+  закрывается, лента перезагружается и карточка уходит.
+  Механика: `Card` сообщает наверх через `onMenuOpenChange` (покрывает оба меню
+  и мышь, в отличие от `onKeyboardMoreMenuOpenChange`, который срабатывает
+  только на клавиатурное открытие «…»), `Grid` пробрасывает как
+  `onCardMenuOpenChange`, `App` держит множество слагов и передаёт его в
+  `reconcileBlocks`.
 - `columnWidth` и `left` позиций снапятся к целым CSS-пикселям. Скрытая
   measurement pass использует тот же pixel-snapped width, что и visible render,
   чтобы hover controls внутри `translate3d`-позиционированных карточек не

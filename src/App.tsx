@@ -413,6 +413,13 @@ export function AppWithVault({
     : undefined;
 
   const [blocks, setBlocks] = useState<LightBlock[]>([]);
+  // Cards whose action menu is open. While a menu is open its card stays in the
+  // feed even if an edit made it fail the current collection filter — the write
+  // already happened, only the reflow waits, so the menu does not slide out from
+  // under the pointer halfway through a gesture.
+  const [heldSlugs, setHeldSlugs] = useState<ReadonlySet<string>>(() => new Set());
+  const heldSlugsRef = useRef(heldSlugs);
+  heldSlugsRef.current = heldSlugs;
   // Per-slug feed thumbnail cache-buster. A `thumb:updated` event bumps the
   // affected slug so its mounted card re-renders and refetches the regenerated
   // poster/thumbnail (see Grid `thumbVersions`), without invalidating the route
@@ -582,7 +589,7 @@ export function AppWithVault({
     // Preserve object identity for blocks whose content did not change so a
     // no-op refresh does not invalidate the grid's downstream memos or remount
     // any cards.
-    setBlocks((prev) => reconcileBlocks(prev, grid.blocks));
+    setBlocks((prev) => reconcileBlocks(prev, grid.blocks, heldSlugsRef.current));
     setGridSnapshotIdentity({ routeKey, generation: grid.generation });
     setTotalBlocks(grid.total_blocks);
     setHasMoreBlocks(grid.has_more);
@@ -1036,6 +1043,25 @@ export function AppWithVault({
       void flushRefreshQueue();
     }, delayMs);
   }, [flushRefreshQueue, requestVaultStatsRefresh, vaultReady]);
+
+  const handleCardMenuOpenChange = useCallback((slug: string, open: boolean) => {
+    setHeldSlugs((current) => {
+      if (open) {
+        if (current.has(slug)) return current;
+        return new Set(current).add(slug);
+      }
+      if (!current.has(slug)) return current;
+      const next = new Set(current);
+      next.delete(slug);
+      return next;
+    });
+    if (!open) {
+      // The menu is gone, so the feed can finally close over the card. Reload
+      // rather than filter locally: the snapshot is the only thing that knows
+      // whether the card still belongs here.
+      void loadGridSnapshotRef.current?.({ invalidateCachedRoutes: true });
+    }
+  }, []);
 
   const reloadAllSnapshots = useCallback(async () => {
     invalidateRouteSnapshots();
@@ -3035,6 +3061,7 @@ export function AppWithVault({
                 onCreateAndAssignBatch={handleCreateTagFromBatchMenu}
                 onDeleteSelectedBlocks={handleDeleteSelectedBlocks}
                 onMergeSelectedBlocks={handleMergeSelectedBlocks}
+                onCardMenuOpenChange={handleCardMenuOpenChange}
                 onRequestRename={setRenamingBlock}
                 onRequestDelete={requestDeleteBlock}
                 onColumnCountChange={handleColumnCountChange}
@@ -3305,6 +3332,7 @@ interface RouteContext {
   onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
   onMergeSelectedBlocks: (orderedSlugs: string[]) => void | Promise<void>;
   onGroupSelectionStart?: () => void;
+  onCardMenuOpenChange?: (slug: string, open: boolean) => void;
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
   onRequestDelete: (slug: string) => void;
   onColumnCountChange: (count: number) => void;
