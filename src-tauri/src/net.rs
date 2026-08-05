@@ -22,7 +22,12 @@ const MAX_REDIRECTS: usize = 5;
 /// chunked response that stays within the per-request timeout. The clipper
 /// upload server applies the same `take(MAX + 1)` guard; this aligns the
 /// download path with it.
-pub const MAX_MEDIA_BYTES: u64 = 50 * 1024 * 1024;
+///
+/// Sized for what people actually save rather than for what feels tidy. A cap
+/// that rejects a routine 1080p clip does not protect anything — it silently
+/// leaves a remote URL in the note, and a note that depends on someone else's
+/// server is exactly what this vault exists to avoid.
+pub const MAX_MEDIA_BYTES: u64 = 500 * 1024 * 1024;
 
 /// Validate that a URL is safe to fetch: `http`/`https` only, and the resolved
 /// host must not be a private, loopback, link-local, broadcast, unspecified or

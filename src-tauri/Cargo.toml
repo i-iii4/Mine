@@ -102,6 +102,10 @@ name = "migrate-primary-file-to-wikilinks"
 path = "src/bin/migrate_primary_file_to_wikilinks.rs"
 
 [[bin]]
+name = "localize-remote-media"
+path = "src/bin/localize_remote_media.rs"
+
+[[bin]]
 name = "cold-space-audit"
 path = "src/bin/cold_space_audit.rs"
 

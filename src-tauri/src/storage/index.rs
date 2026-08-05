@@ -674,13 +674,35 @@ fn serialize_feed_preview_manifest(
                     .collect::<Vec<_>>();
 
                 match tiles.as_slice() {
-                    [] => FeedPreviewManifest {
-                        kind: FeedPreviewKind::Text,
-                        primary_preview_path: None,
-                        width: None,
-                        height: None,
-                        tiles,
-                        overflow_count: 0,
+                    // Nothing local in the body, but the block may still have a
+                    // thumbnail — a poster kept for a video too large to store.
+                    // Without this the card falls back to text and the post
+                    // looks empty in the feed.
+                    [] => match block
+                        .frontmatter
+                        .thumbnail
+                        .as_deref()
+                        .filter(|source| is_image_media(source))
+                    {
+                        Some(source) => {
+                            let tile = media_tile(source, &dims, false, false);
+                            FeedPreviewManifest {
+                                kind: FeedPreviewKind::Image,
+                                primary_preview_path: Some(primary_preview_path(&block.slug)),
+                                width: tile.width,
+                                height: tile.height,
+                                tiles: vec![tile],
+                                overflow_count: 0,
+                            }
+                        }
+                        None => FeedPreviewManifest {
+                            kind: FeedPreviewKind::Text,
+                            primary_preview_path: None,
+                            width: None,
+                            height: None,
+                            tiles,
+                            overflow_count: 0,
+                        },
                     },
                     [single] => FeedPreviewManifest {
                         kind: if single.is_video {
@@ -3000,6 +3022,62 @@ mod tests {
         );
         assert_eq!(manifest.tiles.len(), 3);
         assert_eq!(manifest.overflow_count, 0);
+    }
+
+    #[test]
+    fn social_post_falls_back_to_its_poster_when_the_video_stayed_remote() {
+        // A video too large to store leaves only a remote URL in the body, which
+        // never becomes a tile. The poster is what keeps the card from going
+        // text-only in the feed.
+        let mut block = make_block_full(
+            "oversized-clip",
+            "article",
+            Some("Oversized clip"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "text\n\n![](https://video.twimg.com/amplify_video/1/vid/720x1280/a.mp4)",
+        );
+        block.frontmatter.url = Some("https://x.com/user/status/1".to_string());
+        block.frontmatter.thumbnail = Some("oversized-clip (poster).jpg".to_string());
+
+        let manifest: FeedPreviewManifest = serde_json::from_str(
+            &serialize_feed_preview_manifest(
+                &block,
+                None,
+                None,
+                Some(r#"{"oversized-clip (poster).jpg":[720,1280]}"#),
+                Some("[]"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(manifest.kind, FeedPreviewKind::Image);
+        assert_eq!((manifest.width, manifest.height), (Some(720), Some(1280)));
+        assert_eq!(
+            manifest.tiles[0].source_path,
+            "oversized-clip (poster).jpg"
+        );
+    }
+
+    #[test]
+    fn social_post_without_media_or_poster_stays_text() {
+        let mut block = make_block_full(
+            "plain-post",
+            "article",
+            Some("Plain post"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "just text",
+        );
+        block.frontmatter.url = Some("https://x.com/user/status/1".to_string());
+
+        let manifest: FeedPreviewManifest = serde_json::from_str(
+            &serialize_feed_preview_manifest(&block, None, None, None, Some("[]")).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(manifest.kind, FeedPreviewKind::Text);
     }
 
     #[test]

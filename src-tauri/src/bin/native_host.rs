@@ -102,6 +102,15 @@ struct SaveBlockParams {
     author: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
+    /// Posters for the videos referenced in `body`, so a video that cannot be
+    /// stored locally still leaves the block with a real preview.
+    video_posters: Option<Vec<VideoPosterRef>>,
+}
+
+#[derive(serde::Deserialize)]
+struct VideoPosterRef {
+    video_url: String,
+    poster_url: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -716,7 +725,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     }
 
     // Download inline images (and videos) for article bodies
-    let (body, inline_files) = {
+    let (body, inline_files, unresolved_videos) = {
         let mut raw = p.body.unwrap_or_default();
 
         // For Twitter: fetch video MP4 URLs via syndication API.
@@ -744,9 +753,31 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             let page_url = p.url.as_deref().unwrap_or("");
             localize_body_images(&raw, vault, &slug, page_url)
         } else {
-            (raw, Vec::new())
+            (raw, Vec::new(), Vec::new())
         }
     };
+
+    // A video too large to store leaves the note pointing at someone else's
+    // server. Nothing can be done about the video itself here, but its poster
+    // is small and always fits, so the feed still gets a real card instead of
+    // a text-only one.
+    if thumbnail_file.is_none() && !unresolved_videos.is_empty() {
+        if let Some(poster_url) = p.video_posters.as_ref().and_then(|posters| {
+            posters
+                .iter()
+                .find(|entry| unresolved_videos.iter().any(|url| url == &entry.video_url))
+                .map(|entry| entry.poster_url.clone())
+        }) {
+            let ext = ext_from_url(&poster_url);
+            let dest_name = format!("{slug} (poster).{ext}");
+            let dest_path = vault.root().join(&dest_name);
+            let referer = p.url.as_deref().unwrap_or(&poster_url);
+            match download_file(&poster_url, &dest_path, referer) {
+                Ok(()) => thumbnail_file = Some(dest_name),
+                Err(e) => log::warn!("inline-media: poster download failed err={e}"),
+            }
+        }
+    }
     let body = if !body.trim().is_empty() && should_write_body_h1(bt, p.url.as_deref()) {
         mine_lib::domain::block::ensure_body_starts_with_h1(&body, p.title.as_deref().unwrap_or(""))
     } else {
@@ -1416,6 +1447,7 @@ fn host_from_url(url: &str) -> String {
 /// deterministic per-kind indices. Stops at MAX_INLINE_IMAGES successful
 /// http(s) matches; non-http URLs and malformed `![alt](...)` patterns
 /// are skipped without consuming the cap.
+#[cfg(test)]
 fn scan_inline_tasks(body: &str, vault: &VaultLayout, slug: &str) -> Vec<InlineTask> {
     scan_inline_tasks_with(body, vault, slug, &|_| None)
 }
@@ -1682,10 +1714,10 @@ fn localize_body_images(
     vault: &VaultLayout,
     slug: &str,
     page_url: &str,
-) -> (String, Vec<std::path::PathBuf>) {
+) -> (String, Vec<std::path::PathBuf>, Vec<String>) {
     let tasks = scan_inline_tasks_with(body, vault, slug, &probe_ext_over_network);
     if tasks.is_empty() {
-        return (body.to_string(), Vec::new());
+        return (body.to_string(), Vec::new(), Vec::new());
     }
     let started = std::time::Instant::now();
     log::info!(
@@ -1696,9 +1728,16 @@ fn localize_body_images(
     );
     let outcomes = run_parallel_downloads(&tasks, page_url);
     let ok = outcomes.iter().filter(|r| r.is_ok()).count();
+    // Video that stayed remote is reported separately: the note now depends on
+    // someone else's server for it, and the caller can at least keep a local
+    // poster so the feed has something to show.
+    let mut unresolved_videos = Vec::new();
     for (task, outcome) in tasks.iter().zip(outcomes.iter()) {
         if let Err(e) = outcome {
             log::warn!("inline-media: download failed url={} err={}", task.url, e);
+            if task.kind == InlineMediaKind::Video {
+                unresolved_videos.push(task.url.clone());
+            }
         }
     }
     let (result, inline_files) = apply_rewrites(body, &tasks, &outcomes);
@@ -1708,7 +1747,7 @@ fn localize_body_images(
         ok,
         tasks.len()
     );
-    (result, inline_files)
+    (result, inline_files, unresolved_videos)
 }
 
 /// Compare two files byte-by-byte. Returns true if identical.

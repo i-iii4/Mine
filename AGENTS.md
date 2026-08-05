@@ -289,6 +289,7 @@ bun run verify                 # Полный contract, включая Feed, Gra
 bun run verify:release         # Полный contract + native-shell smoke
 bunx shadcn info               # Проверить CLI/config/base без изменения файлов
 bunx shadcn add button --diff  # Read-only upstream diff; не перезаписывает компонент
+cargo run -p mine --bin localize-remote-media -- --dry-run <vault> # Найти медиа, оставшееся удалённой ссылкой
 cargo run -p mine --bin cold-space-audit -- <source> <empty-derived-dir> 2
 cargo +1.88.0 check --workspace --all-targets --locked # MSRV gate
 cargo clippy                   # Линтинг Rust

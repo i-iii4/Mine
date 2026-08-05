@@ -797,6 +797,15 @@ export function useClipperState() {
       if (resolved.source === "article" && resolved.byline) {
         payload.author = resolved.byline;
       }
+      // Posters travel with the body so the host can fall back to one when a
+      // video turns out to be too large to store. They cost nothing when every
+      // video saves normally, and the popup is the only place that knows them.
+      const posters = (articleDataRef.current?.embeddedVideos ?? [])
+        .filter((video) => video.src && video.poster)
+        .map((video) => ({ video_url: video.src!, poster_url: video.poster! }));
+      if (posters.length > 0) {
+        payload.video_posters = posters;
+      }
 
     } else if (currentType === "link") {
       payload.body = buildLinkBody(title);
