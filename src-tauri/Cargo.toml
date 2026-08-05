@@ -106,6 +106,10 @@ name = "localize-remote-media"
 path = "src/bin/localize_remote_media.rs"
 
 [[bin]]
+name = "migrate-vault-layout"
+path = "src/bin/migrate_vault_layout.rs"
+
+[[bin]]
 name = "cold-space-audit"
 path = "src/bin/cold_space_audit.rs"
 
