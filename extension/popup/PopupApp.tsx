@@ -266,9 +266,12 @@ export function PopupApp() {
                     urlTransform={safeMarkdownUrl}
                     components={{
                       img: ({ src, alt, ...props }) => {
+                        // An extractor that registered this source already knows
+                        // it is video, whatever the URL looks like — that answer
+                        // outranks guessing from the extension, which API-style
+                        // URLs (a method name, not a file type) do not carry.
+                        if (embeddedVideoBySrc.has(videoPreviewKey(src) ?? "")) return null;
                         if (isVideoUrl(src)) {
-                          const video = embeddedVideoBySrc.get(videoPreviewKey(src) ?? "");
-                          if (video) return null;
                           return (
                             <VideoPosterPreview
                               posterUrl={ogImage}

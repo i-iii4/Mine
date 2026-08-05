@@ -750,6 +750,7 @@
       const handle = post.author?.handle || handleOrDid;
 
       const mediaEntries = [];
+      const embeddedVideos = [];
       // Media sits under one of a few embed shapes: when a post both quotes
       // another and carries media, its own media moves under `media`.
       const embeds = [post.embed, post.embed?.media].filter(Boolean);
@@ -764,6 +765,15 @@
           const blob = await resolveBlueskyVideoBlobUrl(embed, did);
           if (blob) {
             mediaEntries.push({ kind: "video", url: blob });
+            // Registered directly rather than through pushVideoUrlPreview,
+            // which admits a source only if its URL ends in a video extension.
+            // A blob URL names a method and a hash, never a file type — but
+            // here the embed already told us this is video.
+            pushUniqueVideo(embeddedVideos, {
+              src: blob,
+              poster: embed.thumbnail || null,
+              title: "Bluesky video",
+            });
           } else if (embed.thumbnail) {
             // No repository to read the blob from — keep the poster so the post
             // still carries something visual.
@@ -782,7 +792,7 @@
         content: parts.join("\n\n"),
         byline: `@${handle}`,
         excerpt: text.slice(0, 200),
-        embeddedVideos: [],
+        embeddedVideos,
       };
     } catch {
       return null;
