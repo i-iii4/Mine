@@ -39,6 +39,16 @@ describe("cursor contract", () => {
     ).toEqual([]);
   });
 
+  it("stops anchors from claiming the hand just for being anchors", () => {
+    // Routing inside Mine runs on real anchors — sidebar rows are NavLink — and
+    // browsers hand every anchor a pointing hand for free. Classes alone cannot
+    // catch that: the cursor never appears in the markup. Only the stylesheet
+    // can take it back, so the rule has to live there and be checked there.
+    const css = readFileSync("src/styles/global.css", "utf8");
+    expect(css).toMatch(/a\s*\{[^}]*cursor:\s*default/);
+    expect(css).toMatch(/a\[target="_blank"\][^{]*\{[^}]*cursor:\s*pointer/);
+  });
+
   it("names why each allowed file is allowed", () => {
     // Guards the allowlist against growing by copy-paste: a new entry has to
     // state which control opens the browser.

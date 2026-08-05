@@ -175,6 +175,23 @@ select,
   transition-duration: 0ms;
 }
 
+/* Cursor contract (DESIGN_SYSTEM.md → Интерактивные состояния → Курсор).
+ *
+ * Routing inside Mine is built on real anchors — sidebar rows are NavLink — and
+ * the browser hands every anchor a pointing hand. In a macOS app that hand means
+ * "this leaves for a URL", and moving between collections does not leave
+ * anything. So anchors default to the arrow, and only the ones that really open
+ * a browser keep the hand. Utility classes still win: they come from a later
+ * cascade layer. */
+a {
+  cursor: default;
+}
+a[target="_blank"],
+a[href^="http://"],
+a[href^="https://"] {
+  cursor: pointer;
+}
+
 /* Sidebar resize: force col-resize cursor and disable selection globally */
 body.sidebar-resizing {
   cursor: col-resize !important;
