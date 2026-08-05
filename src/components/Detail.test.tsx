@@ -1016,9 +1016,12 @@ describe("Detail", () => {
     for (const img of Array.from(dragSurface!.querySelectorAll("img"))) {
       expect(img).toHaveClass("block", "max-w-full");
     }
+    // mousedown is left alone so the click that follows can open the preview;
+    // the drag sensor still needs an 8px move before it engages.
     expect(dragSurface!.dispatchEvent(
       new MouseEvent("mousedown", { bubbles: true, cancelable: true }),
-    )).toBe(false);
+    )).toBe(true);
+    // Native HTML drag stays suppressed — dragging is dnd-kit's job.
     expect(dragSurface!.dispatchEvent(
       new Event("dragstart", { bubbles: true, cancelable: true }),
     )).toBe(false);
@@ -1052,6 +1055,40 @@ describe("Detail", () => {
       child instanceof HTMLElement && child.hasAttribute("data-detail-media-action-frame")
     ));
     expect(frames).toHaveLength(2);
+  });
+
+  it("hands the viewer every image of the card, in reading order", async () => {
+    // The arrow keys step within a card, so clicking the second image must
+    // still carry the first — the viewer cannot ask for it later.
+    const onOpenImagePreview = vi.fn();
+    const b = block({ body: "![[One.jpg]]\n\n![[Two.jpg]]" });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenImagePreview={onOpenImagePreview}
+      />,
+    );
+
+    const frames = container.querySelectorAll<HTMLElement>("[data-detail-media-action-frame]");
+    fireEvent.click(frames[1]!);
+
+    const request = onOpenImagePreview.mock.calls[0]?.[0];
+    expect(request.mediaRef).toBe("Two.jpg");
+    expect(request.siblings.map((item: { mediaRef: string }) => item.mediaRef)).toEqual([
+      "One.jpg",
+      "Two.jpg",
+    ]);
   });
 
   it("uses resolved backend tile path for bare Obsidian attachment embeds", () => {
@@ -1294,7 +1331,7 @@ describe("Detail", () => {
     });
   });
 
-  it("keeps image left click inert, delegates Expand to app-level preview, and opens the media menu on right click", async () => {
+  it("opens the preview on image click and on Expand, and opens the media menu on right click", async () => {
     const onOpenImagePreview = vi.fn();
     const b = block({
       card_kind: "media",
@@ -1324,15 +1361,22 @@ describe("Detail", () => {
     const image = container.querySelector("img");
     expect(image).toHaveAttribute("src", "asset://localhost//tmp/test-vault/photo.jpg");
 
+    // A click that never moved is a click: the drag sensor needs 8px to engage.
     fireEvent.click(image!);
-    expect(onOpenImagePreview).not.toHaveBeenCalled();
+    expect(onOpenImagePreview).toHaveBeenCalledWith({
+      src: "asset://localhost//tmp/test-vault/photo.jpg",
+      mediaRef: "photo.jpg",
+      siblings: [{ src: "asset://localhost//tmp/test-vault/photo.jpg", mediaRef: "photo.jpg" }],
+    });
 
+    onOpenImagePreview.mockClear();
     const expandButton = container.querySelector("[data-detail-media-expand-button]");
     expect(expandButton).toHaveAttribute("aria-label", "Expand image");
     fireEvent.click(expandButton!);
     expect(onOpenImagePreview).toHaveBeenCalledWith({
       src: "asset://localhost//tmp/test-vault/photo.jpg",
       mediaRef: "photo.jpg",
+      siblings: [{ src: "asset://localhost//tmp/test-vault/photo.jpg", mediaRef: "photo.jpg" }],
     });
     expect(screen.queryByRole("dialog", { name: "Image preview" })).not.toBeInTheDocument();
 

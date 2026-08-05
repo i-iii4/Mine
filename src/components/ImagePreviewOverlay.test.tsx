@@ -169,4 +169,68 @@ describe("ImagePreviewOverlay", () => {
     fireEvent.click(collapseButton);
     expect(onClose).toHaveBeenCalled();
   });
+
+  const gallery = {
+    src: "asset://localhost/b.jpg",
+    mediaRef: "b.jpg",
+    siblings: [
+      { src: "asset://localhost/a.jpg", mediaRef: "a.jpg" },
+      { src: "asset://localhost/b.jpg", mediaRef: "b.jpg" },
+      { src: "asset://localhost/c.jpg", mediaRef: "c.jpg" },
+    ],
+  };
+
+  function shownSrc(container: HTMLElement) {
+    return container.querySelector("img")?.getAttribute("src");
+  }
+
+  it("steps through a card's images with the arrow keys, starting at the clicked one", () => {
+    const { container } = render(
+      <ImagePreviewOverlay preview={gallery} onClose={vi.fn()} />,
+    );
+
+    expect(shownSrc(container)).toBe("asset://localhost/b.jpg");
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    expect(shownSrc(container)).toBe("asset://localhost/c.jpg");
+    fireEvent.keyDown(document, { key: "ArrowLeft" });
+    expect(shownSrc(container)).toBe("asset://localhost/b.jpg");
+  });
+
+  it("wraps around at both ends", () => {
+    const { container } = render(
+      <ImagePreviewOverlay preview={gallery} onClose={vi.fn()} />,
+    );
+
+    fireEvent.keyDown(document, { key: "ArrowLeft" });
+    expect(shownSrc(container)).toBe("asset://localhost/a.jpg");
+    fireEvent.keyDown(document, { key: "ArrowLeft" });
+    expect(shownSrc(container)).toBe("asset://localhost/c.jpg");
+  });
+
+  it("copies whatever is on screen after stepping, not the image it opened with", async () => {
+    render(<ImagePreviewOverlay preview={gallery} onClose={vi.fn()} />);
+
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    fireEvent.click(screen.getByLabelText("Copy media"));
+
+    await waitFor(() => {
+      expect(copyMediaAssetToClipboardMock).toHaveBeenCalledWith("c.jpg");
+    });
+  });
+
+  it("leaves the arrow keys alone when the card holds a single image", () => {
+    // Card-to-card navigation lives on the same keys, so a lone image must not
+    // claim them just because the viewer happens to be open.
+    const onClose = vi.fn();
+    render(
+      <ImagePreviewOverlay
+        preview={{ src: "asset://localhost/only.jpg", mediaRef: "only.jpg" }}
+        onClose={onClose}
+      />,
+    );
+
+    const event = new KeyboardEvent("keydown", { key: "ArrowRight", cancelable: true, bubbles: true });
+    document.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
 });

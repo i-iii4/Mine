@@ -177,10 +177,28 @@ right corner and does not place a full-surface overlay over the video.
 
 Image click contract:
 
-- left click on a local image surface does not open anything; it is reserved for
-  drag-and-drop initiation;
-- the top-right media controls include a standard `Expand` icon button for
+- left click on a local image opens the fullscreen preview;
+- dragging the same image still works: the two are told apart by the shared
+  `PointerSensor` activation distance of 8px, so a press that does not move is a
+  click and a press that moves is a drag. There is no separate drag handle — a
+  handle would be a small target for a gesture that already has a reliable
+  discriminator;
+- because of this the image surface must not suppress `mousedown`: doing so
+  would also suppress the click. Native HTML `dragstart` stays suppressed, since
+  dragging belongs to dnd-kit;
+- the resting cursor is `zoom-in` (the click is the primary gesture); `grabbing`
+  appears only while a drag is actually in progress;
+- the top-right media controls keep the standard `Expand` icon button for
   fullscreen image preview;
+- both entry points pass every image of the card, in reading order, so the
+  viewer can step through them. The set is read from the rendered card: the body
+  is Markdown turned into elements, so document order is reading order and no
+  separate index can be more authoritative than what the reader sees;
+- inside the viewer `ArrowLeft` / `ArrowRight` move between those images and
+  wrap at both ends; zoom and pan reset on each step, and `Copy Media` copies
+  whatever is on screen rather than the image the viewer was opened with;
+- the arrows are claimed only while the viewer is open and the card holds more
+  than one image, so card-to-card navigation on the same keys keeps working;
 - fullscreen image preview is an app-level overlay, not a nested `Detail`
   dialog and not a Radix portal;
 - the overlay is fixed to `top: 32px; bottom: 0`, covers the body and bottom

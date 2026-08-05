@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -14,6 +15,15 @@ import { copyMediaAssetToClipboard } from "@/lib/commands";
 import { cn } from "@/lib/utils";
 
 export type ImagePreviewRequest = {
+  src: string;
+  mediaRef: string;
+  /// Every image of the card the request came from, in reading order, so the
+  /// viewer can step through them. Omitted when the caller has no such set;
+  /// the viewer then shows the single image and the arrow keys do nothing.
+  siblings?: ImagePreviewSibling[];
+};
+
+export type ImagePreviewSibling = {
   src: string;
   mediaRef: string;
 };
@@ -108,6 +118,38 @@ export function ImagePreviewOverlay({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [zoomLabel, setZoomLabel] = useState("100%");
   const [copyError, setCopyError] = useState<string | null>(null);
+  // Which image of the card is on screen. The request names the one that was
+  // clicked; the arrow keys move within its card without reopening the viewer.
+  const [shownMediaRef, setShownMediaRef] = useState<string | null>(null);
+
+  const gallery = useMemo<ImagePreviewSibling[]>(() => {
+    if (!preview) return [];
+    const siblings = preview.siblings ?? [];
+    return siblings.some((item) => item.mediaRef === preview.mediaRef)
+      ? siblings
+      : [{ src: preview.src, mediaRef: preview.mediaRef }];
+  }, [preview]);
+
+  const shown = useMemo<ImagePreviewSibling | null>(() => {
+    if (!preview) return null;
+    return (
+      gallery.find((item) => item.mediaRef === shownMediaRef)
+      ?? { src: preview.src, mediaRef: preview.mediaRef }
+    );
+  }, [gallery, preview, shownMediaRef]);
+
+  useEffect(() => {
+    setShownMediaRef(preview?.mediaRef ?? null);
+  }, [preview]);
+
+  const step = useCallback((direction: -1 | 1) => {
+    if (gallery.length < 2 || !shown) return;
+    const index = gallery.findIndex((item) => item.mediaRef === shown.mediaRef);
+    if (index < 0) return;
+    // Wraps, so a long press on one arrow keeps cycling instead of dead-ending.
+    const next = gallery[(index + direction + gallery.length) % gallery.length];
+    if (next) setShownMediaRef(next.mediaRef);
+  }, [gallery, shown]);
 
   const clearControlsHideTimer = useCallback(() => {
     if (controlsHideTimerRef.current !== null) {
@@ -239,23 +281,38 @@ export function ImagePreviewOverlay({
         frameRef.current = null;
       }
     };
-  }, [applyTransform, clearControlsHideTimer, preview, scheduleControlsHide]);
+  }, [applyTransform, clearControlsHideTimer, preview, scheduleControlsHide, shown?.mediaRef]);
 
   useEffect(() => {
     if (!preview) {
       return;
     }
     const handler = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) {
+      if (event.defaultPrevented) {
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        onClose();
+        return;
+      }
+      // Arrows are claimed only while the viewer is open and the card actually
+      // has more than one image, so card-to-card navigation underneath keeps
+      // working in every other case.
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+        return;
+      }
+      if (gallery.length < 2) {
         return;
       }
       event.preventDefault();
       event.stopImmediatePropagation();
-      onClose();
+      step(event.key === "ArrowLeft" ? -1 : 1);
     };
     document.addEventListener("keydown", handler, true);
     return () => document.removeEventListener("keydown", handler, true);
-  }, [onClose, preview]);
+  }, [gallery.length, onClose, preview, step]);
 
   const stepScale = useCallback((direction: -1 | 1) => {
     applyScaleAtStageCenter(
@@ -346,16 +403,18 @@ export function ImagePreviewOverlay({
   }, []);
 
   const copyImage = useCallback(() => {
-    if (!preview) {
+    if (!shown) {
       return;
     }
     setCopyError(null);
     showControls();
-    void copyMediaAssetToClipboard(preview.mediaRef)
+    // Copies what is on screen, which after an arrow press is no longer the
+    // image the viewer was opened with.
+    void copyMediaAssetToClipboard(shown.mediaRef)
       .catch((error) => setCopyError(error instanceof Error ? error.message : String(error)));
-  }, [preview, showControls]);
+  }, [shown, showControls]);
 
-  if (!preview) {
+  if (!preview || !shown) {
     return null;
   }
 
@@ -379,7 +438,7 @@ export function ImagePreviewOverlay({
       >
         <img
           ref={imageRef}
-          src={preview.src}
+          src={shown.src}
           alt=""
           className="image-preview-primary-media max-h-[calc(100vh-8rem)] max-w-[calc(100vw-4rem)] origin-center cursor-grab select-none object-contain will-change-transform active:cursor-grabbing"
           draggable={false}

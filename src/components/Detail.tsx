@@ -122,7 +122,7 @@ import {
 import { QuantizedMenuScrollArea } from "./QuantizedMenuScrollArea";
 import { SearchMenuInput } from "./SearchMenuInput";
 import { microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
-import type { ImagePreviewRequest } from "./ImagePreviewOverlay";
+import type { ImagePreviewRequest, ImagePreviewSibling } from "./ImagePreviewOverlay";
 
 // Layout constants shared by scroll content and fixed metadata. The rail is
 // anchored to the right edge with a fixed 20rem inspector width, while the
@@ -202,6 +202,24 @@ const noopMediaAssetRename = async (_asset: MediaAssetRef, _newStem: string) => 
 const noopMediaAssetDelete = async (_asset: MediaAssetRef) => {};
 const noopTextSelectionCreate = async (_payload: MineTextSelectionDragPayload, _tag: string) => {};
 const noopOpenImagePreview = (_preview: ImagePreviewRequest) => {};
+
+/// Collect every image of the card that `origin` belongs to, in reading order.
+///
+/// Read from the rendered card rather than from a prepared list: the body is
+/// Markdown turned into elements, so document order *is* reading order, and no
+/// separate index can be more authoritative than what the reader sees. Frames
+/// without a loaded image are skipped — the viewer has nothing to show for them.
+function collectCardImages(origin: HTMLElement | null): ImagePreviewSibling[] {
+  const column = origin?.closest("[data-detail-article-column]");
+  if (!column) return [];
+  const found: ImagePreviewSibling[] = [];
+  for (const frame of column.querySelectorAll<HTMLElement>("[data-media-asset-ref]")) {
+    const mediaRef = frame.dataset.mediaAssetRef;
+    const src = frame.querySelector("img")?.getAttribute("src");
+    if (mediaRef && src) found.push({ src, mediaRef });
+  }
+  return found;
+}
 
 function getElementLayoutWidth(node: HTMLElement): number {
   const measuredWidth = node.getBoundingClientRect().width;
@@ -1540,7 +1558,11 @@ function MediaAssetActionFrame({
       {...(canDrag ? dragListeners : {})}
       className={cn(
         "not-prose group/detail-media relative inline-flex max-h-[85vh] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
-        canDrag && "cursor-grab select-none active:cursor-grabbing",
+        canDrag && "select-none active:cursor-grabbing",
+        // Click is the primary gesture, so the resting cursor advertises it.
+        // The grab cursor belongs to the moment a drag actually starts, not to
+        // an image sitting still under the pointer.
+        canOpenImagePreview && "cursor-zoom-in",
         isDragging && "opacity-40",
         className,
       )}
@@ -1551,13 +1573,26 @@ function MediaAssetActionFrame({
       onPointerDown={(event) => {
         if (!canDrag || event.button !== 0) return;
         dragPointerListener?.(event);
-        event.preventDefault();
+        // Suppressing the default here would also suppress the click that
+        // follows, and a click is now how the image opens. The drag sensor
+        // needs an 8px move to engage, so a still press stays a click.
+        if (!canOpenImagePreview) event.preventDefault();
         window.getSelection()?.removeAllRanges();
       }}
       onMouseDown={(event) => {
-        if (canDrag && event.button === 0) {
+        if (canDrag && event.button === 0 && !canOpenImagePreview) {
           event.preventDefault();
         }
+      }}
+      onClick={(event) => {
+        // A completed drag never reaches here: dnd-kit swallows the click once
+        // the pointer passes the activation distance.
+        if (!canOpenImagePreview || !fullSizeImageSrc || isDragging) return;
+        onOpenImagePreview({
+          src: fullSizeImageSrc,
+          mediaRef: asset.media_ref,
+          siblings: collectCardImages(event.currentTarget),
+        });
       }}
       onContextMenu={(event) => {
         if (!canOpenImagePreview) return;
@@ -1591,10 +1626,11 @@ function MediaAssetActionFrame({
             size="icon"
             aria-label="Expand image"
             data-detail-media-expand-button
-            onClick={() => {
+            onClick={(event) => {
               onOpenImagePreview({
                 src: fullSizeImageSrc,
                 mediaRef: asset.media_ref,
+                siblings: collectCardImages(event.currentTarget),
               });
             }}
           >
