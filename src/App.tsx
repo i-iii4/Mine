@@ -34,6 +34,7 @@ import {
 import { arrayMove } from "@dnd-kit/sortable";
 import { collectionRefLabel } from "@/lib/collections";
 import { reconcileBlocks } from "@/lib/blockIdentity";
+import { refreshPageLimit } from "@/lib/gridPaging";
 import { imageCardNeedsGeometryRefresh } from "@/lib/cardHeight";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { cn } from "@/lib/utils";
@@ -800,10 +801,7 @@ export function AppWithVault({
     // count is that route's loaded range. Round up to a whole number of pages
     // (minimum one) so the backend returns the full contiguous span.
     const loadedCount = preserveLoadedRange ? blocksRef.current.length : 0;
-    const pageLimit = Math.max(
-      GRID_PAGE_SIZE,
-      Math.ceil(loadedCount / GRID_PAGE_SIZE) * GRID_PAGE_SIZE,
-    );
+    const pageLimit = refreshPageLimit(loadedCount, GRID_PAGE_SIZE);
     try {
       const grid = await fetchGridBlocks(tagAtStart, 0, pageLimit);
       if (
@@ -1045,28 +1043,40 @@ export function AppWithVault({
   }, [flushRefreshQueue, requestVaultStatsRefresh, vaultReady]);
 
   const handleCardMenuOpenChange = useCallback((slug: string, open: boolean) => {
+    let wasHeld = false;
     setHeldSlugs((current) => {
       if (open) {
         if (current.has(slug)) return current;
         return new Set(current).add(slug);
       }
-      if (!current.has(slug)) return current;
+      wasHeld = current.has(slug);
+      if (!wasHeld) return current;
       const next = new Set(current);
       next.delete(slug);
       return next;
     });
-    if (!open) {
-      // The menu is gone, so the feed can finally close over the card. Reload
-      // rather than filter locally: the snapshot is the only thing that knows
-      // whether the card still belongs here.
-      void loadGridSnapshotRef.current?.({ invalidateCachedRoutes: true });
-    }
+    if (open || !wasHeld) return;
+    // The menu is gone, so the feed can finally close over the card. Reload
+    // rather than filter locally: the snapshot is the only thing that knows
+    // whether the card still belongs here.
+    //
+    // `preserveLoadedRange` is not optional here. Without it the refresh
+    // returns the first page alone, truncating however far the user had
+    // scrolled and rebuilding every card below — a visible rebuild of the whole
+    // feed as the price of closing one menu. The route cache is left intact for
+    // the same reason: this refresh is about one card, not the whole route.
+    void loadGridSnapshotRef.current?.({ preserveLoadedRange: true });
   }, []);
 
   const reloadAllSnapshots = useCallback(async () => {
     invalidateRouteSnapshots();
     await Promise.all([
-      loadGridSnapshot({ invalidateCachedRoutes: true }),
+      // Keep whatever the user had scrolled through. Without this a refresh —
+      // connecting a card to a collection, say — hands back the first page
+      // alone, so every card past it unmounts and mounts again: video restarts,
+      // posters refetch, and the feed visibly rebuilds around an edit that
+      // touched one card.
+      loadGridSnapshot({ invalidateCachedRoutes: true, preserveLoadedRange: true }),
       loadTaxonomySnapshotState(),
       loadVaultStats(),
       loadPreviews(),
