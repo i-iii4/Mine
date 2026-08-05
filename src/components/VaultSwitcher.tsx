@@ -8,6 +8,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { FolderOpen, Unlink } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,7 +23,18 @@ import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import { filterAndRankChannelSearch } from "@/lib/channelSearch";
-import { listKnownVaults, selectVault } from "@/lib/commands";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { forgetKnownVault, listKnownVaults, selectVault } from "@/lib/commands";
 import { cn } from "@/lib/utils";
 
 interface VaultSwitcherProps {
@@ -48,6 +61,9 @@ export function VaultSwitcher({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  // The space awaiting removal confirmation. Held here rather than inside the
+  // row so the dialog outlives the menu that opened it.
+  const [pendingForget, setPendingForget] = useState<string | null>(null);
   const actionIdPrefix = useId();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const triggerLabel = vaultName(currentPath);
@@ -70,6 +86,23 @@ export function VaultSwitcher({
     await selectVault(path);
     onVaultSelected(path);
   }, [currentPath, onVaultSelected, resetMenuSearch]);
+
+  const handleReveal = useCallback(async (path: string) => {
+    try {
+      await revealItemInDir(path);
+    } catch {
+      // Finder refused to open it; nothing here can recover, and the menu
+      // staying put is better than an error the user cannot act on.
+    }
+  }, []);
+
+  const handleForget = useCallback(async (path: string) => {
+    try {
+      setKnownVaults(await forgetKnownVault(path));
+    } finally {
+      setPendingForget(null);
+    }
+  }, []);
 
   const handleAddSpace = useCallback(async () => {
     const selected = await openDialog({ directory: true, multiple: false });
@@ -199,6 +232,7 @@ export function VaultSwitcher({
   }, [isTopChrome]);
 
   return (
+    <>
     <DropdownMenu
       open={isTopChrome ? open : undefined}
       onOpenChange={handleOpenChange}
@@ -257,19 +291,20 @@ export function VaultSwitcher({
           >
             {visibleVaults.length > 0 ? (
               visibleVaults.map((path, index) => (
-                <SearchMenuAction
-                  id={`${actionIdPrefix}-space-action-${index}`}
+                <SpaceRow
                   key={path}
+                  id={`${actionIdPrefix}-space-action-${index}`}
+                  path={path}
                   active={activeIndex === index}
                   onActive={() => setActiveIndex(index)}
-                  onPress={() => {
+                  onSwitch={() => {
                     void handleSwitch(path);
                   }}
-                >
-                  <span className="min-w-0 truncate">
-                    {vaultName(path)}
-                  </span>
-                </SearchMenuAction>
+                  onReveal={() => {
+                    void handleReveal(path);
+                  }}
+                  onRequestForget={() => setPendingForget(path)}
+                />
               ))
             ) : (
               <div className="flex h-[var(--menu-row-height)] items-center px-2 text-base text-muted-foreground">
@@ -326,5 +361,125 @@ export function VaultSwitcher({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+
+    <AlertDialog
+      open={pendingForget !== null}
+      onOpenChange={(next) => {
+        if (!next) setPendingForget(null);
+      }}
+    >
+      <AlertDialogContent size="default" className="sm:max-w-md">
+        <AlertDialogHeader className="place-items-start text-left">
+          <AlertDialogTitle>
+            Remove {pendingForget ? vaultName(pendingForget) : "space"} from the list?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            Nothing is deleted from your computer. The folder and everything in
+            it stay where they are — Mine just stops listing the space. You can
+            add it back later with Add space.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          {/* Deliberately not destructive: red would say "data is about to be
+              lost", which is the exact misreading this dialog exists to
+              prevent. The menu item carries the detach colour instead. */}
+          <AlertDialogAction
+            variant="default"
+            onClick={() => {
+              if (pendingForget) void handleForget(pendingForget);
+            }}
+          >
+            Remove
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
+  );
+}
+
+/// One space in the switcher: the row switches, the two icons beside it act on
+/// the folder itself.
+///
+/// The icons sit next to the row rather than inside it — the row is a `button`,
+/// and a control nested in a button is invalid markup. They are also plain
+/// buttons rather than an overflow menu: a menu inside an open menu fights the
+/// outer one for pointer and focus, and two actions do not need a container.
+function SpaceRow({
+  id,
+  path,
+  active,
+  onActive,
+  onSwitch,
+  onReveal,
+  onRequestForget,
+}: {
+  id: string;
+  path: string;
+  active: boolean;
+  onActive: () => void;
+  onSwitch: () => void;
+  onReveal: () => void;
+  onRequestForget: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const name = vaultName(path);
+  const actionsVisible = hovered || active;
+
+  return (
+    <div
+      className="relative"
+      data-vault-switcher-row={path}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+    >
+      <SearchMenuAction
+        id={id}
+        active={active}
+        onActive={onActive}
+        onPress={onSwitch}
+        className="pr-14"
+      >
+        <span className="min-w-0 truncate">{name}</span>
+      </SearchMenuAction>
+      <div
+        className={cn(
+          "absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 transition-opacity duration-[120ms]",
+          actionsVisible ? "opacity-100" : "pointer-events-none opacity-0",
+        )}
+        data-vault-switcher-row-actions=""
+      >
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Reveal ${name} in Finder`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onReveal();
+          }}
+        >
+          <FolderOpen className="size-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Remove ${name} from the list`}
+          className="text-detach hover:text-detach"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onRequestForget();
+          }}
+        >
+          <Unlink className="size-4" />
+        </Button>
+      </div>
+    </div>
   );
 }

@@ -1,11 +1,16 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VaultSwitcher } from "./VaultSwitcher";
 
 const commandMocks = vi.hoisted(() => ({
   listKnownVaults: vi.fn<() => Promise<string[]>>(),
   selectVault: vi.fn<(path: string) => Promise<void>>(),
+  forgetKnownVault: vi.fn<(path: string) => Promise<string[]>>(),
 }));
+
+const revealItemInDir = vi.hoisted(() => vi.fn<(path: string) => Promise<void>>());
+
+vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
@@ -14,12 +19,17 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 vi.mock("@/lib/commands", () => ({
   listKnownVaults: commandMocks.listKnownVaults,
   selectVault: commandMocks.selectVault,
+  forgetKnownVault: commandMocks.forgetKnownVault,
 }));
 
 describe("VaultSwitcher", () => {
   beforeEach(() => {
     commandMocks.listKnownVaults.mockResolvedValue([]);
     commandMocks.selectVault.mockResolvedValue(undefined);
+    commandMocks.forgetKnownVault.mockReset();
+    commandMocks.forgetKnownVault.mockResolvedValue([]);
+    revealItemInDir.mockReset();
+    revealItemInDir.mockResolvedValue(undefined);
   });
 
   it("keeps the top-chrome layout slot transparent and puts hover state on the inner pill", async () => {
@@ -110,7 +120,13 @@ describe("VaultSwitcher", () => {
       "data-vault-switcher-menu-align-offset",
       "12",
     );
-    expect(document.querySelector("[data-slot='dropdown-menu-content']")?.querySelector("svg")).toBeNull();
+    // The rows stay textual: the only icon in the menu is the per-row overflow
+    // trigger, which carries the space's own actions.
+    const content = document.querySelector("[data-slot='dropdown-menu-content']");
+    const icons = content?.querySelectorAll("svg") ?? [];
+    for (const icon of icons) {
+      expect(icon.closest("[data-vault-switcher-row-actions]")).not.toBeNull();
+    }
   });
 
   it("filters spaces and keeps input focus while arrow navigation changes the active row", async () => {
@@ -160,5 +176,60 @@ describe("VaultSwitcher", () => {
       expect(commandMocks.selectVault).toHaveBeenCalledWith("/Users/i_iii/Desktop/Фотоальбомы");
     });
     expect(onVaultSelected).toHaveBeenCalledWith("/Users/i_iii/Desktop/Фотоальбомы");
+  });
+
+  async function openSwitcherWithSpaces() {
+    commandMocks.listKnownVaults.mockResolvedValue([
+      "/Users/i_iii/Library/Mobile Documents/com~apple~CloudDocs/Mine",
+      "/Users/i_iii/Desktop/Тест",
+    ]);
+    render(
+      <VaultSwitcher
+        currentPath="/Users/i_iii/Library/Mobile Documents/com~apple~CloudDocs/Mine"
+        onVaultSelected={vi.fn()}
+        surface="topChrome"
+      />,
+    );
+    await waitFor(() => expect(commandMocks.listKnownVaults).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /Switch space: Mine/ }));
+    await screen.findByRole("menuitem", { name: "Тест" });
+  }
+
+  it("reveals a space in Finder from its row", async () => {
+    await openSwitcherWithSpaces();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal Тест in Finder" }));
+
+    await waitFor(() => {
+      expect(revealItemInDir).toHaveBeenCalledWith("/Users/i_iii/Desktop/Тест");
+    });
+  });
+
+  it("asks before forgetting a space and says the files stay on disk", async () => {
+    await openSwitcherWithSpaces();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Тест from the list" }));
+
+    // The whole point of the confirmation: removal here is about the list, and
+    // the wording has to rule out the reading that files are being deleted.
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent(/Nothing is deleted from your computer/i);
+    expect(commandMocks.forgetKnownVault).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => {
+      expect(commandMocks.forgetKnownVault).toHaveBeenCalledWith("/Users/i_iii/Desktop/Тест");
+    });
+  });
+
+  it("forgets nothing when the confirmation is dismissed", async () => {
+    await openSwitcherWithSpaces();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Тест from the list" }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(commandMocks.forgetKnownVault).not.toHaveBeenCalled();
   });
 });

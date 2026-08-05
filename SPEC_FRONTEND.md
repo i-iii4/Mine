@@ -962,6 +962,18 @@ Image media expansion:
 - Space selector показывает текущую папку, открывает searchable dropdown
   известных vaults и заменяет старый bottom-bar vault switcher.
   `Cmd+Shift+O` продолжает открывать native folder picker.
+- Каждая строка списка несёт два действия над самой папкой: `Reveal in Finder`
+  (`FolderOpen`) и удаление из списка (`Unlink`, цвет `--detach`). Иконки
+  появляются при наведении или когда строка активна, и живут рядом со строкой,
+  а не внутри неё: строка — `button`, вложенный в неё контрол был бы невалидной
+  разметкой. Оверфлоу-меню здесь сознательно не используется — меню внутри
+  открытого меню борется с внешним за указатель и фокус, а два действия не
+  нуждаются в контейнере.
+- Удаление из списка требует подтверждения, и текст диалога обязан снимать
+  главное заблуждение: файлы на диске не трогаются, папка просто перестаёт
+  числиться в списке. Кнопка подтверждения — обычная, не `destructive`:
+  красный сообщал бы о потере данных, то есть ровно то, что диалог опровергает.
+  Цвет `--detach` несёт иконка действия.
 - Every `vault-selected` event replaces the mounted vault subtree by source
   path identity. During rapid `A -> B -> A -> B` switching, promises and events
   from an unmounted subtree cannot publish cards, taxonomy, preview updates or
